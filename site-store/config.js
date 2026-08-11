@@ -1,18 +1,17 @@
 // Pigeonpost handle store — deployment configuration.
 //
-// Every value here is filled in once the MASAAS tenant exists and Stripe test keys are issued.
+// Every value here is filled in once the MASAAS tenant exists. MASAAS holds the payment-gateway
 // Until then the store runs in "preview" mode: handle validation and the whole UI work, but the
 // checkout button explains what is not yet wired instead of calling a dead endpoint.
 //
-// Nothing secret belongs in this file — it ships to the browser. The Stripe *publishable* key is
-// public by design; the secret key lives only in the adapter service and MASAAS.
+// keys and hosts the card capture, so no gateway secret ever appears here or in the browser.
 window.PIGEONPOST_STORE = {
   // The Pigeonpost billing adapter (the service that fronts saas_be's internal checkout API).
   // Empty string = preview mode.
   adapterBaseUrl: "",
 
-  // Stripe publishable key, test mode (pk_test_...). Public. Empty = preview mode.
-  stripePublishableKey: "",
+  // No payment-gateway key here, on purpose. MASAAS holds the Stripe keys and hosts the card
+  // capture; the store only ever redirects to the hosted payment URL the adapter returns.
 
   // sealunit OIDC for the product realm — where "Sign in" sends the browser.
   oidc: {

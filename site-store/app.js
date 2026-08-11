@@ -1,6 +1,6 @@
 // Pigeonpost handle store — client logic.
 //
-// Preview-safe: with no adapter or Stripe key configured, every network step degrades to an honest
+// Preview-safe: with no adapter configured, every network step degrades to an honest
 // explanation rather than a broken call. When config.js is filled in, the same code paths become live.
 
 (function () {
@@ -117,7 +117,7 @@
         "Not selling yet",
         `The store is built and this is exactly where checkout runs. It is not connected to a ` +
         `payment gateway yet, so <strong>/${name}</strong> cannot be purchased today. When the ` +
-        `Stripe test tenant is wired in <code>config.js</code>, this button opens the card form.`
+        `MASAAS billing tenant is wired in <code>config.js</code>, this button opens the hosted card form.`
       );
       return;
     }
@@ -127,22 +127,21 @@
       const res = await fetch(`${cfg.adapterBaseUrl}/v1/checkout/session`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${token}` },
-        body: JSON.stringify({ handle: name, packageId: cfg.product.packageId }),
+        body: JSON.stringify({
+          handle: name,
+          packageId: cfg.product.packageId,
+          returnUrl: window.location.origin + "/account",
+          cancelUrl: window.location.origin + "/",
+        }),
       });
       const body = await res.json();
+      // MASAAS hosts the card capture. The adapter returns its hosted URL; we redirect to it. No
+      // payment-gateway script or key ever runs in this page.
       if (body.checkoutUrl) { window.location.href = body.checkoutUrl; return; }
-      if (body.clientSecret && window.Stripe && cfg.stripePublishableKey) {
-        return redirectToStripe(body.clientSecret);
-      }
       showModal("Checkout unavailable", body.error || "The checkout session could not be created.");
     } catch (e) {
       showModal("Checkout failed", "Could not reach the store backend. Try again shortly.");
     }
-  }
-
-  async function redirectToStripe(clientSecret) {
-    const stripe = window.Stripe(cfg.stripePublishableKey);
-    await stripe.redirectToCheckout({ sessionId: clientSecret });
   }
 
   // ---- account / subscription page ----------------------------------------------------------
