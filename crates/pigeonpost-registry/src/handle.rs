@@ -11,13 +11,26 @@ use serde::{Deserialize, Serialize};
 
 use crate::error::{RegistryError, Result};
 
-/// Namespaces we mirror. Adding one means adding an identity adapter that can prove control of a
-/// name in it — never a policy decision made here.
+/// Provider namespaces we *mirror*. Adding one means adding an identity adapter that can prove
+/// control of a name in it — never a policy decision made here.
 pub const NAMESPACES: &[&str] = &["github", "google"];
 
-/// Longest name we reflect. GitHub's own limit is 39; matching it means we never have to reject a
+/// The internal namespace for flat, unprefixed handles — `/wodo`. Unlike the provider namespaces
+/// this one is *allocated*, not reflected: it is the paid tier, gated on an entitlement rather than
+/// an upstream proof, and it is the only namespace that carries a reserved set. Stored under this
+/// tag; displayed bare.
+pub const FLAT_NAMESPACE: &str = "handle";
+
+/// Longest provider name we reflect. GitHub's own limit is 39; matching it means we never reject a
 /// name the upstream namespace considers valid.
 pub const MAX_NAME: usize = 39;
+
+/// Flat handles are deliberately tighter than provider handles: alphanumeric only (no `-` `_` `.`),
+/// 3..=32 characters. The floor keeps single/double characters — which are namespace-shaped — out of
+/// the salable pool; the ceiling and charset kill the punctuation and homograph tricks a chosen name
+/// invites (`docs/architecture.md`, `docs/reserved-names.md`).
+pub const FLAT_MIN: usize = 3;
+pub const FLAT_MAX: usize = 32;
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(try_from = "String", into = "String")]
@@ -29,6 +42,12 @@ pub struct Handle {
 impl Handle {
     pub fn new(namespace: &str, name: &str) -> Result<Self> {
         let namespace = namespace.to_ascii_lowercase();
+        if namespace == FLAT_NAMESPACE {
+            return Ok(Handle {
+                namespace,
+                name: validate_flat_name(name)?,
+            });
+        }
         if !NAMESPACES.contains(&namespace.as_str()) {
             return Err(RegistryError::UnknownNamespace(namespace));
         }
@@ -38,12 +57,15 @@ impl Handle {
         })
     }
 
+    /// Accepts both the provider form `/github/superaidev` and the flat form `/wodo`. A bare segment
+    /// with no second `/` is a flat handle; the reserved set (which includes every namespace name)
+    /// is what stops `/github` being claimed as the flat name "github".
     pub fn parse(input: &str) -> Result<Self> {
         let trimmed = input.strip_prefix('/').unwrap_or(input);
-        let (namespace, name) = trimmed
-            .split_once('/')
-            .ok_or_else(|| RegistryError::MalformedHandle("expected /<namespace>/<name>".into()))?;
-        Handle::new(namespace, name)
+        match trimmed.split_once('/') {
+            Some((namespace, name)) => Handle::new(namespace, name),
+            None => Handle::new(FLAT_NAMESPACE, trimmed),
+        }
     }
 
     pub fn namespace(&self) -> &str {
@@ -54,8 +76,25 @@ impl Handle {
         &self.name
     }
 
+    /// True for the paid, allocated tier. Callers gate the entitlement check on this.
+    pub fn is_flat(&self) -> bool {
+        self.namespace == FLAT_NAMESPACE
+    }
+
+    /// Canonical stored key — always `/{namespace}/{name}`, including flat (`/handle/wodo`), so the
+    /// storage layer has one shape. Use [`Handle::display`] for what a human types.
     pub fn as_path(&self) -> String {
         format!("/{}/{}", self.namespace, self.name)
+    }
+
+    /// What a human writes and reads: flat handles are bare (`/wodo`), provider handles keep their
+    /// prefix (`/github/superaidev`).
+    pub fn display(&self) -> String {
+        if self.is_flat() {
+            format!("/{}", self.name)
+        } else {
+            self.as_path()
+        }
     }
 }
 
@@ -102,6 +141,29 @@ fn validate_name(name: &str) -> Result<String> {
     Ok(name.to_ascii_lowercase())
 }
 
+/// Flat handles are the allocated, salable tier, so the rules are strict: lowercase ASCII
+/// alphanumerics only, `FLAT_MIN..=FLAT_MAX` characters, and never a reserved name. The charset is
+/// what stops a flat handle rendering as a provider path (`/gh/x` via `@`, `/` or `.`) or a
+/// homograph; the reserved set is what stops squatting a namespace, brand, or fraud word.
+fn validate_flat_name(name: &str) -> Result<String> {
+    let lower = name.to_ascii_lowercase();
+    let len = lower.chars().count();
+    if len < FLAT_MIN || len > FLAT_MAX {
+        return Err(RegistryError::MalformedHandle(format!(
+            "a handle must be {FLAT_MIN}..={FLAT_MAX} characters"
+        )));
+    }
+    if !lower.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(RegistryError::MalformedHandle(
+            "a handle may contain only letters a-z and digits 0-9".into(),
+        ));
+    }
+    if let Some(reason) = crate::reserved::reserved_reason(&lower) {
+        return Err(RegistryError::MalformedHandle(format!("that handle is {reason}")));
+    }
+    Ok(lower)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,6 +182,48 @@ mod tests {
             Handle::parse("github/superaidev").unwrap(),
             Handle::parse("/github/superaidev").unwrap()
         );
+    }
+
+    #[test]
+    fn a_bare_segment_parses_as_a_flat_handle() {
+        let handle = Handle::parse("/wodoagent").unwrap();
+        assert!(handle.is_flat());
+        assert_eq!(handle.namespace(), FLAT_NAMESPACE);
+        assert_eq!(handle.name(), "wodoagent");
+        assert_eq!(handle.display(), "/wodoagent"); // bare for humans
+        assert_eq!(handle.as_path(), "/handle/wodoagent"); // canonical for storage
+    }
+
+    #[test]
+    fn a_flat_handle_round_trips_through_its_canonical_path() {
+        let claimed = Handle::parse("/wodoagent").unwrap();
+        let stored = Handle::parse(&claimed.as_path()).unwrap();
+        assert_eq!(claimed, stored);
+    }
+
+    #[test]
+    fn flat_handles_reject_punctuation_that_could_fake_a_provider_path() {
+        // The whole point of the alphanumeric-only rule: no `@`, `/`, `.`, `-`, `_`.
+        for bad in ["/bekir@gmail.com", "/gh.evil", "/my-agent", "/a_b", "/x/y/z"] {
+            assert!(Handle::parse(bad).is_err(), "{bad} must be rejected");
+        }
+    }
+
+    #[test]
+    fn flat_handles_enforce_length_and_reserved_set() {
+        assert!(Handle::parse("/ab").is_err()); // too short / reserved
+        assert!(Handle::parse(&format!("/{}", "x".repeat(FLAT_MAX + 1))).is_err()); // too long
+        assert!(Handle::parse("/github").is_err()); // reserved namespace name
+        assert!(Handle::parse("/paypal").is_err()); // reserved brand
+        assert!(Handle::parse("/g00gle").is_err()); // confusable fold
+        assert!(Handle::parse("/superaidev").is_ok()); // allocatable
+    }
+
+    #[test]
+    fn provider_handles_are_unaffected_by_the_flat_rules() {
+        // '-' '_' '.' still fine in a provider name; reserved words don't apply there.
+        assert!(Handle::parse("/github/my-agent_1.0").is_ok());
+        assert!(Handle::parse("/github/admin").is_ok()); // only the GitHub user 'admin' can prove it
     }
 
     #[test]
