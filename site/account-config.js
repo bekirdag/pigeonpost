@@ -11,7 +11,7 @@ window.PIGEONPOST_ACCOUNT = {
   // empty clientId = sign-in shows "not yet configured" instead of a broken redirect.
   oidc: {
     issuer: "https://sso.sealunit.com/realms/pigeonpost-prod",
-    clientId: "",                 // e.g. "pigeonpost-web" — created in the pigeonpost-prod realm
+    clientId: "pigeonpost-web",   // live in the pigeonpost-prod realm (public, PKCE S256)
     redirectPath: "/account",
     scope: "openid email profile",
   },
