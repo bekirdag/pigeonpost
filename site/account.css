@@ -1,0 +1,63 @@
+/* Pigeonpost account — extends style.css with the member-area pieces. Same tokens, same white. */
+
+.account { padding: 8px 0 40px; }
+.ac-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.ac-head h2 { margin: 0; }
+
+.ac-card {
+  border: 1px solid var(--rule);
+  border-radius: 12px;
+  padding: 22px 24px;
+  margin: 16px 0;
+}
+.ac-card h2, .ac-card h3 { margin: 0 0 12px; color: var(--ink); }
+.ac-card h3 { font-size: 16px; }
+.ac-center { text-align: center; }
+.ac-center h2 { margin-bottom: 8px; }
+.ac-actions { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+.ac-note { font-size: 13.5px; color: var(--muted); margin-top: 16px; }
+
+/* buttons — reuse the site's .btn if present, define a compatible set otherwise */
+.btn { display: inline-flex; align-items: center; gap: 7px; padding: 11px 20px; border-radius: 9px;
+  font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; text-decoration: none;
+  transition: background .15s, border-color .15s, opacity .15s; }
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover { background: #1d4185; }
+.btn-secondary { border-color: var(--rule); color: var(--ink); background: #fff; }
+.btn-secondary:hover { border-color: #cfd5de; background: var(--wash); }
+.btn-small { padding: 7px 13px; font-size: 13.5px; background: #fff; border: 1px solid var(--rule); color: var(--ink); border-radius: 8px; }
+.btn-small:hover { border-color: #cfd5de; background: var(--wash); }
+.btn:disabled { opacity: .45; cursor: not-allowed; }
+
+/* handle search */
+.ac-search-card { background: var(--wash); }
+.ac-search { display: flex; gap: 10px; }
+.ac-field { flex: 1; display: flex; align-items: center; border: 1.5px solid var(--rule); border-radius: 9px; padding: 0 12px; background: #fff; }
+.ac-field:focus-within { border-color: var(--blue); }
+.ac-field .slash { font: 19px var(--mono); color: var(--muted); }
+#ac-handle { flex: 1; border: 0; outline: 0; font: 19px var(--mono); padding: 12px 4px; color: var(--ink); background: transparent; min-width: 0; }
+.hs { min-height: 20px; font: 14px var(--mono); margin: 12px 0 0; }
+.hs.ok { color: var(--green); } .hs.bad { color: #c0362c; }
+
+/* rows */
+.ac-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--rule); }
+.ac-row:first-child { border-top: 0; }
+.ac-row .k { font: 15px var(--mono); color: var(--navy); margin-right: 10px; }
+
+/* billing form */
+.ac-form { margin-top: 4px; }
+.ac-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
+.ac-form label { display: flex; flex-direction: column; font-size: 13.5px; color: var(--muted); gap: 5px; }
+.ac-form input, .ac-form select { border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; font-size: 15px; color: var(--ink); font-family: var(--sans); background: #fff; }
+.ac-form input:focus, .ac-form select:focus { outline: 0; border-color: var(--blue); }
+.ac-msg { margin-left: 12px; font-size: 13.5px; color: var(--muted); }
+
+#ac-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
+  background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14.5px;
+  opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; max-width: 90vw; text-align: center; }
+#ac-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
+
+@media (max-width: 560px) {
+  .ac-search { flex-direction: column; }
+  .ac-grid { grid-template-columns: 1fr; }
+}
