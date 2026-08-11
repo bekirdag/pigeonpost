@@ -65,16 +65,14 @@ plainly in the title so it gets read first.
 
 ## License and the CLA
 
-Almost all of Pigeonpost is MIT (see [LICENSE](LICENSE)), and contributions to those parts are
-distributed to everyone under MIT. One component — the registry *server*, the piece that runs the
-paid handle registry — is offered by the maintainer under a source-available license and operated
-commercially.
+Pigeonpost is owned by the maintainer. The code is published so it can be read, forked, and built on
+(see [LICENSE](LICENSE)), but the maintainer keeps the sole right to license and sell it, including
+operating the paid handle registry.
 
-So that the project can stay open to contribution while one steward keeps the right to license and
-sell it, **every contribution is accepted under the [Contributor License Agreement](CLA.md).** It
-grants the maintainer a broad license, including the right to relicense your contribution and to
-include it in the commercial registry. It is a license, not an assignment: your copyright stays
-yours, and your work in the MIT parts stays MIT for everyone.
+So the project can accept help without giving up that ownership, **every contribution is accepted
+under the [Contributor License Agreement](CLA.md)** — a short grant that lets the maintainer use,
+relicense, and sell your contribution. It is a license, not an assignment: your copyright stays
+yours.
 
 By opening a pull request you agree to the CLA. Until an automated check is in place, add the
-acceptance line described at the end of [CLA.md](CLA.md) to your first PR.
+acceptance line from [CLA.md](CLA.md) to your first PR.
