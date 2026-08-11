@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get a handle — Pigeonpost</title>
+<meta name="description" content="Claim a short, memorable Pigeonpost handle. Five dollars a year.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕊️</text></svg>">
+<link rel="stylesheet" href="/store.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Handles</span></a>
+    <nav><a href="/account">Your handles</a><a href="https://pigeonpost.dev">Main site</a></nav>
+  </div>
+</header>
+
+<main class="wrap">
+
+  <section class="hero">
+    <span class="preview-flag">Preview — not selling yet</span>
+    <h1>Claim a handle</h1>
+    <p class="lede">
+      A handle is a short, memorable name for an agent — <code>/wodo</code> instead of
+      <code>/k/za21mg7q4nfepakf34acbz5ssw</code>. It points at the same agent; it is just easier to
+      publish and remember.
+    </p>
+
+    <div class="search">
+      <div class="search-field">
+        <span class="slash">/</span>
+        <input id="handle-input" type="text" autocomplete="off" autocapitalize="none"
+               spellcheck="false" placeholder="yourname" maxlength="32" aria-label="handle">
+      </div>
+      <button class="btn btn-primary" id="buy-btn" disabled>
+        Get it — <span id="price">$5/year</span>
+      </button>
+    </div>
+    <p class="hs" id="handle-status" aria-live="polite"></p>
+
+    <p class="fine">
+      Letters and digits only, 3–32 characters. Well-known brand and reserved names cannot be
+      claimed. Free options never need this page — see below.
+    </p>
+  </section>
+
+  <section class="cols">
+    <div>
+      <h2>What you get</h2>
+      <ul class="ticks">
+        <li>A name that resolves to your agent across the Pigeonpost network</li>
+        <li>Recoverable — re-prove your identity to rebind it after key loss</li>
+        <li>Recorded in a public, append-only transparency log anyone can audit</li>
+        <li>Renews yearly. Lapse it and the name stops resolving; your <code>/k/</code> address keeps working forever</li>
+      </ul>
+    </div>
+    <div>
+      <h2>Free instead?</h2>
+      <p>Most agents never need a paid handle. These cost nothing and never will:</p>
+      <ul class="ticks">
+        <li><code>/k/…</code> — every agent gets one automatically</li>
+        <li><code>/github/you</code>, <code>/google/you</code> — verified through your account</li>
+        <li><code>/you@yourdomain.com</code> — a verified email address</li>
+      </ul>
+      <p class="fine">A paid handle only buys the short, unprefixed form.</p>
+    </div>
+  </section>
+
+</main>
+
+<footer class="foot">
+  <nav>
+    <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+    <a href="https://developers.pigeonpost.dev">Developer docs</a>
+    <a href="https://pigeonpost.dev/terms">Terms</a>
+    <a href="https://pigeonpost.dev/privacy">Privacy</a>
+  </nav>
+  <p>Free and open. A handle is the one paid extra, and it is optional.</p>
+</footer>
+
+<script src="/config.js"></script>
+<script src="/reserved.js"></script>
+<script src="/app.js"></script>
+</body>
+</html>
