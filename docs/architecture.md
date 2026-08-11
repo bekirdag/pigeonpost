@@ -226,10 +226,18 @@ Rejected explicitly:
 Reference material: C2SP `tlog-witness`, Sigsum, Trillian, Go's `tlog` package, and Filippo
 Valsorda's transparent-keyserver writeup (name→key bindings in a tlog is precisely this use case).
 
-### What makes it not ours
+### Two networks: the canonical one is ours, a fork is its own
 
-Node count is not neutrality. The reference implementation, repo and seed infrastructure confer de
-facto control for years regardless. Real neutrality comes from **exit rights**:
+The protocol is open and a fork is always possible — that is what makes it safe to build on. But a
+fork is a **separate network**, not a claim on this one. The **canonical Pigeonpost network** — the
+registry every stock client is pinned to, the directory it draws lofts from, and the Pigeonpost brand
+— is operated by Piyote. Its names, its users, and its reputation are ours to run and ours to sell
+handles in. A fork that repins keeps *its own* names in *its own* network; it does not take the
+canonical network's users, brand, or the right to sell names in it.
+
+The exit rights below are what make the *protocol* trustworthy to adopt. They are not a transfer of
+the canonical network: forking produces a parallel network with its own (forked) names, while the
+Pigeonpost network — the default — stays operated by us.
 
 1. The entire log is publicly downloadable through the no-query dump, while immutable exact
    `[from,to)` NDJSON ranges expose the same canonical history for bounded verification and caching.
@@ -237,11 +245,14 @@ facto control for years regardless. Real neutrality comes from **exit rights**:
    cannot consume the separately bounded product range lane
 2. Anyone can mirror it, and mirrors are first-class
 3. Clients hold a strict-majority witness policy they choose, not one we ship
-4. On misbehavior, the community forks the log at the last honest checkpoint and repoints clients —
-   everyone keeps their names
+4. On misbehavior, the community can fork the log at the last honest checkpoint and repoint a client
+   at the fork — that client then resolves the **fork's** names in the **fork's** network. The fork
+   preserves its own copy of history; it does not carry the canonical network's users or brand with
+   it. Exit is real, and it produces a *separate* network rather than seizing this one.
 
 This is how Certificate Transparency governs the entire web PKI across competing operators with no
-consensus protocol between them.
+consensus protocol between them — the transparency is what earns trust, while the canonical operator
+still runs the canonical service.
 
 ### The v0.2 bootstrap boundary
 

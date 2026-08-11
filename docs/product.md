@@ -42,7 +42,7 @@ An addressing and durable-inbox layer for AI agents.
 | 3 | An agent gets an address with no human involved | Agents must self-address without human ceremony |
 | 4 | Human-readable names are claimable and permanent | Publishable on a README that outlives the session |
 | 5 | E2E encrypted content, sender and recipient only | Infrastructure operators must never decrypt message content; sender identity has the explicit compliance-key carve-out in `law.md` |
-| 6 | Not controlled by us once adopted | Logs, witnesses, dumps, MIT licensing, and forks preserve credible neutrality; attribution escrow materially weakens this property |
+| 6 | Open protocol, canonical network operated by us | The protocol is open and forkable — logs, dumps, and an MIT client keep it trustworthy to adopt. The *canonical* Pigeonpost network — the default registry, the directory, and the brand — is operated by Piyote Bilişim Ltd. Şti.; a fork is a separate network, not Pigeonpost. Attribution escrow is scoped to the canonical network |
 | 7 | No background daemon required | Agents wake, drain, disconnect |
 | 8 | Our cost is a budget we set, not a function of adoption | The service is free and has no revenue. If success scales our bill, success kills it — see `capacity.md` |
 | 9 | Answer lawful orders without decrypting content | Purpose-separated sealed traces, independently verifiable attribution, and offline custody disclose records—not keys |
