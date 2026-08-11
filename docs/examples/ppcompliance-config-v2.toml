@@ -1,0 +1,124 @@
+# ppcompliance operator configuration schema version 2.
+#
+# This is a public deployment template, not a usable production configuration. Every
+# REPLACE_* value must come from the documented provisioning ceremony. The operator
+# intentionally fails closed while any placeholder remains. All paths are examples;
+# PIGEONPOST_COMPLIANCE_HOME would be /srv/pigeonpost-compliance for this layout.
+
+version = 2
+ledger_path = "/srv/pigeonpost-compliance/state/disclosure.log"
+private_audit_directory = "/srv/pigeonpost-compliance/private-audit"
+private_audit_key_path = "/srv/pigeonpost-compliance/keys/private-audit.key"
+checkpoint_origin = "compliance.example/disclosures"
+checkpoint_signing_key_path = "/srv/pigeonpost-compliance/keys/disclosure-checkpoint.key"
+checkpoint_output_path = "/srv/pigeonpost-compliance/publication/disclosure.checkpoint"
+
+[registry_audit]
+log_path = "/srv/pigeonpost-compliance/registry/registry.ndjson"
+checkpoint_path = "/srv/pigeonpost-compliance/registry/registry.checkpoint"
+expected_origin = "registry.example"
+checkpoint_key = "REPLACE_WITH_64_LOWERCASE_HEX_REGISTRY_CHECKPOINT_PUBLIC_KEY"
+witness_threshold = 2
+# Replace this empty-tree floor with the latest independently retained, audited floor
+# during production provisioning. Size zero is valid only with this exact empty root.
+minimum_checkpoint_size = 0
+minimum_checkpoint_root = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+max_cosignature_age_seconds = 86400
+future_clock_skew_seconds = 300
+
+[[registry_audit.witnesses]]
+name = "witness-one.example"
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_WITNESS_ONE_ED25519_PUBLIC_KEY"
+
+[[registry_audit.witnesses]]
+name = "witness-two.example"
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_WITNESS_TWO_ED25519_PUBLIC_KEY"
+
+[[registry_audit.witnesses]]
+name = "witness-three.example"
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_WITNESS_THREE_ED25519_PUBLIC_KEY"
+
+[approval]
+request_ttl_ms = 300000
+
+[[approval.approvers]]
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_APPROVER_ONE_ED25519_PUBLIC_KEY"
+identity = "compliance-officer-one"
+
+[[approval.approvers]]
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_APPROVER_TWO_ED25519_PUBLIC_KEY"
+identity = "independent-reviewer-two"
+
+[approval.command]
+executable = "/opt/pigeonpost-compliance/bin/approval-adapter"
+args = []
+timeout_ms = 30000
+inherit_environment = []
+
+[destruction_command]
+executable = "/opt/pigeonpost-compliance/bin/destruction-adapter"
+args = []
+timeout_ms = 30000
+inherit_environment = []
+
+# Network- and identity-trace epochs use this artifact shape. Add one independent
+# [[epochs]] block per canonical key id; do not combine the two purposes.
+[[epochs]]
+key_id = "REPLACE_WITH_94_LOWERCASE_HEX_NETWORK_TRACE_KEY_ID"
+inventory_path = "/srv/pigeonpost-compliance/inventories/network-example.ppinv"
+inventory_declaration_path = "/srv/pigeonpost-compliance/declarations/network-example.toml"
+inventory_staging_path = "/srv/pigeonpost-compliance/staging/network-example.ppinv"
+inventory_import_path = "/srv/pigeonpost-compliance/import/network-example.ppinv"
+
+[epochs.retention_policy]
+version = 1
+# This example value is not a legal decision. Counsel must select 365..730 before
+# activation, even when this particular epoch is governed by another jurisdiction.
+tr_days = 548
+counsel_approval_commitment = "REPLACE_WITH_64_LOWERCASE_HEX_COUNSEL_APPROVAL_COMMITMENT"
+
+[epochs.artifact]
+kind = "trace_segments"
+directory = "/srv/pigeonpost-compliance/artifacts/network-example"
+expected_node_id = "REPLACE_WITH_64_LOWERCASE_HEX_PRODUCER_NODE_ID"
+expected_signer_public_key = "REPLACE_WITH_64_LOWERCASE_HEX_SEGMENT_SIGNER_ED25519_PUBLIC_KEY"
+expected_custody_key_digest = "REPLACE_WITH_64_LOWERCASE_HEX_SHA256_OF_NETWORK_TRACE_CUSTODY_PUBLIC_KEY"
+
+[epochs.custody]
+mode = "external"
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_NETWORK_TRACE_X25519_CUSTODY_PUBLIC_KEY"
+
+[epochs.custody.command]
+executable = "/opt/pigeonpost-compliance/bin/custody-adapter"
+args = []
+timeout_ms = 30000
+inherit_environment = []
+
+# Attribution epochs use explicit serialized v3 wrap paths and no trace-only fields.
+[[epochs]]
+key_id = "REPLACE_WITH_94_LOWERCASE_HEX_ATTRIBUTION_KEY_ID"
+inventory_path = "/srv/pigeonpost-compliance/inventories/attribution-example.ppinv"
+inventory_declaration_path = "/srv/pigeonpost-compliance/declarations/attribution-example.toml"
+inventory_staging_path = "/srv/pigeonpost-compliance/staging/attribution-example.ppinv"
+inventory_import_path = "/srv/pigeonpost-compliance/import/attribution-example.ppinv"
+
+[epochs.retention_policy]
+version = 1
+tr_days = 548
+counsel_approval_commitment = "REPLACE_WITH_64_LOWERCASE_HEX_COUNSEL_APPROVAL_COMMITMENT"
+
+[epochs.artifact]
+kind = "attribution_wraps"
+paths = [
+  "/srv/pigeonpost-compliance/artifacts/attribution/example-wrap-v3.json",
+]
+
+[epochs.custody]
+mode = "external"
+public_key = "REPLACE_WITH_64_LOWERCASE_HEX_ATTRIBUTION_X25519_CUSTODY_PUBLIC_KEY"
+
+[epochs.custody.command]
+executable = "/opt/pigeonpost-compliance/bin/custody-adapter"
+args = []
+timeout_ms = 30000
+inherit_environment = []

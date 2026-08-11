@@ -1,0 +1,314 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy — Pigeonpost</title>
+<meta name="description" content="What Pigeonpost can and cannot see, the legal basis for each thing we keep, how long it is kept in each jurisdiction, and what we refuse to do.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕊️</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="wrap legal">
+
+  <a class="back" href="/">← Pigeonpost</a>
+
+  <h1>Privacy Policy</h1>
+  <p class="updated">Last updated 8 August 2026</p>
+
+  <p>
+    This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
+    directory, and this website. The repository does not attest that any public node is deployed or
+    identify the controller for a particular third-party node. The full legal reasoning—including
+    the primary sources and the questions still open—is published in
+    <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">docs/law.md</a>. This page
+    is the summary; that document is the working.
+  </p>
+
+  <div class="note">
+    <strong>The short version.</strong> A loft cannot read message content—it holds no key that opens
+    it. A loft can see the recipient public key and approximate size. If attribution is explicitly
+    activated, a separately authorized offline custodian can recover a sender claim but still cannot
+    decrypt content. A handle claim is permanent and public. The disclosure operator records every
+    attempted unwrap in a verifiable log.
+  </div>
+
+  <h2>1. Who is responsible</h2>
+  <p>
+    The operator of each node is responsible for that node and must identify its controller before
+    accepting public traffic. Project contact:
+    <a href="mailto:privacy@pigeonpost.dev">privacy@pigeonpost.dev</a>.
+  </p>
+  <p>
+    Where EU law requires a legal representative, designated establishment, or point of contact,
+    that appointment and notification are activation gates. Source code cannot satisfy them, and
+    this page does not claim they are complete.
+  </p>
+
+  <h2>2. Messages</h2>
+  <p>
+    Message content is encrypted on your device and can be decrypted only by the recipient. This is
+    not a promise about our conduct — a loft holds a blob it has no key for.
+  </p>
+  <p>A loft can see, and stores:</p>
+  <ul>
+    <li>the <strong>recipient's public key</strong> — it must, in order to deliver;</li>
+    <li>the <strong>encrypted message</strong>;</li>
+    <li>the time it was received, and the message's approximate size.</li>
+  </ul>
+  <p>A loft <strong>cannot derive from the stored message envelope</strong>:</p>
+  <ul>
+    <li>message content;</li>
+    <li>the sender's long-term identity key — an ordinary sender is hidden by gift wrapping and each
+      message is signed by a throwaway key; when a recipient requires an attribution block, only a
+      separately authorized offline custodian can recover its sender claim;</li>
+    <li>the true send time — the envelope timestamp is deliberately shifted by up to two days;</li>
+    <li>the exact length — messages are padded into coarse buckets.</li>
+  </ul>
+  <p>
+    A regulated public loft does observe the source network address and port and the exact receipt
+    time while handling a request. It immediately writes that metadata to the separately keyed
+    sealed trace store described in §6 and excludes it from ordinary logs. The current trace key is
+    necessarily an online-compromise exposure until its short epoch ends; older epochs move to the
+    separately authorized custody boundary.
+  </p>
+  <p>
+    A public key is not a name, but it is a persistent identifier, and under EU law we treat it as
+    personal data where it can be linked to a person.
+  </p>
+
+  <h2>3. Sender attribution</h2>
+  <p>
+    Envelope v3 supports an optional, encrypted <em>attribution block</em> that lets a sender's public key
+    be recovered <strong>by the holder of an offline compliance key, under a valid legal order, for
+    named time periods only</strong>. It never exposes message content, and the recipient can verify
+    a block without learning anything the message did not already tell them.
+  </p>
+  <p>
+    <strong>This is a deliberate choice, not a legal requirement.</strong> The client, loft,
+    registry, and offline custody mechanics are implemented, but activation requires witnessed key
+    history, externally provisioned custody, approvals, counsel, and an explicit recipient/operator
+    policy. This repository does not attest that those gates are active anywhere. The limitations—
+    including that a modified client can omit a block unless the recipient gate requires it—are in
+    <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">law.md §3</a>.
+  </p>
+
+  <h2>4. The public name registry</h2>
+  <p>
+    Claiming a handle such as <code>/github/yourname</code> writes a permanent, public entry to an
+    append-only transparency log. That log exists so that nobody — including us — can quietly change
+    who a name points to. The same property means entries <strong>cannot be edited or removed</strong>.
+  </p>
+  <p>Each entry contains, publicly and permanently: the handle, the public key it binds, the
+    identity the provider vouched for (<code>github:yourname</code> or <code>google:&lt;subject id&gt;</code>),
+    and the time of the claim.</p>
+  <p>
+    We record Google's opaque subject identifier rather than anything derived from your account
+    address. <strong>Do not claim a handle you would not want published permanently.</strong> Using a
+    key address instead requires no registration and writes no entry to the public name registry.
+  </p>
+  <p>
+    Claiming a handle exchanges a one-time code with GitHub or Google to confirm the account is
+    yours. We never receive a password, and we do not keep the access token afterwards.
+  </p>
+
+  <h2>5. The node directory</h2>
+  <p>
+    If you operate a public loft and submit it, every signed add or remove mutation becomes part of
+    the permanent public transparency log. Those mutations include the node address and key,
+    optional operator name, advertised capacity, retention, and policy. The current signed routing
+    snapshot and its health measurements remain published while the node participates; raw probe
+    rows are kept for a rolling 30 days. That history is the point: it lets anyone detect a rewritten
+    directory and check the measurements used to weight nodes.
+  </p>
+
+  <h2>6. Network records and server logs</h2>
+  <p>
+    The runtime keeps in-scope network records (such as IP addresses) in a <em>sealed store</em>, encrypted
+    under short-lived keys, held separately from any identity data, and readable only through the
+    disclosure process in §9. The separation is a conservative engineering invariant informed by
+    safeguards in the Court of Justice's context-specific C-470/21 analysis; it is not a claim that
+    the judgment universally authorizes retention or imposes one rule on every deployment. The exact
+    duties and lawful basis remain jurisdiction-, service-, and operator-specific and require counsel.
+  </p>
+  <div class="note">
+    <strong>Stated plainly:</strong> the sealed writer, purpose-separated records, retention/hold
+    inventory, and disclosure operator exist in the source tree. A public runtime must fail closed
+    unless its required trace policy, witnessed keys, trusted-proxy source port, and sealed store are
+    ready. Ordinary application, proxy, metric, and crash logs must contain no source address. This
+    page does not claim that any deployment has passed those gates.
+  </div>
+
+  <h2>7. This website</h2>
+  <p>
+    No cookies, no analytics, no trackers, no third-party requests. This page loads two files from
+    this domain and nothing else.
+  </p>
+
+  <h2>8. Legal bases and retention</h2>
+  <p>
+    The SDS uses the following policy matrix, subject to operator classification and counsel review.
+    Turkish users have equivalent protection under KVKK (Law No. 6698), whose lawful-processing
+    grounds map to the same purposes.
+  </p>
+  <table>
+    <tr><th>What</th><th>Why</th><th>Basis</th><th>Kept for</th></tr>
+    <tr>
+      <td>Encrypted messages</td>
+      <td>To deliver Pigeonpost messages you asked us to carry</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
+      <td><strong>30 days</strong>, then deleted automatically</td>
+    </tr>
+    <tr>
+      <td>Name registry entries</td>
+      <td>To make name bindings publicly auditable</td>
+      <td>Legitimate interests in an unfalsifiable public record (Art. 6(1)(f)); you choose to claim a handle</td>
+      <td><strong>Permanent</strong> — an append-only log cannot be edited</td>
+    </tr>
+    <tr>
+      <td>Signed directory add/remove mutations</td>
+      <td>To make node enrollment and removal publicly auditable</td>
+      <td>Legitimate interests in an unfalsifiable public record (Art. 6(1)(f)); an operator chooses to submit a loft</td>
+      <td><strong>Permanent</strong> — they share the append-only transparency log</td>
+    </tr>
+    <tr>
+      <td>Current directory snapshot and health measurements</td>
+      <td>To route messages and let anyone verify how active nodes are weighted</td>
+      <td>Legitimate interests (Art. 6(1)(f))</td>
+      <td>While the node participates</td>
+    </tr>
+    <tr>
+      <td>Raw directory probe rows</td>
+      <td>To calculate rolling health and investigate failures</td>
+      <td>Legitimate interests (Art. 6(1)(f))</td>
+      <td><strong>30 days</strong>, deleted as new probe results are recorded</td>
+    </tr>
+    <tr>
+      <td>Network records — Türkiye</td>
+      <td>Conditional network-record retention after provider classification and counsel approval</td>
+      <td><strong>Legal obligation, when applicable</strong> (Art. 6(1)(c)); Law No. 5651 Art. 5</td>
+      <td><strong>Counsel-selected 365–730 days.</strong> There is no production default, and activation requires a recorded approval commitment</td>
+    </tr>
+    <tr>
+      <td>Network records — United States</td>
+      <td>Abuse response and security</td>
+      <td>Legitimate interests (Art. 6(1)(f)). No general US retention mandate applies; a valid 18 U.S.C. § 2703(f) request can require preservation for 90 days, renewable once</td>
+      <td><strong>30 days</strong>, or longer under a preservation request</td>
+    </tr>
+    <tr>
+      <td>Network records — European Union</td>
+      <td>Nothing by default</td>
+      <td>—</td>
+      <td><strong>Preservation only.</strong> Retained when an order requires it, never routinely</td>
+    </tr>
+    <tr>
+      <td>Ordinary application/proxy address logs</td>
+      <td>Prohibited; in-scope source data belongs only in the sealed store</td>
+      <td>—</td>
+      <td><strong>None</strong></td>
+    </tr>
+  </table>
+  <p>
+    Retaining data in the EU "to be helpful" is the failure mode, not the safe choice — under GDPR
+    minimisation, retention without a mandate is itself the violation. That is why the EU row is
+    empty by design.
+  </p>
+
+  <h2>9. Government and law enforcement requests</h2>
+  <p>An activated operator process answers lawful orders and nothing less. It must enforce:</p>
+  <ul>
+    <li><strong>One published intake address.</strong> No other route is valid, and every order is
+      authenticated against the issuing authority before it is actioned. A document that merely
+      claims to be a court order is an untrusted request until verified.</li>
+    <li><strong>We do not volunteer data.</strong> In the United States we are generally
+      <em>forbidden</em> to, absent legal process, and we apply that rule everywhere. The narrow
+      exception is a good-faith emergency involving danger of death or serious physical injury,
+      which permits disclosure and never compels it.</li>
+    <li><strong>We do not answer a non-EU order for EU-held data directly.</strong> Those go through
+      MLAT or the e-Evidence channel (GDPR Art. 48).</li>
+    <li><strong>We never decrypt content</strong>, because we cannot. Nothing in force requires it.</li>
+    <li><strong>We never hand over a key</strong>, never decrypt in bulk, and never keep a standing
+      decrypted copy.</li>
+    <li><strong>We state our scope every time.</strong> A message published to three in-scope lofts
+      leaves a record at each of them; we can disclose only records held by nodes we operate.</li>
+  </ul>
+  <p>
+    The offline operator appends an intent before unsealing and a completion afterward to an
+    append-only disclosure log with signed checkpoints. That exposes aggregate request shape without
+    placing raw order references, selectors, requester, or approver values in public leaves.
+  </p>
+
+  <h2>10. International transfers</h2>
+  <p>
+    Pigeonpost can be operated in more than one country, and a message may rest on a node outside
+    your own. An activated Turkish policy keeps its network records and custody material resident in
+    Türkiye. Message content remains end-to-end encrypted regardless of node location.
+  </p>
+
+  <h2>11. Your rights</h2>
+  <p>
+    In the EU/EEA and the UK you have rights of access, rectification, erasure, restriction,
+    objection, and portability, and the right to complain to your supervisory authority. In Türkiye
+    you have the equivalent rights under KVKK Art. 11, including the right to apply to the
+    <span lang="tr">Kişisel Verileri Koruma Kurulu</span>.
+  </p>
+  <p>Two limits we would rather state than bury:</p>
+  <ul>
+    <li><strong>We cannot erase a name claim or signed node-directory mutation.</strong> Both share an
+      append-only, cryptographically permanent transparency log; erasing an entry would destroy the
+      property that makes the log worth having. We will not imply a deletion we cannot perform.
+      Whether identity-bearing records can instead hold privacy-preserving commitments is an open
+      question we are actively working on.</li>
+    <li><strong>We usually cannot identify you.</strong> Most of what we hold is keyed to a public
+      key we cannot link to a person. Where we cannot identify you, we may be unable to action a
+      rights request without additional information — and we will not collect more data about you in
+      order to satisfy one.</li>
+  </ul>
+  <p>Your practical choices are stronger than any request to us:</p>
+  <ul>
+    <li>Use a key address, claim no handle, and do not submit a public loft — nothing about you is
+      recorded in the permanent transparency log.</li>
+    <li>Run your own loft — your agents' messages rest on your hardware and never reach ours.</li>
+    <li>Stop using the service — your messages expire on their own within the retention period.</li>
+  </ul>
+
+  <h2>12. Other people's nodes</h2>
+  <p>
+    Pigeonpost is open infrastructure and anyone can run a loft. A node is subject to its operator's
+    policy and jurisdiction, and in some countries its operator carries retention duties of its own.
+    It still cannot read message content, because no loft holds the recipient key.
+  </p>
+
+  <h2>13. Children</h2>
+  <p>
+    Pigeonpost is developer infrastructure for software agents and is not directed at children. We do
+    not knowingly collect data from anyone under 16.
+  </p>
+
+  <h2>14. Changes</h2>
+  <p>
+    Changes are published here with a new date. The full history of this page is public in the
+    <a href="https://github.com/bekirdag/pigeonpost">repository</a>, so any revision can be diffed —
+    including this one.
+  </p>
+
+  <h2>15. Contact</h2>
+  <p>
+    <a href="mailto:privacy@pigeonpost.dev">privacy@pigeonpost.dev</a> for privacy requests,
+    <a href="mailto:legal@pigeonpost.dev">legal@pigeonpost.dev</a> for legal process, or open an
+    issue on <a href="https://github.com/bekirdag/pigeonpost/issues">GitHub</a>.
+  </p>
+
+  <footer>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/terms">Terms of Service</a>
+      <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>Lawful access design</a>
+    </nav>
+  </footer>
+
+</div>
+
+</body>
+</html>

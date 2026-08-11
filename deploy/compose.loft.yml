@@ -1,0 +1,109 @@
+# A loft, sized to be safe on a box that is doing something else.
+#
+# Every constraint here exists because a donated node runs alongside its operator's real work. A
+# loft that surprises its operator by filling a shared disk is a loft nobody runs twice.
+#
+#   docker compose -f compose.loft.yml up -d
+#
+# The loft itself binds loopback, exactly like a native private install. A pinned Caddy sidecar
+# shares its network namespace and exposes only a host-loopback development port. This avoids
+# weakening the binary's rule that an untraced non-loopback loft must not start.
+
+name: pigeonpost
+
+services:
+  loft:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: pigeonpost:local
+    user: "10001:10001"
+    command:
+      - loft
+      - serve
+      - --dir=/var/lib/pigeonpost
+      - --bind=127.0.0.1:7717
+      - --capacity-gb=${PIGEONPOST_CAPACITY_GB:-20}
+      - --retention-days=${PIGEONPOST_RETENTION_DAYS:-30}
+
+    # Caddy listens on 17717 inside this service's shared network namespace. Change the
+    # left-hand side, never the right.
+    ports:
+      - "127.0.0.1:${PIGEONPOST_PORT:-7717}:17717"
+
+    volumes:
+      - pigeonpost_mail:/var/lib/pigeonpost
+
+    networks:
+      - pigeonpost_net
+
+    restart: unless-stopped
+    stop_grace_period: 30s
+
+    # Process ceilings. The loft's advertised message-store capacity is an application budget that
+    # refuses writes when full, not proof of a host filesystem quota; see docs/capacity.md.
+    mem_limit: 512m
+    cpus: 1.0
+    pids_limit: 256
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
+
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7717/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  edge:
+    image: caddy@sha256:4c6e91c6ed0e2fa03efd5b44747b625fec79bc9cd06ac5235a779726618e530d
+    user: "10001:10001"
+    network_mode: service:loft
+    depends_on:
+      loft:
+        condition: service_healthy
+    command: ["caddy", "run", "--config", "/etc/caddy/Caddyfile", "--adapter", "caddyfile"]
+    volumes:
+      - ./Caddyfile.local:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=16m,mode=1777,noexec,nosuid,nodev
+      - /data:size=16m,mode=0700,noexec,nosuid,nodev
+      - /config:size=4m,mode=0700,noexec,nosuid,nodev
+    mem_limit: 128m
+    cpus: 0.25
+    pids_limit: 64
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  pigeonpost_mail:
+    name: pigeonpost_mail
+
+networks:
+  pigeonpost_net:
+    name: pigeonpost_net

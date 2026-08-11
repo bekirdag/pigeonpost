@@ -1,0 +1,142 @@
+# Registry, directory, and loft together — the services that seed the network.
+#
+#   docker compose -f compose.core.yml up -d
+#
+# This is an operator topology, not a zero-configuration development stack. Fresh volumes fail
+# closed until registry.toml, directory.toml, loft.toml, witness trust, and required key material
+# are provisioned as documented. Host ports remain loopback-only for an existing reverse proxy.
+# The registry checkpoint key is the one irreplaceable thing in this stack: messages expire by
+# design and a lost loft is survivable, but a lost checkpoint key breaks log continuity.
+
+name: pigeonpost
+
+x-common: &common
+  build:
+    context: ..
+    dockerfile: deploy/Dockerfile
+  image: pigeonpost:local
+  user: "10001:10001"
+  restart: unless-stopped
+  stop_grace_period: 30s
+  networks: [pigeonpost_net]
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  read_only: true
+  tmpfs: ["/tmp:size=64m,mode=1777,noexec,nosuid,nodev"]
+  pids_limit: 256
+  ulimits:
+    nofile:
+      soft: 8192
+      hard: 8192
+  logging:
+    driver: json-file
+    options:
+      max-size: "10m"
+      max-file: "3"
+
+services:
+  registry:
+    <<: *common
+    command:
+      - registry
+      - serve
+      - --dir=/var/lib/pigeonpost
+      - --bind=0.0.0.0:7718
+      - --origin=${PIGEONPOST_ORIGIN:-pigeonpost.dev/registry}
+    environment:
+      # Public identifiers may use environment variables. The long-lived GitHub credential is
+      # available only through the fixed read-only file below, never the container environment.
+      PIGEONPOST_GITHUB_CLIENT_ID: ${PIGEONPOST_GITHUB_CLIENT_ID:-}
+      PIGEONPOST_GITHUB_CLIENT_SECRET_FILE: ${PIGEONPOST_GITHUB_CLIENT_ID:+/run/secrets/pigeonpost_github_client_secret}
+      PIGEONPOST_GOOGLE_CLIENT_ID: ${PIGEONPOST_GOOGLE_CLIENT_ID:-}
+    ports:
+      - "127.0.0.1:7718:7718"
+    volumes:
+      - type: bind
+        source: ${PIGEONPOST_REGISTRY_DATA_HOST_PATH:?Set PIGEONPOST_REGISTRY_DATA_HOST_PATH to the preprovisioned quota-managed registry data directory}
+        target: /var/lib/pigeonpost
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PIGEONPOST_REGISTRY_NETWORK_TRACE_HOST_PATH:?Set PIGEONPOST_REGISTRY_NETWORK_TRACE_HOST_PATH to the preprovisioned network-trace directory}
+        target: /var/lib/pigeonpost-traces/registry-network
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PIGEONPOST_REGISTRY_IDENTITY_TRACE_HOST_PATH:?Set PIGEONPOST_REGISTRY_IDENTITY_TRACE_HOST_PATH to the preprovisioned identity-trace directory}
+        target: /var/lib/pigeonpost-traces/registry-identity
+        bind:
+          create_host_path: false
+      # `/dev/null` is an unused placeholder only when GitHub registration is disabled. Preflight
+      # requires a regular owner-only host file whenever the public client ID is configured.
+      - type: bind
+        source: ${PIGEONPOST_GITHUB_CLIENT_SECRET_FILE:-/dev/null}
+        target: /run/secrets/pigeonpost_github_client_secret
+        read_only: true
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7718/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  directory:
+    <<: *common
+    command:
+      - directory
+      - serve
+      - --dir=/var/lib/pigeonpost
+      - --bind=0.0.0.0:7719
+    ports:
+      - "127.0.0.1:7719:7719"
+    volumes:
+      - type: bind
+        source: ${PIGEONPOST_DIRECTORY_DATA_HOST_PATH:?Set PIGEONPOST_DIRECTORY_DATA_HOST_PATH to the preprovisioned quota-managed directory data directory}
+        target: /var/lib/pigeonpost
+        bind:
+          create_host_path: false
+    mem_limit: 256m
+    cpus: 0.5
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7719/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  loft:
+    <<: *common
+    command:
+      - loft
+      - serve
+      - --dir=/var/lib/pigeonpost
+      - --bind=0.0.0.0:7717
+      - --capacity-gb=${PIGEONPOST_CAPACITY_GB:-20}
+      - --retention-days=${PIGEONPOST_RETENTION_DAYS:-30}
+    ports:
+      - "127.0.0.1:7717:7717"
+    volumes:
+      - type: bind
+        source: ${PIGEONPOST_LOFT_DATA_HOST_PATH:?Set PIGEONPOST_LOFT_DATA_HOST_PATH to the preprovisioned quota-managed loft data directory}
+        target: /var/lib/pigeonpost
+        bind:
+          create_host_path: false
+      - type: bind
+        source: ${PIGEONPOST_LOFT_NETWORK_TRACE_HOST_PATH:?Set PIGEONPOST_LOFT_NETWORK_TRACE_HOST_PATH to the preprovisioned loft network-trace directory}
+        target: /var/lib/pigeonpost-traces/loft-network
+        bind:
+          create_host_path: false
+    mem_limit: 512m
+    cpus: 1.0
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7717/ready"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+networks:
+  pigeonpost_net:
+    name: pigeonpost_net

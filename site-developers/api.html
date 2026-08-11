@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>HTTP API — Pigeonpost Developers</title>
+<meta name="description" content="The loft, registry, and directory HTTP surfaces, and the public endpoints.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api" class="on">API</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/handles">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api" class="on">HTTP API</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>HTTP API</h1>
+<p>JSON throughout. Volume is small, and a format an operator can read with <code>curl</code> is worth more than a few bytes on the wire at this scale.</p>
+<p>Most people should use the <a href="/cli">CLI</a> or the <a href="/mcp">MCP server</a> — they handle the cryptography. These endpoints are for building a client or operating a node.</p>
+<h2 id="configured-endpoints">Configured endpoints<a class="ah" href="#configured-endpoints">#</a></h2>
+<p>The repository does not attest a live public service. Substitute endpoints whose operator and trust roots you have verified:</p>
+<div class="tw"><table><thead><tr><th>Service</th><th>Example</th></tr></thead><tbody><tr><td>Registry</td><td><code>https://registry.example</code></td></tr><tr><td>Directory</td><td><code>https://directory.example</code></td></tr><tr><td>Loft</td><td><code>https://loft.example</code></td></tr></tbody></table></div>
+<p>These are JSON APIs with no page at <code>/</code>. Start at <code>/health</code>.</p>
+<h2 id="loft">Loft<a class="ah" href="#loft">#</a></h2>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>GET</code></td><td><code>/ready</code></td><td>Readiness</td></tr><tr><td><code>GET</code></td><td><code>/v1/info</code></td><td>Exact canonical origin, public key, capacity, utilisation, retention, and limits</td></tr><tr><td><code>POST</code></td><td><code>/v1/publish</code></td><td>Deliver a wrapped message. Optional <code>token</code> presentation</td></tr><tr><td><code>POST</code></td><td><code>/v1/fetch</code></td><td>Fetch messages. Requires a fetch proof bound to this loft</td></tr><tr><td><code>POST</code></td><td><code>/v1/policy</code></td><td>Publish the recipient policy senders must satisfy</td></tr><tr><td><code>GET</code>/<code>PUT</code></td><td><code>/v1/agent/{address}</code></td><td>The agent record: which lofts to deliver to</td></tr></tbody></table></div>
+<pre class="lang-bash"><code>curl -s http://127.0.0.1:7717/v1/info</code></pre>
+<pre class="lang-json"><code>{
+  &quot;software&quot;: &quot;pigeonpost-loft&quot;,
+  &quot;version&quot;: &quot;0.2.0&quot;,
+  &quot;protocol&quot;: &quot;pigeonpost/3&quot;,
+  &quot;pubkey&quot;: &quot;accf04bb61af2559…&quot;,
+  &quot;origin&quot;: &quot;http://127.0.0.1:7717&quot;,
+  &quot;capacity_bytes&quot;: 5368709120,
+  &quot;used_bytes&quot;: 414314,
+  &quot;utilization&quot;: 0.0000771,
+  &quot;retention_days&quot;: 30,
+  &quot;max_event_bytes&quot;: 2097152,
+  &quot;event_count&quot;: 42,
+  &quot;accepting&quot;: true
+}</code></pre>
+<p><code>/v1/fetch</code> requires a proof signed by the recipient key and <strong>bound to the loft being asked</strong>, so a proof captured by one loft cannot be replayed at another. A proof for the wrong loft is answered <code>401</code> with a uniform message — the error does not reveal whether the address exists.</p>
+<h2 id="registry">Registry<a class="ah" href="#registry">#</a></h2>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>POST</code></td><td><code>/v1/identity/challenge</code></td><td>Begin a challenge-bound provider proof</td></tr><tr><td><code>POST</code></td><td><code>/v1/register</code></td><td>Claim a handle. Body: <code>handle</code>, <code>pubkey</code>, <code>signature</code>, <code>proof</code></td></tr><tr><td><code>POST</code></td><td><code>/v1/rotate</code></td><td>Append an authenticated handle-key rotation</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/add</code></td><td>Append an authenticated directory addition</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/remove</code></td><td>Append an authenticated directory removal</td></tr><tr><td><code>GET</code></td><td><code>/v1/resolve/{namespace}/{name}</code></td><td>Resolve, with an inclusion proof</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/checkpoint</code></td><td>Signed tree head</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/consistency</code></td><td>Prove the log only ever appended</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/entries</code></td><td>Read a bounded, continuous log range</td></tr><tr><td><code>GET</code></td><td><code>/v1/log/dump</code></td><td>The entire log, as a file</td></tr><tr><td><code>GET</code></td><td><code>/v1/compliance-keys</code></td><td>Read the bounded key projection plus witnessed head</td></tr><tr><td><code>GET</code></td><td><code>/v1/compliance-keys/{key_id}</code></td><td>Read one compliance-key publication with proof</td></tr></tbody></table></div>
+<pre class="lang-bash"><code>curl -s http://127.0.0.1:7718/v1/log/checkpoint</code></pre>
+<p>Verify the inclusion proof yourself. A resolve you did not verify is a resolve you trusted, and the whole design exists so you do not have to.</p>
+<h2 id="directory">Directory<a class="ah" href="#directory">#</a></h2>
+<div class="tw"><table><thead><tr><th>Method</th><th>Path</th><th>Does</th></tr></thead><tbody><tr><td><code>GET</code></td><td><code>/health</code></td><td>Liveness</td></tr><tr><td><code>GET</code></td><td><code>/directory.json</code></td><td>The signed pool document</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/submit</code></td><td>Submit a loft to the pool</td></tr><tr><td><code>POST</code></td><td><code>/v1/directory/drain</code></td><td>Announce an exit</td></tr><tr><td><code>GET</code></td><td><code>/v1/probe</code></td><td>Probe results</td></tr><tr><td><code>GET</code></td><td><code>/v1/probe/measurements.json</code></td><td>Canonical signed measurement document</td></tr></tbody></table></div>
+<pre class="lang-bash"><code>curl -s http://127.0.0.1:7719/directory.json</code></pre>
+<p>Every entry carries the operator&#x27;s signature, measured utilisation, and probe health, so the numbers used to weight selection can be checked rather than believed. Pin the directory&#x27;s signing key out of band.</p>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed. Documented against v0.2.0.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

@@ -1,0 +1,59 @@
+[package]
+name = "pigeonpost-cli"
+description = "Pigeonpost command line: send and receive agent messages, and run a loft."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = []
+# Explicit source-test surface. Release builds do not expose mock identity providers.
+test-utilities = ["pigeonpost-registry/test-utilities"]
+
+[[bin]]
+name = "pigeonpost"
+path = "src/main.rs"
+
+[dependencies]
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.2.0" }
+pigeonpost-client = { path = "../pigeonpost-client", version = "0.2.0" }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.2.0" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.2.0" }
+pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.2.0" }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.2.0" }
+pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.2.0" }
+pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.2.0" }
+axum = "0.8"
+ed25519-dalek.workspace = true
+fs2 = "0.4"
+clap = { version = "4", features = ["derive", "env"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "io-util"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rand_core.workspace = true
+rpassword.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url.workspace = true
+zeroize.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+
+[target.'cfg(windows)'.dev-dependencies]
+windows-permissions = "0.2.4"
+
+[target.'cfg(unix)'.dependencies]
+pigeonpost-unix-custody = { path = "../pigeonpost-unix-custody" }
+rustix = { version = "1.1", features = ["fs", "process"] }
+
+[lints.rust]
+unsafe_code = "forbid"

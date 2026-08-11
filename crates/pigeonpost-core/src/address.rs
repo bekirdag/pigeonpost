@@ -1,0 +1,426 @@
+//! Key addresses: `/k/<26 Crockford base32 chars>`, derived from the public key.
+//!
+//! `addr = "/k/" + base32(SHA-256(pubkey))[..16 bytes]` — 128 bits, sized against *second*
+//! preimage (2^128, targeting a specific victim). Birthday collisions between two keys an
+//! attacker already holds buy nothing, so 128 bits is the number that matters. See
+//! `docs/architecture.md`.
+
+use core::fmt;
+
+use ed25519_dalek::VerifyingKey;
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
+
+use crate::b32;
+use crate::error::{Error, Result};
+use crate::network::{is_localhost_name, is_numeric_loopback_host};
+use crate::token::Token;
+
+/// Bytes of truncated hash in an address.
+pub const ADDRESS_BYTES: usize = 16;
+/// Characters after the `/k/` prefix.
+pub const ADDRESS_CHARS: usize = 26;
+/// Prefix marking the key-address tier.
+pub const KEY_PREFIX: &str = "/k/";
+/// A routing hint is user-controlled input and eventually becomes a URL. Keep it bounded here;
+/// the HTTP client applies DNS/IP and redirect policy at connection time.
+pub const MAX_LOFT_HINT_BYTES: usize = 2_048;
+/// Keep human-readable handles small enough to use safely in URLs, state rows, and diagnostics.
+pub const MAX_HANDLE_BYTES: usize = 128;
+const MAX_HANDLE_NAMESPACE_BYTES: usize = 32;
+const MAX_HANDLE_NAME_BYTES: usize = 39;
+
+/// A key address. Always canonical: constructing one validates it.
+#[derive(Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Address(String);
+
+impl Address {
+    /// Derive the address for a public key. Total function — every key has exactly one address.
+    pub fn from_pubkey(pubkey: &VerifyingKey) -> Self {
+        let digest = Sha256::digest(pubkey.as_bytes());
+        let encoded = b32::encode(&digest[..ADDRESS_BYTES]);
+        debug_assert_eq!(encoded.len(), ADDRESS_CHARS);
+        Address(format!("{KEY_PREFIX}{encoded}"))
+    }
+
+    /// Parse and validate. Accepts the ambiguous characters Crockford folds (`i`→`1`, `o`→`0`)
+    /// but always stores the canonical form, so equality is not fooled by a transcription.
+    pub fn parse(input: &str) -> Result<Self> {
+        let body = input
+            .strip_prefix(KEY_PREFIX)
+            .ok_or(Error::MalformedAddress("missing /k/ prefix"))?;
+
+        if body.len() != ADDRESS_CHARS {
+            return Err(Error::MalformedAddress("wrong length"));
+        }
+
+        let decoded = b32::decode(body).map_err(|_| Error::MalformedAddress("bad base32"))?;
+        if decoded.len() < ADDRESS_BYTES {
+            return Err(Error::MalformedAddress("insufficient entropy"));
+        }
+
+        // Re-encode rather than lowercasing: this canonicalises folded characters too.
+        Ok(Address(format!(
+            "{KEY_PREFIX}{}",
+            b32::encode(&decoded[..ADDRESS_BYTES])
+        )))
+    }
+
+    /// True when this address is the one derived from `pubkey`. This is the whole verification
+    /// story for tier 1 — no registry, no authority, just arithmetic.
+    pub fn matches(&self, pubkey: &VerifyingKey) -> bool {
+        // Addresses are public identifiers, not secrets; a plain comparison is fine here.
+        *self == Address::from_pubkey(pubkey)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// The identity target carried by a [`Destination`].
+#[derive(Clone, PartialEq, Eq)]
+pub enum DestinationTarget {
+    /// A self-certifying key address that needs no registry.
+    Key(Address),
+    /// A canonical human-readable handle that must be resolved through a trusted registry client.
+    Handle(String),
+}
+
+/// A destination is an identity target plus optional routing and authorization material.
+///
+/// [`Address`] deliberately remains the stable identity value. Keeping decorations in this
+/// separate type prevents a parser from silently discarding a loft hint or capability token before
+/// the client can use it.
+#[derive(Clone, PartialEq, Eq)]
+pub struct Destination {
+    target: DestinationTarget,
+    loft_hint: Option<String>,
+    token: Option<Token>,
+}
+
+impl Destination {
+    pub fn for_address(address: Address) -> Self {
+        Self {
+            target: DestinationTarget::Key(address),
+            loft_hint: None,
+            token: None,
+        }
+    }
+
+    /// Build a destination for a human-readable handle. The stored value is canonical lowercase
+    /// with one leading slash; supported namespaces remain a registry policy decision. The
+    /// pre-1.0 `/gh` abbreviation is rejected rather than treated as an alias for `/github`.
+    pub fn for_handle(handle: &str) -> Result<Self> {
+        Ok(Self {
+            target: DestinationTarget::Handle(canonical_handle(handle)?),
+            loft_hint: None,
+            token: None,
+        })
+    }
+
+    /// Parse `/k/...` or `/<namespace>/<name>`, optionally followed by `?l=https://...` and/or a
+    /// 32-byte `#t=<hex>` token. Unknown/duplicate decorations fail closed instead of being ignored.
+    pub fn parse(input: &str) -> Result<Self> {
+        let mut fragments = input.split('#');
+        let before_fragment = fragments.next().unwrap_or_default();
+        let fragment = fragments.next();
+        if fragments.next().is_some() {
+            return Err(Error::MalformedAddress("multiple fragments"));
+        }
+
+        let token = match fragment {
+            Some(value) => {
+                let hex = value
+                    .strip_prefix("t=")
+                    .ok_or(Error::MalformedAddress("unknown fragment"))?;
+                Some(Token::from_hex(hex).ok_or(Error::MalformedAddress("bad capability token"))?)
+            }
+            None => None,
+        };
+
+        let mut queries = before_fragment.split('?');
+        let bare = queries.next().unwrap_or_default();
+        let query = queries.next();
+        if queries.next().is_some() {
+            return Err(Error::MalformedAddress("multiple queries"));
+        }
+
+        let loft_hint = match query {
+            Some(value) => {
+                let hint = value
+                    .strip_prefix("l=")
+                    .ok_or(Error::MalformedAddress("unknown query"))?;
+                validate_loft_hint(hint)?;
+                Some(hint.to_owned())
+            }
+            None => None,
+        };
+
+        let target = if bare.starts_with(KEY_PREFIX) {
+            DestinationTarget::Key(Address::parse(bare)?)
+        } else {
+            DestinationTarget::Handle(canonical_handle(bare)?)
+        };
+
+        Ok(Self {
+            target,
+            loft_hint,
+            token,
+        })
+    }
+
+    /// Return the self-certifying address, or `None` when this destination still needs registry
+    /// resolution. Callers must not silently treat a handle as an address.
+    pub fn address(&self) -> Option<&Address> {
+        match &self.target {
+            DestinationTarget::Key(address) => Some(address),
+            DestinationTarget::Handle(_) => None,
+        }
+    }
+
+    pub fn handle(&self) -> Option<&str> {
+        match &self.target {
+            DestinationTarget::Key(_) => None,
+            DestinationTarget::Handle(handle) => Some(handle),
+        }
+    }
+
+    pub fn target(&self) -> &DestinationTarget {
+        &self.target
+    }
+
+    pub fn loft_hint(&self) -> Option<&str> {
+        self.loft_hint.as_deref()
+    }
+
+    pub fn token(&self) -> Option<&Token> {
+        self.token.as_ref()
+    }
+}
+
+impl From<Address> for Destination {
+    fn from(address: Address) -> Self {
+        Self::for_address(address)
+    }
+}
+
+impl fmt::Debug for Destination {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Destination")
+            .field("target", &self.target)
+            .field("loft_hint", &self.loft_hint)
+            .field("token", &self.token.as_ref().map(|_| "redacted"))
+            .finish()
+    }
+}
+
+impl fmt::Debug for DestinationTarget {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Key(address) => f.debug_tuple("Key").field(address).finish(),
+            Self::Handle(handle) => f.debug_tuple("Handle").field(handle).finish(),
+        }
+    }
+}
+
+fn canonical_handle(input: &str) -> Result<String> {
+    if input.is_empty() || input.len() > MAX_HANDLE_BYTES || !input.is_ascii() {
+        return Err(Error::MalformedAddress("bad handle length"));
+    }
+    let trimmed = input.strip_prefix('/').unwrap_or(input);
+    let (namespace, name) = trimmed
+        .split_once('/')
+        .ok_or(Error::MalformedAddress("expected /<namespace>/<name>"))?;
+    if namespace.eq_ignore_ascii_case("gh") {
+        return Err(Error::MalformedAddress(
+            "legacy /gh namespace is not supported; use /github",
+        ));
+    }
+    if namespace.is_empty()
+        || namespace.len() > MAX_HANDLE_NAMESPACE_BYTES
+        || name.is_empty()
+        || name.len() > MAX_HANDLE_NAME_BYTES
+        || name.contains('/')
+    {
+        return Err(Error::MalformedAddress("bad handle shape"));
+    }
+    let allowed = |byte: u8| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.');
+    if !namespace.bytes().all(allowed)
+        || !name.bytes().all(allowed)
+        || namespace.starts_with('-')
+        || namespace.ends_with('-')
+        || name.starts_with('-')
+        || name.ends_with('-')
+    {
+        return Err(Error::MalformedAddress("bad handle characters"));
+    }
+    Ok(format!(
+        "/{}/{}",
+        namespace.to_ascii_lowercase(),
+        name.to_ascii_lowercase()
+    ))
+}
+
+fn validate_loft_hint(hint: &str) -> Result<()> {
+    if hint.is_empty() || hint.len() > MAX_LOFT_HINT_BYTES {
+        return Err(Error::MalformedAddress("bad loft hint length"));
+    }
+    if hint.chars().any(|c| c.is_control() || c.is_whitespace()) {
+        return Err(Error::MalformedAddress("bad loft hint"));
+    }
+    let url = url::Url::parse(hint).map_err(|_| Error::MalformedAddress("bad loft hint URL"))?;
+    if url.cannot_be_a_base()
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.host_str().is_none()
+        || url.port() == Some(0)
+        || !matches!(url.path(), "" | "/")
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err(Error::MalformedAddress("loft hint must be an origin"));
+    }
+    let host = url
+        .host_str()
+        .ok_or(Error::MalformedAddress("loft hint has no host"))?;
+    if is_localhost_name(host) {
+        return Err(Error::MalformedAddress("loft hint cannot use localhost"));
+    }
+    if url.scheme() != "https" && !(url.scheme() == "http" && is_numeric_loopback_host(host)) {
+        return Err(Error::MalformedAddress("loft hint must use HTTPS"));
+    }
+    Ok(())
+}
+
+impl fmt::Display for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl fmt::Debug for Address {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Address({})", self.0)
+    }
+}
+
+impl TryFrom<String> for Address {
+    type Error = Error;
+    fn try_from(value: String) -> Result<Self> {
+        Address::parse(&value)
+    }
+}
+
+impl From<Address> for String {
+    fn from(value: Address) -> Self {
+        value.0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::keys::Identity;
+
+    fn identity(seed: u8) -> Identity {
+        Identity::from_seed([seed; 32])
+    }
+
+    #[test]
+    fn derivation_is_deterministic_and_correctly_shaped() {
+        let id = identity(1);
+        let a = Address::from_pubkey(&id.verifying_key());
+        let b = Address::from_pubkey(&id.verifying_key());
+        assert_eq!(a, b);
+        assert!(a.as_str().starts_with(KEY_PREFIX));
+        assert_eq!(a.as_str().len(), KEY_PREFIX.len() + ADDRESS_CHARS);
+    }
+
+    #[test]
+    fn distinct_keys_give_distinct_addresses() {
+        let a = Address::from_pubkey(&identity(1).verifying_key());
+        let b = Address::from_pubkey(&identity(2).verifying_key());
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn round_trips_through_parse() {
+        let addr = Address::from_pubkey(&identity(7).verifying_key());
+        assert_eq!(Address::parse(addr.as_str()).unwrap(), addr);
+    }
+
+    #[test]
+    fn matches_only_its_own_key() {
+        let mine = identity(3);
+        let other = identity(4);
+        let addr = Address::from_pubkey(&mine.verifying_key());
+        assert!(addr.matches(&mine.verifying_key()));
+        assert!(!addr.matches(&other.verifying_key()));
+    }
+
+    #[test]
+    fn folded_characters_canonicalise_to_the_same_address() {
+        let addr = Address::from_pubkey(&identity(9).verifying_key());
+        let mangled = addr.as_str().replace('1', "l").replace('0', "O");
+        assert_eq!(Address::parse(&mangled).unwrap(), addr);
+    }
+
+    #[test]
+    fn decorations_are_retained_outside_identity() {
+        let addr = Address::from_pubkey(&identity(5).verifying_key());
+        let token = Token::mint(&[8; 32], "readme");
+        let decorated = format!("{addr}?l=https://loft.example.com#t={}", token.to_hex());
+        assert!(Address::parse(&decorated).is_err());
+        let destination = Destination::parse(&decorated).unwrap();
+        assert_eq!(destination.address(), Some(&addr));
+        assert_eq!(destination.handle(), None);
+        assert_eq!(destination.loft_hint(), Some("https://loft.example.com"));
+        assert_eq!(destination.token(), Some(&token));
+    }
+
+    #[test]
+    fn handle_destinations_are_canonical_and_keep_decorations() {
+        let token = Token::mint(&[9; 32], "handle-route");
+        let destination = Destination::parse(&format!(
+            "/GITHUB/Alice_One?l=https://loft.example.com#t={}",
+            token.to_hex()
+        ))
+        .unwrap();
+        assert_eq!(destination.address(), None);
+        assert_eq!(destination.handle(), Some("/github/alice_one"));
+        assert_eq!(destination.loft_hint(), Some("https://loft.example.com"));
+        assert_eq!(destination.token(), Some(&token));
+    }
+
+    #[test]
+    fn destination_rejects_ignored_or_unsafe_decorations() {
+        let addr = Address::from_pubkey(&identity(5).verifying_key());
+        assert!(Destination::parse(&format!("{addr}?x=https://loft.example")).is_err());
+        assert!(Destination::parse(&format!("{addr}#x=00")).is_err());
+        assert!(Destination::parse(&format!("{addr}#t=readme")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=http://example.com")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=http://localhost")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://localhost")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://localhost.")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://api.localhost")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://API.LOCALHOST.")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=http://localhost.evil")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://loft.example/path")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://user:pass@example.com")).is_err());
+        assert!(Destination::parse(&format!("{addr}?l=https://a?l=https://b")).is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_input() {
+        assert!(Address::parse("no-prefix").is_err());
+        assert!(Address::parse("/k/tooshort").is_err());
+        assert!(Address::parse("/k/uuuuuuuuuuuuuuuuuuuuuuuuuu").is_err());
+        assert!(Address::parse("/github/someone").is_err());
+        assert!(Destination::parse("/github/").is_err());
+        assert!(Destination::parse("/github/has/slash").is_err());
+        assert!(Destination::parse("/github/-leading").is_err());
+        assert!(Destination::parse("/gh/someone").is_err());
+    }
+}

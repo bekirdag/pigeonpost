@@ -1,0 +1,47 @@
+# Private operational docs — hosts, IPs, deployment specifics.
+# Never publish: this repo is public.
+/private/
+
+# npm
+node_modules/
+*.tgz
+npm-debug.log*
+
+# OS / editor noise
+.DS_Store
+__pycache__/
+*.py[cod]
+/.vscode/
+/.idea/
+*.swp
+*.swo
+
+# Local agent + index state
+/.claude/
+/.docdex/
+/.docdex-state/
+/.mcoda/
+
+# Env / logs / scratch
+.env
+.env.*
+*.log
+logs/
+tmp/
+/.tmp/
+
+# Rust
+/target/
+
+# Local planning and audit artifacts
+/docs/planning/
+
+# Unapproved future naming/payment proposal; excluded from the v0.2 SDS contract.
+/docs/reserved-names.md
+
+# Credentials — never commit
+.creds
+*.creds
+
+# Build inspection artifacts
+server-dependency-tree.txt

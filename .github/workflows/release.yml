@@ -1,0 +1,1937 @@
+name: Release
+
+# Releases are immutable tag events. There is deliberately no manual-dispatch path: publishing a
+# ref selected in the Actions UI makes it too easy for the tag, binaries, and package to diverge.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  validate:
+    name: validate release tag
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      created: ${{ steps.version.outputs.created }}
+      resume: ${{ steps.release_state.outputs.resume }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+
+      - name: Require one version everywhere
+        id: version
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 > cargo-metadata.json
+          node <<'NODE'
+          const fs = require('node:fs');
+
+          const tag = process.env.GITHUB_REF_NAME;
+          if (!/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/.test(tag)) {
+            throw new Error(`release tags must be stable SemVer in the form vX.Y.Z; got ${tag}`);
+          }
+          if (tag === 'v0.1.0') {
+            throw new Error('v0.1.0 is a historical published version; prepare a new immutable release');
+          }
+          const version = tag.slice(1);
+          const npmPackage = require('./npm/package.json');
+          const npmVersion = npmPackage.version;
+          const server = require('./server.json');
+          const metadata = JSON.parse(fs.readFileSync('cargo-metadata.json', 'utf8'));
+          const members = new Set(metadata.workspace_members);
+          const mismatched = metadata.packages
+            .filter((pkg) => members.has(pkg.id) && pkg.version !== version)
+            .map((pkg) => `${pkg.name}=${pkg.version}`);
+
+          if (npmVersion !== version) mismatched.push(`@bekirdag/pigeonpost=${npmVersion}`);
+          if (server.version !== version) mismatched.push(`server.json=${server.version}`);
+          if (server.name !== npmPackage.mcpName) {
+            mismatched.push(`server.json name=${server.name}; npm mcpName=${npmPackage.mcpName}`);
+          }
+          const npmEntries = (server.packages || []).filter(
+            (pkg) => pkg.registryType === 'npm' && pkg.identifier === npmPackage.name,
+          );
+          if (npmEntries.length !== 1 || npmEntries[0].version !== version) {
+            mismatched.push(`server.json npm package is not exactly ${npmPackage.name}@${version}`);
+          }
+          const mcpArgument = npmEntries[0]?.packageArguments;
+          if (JSON.stringify(mcpArgument) !== JSON.stringify([{type: 'positional', value: 'mcp'}])) {
+            mismatched.push('server.json does not launch the package with the mcp subcommand');
+          }
+          if (mismatched.length !== 0) {
+            throw new Error(`tag ${tag} does not match package versions: ${mismatched.join(', ')}`);
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `version=${version}\n`);
+          NODE
+          test "$(git rev-parse "${GITHUB_REF_NAME}^{commit}")" = "$GITHUB_SHA"
+          echo "created=$(git show -s --format=%cI "$GITHUB_SHA")" >> "$GITHUB_OUTPUT"
+
+      - name: Detect a completed immutable release resume
+        id: release_state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft,isImmutable >release-state.json 2>release-error.txt; then
+            if [ "$(node -p "require('./release-state.json').isDraft")" = "true" ]; then
+              echo "resume=false" >> "$GITHUB_OUTPUT"
+            elif [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ]; then
+              echo "resume=true" >> "$GITHUB_OUTPUT"
+            else
+              echo '::error::An existing published release is mutable; refusing to rebuild or publish packages from it.'
+              exit 1
+            fi
+          elif grep -Eqi 'release not found|HTTP 404' release-error.txt; then
+            echo "resume=false" >> "$GITHUB_OUTPUT"
+          else
+            cat release-error.txt >&2
+            exit 1
+          fi
+
+  ci:
+    name: release gate
+    needs: validate
+    uses: ./.github/workflows/ci.yml
+    permissions:
+      contents: read
+
+  authorize:
+    name: authorize regulated publication
+    needs: [validate, ci]
+    runs-on: ubuntu-24.04
+    environment: production-release
+    permissions:
+      actions: read
+      contents: read
+    env:
+      DESIGNATION_EVIDENCE_SHA256: ${{ vars.PIGEONPOST_EU_EVIDENCE_DESIGNATION_SHA256 }}
+      RELEASE_APPROVAL_SIGNATURE: ${{ secrets.PIGEONPOST_RELEASE_APPROVAL_SIGNATURE_B64 }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Require protected main and a deliberately configured approval environment
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          case "$DESIGNATION_EVIDENCE_SHA256" in
+            ''|*[!0-9a-f]*)
+              echo '::error::The production-release environment lacks a lowercase designation-evidence SHA-256.'
+              exit 1
+              ;;
+          esac
+          if [ "${#DESIGNATION_EVIDENCE_SHA256}" -ne 64 ] || \
+             [ "$DESIGNATION_EVIDENCE_SHA256" = "$(printf '0%.0s' {1..64})" ]; then
+            echo '::error::The designation-evidence SHA-256 must be one nonzero 64-character digest.'
+            exit 1
+          fi
+          node deploy/acceptance/verify-release-authorization.mjs
+
+          gh api -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/environments/production-release" > environment.json
+          gh api -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/environments/production-release/deployment-branch-policies?per_page=100" \
+            > environment-policies.json
+          gh api -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/environments/production-release/deployment_protection_rules" \
+            > external-protection-rules.json
+          gh api --paginate --slurp \
+            -H 'Accept: application/vnd.github+json' \
+            -H 'X-GitHub-Api-Version: 2026-03-10' \
+            "repos/$GITHUB_REPOSITORY/rules/branches/main?per_page=100" \
+            > main-rule-pages.json
+
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import {
+            effectiveRulesetReferences,
+          } from './deploy/acceptance/verify-release-authorization.mjs';
+
+          const pages = JSON.parse(fs.readFileSync('main-rule-pages.json', 'utf8'));
+          if (!Array.isArray(pages) || pages.length === 0
+              || pages.some((page) => !Array.isArray(page))) {
+            throw new Error('GitHub returned malformed paginated main-rule evidence');
+          }
+          const mainRules = pages.flat();
+          const references = effectiveRulesetReferences(mainRules, process.env.GITHUB_REPOSITORY);
+          fs.writeFileSync('main-rules.json', `${JSON.stringify(mainRules)}\n`);
+          fs.writeFileSync(
+            'main-ruleset-ids.txt',
+            `${references.map((reference) => reference.id).join('\n')}\n`,
+          );
+          NODE
+
+          mkdir main-rulesets
+          while IFS= read -r ruleset_id; do
+            case "$ruleset_id" in
+              ''|*[!0-9]*)
+                echo '::error::GitHub returned an invalid effective ruleset id.'
+                exit 1
+                ;;
+            esac
+            gh api -H 'Accept: application/vnd.github+json' \
+              -H 'X-GitHub-Api-Version: 2026-03-10' \
+              "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id?includes_parents=true" \
+              > "main-rulesets/$ruleset_id.json"
+          done < main-ruleset-ids.txt
+
+          node --input-type=module <<'NODE'
+          import fs from 'node:fs';
+          import {
+            effectiveRulesetReferences,
+            verifyGitHubReleaseControls,
+          } from './deploy/acceptance/verify-release-authorization.mjs';
+
+          const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
+          const mainRules = readJson('main-rules.json');
+          const references = effectiveRulesetReferences(mainRules, process.env.GITHUB_REPOSITORY);
+          const effectiveRulesets = references.map((reference) =>
+            readJson(`main-rulesets/${reference.id}.json`));
+          verifyGitHubReleaseControls({
+            environment: readJson('environment.json'),
+            policies: readJson('environment-policies.json'),
+            externalRules: readJson('external-protection-rules.json'),
+            mainRules,
+            effectiveRulesets,
+            authorization: readJson('.github/release-authorization.json'),
+            repository: process.env.GITHUB_REPOSITORY,
+          });
+          process.stdout.write('GitHub release-control evidence verified\n');
+          NODE
+
+          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
+            echo '::error::Release tags must point to a commit already contained in protected main.'
+            exit 1
+          fi
+
+  build:
+    name: build ${{ matrix.target }}
+    needs: [validate, ci]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Native runners make `--version` a real execution smoke test for every released asset.
+          # Linux assets are built as static musl binaries inside one digest-pinned multi-arch
+          # builder, so npm does not accidentally inherit the Ubuntu runner's glibc floor.
+          - { os: macos-14, target: aarch64-apple-darwin, asset: pigeonpost-darwin-arm64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-darwin-arm64, compliance_binary: ppcompliance }
+          - { os: macos-15-intel, target: x86_64-apple-darwin, asset: pigeonpost-darwin-x64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-darwin-x64, compliance_binary: ppcompliance }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl, asset: pigeonpost-linux-arm64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-linux-arm64, compliance_binary: ppcompliance, static_linux: true }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-musl, asset: pigeonpost-linux-x64, binary: pigeonpost, compliance: true, compliance_asset: ppcompliance-linux-x64, compliance_binary: ppcompliance, static_linux: true }
+          # The offline operator is intentionally not released for Windows. Its private-state
+          # layer does not yet establish the audited owner-only ACL, hard-link, stable-identity,
+          # safe-parent, and atomic-replacement properties. The separately bounded online Windows
+          # filesystem helpers do not authorize an offline custody artifact. The online CLI ships.
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc, asset: pigeonpost-win32-arm64.exe, binary: pigeonpost.exe, compliance: false }
+          - { os: windows-2022, target: x86_64-pc-windows-msvc, asset: pigeonpost-win32-x64.exe, binary: pigeonpost.exe, compliance: false }
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: ${{ !matrix.compliance }}
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+
+      - if: ${{ !matrix.static_linux }}
+        run: cargo build --release --locked --target ${{ matrix.target }} -p pigeonpost-cli
+      - if: ${{ matrix.compliance && !matrix.static_linux }}
+        run: >-
+          cargo build --release --locked --target ${{ matrix.target }}
+          -p pigeonpost-compliance --bin ppcompliance --example m6_acceptance_adapter
+
+      - name: Build static Linux release assets in the pinned musl toolchain
+        if: matrix.static_linux
+        shell: bash
+        env:
+          LINUX_BUILD_IMAGE: docker.io/library/rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+          TARGET: ${{ matrix.target }}
+        run: |
+          set -euo pipefail
+          case "$TARGET" in
+            aarch64-unknown-linux-musl) build_platform=linux/arm64 ;;
+            x86_64-unknown-linux-musl) build_platform=linux/amd64 ;;
+            *)
+              echo "::error::Unsupported static Linux target: $TARGET"
+              exit 1
+              ;;
+          esac
+          builder_iid="$RUNNER_TEMP/pigeonpost-musl-builder.iid"
+          docker buildx build \
+            --file deploy/Dockerfile.release-musl \
+            --build-arg "LINUX_BUILD_IMAGE=$LINUX_BUILD_IMAGE" \
+            --platform "$build_platform" \
+            --load \
+            --iidfile "$builder_iid" \
+            .
+          builder_image=$(cat "$builder_iid")
+          if [[ ! "$builder_image" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "::error::Derived musl builder did not produce an immutable local image ID."
+            exit 1
+          fi
+          cleanup_builder() {
+            docker image rm --force "$builder_image" >/dev/null 2>&1 || true
+          }
+          trap cleanup_builder EXIT
+          docker run --rm \
+            --user "$(id -u):$(id -g)" \
+            --security-opt no-new-privileges \
+            --cap-drop ALL \
+            --tmpfs /tmp:rw,nosuid,nodev,exec,size=4g \
+            -e HOME=/tmp/pigeonpost-home \
+            -e CARGO_HOME=/tmp/pigeonpost-cargo \
+            -e CARGO_TARGET_DIR=/src/target \
+            -e TARGET \
+            -v "$GITHUB_WORKSPACE:/src" \
+            -w /src \
+            "$builder_image" \
+            sh -euxc '
+              cargo build --release --locked --target "$TARGET" -p pigeonpost-cli
+              cargo build --release --locked --target "$TARGET" \
+                -p pigeonpost-compliance --bin ppcompliance --example m6_acceptance_adapter
+            '
+
+      - name: Stage the online release asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          cp "target/${{ matrix.target }}/release/${{ matrix.binary }}" "dist/${{ matrix.asset }}"
+          test -s "dist/${{ matrix.asset }}"
+          "./dist/${{ matrix.asset }}" --version
+
+      - name: Exercise the exact Windows release lifecycle
+        if: ${{ !matrix.compliance }}
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE/deploy/acceptance/windows-release.ps1" `
+            -BinaryPath "$env:GITHUB_WORKSPACE/dist/${{ matrix.asset }}"
+
+      - name: Prove the exact online asset excludes mock identity providers
+        if: matrix.compliance
+        shell: bash
+        run: |
+          set -euo pipefail
+          for flag in PIGEONPOST_ALLOW_MOCK_IDENTITIES PIGEONPOST_TEST_ALLOW_MOCK_IDENTITIES; do
+            output="$RUNNER_TEMP/${flag}.out"
+            if env "$flag=1" "./dist/${{ matrix.asset }}" registry serve \
+                --bind 127.0.0.1:7718 \
+                --dir "$RUNNER_TEMP/mock-registry" \
+                --origin pigeonpost.test/registry >"$output" 2>&1; then
+              echo "::error::Release asset accepted $flag."
+              exit 1
+            fi
+            grep -Fq 'mock identities are not compiled into production Pigeonpost binaries' "$output"
+          done
+
+      - name: Stage the offline custody asset
+        if: matrix.compliance
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp "target/${{ matrix.target }}/release/${{ matrix.compliance_binary }}" "dist/${{ matrix.compliance_asset }}"
+          test -s "dist/${{ matrix.compliance_asset }}"
+          "./dist/${{ matrix.compliance_asset }}" --version
+
+      - name: Prove Linux assets have no dynamic loader and run in the oldest container baseline
+        if: matrix.static_linux
+        shell: bash
+        env:
+          LINUX_RUNTIME_BASELINE: docker.io/library/debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792
+        run: |
+          set -euo pipefail
+          for asset in "${{ matrix.asset }}" "${{ matrix.compliance_asset }}"; do
+            if readelf -l "dist/$asset" | grep -Fq 'Requesting program interpreter'; then
+              echo "::error::$asset contains a dynamic program interpreter."
+              exit 1
+            fi
+            if readelf -d "dist/$asset" 2>/dev/null | grep -Fq '(NEEDED)'; then
+              echo "::error::$asset contains a dynamic shared-library dependency."
+              exit 1
+            fi
+            docker run --rm \
+              --network none \
+              --read-only \
+              --security-opt no-new-privileges \
+              --cap-drop ALL \
+              -v "$GITHUB_WORKSPACE/dist:/dist:ro" \
+              "$LINUX_RUNTIME_BASELINE" "/dist/$asset" --version
+          done
+
+      - name: Exercise the exact staged M6 release binaries
+        if: matrix.compliance
+        env:
+          PIGEONPOST_BIN: ${{ github.workspace }}/dist/${{ matrix.asset }}
+          PPCOMPLIANCE_BIN: ${{ github.workspace }}/dist/${{ matrix.compliance_asset }}
+          PIGEONPOST_M6_ADAPTER_BIN: ${{ github.workspace }}/target/${{ matrix.target }}/release/examples/m6_acceptance_adapter
+        run: ./deploy/acceptance/m6-compliance.sh
+
+      - name: Assert Windows offline-operator output is absent
+        if: ${{ !matrix.compliance }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if compgen -G 'dist/ppcompliance*' >/dev/null; then
+            echo '::error::A Windows offline-operator artifact was staged without its own audited filesystem-custody enforcement.'
+            exit 1
+          fi
+
+      - name: Capture the exact target-filtered locked Cargo inventory
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir cargo-metadata
+          cargo metadata --locked --format-version 1 \
+            --filter-platform '${{ matrix.target }}' \
+            > 'cargo-metadata/${{ matrix.target }}.json'
+          test -s 'cargo-metadata/${{ matrix.target }}.json'
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cargo-metadata-${{ matrix.asset }}
+          path: cargo-metadata/${{ matrix.target }}.json
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - if: matrix.compliance
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asset-${{ matrix.asset }}
+          path: |
+            dist/${{ matrix.asset }}
+            dist/${{ matrix.compliance_asset }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+      - if: ${{ !matrix.compliance }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: asset-${{ matrix.asset }}
+          path: dist/${{ matrix.asset }}
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  container_candidate:
+    name: push an untagged multi-architecture candidate
+    needs: [validate, ci, authorize, build]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    outputs:
+      built: ${{ steps.existing_image.outputs.build }}
+      digest: ${{ steps.exact_image.outputs.digest }}
+      image: ${{ steps.exact_image.outputs.image }}
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the immutable image name
+        shell: bash
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          image: docker.io/tonistiigi/binfmt:latest@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          version: v0.36.1
+          driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Require stable aliases to be absent before immutable release creation
+        id: existing_image
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          manifest_digest() {
+            local ref="$1"
+            local stem="$2"
+            if docker buildx imagetools inspect "$ref" --raw >"$stem.json" 2>"$stem.err"; then
+              printf 'sha256:%s' "$(sha256sum "$stem.json" | cut -d' ' -f1)"
+              return 0
+            fi
+            if grep -Eqi 'manifest unknown|not found|404' "$stem.err"; then
+              return 4
+            fi
+            cat "$stem.err" >&2
+            return 1
+          }
+
+          for alias in "$IMAGE:$VERSION" "$IMAGE:sha-$GITHUB_SHA"; do
+            if digest=$(manifest_digest "$alias" stable-alias); then
+              echo "::error::$alias already names $digest before the immutable release exists."
+              exit 1
+            else
+              status=$?
+              test "$status" -eq 4
+            fi
+          done
+          echo "build=true" >> "$GITHUB_OUTPUT"
+      - name: Build and push a per-attempt candidate image
+        id: image
+        if: steps.existing_image.outputs.build == 'true'
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          file: deploy/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          # Push the candidate by digest without creating a discoverable tag. Stable aliases are
+          # created only after provenance verification, scanning, and execution all succeed.
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          provenance: mode=max
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          labels: |
+            org.opencontainers.image.created=${{ needs.validate.outputs.created }}
+            org.opencontainers.image.revision=${{ github.sha }}
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.VERSION }}
+      - name: Resolve the exact image digest
+        id: exact_image
+        shell: bash
+        env:
+          BUILT_DIGEST: ${{ steps.image.outputs.digest }}
+          REUSED_DIGEST: ${{ steps.existing_image.outputs.digest }}
+        run: |
+          set -euo pipefail
+          if [ "${{ steps.existing_image.outputs.build }}" = 'true' ]; then
+            DIGEST="$BUILT_DIGEST"
+          else
+            DIGEST="$REUSED_DIGEST"
+          fi
+          if ! printf '%s' "$DIGEST" | grep -Eq '^sha256:[a-f0-9]{64}$'; then
+            echo "::error::The release image did not resolve to a valid sha256 digest."
+            exit 1
+          fi
+          echo "digest=$DIGEST" >> "$GITHUB_OUTPUT"
+          echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
+  container_attest:
+    name: attest the exact OCI candidate
+    needs: [validate, ci, authorize, build, container_candidate]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      # This job deliberately runs only a pinned first-party attestation action under its OIDC and
+      # registry-write authority. Candidate construction and third-party scanning happen elsewhere.
+      - name: Authenticate only for the OCI attestation upload
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | \
+            docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Attest a newly built image before any stable-alias promotion
+        if: needs.container_candidate.outputs.built == 'true'
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-name: ${{ needs.container_candidate.outputs.image }}
+          subject-digest: ${{ needs.container_candidate.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io
+
+  container_verify:
+    name: verify, scan, and execute the exact OCI candidate
+    needs: [validate, ci, authorize, build, container_candidate, container_attest]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: read
+      attestations: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select the immutable image name
+        shell: bash
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY,,}" >> "$GITHUB_ENV"
+      - uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          image: docker.io/tonistiigi/binfmt:latest@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+          platforms: arm64
+      - uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          version: v0.36.1
+          driver-opts: image=docker.io/moby/buildkit:buildx-stable-1@sha256:2f5adac4ecd194d9f8c10b7b5d7bceb5186853db1b26e5abd3a657af0b7e26ec
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Verify the exact image provenance before promotion
+        shell: bash
+        env:
+          DIGEST: ${{ needs.container_candidate.outputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$IMAGE@$DIGEST" \
+            --bundle-from-oci \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners >/dev/null
+      - name: Resolve and validate both runnable child manifests
+        id: child_images
+        shell: bash
+        env:
+          DIGEST: ${{ needs.container_candidate.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > exact-index.json
+          test "sha256:$(sha256sum exact-index.json | cut -d' ' -f1)" = "$DIGEST"
+          node <<'NODE'
+          const fs = require('node:fs');
+          const index = JSON.parse(fs.readFileSync('exact-index.json', 'utf8'));
+          if (!Array.isArray(index.manifests)) {
+            throw new Error('release image is not a multi-architecture OCI index');
+          }
+          const digestPattern = /^sha256:[a-f0-9]{64}$/;
+          const wanted = new Map();
+          for (const descriptor of index.manifests) {
+            const platform = descriptor.platform || {};
+            if (platform.os === 'linux' && ['amd64', 'arm64'].includes(platform.architecture)) {
+              if (wanted.has(platform.architecture)) {
+                throw new Error(`duplicate linux/${platform.architecture} child manifest`);
+              }
+              if (!digestPattern.test(descriptor.digest || '')) {
+                throw new Error(`invalid linux/${platform.architecture} child digest`);
+              }
+              wanted.set(platform.architecture, descriptor.digest);
+            }
+          }
+          if (wanted.size !== 2) {
+            throw new Error('release index must contain exactly one linux/amd64 and one linux/arm64 image');
+          }
+          const imageDigests = new Set(wanted.values());
+          for (const descriptor of index.manifests) {
+            if (imageDigests.has(descriptor.digest)) continue;
+            const platform = descriptor.platform || {};
+            const annotations = descriptor.annotations || {};
+            const validAttestation =
+              platform.os === 'unknown' &&
+              platform.architecture === 'unknown' &&
+              annotations['vnd.docker.reference.type'] === 'attestation-manifest' &&
+              imageDigests.has(annotations['vnd.docker.reference.digest']);
+            if (!validAttestation) {
+              throw new Error(`unexpected descriptor in release index: ${descriptor.digest || '<missing>'}`);
+            }
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `amd64=${wanted.get('amd64')}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `arm64=${wanted.get('arm64')}\n`);
+          NODE
+      - name: Scan the exact linux/amd64 child
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.child_images.outputs.amd64 }}
+          fail-build: true
+          severity-cutoff: critical
+          output-format: json
+          output-file: grype-report-amd64.json
+          grype-version: v0.116.1
+      - name: Scan the exact linux/arm64 child
+        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
+        with:
+          image: ${{ env.IMAGE }}@${{ steps.child_images.outputs.arm64 }}
+          fail-build: true
+          severity-cutoff: critical
+          output-format: json
+          output-file: grype-report-arm64.json
+          grype-version: v0.116.1
+      - name: Execute both exact child manifests
+        shell: bash
+        env:
+          AMD64_DIGEST: ${{ steps.child_images.outputs.amd64 }}
+          ARM64_DIGEST: ${{ steps.child_images.outputs.arm64 }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$IMAGE@$AMD64_DIGEST"
+          docker run --rm --platform linux/amd64 "$IMAGE@$AMD64_DIGEST" --version
+          docker pull --platform linux/arm64 "$IMAGE@$ARM64_DIGEST"
+          docker run --rm --platform linux/arm64 "$IMAGE@$ARM64_DIGEST" --version
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+      - name: Exercise the exact linux/amd64 runtime and message path
+        env:
+          PIGEONPOST_IMAGE: ${{ env.IMAGE }}@${{ steps.child_images.outputs.amd64 }}
+          PIGEONPOST_PLATFORM: linux/amd64
+        run: ./deploy/acceptance/container-release.sh --full
+      - name: Exercise exact linux/arm64 startup and readiness under QEMU
+        env:
+          PIGEONPOST_IMAGE: ${{ env.IMAGE }}@${{ steps.child_images.outputs.arm64 }}
+          PIGEONPOST_PLATFORM: linux/arm64
+        run: ./deploy/acceptance/container-release.sh --ready-only
+      - name: Require anonymous access to the exact digest before release assembly
+        shell: bash
+        env:
+          DIGEST: ${{ needs.container_candidate.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io
+          docker buildx imagetools inspect "$IMAGE@$DIGEST" --raw > anonymous-index.json
+          if [ "sha256:$(sha256sum anonymous-index.json | cut -d' ' -f1)" != "$DIGEST" ]; then
+            echo '::error::Anonymous GHCR access returned a different manifest.'
+            exit 1
+          fi
+      - name: Record the exact verified candidate
+        shell: bash
+        env:
+          DIGEST: ${{ needs.container_candidate.outputs.digest }}
+        run: printf '%s@%s\n' "$IMAGE" "$DIGEST" > pigeonpost-container.txt
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: container-verification
+          path: |
+            pigeonpost-container.txt
+            grype-report-amd64.json
+            grype-report-arm64.json
+          if-no-files-found: error
+          retention-days: 14
+
+  container_promote:
+    name: promote immutable-release OCI aliases
+    needs:
+      - validate
+      - ci
+      - authorize
+      - build
+      - container_candidate
+      - container_attest
+      - container_verify
+      - release_sbom
+      - release_assemble
+      - release_attest
+      - release_verify
+      - release_create
+      - release_resume
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.ci.result == 'success' &&
+      needs.authorize.result == 'success' &&
+      ((needs.validate.outputs.resume == 'true' &&
+        needs.build.result == 'skipped' &&
+        needs.container_candidate.result == 'skipped' &&
+        needs.container_attest.result == 'skipped' &&
+        needs.container_verify.result == 'skipped' &&
+        needs.release_sbom.result == 'skipped' &&
+        needs.release_assemble.result == 'skipped' &&
+        needs.release_attest.result == 'skipped' &&
+        needs.release_verify.result == 'skipped' &&
+        needs.release_create.result == 'skipped' &&
+        needs.release_resume.result == 'success') ||
+       (needs.validate.outputs.resume != 'true' &&
+        needs.build.result == 'success' &&
+        needs.container_candidate.result == 'success' &&
+        needs.container_attest.result == 'success' &&
+        needs.container_verify.result == 'success' &&
+        needs.release_sbom.result == 'success' &&
+        needs.release_assemble.result == 'success' &&
+        needs.release_attest.result == 'success' &&
+        needs.release_verify.result == 'success' &&
+        needs.release_create.result == 'success' &&
+        needs.release_resume.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+      attestations: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      # No third-party action runs with this job's package-write credential. Both the fresh and
+      # resume branches recover the pointer from the already immutable GitHub release.
+      - name: Require the immutable release and load its exact container pointer
+        id: reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release verify --help >/dev/null
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --json isDraft,isImmutable > release-state.json
+          test "$(node -p "require('./release-state.json').isDraft")" = false
+          test "$(node -p "require('./release-state.json').isImmutable")" = true
+          gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+
+          mkdir released-pointer
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern pigeonpost-container.txt --pattern SHA256SUMS --dir released-pointer
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const expectedFiles = ['SHA256SUMS', 'pigeonpost-container.txt'].sort();
+          const actualFiles = fs.readdirSync('released-pointer').sort();
+          if (JSON.stringify(actualFiles) !== JSON.stringify(expectedFiles)) {
+            throw new Error(`unexpected immutable-release pointer handoff: ${actualFiles.join(', ')}`);
+          }
+          for (const name of expectedFiles) {
+            const stat = fs.lstatSync(path.join('released-pointer', name));
+            if (!stat.isFile() || stat.size === 0 || stat.size > 1024 * 1024) {
+              throw new Error(`${name} is not a bounded non-empty regular file`);
+            }
+          }
+          const manifest = fs.readFileSync('released-pointer/SHA256SUMS', 'utf8').trim().split('\n');
+          const pointerEntries = manifest
+            .map((line) => /^([a-f0-9]{64})  ([^/]+)$/.exec(line))
+            .filter((match) => match && match[2] === 'pigeonpost-container.txt');
+          if (pointerEntries.length !== 1) {
+            throw new Error('SHA256SUMS must name pigeonpost-container.txt exactly once');
+          }
+          const pointerPath = 'released-pointer/pigeonpost-container.txt';
+          const pointerDigest = crypto.createHash('sha256').update(fs.readFileSync(pointerPath)).digest('hex');
+          if (pointerDigest !== pointerEntries[0][1]) {
+            throw new Error('immutable-release container pointer checksum mismatch');
+          }
+          const reference = fs.readFileSync(pointerPath, 'utf8');
+          const expectedImage = `ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}`;
+          const match = /^(ghcr\.io\/[a-z0-9._/-]+)@(sha256:[a-f0-9]{64})\n$/.exec(reference);
+          if (!match || match[1] !== expectedImage) {
+            throw new Error('released container reference is not this repository image and digest');
+          }
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `image=${match[1]}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `digest=${match[2]}\n`);
+          fs.appendFileSync(process.env.GITHUB_OUTPUT, `reference=${match[1]}@${match[2]}\n`);
+          NODE
+      - name: Require anonymous digest visibility before any stable alias
+        shell: bash
+        env:
+          REFERENCE: ${{ steps.reference.outputs.reference }}
+          DIGEST: ${{ steps.reference.outputs.digest }}
+        run: |
+          set -euo pipefail
+          docker logout ghcr.io >/dev/null 2>&1 || true
+          docker buildx imagetools inspect "$REFERENCE" --raw > anonymous-release-index.json
+          test "sha256:$(sha256sum anonymous-release-index.json | cut -d' ' -f1)" = "$DIGEST"
+      - name: Require exact hosted-workflow OCI provenance before promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REFERENCE: ${{ steps.reference.outputs.reference }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$REFERENCE" \
+            --bundle-from-oci \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners >/dev/null
+      - name: Authenticate only for stable-alias promotion
+        env:
+          REGISTRY_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s' "$REGISTRY_TOKEN" | \
+            docker login ghcr.io --username "$GITHUB_ACTOR" --password-stdin
+      - name: Promote verified aliases without overwriting either name
+        shell: bash
+        env:
+          IMAGE: ${{ steps.reference.outputs.image }}
+          DIGEST: ${{ steps.reference.outputs.digest }}
+        run: |
+          set -euo pipefail
+
+          promote_alias() {
+            local alias="$1"
+            local stem="$2"
+            if docker buildx imagetools inspect "$alias" --raw \
+                > "$stem-existing.json" 2> "$stem-existing.err"; then
+              existing="sha256:$(sha256sum "$stem-existing.json" | cut -d' ' -f1)"
+              if [ "$existing" != "$DIGEST" ]; then
+                echo "::error::$alias already names $existing; releases are immutable."
+                exit 1
+              fi
+            elif grep -Eqi 'manifest unknown|not found|404' "$stem-existing.err"; then
+              docker buildx imagetools create --tag "$alias" "$IMAGE@$DIGEST"
+            else
+              cat "$stem-existing.err" >&2
+              exit 1
+            fi
+            docker buildx imagetools inspect "$alias" --raw > "$stem-promoted.json"
+            promoted="sha256:$(sha256sum "$stem-promoted.json" | cut -d' ' -f1)"
+            if [ "$promoted" != "$DIGEST" ]; then
+              echo "::error::$alias resolved to $promoted after promotion, expected $DIGEST."
+              exit 1
+            fi
+          }
+
+          promote_alias "$IMAGE:sha-$GITHUB_SHA" commit
+          promote_alias "$IMAGE:$VERSION" version
+      - name: Remove registry credentials
+        if: always()
+        shell: bash
+        run: docker logout ghcr.io
+      - name: Require anonymous access to both stable aliases
+        shell: bash
+        env:
+          IMAGE: ${{ steps.reference.outputs.image }}
+          DIGEST: ${{ steps.reference.outputs.digest }}
+        run: |
+          set -euo pipefail
+          for alias in "$IMAGE:sha-$GITHUB_SHA" "$IMAGE:$VERSION"; do
+            docker buildx imagetools inspect "$alias" --raw > stable-alias.json
+            test "sha256:$(sha256sum stable-alias.json | cut -d' ' -f1)" = "$DIGEST"
+          done
+
+  release_sbom:
+    name: generate SBOM for ${{ matrix.asset }} without publication authority
+    needs: [validate, ci, authorize, build]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { asset: pigeonpost-darwin-arm64, sbom: pigeonpost-darwin-arm64.spdx.json, compliance: true, compliance_asset: ppcompliance-darwin-arm64, compliance_sbom: ppcompliance-darwin-arm64.spdx.json }
+          - { asset: pigeonpost-darwin-x64, sbom: pigeonpost-darwin-x64.spdx.json, compliance: true, compliance_asset: ppcompliance-darwin-x64, compliance_sbom: ppcompliance-darwin-x64.spdx.json }
+          - { asset: pigeonpost-linux-arm64, sbom: pigeonpost-linux-arm64.spdx.json, compliance: true, compliance_asset: ppcompliance-linux-arm64, compliance_sbom: ppcompliance-linux-arm64.spdx.json }
+          - { asset: pigeonpost-linux-x64, sbom: pigeonpost-linux-x64.spdx.json, compliance: true, compliance_asset: ppcompliance-linux-x64, compliance_sbom: ppcompliance-linux-x64.spdx.json }
+          - { asset: pigeonpost-win32-arm64.exe, sbom: pigeonpost-win32-arm64.spdx.json, compliance: false }
+          - { asset: pigeonpost-win32-x64.exe, sbom: pigeonpost-win32-x64.spdx.json, compliance: false }
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: asset-${{ matrix.asset }}
+          path: inputs
+      - name: Prepare bounded SBOM output directory
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s 'inputs/${{ matrix.asset }}'
+          if [ '${{ matrix.compliance }}' = true ]; then
+            test -s 'inputs/${{ matrix.compliance_asset }}'
+          fi
+          mkdir sboms
+      - name: Generate the online-asset SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: inputs/${{ matrix.asset }}
+          format: spdx-json
+          output-file: sboms/${{ matrix.sbom }}
+          upload-artifact: false
+          upload-release-assets: false
+          syft-version: v1.50.0
+      - name: Generate the offline-operator SBOM
+        if: matrix.compliance
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          file: inputs/${{ matrix.compliance_asset }}
+          format: spdx-json
+          output-file: sboms/${{ matrix.compliance_sbom }}
+          upload-artifact: false
+          upload-release-assets: false
+          syft-version: v1.50.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: sbom-${{ matrix.asset }}
+          path: sboms
+          if-no-files-found: error
+          retention-days: 1
+          compression-level: 0
+
+  release_assemble:
+    name: assemble and validate the exact release payload
+    needs: [validate, ci, authorize, build, container_verify, release_sbom]
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.ci.result == 'success' &&
+      needs.authorize.result == 'success' &&
+      needs.validate.outputs.resume != 'true' &&
+      needs.build.result == 'success' &&
+      needs.container_verify.result == 'success' &&
+      needs.release_sbom.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.validate.outputs.resume != 'true'
+        with:
+          path: dist
+          pattern: asset-*
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.validate.outputs.resume != 'true'
+        with:
+          name: container-verification
+          path: container
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.validate.outputs.resume != 'true'
+        with:
+          path: sboms
+          pattern: sbom-*
+          merge-multiple: true
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        if: needs.validate.outputs.resume != 'true'
+        with:
+          path: cargo-metadata
+          pattern: cargo-metadata-*
+          merge-multiple: true
+      - name: Stage the immutable container reference and native SBOMs
+        if: needs.validate.outputs.resume != 'true'
+        run: |
+          mv container/pigeonpost-container.txt dist/pigeonpost-container.txt
+          mv sboms/*.spdx.json dist/
+          cp server.json dist/server.json
+
+      - name: Validate assets and record package checksums
+        if: needs.validate.outputs.resume != 'true'
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const expected = [
+            'pigeonpost-darwin-arm64',
+            'pigeonpost-darwin-x64',
+            'pigeonpost-linux-arm64',
+            'pigeonpost-linux-x64',
+            'pigeonpost-win32-arm64.exe',
+            'pigeonpost-win32-x64.exe',
+            'pigeonpost-darwin-arm64.spdx.json',
+            'pigeonpost-darwin-x64.spdx.json',
+            'pigeonpost-linux-arm64.spdx.json',
+            'pigeonpost-linux-x64.spdx.json',
+            'pigeonpost-win32-arm64.spdx.json',
+            'pigeonpost-win32-x64.spdx.json',
+            'ppcompliance-darwin-arm64',
+            'ppcompliance-darwin-x64',
+            'ppcompliance-linux-arm64',
+            'ppcompliance-linux-x64',
+            'ppcompliance-darwin-arm64.spdx.json',
+            'ppcompliance-darwin-x64.spdx.json',
+            'ppcompliance-linux-arm64.spdx.json',
+            'ppcompliance-linux-x64.spdx.json',
+            'pigeonpost-container.txt',
+            'server.json',
+          ].sort();
+          const onlineAssets = new Set([
+            'pigeonpost-darwin-arm64',
+            'pigeonpost-darwin-x64',
+            'pigeonpost-linux-arm64',
+            'pigeonpost-linux-x64',
+            'pigeonpost-win32-arm64.exe',
+            'pigeonpost-win32-x64.exe',
+          ]);
+          const actual = fs.readdirSync('dist').sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`unexpected release assets: ${actual.join(', ')}`);
+          }
+          const checksums = {};
+          for (const name of actual.filter((name) => name !== 'pigeonpost-container.txt')) {
+            const file = path.join('dist', name);
+            const stat = fs.lstatSync(file);
+            if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024) {
+              throw new Error(`${name} is not a non-empty regular file within the 64 MiB release limit`);
+            }
+            if (onlineAssets.has(name)) {
+              checksums[name] = crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+            }
+          }
+          fs.writeFileSync('npm/checksums.json', `${JSON.stringify(checksums, null, 2)}\n`);
+          fs.chmodSync('npm/checksums.json', 0o644);
+          NODE
+          npm test --prefix npm
+
+      - name: Normalize the native SBOMs and pack the exact npm artifact
+        if: needs.validate.outputs.resume != 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          COMMIT_TIME=$(git show -s --format=%cI "$GITHUB_SHA")
+          node deploy/acceptance/normalize-release-sboms.mjs \
+            dist "$VERSION" "$COMMIT_TIME" cargo-metadata
+          npm pack ./npm --ignore-scripts=false --pack-destination dist --json > npm-pack.json
+          NPM_TARBALL=$(node -p "require('./npm-pack.json')[0].filename")
+          test -s "dist/$NPM_TARBALL"
+          echo "NPM_TARBALL=$NPM_TARBALL" >> "$GITHUB_ENV"
+
+      - name: Create the complete release checksum manifest
+        if: needs.validate.outputs.resume != 'true'
+        run: |
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const lines = fs.readdirSync('dist').sort().map((name) => {
+            const digest = crypto.createHash('sha256')
+              .update(fs.readFileSync(path.join('dist', name))).digest('hex');
+            return `${digest}  ${name}`;
+          });
+          fs.writeFileSync('dist/SHA256SUMS', `${lines.join('\n')}\n`);
+          NODE
+
+      - name: Validate the exact release payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+
+          const expected = [
+            'pigeonpost-darwin-arm64',
+            'pigeonpost-darwin-x64',
+            'pigeonpost-linux-arm64',
+            'pigeonpost-linux-x64',
+            'pigeonpost-win32-arm64.exe',
+            'pigeonpost-win32-x64.exe',
+            'pigeonpost-darwin-arm64.spdx.json',
+            'pigeonpost-darwin-x64.spdx.json',
+            'pigeonpost-linux-arm64.spdx.json',
+            'pigeonpost-linux-x64.spdx.json',
+            'pigeonpost-win32-arm64.spdx.json',
+            'pigeonpost-win32-x64.spdx.json',
+            'ppcompliance-darwin-arm64',
+            'ppcompliance-darwin-x64',
+            'ppcompliance-linux-arm64',
+            'ppcompliance-linux-x64',
+            'ppcompliance-darwin-arm64.spdx.json',
+            'ppcompliance-darwin-x64.spdx.json',
+            'ppcompliance-linux-arm64.spdx.json',
+            'ppcompliance-linux-x64.spdx.json',
+            'pigeonpost-container.txt',
+            'server.json',
+            `bekirdag-pigeonpost-${process.env.VERSION}.tgz`,
+            'SHA256SUMS',
+          ].sort();
+          const actual = fs.readdirSync('dist').sort();
+          if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+            throw new Error(`unexpected final release assets: ${actual.join(', ')}`);
+          }
+          for (const name of actual) {
+            const stat = fs.lstatSync(path.join('dist', name));
+            if (!stat.isFile() || stat.size === 0 || stat.size > 64 * 1024 * 1024) {
+              throw new Error(`${name} is not a non-empty regular file within the 64 MiB release limit`);
+            }
+          }
+          if (!fs.readFileSync('dist/server.json').equals(fs.readFileSync('server.json'))) {
+            throw new Error('released server.json differs from the tagged source');
+          }
+          const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          const manifest = fs.readFileSync('dist/SHA256SUMS', 'utf8').trim().split('\n');
+          const checksummed = [];
+          for (const line of manifest) {
+            const match = /^([a-f0-9]{64})  ([^/]+)$/.exec(line);
+            if (!match) throw new Error(`invalid SHA256SUMS line: ${line}`);
+            const [, expectedDigest, name] = match;
+            if (!actual.includes(name) || name === 'SHA256SUMS') {
+              throw new Error(`SHA256SUMS names an invalid asset: ${name}`);
+            }
+            checksummed.push(name);
+            if (hash(path.join('dist', name)) !== expectedDigest) {
+              throw new Error(`SHA256SUMS mismatch: ${name}`);
+            }
+          }
+          const expectedChecksummed = actual.filter((name) => name !== 'SHA256SUMS').sort();
+          if (JSON.stringify(checksummed.sort()) !== JSON.stringify(expectedChecksummed)) {
+            throw new Error('SHA256SUMS does not cover the exact release asset set');
+          }
+          const reference = fs.readFileSync('dist/pigeonpost-container.txt', 'utf8');
+          const parts = reference.trimEnd().split('@');
+          const expectedImage = `ghcr.io/${process.env.GITHUB_REPOSITORY.toLowerCase()}`;
+          if (!reference.endsWith('\n') || parts.length !== 2 || parts[0] !== expectedImage ||
+              !/^sha256:[a-f0-9]{64}$/.test(parts[1])) {
+            throw new Error('released container reference is not the expected immutable digest');
+          }
+          NODE
+          CONTAINER_REFERENCE=$(tr -d '\n' < dist/pigeonpost-container.txt)
+          docker buildx imagetools inspect "$CONTAINER_REFERENCE" >/dev/null
+          TARBALL="dist/bekirdag-pigeonpost-$VERSION.tgz"
+          tar -xOf "$TARBALL" package/package.json > released-package.json
+          tar -xOf "$TARBALL" package/checksums.json > released-checksums.json
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const pkg = require('./released-package.json');
+          const checksums = require('./released-checksums.json');
+          if (pkg.name !== '@bekirdag/pigeonpost' || pkg.version !== process.env.VERSION) {
+            throw new Error('released npm package name/version differs from the tag');
+          }
+          const expectedNames = [
+            'pigeonpost-darwin-arm64',
+            'pigeonpost-darwin-x64',
+            'pigeonpost-linux-arm64',
+            'pigeonpost-linux-x64',
+            'pigeonpost-win32-arm64.exe',
+            'pigeonpost-win32-x64.exe',
+          ].sort();
+          if (JSON.stringify(Object.keys(checksums).sort()) !== JSON.stringify(expectedNames)) {
+            throw new Error('released npm checksums do not cover the exact online binary set');
+          }
+          for (const name of expectedNames) {
+            const actual = crypto.createHash('sha256')
+              .update(fs.readFileSync(path.join('dist', name))).digest('hex');
+            if (checksums[name] !== actual) throw new Error(`npm checksum mismatch: ${name}`);
+          }
+          NODE
+          SCRIPT_REFERENCE=$(node deploy/acceptance/verify-release-assets.mjs \
+            dist "$VERSION" "$GITHUB_REPOSITORY" server.json)
+          test "$SCRIPT_REFERENCE" = "$CONTAINER_REFERENCE"
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-payload
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release_attest:
+    name: attest the exact release payload
+    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-payload
+          path: dist
+      - name: Attest every downloadable artifact
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - name: Attest the SBOM for pigeonpost-darwin-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-darwin-arm64
+          sbom-path: dist/pigeonpost-darwin-arm64.spdx.json
+      - name: Attest the SBOM for pigeonpost-darwin-x64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-darwin-x64
+          sbom-path: dist/pigeonpost-darwin-x64.spdx.json
+      - name: Attest the SBOM for pigeonpost-linux-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-linux-arm64
+          sbom-path: dist/pigeonpost-linux-arm64.spdx.json
+      - name: Attest the SBOM for pigeonpost-linux-x64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-linux-x64
+          sbom-path: dist/pigeonpost-linux-x64.spdx.json
+      - name: Attest the SBOM for pigeonpost-win32-arm64.exe
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-win32-arm64.exe
+          sbom-path: dist/pigeonpost-win32-arm64.spdx.json
+      - name: Attest the SBOM for pigeonpost-win32-x64.exe
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/pigeonpost-win32-x64.exe
+          sbom-path: dist/pigeonpost-win32-x64.spdx.json
+      - name: Attest the SBOM for ppcompliance-darwin-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/ppcompliance-darwin-arm64
+          sbom-path: dist/ppcompliance-darwin-arm64.spdx.json
+      - name: Attest the SBOM for ppcompliance-darwin-x64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/ppcompliance-darwin-x64
+          sbom-path: dist/ppcompliance-darwin-x64.spdx.json
+      - name: Attest the SBOM for ppcompliance-linux-arm64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/ppcompliance-linux-arm64
+          sbom-path: dist/ppcompliance-linux-arm64.spdx.json
+      - name: Attest the SBOM for ppcompliance-linux-x64
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: dist/ppcompliance-linux-x64
+          sbom-path: dist/ppcompliance-linux-x64.spdx.json
+
+  release_verify:
+    name: verify exact release artifact provenance
+    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble, release_attest]
+    if: needs.validate.outputs.resume != 'true'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: read
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-payload
+          path: dist
+      - name: Verify every artifact came from this hosted release workflow
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify --help >/dev/null
+          verified=false
+          for _ in 1 2 3 4 5 6; do
+            failed=false
+            for artifact in dist/*; do
+              if [ "$(basename "$artifact")" = SHA256SUMS ]; then
+                continue
+              fi
+              if ! gh attestation verify "$artifact" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+                  --source-ref "$GITHUB_REF" \
+                  --source-digest "$GITHUB_SHA" \
+                  --deny-self-hosted-runners >/dev/null; then
+                failed=true
+                break
+              fi
+              case "$(basename "$artifact")" in
+                pigeonpost-darwin-arm64|pigeonpost-darwin-x64|\
+                pigeonpost-linux-arm64|pigeonpost-linux-x64|\
+                pigeonpost-win32-arm64.exe|pigeonpost-win32-x64.exe|\
+                ppcompliance-darwin-arm64|ppcompliance-darwin-x64|\
+                ppcompliance-linux-arm64|ppcompliance-linux-x64)
+                  if ! gh attestation verify "$artifact" \
+                      --repo "$GITHUB_REPOSITORY" \
+                      --predicate-type https://spdx.dev/Document/v2.3 \
+                      --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+                      --source-ref "$GITHUB_REF" \
+                      --source-digest "$GITHUB_SHA" \
+                      --deny-self-hosted-runners >/dev/null; then
+                    failed=true
+                    break
+                  fi
+                  ;;
+              esac
+            done
+            if [ "$failed" = false ]; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "$verified" = true
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: release-verified
+          path: dist
+          if-no-files-found: error
+          retention-days: 14
+          compression-level: 0
+
+  release_create:
+    name: create and seal the immutable GitHub release
+    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble, release_attest, release_verify]
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.ci.result == 'success' &&
+      needs.authorize.result == 'success' &&
+      needs.validate.outputs.resume != 'true' &&
+      needs.build.result == 'success' &&
+      needs.container_verify.result == 'success' &&
+      needs.release_sbom.result == 'success' &&
+      needs.release_assemble.result == 'success' &&
+      needs.release_attest.result == 'success' &&
+      needs.release_verify.result == 'success'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-verified
+          path: dist
+      - name: Check whether the GitHub release already exists
+        id: github_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --json isDraft,isImmutable >release-state.json 2>release-error.txt; then
+            if [ "$(node -p "require('./release-state.json').isDraft")" = "true" ]; then
+              echo '::error::A pre-existing draft requires operator review; refusing to delete or overwrite it.'
+              exit 1
+            else
+              if [ "$(node -p "require('./release-state.json').isImmutable")" != "true" ]; then
+                echo '::error::An existing published release is mutable.'
+                exit 1
+              fi
+              echo '::error::An immutable release appeared after validation; rerun to verify and resume from it.'
+              exit 1
+            fi
+          elif grep -Eqi 'release not found|HTTP 404' release-error.txt; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat release-error.txt >&2
+            exit 1
+          fi
+      - name: Create the GitHub release without replacing assets
+        if: steps.github_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --generate-notes \
+            --target "$GITHUB_SHA" \
+            --verify-tag
+      - name: Verify every staged or immutable release asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir released
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir released
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const path = require('node:path');
+          const localNames = fs.readdirSync('dist').sort();
+          const releasedNames = fs.readdirSync('released').sort();
+          if (JSON.stringify(releasedNames) !== JSON.stringify(localNames)) {
+            throw new Error(`published release asset set differs: ${releasedNames.join(', ')}`);
+          }
+          const hash = (file) => crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex');
+          for (const name of releasedNames) {
+            if (hash(path.join('released', name)) !== hash(path.join('dist', name))) {
+              throw new Error(`published release asset differs: ${name}`);
+            }
+          }
+
+          const manifest = fs.readFileSync('released/SHA256SUMS', 'utf8').trim().split('\n');
+          const checksummed = [];
+          for (const line of manifest) {
+            const match = /^([a-f0-9]{64})  ([^/]+)$/.exec(line);
+            if (!match) throw new Error(`invalid SHA256SUMS line: ${line}`);
+            const [, expected, name] = match;
+            checksummed.push(name);
+            if (hash(path.join('released', name)) !== expected) {
+              throw new Error(`SHA256SUMS mismatch: ${name}`);
+            }
+          }
+          const expectedChecksummed = releasedNames.filter((name) => name !== 'SHA256SUMS');
+          if (JSON.stringify(checksummed.sort()) !== JSON.stringify(expectedChecksummed)) {
+            throw new Error('SHA256SUMS does not cover the exact release asset set');
+          }
+          NODE
+      - name: Publish the verified release draft
+        if: steps.github_release.outputs.exists == 'false'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
+      - name: Require an immutable published release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release verify --help >/dev/null
+          verified=false
+          for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                --json isDraft,isImmutable > release-state.json && \
+                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ] && \
+                [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ] && \
+                gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          if [ "$verified" != true ]; then
+            echo '::error::The published release did not become immutable with a valid GitHub release attestation. Inspect it before any retry; this workflow will not delete it.'
+            exit 1
+          fi
+
+  release_resume:
+    name: verify an existing immutable release
+    needs:
+      - validate
+      - ci
+      - authorize
+      - build
+      - container_candidate
+      - container_attest
+      - container_verify
+      - release_sbom
+      - release_assemble
+      - release_attest
+      - release_verify
+      - release_create
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.ci.result == 'success' &&
+      needs.authorize.result == 'success' &&
+      needs.validate.outputs.resume == 'true' &&
+      needs.build.result == 'skipped' &&
+      needs.container_candidate.result == 'skipped' &&
+      needs.container_attest.result == 'skipped' &&
+      needs.container_verify.result == 'skipped' &&
+      needs.release_sbom.result == 'skipped' &&
+      needs.release_assemble.result == 'skipped' &&
+      needs.release_attest.result == 'skipped' &&
+      needs.release_verify.result == 'skipped' &&
+      needs.release_create.result == 'skipped'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      attestations: read
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+
+      - name: Require the immutable release attestation
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release verify --help >/dev/null
+          verified=false
+          for _ in 1 2 3 4 5 6; do
+            if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+                --json isDraft,isImmutable > release-state.json && \
+                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ] && \
+                [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ] && \
+                gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null; then
+              verified=true
+              break
+            fi
+            sleep 5
+          done
+          test "$verified" = true
+
+      - name: Download and validate the immutable payload
+        id: release_assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir dist
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --dir dist
+          CONTAINER_REFERENCE=$(node deploy/acceptance/verify-release-assets.mjs \
+            dist "$VERSION" "$GITHUB_REPOSITORY" server.json)
+          docker buildx imagetools inspect "$CONTAINER_REFERENCE" >/dev/null
+          echo "container_reference=$CONTAINER_REFERENCE" >> "$GITHUB_OUTPUT"
+
+      - name: Require exact hosted-workflow provenance for the released OCI digest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CONTAINER_REFERENCE: ${{ steps.release_assets.outputs.container_reference }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify "oci://$CONTAINER_REFERENCE" \
+            --bundle-from-oci \
+            --repo "$GITHUB_REPOSITORY" \
+            --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+            --source-ref "$GITHUB_REF" \
+            --source-digest "$GITHUB_SHA" \
+            --deny-self-hosted-runners >/dev/null
+
+      - name: Require exact hosted-workflow provenance for every artifact
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh attestation verify --help >/dev/null
+          for artifact in dist/*; do
+            if [ "$(basename "$artifact")" = SHA256SUMS ]; then
+              continue
+            fi
+            gh attestation verify "$artifact" \
+              --repo "$GITHUB_REPOSITORY" \
+              --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+              --source-ref "$GITHUB_REF" \
+              --source-digest "$GITHUB_SHA" \
+              --deny-self-hosted-runners >/dev/null
+            case "$(basename "$artifact")" in
+              pigeonpost-darwin-arm64|pigeonpost-darwin-x64|\
+              pigeonpost-linux-arm64|pigeonpost-linux-x64|\
+              pigeonpost-win32-arm64.exe|pigeonpost-win32-x64.exe|\
+              ppcompliance-darwin-arm64|ppcompliance-darwin-x64|\
+              ppcompliance-linux-arm64|ppcompliance-linux-x64)
+                gh attestation verify "$artifact" \
+                  --repo "$GITHUB_REPOSITORY" \
+                  --predicate-type https://spdx.dev/Document/v2.3 \
+                  --signer-workflow "github.com/$GITHUB_REPOSITORY/.github/workflows/release.yml" \
+                  --source-ref "$GITHUB_REF" \
+                  --source-digest "$GITHUB_SHA" \
+                  --deny-self-hosted-runners >/dev/null
+                ;;
+            esac
+          done
+
+  release:
+    name: release provenance gate
+    needs:
+      - validate
+      - ci
+      - authorize
+      - build
+      - container_candidate
+      - container_attest
+      - container_verify
+      - release_sbom
+      - release_assemble
+      - release_attest
+      - release_verify
+      - release_create
+      - release_resume
+      - container_promote
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.ci.result == 'success' &&
+      needs.authorize.result == 'success' &&
+      ((needs.validate.outputs.resume == 'true' &&
+        needs.build.result == 'skipped' &&
+        needs.container_candidate.result == 'skipped' &&
+        needs.container_attest.result == 'skipped' &&
+        needs.container_verify.result == 'skipped' &&
+        needs.container_promote.result == 'success' &&
+        needs.release_sbom.result == 'skipped' &&
+        needs.release_assemble.result == 'skipped' &&
+        needs.release_attest.result == 'skipped' &&
+        needs.release_verify.result == 'skipped' &&
+        needs.release_create.result == 'skipped' &&
+        needs.release_resume.result == 'success') ||
+       (needs.validate.outputs.resume != 'true' &&
+        needs.build.result == 'success' &&
+        needs.container_candidate.result == 'success' &&
+        needs.container_attest.result == 'success' &&
+        needs.container_verify.result == 'success' &&
+        needs.container_promote.result == 'success' &&
+        needs.release_sbom.result == 'success' &&
+        needs.release_assemble.result == 'success' &&
+        needs.release_attest.result == 'success' &&
+        needs.release_verify.result == 'success' &&
+        needs.release_create.result == 'success' &&
+        needs.release_resume.result == 'skipped'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - name: Confirm exactly one verified release path completed
+        run: echo 'immutable release and provenance verification complete'
+
+  npm_publish:
+    name: publish npm launcher with OIDC
+    needs: [validate, release]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      PACKAGE: "@bekirdag/pigeonpost"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+          registry-url: "https://registry.npmjs.org"
+          package-manager-cache: false
+
+      # Trusted publishing requires npm >=11.5.1, while signed-statement inspection requires the
+      # audit JSON added later in npm 11. The independently reviewed tarball digest is pinned as
+      # well as the version: publication authority never executes registry-selected CLI bytes.
+      - name: Install the digest-pinned trusted-publishing npm CLI
+        env:
+          NPM_CLI_SHA256: 30fc15697c771002878665c29f49dddde9aa8667fa5719854b2f52d3cd19230b
+          NPM_CLI_URL: https://registry.npmjs.org/npm/-/npm-11.16.0.tgz
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --proto '=https' --tlsv1.2 \
+            --output npm-11.16.0.tgz "$NPM_CLI_URL"
+          printf '%s  %s\n' "$NPM_CLI_SHA256" npm-11.16.0.tgz | sha256sum -c -
+          npm install -g ./npm-11.16.0.tgz --ignore-scripts
+          test "$(npm --version)" = "11.16.0"
+
+      - name: Download and verify the exact release package
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          TARBALL="bekirdag-pigeonpost-$VERSION.tgz"
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern "$TARBALL" --pattern SHA256SUMS --dir .
+          TARBALL="$TARBALL" node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const tarball = process.env.TARBALL;
+          const matches = fs.readFileSync('SHA256SUMS', 'utf8').trim().split('\n')
+            .map((line) => /^([a-f0-9]{64})  ([^/]+)$/.exec(line))
+            .filter((match) => match && match[2] === tarball);
+          if (matches.length !== 1) throw new Error(`SHA256SUMS does not name ${tarball} exactly once`);
+          const actual = crypto.createHash('sha256').update(fs.readFileSync(tarball)).digest('hex');
+          if (actual !== matches[0][1]) throw new Error(`release checksum mismatch for ${tarball}`);
+          NODE
+          echo "NPM_TARBALL=$TARBALL" >> "$GITHUB_ENV"
+
+      - name: Check whether the npm version already exists
+        id: npm_release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if npm view "$PACKAGE@$VERSION" version --json >npm-version.json 2>npm-error.txt; then
+            test "$(node -p "require('./npm-version.json')")" = "$VERSION"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          elif grep -Eqi 'E404|404 Not Found' npm-error.txt; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          else
+            cat npm-error.txt >&2
+            exit 1
+          fi
+
+      - name: Require the OIDC publication token
+        if: steps.npm_release.outputs.exists == 'false'
+        run: |
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::No OIDC token was granted. Check npm trusted publishing for release.yml."
+            exit 1
+          fi
+
+      - name: Publish the byte-verified launcher
+        if: steps.npm_release.outputs.exists == 'false'
+        run: npm publish "$NPM_TARBALL" --access public --provenance
+
+      - name: Verify npm serves the exact immutable tarball
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir published-npm
+          for attempt in 1 2 3 4 5 6; do
+            if npm pack "$PACKAGE@$VERSION" --pack-destination published-npm --json \
+                > published-npm/pack.json 2>published-npm/error.txt; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              cat published-npm/error.txt >&2
+              exit 1
+            fi
+            sleep 5
+          done
+          PACK_FILE=$(node -p "require('./published-npm/pack.json')[0].filename")
+          cmp "$NPM_TARBALL" "published-npm/$PACK_FILE"
+          mkdir npm-provenance-audit
+          (
+            cd npm-provenance-audit
+            npm init --yes >/dev/null
+            npm install --ignore-scripts --audit=false --fund=false --save-exact \
+              "$PACKAGE@$VERSION"
+            npm audit signatures --json --include-attestations > audit.json
+          )
+          node deploy/acceptance/verify-npm-provenance.mjs \
+            npm-provenance-audit/audit.json \
+            "$NPM_TARBALL" \
+            "$PACKAGE" \
+            "$VERSION" \
+            "$GITHUB_REPOSITORY" \
+            .github/workflows/release.yml \
+            "$GITHUB_REF" \
+            "$GITHUB_SHA"
+
+  mcp_publish:
+    name: publish MCP Registry metadata with OIDC
+    needs: [validate, npm_publish]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.validate.outputs.version }}
+      MCP_NAME: io.github.bekirdag/pigeonpost
+      MCP_PUBLISHER_VERSION: 1.7.9
+      MCP_PUBLISHER_SHA256: ab128162b0616090b47cf245afe0a23f3ef08936fdce19074f5ba0a4469281ac
+    steps:
+      - name: Download and verify the released registry metadata
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --pattern server.json --pattern SHA256SUMS --dir .
+          node <<'NODE'
+          const crypto = require('node:crypto');
+          const fs = require('node:fs');
+          const matches = fs.readFileSync('SHA256SUMS', 'utf8').trim().split('\n')
+            .map((line) => /^([a-f0-9]{64})  ([^/]+)$/.exec(line))
+            .filter((match) => match && match[2] === 'server.json');
+          if (matches.length !== 1) throw new Error('SHA256SUMS does not name server.json exactly once');
+          const actual = crypto.createHash('sha256').update(fs.readFileSync('server.json')).digest('hex');
+          if (actual !== matches[0][1]) throw new Error('release checksum mismatch for server.json');
+          const server = require('./server.json');
+          if (server.name !== process.env.MCP_NAME || server.version !== process.env.VERSION) {
+            throw new Error('released server.json does not match the requested name and tag');
+          }
+          NODE
+
+      - name: Check whether this immutable registry version exists
+        id: mcp_release
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENCODED_NAME=$(node -p 'encodeURIComponent(process.env.MCP_NAME)')
+          URL="https://registry.modelcontextprotocol.io/v0.1/servers/$ENCODED_NAME/versions/$VERSION"
+          STATUS=$(curl --proto '=https' --tlsv1.2 -sS -o registry-entry.json -w '%{http_code}' "$URL")
+          case "$STATUS" in
+            200) echo "exists=true" >> "$GITHUB_OUTPUT" ;;
+            404) echo "exists=false" >> "$GITHUB_OUTPUT" ;;
+            *) echo "::error::MCP Registry lookup failed with HTTP $STATUS"; exit 1 ;;
+          esac
+
+      - name: Download the pinned MCP publisher
+        if: steps.mcp_release.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE=mcp-publisher_linux_amd64.tar.gz
+          curl --proto '=https' --tlsv1.2 -fL --retry 3 \
+            "https://github.com/modelcontextprotocol/registry/releases/download/v$MCP_PUBLISHER_VERSION/$ARCHIVE" \
+            -o "$ARCHIVE"
+          printf '%s  %s\n' "$MCP_PUBLISHER_SHA256" "$ARCHIVE" | sha256sum -c -
+          tar -xzf "$ARCHIVE" mcp-publisher
+          test -x ./mcp-publisher
+
+      - name: Authenticate and publish to the MCP Registry
+        if: steps.mcp_release.outputs.exists == 'false'
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+            echo "::error::No OIDC token was granted for MCP Registry publication."
+            exit 1
+          fi
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
+
+      - name: Verify the immutable MCP Registry metadata
+        shell: bash
+        run: |
+          set -euo pipefail
+          ENCODED_NAME=$(node -p 'encodeURIComponent(process.env.MCP_NAME)')
+          URL="https://registry.modelcontextprotocol.io/v0.1/servers/$ENCODED_NAME/versions/$VERSION"
+          for attempt in 1 2 3 4 5 6; do
+            if curl --proto '=https' --tlsv1.2 -fsS "$URL" -o registry-entry.json; then
+              break
+            fi
+            if [ "$attempt" -eq 6 ]; then
+              echo '::error::The MCP Registry did not serve the published version.'
+              exit 1
+            fi
+            sleep 5
+          done
+          node <<'NODE'
+          const fs = require('node:fs');
+          const local = JSON.parse(fs.readFileSync('server.json', 'utf8'));
+          const remote = JSON.parse(fs.readFileSync('registry-entry.json', 'utf8')).server;
+          const canonical = (value) => {
+            if (Array.isArray(value)) return value.map(canonical);
+            if (value && typeof value === 'object') {
+              return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+            }
+            return value;
+          };
+          if (JSON.stringify(canonical(remote)) !== JSON.stringify(canonical(local))) {
+            throw new Error('MCP Registry metadata differs from the immutable released server.json');
+          }
+          NODE

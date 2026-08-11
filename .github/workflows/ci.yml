@@ -1,0 +1,1074 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  # GitHub's current hosted-runner default is Node 24. Keep that runtime explicit so the one
+  # remaining upstream action whose manifest still says node20 is exercised on the production
+  # runtime instead of silently depending on a deprecated compatibility path.
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Parse the Windows release lifecycle harness
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $tokens = $null
+          $parseErrors = $null
+          [void][System.Management.Automation.Language.Parser]::ParseFile(
+            "$env:GITHUB_WORKSPACE/deploy/acceptance/windows-release.ps1",
+            [ref]$tokens,
+            [ref]$parseErrors
+          )
+          if ($parseErrors.Count -ne 0) {
+            $details = $parseErrors | ForEach-Object {
+              "line $($_.Extent.StartLineNumber): $($_.Message)"
+            }
+            throw "windows-release.ps1 parser errors:`n$($details -join "`n")"
+          }
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - if: runner.os == 'Windows'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+      - run: cargo test --locked --all --all-targets --all-features
+      - run: cargo test --locked --all --doc --all-features
+      - name: Build the exact Windows lifecycle binary
+        if: runner.os == 'Windows'
+        run: cargo build --release --locked -p pigeonpost-cli
+      - name: Exercise the exact Windows client, Loft, and Directory lifecycle
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "$env:GITHUB_WORKSPACE/deploy/acceptance/windows-release.ps1" `
+            -BinaryPath "$env:GITHUB_WORKSPACE/target/release/pigeonpost.exe"
+
+  lint:
+    name: fmt + clippy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo fmt --all --check
+      - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Keep generated developer documentation and Pigeonpost vocabulary exact
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 site-developers/build.py >/dev/null
+          git diff --exit-code -- site-developers
+          forbidden_word="$(printf '%s%s' 'e' 'mail')"
+          if git grep -n -i -w "$forbidden_word" -- .; then
+            echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
+            exit 1
+          fi
+      - name: Keep regulated publication behind the protected environment
+        shell: bash
+        run: |
+          ruby <<'RUBY'
+          require 'json'
+          require 'yaml'
+
+          workflow = YAML.safe_load(File.read('.github/workflows/release.yml'), aliases: true)
+          ci_workflow = YAML.safe_load(File.read('.github/workflows/ci.yml'), aliases: true)
+          jobs = workflow.fetch('jobs')
+          ci_jobs = ci_workflow.fetch('jobs')
+          workflow_expression = ->(name) { '$' + "{{ #{name} }}" }
+          matrix_not_compliance = workflow_expression.call('!matrix.compliance')
+          matrix_asset = workflow_expression.call('matrix.asset')
+          matrix_compliance_asset = workflow_expression.call('matrix.compliance_asset')
+          matrix_compliance_sbom = workflow_expression.call('matrix.compliance_sbom')
+          matrix_sbom = workflow_expression.call('matrix.sbom')
+          matrix_target = workflow_expression.call('matrix.target')
+
+          release_node_versions = jobs.values.flat_map do |job|
+            job.fetch('steps', []).filter_map do |step|
+              next unless step.fetch('uses', '').start_with?('actions/setup-node@')
+              step.fetch('with').fetch('node-version')
+            end
+          end
+          unless release_node_versions.length == 6 &&
+              release_node_versions.all? { |version| version == '24.19.0' }
+            raise "release jobs must use exact Node 24.19.0: #{release_node_versions.join(', ')}"
+          end
+          acceptance_node = ci_jobs.fetch('acceptance').fetch('steps').find do |step|
+            step.fetch('uses', '').start_with?('actions/setup-node@')
+          end.fetch('with').fetch('node-version')
+          raise 'acceptance must use exact Node 24.19.0' unless acceptance_node == '24.19.0'
+          ci_test_steps = ci_jobs.fetch('test').fetch('steps')
+          ci_windows_node = ci_test_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/setup-node@')
+          end
+          ci_windows_build = ci_test_steps.find do |step|
+            step['name'] == 'Build the exact Windows lifecycle binary'
+          end
+          ci_windows_lifecycle = ci_test_steps.find do |step|
+            step['name'] == 'Exercise the exact Windows client, Loft, and Directory lifecycle'
+          end
+          unless ci_windows_node&.fetch('if') == "runner.os == 'Windows'" &&
+              ci_windows_node.dig('with', 'node-version') == '24.19.0' &&
+              ci_windows_build&.fetch('if') == "runner.os == 'Windows'" &&
+              ci_windows_build.fetch('run') ==
+                'cargo build --release --locked -p pigeonpost-cli' &&
+              ci_windows_lifecycle&.fetch('if') == "runner.os == 'Windows'" &&
+              ci_windows_lifecycle.fetch('shell') == 'pwsh' &&
+              ci_windows_lifecycle.fetch('run').include?(
+                'deploy/acceptance/windows-release.ps1') &&
+              ci_windows_lifecycle.fetch('run').include?(
+                'target/release/pigeonpost.exe')
+            raise 'normal Windows CI no longer exercises the exact release lifecycle'
+          end
+          launcher_nodes = ci_jobs.fetch('launcher').fetch('strategy').fetch('matrix').fetch('node')
+          raise 'launcher CI must exercise both exact supported Node floors' unless
+            launcher_nodes == ['22.23.2', '24.19.0']
+          npm_package = JSON.parse(File.read('npm/package.json'))
+          raise 'npm Node engine contract changed' unless
+            npm_package.dig('engines', 'node') == '^22.23.2 || ^24.19.0'
+          authorize = jobs.fetch('authorize')
+          raise 'release authorization environment changed' unless
+            authorize.fetch('environment') == 'production-release'
+          raise 'release authorization permissions changed' unless
+            authorize.fetch('permissions') == {'actions' => 'read', 'contents' => 'read'}
+
+          environment = authorize.fetch('env')
+          %w[DESIGNATION_EVIDENCE_SHA256 RELEASE_APPROVAL_SIGNATURE].each do |name|
+            raise "missing release authorization input #{name}" unless environment.key?(name)
+          end
+          raise 'designation evidence is not environment-scoped' unless
+            environment.fetch('DESIGNATION_EVIDENCE_SHA256').include?(
+              'PIGEONPOST_EU_EVIDENCE_DESIGNATION_SHA256'
+            )
+          raise 'release approval signature is not environment-scoped' unless
+            environment.fetch('RELEASE_APPROVAL_SIGNATURE').include?(
+              'PIGEONPOST_RELEASE_APPROVAL_SIGNATURE_B64'
+            )
+          gated_jobs = %w[
+            container_candidate container_attest container_verify container_promote
+            release_sbom release_assemble release_attest release_verify release_create
+            release_resume release
+          ]
+          gated_jobs.each do |name|
+            raise "#{name} bypasses release authorization" unless
+              Array(jobs.fetch(name).fetch('needs')).include?('authorize')
+          end
+
+          script = authorize.fetch('steps').filter_map { |step| step['run'] }.join("\n")
+          %w[deployment-branch-policies deployment_protection_rules rules/branches/main
+             --paginate --slurp rulesets/$ruleset_id?includes_parents=true
+             effectiveRulesetReferences verifyGitHubReleaseControls merge-base
+             verify-release-authorization.mjs].each do |needle|
+            raise "release authorization no longer checks #{needle}" unless script.include?(needle)
+          end
+          authorization_verifier = File.read(
+            'deploy/acceptance/verify-release-authorization.mjs'
+          )
+          %w[required_reviewers prevent_self_review can_admins_bypass
+             externalProtectionAppSlug ruleset_id ruleset_source_type ruleset_source
+             bypass_actors Object.hasOwn].each do |needle|
+            raise "release control verifier no longer checks #{needle}" unless
+              authorization_verifier.include?(needle)
+          end
+          custody_metadata_step = ci_jobs.fetch('custody-boundary').fetch('steps').find do |step|
+            step['name'] == 'Assert the exact platform-custody package and feature boundaries'
+          end
+          raise 'Cargo metadata custody policy is missing' unless custody_metadata_step
+          custody_script = custody_metadata_step.fetch('run')
+          policy_start = custody_script.index('const offlineComplianceEdges')
+          policy_end = custody_script.index('const helperPolicies')
+          raise 'all-kind offline compliance dependency policy is missing' unless
+            policy_start && policy_end && policy_start < policy_end
+          offline_policy = custody_script[policy_start...policy_end]
+          unless offline_policy.include?("dependency.name === 'pigeonpost-compliance'") &&
+              offline_policy.include?("dependency.kind ?? 'normal'") &&
+              offline_policy.include?('normal, dev, or build') &&
+              !offline_policy.include?('dependency.kind ===')
+            raise 'offline compliance dependency policy no longer covers every Cargo kind'
+          end
+
+          exact_permissions = {
+            'container_candidate' => {'contents' => 'read', 'packages' => 'write'},
+            'container_attest' => {
+              'contents' => 'read', 'packages' => 'write',
+              'id-token' => 'write', 'attestations' => 'write'
+            },
+            'container_verify' => {
+              'contents' => 'read', 'packages' => 'read', 'attestations' => 'read'
+            },
+            'container_promote' => {
+              'contents' => 'read', 'packages' => 'write', 'attestations' => 'read'
+            },
+            'release_sbom' => {'contents' => 'read'},
+            'release_assemble' => {'contents' => 'read'},
+            'release_attest' => {
+              'contents' => 'read', 'id-token' => 'write', 'attestations' => 'write'
+            },
+            'release_verify' => {'contents' => 'read', 'attestations' => 'read'},
+            'release_create' => {'contents' => 'write'},
+          }
+          exact_permissions.each do |name, expected|
+            actual = jobs.fetch(name).fetch('permissions')
+            raise "#{name} permissions changed: #{actual}" unless actual == expected
+          end
+
+          %w[container_attest container_promote release_attest release_create].each do |name|
+            foreign = jobs.fetch(name).fetch('steps').filter_map { |step| step['uses'] }
+              .reject { |action| action.start_with?('actions/') }
+            raise "#{name} runs a non-first-party action with release authority: #{foreign.join(', ')}" unless
+              foreign.empty?
+          end
+
+          build_steps = jobs.fetch('build').fetch('steps')
+          windows_node = build_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/setup-node@') &&
+              step.fetch('if', '') == matrix_not_compliance
+          end
+          unless windows_node&.dig('with', 'node-version') == '24.19.0'
+            raise 'Windows release lifecycle lost its exact Node fixture runtime'
+          end
+          compliance_build = build_steps.find do |step|
+            step.fetch('run', '').include?('--bin ppcompliance')
+          end
+          unless compliance_build &&
+              compliance_build.fetch('run').include?('--example m6_acceptance_adapter')
+            raise 'native custody builds no longer include the test-only M6 adapter'
+          end
+          build_positions = build_steps.each_with_index.to_h { |step, index| [step['name'], index] }
+          staged_offline = build_positions.fetch('Stage the offline custody asset')
+          exact_m6 = build_positions.fetch('Exercise the exact staged M6 release binaries')
+          first_upload = build_steps.index { |step| step.fetch('uses', '').start_with?('actions/upload-artifact@') }
+          unless staged_offline < exact_m6 && exact_m6 < first_upload
+            raise 'exact M6 lifecycle must pass after staging and before release-asset upload'
+          end
+          m6_step = build_steps.fetch(exact_m6)
+          unless m6_step.fetch('if') == 'matrix.compliance' &&
+              m6_step.fetch('run') == './deploy/acceptance/m6-compliance.sh' &&
+              m6_step.fetch('env').fetch('PIGEONPOST_BIN').include?("/dist/#{matrix_asset}") &&
+              m6_step.fetch('env').fetch('PPCOMPLIANCE_BIN').include?(
+                "/dist/#{matrix_compliance_asset}")
+            raise 'release M6 lifecycle no longer exercises both exact staged assets'
+          end
+          staged_online = build_positions.fetch('Stage the online release asset')
+          windows_lifecycle = build_positions.fetch('Exercise the exact Windows release lifecycle')
+          windows_step = build_steps.fetch(windows_lifecycle)
+          unless staged_online < windows_lifecycle && windows_lifecycle < first_upload &&
+              windows_step.fetch('if') == matrix_not_compliance &&
+              windows_step.fetch('shell') == 'pwsh' &&
+              windows_step.fetch('run').include?('deploy/acceptance/windows-release.ps1') &&
+              windows_step.fetch('run').include?("dist/#{matrix_asset}")
+            raise 'exact Windows staged-binary lifecycle no longer precedes release upload'
+          end
+          mock_provider_step = build_steps.find do |step|
+            step['name'] == 'Prove the exact online asset excludes mock identity providers'
+          end
+          unless mock_provider_step&.fetch('if') == 'matrix.compliance'
+            raise 'mock-provider proof must run only where the Registry platform is supported'
+          end
+
+          build_matrix = jobs.fetch('build').fetch('strategy').fetch('matrix').fetch('include')
+          linux_assets = build_matrix.select { |entry| entry.fetch('asset').include?('-linux-') }
+          expected_linux_targets = {
+            'pigeonpost-linux-x64' => 'x86_64-unknown-linux-musl',
+            'pigeonpost-linux-arm64' => 'aarch64-unknown-linux-musl',
+          }
+          linux_targets_valid = linux_assets.length == 2 && linux_assets.all? { |entry|
+            expected_linux_targets.fetch(entry.fetch('asset')) == entry.fetch('target') &&
+              entry.fetch('static_linux') == true && entry.fetch('compliance') == true
+          }
+          raise 'Linux release assets must be the two static musl targets' unless linux_targets_valid
+          linux_build = build_steps.find do |step|
+            step['name'] == 'Build static Linux release assets in the pinned musl toolchain'
+          end
+          unless linux_build &&
+              linux_build.fetch('env').fetch('LINUX_BUILD_IMAGE') ==
+                'docker.io/library/rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d' &&
+              linux_build.fetch('run').include?('deploy/Dockerfile.release-musl') &&
+              linux_build.fetch('run').include?('--build-arg "LINUX_BUILD_IMAGE=$LINUX_BUILD_IMAGE"') &&
+              linux_build.fetch('run').include?('--iidfile "$builder_iid"') &&
+              linux_build.fetch('run').include?('^sha256:[0-9a-f]{64}$') &&
+              linux_build.fetch('run').include?('--cap-drop ALL') &&
+              linux_build.fetch('run').include?('--locked --target "$TARGET"') &&
+              linux_build.fetch('run').include?('-p pigeonpost-cli') &&
+              linux_build.fetch('run').include?('--bin ppcompliance --example m6_acceptance_adapter')
+            raise 'static Linux build no longer uses the exact pinned bounded toolchain path'
+          end
+          linux_compat = build_steps.find do |step|
+            step['name'] ==
+              'Prove Linux assets have no dynamic loader and run in the oldest container baseline'
+          end
+          unless linux_compat &&
+              linux_compat.fetch('env').fetch('LINUX_RUNTIME_BASELINE') ==
+                'docker.io/library/debian:bullseye-slim@sha256:f313b4bd62667092a59b3a664d7d3ab8b5e65f41675f48e81455a15dc5abe792' &&
+              linux_compat.fetch('run').include?('Requesting program interpreter') &&
+              linux_compat.fetch('run').include?("'(NEEDED)'") &&
+              linux_compat.fetch('run').include?('--network none') &&
+              build_positions.fetch(linux_compat.fetch('name')) < exact_m6
+            raise 'static Linux compatibility proof no longer precedes exact M6 acceptance'
+          end
+          cargo_inventory = build_steps.find do |step|
+            step['name'] == 'Capture the exact target-filtered locked Cargo inventory'
+          end
+          cargo_inventory_upload = build_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/upload-artifact@') &&
+              step.dig('with', 'name') == "cargo-metadata-#{matrix_asset}"
+          end
+          unless cargo_inventory &&
+              cargo_inventory.fetch('run').include?(
+                'cargo metadata --locked --format-version 1') &&
+              cargo_inventory.fetch('run').include?(
+                "--filter-platform '#{matrix_target}'") &&
+              cargo_inventory.fetch('run').include?(
+                "cargo-metadata/#{matrix_target}.json") &&
+              cargo_inventory_upload&.dig('with', 'path') ==
+                "cargo-metadata/#{matrix_target}.json"
+            raise 'native builds no longer capture their exact target-filtered locked Cargo graph'
+          end
+
+          dockerfile = File.read('deploy/Dockerfile')
+          %w[
+            rust:1.88.0-trixie@sha256:f2a17efbe58b00470be6e73dbea79705a789ee20ee8de2dcdaf73c0c6091f1db
+            debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
+            CA_CERTIFICATES_VERSION=20250419
+            CURL_VERSION=8.14.1-2+deb13u4
+            TINI_VERSION=0.19.0-3+b7
+          ].each do |needle|
+            raise "official Trixie image input changed: #{needle}" unless dockerfile.include?(needle)
+          end
+          raise 'Bullseye must not remain the official product-image base' if
+            dockerfile.match?(/(?:BUILD_BASE|RUNTIME_BASE)=.*bullseye/i)
+          musl_toolchain = File.read('deploy/Dockerfile.release-musl')
+          %w[
+            rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+            MUSL_VERSION=1.2.5-r12
+            musl=${MUSL_VERSION}
+            musl-dev=${MUSL_VERSION}
+          ].each do |needle|
+            raise "release musl toolchain input changed: #{needle}" unless
+              musl_toolchain.include?(needle)
+          end
+
+          ordered_jobs = %w[container_candidate container_attest container_verify]
+          ordered_jobs.each_cons(2) do |before, after|
+            raise "#{after} no longer depends on #{before}" unless
+              Array(jobs.fetch(after).fetch('needs')).include?(before)
+          end
+          image_build = jobs.fetch('container_candidate').fetch('steps').find do |step|
+            step.fetch('uses', '').start_with?('docker/build-push-action@')
+          end
+          output = image_build.fetch('with').fetch('outputs')
+          raise 'candidate is no longer pushed without a tag' unless
+            output.include?('push-by-digest=true') && output.include?('name-canonical=true')
+          raise 'candidate build creates a discoverable tag' if image_build.fetch('with').key?('tags')
+          raise 'candidate overrides the audited Dockerfile inputs' if
+            image_build.fetch('with').key?('build-args')
+          pre_release_alias_check = jobs.fetch('container_candidate').fetch('steps').find do |step|
+            step['name'] == 'Require stable aliases to be absent before immutable release creation'
+          end.fetch('run')
+          unless pre_release_alias_check.include?('already names $digest before the immutable release exists') &&
+              !pre_release_alias_check.include?('build=false')
+            raise 'fresh releases can reuse a stable alias created before immutable release creation'
+          end
+
+          verify_steps = jobs.fetch('container_verify').fetch('steps')
+          verify_positions = verify_steps.each_with_index.to_h { |step, index| [step['name'], index] }
+          verify_order = [
+            'Verify the exact image provenance before promotion',
+            'Exercise the exact linux/amd64 runtime and message path',
+            'Exercise exact linux/arm64 startup and readiness under QEMU',
+            'Require anonymous access to the exact digest before release assembly',
+            'Record the exact verified candidate',
+          ].map { |name| verify_positions.fetch(name) }
+          raise 'anonymous OCI verification no longer precedes release assembly' unless
+            verify_order == verify_order.sort
+
+          release_order = %w[release_sbom release_assemble release_attest release_verify release_create]
+          release_order.each_cons(2) do |before, after|
+            raise "#{after} no longer depends on #{before}" unless
+              Array(jobs.fetch(after).fetch('needs')).include?(before)
+          end
+          release_assemble = jobs.fetch('release_assemble')
+          unless Array(release_assemble.fetch('needs')).include?('container_verify') &&
+              !Array(release_assemble.fetch('needs')).include?('container_promote')
+            raise 'release assembly must consume verified OCI bytes before alias promotion'
+          end
+          assembly_steps = release_assemble.fetch('steps')
+          container_input = assembly_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/download-artifact@') &&
+              step.fetch('with', {})['name'] == 'container-verification'
+          end
+          raise 'release assembly no longer downloads the verified OCI handoff' unless container_input
+          expected_sbom_bindings = {
+            'pigeonpost-darwin-arm64' => 'pigeonpost-darwin-arm64.spdx.json',
+            'pigeonpost-darwin-x64' => 'pigeonpost-darwin-x64.spdx.json',
+            'pigeonpost-linux-arm64' => 'pigeonpost-linux-arm64.spdx.json',
+            'pigeonpost-linux-x64' => 'pigeonpost-linux-x64.spdx.json',
+            'pigeonpost-win32-arm64.exe' => 'pigeonpost-win32-arm64.spdx.json',
+            'pigeonpost-win32-x64.exe' => 'pigeonpost-win32-x64.spdx.json',
+            'ppcompliance-darwin-arm64' => 'ppcompliance-darwin-arm64.spdx.json',
+            'ppcompliance-darwin-x64' => 'ppcompliance-darwin-x64.spdx.json',
+            'ppcompliance-linux-arm64' => 'ppcompliance-linux-arm64.spdx.json',
+            'ppcompliance-linux-x64' => 'ppcompliance-linux-x64.spdx.json',
+          }
+          sbom_job = jobs.fetch('release_sbom')
+          sbom_rows = sbom_job.fetch('strategy').fetch('matrix').fetch('include')
+          sbom_bindings = {}
+          sbom_rows.each do |row|
+            asset = row.fetch('asset')
+            matching_build = build_matrix.find { |entry| entry.fetch('asset') == asset }
+            raise "SBOM row has no native build: #{asset}" unless matching_build
+            raise "SBOM compliance split changed for #{asset}" unless
+              row.fetch('compliance') == matching_build.fetch('compliance')
+            sbom_bindings[asset] = row.fetch('sbom')
+            if row.fetch('compliance')
+              compliance_asset = row.fetch('compliance_asset')
+              raise "SBOM row changed offline asset for #{asset}" unless
+                compliance_asset == matching_build.fetch('compliance_asset')
+              sbom_bindings[compliance_asset] = row.fetch('compliance_sbom')
+            elsif row.keys.any? { |key| key.start_with?('compliance_') }
+              raise "Windows SBOM row names an offline-operator output: #{row}"
+            end
+          end
+          unless sbom_rows.length == 6 && sbom_bindings == expected_sbom_bindings
+            raise "native SBOM matrix changed: #{sbom_bindings}"
+          end
+          sbom_steps = sbom_job.fetch('steps')
+          sbom_input = sbom_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/download-artifact@')
+          end
+          sbom_output = sbom_steps.reverse.find do |step|
+            step.fetch('uses', '').start_with?('actions/upload-artifact@')
+          end
+          online_sbom = sbom_steps.find { |step| step['name'] == 'Generate the online-asset SBOM' }
+          offline_sbom = sbom_steps.find { |step| step['name'] == 'Generate the offline-operator SBOM' }
+          unless sbom_input&.dig('with', 'name') == "asset-#{matrix_asset}" &&
+              sbom_output&.dig('with', 'name') == "sbom-#{matrix_asset}" &&
+              online_sbom&.dig('with', 'file') == "inputs/#{matrix_asset}" &&
+              online_sbom&.dig('with', 'output-file') == "sboms/#{matrix_sbom}" &&
+              offline_sbom&.fetch('if') == 'matrix.compliance' &&
+              offline_sbom&.dig('with', 'file') == "inputs/#{matrix_compliance_asset}" &&
+              offline_sbom&.dig('with', 'output-file') ==
+                "sboms/#{matrix_compliance_sbom}"
+            raise 'native SBOM jobs no longer consume and emit one target-scoped artifact'
+          end
+          sbom_download = assembly_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/download-artifact@') &&
+              step.dig('with', 'pattern') == 'sbom-*'
+          end
+          unless sbom_download && sbom_download.dig('with', 'merge-multiple') == true
+            raise 'release assembly no longer merges the complete native SBOM matrix'
+          end
+          cargo_metadata_download = assembly_steps.find do |step|
+            step.fetch('uses', '').start_with?('actions/download-artifact@') &&
+              step.dig('with', 'pattern') == 'cargo-metadata-*'
+          end
+          unless cargo_metadata_download&.dig('with', 'path') == 'cargo-metadata' &&
+              cargo_metadata_download.dig('with', 'merge-multiple') == true
+            raise 'release assembly no longer consumes every build-produced Cargo graph'
+          end
+          staged_validation = assembly_steps.find do |step|
+            step['name'] == 'Validate assets and record package checksums'
+          end.fetch('run')
+          expected_sbom_bindings.each_value do |name|
+            raise "pre-packaging exact set omits #{name}" unless
+              staged_validation.include?("'#{name}'")
+          end
+          npm_package = JSON.parse(File.read('npm/package.json'))
+          package_guard = "node -e \"require('./bin/pigeonpost.js').verifyPackageChecksums()\""
+          package_scripts = npm_package.fetch('scripts')
+          unless package_scripts['prepack'] == package_guard &&
+              package_scripts['prepublishOnly'] == package_guard
+            raise 'npm pack/publish no longer requires the exact release checksum guard'
+          end
+          unless npm_package.fetch('files') == %w[bin checksums.json README.md LICENSE]
+            raise 'npm package file allowlist changed'
+          end
+          unless npm_package.fetch('bin') == {'pigeonpost' => 'bin/pigeonpost.js'} &&
+              staged_validation.include?("fs.chmodSync('npm/checksums.json', 0o644)")
+            raise 'npm package entrypoint or deterministic checksum mode changed'
+          end
+          package_step = assembly_steps.find do |step|
+            step['name'] == 'Normalize the native SBOMs and pack the exact npm artifact'
+          end.fetch('run')
+          unless package_step.include?(
+              'node deploy/acceptance/normalize-release-sboms.mjs') &&
+              package_step.include?('npm pack ./npm --ignore-scripts=false')
+            raise 'release assembly bypasses the npm checksum lifecycle guard'
+          end
+          sbom_normalizer = File.read('deploy/acceptance/normalize-release-sboms.mjs')
+          expected_sbom_bindings.each do |artifact, sbom|
+            binding = /"#{Regexp.escape(sbom)}",\s*\{\s*artifact:\s*"#{Regexp.escape(artifact)}"/m
+            unless sbom_normalizer.match?(binding)
+              raise "SBOM normalization no longer binds #{sbom} to #{artifact}"
+            end
+          end
+          %w[
+            SPDXRef-Pigeonpost-Release-Artifact
+            primaryPackagePurpose
+            SHA256
+            DESCRIBES
+            CONTAINS
+            has\ no\ Syft\ package\ inventory\ to\ bind
+            Cargo\ inventory\ has\ no\ production\ dependency\ graph
+          ].each do |needle|
+            raise "native SBOM root binding lost #{needle}" unless
+              sbom_normalizer.include?(needle.gsub('\\ ', ' '))
+          end
+          unless package_step.include?('"$COMMIT_TIME" cargo-metadata')
+            raise 'native SBOM generation lost its target-filtered locked Cargo inventory'
+          end
+          payload_validation = assembly_steps.find do |step|
+            step['name'] == 'Validate the exact release payload'
+          end.fetch('run')
+          unless payload_validation.include?('verify-release-assets.mjs')
+            raise 'release assembly no longer verifies exact npm tar members and modes'
+          end
+          sbom_attestations = jobs.fetch('release_attest').fetch('steps').filter_map do |step|
+            sbom = step.dig('with', 'sbom-path')
+            next unless sbom
+            [step.dig('with', 'subject-path'), sbom]
+          end.to_h
+          expected_attestations = expected_sbom_bindings.to_h do |artifact, sbom|
+            ["dist/#{artifact}", "dist/#{sbom}"]
+          end
+          unless sbom_attestations.length == 10 && sbom_attestations == expected_attestations
+            raise "native SBOM attestations changed: #{sbom_attestations}"
+          end
+          %w[release_verify release_resume].each do |job_name|
+            verification_script = jobs.fetch(job_name).fetch('steps')
+              .filter_map { |step| step['run'] }.join("\n")
+            unless verification_script.scan(
+                '--predicate-type https://spdx.dev/Document/v2.3'
+              ).length == 1
+              raise "#{job_name} no longer verifies exactly one explicit SPDX predicate path"
+            end
+            expected_sbom_bindings.each_key do |artifact|
+              raise "#{job_name} no longer verifies the SBOM for #{artifact}" unless
+                verification_script.include?(artifact)
+            end
+          end
+
+          fresh_jobs = %w[
+            build container_candidate container_attest container_verify
+            release_sbom release_assemble release_attest release_verify release_create
+          ]
+          resume = jobs.fetch('release_resume')
+          promote = jobs.fetch('container_promote')
+          release_join = jobs.fetch('release')
+          fresh_jobs.each do |name|
+            raise "resume path does not wait for #{name}" unless
+              Array(resume.fetch('needs')).include?(name)
+            raise "resume path does not require #{name} to be skipped" unless
+              resume.fetch('if').include?("needs.#{name}.result == 'skipped'")
+            raise "promotion does not wait for #{name}" unless
+              Array(promote.fetch('needs')).include?(name)
+            %w[skipped success].each do |result|
+              raise "promotion lost #{name}=#{result} branch" unless
+                promote.fetch('if').include?("needs.#{name}.result == '#{result}'")
+            end
+            raise "release join does not wait for #{name}" unless
+              Array(release_join.fetch('needs')).include?(name)
+            %w[skipped success].each do |result|
+              raise "release join lost #{name}=#{result} branch" unless
+              release_join.fetch('if').include?("needs.#{name}.result == '#{result}'")
+            end
+          end
+          raise 'resume must not depend on post-release alias promotion' if
+            Array(resume.fetch('needs')).include?('container_promote')
+          %w[release_create release_resume].each do |name|
+            raise "promotion no longer waits for #{name}" unless
+              Array(promote.fetch('needs')).include?(name)
+          end
+          %w[skipped success].each do |result|
+            raise "promotion lost release_resume=#{result} branch" unless
+              promote.fetch('if').include?("needs.release_resume.result == '#{result}'")
+          end
+          unless Array(release_join.fetch('needs')).include?('container_promote') &&
+              release_join.fetch('if').scan("needs.container_promote.result == 'success'").length == 2
+            raise 'release join no longer requires post-release alias promotion on both branches'
+          end
+
+          promotion_actions = promote.fetch('steps').filter_map { |step| step['uses'] }
+          raise 'alias promotion must not run actions under package-write authority' unless
+            promotion_actions.empty?
+          promotion_steps = promote.fetch('steps')
+          promotion_positions = promotion_steps.each_with_index.to_h do |step, index|
+            [step['name'], index]
+          end
+          promotion_order = [
+            'Require the immutable release and load its exact container pointer',
+            'Require anonymous digest visibility before any stable alias',
+            'Require exact hosted-workflow OCI provenance before promotion',
+            'Authenticate only for stable-alias promotion',
+            'Promote verified aliases without overwriting either name',
+            'Remove registry credentials',
+            'Require anonymous access to both stable aliases',
+          ].map { |name| promotion_positions.fetch(name) }
+          raise 'immutable-release verification/promotion order regressed' unless
+            promotion_order == promotion_order.sort
+          promotion_script = promotion_steps.filter_map { |step| step['run'] }.join("\n")
+          %w[gh\ release\ verify gh\ release\ download SHA256SUMS
+             --bundle-from-oci --source-ref --source-digest].each do |needle|
+            raise "alias promotion no longer verifies #{needle}" unless
+              promotion_script.include?(needle)
+          end
+          alias_writers = jobs.filter_map do |name, job|
+            scripts = job.fetch('steps', []).filter_map { |step| step['run'] }.join("\n")
+            name if scripts.include?('imagetools create --tag')
+          end
+          raise "stable aliases can be created outside promotion: #{alias_writers.join(', ')}" unless
+            alias_writers == ['container_promote']
+
+          release_create = jobs.fetch('release_create')
+          release_actions = release_create.fetch('steps').filter_map { |step| step['uses'] }
+          unless release_actions.all? { |action| action.start_with?('actions/download-artifact@') }
+            raise "release creator runs an unrelated action: #{release_actions.join(', ')}"
+          end
+          release_script = release_create.fetch('steps').filter_map { |step| step['run'] }.join("\n")
+          %w[gh\ release\ create --draft --verify-tag gh\ release\ download gh\ release\ verify].each do |needle|
+            raise "release creator no longer enforces #{needle}" unless release_script.include?(needle)
+          end
+          raise 'release creator contains destructive cleanup' if
+            release_script.match?(/^\s*gh release delete\b|--clobber/m)
+
+          raise 'npm publication bypasses the release join' unless
+            Array(jobs.fetch('npm_publish').fetch('needs')).include?('release')
+          npm_cli_step = jobs.fetch('npm_publish').fetch('steps').find do |step|
+            step['name'] == 'Install the digest-pinned trusted-publishing npm CLI'
+          end
+          raise 'npm publication no longer installs a digest-pinned CLI tarball' unless npm_cli_step
+          npm_cli_script = npm_cli_step.fetch('run')
+          npm_cli_env = npm_cli_step.fetch('env')
+          unless npm_cli_env.fetch('NPM_CLI_URL') ==
+              'https://registry.npmjs.org/npm/-/npm-11.16.0.tgz' &&
+              npm_cli_env.fetch('NPM_CLI_SHA256') ==
+                '30fc15697c771002878665c29f49dddde9aa8667fa5719854b2f52d3cd19230b' &&
+              npm_cli_script.include?('sha256sum -c -') &&
+              npm_cli_script.include?('npm install -g ./npm-11.16.0.tgz --ignore-scripts') &&
+              !npm_cli_script.include?('npm install -g npm@')
+            raise 'npm publication CLI can execute mutable registry-selected bytes'
+          end
+          npm_publish_step = jobs.fetch('npm_publish').fetch('steps').find do |step|
+            step['name'] == 'Publish the byte-verified launcher'
+          end.fetch('run')
+          unless npm_publish_step.include?('npm publish "$NPM_TARBALL"') &&
+              !npm_publish_step.include?('npm publish ./npm')
+            raise 'npm publication no longer consumes the byte-verified release tarball'
+          end
+          npm_verification = jobs.fetch('npm_publish').fetch('steps').find do |step|
+            step['name'] == 'Verify npm serves the exact immutable tarball'
+          end.fetch('run')
+          %w[
+            cmp
+            --ignore-scripts
+            --save-exact
+            npm\ audit\ signatures\ --json\ --include-attestations
+            deploy/acceptance/verify-npm-provenance.mjs
+            .github/workflows/release.yml
+            $GITHUB_REF
+            $GITHUB_SHA
+          ].each do |needle|
+            raise "npm publication verification lost #{needle}" unless
+              npm_verification.include?(needle.gsub('\\ ', ' '))
+          end
+          if npm_verification.include?('dist.attestations.provenance.predicateType')
+            raise 'npm publication reverted to unsigned predicate metadata inspection'
+          end
+          raise 'MCP publication bypasses npm publication' unless
+            Array(jobs.fetch('mcp_publish').fetch('needs')).include?('npm_publish')
+
+          resume_script = jobs.fetch('release_resume').fetch('steps')
+            .filter_map { |step| step['run'] }.join("\n")
+          %w[oci://$CONTAINER_REFERENCE --bundle-from-oci --source-ref --source-digest].each do |needle|
+            raise "release resume no longer verifies OCI provenance: #{needle}" unless
+              resume_script.include?(needle)
+          end
+          RUBY
+
+  windows-custody-lint:
+    name: Windows native custody Clippy
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Lint the helper and all direct Windows consumers natively
+        run: >-
+          cargo clippy --locked --all-targets --all-features
+          -p pigeonpost-windows-custody
+          -p pigeonpost-client
+          -p pigeonpost-directory
+          -p pigeonpost-loft
+          -- -D warnings
+
+  audit:
+    name: cargo audit
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - name: Install the exact compatible cargo-audit release
+        run: cargo install cargo-audit --version 0.22.2 --locked
+      - run: cargo audit
+
+  conformance:
+    # Called out separately from `test` because these vectors are the compatibility contract for
+    # a clean-room implementation (docs/sds.md §8). A change here is a protocol break, and it
+    # should be obvious in the checks list which job failed.
+    name: conformance vectors
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: cargo test --locked -p pigeonpost-core --test conformance
+      - run: cargo test --locked -p pigeonpost-compliance --test conformance
+
+  acceptance:
+    # Exercise the built product as two isolated agents, including an offline loft/outbox retry,
+    # and capture the exact generated reverse proxy under real Caddy. These are SDS §8 release
+    # gates that crate-level tests alone cannot prove.
+    name: black-box delivery + proxy privacy
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+      - name: Build the exact acceptance binaries and test adapter
+        run: |
+          cargo build --locked -p pigeonpost-cli
+          cargo build --locked -p pigeonpost-compliance --bin ppcompliance --example m6_acceptance_adapter
+      - name: Prove a clean-box zero-option loft installation
+        env:
+          PIGEONPOST_BIN: ${{ github.workspace }}/target/debug/pigeonpost
+        run: ./deploy/acceptance/install-defaults.sh
+      - name: Exercise online and offline Pigeonpost delivery
+        env:
+          PIGEONPOST_BIN: ${{ github.workspace }}/target/debug/pigeonpost
+        run: ./deploy/acceptance/local.sh --binary-only
+      - name: Exercise the exact-binary M6 compliance lifecycle
+        env:
+          PIGEONPOST_BIN: ${{ github.workspace }}/target/debug/pigeonpost
+          PPCOMPLIANCE_BIN: ${{ github.workspace }}/target/debug/ppcompliance
+          PIGEONPOST_M6_ADAPTER_BIN: ${{ github.workspace }}/target/debug/examples/m6_acceptance_adapter
+        run: ./deploy/acceptance/m6-compliance.sh
+      - name: Prove generated Caddy logs do not retain source identifiers
+        env:
+          PIGEONPOST_BIN: ${{ github.workspace }}/target/debug/pigeonpost
+        run: ./deploy/acceptance/proxy-privacy.sh
+      - name: Prove v0.1 backups, forward migrations, and restore rollback
+        run: ./deploy/acceptance/migration-rollback.sh
+      - name: Prove production preflight requires exact OCI provenance
+        run: sh ./deploy/acceptance/preflight-policy.sh
+      - name: Prove release approval is independently signed and release-bound
+        run: node --test deploy/acceptance/release-authorization.test.mjs
+      - name: Prove the npm release member and mode allowlist
+        run: node --test deploy/acceptance/release-assets.test.mjs
+      - name: Prove generated SBOMs are bound to exact release artifacts
+        run: node --test deploy/acceptance/normalize-release-sboms.test.mjs
+      - name: Prove npm provenance is signed and release-bound
+        run: node --test deploy/acceptance/verify-npm-provenance.test.mjs
+      - name: Keep container acceptance private without weakening public-loft startup
+        shell: bash
+        run: |
+          set -euo pipefail
+          grep -Fq -- '--bind=127.0.0.1:7717' deploy/acceptance/container-release.sh
+          if grep -Fq -- '--bind=0.0.0.0:7717' deploy/acceptance/container-release.sh; then
+            echo '::error::Release acceptance must not bypass the public loft compliance gate.'
+            exit 1
+          fi
+
+  custody-boundary:
+    # The online binary may seal records but must never acquire the offline unseal/custody crate.
+    # This is a build invariant from docs/sds.md §4, not a deployment convention.
+    name: online/offline custody boundary
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - name: Assert the exact platform-custody package and feature boundaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo metadata --locked --no-deps --format-version 1 > "$RUNNER_TEMP/custody-metadata.json"
+          node - "$RUNNER_TEMP/custody-metadata.json" <<'NODE'
+          const fs = require('node:fs');
+          const metadata = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          const packages = new Map(metadata.packages.map((pkg) => [pkg.name, pkg]));
+          const packageByName = (name) => {
+            const pkg = packages.get(name);
+            if (!pkg) throw new Error(`workspace package is missing: ${name}`);
+            return pkg;
+          };
+          const stable = (items) => [...items].sort();
+          const same = (actual, expected, message) => {
+            if (JSON.stringify(stable(actual)) !== JSON.stringify(stable(expected))) {
+              throw new Error(`${message}: ${actual.join(', ')}`);
+            }
+          };
+          const dependencyShape = (dependency) => [
+            dependency.name,
+            dependency.kind ?? 'normal',
+            dependency.target ?? 'all',
+            dependency.optional ? 'optional' : 'required',
+            dependency.req,
+            stable(dependency.features).join('+'),
+          ].join('|');
+          const workspacePackageIds = new Set(metadata.workspace_members);
+          const workspacePackageRecords = metadata.packages.filter((pkg) =>
+            workspacePackageIds.has(pkg.id));
+          if (workspacePackageRecords.length !== workspacePackageIds.size) {
+            throw new Error('Cargo metadata omitted a workspace package record');
+          }
+          for (const pkg of workspacePackageRecords) {
+            if (JSON.stringify(pkg.publish) !== '[]') {
+              throw new Error(
+                `${pkg.name} must remain internal and declare publish=false`,
+              );
+            }
+          }
+          const offlineComplianceEdges = workspacePackageRecords.flatMap((pkg) =>
+            pkg.dependencies
+              .filter((dependency) => dependency.name === 'pigeonpost-compliance')
+              .map((dependency) => [
+                pkg.name,
+                dependency.kind ?? 'normal',
+                dependency.target ?? 'all',
+                dependency.optional ? 'optional' : 'required',
+              ].join('|')));
+          if (offlineComplianceEdges.length !== 0) {
+            throw new Error(
+              `online workspace packages depend on the offline compliance crate through a `
+                + `normal, dev, or build edge: ${offlineComplianceEdges.join(', ')}`,
+            );
+          }
+          const helperPolicies = new Map([
+            ['pigeonpost-unix-custody', [
+              'rustix|normal|cfg(unix)|required|^1.1|fs+process',
+              'tempfile|dev|cfg(unix)|required|^3.27|',
+            ]],
+            ['pigeonpost-windows-custody', [
+              'tempfile|dev|cfg(windows)|required|^3.27|',
+              'windows-permissions|normal|cfg(windows)|required|^0.2.4|',
+              'windows-sys|normal|cfg(windows)|required|^0.61.2|Wdk_Foundation+Wdk_Storage_FileSystem+Win32_Foundation+Win32_Security+Win32_Storage_FileSystem+Win32_System_IO',
+            ]],
+          ]);
+          for (const [helper, expectedDependencies] of helperPolicies) {
+            const pkg = packageByName(helper);
+            if (JSON.stringify(pkg.publish) !== '[]') {
+              throw new Error(`${helper} must remain an internal publish=false package`);
+            }
+            if (Object.keys(pkg.features).length !== 0) {
+              throw new Error(`${helper} must not grow an implicit feature surface`);
+            }
+            same(
+              pkg.dependencies.map(dependencyShape),
+              expectedDependencies,
+              `${helper} dependency allowlist changed`,
+            );
+          }
+
+          const workspacePackages = new Set(metadata.workspace_members);
+          const directConsumers = (helper) => metadata.packages.flatMap((pkg) => {
+            if (!workspacePackages.has(pkg.id)) return [];
+            return pkg.dependencies
+              .filter((dependency) => dependency.name === helper && dependency.kind === null)
+              .map((dependency) => [
+                pkg.name,
+                dependency.target ?? 'all',
+                dependency.optional ? 'optional' : 'required',
+              ].join('|'));
+          });
+          same(directConsumers('pigeonpost-windows-custody'), [
+            'pigeonpost-client|cfg(windows)|required',
+            'pigeonpost-directory|cfg(windows)|optional',
+            'pigeonpost-loft|cfg(windows)|optional',
+          ], 'Windows custody consumer boundary changed');
+          same(directConsumers('pigeonpost-unix-custody'), [
+            'pigeonpost-cli|cfg(unix)|required',
+            'pigeonpost-client|cfg(unix)|required',
+            'pigeonpost-compliance-seal|cfg(unix)|required',
+            'pigeonpost-compliance|cfg(unix)|required',
+            'pigeonpost-directory|cfg(unix)|optional',
+            'pigeonpost-loft|cfg(unix)|optional',
+            'pigeonpost-registry|cfg(unix)|optional',
+          ], 'Unix custody consumer boundary changed');
+
+          for (const name of ['pigeonpost-directory', 'pigeonpost-loft', 'pigeonpost-registry']) {
+            const features = packageByName(name).features;
+            if (!features.server?.includes('dep:pigeonpost-unix-custody')) {
+              throw new Error(`${name}/server no longer enables Unix custody`);
+            }
+            if (features.client?.includes('dep:pigeonpost-unix-custody')) {
+              throw new Error(`${name}/client unexpectedly enables Unix custody`);
+            }
+          }
+          for (const name of ['pigeonpost-directory', 'pigeonpost-loft']) {
+            const features = packageByName(name).features;
+            if (!features.server.includes('dep:pigeonpost-windows-custody') ||
+                features.client.includes('dep:pigeonpost-windows-custody')) {
+              throw new Error(`${name} server/client Windows custody boundary changed`);
+            }
+          }
+          NODE
+      - name: Assert exact release-target and client/server custody graphs
+        shell: bash
+        run: |
+          set -euo pipefail
+          has_crate() {
+            grep -Eq "(^|[[:space:]│├└─])$2 v[0-9]" "$1"
+          }
+          lacks_crate() {
+            if has_crate "$1" "$2"; then
+              echo "::error::$1 unexpectedly contains $2."
+              exit 1
+            fi
+          }
+          for target in \
+            aarch64-apple-darwin \
+            x86_64-apple-darwin \
+            aarch64-unknown-linux-musl \
+            x86_64-unknown-linux-musl
+          do
+            tree="$RUNNER_TEMP/cli-$target.txt"
+            cargo tree --locked -e normal --target "$target" -p pigeonpost-cli > "$tree"
+            has_crate "$tree" pigeonpost-unix-custody
+            lacks_crate "$tree" pigeonpost-windows-custody
+            lacks_crate "$tree" pigeonpost-compliance
+          done
+          for target in aarch64-pc-windows-msvc x86_64-pc-windows-msvc; do
+            tree="$RUNNER_TEMP/cli-$target.txt"
+            cargo tree --locked -e normal --target "$target" -p pigeonpost-cli > "$tree"
+            has_crate "$tree" pigeonpost-windows-custody
+            lacks_crate "$tree" pigeonpost-unix-custody
+            lacks_crate "$tree" pigeonpost-compliance
+          done
+          for package in pigeonpost-directory pigeonpost-loft pigeonpost-registry; do
+            client_tree="$RUNNER_TEMP/$package-client-unix.txt"
+            server_tree="$RUNNER_TEMP/$package-server-unix.txt"
+            cargo tree --locked -e normal --target x86_64-unknown-linux-musl \
+              -p "$package" --no-default-features --features client > "$client_tree"
+            cargo tree --locked -e normal --target x86_64-unknown-linux-musl \
+              -p "$package" --no-default-features --features server > "$server_tree"
+            lacks_crate "$client_tree" pigeonpost-unix-custody
+            has_crate "$server_tree" pigeonpost-unix-custody
+            lacks_crate "$client_tree" pigeonpost-windows-custody
+            lacks_crate "$server_tree" pigeonpost-windows-custody
+          done
+          for package in pigeonpost-directory pigeonpost-loft; do
+            cargo tree --locked -e normal --target x86_64-pc-windows-msvc \
+              -p "$package" --no-default-features --features client \
+              > "$RUNNER_TEMP/$package-client-windows.txt"
+            cargo tree --locked -e normal --target x86_64-pc-windows-msvc \
+              -p "$package" --no-default-features --features server \
+              > "$RUNNER_TEMP/$package-server-windows.txt"
+            lacks_crate "$RUNNER_TEMP/$package-client-windows.txt" pigeonpost-windows-custody
+            has_crate "$RUNNER_TEMP/$package-server-windows.txt" pigeonpost-windows-custody
+            lacks_crate "$RUNNER_TEMP/$package-server-windows.txt" pigeonpost-unix-custody
+          done
+      - name: Inspect the final online dependency closure
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo tree --locked -e normal -p pigeonpost-cli > server-dependency-tree.txt
+          if grep -Eq '(^|[[:space:]│├└─])pigeonpost-compliance v[0-9]' server-dependency-tree.txt; then
+            echo '::error::The online pigeonpost binary includes the offline custody crate.'
+            exit 1
+          fi
+          grep -q 'pigeonpost-compliance-format v' server-dependency-tree.txt
+          grep -q 'pigeonpost-compliance-seal v' server-dependency-tree.txt
+      - name: Inspect reachable release symbols
+        shell: bash
+        run: |
+          set -euo pipefail
+          CARGO_PROFILE_RELEASE_STRIP=false cargo build --release --locked -p pigeonpost-cli
+          nm --defined-only -C target/release/pigeonpost > server-symbols.txt
+          test -s server-symbols.txt
+          if grep -Eq 'pigeonpost_compliance::|ppcompliance' server-symbols.txt; then
+            echo '::error::The online binary exposes an offline custody/unseal symbol.'
+            exit 1
+          fi
+      - name: Prove release builds exclude mock identity providers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for flag in PIGEONPOST_ALLOW_MOCK_IDENTITIES PIGEONPOST_TEST_ALLOW_MOCK_IDENTITIES; do
+            output="$RUNNER_TEMP/${flag}.out"
+            if env "$flag=1" target/release/pigeonpost registry serve \
+                --bind 127.0.0.1:7718 \
+                --dir "$RUNNER_TEMP/mock-registry" \
+                --origin pigeonpost.test/registry >"$output" 2>&1; then
+              echo "::error::Release binary accepted $flag."
+              exit 1
+            fi
+            grep -Fq 'mock identities are not compiled into production Pigeonpost binaries' "$output"
+          done
+      - name: Refuse unsupported Windows offline-operator artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          node <<'NODE'
+          const fs = require('node:fs');
+          const workflow = fs.readFileSync('.github/workflows/release.yml', 'utf8');
+          const rows = workflow.split('\n')
+            .map((line) => line.trim())
+            .filter((line) => line.startsWith('- { os:'));
+          const windows = rows.filter((line) => /\bos:\s*windows-/.test(line));
+          const offlineOperators = rows.filter((line) => /\bcompliance:\s*true\b/.test(line));
+          if (rows.length !== 6 || windows.length !== 2 || offlineOperators.length !== 4) {
+            throw new Error('release matrix must contain six online targets and four offline-operator targets');
+          }
+          if (windows.some((line) => !/\bcompliance:\s*false\b/.test(line)
+              || /\bcompliance_(?:asset|binary):/.test(line))) {
+            throw new Error('Windows offline-operator output is forbidden until its private-state boundary is audited');
+          }
+          if (/ppcompliance-win32|ppcompliance[^\n]*windows|windows[^\n]*ppcompliance/i.test(workflow)) {
+            throw new Error('the release workflow names an unsupported Windows offline-operator artifact');
+          }
+          NODE
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: online-dependency-closure
+          path: server-dependency-tree.txt
+          if-no-files-found: error
+          retention-days: 14
+
+  launcher:
+    name: npm launcher (Node ${{ matrix.node }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22.23.2", "24.19.0"]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ matrix.node }}
+      - run: npm test --prefix npm

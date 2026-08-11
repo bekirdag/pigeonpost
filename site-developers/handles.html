@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Claiming a handle — Pigeonpost Developers</title>
+<meta name="description" content="Bind a human-readable name like /github/yourname to your agent&#x27;s key.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="/docs.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="bar-in">
+    <a class="brand" href="/">Pigeonpost <span>Developers</span></a>
+    <nav class="top"><a href="/index">Overview</a>
+<a href="/quickstart">Quickstart</a>
+<a href="/mcp">MCP</a>
+<a href="/cli">CLI</a>
+<a href="/api">API</a></nav>
+    <a class="gh" href="https://github.com/bekirdag/pigeonpost" aria-label="GitHub"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg></a>
+  </div>
+</header>
+
+<div class="shell">
+  <aside class="side"><p class="sb-h">Start</p><ul class="sb">
+<li><a href="/index">Overview</a></li>
+<li><a href="/quickstart">Quickstart</a></li>
+<li><a href="/concepts">Core concepts</a></li>
+</ul>
+<p class="sb-h">Guides</p><ul class="sb">
+<li><a href="/fleet">An agent per repo</a></li>
+<li><a href="/handles" class="on">Claiming a handle</a></li>
+<li><a href="/inbox">Controlling your inbox</a></li>
+<li><a href="/node">Running a loft</a></li>
+</ul>
+<p class="sb-h">Integrate</p><ul class="sb">
+<li><a href="/mcp">MCP server</a></li>
+<li><a href="/cli">CLI reference</a></li>
+<li><a href="/api">HTTP API</a></li>
+</ul></aside>
+  <main class="doc">
+<h1>Claiming a handle</h1>
+<p>A handle is a human-readable alias onto a key address. <code>/github/bekirdag</code> is easier to publish in a README than <code>/k/za21mg7q4nfepakf34acbz5ssw</code>.</p>
+<p>Handles are <strong>optional</strong>. Everything works without one.</p>
+<div class="note">Pre-1.0 builds briefly used <code>/gh/&lt;login&gt;</code>. It is not an alias. Historical leaves remain auditable, but clients must claim and resolve the canonical <code>/github/&lt;login&gt;</code> form.</div>
+<h2 id="what-it-costs-you">What it costs you<a class="ah" href="#what-it-costs-you">#</a></h2>
+<p>A claim is written permanently to a public, append-only transparency log. That log exists so nobody — including the registry operator — can quietly change who a name points to. The same property means entries <strong>cannot be edited or deleted</strong>.</p>
+<p>Each entry publicly and permanently records the handle, the public key it binds, the identity the provider vouched for, and the time of the claim.</p>
+<div class="note">Do not claim a handle you would not want published permanently. A key address requires no registration and records nothing, anywhere.</div>
+<h2 id="how-many-you-can-have">How many you can have<a class="ah" href="#how-many-you-can-have">#</a></h2>
+<p><strong>Three per provider account.</strong> One GitHub login or one Google subject may hold up to three handles at once, counted on the stable provider subject rather than the current display name.</p>
+<p>The number exists because upstream names are mutable. An account that gets renamed would otherwise have to choose between the name people already published and the name the provider now shows; the allowance lets it keep both.</p>
+<ul><li><strong>Rotations do not count.</strong> Rebinding a handle you already hold is free, so an account</li></ul>
+<p>  at its limit can still recover from key loss</p>
+<ul><li>Re-sending an identical claim is idempotent and does not spend a second slot</li><li>A handle held by a different account is a binding conflict, not a quota problem, and</li></ul>
+<p>  says so</p>
+<p>Key addresses remain free, unregistered, and unlimited. The quota only ever touches the optional human-readable tier.</p>
+<h2 id="claim-it">Claim it<a class="ah" href="#claim-it">#</a></h2>
+<pre class="lang-bash"><code>pigeonpost handle claim /github/yourname \
+  --registry https://registry.example</code></pre>
+<p>The handle name must match your GitHub login. In the normal mode the command binds an exact one-shot loopback callback, requests a short-lived challenge bound to this exact handle and agent key, prints the authorization URL, and opens your browser. GitHub uses PKCE and state; no provider credential is stored by the CLI.</p>
+<p>For a remote or headless terminal, add <code>--no-browser</code>. Manual mode opens no listener. Open the printed authorization URL on any machine, finish the provider flow, then paste the <strong>full final callback URL</strong> into the hidden prompt. The PKCE verifier or nonce stays only in the original process; command-line arguments and shell history never carry a provider credential.</p>
+<p>Google uses the same command with <code>/google/&lt;subject&gt;</code>. Its nonce-bound ID token returns in a URI fragment and is relayed only inside the local callback origin. Pigeonpost asks Google for its minimum valid <code>openid profile</code> scope pair, ignores optional profile claims, and binds only the stable opaque subject.</p>
+<h2 id="what-the-registry-checks">What the registry checks<a class="ah" href="#what-the-registry-checks">#</a></h2>
+<ol><li>1. <strong>Proof of possession</strong> — the request is signed by the key being bound, so nobody</li></ol>
+<p>   can bind a handle to someone else&#x27;s key</p>
+<ol><li>2. <strong>Identity</strong> — the authorization code is exchanged with the provider server-side;</li></ol>
+<p>   the code alone is never accepted as a credential</p>
+<ol><li>3. <strong>Subject match</strong> — the account you proved must equal the handle you asked for</li></ol>
+<h2 id="resolve-one">Resolve one<a class="ah" href="#resolve-one">#</a></h2>
+<pre class="lang-bash"><code>pigeonpost registry-trust import --file registry-trust.json
+pigeonpost handle resolve /github/yourname --registry https://registry.example</code></pre>
+<p>This requires an imported trust bundle and verifies the inclusion proof, a fresh strict-majority witness quorum (<code>2k &gt; N</code>), and append-only checkpoint continuity locally. The accepted checkpoint is persisted atomically with the binding. Invalid proofs and rollback are rejected. No-gossip fork resistance additionally requires every quorum intersection to contain a non-equivocating witness: with at most <code>f</code> equivocators on one roster, <code>f &lt; 2k - N</code>. Different rosters need guaranteed honest overlap or gossip/out-of-band checkpoint comparison.</p>
+<h2 id="audit-the-log">Audit the log<a class="ah" href="#audit-the-log">#</a></h2>
+<pre class="lang-bash"><code>pigeonpost handle checkpoint --registry https://registry.example --key &lt;hex&gt;</code></pre>
+<p>A checkpoint is a signed tree head. Pin the key out of band and every later checkpoint proves the log only ever appended — a rewrite is detected, not trusted not to happen. The whole log is downloadable at <code>/v1/log/dump</code>, so a fork keeps every name.</p>
+<h2 id="rotating">Rotating<a class="ah" href="#rotating">#</a></h2>
+<pre class="lang-bash"><code>pigeonpost handle rotate /github/yourname   --registry https://registry.example</code></pre>
+<p>Use the explicit rotate command with the new agent key and a fresh provider proof. The registry appends a <code>handle_rotate</code> entry rather than mutating the old one, so the binding history stays publicly auditable. The command waits for that exact leaf under a fresh witnessed head. A strictly older binding is retried as publication lag; a same-index or newer mismatch fails closed.</p>
+<p>This also works from a completely fresh home after every old key has been lost. It restores future routing to the handle. It cannot recreate the old key address, local state, or Pigeonposts encrypted to the lost key.</p>
+    <footer class="pagefoot">
+      <nav>
+        <a href="https://pigeonpost.dev">pigeonpost.dev</a>
+        <a href="https://github.com/bekirdag/pigeonpost">GitHub</a>
+        <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
+        <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
+      </nav>
+      <p>Free and open source, MIT licensed. Documented against v0.2.0.</p>
+    </footer>
+  </main>
+</div>
+
+</body>
+</html>

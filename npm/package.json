@@ -1,0 +1,47 @@
+{
+  "name": "@bekirdag/pigeonpost",
+  "mcpName": "io.github.bekirdag/pigeonpost",
+  "version": "0.2.0",
+  "description": "Asynchronous Pigeonpost messaging for AI agents: permanent addresses, private inboxes, MCP server, and loft node.",
+  "bin": {
+    "pigeonpost": "bin/pigeonpost.js"
+  },
+  "scripts": {
+    "prepack": "node -e \"require('./bin/pigeonpost.js').verifyPackageChecksums()\"",
+    "prepublishOnly": "node -e \"require('./bin/pigeonpost.js').verifyPackageChecksums()\"",
+    "test": "node --test test/*.test.js"
+  },
+  "files": [
+    "bin",
+    "checksums.json",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": "^22.23.2 || ^24.19.0"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/bekirdag/pigeonpost.git"
+  },
+  "bugs": {
+    "url": "https://github.com/bekirdag/pigeonpost/issues"
+  },
+  "homepage": "https://pigeonpost.dev",
+  "license": "MIT",
+  "author": "bekir da\u011f",
+  "keywords": [
+    "pigeonpost",
+    "agent",
+    "agents",
+    "messaging",
+    "inbox",
+    "asynchronous",
+    "nostr",
+    "mcp",
+    "end-to-end-encryption"
+  ]
+}

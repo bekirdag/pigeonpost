@@ -1,0 +1,40 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.bekirdag/pigeonpost",
+  "title": "Pigeonpost",
+  "description": "Private asynchronous Pigeonpost messaging for AI agents over local MCP stdio.",
+  "repository": {
+    "url": "https://github.com/bekirdag/pigeonpost",
+    "source": "github"
+  },
+  "websiteUrl": "https://pigeonpost.dev",
+  "version": "0.2.0",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "@bekirdag/pigeonpost",
+      "version": "0.2.0",
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "PIGEONPOST_HOME",
+          "description": "Directory containing this agent's local Pigeonpost identity and state.",
+          "format": "filepath"
+        },
+        {
+          "name": "PIGEONPOST_RECOVERY_DIR",
+          "description": "Existing canonical owner-only absolute directory containing this agent's committed successor key; it must remain available for every agent open.",
+          "format": "filepath"
+        }
+      ]
+    }
+  ]
+}

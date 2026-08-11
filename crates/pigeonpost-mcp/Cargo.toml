@@ -1,0 +1,31 @@
+[package]
+name = "pigeonpost-mcp"
+description = "Pigeonpost MCP server: agent messaging as tools for any MCP client."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[dependencies]
+ed25519-dalek.workspace = true
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.2.0" }
+pigeonpost-client = { path = "../pigeonpost-client", version = "0.2.0" }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.2.0", default-features = false, features = ["client"] }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.2.0", default-features = false, features = ["client"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+serde.workspace = true
+serde_json.workspace = true
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "io-util", "net", "sync", "time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+fs2 = "0.4"
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+
+[lints.rust]
+unsafe_code = "forbid"

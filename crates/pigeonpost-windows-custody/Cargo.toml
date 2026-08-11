@@ -1,0 +1,28 @@
+[package]
+name = "pigeonpost-windows-custody"
+description = "Internal Windows handle-relative custody primitives for Pigeonpost."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[target.'cfg(windows)'.dependencies]
+windows-permissions = "0.2.4"
+windows-sys = { version = "0.61.2", features = [
+    "Wdk_Foundation",
+    "Wdk_Storage_FileSystem",
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+] }
+
+[target.'cfg(windows)'.dev-dependencies]
+tempfile = "3.27"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"

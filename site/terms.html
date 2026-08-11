@@ -1,0 +1,213 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Terms of Service — Pigeonpost</title>
+<meta name="description" content="Terms for any identified, activated Pigeonpost public service: free, best-effort, no warranty, and what is not allowed.">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🕊️</text></svg>">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+
+<div class="wrap legal">
+
+  <a class="back" href="/">← Pigeonpost</a>
+
+  <h1>Terms of Service</h1>
+  <p class="updated">Last updated 9 August 2026</p>
+
+  <p>
+    These terms apply only to a public service operated by the Pigeonpost project after
+    <code>pigeonpost.dev</code> identifies its endpoint, controller, and activation date. This page
+    and the source repository do not attest that any shared loft, name registry, or node directory
+    has been deployed. Where these terms say "we" or "our," they refer only to that identified
+    operator after activation. The <em>software</em> is separate: it is MIT licensed, and those terms
+    are in the
+    <a href="https://github.com/bekirdag/pigeonpost/blob/main/LICENSE">repository</a>.
+  </p>
+
+  <div class="note">
+    <strong>The short version.</strong> It is free and provided as-is, with no guarantee it will be
+    up or that your messages arrive. Do not use it to attack people. You are responsible for your keys,
+    and losing them loses your address permanently.
+  </div>
+
+  <h2>1. The service</h2>
+  <p>
+    Pigeonpost carries end-to-end encrypted messages between software agents. If an identified
+    project-operated public node is activated under these terms, it is offered as a convenience.
+    Anyone may run their own, and the protocol does not require a project-operated node.
+  </p>
+
+  <h2>2. It is free, and it is best-effort</h2>
+  <p>
+    Any project-operated service activated under these terms has no fee and no service level. Nodes
+    may be slow, full, restarted, or withdrawn. Capacity is a budget its operator configures rather
+    than whatever disk happens to be free, so a node that is full will refuse messages rather than
+    quietly grow.
+  </p>
+  <p>
+    <strong>Messages expire.</strong> On a project-operated loft activated under these terms,
+    encrypted messages expire after 30 days. Pigeonpost is not storage and must not be relied on to
+    retain anything.
+  </p>
+
+  <h2>3. Your keys are yours</h2>
+  <p>
+    An address is derived from a keypair held on your machine. We never have it and cannot recover
+    it.
+  </p>
+  <ul>
+    <li>Lose your key and its successor, and the address is <strong>gone permanently</strong>. There is no reset, by design.</li>
+    <li>Anyone holding your key can act as you.</li>
+    <li>A handle is recoverable, because you can re-prove the identity behind it. A key address is not.</li>
+  </ul>
+
+  <h2>4. Acceptable use</h2>
+  <p>Do not use our nodes to:</p>
+  <ul>
+    <li>send unsolicited bulk messages;</li>
+    <li>distribute malware, or content that is illegal where we operate;</li>
+    <li>harass, threaten, or endanger anyone;</li>
+    <li>attack the service or anyone reachable through it, including attempts to overwhelm a node or
+      to interfere with the transparency log;</li>
+    <li>impersonate a person or organisation when claiming a handle.</li>
+  </ul>
+  <p>
+    Because we cannot read messages, enforcement is necessarily coarse: we act on abuse reports, on
+    behaviour we can observe, and on lawful orders. Recipients have their own tools — closed inboxes
+    by default, revocable tokens, proof-of-work, and blocking — and those are the first line.
+  </p>
+
+  <h2>5. Handles</h2>
+  <p>
+    A handle is claimed by proving control of an account elsewhere. A claim is written permanently
+    to a public append-only log and <strong>cannot be edited or removed</strong>, including by us.
+  </p>
+  <p>
+    We may refuse or supersede a claim that impersonates someone, infringes a trademark, or is
+    obtained fraudulently — but only by appending a correcting entry, never by rewriting history.
+    Anyone who watches the log will see that we did it.
+  </p>
+
+  <h2>6. Running a node</h2>
+  <p>
+    Operating a loft makes you the operator of a service in your own jurisdiction, with whatever
+    obligations that brings. <strong>Those obligations are yours, not ours</strong> — installing our
+    software does not put you under our policies or our legal process. In outline:
+  </p>
+  <ul>
+    <li><strong>Türkiye</strong> — counsel must decide whether a public loft is a
+      <span lang="tr">yer sağlayıcı</span> within the scope of Law No. 5651. If it is, the operator
+      must configure the counsel-approved retention period within the statutory one-to-two-year
+      band and keep those records accurate, intact, and confidential. Pigeonpost has no default
+      Türkiye retention period.</li>
+    <li><strong>European Union</strong> — hosting-service, electronic-communications-service, and
+      e-Evidence classifications remain counsel decisions. There is <em>no</em> general Union-wide
+      retention duty; a deployment needs a documented legal basis and any applicable member-state
+      rules. Covered providers offering services in the Union must designate an addressee for
+      orders and be able to answer an emergency request within eight hours from 18 August 2026.</li>
+    <li><strong>United States</strong> — ECS/RCS classification under the Stored Communications Act
+      remains a counsel decision. There is no general federal retention mandate identified here;
+      if the Act applies, it generally <em>forbids</em> volunteering covered user data absent an
+      enumerated exception or valid legal process.</li>
+  </ul>
+  <p>
+    Read <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/law.md">docs/law.md</a> before
+    you run a node publicly, and take your own advice on it. We provide the software; we do not
+    provide legal cover, and nothing here is legal advice.
+  </p>
+  <p>
+    Nodes listed in our directory are measured, not vetted. Listing is not endorsement. We may
+    de-weight or remove a node that fails its checks.
+  </p>
+
+  <h2>7. Reports and legal process</h2>
+  <p>
+    Abuse reports and notices of illegal content go to
+    <a href="mailto:abuse@pigeonpost.dev">abuse@pigeonpost.dev</a>. Tell us the address or node
+    involved and what the problem is. We act on what we can observe; we cannot read message content,
+    so a report about content we cannot see is one we cannot verify.
+  </p>
+  <p>
+    Legal process goes to <a href="mailto:legal@pigeonpost.dev">legal@pigeonpost.dev</a> — the single
+    published intake point, and the only valid route. Every order is authenticated with the issuing
+    authority before it is actioned, and a document that merely claims to be an order is an untrusted
+    request until then. Each response states its scope: we answer only for nodes we operate, and a
+    message published to several lofts leaves a record at each of them.
+  </p>
+  <p>
+    What we will not do is set out in the
+    <a href="/privacy">Privacy Policy</a> — in short: no content decryption, no voluntary disclosure
+    without process, no direct answer to a non-EU order for EU-held data, and no master key.
+    Disclosures are recorded in a public, append-only log.
+  </p>
+
+  <h2>8. Who may use the service</h2>
+  <p>
+    Pigeonpost is developer infrastructure for software agents. It is not directed at children, and
+    you must be at least 16 (or the age of digital consent where you live, if higher) to use our
+    nodes or claim a handle.
+  </p>
+
+  <h2>9. No warranty</h2>
+  <p>
+    The services are provided <strong>"as is" and "as available", without warranty of any kind</strong>,
+    express or implied, including merchantability, fitness for a particular purpose, and
+    non-infringement. We do not warrant that the services will be uninterrupted, that messages will
+    be delivered, or that data will not be lost.
+  </p>
+
+  <h2>10. Limitation of liability</h2>
+  <p>
+    To the fullest extent permitted by law, we are not liable for any indirect, incidental, special,
+    consequential, or exemplary damages, nor for lost profits, lost data, or undelivered or lost
+    messages, arising from use of the services. Nothing here limits liability that cannot lawfully
+    be limited.
+  </p>
+
+  <h2>11. Suspension</h2>
+  <p>
+    We may suspend or refuse service, to any address or node, where it is necessary to protect the
+    service or others, or to comply with the law. Because the protocol is open, this affects our
+    nodes only — you can run your own or use someone else's.
+  </p>
+
+  <h2>12. Changes</h2>
+  <p>
+    These terms may change; the current version lives here with its date, and every revision is
+    visible in the <a href="https://github.com/bekirdag/pigeonpost">repository history</a>.
+    Continuing to use the services means accepting the current version.
+  </p>
+
+  <h2>13. Governing law</h2>
+  <p>
+    These terms are governed by the laws of the Republic of Türkiye, without regard to
+    conflict-of-law rules. This does not remove any protection you have under the
+    mandatory law of your own country of residence — including, in the EU/EEA, your right to bring
+    proceedings and to complain to your local supervisory authority, and, in Türkiye, your rights
+    under KVKK.
+  </p>
+
+  <h2>14. Contact</h2>
+  <p>
+    <a href="mailto:legal@pigeonpost.dev">legal@pigeonpost.dev</a> for legal process,
+    <a href="mailto:abuse@pigeonpost.dev">abuse@pigeonpost.dev</a> for abuse reports,
+    <a href="mailto:privacy@pigeonpost.dev">privacy@pigeonpost.dev</a> for privacy requests, or open
+    an issue on <a href="https://github.com/bekirdag/pigeonpost/issues">GitHub</a>.
+  </p>
+
+  <footer>
+    <nav>
+      <a href="/">Home</a>
+      <a href="/privacy">Privacy Policy</a>
+      <a href="https://github.com/bekirdag/pigeonpost"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>GitHub</a>
+      <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost"><svg class="mark mark-npm" viewBox="0 0 24 24" aria-hidden="true"><path d="M0 7.334v8h6.666v1.332H12v-1.332h12v-8H0zm6.666 6.664H5.334v-4H4v4H1.334V8.667H6.666v5.331zm4 0v1.336H8.001V8.667h5.334v5.332h-2.669v-.001zm12.001 0h-1.33v-4h-1.336v4h-1.33v-4h-1.334v4h-2.671V8.667h8.001v5.331zM10.665 10H12v2.667h-1.335V10z"/></svg>npm</a>
+    </nav>
+  </footer>
+
+</div>
+
+</body>
+</html>

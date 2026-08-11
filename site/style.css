@@ -1,0 +1,199 @@
+/* Pigeonpost — one stylesheet, no dependencies, no fonts to fetch.
+   White background throughout, on purpose: the product is infrastructure, not a brand experience. */
+
+:root {
+  --navy: #16326b;
+  --blue: #2563eb;
+  --green: #22c55e;
+  --ink: #14181f;
+  --body: #444c58;
+  --muted: #6b7480;
+  --rule: #e6e9ee;
+  --wash: #f7f9fb;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: #fff;
+  color: var(--body);
+  font: 17px/1.65 var(--sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.wrap { max-width: 760px; margin: 0 auto; padding: 0 24px; }
+
+/* ---- header ---- */
+
+header {
+  padding: 44px 0 0;
+}
+header img { width: 232px; max-width: 62vw; height: auto; display: block; }
+
+/* ---- hero ---- */
+
+.hero { padding: 40px 0 8px; }
+.hero h1 {
+  font-size: clamp(30px, 5.2vw, 42px);
+  line-height: 1.18;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  font-weight: 700;
+  margin: 0 0 18px;
+  max-width: 17ch;
+}
+.hero p.lede {
+  font-size: 19px;
+  color: var(--body);
+  margin: 0 0 26px;
+  max-width: 58ch;
+}
+
+.cta { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 8px; }
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 20px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 550;
+  text-decoration: none;
+  border: 1px solid transparent;
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover { background: #1d4185; }
+.btn-secondary { border-color: var(--rule); color: var(--ink); }
+.btn-secondary:hover { border-color: #cfd5de; background: var(--wash); }
+
+/* Brand marks inline in links. They inherit link colour so they sit in the text
+   rather than announcing themselves — except npm, which is only recognisable red. */
+.mark { width: 1.05em; height: 1.05em; flex: none; fill: currentColor; }
+.mark-npm { fill: #cb3837; width: 1.5em; height: 1.5em; }
+.btn-secondary .mark-npm { fill: #cb3837; }
+
+/* ---- code ---- */
+
+pre {
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  padding: 16px 18px;
+  overflow-x: auto;
+  font: 13.5px/1.7 var(--mono);
+  color: var(--ink);
+  margin: 22px 0;
+}
+pre .c { color: var(--muted); }
+code {
+  font: 0.9em/1 var(--mono);
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 4px;
+  padding: 1.5px 5px;
+  color: var(--ink);
+}
+pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+
+/* ---- sections ---- */
+
+section { padding: 40px 0; border-top: 1px solid var(--rule); }
+section:first-of-type { border-top: 0; }
+
+h2 {
+  font-size: 13px;
+  letter-spacing: .09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  font-weight: 600;
+  margin: 0 0 20px;
+}
+h3 {
+  font-size: 17px;
+  color: var(--ink);
+  font-weight: 620;
+  margin: 0 0 6px;
+}
+p { margin: 0 0 16px; }
+p:last-child { margin-bottom: 0; }
+a { color: var(--blue); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.grid { display: grid; gap: 26px 30px; grid-template-columns: repeat(auto-fit, minmax(230px, 1fr)); }
+.grid p { font-size: 15.5px; margin: 0; }
+
+.addr {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.addr > div { padding: 20px; }
+.addr > div + div { border-left: 1px solid var(--rule); }
+.addr .k { font: 13px/1.5 var(--mono); color: var(--navy); word-break: break-all; margin-bottom: 10px; }
+.addr p { font-size: 14.5px; margin: 0; }
+
+@media (max-width: 560px) {
+  .addr { grid-template-columns: 1fr; }
+  .addr > div + div { border-left: 0; border-top: 1px solid var(--rule); }
+}
+
+/* ---- legal pages ---- */
+
+.legal { padding: 34px 0 0; }
+.legal h1 { font-size: 30px; color: var(--ink); letter-spacing: -0.02em; margin: 0 0 6px; }
+.legal .updated { color: var(--muted); font-size: 14.5px; margin: 0 0 34px; }
+.legal h2 {
+  font-size: 17px;
+  text-transform: none;
+  letter-spacing: 0;
+  color: var(--ink);
+  font-weight: 620;
+  margin: 34px 0 10px;
+}
+.legal ul { margin: 0 0 16px; padding-left: 22px; }
+.legal li { margin-bottom: 7px; }
+.legal table { border-collapse: collapse; width: 100%; margin: 18px 0; font-size: 15px; }
+.legal th, .legal td { text-align: left; padding: 9px 12px; border-bottom: 1px solid var(--rule); vertical-align: top; }
+.legal th { font-weight: 600; color: var(--ink); font-size: 13px; text-transform: uppercase; letter-spacing: .05em; }
+
+/* A four-column table has nowhere to go on a phone; let it scroll rather than
+   squeeze the page. */
+@media (max-width: 620px) {
+  .legal table { display: block; overflow-x: auto; white-space: nowrap; }
+  .legal td, .legal th { white-space: normal; min-width: 130px; }
+}
+
+.note {
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-left: 3px solid var(--navy);
+  border-radius: 0 8px 8px 0;
+  padding: 15px 18px;
+  margin: 22px 0;
+  font-size: 15.5px;
+}
+
+.back { display: inline-block; margin-bottom: 26px; font-size: 15px; }
+
+/* ---- footer ---- */
+
+footer {
+  border-top: 1px solid var(--rule);
+  margin-top: 24px;
+  padding: 30px 0 60px;
+  font-size: 14.5px;
+  color: var(--muted);
+}
+footer nav { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 20px; margin-bottom: 14px; }
+footer nav a { display: inline-flex; align-items: center; gap: 7px; }
+footer a { color: var(--body); }
+footer a:hover { color: var(--blue); }

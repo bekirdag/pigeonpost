@@ -1,0 +1,78 @@
+[package]
+name = "pigeonpost-directory"
+description = "Pigeonpost directory: the pool of community lofts, and how clients choose among them."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[features]
+default = ["client", "server"]
+client = ["dep:reqwest"]
+# Raw state transitions exist only for cross-crate acceptance fixtures. Normal
+# builds must use the witnessed `RegistryLog` mutation path exposed by the server.
+test-utilities = ["server"]
+server = [
+    "client",
+    "dep:pigeonpost-loft",
+    "pigeonpost-registry/client",
+    "dep:axum",
+    "dep:http-body",
+    "dep:hyper",
+    "dep:hyper-util",
+    "dep:tokio",
+    "dep:tower",
+    "dep:rusqlite",
+    "dep:rand_core",
+    "dep:zeroize",
+    "dep:tracing",
+    "dep:pigeonpost-unix-custody",
+    "dep:rustix",
+    "dep:pigeonpost-windows-custody",
+    "dep:winapi-util",
+    "dep:windows-permissions",
+]
+
+[dependencies]
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.2.0" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.2.0", default-features = false }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.2.0", default-features = false, optional = true }
+axum = { version = "0.8", optional = true }
+http-body = { version = "1", optional = true }
+hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
+hyper-util = { version = "0.1", features = ["server-auto", "tokio", "service"], optional = true }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "sync"], optional = true }
+tower = { version = "0.5", features = ["util"], optional = true }
+rusqlite = { version = "0.32", features = ["bundled"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"], optional = true }
+ed25519-dalek.workspace = true
+rand_core = { workspace = true, optional = true }
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+thiserror.workspace = true
+zeroize = { workspace = true, optional = true }
+tracing = { version = "0.1", optional = true }
+
+[target.'cfg(unix)'.dependencies]
+pigeonpost-unix-custody = { path = "../pigeonpost-unix-custody", optional = true }
+rustix = { version = "1.1", features = ["fs", "process"], optional = true }
+
+[target.'cfg(windows)'.dependencies]
+pigeonpost-windows-custody = { path = "../pigeonpost-windows-custody", optional = true }
+tempfile = "3.27"
+winapi-util = { version = "0.1.11", optional = true }
+windows-permissions = { version = "0.2.4", optional = true }
+
+[dev-dependencies]
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.2.0" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.2.0", default-features = false, features = ["client", "server"] }
+tokio = { version = "1", features = ["full"] }
+tempfile = "3"
+
+[lints.rust]
+unsafe_code = "forbid"

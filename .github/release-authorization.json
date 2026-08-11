@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "repository": "bekirdag/pigeonpost",
+  "algorithm": "Ed25519",
+  "approverPublicKeySpkiBase64": null,
+  "externalProtectionAppSlug": null
+}

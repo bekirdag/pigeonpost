@@ -1,0 +1,13 @@
+# Release-only native musl toolchain.
+#
+# The digest-pinned Rust/Alpine image intentionally carries a compiler but no C development
+# headers. `ring` and bundled SQLite both compile C during the release build, so construct the
+# smallest possible derived toolchain with exact, signed Alpine packages. Exact version pins make
+# repository churn fail closed instead of silently changing release inputs.
+ARG LINUX_BUILD_IMAGE=docker.io/library/rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+FROM ${LINUX_BUILD_IMAGE}
+
+ARG MUSL_VERSION=1.2.5-r12
+RUN apk add --no-cache \
+      musl=${MUSL_VERSION} \
+      musl-dev=${MUSL_VERSION}
