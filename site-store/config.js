@@ -1,35 +1,30 @@
 // Pigeonpost handle store — deployment configuration.
 //
-// Every value here is filled in once the MASAAS tenant exists. MASAAS holds the payment-gateway
-// Until then the store runs in "preview" mode: handle validation and the whole UI work, but the
-// checkout button explains what is not yet wired instead of calling a dead endpoint.
-//
-// keys and hosts the card capture, so no gateway secret ever appears here or in the browser.
+// The customer-facing store (login, checkout, card capture, subscription management) is HOSTED BY
+// MASAAS at the product app URL below. This branded landing validates the handle and hands the
+// buyer off to that hosted store to sign in and subscribe. No payment keys, no API calls, no
+// secrets live here — MASAAS owns all of it, exactly as the product was provisioned.
 window.PIGEONPOST_STORE = {
-  // The Pigeonpost billing adapter (the service that fronts saas_be's internal checkout API).
-  // Empty string = preview mode.
-  adapterBaseUrl: "",
+  // The MASAAS-hosted store for this product. Empty = preview mode.
+  masaasStoreUrl: "https://app-pigeonpost.masaas.org",
 
-  // No payment-gateway key here, on purpose. MASAAS holds the Stripe keys and hosts the card
-  // capture; the store only ever redirects to the hosted payment URL the adapter returns.
+  // Where in the hosted store the customer subscribes / manages. Packages are shown here.
+  billingPath: "/billing",
 
-  // sealunit OIDC for the product realm — where "Sign in" sends the browser.
-  oidc: {
-    issuer: "",            // e.g. https://sso.sealunit.com/realms/pigeonpost
-    clientId: "",          // the store's public OIDC client id
-    redirectPath: "/account",
+  // The public catalog — used only to read the live price so this page never drifts from MASAAS.
+  catalog: {
+    apiUrl: "https://api.masaas.org/v1",
+    productSlug: "pigeonpost",
+    packageSlug: "handle-yearly",
+    planSlug: "handle-yearly-annual-usd", // stable across revisions; never use the price_plan UUID
   },
 
-  // The registry these handles are sold in. Read-only here; used to show a resolve link.
-  registryUrl: "https://registry.pigeonpost.dev",
-
-  // Commercial terms shown to the buyer. The authority is the MASAAS price plan; these are display.
+  // Display fallback if the live catalog read fails. MASAAS is authoritative.
   price: { amount: 5, currency: "USD", interval: "year" },
 
-  // The MASAAS product/package a purchase subscribes to.
-  product: { slug: "pigeonpost", packageId: "" },
+  registryUrl: "https://registry.pigeonpost.dev",
 
-  // Handle grammar — mirrors the registry's flat-handle rules so the UI can validate before asking
-  // the server. The server remains authoritative.
+  // Handle grammar — mirrors the registry's flat-handle rules for instant feedback. The registry,
+  // and MASAAS at checkout, remain authoritative.
   handle: { min: 3, max: 32, pattern: "^[a-z0-9]+$" },
 };
