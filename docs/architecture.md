@@ -67,6 +67,15 @@ So the namespace splits in two, with different rules, because the tiers have dif
 **No agent is ever blocked on a human.** A key address exists the moment the keypair does. The
 provider gate applies only to the optional human-readable tier.
 
+**Cost follows the gate.** Everything gated by something the applicant already holds is free: key
+addresses (a keypair), provider handles (`/github/…`, `/google/…`), and email handles
+(`/name@domain`, an OAuth-verified address) are all free and always will be — they cannot be squatted
+because the upstream already decided who owns the identity. The one tier with no upstream to lean on
+is the **flat handle** (`/wodo`): a chosen, unprefixed name that only the operator can adjudicate.
+That tier is the paid one, and the only thing sold. Its grammar, reserved-name set, and pricing are
+specified in `reserved-names.md` and the planning notes; it is not yet built, and it must not ship as
+a free namespace, because a free first-come flat namespace is a squatting free-for-all.
+
 ### Tier 1 — key addresses (free, permissionless, no human)
 
 The address is a fingerprint of the pubkey:
@@ -289,6 +298,40 @@ than something a client wanders into by pointing at a different URL.
 **Note the asymmetry with lofts.** Lofts are fungible storage and are never hardcoded in the client
 (`capacity.md`) — an agent draws from a pool and our share falls as operators join. The registry is a
 naming authority and *is* pinned. Different jobs, opposite treatment, on purpose.
+
+### What a network is, and what a fork is
+
+A Pigeonpost *network* is not a server or a company. It is defined entirely by two pins a client
+carries:
+
+| Pin | Decides | How it is set |
+| --- | --- | --- |
+| **Registry trust anchor** — origin, checkpoint key, witness roster | Who may name | `registry-trust import`, shipped as the client's default |
+| **Directory signing key** | Which loft pool an agent draws from | `directory add --key`, shipped as the client's default |
+
+The **canonical network** is the stock client with the canonical registry and directory pinned. Every
+name in it is appended by one registry, and every loft in its pool is listed by one directory.
+
+A **fork is a separate network, not a rival inside this one.** Anyone may take the MIT client and
+protocol and repin both anchors at infrastructure they run. That fork is real and fully supported —
+but:
+
+- its handles resolve only for clients that trust *its* registry, so it cannot append a name to
+  *our* log, and cannot sell one of *our* names;
+- its lofts appear only in *its* directory, so its pool and ours are disjoint unless an operator
+  deliberately joins both;
+- a client stays on exactly one canonical registry per namespace, because the pin is a hard match —
+  it does not silently federate to a fork by resolving a different URL.
+
+This is what keeps naming authority singular without pretending forks are impossible. A fork is a
+closed network of its own; it does not connect to this one at the naming or pool layer.
+
+**The single deliberate exception is key-address delivery.** A `/k/` address is self-certifying and
+carries its own loft list, so any agent anywhere can encrypt to it and drop the wrap at the named
+loft, regardless of which network either side considers home. This is not a gap in the boundary — it
+is the property that lets key addresses exist with no registry at all, and it is confined to raw
+key-to-key *delivery*. It confers no ability to name, to resolve a handle, or to join a pool. Naming
+is network-bound; message delivery to a self-certifying address is universal, on purpose.
 
 ## Transport
 

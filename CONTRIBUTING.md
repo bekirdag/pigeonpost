@@ -63,7 +63,18 @@ Include what you expected, what the doc says, and the case where they diverge. F
 security-shaped — key handling, the encryption envelope, the registry's integrity properties — say so
 plainly in the title so it gets read first.
 
-## License
+## License and the CLA
 
-Contributions are accepted under the MIT license (see [LICENSE](LICENSE)). By opening a pull request,
-you agree your contribution is licensed under those terms.
+Almost all of Pigeonpost is MIT (see [LICENSE](LICENSE)), and contributions to those parts are
+distributed to everyone under MIT. One component — the registry *server*, the piece that runs the
+paid handle registry — is offered by the maintainer under a source-available license and operated
+commercially.
+
+So that the project can stay open to contribution while one steward keeps the right to license and
+sell it, **every contribution is accepted under the [Contributor License Agreement](CLA.md).** It
+grants the maintainer a broad license, including the right to relicense your contribution and to
+include it in the commercial registry. It is a license, not an assignment: your copyright stays
+yours, and your work in the MIT parts stays MIT for everyone.
+
+By opening a pull request you agree to the CLA. Until an automated check is in place, add the
+acceptance line described at the end of [CLA.md](CLA.md) to your first PR.
