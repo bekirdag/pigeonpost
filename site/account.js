@@ -12,7 +12,11 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const authReady = Boolean(cfg.oidc && cfg.oidc.clientId);
 
-  const SS = window.sessionStorage;
+  // localStorage, not sessionStorage: the PKCE verifier and session must survive the full-page
+  // redirect out to Keycloak and back. sessionStorage is meant to persist across that, but in
+  // practice some browsers drop it across a cross-site OAuth round-trip, which loses the verifier
+  // and makes every exchange fail invalid_grant — a silent sign-in loop. localStorage is durable.
+  const SS = window.localStorage;
   const getToken = () => SS.getItem("pp_session");
   const setToken = (t) => SS.setItem("pp_session", t);
   const clearToken = () => SS.removeItem("pp_session");
@@ -61,9 +65,16 @@
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
+    const strip = () => history.replaceState({}, "", cfg.oidc.redirectPath || "/account");
+    if (params.get("error")) {
+      toast("Sign-in did not complete: " + params.get("error"));
+      strip();
+      return false;
+    }
     if (!code) return false;
     if (state && SS.getItem("pp_state") && state !== SS.getItem("pp_state")) {
       toast("Sign-in could not be verified. Please try again.");
+      SS.removeItem("pp_pkce"); SS.removeItem("pp_state"); strip();
       return false;
     }
     const verifier = SS.getItem("pp_pkce") || "";
@@ -74,11 +85,19 @@
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ code, redirectUri: redirect, codeVerifier: verifier }),
       });
-      const body = await res.json();
-      if (body.session) { setToken(body.session); }
-    } catch (_) { /* fall through to signed-out */ }
+      const body = await res.json().catch(() => ({}));
+      if (body.session) {
+        setToken(body.session);
+      } else {
+        // Surface the reason rather than looping silently — this is what turned a real bug into a
+        // mystery on the first sign-in attempt.
+        toast("Could not complete sign-in" + (body.error ? ": " + body.error : "."));
+      }
+    } catch (_) {
+      toast("Could not reach the sign-in service. Try again in a moment.");
+    }
     SS.removeItem("pp_pkce"); SS.removeItem("pp_state");
-    history.replaceState({}, "", cfg.oidc.redirectPath || "/account");
+    strip();
     return Boolean(getToken());
   }
 
