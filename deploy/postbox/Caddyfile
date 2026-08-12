@@ -1,0 +1,13 @@
+# Caddy terminates TLS (auto-ACME) and reverse-proxies both hostnames to the postbox container.
+# DNS is grey-cloud, so HTTP-01 / TLS-ALPN issuance reaches this box directly on 80/443.
+#
+# mcp.pigeonpost.dev carries long-lived MCP streaming — no edge proxy sits in front to cut it.
+
+postbox.pigeonpost.dev, mcp.pigeonpost.dev {
+	encode zstd gzip
+
+	# Long-lived MCP streaming: don't buffer, don't impose a short flush timeout.
+	reverse_proxy postbox:8990 {
+		flush_interval -1
+	}
+}

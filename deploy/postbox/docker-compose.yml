@@ -1,0 +1,91 @@
+# pigeonpost-postbox — hosted plane on 159.69.201.24 (postbox.pigeonpost.dev / mcp.pigeonpost.dev).
+# DNS is grey-cloud (not Cloudflare-proxied): Caddy auto-issues TLS via HTTP-01/TLS-ALPN, and MCP
+# streaming is not cut by an edge proxy. See docs/planning/hosted-postbox-architecture-2026-08-12.md.
+#
+# Bring up:  cp postbox.env.example postbox.env && edit;  mkdir -p secrets && place pg_pw + master.age
+#            docker compose up -d --build
+name: pigeonpost-postbox
+
+networks:
+  edge: {}
+  internal:
+    internal: true
+
+volumes:
+  pg_data: {}
+  loft_data: {}
+  caddy_data: {}
+
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"     # public on 159.69.201.24 (ACME + redirect)
+      - "443:443"
+    networks: [edge, internal]
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - postbox
+
+  postbox:
+    image: pigeonpost-postbox:latest
+    build:
+      context: ../..                       # repo root
+      dockerfile: deploy/postbox/Dockerfile
+    restart: unless-stopped
+    env_file: [./postbox.env]              # copied from postbox.env.example; keep 600, never committed
+    networks: [internal]
+    volumes:
+      - loft_data:/data/loft
+      - ./secrets/master.age:/kms/master.age:ro
+    depends_on:
+      - postgres
+    healthcheck:
+      test: ["CMD", "/usr/local/bin/pigeonpost-postbox", "--healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postbox
+      POSTGRES_USER: postbox
+      POSTGRES_PASSWORD_FILE: /run/secrets/pg_pw
+    networks: [internal]
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    secrets: [pg_pw]
+
+  reaper:
+    image: pigeonpost-postbox:latest
+    restart: unless-stopped
+    command: ["--reaper"]                  # ephemeral-retention sweep loop
+    env_file: [./postbox.env]
+    networks: [internal]
+    volumes:
+      - loft_data:/data/loft
+    depends_on:
+      - postgres
+      - postbox
+
+  backup:
+    image: offen/docker-volume-backup:latest
+    restart: unless-stopped
+    environment:
+      BACKUP_CRON_EXPRESSION: "0 3 * * *"
+      BACKUP_FILENAME: "postbox-%Y%m%d.tar.gz"
+    networks: [internal]
+    volumes:
+      - pg_data:/backup/pg:ro
+      - loft_data:/backup/loft:ro
+      # - ./backups:/archive   # or configure offsite (S3/etc.) — see image docs
+
+secrets:
+  pg_pw:
+    file: ./secrets/pg_pw

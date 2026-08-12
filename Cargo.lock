@@ -1365,6 +1365,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "pigeonpost-postbox"
+version = "0.2.0"
+dependencies = [
+ "axum",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "pigeonpost-registry"
 version = "0.2.0"
 dependencies = [

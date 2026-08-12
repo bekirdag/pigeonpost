@@ -1,0 +1,23 @@
+[package]
+name = "pigeonpost-postbox"
+description = "Pigeonpost hosted plane: remote MCP + key custody + inbox hosting for mass adoption."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+# Scaffold only. Stub HTTP surface (/health, /mcp, /v1) + healthcheck + reaper entrypoints.
+# The real P0 logic (anon /k/ create with PoW, send/inbox/read, key vault, accounts) is not here yet;
+# see docs/planning/hosted-postbox-architecture-2026-08-12.md. Kept dependency-light so it always
+# builds; the pigeonpost-core/-loft/-mcp/-registry integrations are added as the build lands.
+[dependencies]
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }

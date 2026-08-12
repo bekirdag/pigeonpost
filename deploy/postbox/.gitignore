@@ -1,0 +1,4 @@
+# Never commit real secrets or local state.
+postbox.env
+secrets/
+backups/
