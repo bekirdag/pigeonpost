@@ -60,7 +60,7 @@ struct AppState {
 struct Config {
     bind: String,
     public_url: String,
-    db_url: String,
+    db_path: String,
     loft_dir: String,
     registry_url: String,
     pow_min_bits: u32,
@@ -74,7 +74,7 @@ impl Config {
         Config {
             bind: env_or("POSTBOX_BIND", "0.0.0.0:8990"),
             public_url: env_or("POSTBOX_PUBLIC_URL", "http://localhost:8990"),
-            db_url: env_or("POSTBOX_DB_URL", "sqlite::memory:"),
+            db_path: env_or("POSTBOX_DB_PATH", "/data/postbox.db"),
             loft_dir: env_or("POSTBOX_LOFT_DIR", "/data/loft"),
             registry_url: env_or("REGISTRY_URL", "https://registry.pigeonpost.dev"),
             pow_min_bits: env_num("POW_MIN_BITS", 18),
@@ -151,17 +151,24 @@ async fn serve(cfg: Config) {
         }
     };
 
-    // Note: db_url is intentionally omitted — it may embed a password.
+    let state = match build_state(&cfg) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, db_path = %cfg.db_path, "failed to open the identity store");
+            std::process::exit(1);
+        }
+    };
+
     tracing::info!(
         bind = %cfg.bind,
         public_url = %cfg.public_url,
         registry = %cfg.registry_url,
-        loft_dir = %cfg.loft_dir,
+        db_path = %cfg.db_path,
         pow_bits = format!("{}..{}", cfg.pow_min_bits, cfg.pow_max_bits),
-        "pigeonpost-postbox listening (scaffold — /mcp and /v1 return 501)"
+        "pigeonpost-postbox listening (/v1 identity + PoW live; /mcp returns 501)"
     );
 
-    if let Err(e) = axum::serve(listener, build_router(build_state(&cfg)))
+    if let Err(e) = axum::serve(listener, build_router(state))
         .with_graceful_shutdown(shutdown_signal())
         .await
     {
@@ -173,7 +180,7 @@ async fn serve(cfg: Config) {
 /// Assemble shared state. The PoW HMAC secret comes from `POW_HMAC_SECRET`; if it's unset (or the
 /// placeholder), we fall back to an ephemeral random secret and warn — fine for dev, but challenges
 /// won't survive a restart and won't validate across replicas.
-fn build_state(cfg: &Config) -> AppState {
+fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
     let secret = match std::env::var("POW_HMAC_SECRET") {
         Ok(s) if !s.is_empty() && s != "CHANGEME" => s.into_bytes(),
         _ => {
@@ -185,7 +192,7 @@ fn build_state(cfg: &Config) -> AppState {
             b.to_vec()
         }
     };
-    AppState {
+    Ok(AppState {
         pow: Arc::new(pow::Pow::new(
             secret,
             cfg.pow_min_bits,
@@ -193,8 +200,8 @@ fn build_state(cfg: &Config) -> AppState {
             POW_TTL_SECS,
         )),
         vault: Arc::new(vault::Vault::new(load_master_key())),
-        store: Arc::new(store::Store::new()),
-    }
+        store: Arc::new(store::Store::open(&cfg.db_path)?),
+    })
 }
 
 /// The vault master key. P0 derives it as `SHA-256` of the sealed file named by
@@ -341,16 +348,28 @@ async fn create_identity(
     let cap_token = gen_cap_token();
     let cap_hash = sha256(cap_token.as_bytes());
 
-    state.store.insert(store::StoredIdentity {
-        address: address.clone(),
-        wrapped_seed,
-        ed25519_pub,
-        x25519_pub,
-        cap_hash,
-        label: req.label.clone(),
-        created_at: now,
-    });
-    tracing::info!(address = %address, total = state.store.len(), "minted /k/ identity");
+    if let Err(e) = state
+        .store
+        .insert(store::StoredIdentity {
+            address: address.clone(),
+            wrapped_seed,
+            ed25519_pub,
+            x25519_pub,
+            cap_hash,
+            label: req.label.clone(),
+            created_at: now,
+        })
+        .await
+    {
+        tracing::error!(error = %e, "store insert failed");
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({ "error": "store_error" })),
+        )
+            .into_response();
+    }
+    let total = state.store.count().await.unwrap_or(0);
+    tracing::info!(address = %address, total, "minted /k/ identity");
 
     (
         StatusCode::CREATED,
@@ -451,7 +470,7 @@ mod tests {
         let state = AppState {
             pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
             vault: Arc::new(vault::Vault::new([0u8; 32])),
-            store: Arc::new(store::Store::new()),
+            store: Arc::new(store::Store::open(":memory:").unwrap()),
         };
         let _ = build_router(state);
     }

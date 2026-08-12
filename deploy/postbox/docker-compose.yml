@@ -2,7 +2,9 @@
 # DNS is grey-cloud (not Cloudflare-proxied): Caddy auto-issues TLS via HTTP-01/TLS-ALPN, and MCP
 # streaming is not cut by an edge proxy. See docs/planning/hosted-postbox-architecture-2026-08-12.md.
 #
-# Bring up:  cp postbox.env.example postbox.env && edit;  mkdir -p secrets && place pg_pw + master.age
+# P0 storage is bundled SQLite on the `data` volume (POSTBOX_DB_PATH). Postgres is the P2 swap.
+#
+# Bring up:  cp postbox.env.example postbox.env && edit;  mkdir -p secrets && place master.age
 #            docker compose up -d --build
 name: pigeonpost-postbox
 
@@ -12,9 +14,8 @@ networks:
     internal: true
 
 volumes:
-  pg_data: {}
-  loft_data: {}
-  caddy_data: {}
+  data: {}        # SQLite db + loft store
+  caddy_data: {}  # ACME certs
 
 services:
   caddy:
@@ -39,28 +40,14 @@ services:
     env_file: [./postbox.env]              # copied from postbox.env.example; keep 600, never committed
     networks: [internal]
     volumes:
-      - loft_data:/data/loft
+      - data:/data
       - ./secrets/master.age:/kms/master.age:ro
-    depends_on:
-      - postgres
     healthcheck:
       test: ["CMD", "/usr/local/bin/pigeonpost-postbox", "--healthcheck"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
-
-  postgres:
-    image: postgres:16
-    restart: unless-stopped
-    environment:
-      POSTGRES_DB: postbox
-      POSTGRES_USER: postbox
-      POSTGRES_PASSWORD_FILE: /run/secrets/pg_pw
-    networks: [internal]
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-    secrets: [pg_pw]
 
   reaper:
     image: pigeonpost-postbox:latest
@@ -69,9 +56,8 @@ services:
     env_file: [./postbox.env]
     networks: [internal]
     volumes:
-      - loft_data:/data/loft
+      - data:/data
     depends_on:
-      - postgres
       - postbox
 
   backup:
@@ -82,10 +68,5 @@ services:
       BACKUP_FILENAME: "postbox-%Y%m%d.tar.gz"
     networks: [internal]
     volumes:
-      - pg_data:/backup/pg:ro
-      - loft_data:/backup/loft:ro
+      - data:/backup/data:ro
       # - ./backups:/archive   # or configure offsite (S3/etc.) — see image docs
-
-secrets:
-  pg_pw:
-    file: ./secrets/pg_pw
