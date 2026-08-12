@@ -1012,6 +1012,14 @@ impl Registry {
         source: SocketAddr,
         operation: HandleBindingOperation,
     ) -> Result<Registration> {
+        // Flat handles are the paid, allocated tier. They are gated on a billing entitlement, not on
+        // a provider proof, so they must never fall through to provider verification. The entitlement
+        // path (webhook-pushed entitlement + admission check + HandleRenew/HandleLapse) is the
+        // separate Slice 2 build; until it ships, a flat claim is refused cleanly rather than
+        // half-processed against a provider it has no proof for.
+        if handle.is_flat() {
+            return Err(RegistryError::HandleTierUnavailable);
+        }
         let prepared = self.prepare_handle_binding(
             handle.clone(),
             *pubkey,

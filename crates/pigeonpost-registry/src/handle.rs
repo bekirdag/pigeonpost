@@ -159,7 +159,9 @@ fn validate_flat_name(name: &str) -> Result<String> {
         ));
     }
     if let Some(reason) = crate::reserved::reserved_reason(&lower) {
-        return Err(RegistryError::MalformedHandle(format!("that handle is {reason}")));
+        return Err(RegistryError::MalformedHandle(format!(
+            "that handle is {reason}"
+        )));
     }
     Ok(lower)
 }
@@ -204,7 +206,13 @@ mod tests {
     #[test]
     fn flat_handles_reject_punctuation_that_could_fake_a_provider_path() {
         // The whole point of the alphanumeric-only rule: no `@`, `/`, `.`, `-`, `_`.
-        for bad in ["/bekir@gmail.com", "/gh.evil", "/my-agent", "/a_b", "/x/y/z"] {
+        for bad in [
+            "/bekir@gmail.com",
+            "/gh.evil",
+            "/my-agent",
+            "/a_b",
+            "/x/y/z",
+        ] {
             assert!(Handle::parse(bad).is_err(), "{bad} must be rejected");
         }
     }

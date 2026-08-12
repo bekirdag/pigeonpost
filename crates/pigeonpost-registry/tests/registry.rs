@@ -1702,3 +1702,25 @@ fn open_error(path: &str) -> RegistryError {
         Err(error) => error,
     }
 }
+
+#[tokio::test]
+async fn flat_handles_are_recognized_but_not_yet_claimable() {
+    // Slice 1 defines and protects the flat namespace; the paid entitlement path (Slice 2) is not
+    // built yet. A flat claim must be refused cleanly — never run through provider verification it
+    // has no proof for — so the failure is honest rather than a confusing provider error.
+    let registry = registry();
+    let handle = Handle::parse("/wodoagent").unwrap();
+    assert!(handle.is_flat());
+    let identity = Identity::from_seed([7; 32]);
+    let (key, sig) = claim(&identity, &handle);
+    let error = registry
+        .register(&handle, &key, &sig, &mock("wodoagent"), source())
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(error, RegistryError::HandleTierUnavailable),
+        "a flat claim must be refused as tier-unavailable, not attempted against a provider: {error:?}"
+    );
+    // And nothing was written to the log.
+    assert!(registry.resolve(&handle).is_err());
+}

@@ -65,38 +65,171 @@ fn contains(table: &[&str], name: &str) -> bool {
 /// Live and candidate provider namespaces — spelled out, because abbreviations are exactly the
 /// strings most wanted as flat handles.
 const NAMESPACES: &[&str] = &[
-    "amazon", "apple", "auth0", "bitbucket", "bluesky", "bsky", "discord", "email", "facebook",
-    "github", "gitlab", "google", "instagram", "k", "keybase", "linkedin", "mastodon", "meta",
-    "microsoft", "npm", "okta", "orcid", "pypi", "reddit", "signal", "slack", "stackoverflow",
-    "telegram", "threads", "tiktok", "twitch", "twitter", "whatsapp", "x", "youtube",
+    "amazon",
+    "apple",
+    "auth0",
+    "bitbucket",
+    "bluesky",
+    "bsky",
+    "discord",
+    "email",
+    "facebook",
+    "github",
+    "gitlab",
+    "google",
+    "instagram",
+    "k",
+    "keybase",
+    "linkedin",
+    "mastodon",
+    "meta",
+    "microsoft",
+    "npm",
+    "okta",
+    "orcid",
+    "pypi",
+    "reddit",
+    "signal",
+    "slack",
+    "stackoverflow",
+    "telegram",
+    "threads",
+    "tiktok",
+    "twitch",
+    "twitter",
+    "whatsapp",
+    "x",
+    "youtube",
 ];
 
 /// Confusable with service endpoints, support channels, or system accounts.
 const OPERATIONAL: &[&str] = &[
-    "about", "abuse", "admin", "administrator", "api", "app", "apps", "auth", "billing", "blog",
-    "checkout", "compliance", "contact", "daemon", "default", "demo", "dmca", "docs",
-    "documentation", "example", "help", "helpdesk", "home", "hostmaster", "index", "info",
-    "internal", "legal", "login", "mail", "moderator", "news", "noreply", "operator", "owner",
-    "payment", "postmaster", "press", "pricing", "privacy", "public", "register", "reset", "root",
-    "sales", "sandbox", "search", "security", "service", "signin", "signup", "sso", "staging",
-    "status", "support", "sys", "system", "terms", "test", "token", "webmaster", "www",
+    "about",
+    "abuse",
+    "admin",
+    "administrator",
+    "api",
+    "app",
+    "apps",
+    "auth",
+    "billing",
+    "blog",
+    "checkout",
+    "compliance",
+    "contact",
+    "daemon",
+    "default",
+    "demo",
+    "dmca",
+    "docs",
+    "documentation",
+    "example",
+    "help",
+    "helpdesk",
+    "home",
+    "hostmaster",
+    "index",
+    "info",
+    "internal",
+    "legal",
+    "login",
+    "mail",
+    "moderator",
+    "news",
+    "noreply",
+    "operator",
+    "owner",
+    "payment",
+    "postmaster",
+    "press",
+    "pricing",
+    "privacy",
+    "public",
+    "register",
+    "reset",
+    "root",
+    "sales",
+    "sandbox",
+    "search",
+    "security",
+    "service",
+    "signin",
+    "signup",
+    "sso",
+    "staging",
+    "status",
+    "support",
+    "sys",
+    "system",
+    "terms",
+    "test",
+    "token",
+    "webmaster",
+    "www",
 ];
 
 /// Pigeonpost's own terms plus the brands most likely targeted for impersonation. Not exhaustive —
 /// a trademark register has millions of entries; the dispute policy in `architecture.md` covers the
 /// rest.
 const BRAND: &[&str] = &[
-    "anthropic", "apple", "chatgpt", "claude", "copilot", "directory", "gemini", "google", "loft",
-    "mastercard", "meta", "microsoft", "netflix", "nvidia", "official", "openai", "paypal",
-    "pigeon", "pigeonpost", "piyote", "post", "registry", "spotify", "staff", "stripe", "team",
-    "tesla", "uber", "verified", "visa", "witness", "wodo",
+    "anthropic",
+    "apple",
+    "chatgpt",
+    "claude",
+    "copilot",
+    "directory",
+    "gemini",
+    "google",
+    "loft",
+    "mastercard",
+    "meta",
+    "microsoft",
+    "netflix",
+    "nvidia",
+    "official",
+    "openai",
+    "paypal",
+    "pigeon",
+    "pigeonpost",
+    "piyote",
+    "post",
+    "registry",
+    "spotify",
+    "staff",
+    "stripe",
+    "team",
+    "tesla",
+    "uber",
+    "verified",
+    "visa",
+    "witness",
+    "wodo",
 ];
 
 /// Terms that make a handle useful for fraud regardless of who holds it.
 const ABUSE: &[&str] = &[
-    "activate", "airdrop", "alert", "bonus", "claim", "confirm", "free", "giveaway", "invoice",
-    "prize", "recovery", "refund", "renew", "reward", "secure", "unlock", "update", "validate",
-    "verification", "verify", "wallet", "winner",
+    "activate",
+    "airdrop",
+    "alert",
+    "bonus",
+    "claim",
+    "confirm",
+    "free",
+    "giveaway",
+    "invoice",
+    "prize",
+    "recovery",
+    "refund",
+    "renew",
+    "reward",
+    "secure",
+    "unlock",
+    "update",
+    "validate",
+    "verification",
+    "verify",
+    "wallet",
+    "winner",
 ];
 
 #[cfg(test)]
@@ -116,14 +249,20 @@ mod tests {
             ("brand", BRAND),
             ("abuse", ABUSE),
         ] {
-            assert!(is_sorted_unique(table), "{label} table must be sorted and unique");
+            assert!(
+                is_sorted_unique(table),
+                "{label} table must be sorted and unique"
+            );
         }
     }
 
     #[test]
     fn allocatable_names_pass() {
         for name in ["superaidev", "myagent", "buildbot", "n7k2", "quill"] {
-            assert!(reserved_reason(name).is_none(), "{name} should be allocatable");
+            assert!(
+                reserved_reason(name).is_none(),
+                "{name} should be allocatable"
+            );
         }
     }
 
@@ -136,7 +275,15 @@ mod tests {
 
     #[test]
     fn namespaces_operational_brand_abuse_are_reserved() {
-        for name in ["github", "google", "admin", "support", "pigeonpost", "paypal", "airdrop"] {
+        for name in [
+            "github",
+            "google",
+            "admin",
+            "support",
+            "pigeonpost",
+            "paypal",
+            "airdrop",
+        ] {
             assert!(is_reserved(name), "{name} must be reserved");
         }
     }

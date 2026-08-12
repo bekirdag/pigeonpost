@@ -75,6 +75,9 @@ pub enum RegistryError {
     #[error("this account already holds the maximum of {limit} handles")]
     HandleQuotaExceeded { limit: usize },
 
+    #[error("flat handle registration is not yet available")]
+    HandleTierUnavailable,
+
     #[error("handle is already bound to a different key")]
     AlreadyBound,
 
@@ -132,7 +135,9 @@ impl IntoResponse for RegistryError {
             | RegistryError::WitnessConflict => StatusCode::CONFLICT,
             RegistryError::NotFound => StatusCode::NOT_FOUND,
             RegistryError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
-            RegistryError::Overloaded => StatusCode::SERVICE_UNAVAILABLE,
+            RegistryError::Overloaded | RegistryError::HandleTierUnavailable => {
+                StatusCode::SERVICE_UNAVAILABLE
+            }
             RegistryError::ProviderNotConfigured => StatusCode::NOT_IMPLEMENTED,
             RegistryError::ProviderUnreachable(_) | RegistryError::RegistryUnavailable => {
                 StatusCode::BAD_GATEWAY
@@ -190,6 +195,7 @@ impl RegistryError {
             Self::DirectoryPublisherUnauthorized => "directory_publisher",
             Self::AlreadyBound => "already_bound",
             Self::HandleQuotaExceeded { .. } => "handle_quota",
+            Self::HandleTierUnavailable => "handle_tier_unavailable",
             Self::DirectoryKeyMismatch => "directory_key_mismatch",
             Self::DirectoryReplay => "directory_replay",
             Self::NotFound => "not_found",

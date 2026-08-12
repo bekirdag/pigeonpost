@@ -72,9 +72,9 @@ pub mod handle;
 #[cfg(feature = "server")]
 pub mod identity;
 pub mod log;
-pub mod reserved;
 #[cfg(feature = "server")]
 pub mod registry;
+pub mod reserved;
 #[cfg(feature = "server")]
 mod server;
 #[cfg(feature = "server")]
