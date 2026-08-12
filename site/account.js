@@ -12,6 +12,10 @@
   const $ = (s, r) => (r || document).querySelector(s);
   const authReady = Boolean(cfg.oidc && cfg.oidc.clientId);
 
+  // What loadOverview last learned about the signed-in member. Null until the first load, so the
+  // purchase gate knows to fetch it before deciding whether billing/card are missing.
+  let overview = null;
+
   // localStorage, not sessionStorage: the PKCE verifier and session must survive the full-page
   // redirect out to Keycloak and back. sessionStorage is meant to persist across that, but in
   // practice some browsers drop it across a cross-site OAuth round-trip, which loses the verifier
@@ -309,8 +313,48 @@
     buy.onclick = () => {
       if (!current.ok) return;
       if (!signedIn || !getToken()) { SS.setItem("pp_pending_handle", current.name); login(); return; }
-      buyHandle(current.name);
+      startPurchase(current.name);
     };
+  }
+
+  // Make sure we know the member's billing/card state before gating a purchase. loadOverview sets
+  // `overview`; if the buy button is pressed before that first load lands, fetch it now.
+  async function ensureOverview() {
+    if (!overview) await loadOverview();
+    return overview || { hasBilling: false, hasCard: false };
+  }
+
+  // A purchase needs billing details, then a card, then checkout. Rather than let the backend reject
+  // an incomplete purchase with a raw error, walk the member to whichever step is missing — billing
+  // first, card second — and remember the handle so the flow resumes once each step is done.
+  async function startPurchase(name) {
+    const ov = await ensureOverview();
+    if (!ov.hasBilling) {
+      SS.setItem("pp_pending_handle", name);
+      toast(`Almost there — add your billing details to claim /${name}.`);
+      focusStep("#ac-billing", 'input[name="legal_name"]');
+      return;
+    }
+    if (!ov.hasCard) {
+      SS.setItem("pp_pending_handle", name);
+      toast(`One more step — add a payment card to claim /${name}.`);
+      focusStep("#ac-pay", "#ac-addcard");
+      return;
+    }
+    SS.removeItem("pp_pending_handle");
+    buyHandle(name);
+  }
+
+  // Scroll a card into view and put the cursor on the field/button that needs attention.
+  function focusStep(cardSelector, targetSelector) {
+    const card = $(cardSelector);
+    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    const target = card && $(targetSelector, card);
+    if (target) {
+      card.classList.add("ac-attn");
+      setTimeout(() => card.classList.remove("ac-attn"), 1600);
+      setTimeout(() => { try { target.focus({ preventScroll: true }); } catch (_) { target.focus(); } }, 300);
+    }
   }
 
   async function buyHandle(name) {
@@ -328,13 +372,28 @@
   async function loadOverview() {
     let data;
     try { data = await apiGet("/v1/me/overview"); } catch { return; }
+    const profiles = data.billingProfiles || [];
+    const methods = data.paymentMethods || [];
+    overview = { hasBilling: profiles.length > 0, hasCard: methods.length > 0 };
     renderSubs(data.subscriptions || []);
-    renderBilling(data.billingProfiles || []);
-    renderPay(data.paymentMethods || []);
+    renderBilling(profiles);
+    renderPay(methods);
     renderInvoices(data.invoices || []);
-    // Finish a pending purchase started before sign-in.
+    resumePending();
+  }
+
+  // A purchase the member started before completing billing/card (or before signing in) is parked in
+  // pp_pending_handle. After each overview refresh, pick it back up: advance to the next missing step,
+  // or — when everything's in place — pre-fill the handle and put the cursor on the buy button so the
+  // claim is one deliberate click, not a surprise redirect.
+  function resumePending() {
     const pending = SS.getItem("pp_pending_handle");
-    if (pending) { SS.removeItem("pp_pending_handle"); }
+    if (!pending || !overview) return;
+    if (!overview.hasBilling || !overview.hasCard) { startPurchase(pending); return; }
+    const input = $("#ac-handle");
+    if (input) { input.value = pending; input.dispatchEvent(new Event("input")); }
+    toast(`You're all set — press “Get it” to claim /${pending}.`);
+    focusStep(".ac-search-card", "#ac-buy");
   }
 
   function renderSubs(subs) {

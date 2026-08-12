@@ -15,6 +15,13 @@
 .ac-center { text-align: center; }
 .ac-center h2 { margin-bottom: 8px; }
 .ac-actions { display: flex; gap: 10px; justify-content: center; margin-top: 16px; flex-wrap: wrap; }
+/* brief ring drawn on the card a purchase is waiting on (missing billing / card / the buy button) */
+.ac-attn { animation: ac-attn-pulse 1.6s ease-out 1; border-radius: 12px; }
+@keyframes ac-attn-pulse {
+  0%   { box-shadow: 0 0 0 0 rgba(59,130,246,0.55); }
+  70%  { box-shadow: 0 0 0 8px rgba(59,130,246,0); }
+  100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
+}
 .ac-remember { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
 .ac-remember input { width: 15px; height: 15px; accent-color: var(--accent, #3b82f6); cursor: pointer; }
 .ac-note { font-size: 13.5px; color: var(--muted); margin-top: 16px; }
