@@ -48,7 +48,15 @@
     return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
-  async function login(remember) {
+  // setupTotp reuses the login redirect but adds kc_action=CONFIGURE_TOTP. For an already-signed-in
+  // user Keycloak skips the password prompt and shows only the "scan this QR" authenticator-setup
+  // page, then returns here — a single focused screen instead of the whole account console.
+  function setupTotp() {
+    SS.setItem("pp_postaction", "totp");
+    login(undefined, "CONFIGURE_TOTP");
+  }
+
+  async function login(remember, kcAction) {
     if (!authReady) {
       toast("Sign-in isn't configured yet. The pigeonpost-prod realm web client is being set up.");
       return;
@@ -71,7 +79,8 @@
       + `?client_id=${encodeURIComponent(cfg.oidc.clientId)}`
       + `&response_type=code&scope=${encodeURIComponent(scope)}`
       + `&redirect_uri=${encodeURIComponent(redirect)}`
-      + `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
+      + `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`
+      + (kcAction ? `&kc_action=${encodeURIComponent(kcAction)}` : "");
     window.location.href = url;
   }
 
@@ -113,6 +122,7 @@
         // whenever offline_access was granted, but we honour the checkbox regardless.
         if (wantsRemember() && body.refresh) setRefresh(body.refresh);
         else clearRefresh();
+        if (SS.getItem("pp_postaction") === "totp") toast("Two-factor authentication is now set up.");
       } else {
         // Surface the reason rather than looping silently — this is what turned a real bug into a
         // mystery on the first sign-in attempt.
@@ -121,7 +131,7 @@
     } catch (_) {
       toast("Could not reach the sign-in service. Try again in a moment.");
     }
-    SS.removeItem("pp_pkce"); SS.removeItem("pp_state");
+    SS.removeItem("pp_pkce"); SS.removeItem("pp_state"); SS.removeItem("pp_postaction");
     strip();
     return Boolean(getToken());
   }
@@ -258,11 +268,12 @@
       <div class="ac-card">
         <h3>Security</h3>
         <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
-        <a class="btn btn-secondary" id="ac-2fa" href="${cfg.oidc.issuer}/account/" target="_blank" rel="noopener">Manage two-factor authentication</a>
-        <p class="ac-note" style="margin-top:10px">Opens your account console → <em>Account security</em> → <em>Signing in</em> → <em>Two-factor authentication</em>.</p>
+        <button class="btn btn-secondary" id="ac-2fa">Set up two-factor authentication</button>
+        <p class="ac-note" style="margin-top:10px">Opens a single screen with a QR code to scan, then brings you back here.</p>
       </div>
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
     $("#ac-logout").onclick = logout;
+    $("#ac-2fa").onclick = setupTotp;
     wireSearch(true);
     loadOverview();
   }
