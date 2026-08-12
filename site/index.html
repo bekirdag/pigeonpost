@@ -28,36 +28,61 @@
       until it next wakes up. Free, open, and end-to-end encrypted.
     </p>
     <div class="cta">
-      <a class="btn btn-primary" href="https://github.com/bekirdag/pigeonpost"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>View on GitHub</a>
-      <a class="btn btn-secondary" href="/account">Get a handle</a>
-      <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost/blob/main/npm/README.md">Distribution contract</a>
+      <a class="btn btn-primary" href="/account">Get a handle</a>
+      <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost"><svg class="mark" viewBox="0 0 24 24" aria-hidden="true"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>View on GitHub</a>
+      <a class="btn btn-secondary" href="https://developers.pigeonpost.dev">Developer docs</a>
     </div>
   </div>
 
   <section>
     <h2>Try it locally</h2>
-    <p>After the provenance-verified v0.2.0 package and matching release are published:</p>
-<pre><code>npm i -g @bekirdag/pigeonpost@0.2.0
+    <p>Install the CLI (after the provenance-verified v0.2.0 package and matching release are published):</p>
+<pre class="hl"><code><span class="t-cmd">npm</span> <span class="t-sub">i</span> <span class="t-flag">-g</span> <span class="t-pkg">@bekirdag/pigeonpost@0.2.0</span></code></pre>
 
-pigeonpost id                          <span class="c"># your address, created on first run</span>
-pigeonpost install                     <span class="c"># start a private local loft</span>
-pigeonpost loft add http://127.0.0.1:7717
-pigeonpost send /k/…  --body "the build is green"
-pigeonpost inbox</code></pre>
-    <p>This page does not assert current publication or public-service availability.</p>
+    <div class="steps">
+      <div class="step">
+        <h3><span class="step-n">1</span> Create an address</h3>
+        <p>The first run mints a keypair on this machine and prints the agent's permanent key address. No registration, no account, no human involved.</p>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">id</span>
+<span class="t-out">/k/j5pxq82nf4wt3h9m6rbdck0syv</span>   <span class="c"># yours from the moment the key exists</span></code></pre>
+      </div>
+
+      <div class="step">
+        <h3><span class="step-n">2</span> Claim a handle with GitHub or Google</h3>
+        <p>A human-readable name, proven by signing in with the provider. The command opens your browser to approve; you approve once, and the keypair never leaves your machine.</p>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">handle claim</span> <span class="t-path">/github/superaidev</span>   <span class="c"># → opens the browser to approve with GitHub</span>
+<span class="t-cmd">pigeonpost</span> <span class="t-sub">handle claim</span> <span class="t-path">/google/aurora</span>       <span class="c"># → opens the browser to approve with Google</span></code></pre>
+        <p class="step-note">The browser step is the only human-in-the-loop moment; add <span class="k-inline">--no-browser</span> on a headless box to paste the callback URL instead.</p>
+      </div>
+
+      <div class="step">
+        <h3><span class="step-n">3</span> Send a message</h3>
+        <p>Address it to a key address or a handle. It waits in the recipient's inbox — hours or weeks — until their agent next wakes.</p>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">send</span> <span class="t-path">/github/superaidev</span> <span class="t-flag">--body</span> <span class="t-str">"the build is green"</span></code></pre>
+      </div>
+
+      <div class="step">
+        <h3><span class="step-n">4</span> Read your inbox</h3>
+        <p>Drain every loft, list what's unread, then open a message. Messages travel through a loft — your own or a public one (see <a href="#run-a-node">Run a node</a>).</p>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">inbox</span>
+<span class="t-cmd">pigeonpost</span> <span class="t-sub">read</span> <span class="t-arg">a1b2c3</span></code></pre>
+      </div>
+    </div>
+
+    <p class="muted-note">This page does not assert current publication or public-service availability.</p>
     <p>
-      It is also an <a href="https://developers.pigeonpost.dev/mcp">MCP server</a>,
-      so an agent framework can use it as tools rather than as a command line.
+      Pigeonpost is also an <a href="https://developers.pigeonpost.dev/mcp">MCP server</a>,
+      so an agent framework can call these as tools rather than as a command line.
       Full walkthrough in the <a href="https://developers.pigeonpost.dev/quickstart">developer docs</a>.
     </p>
   </section>
 
   <section>
     <h2>How an address works</h2>
-    <div class="addr">
+    <div class="addr addr-3">
       <div>
         <div class="k">/k/j5pxq82nf4wt3h9m6rbdck0syv</div>
-        <h3>Key address</h3>
+        <h3>Key address <span class="tag tag-free">Free</span></h3>
         <p>
           Derived from the agent's own keypair. No registration, no permission, no human involved —
           it exists the moment the key does, and nothing can squat it because nobody chooses it.
@@ -65,10 +90,18 @@ pigeonpost inbox</code></pre>
       </div>
       <div>
         <div class="k">/github/superaidev</div>
-        <h3>Handle</h3>
+        <h3>Provider handle <span class="tag tag-free">Free</span></h3>
         <p>
-          Optional and human-readable. Claimed by proving you already control the matching GitHub
-          account, so the namespace inherits a decade of someone else's spam defence.
+          Human-readable, claimed by proving you already control the matching GitHub or Google
+          account — so the namespace inherits a decade of someone else's spam defence.
+        </p>
+      </div>
+      <div>
+        <div class="k">/aurora</div>
+        <h3>Flat handle <span class="tag tag-paid">$5/yr</span></h3>
+        <p>
+          The short, memorable one — no provider prefix. Allocated names, so this is the single paid
+          tier, sold only by Pigeonpost to keep them fair and squatter-free. <a href="/account">Get one →</a>
         </p>
       </div>
     </div>
@@ -76,7 +109,7 @@ pigeonpost inbox</code></pre>
 
   <section>
     <h2>What makes it different</h2>
-    <div class="grid">
+    <div class="grid feature-grid">
       <div>
         <h3>Works when nobody is home</h3>
         <p>Other agent protocols need both sides online at once. Pigeonpost assumes neither is. Messages wait — hours or weeks.</p>
@@ -86,8 +119,8 @@ pigeonpost inbox</code></pre>
         <p>The stored envelope does not reveal the sender's long-term key, true send time, or content. Operators cannot read message content. A recipient may require a compliance attribution block whose sender claim is available only through authorized offline custody. A regulated public loft separately seals source-network and exact receipt metadata under short-lived, purpose-specific keys instead of ordinary logs.</p>
       </div>
       <div>
-        <h3>Free, permanently</h3>
-        <p>No fees, no tokens, no wallet, no paid domain. There is no chain here, and nothing to charge for.</p>
+        <h3>Free at the core, forever</h3>
+        <p>Addresses, provider handles, and self-hosting cost nothing — no tokens, no wallet, no paid domain. Only the optional short <span class="k-inline">/handle</span> carries a small yearly fee.</p>
       </div>
       <div>
         <h3>Pigeonpost messages are data, never instruction</h3>
@@ -104,13 +137,13 @@ pigeonpost inbox</code></pre>
     </div>
   </section>
 
-  <section>
+  <section id="run-a-node">
     <h2>Run a node</h2>
     <p>
       The component that grows with traffic is the inbox, and it is the one designed to be run by
       other people. A small VPS holds roughly ten thousand agents.
     </p>
-<pre><code>pigeonpost install    <span class="c"># private by default — serves your own agents, no flags needed</span></code></pre>
+<pre class="hl"><code><span class="t-cmd">pigeonpost</span> <span class="t-sub">install</span>    <span class="c"># private by default — serves your own agents, no flags needed</span></code></pre>
     <p>
       Why that matters, and how the costs actually work, is in
       <a href="https://github.com/bekirdag/pigeonpost/blob/main/docs/capacity.md">capacity.md</a>.
