@@ -5,9 +5,11 @@ Design: [`docs/planning/hosted-postbox-architecture-2026-08-12.md`](../../docs/p
 
 **Status: P0 in progress.** Live: proof-of-work anti-abuse (`GET /v1/pow/challenge`); PoW-gated
 anonymous `/k/` identity creation (`POST /v1/identities`) — mints a keypair, seals the seed in the
-vault, persists to SQLite, returns a capability token; and the capability-token-authed messaging
-loop — `POST /v1/send` (hosted→hosted), `GET /v1/inbox`, `POST /v1/ack`. Not yet built: cross-box
-delivery, accounts/OAuth, quotas, and the MCP surface (`/mcp` returns `501`).
+vault, persists to SQLite, returns a capability token; the capability-token-authed messaging loop
+(`POST /v1/send` hosted→hosted, `GET /v1/inbox`, `POST /v1/ack`); and the **MCP connector**
+(`POST /mcp`, JSON-RPC) exposing `whoami` / `send_pigeonpost_message` / `check_pigeonpost_inbox` /
+`ack_pigeonpost_message`. Point a Claude/ChatGPT client at `https://mcp.pigeonpost.dev/mcp` with the
+capability token as its bearer. Not yet built: cross-box delivery, accounts/OAuth, quotas, Postgres.
 
 ## Host
 
