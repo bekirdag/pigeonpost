@@ -61,6 +61,13 @@ pub struct StoredIdentity {
     pub created_at: u64,
 }
 
+/// What a retention sweep removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ReapStats {
+    pub identities: usize,
+    pub messages: usize,
+}
+
 /// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a JSON-serialized
 /// `pigeonpost_core::envelope::Wrap`.
 pub struct Message {
@@ -131,8 +138,13 @@ impl Store {
         let conn = if path == ":memory:" {
             Connection::open_in_memory()?
         } else {
-            Connection::open(path)?
+            let c = Connection::open(path)?;
+            // WAL lets the server and the separate reaper process share the file with a single
+            // writer + concurrent readers; busy_timeout retries briefly instead of erroring on lock.
+            c.pragma_update(None, "journal_mode", "WAL")?;
+            c
         };
+        conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
@@ -279,6 +291,35 @@ impl Store {
         .await
         .map_err(|_| StoreError::Join)?
     }
+
+    /// Retention sweep: drop everything older than `cutoff` (unix seconds) — messages past their
+    /// window, identities past theirs, and any message addressed to or from an expired identity.
+    /// Runs in one transaction so a crash can't leave a half-swept state.
+    pub async fn reap(&self, cutoff: u64) -> Result<ReapStats, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<ReapStats, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let messages = tx.execute(
+                "DELETE FROM messages
+                 WHERE created_at < ?1
+                    OR recipient IN (SELECT address FROM identities WHERE created_at < ?1)
+                    OR sender    IN (SELECT address FROM identities WHERE created_at < ?1)",
+                params![cutoff as i64],
+            )?;
+            let identities = tx.execute(
+                "DELETE FROM identities WHERE created_at < ?1",
+                params![cutoff as i64],
+            )?;
+            tx.commit()?;
+            Ok(ReapStats {
+                identities,
+                messages,
+            })
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
 }
 
 #[cfg(test)]
@@ -350,5 +391,43 @@ mod tests {
             .mark_read("m1".into(), "/k/other".into())
             .await
             .unwrap());
+    }
+
+    fn msg(id: &str, recipient: &str, created_at: u64) -> Message {
+        Message {
+            id: id.into(),
+            recipient: recipient.into(),
+            sender: "/k/sender".into(),
+            wrap_blob: vec![1, 2, 3],
+            created_at,
+            read: false,
+        }
+    }
+
+    #[tokio::test]
+    async fn reap_removes_expired_identities_and_messages() {
+        let store = Store::open(":memory:").unwrap();
+        let mut fresh = sample("/k/fresh");
+        fresh.created_at = 10_000;
+        let mut old = sample("/k/old");
+        old.created_at = 0;
+        store.insert(fresh).await.unwrap();
+        store.insert(old).await.unwrap();
+
+        store.enqueue(msg("new", "/k/fresh", 10_000)).await.unwrap(); // survives
+        store.enqueue(msg("stale", "/k/fresh", 0)).await.unwrap(); // past its window
+        store
+            .enqueue(msg("orphan", "/k/old", 10_000))
+            .await
+            .unwrap(); // recipient expired
+
+        let stats = store.reap(5_000).await.unwrap();
+        assert_eq!(stats.identities, 1); // /k/old
+        assert_eq!(stats.messages, 2); // "stale" + "orphan"
+
+        assert_eq!(store.count().await.unwrap(), 1); // /k/fresh remains
+        let remaining = store.list_for("/k/fresh".into()).await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id, "new");
     }
 }

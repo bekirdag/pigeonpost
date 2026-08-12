@@ -674,11 +674,22 @@ async fn not_found() -> impl IntoResponse {
 }
 
 /// The ephemeral-retention sweep. Stub: ticks on an interval and does nothing yet.
+/// Retention sweep loop. Opens the same store as the server (WAL makes that safe) and, each tick,
+/// drops ephemeral identities and messages older than `EPHEMERAL_RETENTION_DAYS`. In P0 every
+/// identity is ephemeral; when durable (paid) identities land they'll be excluded by a plan flag.
 async fn reaper(cfg: Config) {
+    let store = match store::Store::open(&cfg.db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            tracing::error!(error = %e, db_path = %cfg.db_path, "reaper failed to open the store");
+            std::process::exit(1);
+        }
+    };
+    let retention_secs = cfg.ephemeral_retention_days.saturating_mul(86_400);
     tracing::info!(
         interval_s = cfg.reaper_interval_secs,
         retention_days = cfg.ephemeral_retention_days,
-        "reaper started (scaffold — no-op sweeps)"
+        "reaper started"
     );
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
         cfg.reaper_interval_secs.max(1),
@@ -686,7 +697,15 @@ async fn reaper(cfg: Config) {
     loop {
         tokio::select! {
             _ = ticker.tick() => {
-                tracing::info!("reaper tick (stub — expired ephemeral inbox/key sweep pending)");
+                let cutoff = now_unix().saturating_sub(retention_secs);
+                match store.reap(cutoff).await {
+                    Ok(s) if s.identities > 0 || s.messages > 0 => tracing::info!(
+                        identities = s.identities, messages = s.messages, cutoff,
+                        "reaped expired ephemeral data"
+                    ),
+                    Ok(_) => tracing::debug!(cutoff, "reaper: nothing to sweep"),
+                    Err(e) => tracing::error!(error = %e, "reap failed"),
+                }
             }
             _ = shutdown_signal() => {
                 tracing::info!("reaper stopping");
