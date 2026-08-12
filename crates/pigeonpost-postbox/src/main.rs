@@ -17,10 +17,12 @@
 //!   tools, so a Claude/ChatGPT client can drive one or many hosted mailboxes;
 //! - a self-serve onboarding page at `/` (in-browser PoW → mint → connector config);
 //! - accounts + API keys (`POST /v1/accounts`): one key creates and drives many identities without
-//!   per-inbox PoW (the multi-mailbox model), with `identity`/`from` selection.
+//!   per-inbox PoW (the multi-mailbox model), with `identity`/`from` selection;
+//! - quotas: a per-account identity cap and a per-inbox message cap, so one proof-of-work can't be
+//!   parlayed into unbounded identities/messages (disk protection).
 //!
-//! Not yet here: cross-box delivery (resolving external recipient keys), OAuth-backed accounts,
-//! quotas, and Postgres. See the design doc below.
+//! Not yet here: cross-box delivery (resolving external recipient keys), OAuth-backed accounts, and
+//! Postgres. See the design doc below.
 //!
 //! Design: `docs/planning/hosted-postbox-architecture-2026-08-12.md`.
 //!
@@ -56,6 +58,10 @@ struct AppState {
     pow: Arc<pow::Pow>,
     vault: Arc<vault::Vault>,
     store: Arc<store::Store>,
+    /// Max identities one account may hold (identity quota).
+    max_identities: usize,
+    /// Max messages one inbox may hold before senders are refused (inbox quota).
+    max_inbox: usize,
 }
 
 /// Runtime configuration, entirely from environment (see the plan's Appendix A). Secrets
@@ -75,6 +81,8 @@ struct Config {
     pow_max_bits: u32,
     ephemeral_retention_days: u64,
     reaper_interval_secs: u64,
+    max_identities_per_account: usize,
+    max_inbox_messages: usize,
 }
 
 impl Config {
@@ -89,6 +97,8 @@ impl Config {
             pow_max_bits: env_num("POW_MAX_BITS", 26),
             ephemeral_retention_days: env_num("EPHEMERAL_RETENTION_DAYS", 30),
             reaper_interval_secs: env_num("REAPER_INTERVAL_SECS", 3600),
+            max_identities_per_account: env_num("EPHEMERAL_MAX_IDENTITIES", 5),
+            max_inbox_messages: env_num("MAX_INBOX_MESSAGES", 1000),
         }
     }
 }
@@ -209,6 +219,8 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         )),
         vault: Arc::new(vault::Vault::new(load_master_key())),
         store: Arc::new(store::Store::open(&cfg.db_path)?),
+        max_identities: cfg.max_identities_per_account,
+        max_inbox: cfg.max_inbox_messages,
     })
 }
 
@@ -327,6 +339,25 @@ async fn do_create_identity(
     account_id: Option<String>,
     label: Option<String>,
 ) -> Result<serde_json::Value, ApiError> {
+    // Identity quota: an account can't mint unlimited inboxes off a single proof-of-work.
+    if let Some(acc) = &account_id {
+        let held = state
+            .store
+            .count_for_account(acc.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        if held >= state.max_identities {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "identity_quota",
+                format!(
+                    "account is at its limit of {} identities",
+                    state.max_identities
+                ),
+            ));
+        }
+    }
+
     let identity = Identity::generate();
     let address = identity.address().as_str().to_string();
     let ed25519_pub = identity.verifying_key().to_bytes();
@@ -693,6 +724,20 @@ pub(crate) async fn do_send(
             )
         })?;
 
+    // Inbox quota: don't let one recipient's inbox grow without bound (disk protection).
+    let held = state
+        .store
+        .inbox_count(recipient.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    if held >= state.max_inbox {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "recipient_inbox_full",
+            format!("recipient inbox is full ({} messages)", state.max_inbox),
+        ));
+    }
+
     let sender_identity = open_identity(state, sender)?;
     let recipient_vk = keys::verifying_key_from_bytes(&recipient.ed25519_pub)
         .map_err(|_| ApiError::server("bad_recipient_key"))?;
@@ -985,6 +1030,8 @@ mod tests {
             pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
             vault: Arc::new(vault::Vault::new([0u8; 32])),
             store: Arc::new(store::Store::open(":memory:").unwrap()),
+            max_identities: 5,
+            max_inbox: 1000,
         };
         let _ = build_router(state);
     }

@@ -219,6 +219,35 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// How many identities an account holds (identity quota check).
+    pub async fn count_for_account(&self, account_id: String) -> Result<usize, StoreError> {
+        self.count_where(
+            "SELECT COUNT(*) FROM identities WHERE account_id = ?1",
+            account_id,
+        )
+        .await
+    }
+
+    /// How many messages an inbox holds (inbox quota check).
+    pub async fn inbox_count(&self, recipient: String) -> Result<usize, StoreError> {
+        self.count_where(
+            "SELECT COUNT(*) FROM messages WHERE recipient = ?1",
+            recipient,
+        )
+        .await
+    }
+
+    async fn count_where(&self, sql: &'static str, arg: String) -> Result<usize, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n: i64 = c.query_row(sql, params![arg], |r| r.get(0))?;
+            Ok(n as usize)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// Create an account with the given id and its first API key (hash).
     pub async fn create_account(
         &self,
@@ -520,8 +549,14 @@ mod tests {
     #[tokio::test]
     async fn account_api_key_and_ownership() {
         let store = Store::open(":memory:").unwrap();
-        store.create_account("acct_1".into(), [7; 32], 0).await.unwrap();
-        assert_eq!(store.account_for_key([7; 32]).await.unwrap().as_deref(), Some("acct_1"));
+        store
+            .create_account("acct_1".into(), [7; 32], 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.account_for_key([7; 32]).await.unwrap().as_deref(),
+            Some("acct_1")
+        );
         assert_eq!(store.account_for_key([9; 32]).await.unwrap(), None);
 
         let mut a = sample("/k/mine");
@@ -530,9 +565,36 @@ mod tests {
         store.insert(sample("/k/anon")).await.unwrap(); // no account
 
         let owned = store.list_by_account("acct_1".into()).await.unwrap();
-        assert_eq!(owned, vec![("/k/mine".to_string(), Some("repo:test".to_string()))]);
-        assert!(store.get_in_account("acct_1".into(), "/k/mine".into()).await.unwrap().is_some());
-        assert!(store.get_in_account("acct_1".into(), "/k/anon".into()).await.unwrap().is_none());
+        assert_eq!(
+            owned,
+            vec![("/k/mine".to_string(), Some("repo:test".to_string()))]
+        );
+        assert!(store
+            .get_in_account("acct_1".into(), "/k/mine".into())
+            .await
+            .unwrap()
+            .is_some());
+        assert!(store
+            .get_in_account("acct_1".into(), "/k/anon".into())
+            .await
+            .unwrap()
+            .is_none());
+
+        assert_eq!(store.count_for_account("acct_1".into()).await.unwrap(), 1);
+        assert_eq!(
+            store.count_for_account("acct_none".into()).await.unwrap(),
+            0
+        );
+    }
+
+    #[tokio::test]
+    async fn inbox_count_tracks_messages() {
+        let store = Store::open(":memory:").unwrap();
+        assert_eq!(store.inbox_count("/k/box".into()).await.unwrap(), 0);
+        store.enqueue(msg("a", "/k/box", 1)).await.unwrap();
+        store.enqueue(msg("b", "/k/box", 2)).await.unwrap();
+        store.enqueue(msg("c", "/k/other", 3)).await.unwrap();
+        assert_eq!(store.inbox_count("/k/box".into()).await.unwrap(), 2);
     }
 
     #[tokio::test]
