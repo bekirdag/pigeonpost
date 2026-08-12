@@ -194,8 +194,12 @@
     }
     return body;
   }
+  // Two helpers, deliberately. apiGet is for background reads (a 401 there is a genuinely dead
+  // session → sign out). apiAction is for anything the signed-in user just clicked (checkout, add
+  // card, save billing, cancel): a 401 there is ambiguous and must NOT sign them out — it surfaces
+  // the real reason instead. There is intentionally no plain "apiPost" that signs out on 401; that
+  // was the phantom "please sign in again" bounce.
   const apiGet = (path) => apiFetch(path, null, false);
-  const apiPost = (path, body) => apiFetch(path, { method: "POST", body: JSON.stringify(body || {}) }, false);
   const apiAction = (path, body) => apiFetch(path, { method: "POST", body: JSON.stringify(body || {}), keepSession: true }, false);
 
   // ---- handle validation --------------------------------------------------------------------
@@ -335,8 +339,8 @@
   }
   async function cancelSub(id) {
     if (!confirm("Cancel this handle? It stops resolving at the end of the paid term; the key address keeps working.")) return;
-    try { await apiPost(`/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {}); loadOverview(); }
-    catch (e) { if (e.message !== "session expired") toast("Could not cancel."); }
+    try { await apiAction(`/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {}); loadOverview(); }
+    catch (e) { toast("Could not cancel: " + e.message); }
   }
 
   function renderBilling(profiles) {
@@ -391,8 +395,8 @@
       };
       if (fd.account_type === "entity") Object.assign(payload, { entity_name: fd.entity_name, tax_id: fd.tax_id, tax_office: fd.tax_office });
       wrap.querySelector(".ac-msg").textContent = "Saving…";
-      try { await apiPost("/v1/billing/profiles", payload); loadOverview(); }
-      catch (err) { if (err.message !== "session expired") wrap.querySelector(".ac-msg").textContent = "Could not save."; }
+      try { await apiAction("/v1/billing/profiles", payload); loadOverview(); }
+      catch (err) { wrap.querySelector(".ac-msg").textContent = "Could not save: " + err.message; }
     };
     return wrap;
   }
@@ -406,10 +410,10 @@
   }
   async function addCard() {
     try {
-      const body = await apiPost("/v1/billing/payment-methods/setup", {});
+      const body = await apiAction("/v1/billing/payment-methods/setup", {});
       if (body.setupUrl) { window.location.href = body.setupUrl; return; }
       toast(body.error || "Could not start card setup.");
-    } catch (e) { if (e.message !== "session expired") toast("Could not add a card."); }
+    } catch (e) { toast("Could not add a card: " + e.message); }
   }
 
   function renderInvoices(invoices) {
