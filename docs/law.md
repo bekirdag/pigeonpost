@@ -399,6 +399,14 @@ untrusted request until verified against the issuing authority.
 state, with declared accepted languages, and a human reachable inside 8 hours. The company obligation
 is independent of anything in this repository.
 
+**Deferred (2026-08-12, owner decision).** No EU representative is designated yet. Pigeonpost is not
+marketing to or targeting users in the Union at launch; **an EU representative will be designated when
+we serve EU users** and the obligation is triggered. This is a deliberate, owner-accepted deferral of
+a company obligation — recorded here, not satisfied. Nothing in this repository asserts the
+designation exists: the release-authorization designation-evidence digest
+(`PIGEONPOST_EU_EVIDENCE_DESIGNATION_SHA256`) remains intentionally unset until a real designation is
+in place.
+
 **Scope, stated every time.** A message published to three in-scope lofts leaves a record at each of
 them. We can answer only for the subset of nodes we run. Every production response says so in
 writing — a fragment that reads as complete is how a compliance process becomes an obstruction
