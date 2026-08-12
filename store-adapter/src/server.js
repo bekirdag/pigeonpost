@@ -65,6 +65,24 @@ const server = http.createServer(async (req, res) => {
       }, origin);
     }
 
+    // "Remember me" renewal: refresh token -> fresh member session. Kept public (the refresh token
+    // is the credential); a bad/expired token surfaces as 401 so the browser drops it and re-prompts.
+    if (method === "POST" && path === "/v1/auth/refresh") {
+      const { refresh } = await readJson(req);
+      if (!refresh) return send(res, 400, { error: "refresh required" }, origin);
+      let tokens;
+      try {
+        tokens = await masaas.refreshOidcToken(refresh);
+      } catch (_) {
+        return send(res, 401, { error: "session expired" }, origin);
+      }
+      return send(res, 200, {
+        session: tokens.access_token,
+        refresh: tokens.refresh_token || refresh,
+        expiresIn: tokens.expires_in || null,
+      }, origin);
+    }
+
     // Handle availability (registry read; the registry is authoritative on rules).
     const avail = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path);
     if (method === "GET" && avail) {

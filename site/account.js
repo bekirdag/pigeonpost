@@ -21,6 +21,19 @@
   const setToken = (t) => SS.setItem("pp_session", t);
   const clearToken = () => SS.removeItem("pp_session");
 
+  // "Remember me" keeps a refresh token so the access token can be silently renewed for up to 30
+  // days (Keycloak offline session), instead of forcing a fresh sign-in when the short-lived access
+  // token expires. Only stored when the user opts in.
+  const getRefresh = () => SS.getItem("pp_refresh");
+  const setRefresh = (t) => (t ? SS.setItem("pp_refresh", t) : SS.removeItem("pp_refresh"));
+  const clearRefresh = () => SS.removeItem("pp_refresh");
+  const wantsRemember = () => SS.getItem("pp_remember") === "1";
+  function signOut() {
+    clearToken();
+    clearRefresh();
+    SS.removeItem("pp_remember");
+  }
+
   // ---- PKCE ---------------------------------------------------------------------------------
 
   function randomString(len) {
@@ -35,20 +48,28 @@
     return btoa(str).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
   }
 
-  async function login() {
+  async function login(remember) {
     if (!authReady) {
       toast("Sign-in isn't configured yet. The pigeonpost-prod realm web client is being set up.");
       return;
     }
+    // Default to remembering unless the caller explicitly opted out, so the pending-purchase resume
+    // path (which calls login() with no arg) keeps whatever the sign-in card already recorded.
+    const keep = remember === undefined ? wantsRemember() : !!remember;
+    SS.setItem("pp_remember", keep ? "1" : "0");
     const verifier = randomString(48);
     const state = randomString(12);
     SS.setItem("pp_pkce", verifier);
     SS.setItem("pp_state", state);
     const challenge = await sha256b64url(verifier);
     const redirect = window.location.origin + (cfg.oidc.redirectPath || "/account");
+    // offline_access asks Keycloak for a long-lived refresh token (the 30-day offline session). It
+    // is only requested when the user chose "remember me"; otherwise the session is tab-lifetime.
+    let scope = cfg.oidc.scope || "openid email";
+    if (keep && !/\boffline_access\b/.test(scope)) scope += " offline_access";
     const url = `${cfg.oidc.issuer}/protocol/openid-connect/auth`
       + `?client_id=${encodeURIComponent(cfg.oidc.clientId)}`
-      + `&response_type=code&scope=${encodeURIComponent(cfg.oidc.scope || "openid email")}`
+      + `&response_type=code&scope=${encodeURIComponent(scope)}`
       + `&redirect_uri=${encodeURIComponent(redirect)}`
       + `&code_challenge=${challenge}&code_challenge_method=S256&state=${state}`;
     window.location.href = url;
@@ -88,6 +109,10 @@
       const body = await res.json().catch(() => ({}));
       if (body.session) {
         setToken(body.session);
+        // Keep the refresh token only when the user asked to be remembered. Keycloak returns one
+        // whenever offline_access was granted, but we honour the checkbox regardless.
+        if (wantsRemember() && body.refresh) setRefresh(body.refresh);
+        else clearRefresh();
       } else {
         // Surface the reason rather than looping silently — this is what turned a real bug into a
         // mystery on the first sign-in attempt.
@@ -101,24 +126,77 @@
     return Boolean(getToken());
   }
 
-  function logout() { clearToken(); render(); }
+  function logout() { signOut(); render(); }
 
   // ---- API ----------------------------------------------------------------------------------
 
-  async function apiGet(path) {
-    const res = await fetch(api(path), { headers: { authorization: `Bearer ${getToken()}`, accept: "application/json" } });
-    if (res.status === 401) { clearToken(); render(); throw new Error("session expired"); }
-    return res.json();
+  // Renew the access token from a stored refresh token. Returns true on success. A single in-flight
+  // refresh is shared so a burst of 401s doesn't spend the (rotating) refresh token several times.
+  let refreshInFlight = null;
+  async function refreshSession() {
+    const refresh = getRefresh();
+    if (!refresh) return false;
+    if (!refreshInFlight) {
+      refreshInFlight = (async () => {
+        try {
+          const res = await fetch(api("/v1/auth/refresh"), {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ refresh }),
+          });
+          const body = await res.json().catch(() => ({}));
+          if (res.ok && body.session) {
+            setToken(body.session);
+            if (body.refresh) setRefresh(body.refresh); // Keycloak rotates refresh tokens
+            return true;
+          }
+          clearRefresh(); // refresh token is dead/expired — stop trying it
+          return false;
+        } catch (_) {
+          return false; // network blip: keep the refresh token, let the caller surface the error
+        } finally {
+          refreshInFlight = null;
+        }
+      })();
+    }
+    return refreshInFlight;
   }
-  async function apiPost(path, body) {
+
+  // One authenticated request. A 401 triggers at most one refresh-and-retry. A 401 that survives
+  // the retry means the session is genuinely gone (no/dead refresh token) → sign out. A non-401
+  // error is returned to the caller to surface — it must NOT masquerade as an expired session, which
+  // is exactly what turned a failed checkout into a phantom sign-out loop.
+  async function apiFetch(path, init, retried) {
+    const opts = init || {};
     const res = await fetch(api(path), {
-      method: "POST",
-      headers: { authorization: `Bearer ${getToken()}`, "content-type": "application/json" },
-      body: JSON.stringify(body || {}),
+      method: opts.method || "GET",
+      headers: Object.assign(
+        { authorization: `Bearer ${getToken()}`, accept: "application/json" },
+        opts.body ? { "content-type": "application/json" } : {},
+      ),
+      body: opts.body,
     });
-    if (res.status === 401) { clearToken(); render(); throw new Error("session expired"); }
-    return res.json();
+    if (res.status === 401 && !retried && (await refreshSession())) {
+      return apiFetch(path, init, true);
+    }
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      // A 401 on a background/overview call means the session is genuinely gone → sign out. But a
+      // 401 on an explicit action the user just took (checkout) is ambiguous — it may be the payment
+      // backend rejecting the token for that operation, not a dead session. Signing out there is the
+      // bug that produced the phantom "sign in again" loop, so opts.keepSession surfaces the real
+      // reason and leaves the user logged in.
+      if (res.status === 401 && !opts.keepSession) { signOut(); render(); throw new Error("session expired"); }
+      const err = new Error(body.error || `Request failed (${res.status})`);
+      err.status = res.status;
+      err.body = body;
+      throw err;
+    }
+    return body;
   }
+  const apiGet = (path) => apiFetch(path, null, false);
+  const apiPost = (path, body) => apiFetch(path, { method: "POST", body: JSON.stringify(body || {}) }, false);
+  const apiAction = (path, body) => apiFetch(path, { method: "POST", body: JSON.stringify(body || {}), keepSession: true }, false);
 
   // ---- handle validation --------------------------------------------------------------------
 
@@ -153,11 +231,13 @@
           <button class="btn btn-primary" id="ac-signin">Sign in</button>
           <button class="btn btn-secondary" id="ac-register">Create an account</button>
         </div>
+        <label class="ac-remember"><input type="checkbox" id="ac-remember" checked> Keep me signed in for 30 days</label>
         ${authReady ? "" : `<p class="ac-note">Sign-in is being finalized. Handle search below works now.</p>`}
       </div>
       ${searchBlock()}`;
-    $("#ac-signin").onclick = login;
-    $("#ac-register").onclick = register;
+    const remember = () => !!($("#ac-remember") && $("#ac-remember").checked);
+    $("#ac-signin").onclick = () => login(remember());
+    $("#ac-register").onclick = () => { SS.setItem("pp_remember", remember() ? "1" : "0"); register(); };
     wireSearch(false);
   }
 
@@ -171,6 +251,11 @@
       <div class="ac-card"><h3>Your handles</h3><div id="ac-subs"><p class="muted">Loading…</p></div></div>
       <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
       <div class="ac-card"><h3>Payment method</h3><div id="ac-pay"><p class="muted">Loading…</p></div></div>
+      <div class="ac-card">
+        <h3>Security</h3>
+        <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
+        <a class="btn btn-secondary" id="ac-2fa" href="${cfg.oidc.issuer}/account/#/security/signingin" target="_blank" rel="noopener">Set up two-factor authentication</a>
+      </div>
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
     $("#ac-logout").onclick = logout;
     wireSearch(true);
@@ -214,10 +299,14 @@
 
   async function buyHandle(name) {
     try {
-      const body = await apiPost("/v1/checkout", { handle: name });
+      const body = await apiAction("/v1/checkout", { handle: name });
       if (body.checkoutUrl) { window.location.href = body.checkoutUrl; return; }
       toast(body.error || "Could not start checkout.");
-    } catch (e) { if (e.message !== "session expired") toast("Checkout failed. Try again shortly."); }
+    } catch (e) {
+      // apiAction never silently signs the user out — always show the real reason so a token the
+      // payment backend rejects reads as "Checkout couldn't start: …" instead of a phantom bounce.
+      toast("Checkout couldn't start: " + e.message);
+    }
   }
 
   async function loadOverview() {

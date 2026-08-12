@@ -114,6 +114,23 @@ export async function exchangeOidcCode(code, redirectUri, codeVerifier) {
   });
 }
 
+// Silently renew the access token from a stored refresh token ("remember me"). The refresh token
+// itself never reaches the browser as a bearer credential — it round-trips only to Keycloak here.
+export async function refreshOidcToken(refreshToken) {
+  const url = `${config.oidc.issuer}/protocol/openid-connect/token`;
+  const form = new URLSearchParams({
+    grant_type: "refresh_token",
+    refresh_token: refreshToken,
+    client_id: config.oidc.clientId,
+  });
+  if (config.oidc.clientSecret) form.set("client_secret", config.oidc.clientSecret);
+  return doFetch(url, {
+    method: "POST",
+    headers: { "content-type": "application/x-www-form-urlencoded", accept: "application/json" },
+    body: form.toString(),
+  });
+}
+
 // ---- registry read (handle availability) ------------------------------------------------------
 
 export async function registryResolves(name) {
