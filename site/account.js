@@ -274,9 +274,12 @@
         <div id="ac-pb-list"><p class="muted">Loading…</p></div>
         <div class="ac-actions ac-left">
           <button class="btn btn-secondary" id="ac-pb-create">Create an inbox</button>
-          <button class="btn btn-secondary" id="ac-pb-key">Reveal connector key</button>
+          <button class="btn btn-secondary" id="ac-pb-key">Create connector key</button>
         </div>
         <div id="ac-pb-out"></div>
+        <h3 class="ac-mt">Connector keys</h3>
+        <p class="muted">Each key lets an agent act as this account. Revoke one to cut off a device or agent.</p>
+        <div id="ac-pb-keys"><p class="muted">Loading…</p></div>
       </div>
       <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
       <div class="ac-card"><h3>Payment method</h3><div id="ac-pay"><p class="muted">Loading…</p></div></div>
@@ -294,6 +297,7 @@
     wireSearch(true);
     loadOverview();
     loadPostbox();
+    loadKeys();
   }
 
   // ---- hosted postbox (MCP connector) --------------------------------------------------------
@@ -328,11 +332,15 @@
         ? identities.map((i) => `<div class="ac-row">
             <span class="mono">${esc(i.address)}</span>
             <span class="muted">${esc(i.label || "")}</span>
-            <button class="btn btn-small" data-pbview="${esc(i.address)}">View inbox</button>
+            <span class="ac-row-actions">
+              <button class="btn btn-small" data-pbview="${esc(i.address)}">View inbox</button>
+              <button class="btn btn-small" data-pbdel="${esc(i.address)}">Delete</button>
+            </span>
           </div>`).join("")
         : `<p class="muted">No inboxes yet — create one for your agent.</p>`)
         + `<div id="ac-pb-msgs"></div>`;
       box.querySelectorAll("[data-pbview]").forEach((b) => b.onclick = () => pbViewInbox(b.getAttribute("data-pbview")));
+      box.querySelectorAll("[data-pbdel]").forEach((b) => b.onclick = () => pbDeleteInbox(b.getAttribute("data-pbdel")));
     } catch (e) {
       box.innerHTML = `<p class="muted">${e.status === 401 ? "Sign in again to manage inboxes." : "Could not reach the postbox."}</p>`;
     }
@@ -372,6 +380,15 @@
     } catch (e) { toast("Could not create inbox: " + e.message); }
   }
 
+  async function pbDeleteInbox(addr) {
+    if (!confirm(`Delete ${addr}? Its messages will be removed. This can't be undone.`)) return;
+    try {
+      await pbFetch("/v1/identities?identity=" + encodeURIComponent(addr), { method: "DELETE" });
+      loadPostbox();
+      toast("Inbox deleted.");
+    } catch (e) { toast("Could not delete inbox: " + e.message); }
+  }
+
   async function pbRevealKey() {
     try {
       const { api_key } = await pbFetch("/v1/api-keys", { method: "POST" });
@@ -381,7 +398,39 @@
       $("#ac-pb-out").innerHTML =
         `<p class="ac-warn">Save this connector key — it's shown once. Paste the config into your Claude/ChatGPT MCP settings.</p>
          <pre class="ac-pre">${esc(cfg)}</pre>`;
+      loadKeys();
     } catch (e) { toast("Could not create a connector key: " + e.message); }
+  }
+
+  async function loadKeys() {
+    const box = $("#ac-pb-keys"); if (!box) return;
+    try {
+      const { keys } = await pbFetch("/v1/api-keys");
+      box.innerHTML = keys.length
+        ? keys.map((k) => `<div class="ac-row">
+            <span class="mono">${esc(k.prefix)}…</span>
+            <span class="muted">created ${esc(fmtDate(k.created_at))}</span>
+            <button class="btn btn-small" data-pbrevoke="${esc(k.id)}">Revoke</button>
+          </div>`).join("")
+        : `<p class="muted">No connector keys yet — create one to connect an agent.</p>`;
+      box.querySelectorAll("[data-pbrevoke]").forEach((b) => b.onclick = () => pbRevokeKey(b.getAttribute("data-pbrevoke")));
+    } catch (e) {
+      box.innerHTML = `<p class="muted">${e.status === 401 ? "Sign in again to manage keys." : "Could not load keys."}</p>`;
+    }
+  }
+
+  async function pbRevokeKey(id) {
+    if (!confirm("Revoke this key? Any agent using it will lose access immediately.")) return;
+    try {
+      await pbFetch("/v1/api-keys/" + encodeURIComponent(id), { method: "DELETE" });
+      loadKeys();
+      toast("Key revoked.");
+    } catch (e) { toast("Could not revoke key: " + e.message); }
+  }
+
+  function fmtDate(secs) {
+    if (!secs) return "";
+    try { return new Date(secs * 1000).toLocaleDateString(); } catch (_) { return ""; }
   }
 
   function searchBlock() {

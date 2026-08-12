@@ -62,6 +62,7 @@
 .ac-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--rule); }
 .ac-row:first-child { border-top: 0; }
 .ac-row .k { font: 15px var(--mono); color: var(--navy); margin-right: 10px; }
+.ac-row-actions { display: inline-flex; gap: 8px; flex-shrink: 0; }
 
 /* billing form */
 .ac-form { margin-top: 4px; }
