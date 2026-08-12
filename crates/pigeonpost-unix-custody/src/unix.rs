@@ -1208,8 +1208,11 @@ fn stat_links(stat: &Stat) -> u64 {
 }
 
 #[cfg(not(target_vendor = "apple"))]
+// `st_nlink` is `u64` on some musl targets (x86_64) and `u32` on others (aarch64); normalise the
+// width. The conversion is a no-op where it is already `u64`, hence the allow.
+#[allow(clippy::useless_conversion)]
 fn stat_links(stat: &Stat) -> u64 {
-    stat.st_nlink
+    u64::from(stat.st_nlink)
 }
 
 fn cleanup_created_directories(cleanup: &[CleanupDirectory]) {
