@@ -18,12 +18,25 @@
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
 
 use axum::{
+    extract::State,
     http::StatusCode,
     response::IntoResponse,
     routing::{any, get, post},
     Json, Router,
 };
 use serde_json::json;
+use std::sync::Arc;
+
+mod pow;
+
+/// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
+const POW_TTL_SECS: u64 = 120;
+
+/// Shared, cheaply-cloneable handler state.
+#[derive(Clone)]
+struct AppState {
+    pow: Arc<pow::Pow>,
+}
 
 /// Runtime configuration, entirely from environment (see the plan's Appendix A). Secrets
 /// (`POW_HMAC_SECRET`, `CAPTCHA_SECRET`, DB password inside `POSTBOX_DB_URL`) are deliberately never
@@ -136,19 +149,56 @@ async fn serve(cfg: Config) {
         "pigeonpost-postbox listening (scaffold — /mcp and /v1 return 501)"
     );
 
-    let app = Router::new()
-        .route("/health", get(health))
-        .route("/mcp", post(mcp_stub))
-        .route("/v1/{*rest}", any(v1_stub))
-        .fallback(not_found);
-
-    if let Err(e) = axum::serve(listener, app)
+    if let Err(e) = axum::serve(listener, build_router(build_state(&cfg)))
         .with_graceful_shutdown(shutdown_signal())
         .await
     {
         tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
+}
+
+/// Assemble shared state. The PoW HMAC secret comes from `POW_HMAC_SECRET`; if it's unset (or the
+/// placeholder), we fall back to an ephemeral random secret and warn — fine for dev, but challenges
+/// won't survive a restart and won't validate across replicas.
+fn build_state(cfg: &Config) -> AppState {
+    let secret = match std::env::var("POW_HMAC_SECRET") {
+        Ok(s) if !s.is_empty() && s != "CHANGEME" => s.into_bytes(),
+        _ => {
+            let mut b = [0u8; 32];
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
+            tracing::warn!(
+                "POW_HMAC_SECRET unset — using an ephemeral secret (challenges won't survive a restart)"
+            );
+            b.to_vec()
+        }
+    };
+    AppState {
+        pow: Arc::new(pow::Pow::new(
+            secret,
+            cfg.pow_min_bits,
+            cfg.pow_max_bits,
+            POW_TTL_SECS,
+        )),
+    }
+}
+
+fn build_router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(health))
+        .route("/mcp", post(mcp_stub))
+        .route("/v1/pow/challenge", get(pow_challenge))
+        .route("/v1/identities", post(create_identity))
+        .route("/v1/{*rest}", any(v1_stub))
+        .fallback(not_found)
+        .with_state(state)
+}
+
+fn now_unix() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 async fn health() -> impl IntoResponse {
@@ -158,6 +208,65 @@ async fn health() -> impl IntoResponse {
         "version": env!("CARGO_PKG_VERSION"),
         "stage": "scaffold",
     }))
+}
+
+/// Recent anonymous creations before PoW difficulty climbs one bit (§14.1). Fixed input of `0` for
+/// now — the real per-window rate signal lands with the accounts/metering work.
+const POW_RATE_THRESHOLD: u64 = 100;
+
+/// Issue a proof-of-work challenge for anonymous identity creation (§14.1). The client solves it and
+/// submits the solution to `create_identity`.
+async fn pow_challenge(State(state): State<AppState>) -> impl IntoResponse {
+    let now = now_unix();
+    let bits = state.pow.difficulty_for_rate(0, POW_RATE_THRESHOLD);
+    let challenge = state.pow.issue(bits, now);
+    let expires_at = pow::Pow::exp_of(&challenge).unwrap_or(now + POW_TTL_SECS);
+    Json(json!({ "challenge": challenge, "bits": bits, "expires_at": expires_at }))
+}
+
+/// Anonymous identity creation request. `pow_*` are required; `label` is an optional agent tag.
+#[derive(serde::Deserialize)]
+#[allow(dead_code)] // label is consumed once real /k/ minting lands
+struct CreateIdentityReq {
+    #[serde(default)]
+    pow_challenge: String,
+    #[serde(default)]
+    pow_solution: String,
+    #[serde(default)]
+    label: Option<String>,
+}
+
+/// `POST /v1/identities` — anonymous `/k/` creation, gated on proof-of-work. The PoW gate is live;
+/// the actual keypair minting + capability token land with the key-vault increment, so a *passing*
+/// proof currently returns 501 (and burns the challenge, proving single-use end to end).
+async fn create_identity(
+    State(state): State<AppState>,
+    Json(req): Json<CreateIdentityReq>,
+) -> impl IntoResponse {
+    let now = now_unix();
+    match state
+        .pow
+        .consume(&req.pow_challenge, &req.pow_solution, now)
+    {
+        Ok(v) => {
+            tracing::debug!(bits = v.bits, "proof-of-work accepted for create_identity");
+            (
+                StatusCode::NOT_IMPLEMENTED,
+                Json(json!({
+                    "error": "not_implemented",
+                    "detail": "proof-of-work accepted; /k/ identity minting lands with the key-vault increment",
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "pow_required",
+                "detail": e.to_string(),
+                "hint": "GET /v1/pow/challenge, solve it, and resubmit as pow_challenge + pow_solution",
+            })),
+        ),
+    }
 }
 
 async fn mcp_stub() -> impl IntoResponse {
@@ -243,5 +352,15 @@ mod tests {
         assert_eq!(port_from_bind("127.0.0.1:1234"), 1234);
         assert_eq!(port_from_bind("[::]:443"), 443);
         assert_eq!(port_from_bind("garbage"), 8990);
+    }
+
+    /// Guards against a matchit route conflict between `/v1/pow/challenge` and the `/v1/{*rest}`
+    /// catch-all — Router construction panics on conflict, so building it here is the assertion.
+    #[test]
+    fn router_builds_without_route_conflict() {
+        let state = AppState {
+            pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
+        };
+        let _ = build_router(state);
     }
 }

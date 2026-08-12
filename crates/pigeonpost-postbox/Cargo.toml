@@ -21,3 +21,9 @@ serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# proof-of-work anti-abuse (§14.1): HMAC-signed challenges + hashcash verification
+hmac.workspace = true
+sha2.workspace = true
+subtle.workspace = true
+rand_core.workspace = true
+thiserror.workspace = true
