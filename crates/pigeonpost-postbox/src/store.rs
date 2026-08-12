@@ -44,7 +44,9 @@ CREATE TABLE IF NOT EXISTS accounts (
 CREATE TABLE IF NOT EXISTS api_keys (
     key_hash   BLOB PRIMARY KEY,
     account_id TEXT NOT NULL,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    id         TEXT,
+    prefix     TEXT
 );
 ";
 
@@ -57,6 +59,10 @@ const MIGRATIONS: &[&str] = &[
     "CREATE INDEX IF NOT EXISTS identities_by_account ON identities(account_id)",
     "ALTER TABLE accounts ADD COLUMN oidc_sub TEXT",
     "CREATE UNIQUE INDEX IF NOT EXISTS accounts_by_sub ON accounts(oidc_sub)",
+    "ALTER TABLE api_keys ADD COLUMN id TEXT",
+    "ALTER TABLE api_keys ADD COLUMN prefix TEXT",
+    "UPDATE api_keys SET id = lower(hex(randomblob(8))) WHERE id IS NULL",
+    "CREATE INDEX IF NOT EXISTS api_keys_by_account ON api_keys(account_id)",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -102,6 +108,26 @@ pub struct Message {
     pub wrap_blob: Vec<u8>,
     pub created_at: u64,
     pub read: bool,
+}
+
+/// A new API key's storable fields: the secret hash, a revocable id, and a display prefix.
+pub struct NewKey {
+    pub key_hash: [u8; 32],
+    pub id: String,
+    pub prefix: String,
+}
+
+fn insert_api_key(
+    conn: &Connection,
+    account_id: &str,
+    key: &NewKey,
+    now: u64,
+) -> rusqlite::Result<()> {
+    conn.execute(
+        "INSERT INTO api_keys (key_hash, account_id, created_at, id, prefix) VALUES (?1, ?2, ?3, ?4, ?5)",
+        params![&key.key_hash[..], account_id, now as i64, key.id, key.prefix],
+    )?;
+    Ok(())
 }
 
 /// Raw identity columns, before fixed-size arrays are validated.
@@ -256,7 +282,7 @@ impl Store {
     pub async fn create_account(
         &self,
         account_id: String,
-        key_hash: [u8; 32],
+        key: NewKey,
         now: u64,
     ) -> Result<(), StoreError> {
         let conn = self.conn.clone();
@@ -267,10 +293,7 @@ impl Store {
                 "INSERT INTO accounts (id, created_at) VALUES (?1, ?2)",
                 params![account_id, now as i64],
             )?;
-            tx.execute(
-                "INSERT INTO api_keys (key_hash, account_id, created_at) VALUES (?1, ?2, ?3)",
-                params![&key_hash[..], account_id, now as i64],
-            )?;
+            insert_api_key(&tx, &account_id, &key, now)?;
             tx.commit()?;
             Ok(())
         })
@@ -317,17 +340,81 @@ impl Store {
     pub async fn add_api_key(
         &self,
         account_id: String,
-        key_hash: [u8; 32],
+        key: NewKey,
         now: u64,
     ) -> Result<(), StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
             let c = conn.lock().expect("store lock");
-            c.execute(
-                "INSERT INTO api_keys (key_hash, account_id, created_at) VALUES (?1, ?2, ?3)",
-                params![&key_hash[..], account_id, now as i64],
-            )?;
+            insert_api_key(&c, &account_id, &key, now)?;
             Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// List an account's API keys (id, display prefix, created_at) — never the secret.
+    pub async fn list_keys(
+        &self,
+        account_id: String,
+    ) -> Result<Vec<(String, String, u64)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(String, String, u64)>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT COALESCE(id, ''), COALESCE(prefix, ''), created_at
+                 FROM api_keys WHERE account_id = ?1 ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map(params![account_id], |r| {
+                Ok((r.get(0)?, r.get(1)?, r.get::<_, i64>(2)? as u64))
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Revoke one of an account's API keys by id (ownership-scoped).
+    pub async fn revoke_key(&self, account_id: String, id: String) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n = c.execute(
+                "DELETE FROM api_keys WHERE account_id = ?1 AND id = ?2",
+                params![account_id, id],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Delete one of an account's identities and everything in/for its inbox (ownership-scoped).
+    pub async fn delete_identity(
+        &self,
+        account_id: String,
+        address: String,
+    ) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let removed = tx.execute(
+                "DELETE FROM identities WHERE address = ?1 AND account_id = ?2",
+                params![address, account_id],
+            )?;
+            if removed > 0 {
+                tx.execute(
+                    "DELETE FROM messages WHERE recipient = ?1 OR sender = ?1",
+                    params![address],
+                )?;
+            }
+            tx.commit()?;
+            Ok(removed > 0)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -608,10 +695,12 @@ mod tests {
     #[tokio::test]
     async fn account_api_key_and_ownership() {
         let store = Store::open(":memory:").unwrap();
-        store
-            .create_account("acct_1".into(), [7; 32], 0)
-            .await
-            .unwrap();
+        let key = NewKey {
+            key_hash: [7; 32],
+            id: "key1".into(),
+            prefix: "pk_live_aaaabbbb".into(),
+        };
+        store.create_account("acct_1".into(), key, 0).await.unwrap();
         assert_eq!(
             store.account_for_key([7; 32]).await.unwrap().as_deref(),
             Some("acct_1")
@@ -644,6 +733,104 @@ mod tests {
             store.count_for_account("acct_none".into()).await.unwrap(),
             0
         );
+    }
+
+    #[tokio::test]
+    async fn key_management_list_revoke() {
+        let store = Store::open(":memory:").unwrap();
+        let first = NewKey {
+            key_hash: [1; 32],
+            id: "k_first".into(),
+            prefix: "pk_live_first000".into(),
+        };
+        store
+            .create_account("acct_1".into(), first, 100)
+            .await
+            .unwrap();
+        // a second key on the same account
+        let second = NewKey {
+            key_hash: [2; 32],
+            id: "k_second".into(),
+            prefix: "pk_live_secnd000".into(),
+        };
+        store
+            .add_api_key("acct_1".into(), second, 200)
+            .await
+            .unwrap();
+
+        let mut keys = store.list_keys("acct_1".into()).await.unwrap();
+        keys.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(keys.len(), 2);
+        assert_eq!(keys[0].0, "k_first");
+        assert_eq!(keys[0].1, "pk_live_first000");
+        assert_eq!(keys[1].0, "k_second");
+
+        // both keys authenticate before revocation
+        assert_eq!(
+            store.account_for_key([1; 32]).await.unwrap().as_deref(),
+            Some("acct_1")
+        );
+        assert_eq!(
+            store.account_for_key([2; 32]).await.unwrap().as_deref(),
+            Some("acct_1")
+        );
+
+        // revoke the second; it no longer authenticates, the first still does
+        assert!(store
+            .revoke_key("acct_1".into(), "k_second".into())
+            .await
+            .unwrap());
+        assert!(!store
+            .revoke_key("acct_1".into(), "k_second".into())
+            .await
+            .unwrap()); // idempotent
+        assert_eq!(store.account_for_key([2; 32]).await.unwrap(), None);
+        assert_eq!(
+            store.account_for_key([1; 32]).await.unwrap().as_deref(),
+            Some("acct_1")
+        );
+
+        // can't revoke another account's key
+        assert!(!store
+            .revoke_key("acct_other".into(), "k_first".into())
+            .await
+            .unwrap());
+    }
+
+    #[tokio::test]
+    async fn delete_identity_scoped_and_removes_messages() {
+        let store = Store::open(":memory:").unwrap();
+        let key = NewKey {
+            key_hash: [3; 32],
+            id: "k".into(),
+            prefix: "pk_live_x".into(),
+        };
+        store.create_account("acct_1".into(), key, 0).await.unwrap();
+
+        let mut mine = sample("/k/mine");
+        mine.account_id = Some("acct_1".into());
+        store.insert(mine).await.unwrap();
+        store.enqueue(msg("m1", "/k/mine", 1)).await.unwrap();
+        assert_eq!(store.inbox_count("/k/mine".into()).await.unwrap(), 1);
+
+        // wrong account can't delete it
+        assert!(!store
+            .delete_identity("acct_other".into(), "/k/mine".into())
+            .await
+            .unwrap());
+        assert!(store.get("/k/mine".into()).await.unwrap().is_some());
+
+        // owner deletes it: identity and its messages go
+        assert!(store
+            .delete_identity("acct_1".into(), "/k/mine".into())
+            .await
+            .unwrap());
+        assert!(!store
+            .delete_identity("acct_1".into(), "/k/mine".into())
+            .await
+            .unwrap()); // idempotent
+        assert!(store.get("/k/mine".into()).await.unwrap().is_none());
+        assert_eq!(store.inbox_count("/k/mine".into()).await.unwrap(), 0);
     }
 
     #[tokio::test]

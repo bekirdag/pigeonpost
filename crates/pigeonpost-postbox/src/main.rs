@@ -39,7 +39,7 @@ use axum::{
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
-    routing::{any, get, post},
+    routing::{any, delete, get, post},
     Json, Router,
 };
 use pigeonpost_core::{envelope, keys, Address, Identity};
@@ -279,6 +279,19 @@ fn rand_hex(n: usize) -> String {
     hex_str(&b)
 }
 
+/// Mint a fresh API key: returns the plaintext (shown once) and the storable record (hash + a
+/// revocable id + a display prefix).
+fn new_api_key() -> (String, store::NewKey) {
+    let api_key = format!("pk_live_{}", rand_hex(32));
+    let prefix = api_key.chars().take(16).collect::<String>();
+    let record = store::NewKey {
+        key_hash: sha256(api_key.as_bytes()),
+        id: rand_hex(8),
+        prefix,
+    };
+    (api_key, record)
+}
+
 /// A one-time capability token bound to an ephemeral identity (plan §11).
 fn gen_cap_token() -> String {
     let mut raw = [0u8; 32];
@@ -293,8 +306,14 @@ fn build_router(state: AppState) -> Router {
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/accounts", post(create_account))
-        .route("/v1/api-keys", post(create_api_key))
-        .route("/v1/identities", post(create_identity).get(list_identities))
+        .route("/v1/api-keys", post(create_api_key).get(list_api_keys))
+        .route("/v1/api-keys/{id}", delete(revoke_api_key))
+        .route(
+            "/v1/identities",
+            post(create_identity)
+                .get(list_identities)
+                .delete(delete_identity),
+        )
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
@@ -485,10 +504,10 @@ async fn create_account(
         );
     }
     let account_id = format!("acct_{}", rand_hex(12));
-    let api_key = format!("pk_live_{}", rand_hex(32));
+    let (api_key, key_record) = new_api_key();
     match state
         .store
-        .create_account(account_id.clone(), sha256(api_key.as_bytes()), now_unix())
+        .create_account(account_id.clone(), key_record, now_unix())
         .await
     {
         Ok(()) => {
@@ -528,10 +547,10 @@ async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Re
         Ok(a) => a,
         Err(e) => return e.into_response(),
     };
-    let api_key = format!("pk_live_{}", rand_hex(32));
+    let (api_key, key_record) = new_api_key();
     match state
         .store
-        .add_api_key(account.clone(), sha256(api_key.as_bytes()), now_unix())
+        .add_api_key(account.clone(), key_record, now_unix())
         .await
     {
         Ok(()) => {
@@ -540,6 +559,77 @@ async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Re
         }
         Err(e) => {
             tracing::error!(error = %e, "add api key failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `GET /v1/api-keys` — list the account's keys (id + display prefix + created_at, never the secret).
+async fn list_api_keys(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let account = match account_for_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.list_keys(account).await {
+        Ok(rows) => Json(json!({
+            "keys": rows.into_iter().map(|(id, prefix, created_at)| json!({ "id": id, "prefix": prefix, "created_at": created_at })).collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "list keys failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `DELETE /v1/api-keys/{id}` — revoke one of the account's API keys.
+async fn revoke_api_key(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let account = match account_for_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.revoke_key(account, id).await {
+        Ok(true) => (StatusCode::OK, Json(json!({ "revoked": true }))).into_response(),
+        Ok(false) => err_response(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            Some("no such key in your account"),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "revoke key failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct DeleteIdentityQuery {
+    identity: String,
+}
+
+/// `DELETE /v1/identities?identity=<addr>` — delete one of the account's inboxes and its messages.
+async fn delete_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<DeleteIdentityQuery>,
+) -> Response {
+    let account = match account_for_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.delete_identity(account, q.identity).await {
+        Ok(true) => (StatusCode::OK, Json(json!({ "deleted": true }))).into_response(),
+        Ok(false) => err_response(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            Some("no such identity in your account"),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "delete identity failed");
             ApiError::server("store_error").into_response()
         }
     }
@@ -572,7 +662,7 @@ async fn cors(req: Request, next: Next) -> Response {
         }
         h.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, OPTIONS"),
+            HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
