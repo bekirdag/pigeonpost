@@ -9,7 +9,7 @@
 //! runtime; a single connection behind a mutex is ample at P0 volume.
 
 use crate::vault::Wrapped;
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
 const SCHEMA: &str = "
@@ -23,10 +23,23 @@ CREATE TABLE IF NOT EXISTS identities (
     label         TEXT,
     created_at    INTEGER NOT NULL
 );
+CREATE INDEX IF NOT EXISTS identities_by_cap ON identities(cap_hash);
+
+CREATE TABLE IF NOT EXISTS messages (
+    id         TEXT PRIMARY KEY,
+    recipient  TEXT NOT NULL,
+    sender     TEXT NOT NULL,
+    wrap_blob  BLOB NOT NULL,
+    created_at INTEGER NOT NULL,
+    read       INTEGER NOT NULL DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages(recipient);
 ";
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
+    #[error("corrupt stored value: {0}")]
+    Corrupt(&'static str),
     #[error("sqlite: {0}")]
     Sqlite(#[from] rusqlite::Error),
     #[error("store task failed")]
@@ -34,6 +47,9 @@ pub enum StoreError {
 }
 
 /// One hosted identity and its sealed key material.
+// x25519_pub, label, and created_at are persisted for future paths (device keys, display, metering)
+// but not yet read by logic; allow until then.
+#[allow(dead_code)]
 pub struct StoredIdentity {
     pub address: String,
     pub wrapped_seed: Wrapped,
@@ -43,6 +59,64 @@ pub struct StoredIdentity {
     pub cap_hash: [u8; 32],
     pub label: Option<String>,
     pub created_at: u64,
+}
+
+/// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a JSON-serialized
+/// `pigeonpost_core::envelope::Wrap`.
+pub struct Message {
+    pub id: String,
+    pub recipient: String,
+    pub sender: String,
+    pub wrap_blob: Vec<u8>,
+    pub created_at: u64,
+    pub read: bool,
+}
+
+/// Raw identity columns, before fixed-size arrays are validated.
+struct IdRow {
+    address: String,
+    ed: Vec<u8>,
+    x: Vec<u8>,
+    nonce: Vec<u8>,
+    ct: Vec<u8>,
+    cap: Vec<u8>,
+    label: Option<String>,
+    created_at: i64,
+}
+
+fn arr<const N: usize>(v: Vec<u8>, what: &'static str) -> Result<[u8; N], StoreError> {
+    v.try_into().map_err(|_| StoreError::Corrupt(what))
+}
+
+fn id_from_row(r: IdRow) -> Result<StoredIdentity, StoreError> {
+    Ok(StoredIdentity {
+        address: r.address,
+        wrapped_seed: Wrapped {
+            nonce: arr(r.nonce, "wrapped_nonce")?,
+            ct: r.ct,
+        },
+        ed25519_pub: arr(r.ed, "ed25519_pub")?,
+        x25519_pub: arr(r.x, "x25519_pub")?,
+        cap_hash: arr(r.cap, "cap_hash")?,
+        label: r.label,
+        created_at: r.created_at as u64,
+    })
+}
+
+const ID_COLS: &str =
+    "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at";
+
+fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
+    Ok(IdRow {
+        address: row.get(0)?,
+        ed: row.get(1)?,
+        x: row.get(2)?,
+        nonce: row.get(3)?,
+        ct: row.get(4)?,
+        cap: row.get(5)?,
+        label: row.get(6)?,
+        created_at: row.get(7)?,
+    })
 }
 
 /// SQLite-backed identity store.
@@ -100,6 +174,111 @@ impl Store {
         .await
         .map_err(|_| StoreError::Join)?
     }
+
+    /// Resolve the identity a capability token authenticates (bearer auth).
+    pub async fn get_by_cap(
+        &self,
+        cap_hash: [u8; 32],
+    ) -> Result<Option<StoredIdentity>, StoreError> {
+        self.query_one(
+            format!("SELECT {ID_COLS} FROM identities WHERE cap_hash = ?1"),
+            move |c, sql| {
+                c.query_row(sql, params![&cap_hash[..]], map_id_row)
+                    .optional()
+            },
+        )
+        .await
+    }
+
+    /// Resolve a hosted identity by its address (recipient lookup).
+    pub async fn get(&self, address: String) -> Result<Option<StoredIdentity>, StoreError> {
+        self.query_one(
+            format!("SELECT {ID_COLS} FROM identities WHERE address = ?1"),
+            move |c, sql| c.query_row(sql, params![address], map_id_row).optional(),
+        )
+        .await
+    }
+
+    /// Shared plumbing for the two single-identity lookups.
+    async fn query_one<F>(&self, sql: String, run: F) -> Result<Option<StoredIdentity>, StoreError>
+    where
+        F: FnOnce(&Connection, &str) -> rusqlite::Result<Option<IdRow>> + Send + 'static,
+    {
+        let conn = self.conn.clone();
+        let row = tokio::task::spawn_blocking(move || -> Result<Option<IdRow>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            Ok(run(&c, &sql)?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)??;
+        row.map(id_from_row).transpose()
+    }
+
+    pub async fn enqueue(&self, m: Message) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO messages (id, recipient, sender, wrap_blob, created_at, read)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    m.id,
+                    m.recipient,
+                    m.sender,
+                    m.wrap_blob,
+                    m.created_at as i64,
+                    m.read as i64
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Messages waiting for `recipient`, oldest first.
+    pub async fn list_for(&self, recipient: String) -> Result<Vec<Message>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Message>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT id, recipient, sender, wrap_blob, created_at, read
+                 FROM messages WHERE recipient = ?1 ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map(params![recipient], |row| {
+                Ok(Message {
+                    id: row.get(0)?,
+                    recipient: row.get(1)?,
+                    sender: row.get(2)?,
+                    wrap_blob: row.get(3)?,
+                    created_at: row.get::<_, i64>(4)? as u64,
+                    read: row.get::<_, i64>(5)? != 0,
+                })
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Mark a message read, scoped to its recipient so one identity can't ack another's mail.
+    pub async fn mark_read(&self, id: String, recipient: String) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n = c.execute(
+                "UPDATE messages SET read = 1 WHERE id = ?1 AND recipient = ?2",
+                params![id, recipient],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
 }
 
 #[cfg(test)]
@@ -135,5 +314,41 @@ mod tests {
         let store = Store::open(":memory:").unwrap();
         store.insert(sample("/k/dup")).await.unwrap();
         assert!(store.insert(sample("/k/dup")).await.is_err()); // PRIMARY KEY conflict
+    }
+
+    #[tokio::test]
+    async fn message_round_trip_seals_stores_and_opens() {
+        use pigeonpost_core::{envelope, Identity};
+        let store = Store::open(":memory:").unwrap();
+        let alice = Identity::generate();
+        let bob = Identity::generate();
+        let bob_addr = bob.address().as_str().to_string();
+
+        let wrap = envelope::wrap(&alice, &bob.verifying_key(), "hello bob", 1000).unwrap();
+        store
+            .enqueue(Message {
+                id: "m1".into(),
+                recipient: bob_addr.clone(),
+                sender: alice.address().as_str().to_string(),
+                wrap_blob: serde_json::to_vec(&wrap).unwrap(),
+                created_at: 1000,
+                read: false,
+            })
+            .await
+            .unwrap();
+
+        let msgs = store.list_for(bob_addr.clone()).await.unwrap();
+        assert_eq!(msgs.len(), 1);
+        let stored: envelope::Wrap = serde_json::from_slice(&msgs[0].wrap_blob).unwrap();
+        let (from, body) = envelope::open(&bob, &stored).unwrap();
+        assert_eq!(body.as_str(), "hello bob");
+        assert_eq!(from, alice.verifying_key());
+
+        // ack is scoped to the recipient
+        assert!(store.mark_read("m1".into(), bob_addr).await.unwrap());
+        assert!(!store
+            .mark_read("m1".into(), "/k/other".into())
+            .await
+            .unwrap());
     }
 }

@@ -3,10 +3,11 @@
 The Dockerized hosted plane (remote MCP + key custody + inbox hosting) for mass adoption.
 Design: [`docs/planning/hosted-postbox-architecture-2026-08-12.md`](../../docs/planning/hosted-postbox-architecture-2026-08-12.md) *(gitignored planning doc)*.
 
-**Status: P0 in progress.** Live: proof-of-work anti-abuse (`GET /v1/pow/challenge`) and PoW-gated
+**Status: P0 in progress.** Live: proof-of-work anti-abuse (`GET /v1/pow/challenge`); PoW-gated
 anonymous `/k/` identity creation (`POST /v1/identities`) — mints a keypair, seals the seed in the
-vault, and persists it to SQLite. Not yet built: `send`/`inbox`/`read`, accounts/OAuth, quotas, and
-the MCP surface (`/mcp` returns `501`).
+vault, persists to SQLite, returns a capability token; and the capability-token-authed messaging
+loop — `POST /v1/send` (hosted→hosted), `GET /v1/inbox`, `POST /v1/ack`. Not yet built: cross-box
+delivery, accounts/OAuth, quotas, and the MCP surface (`/mcp` returns `501`).
 
 ## Host
 

@@ -9,11 +9,13 @@
 //!   healthcheck, reaper entrypoint;
 //! - proof-of-work anti-abuse (`GET /v1/pow/challenge`) — `pow`;
 //! - anonymous `/k/` identity creation (`POST /v1/identities`), PoW-gated: mints a keypair, seals
-//!   the seed in the `vault`, stores it (in-memory for now — `store`), returns the address + a
-//!   one-time capability token.
+//!   the seed in the `vault`, persists it to SQLite (`store`), returns the address + a one-time
+//!   capability token;
+//! - the messaging loop, capability-token authed: seal + deliver (`POST /v1/send`, hosted→hosted),
+//!   open (`GET /v1/inbox`, managed custody unwraps in-session), and `POST /v1/ack`.
 //!
-//! Not yet here: `send`/`inbox`/`read`, persistent (Postgres) storage, accounts/OAuth, quotas, and
-//! the MCP surface (`/mcp` still returns `501`). See the design doc below.
+//! Not yet here: cross-box delivery (resolving external recipient keys), accounts/OAuth, quotas,
+//! Postgres, and the MCP surface (`/mcp` still returns `501`). See the design doc below.
 //!
 //! Design: `docs/planning/hosted-postbox-architecture-2026-08-12.md`.
 //!
@@ -24,12 +26,12 @@
 
 use axum::{
     extract::State,
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     response::{IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
 };
-use pigeonpost_core::{keys, Identity};
+use pigeonpost_core::{envelope, keys, Address, Identity};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -233,16 +235,20 @@ fn sha256(bytes: &[u8]) -> [u8; 32] {
     h.finalize().into()
 }
 
+fn hex_str(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        let _ = write!(s, "{b:02x}");
+    }
+    s
+}
+
 /// A one-time capability token bound to an ephemeral identity (plan §11).
 fn gen_cap_token() -> String {
     let mut raw = [0u8; 32];
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut raw);
-    let mut s = String::from("cap_");
-    for b in raw {
-        use std::fmt::Write;
-        let _ = write!(s, "{b:02x}");
-    }
-    s
+    format!("cap_{}", hex_str(&raw))
 }
 
 fn build_router(state: AppState) -> Router {
@@ -251,6 +257,9 @@ fn build_router(state: AppState) -> Router {
         .route("/mcp", post(mcp_stub))
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/identities", post(create_identity))
+        .route("/v1/send", post(send))
+        .route("/v1/inbox", get(inbox))
+        .route("/v1/ack", post(ack))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .with_state(state)
@@ -376,6 +385,222 @@ async fn create_identity(
         Json(json!({ "address": address, "capability_token": cap_token })),
     )
         .into_response()
+}
+
+fn err_response(status: StatusCode, error: &str, detail: Option<&str>) -> Response {
+    let mut body = json!({ "error": error });
+    if let Some(d) = detail {
+        body["detail"] = json!(d);
+    }
+    (status, Json(body)).into_response()
+}
+
+/// Resolve the identity a request's `Authorization: Bearer cap_…` token authenticates.
+// Returning the error Response in the Err arm is the standard axum idiom; the lint about its size
+// doesn't apply to our low-frequency auth path.
+#[allow(clippy::result_large_err)]
+async fn authed_identity(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<store::StoredIdentity, Response> {
+    let token = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.strip_prefix("Bearer "))
+        .filter(|s| !s.is_empty());
+    let token = match token {
+        Some(t) => t,
+        None => {
+            return Err(err_response(
+                StatusCode::UNAUTHORIZED,
+                "unauthorized",
+                Some("missing bearer capability token"),
+            ))
+        }
+    };
+    match state.store.get_by_cap(sha256(token.as_bytes())).await {
+        Ok(Some(id)) => Ok(id),
+        Ok(None) => Err(err_response(
+            StatusCode::UNAUTHORIZED,
+            "unauthorized",
+            Some("unknown or revoked capability token"),
+        )),
+        Err(e) => {
+            tracing::error!(error = %e, "auth lookup failed");
+            Err(err_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "store_error",
+                None,
+            ))
+        }
+    }
+}
+
+/// Load an identity's signing key from the vault into memory.
+#[allow(clippy::result_large_err)]
+fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identity, Response> {
+    match state.vault.unwrap(&id.wrapped_seed) {
+        Ok(mut seed) => {
+            let identity = Identity::from_seed(seed);
+            seed.zeroize();
+            Ok(identity)
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "vault open failed");
+            Err(err_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "vault_error",
+                None,
+            ))
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct SendReq {
+    to: String,
+    body: String,
+}
+
+/// `POST /v1/send` — seal a message from the authenticated identity to a hosted recipient and drop
+/// it in their inbox. Cross-box delivery (resolving external recipient keys) is a later increment,
+/// so an unknown recipient is refused rather than silently dropped.
+async fn send(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<SendReq>,
+) -> Response {
+    let sender = match authed_identity(&state, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let recipient = match state.store.get(req.to.clone()).await {
+        Ok(Some(r)) => r,
+        Ok(None) => {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                "recipient_unresolved",
+                Some("only hosted recipients are deliverable in this build"),
+            )
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "recipient lookup failed");
+            return err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None);
+        }
+    };
+
+    let sender_identity = match open_identity(&state, &sender) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+    let recipient_vk = match keys::verifying_key_from_bytes(&recipient.ed25519_pub) {
+        Ok(k) => k,
+        Err(_) => {
+            return err_response(StatusCode::INTERNAL_SERVER_ERROR, "bad_recipient_key", None)
+        }
+    };
+
+    let now = now_unix();
+    let wrap = match envelope::wrap(&sender_identity, &recipient_vk, &req.body, now) {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::error!(error = %e, "seal failed");
+            return err_response(StatusCode::INTERNAL_SERVER_ERROR, "seal_error", None);
+        }
+    };
+    let message_id = hex_str(&wrap.id());
+    let blob = match serde_json::to_vec(&wrap) {
+        Ok(b) => b,
+        Err(_) => return err_response(StatusCode::INTERNAL_SERVER_ERROR, "encode_error", None),
+    };
+
+    if let Err(e) = state
+        .store
+        .enqueue(store::Message {
+            id: message_id.clone(),
+            recipient: recipient.address.clone(),
+            sender: sender.address.clone(),
+            wrap_blob: blob,
+            created_at: now,
+            read: false,
+        })
+        .await
+    {
+        tracing::error!(error = %e, "enqueue failed");
+        return err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None);
+    }
+    tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, "message sealed + enqueued");
+    (
+        StatusCode::CREATED,
+        Json(json!({ "message_id": message_id })),
+    )
+        .into_response()
+}
+
+/// `GET /v1/inbox` — open every message waiting for the authenticated identity and return the
+/// plaintext. Managed custody: the box unwraps the recipient key in-session to open. Bodies are
+/// flagged `untrusted` — they came from another agent and are data, never instruction.
+async fn inbox(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let me = match authed_identity(&state, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    let messages = match state.store.list_for(me.address.clone()).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = %e, "inbox list failed");
+            return err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None);
+        }
+    };
+    let me_identity = match open_identity(&state, &me) {
+        Ok(i) => i,
+        Err(r) => return r,
+    };
+
+    let mut out = Vec::new();
+    for m in messages {
+        let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
+            Ok(w) => w,
+            Err(_) => continue, // skip a corrupt row rather than fail the whole inbox
+        };
+        match envelope::open(&me_identity, &wrap) {
+            Ok((from_vk, body)) => out.push(json!({
+                "message_id": m.id,
+                "from": Address::from_pubkey(&from_vk).as_str(),
+                "body": body.as_str(),
+                "untrusted": true,
+                "received_at": m.created_at,
+                "read": m.read,
+            })),
+            Err(_) => continue, // not openable by us; skip
+        }
+    }
+    Json(json!({ "messages": out })).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct AckReq {
+    message_id: String,
+}
+
+/// `POST /v1/ack` — mark one of the authenticated identity's messages read.
+async fn ack(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AckReq>,
+) -> Response {
+    let me = match authed_identity(&state, &headers).await {
+        Ok(s) => s,
+        Err(r) => return r,
+    };
+    match state.store.mark_read(req.message_id, me.address).await {
+        Ok(true) => (StatusCode::OK, Json(json!({ "ok": true }))).into_response(),
+        Ok(false) => err_response(StatusCode::NOT_FOUND, "not_found", None),
+        Err(e) => {
+            tracing::error!(error = %e, "ack failed");
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None)
+        }
+    }
 }
 
 async fn mcp_stub() -> impl IntoResponse {
