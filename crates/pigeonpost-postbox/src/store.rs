@@ -313,6 +313,26 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Issue an additional API key for an existing account.
+    pub async fn add_api_key(
+        &self,
+        account_id: String,
+        key_hash: [u8; 32],
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO api_keys (key_hash, account_id, created_at) VALUES (?1, ?2, ?3)",
+                params![&key_hash[..], account_id, now as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// The account an API key authenticates, if any.
     pub async fn account_for_key(&self, key_hash: [u8; 32]) -> Result<Option<String>, StoreError> {
         let conn = self.conn.clone();

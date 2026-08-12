@@ -35,8 +35,9 @@
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
 
 use axum::{
-    extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    extract::{Query, Request, State},
+    http::{header, HeaderMap, HeaderValue, Method, StatusCode},
+    middleware::{self, Next},
     response::{Html, IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
@@ -292,12 +293,14 @@ fn build_router(state: AppState) -> Router {
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/accounts", post(create_account))
+        .route("/v1/api-keys", post(create_api_key))
         .route("/v1/identities", post(create_identity).get(list_identities))
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
+        .layer(middleware::from_fn(cors))
         .with_state(state)
 }
 
@@ -515,6 +518,69 @@ pub(crate) async fn do_list_identities(
     Ok(json!({
         "identities": rows.into_iter().map(|(address, label)| json!({ "address": address, "label": label })).collect::<Vec<_>>()
     }))
+}
+
+/// `POST /v1/api-keys` — issue a durable API key for the authenticated account (member JWT or an
+/// existing key). Lets a signed-in web user hand their agent a connector credential that outlives
+/// the short-lived member token.
+async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let account = match account_for_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    let api_key = format!("pk_live_{}", rand_hex(32));
+    match state
+        .store
+        .add_api_key(account.clone(), sha256(api_key.as_bytes()), now_unix())
+        .await
+    {
+        Ok(()) => {
+            tracing::info!(account = %account, "issued API key");
+            (StatusCode::CREATED, Json(json!({ "api_key": api_key }))).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "add api key failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// Web origins allowed to call the API from a browser (the signed-in account page on pigeonpost.dev).
+const CORS_ORIGINS: [&str; 2] = ["https://pigeonpost.dev", "https://www.pigeonpost.dev"];
+
+/// Minimal CORS: echo an allowlisted `Origin`, answer preflight, allow the bearer header. Same-origin
+/// callers (the onboarding page, agents) are unaffected.
+async fn cors(req: Request, next: Next) -> Response {
+    let origin = req
+        .headers()
+        .get(header::ORIGIN)
+        .and_then(|v| v.to_str().ok())
+        .filter(|o| CORS_ORIGINS.contains(o))
+        .map(String::from);
+    let preflight = req.method() == Method::OPTIONS;
+
+    let mut resp = if preflight {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        next.run(req).await
+    };
+
+    if let Some(o) = origin {
+        let h = resp.headers_mut();
+        if let Ok(v) = HeaderValue::from_str(&o) {
+            h.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, v);
+        }
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_METHODS,
+            HeaderValue::from_static("GET, POST, OPTIONS"),
+        );
+        h.insert(
+            header::ACCESS_CONTROL_ALLOW_HEADERS,
+            HeaderValue::from_static("authorization, content-type"),
+        );
+        h.insert(header::VARY, HeaderValue::from_static("Origin"));
+    }
+    resp
 }
 
 /// `GET /v1/identities` — list the API-key account's identities.
