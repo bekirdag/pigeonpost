@@ -272,7 +272,7 @@
         <p class="muted">Give a Claude or ChatGPT agent a hosted Pigeonpost inbox — it sends and
           receives messages through an MCP connector tied to this account.</p>
         <div id="ac-pb-list"><p class="muted">Loading…</p></div>
-        <div class="ac-actions" style="justify-content:flex-start;margin-top:12px">
+        <div class="ac-actions ac-left">
           <button class="btn btn-secondary" id="ac-pb-create">Create an inbox</button>
           <button class="btn btn-secondary" id="ac-pb-key">Reveal connector key</button>
         </div>
@@ -284,7 +284,7 @@
         <h3>Security</h3>
         <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
         <button class="btn btn-secondary" id="ac-2fa">Set up two-factor authentication</button>
-        <p class="ac-note" style="margin-top:10px">Opens a single screen with a QR code to scan, then brings you back here.</p>
+        <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>
       </div>
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
     $("#ac-logout").onclick = logout;
@@ -344,7 +344,7 @@
     try {
       const { messages } = await pbFetch("/v1/inbox?identity=" + encodeURIComponent(addr));
       if (!messages.length) { out.innerHTML = `<p class="muted">${esc(addr)} — inbox empty.</p>`; return; }
-      out.innerHTML = `<p class="muted" style="margin-top:12px">${esc(addr)}</p>` + messages.map((m) => `
+      out.innerHTML = `<p class="muted ac-mt">${esc(addr)}</p>` + messages.map((m) => `
         <div class="ac-msg${m.read ? " read" : ""}">
           <div class="ac-msg-h"><span class="mono">from ${esc(m.from)}</span>
             <button class="btn btn-small" data-pback="${esc(m.message_id)}" data-ident="${esc(addr)}"${m.read ? " disabled" : ""}>${m.read ? "read" : "mark read"}</button></div>
