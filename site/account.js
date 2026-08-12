@@ -465,9 +465,11 @@
       if (body.checkoutUrl) { window.location.href = body.checkoutUrl; return; }
       toast(body.error || "Could not start checkout.");
     } catch (e) {
-      // apiAction never silently signs the user out — always show the real reason so a token the
-      // payment backend rejects reads as "Checkout couldn't start: …" instead of a phantom bounce.
-      toast("Checkout couldn't start: " + e.message);
+      // A 401 that survived the refresh-and-retry means the session token is genuinely stale (expired,
+      // or minted before the current realm claims). Tell the user how to fix it rather than showing a
+      // cryptic "unauthorized"; anything else surfaces the real backend reason.
+      if (e.status === 401) toast("Your session has expired — sign out and sign back in, then try again.");
+      else toast("Checkout couldn't start: " + e.message);
     }
   }
 
