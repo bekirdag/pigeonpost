@@ -13,11 +13,14 @@
 //!   capability token;
 //! - the messaging loop, capability-token authed: seal + deliver (`POST /v1/send`, hosted→hosted),
 //!   open (`GET /v1/inbox`, managed custody unwraps in-session), and `POST /v1/ack`;
-//! - the MCP connector (`POST /mcp`, JSON-RPC) — `mcp` — exposing whoami / send / check-inbox / ack
-//!   as tools, so a Claude/ChatGPT client can drive a hosted mailbox.
+//! - the MCP connector (`POST /mcp`, JSON-RPC) — `mcp` — with identity-management and messaging
+//!   tools, so a Claude/ChatGPT client can drive one or many hosted mailboxes;
+//! - a self-serve onboarding page at `/` (in-browser PoW → mint → connector config);
+//! - accounts + API keys (`POST /v1/accounts`): one key creates and drives many identities without
+//!   per-inbox PoW (the multi-mailbox model), with `identity`/`from` selection.
 //!
-//! Not yet here: cross-box delivery (resolving external recipient keys), accounts/OAuth, quotas, and
-//! Postgres. See the design doc below.
+//! Not yet here: cross-box delivery (resolving external recipient keys), OAuth-backed accounts,
+//! quotas, and Postgres. See the design doc below.
 //!
 //! Design: `docs/planning/hosted-postbox-architecture-2026-08-12.md`.
 //!
@@ -27,7 +30,7 @@
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
 
 use axum::{
-    extract::State,
+    extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Response},
     routing::{any, get, post},
@@ -260,7 +263,8 @@ fn build_router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
-        .route("/v1/identities", post(create_identity))
+        .route("/v1/accounts", post(create_account))
+        .route("/v1/identities", post(create_identity).get(list_identities))
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
@@ -305,9 +309,8 @@ async fn pow_challenge(State(state): State<AppState>) -> impl IntoResponse {
     Json(json!({ "challenge": challenge, "bits": bits, "expires_at": expires_at }))
 }
 
-/// Anonymous identity creation request. `pow_*` are required; `label` is an optional agent tag.
+/// Identity creation request. Anonymous callers supply `pow_*`; API-key callers omit them.
 #[derive(serde::Deserialize)]
-#[allow(dead_code)] // label is consumed once real /k/ minting lands
 struct CreateIdentityReq {
     #[serde(default)]
     pow_challenge: String,
@@ -317,33 +320,13 @@ struct CreateIdentityReq {
     label: Option<String>,
 }
 
-/// `POST /v1/identities` — anonymous `/k/` creation, gated on proof-of-work. Mints a keypair, seals
-/// its seed in the vault, stores the identity, and returns the `/k/` address plus a one-time
-/// capability token (the only credential for this ephemeral identity).
-///
-/// P0 storage is in-memory (see `store`), so identities don't yet survive a restart; that's the
-/// next increment. Custody here is *managed* — the seed is sealed at rest and only ever unwrapped
-/// into short-lived memory.
-async fn create_identity(
-    State(state): State<AppState>,
-    Json(req): Json<CreateIdentityReq>,
-) -> Response {
-    let now = now_unix();
-    if let Err(e) = state
-        .pow
-        .consume(&req.pow_challenge, &req.pow_solution, now)
-    {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "pow_required",
-                "detail": e.to_string(),
-                "hint": "GET /v1/pow/challenge, solve it, and resubmit as pow_challenge + pow_solution",
-            })),
-        )
-            .into_response();
-    }
-
+/// Mint a keypair, seal its seed in the vault, store it (optionally under an account), and return the
+/// `/k/` address plus a one-time capability token. Shared by the REST handler and the MCP tool.
+async fn do_create_identity(
+    state: &AppState,
+    account_id: Option<String>,
+    label: Option<String>,
+) -> Result<serde_json::Value, ApiError> {
     let identity = Identity::generate();
     let address = identity.address().as_str().to_string();
     let ed25519_pub = identity.verifying_key().to_bytes();
@@ -355,11 +338,7 @@ async fn create_identity(
         Err(e) => {
             seed.zeroize();
             tracing::error!(error = %e, "vault seal failed");
-            return (
-                StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({ "error": "vault_error" })),
-            )
-                .into_response();
+            return Err(ApiError::server("vault_error"));
         }
     };
     seed.zeroize();
@@ -367,7 +346,7 @@ async fn create_identity(
     let cap_token = gen_cap_token();
     let cap_hash = sha256(cap_token.as_bytes());
 
-    if let Err(e) = state
+    state
         .store
         .insert(store::StoredIdentity {
             address: address.clone(),
@@ -375,26 +354,141 @@ async fn create_identity(
             ed25519_pub,
             x25519_pub,
             cap_hash,
-            label: req.label.clone(),
-            created_at: now,
+            label,
+            created_at: now_unix(),
+            account_id,
         })
         .await
-    {
-        tracing::error!(error = %e, "store insert failed");
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({ "error": "store_error" })),
-        )
-            .into_response();
-    }
+        .map_err(|e| {
+            tracing::error!(error = %e, "store insert failed");
+            ApiError::server("store_error")
+        })?;
     let total = state.store.count().await.unwrap_or(0);
     tracing::info!(address = %address, total, "minted /k/ identity");
+    Ok(json!({ "address": address, "capability_token": cap_token }))
+}
 
-    (
-        StatusCode::CREATED,
-        Json(json!({ "address": address, "capability_token": cap_token })),
-    )
-        .into_response()
+fn is_api_key(token: &str) -> bool {
+    token.starts_with("pk_")
+}
+
+/// `POST /v1/identities` — create a `/k/` inbox. An **API key** creates under its account with no
+/// PoW; an **anonymous** caller must solve a PoW (ephemeral, no account); a capability token can't
+/// create (it authenticates one existing identity).
+async fn create_identity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<CreateIdentityReq>,
+) -> Response {
+    let created = |r: Result<serde_json::Value, ApiError>| match r {
+        Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
+        Err(e) => e.into_response(),
+    };
+    match bearer(&headers) {
+        Some(tok) if is_api_key(tok) => match state.store.account_for_key(sha256(tok.as_bytes())).await {
+            Ok(Some(account_id)) => created(do_create_identity(&state, Some(account_id), req.label).await),
+            Ok(None) => ApiError::unauthorized("unknown API key").into_response(),
+            Err(e) => {
+                tracing::error!(error = %e, "api-key lookup failed");
+                ApiError::server("store_error").into_response()
+            }
+        },
+        Some(_) => err_response(
+            StatusCode::BAD_REQUEST,
+            "use_api_key",
+            Some("capability tokens can't create identities — create an account (POST /v1/accounts) and use its API key"),
+        ),
+        None => {
+            if let Err(e) = state.pow.consume(&req.pow_challenge, &req.pow_solution, now_unix()) {
+                return err_response(
+                    StatusCode::BAD_REQUEST,
+                    "pow_required",
+                    Some(&format!("{e}. GET /v1/pow/challenge, solve it, resubmit as pow_challenge + pow_solution")),
+                );
+            }
+            created(do_create_identity(&state, None, req.label).await)
+        }
+    }
+}
+
+/// `POST /v1/accounts` — create an account (PoW-gated) and return its first API key, shown once. The
+/// key then creates and drives many identities without further PoW.
+async fn create_account(
+    State(state): State<AppState>,
+    Json(req): Json<CreateIdentityReq>,
+) -> Response {
+    if let Err(e) = state
+        .pow
+        .consume(&req.pow_challenge, &req.pow_solution, now_unix())
+    {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "pow_required",
+            Some(&format!(
+                "{e}. GET /v1/pow/challenge, solve it, resubmit as pow_challenge + pow_solution"
+            )),
+        );
+    }
+    let account_id = format!(
+        "acct_{}",
+        hex_str(&{
+            let mut b = [0u8; 12];
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
+            b
+        })
+    );
+    let api_key = format!(
+        "pk_live_{}",
+        hex_str(&{
+            let mut b = [0u8; 32];
+            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
+            b
+        })
+    );
+    match state
+        .store
+        .create_account(account_id.clone(), sha256(api_key.as_bytes()), now_unix())
+        .await
+    {
+        Ok(()) => {
+            tracing::info!(account = %account_id, "account created");
+            (
+                StatusCode::CREATED,
+                Json(json!({ "account_id": account_id, "api_key": api_key })),
+            )
+                .into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "account create failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// List an account's identities. Shared by REST and the MCP tool.
+pub(crate) async fn do_list_identities(
+    state: &AppState,
+    account: String,
+) -> Result<serde_json::Value, ApiError> {
+    let rows = state.store.list_by_account(account).await.map_err(|e| {
+        tracing::error!(error = %e, "list identities failed");
+        ApiError::server("store_error")
+    })?;
+    Ok(json!({
+        "identities": rows.into_iter().map(|(address, label)| json!({ "address": address, "label": label })).collect::<Vec<_>>()
+    }))
+}
+
+/// `GET /v1/identities` — list the API-key account's identities.
+async fn list_identities(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let account_id = match account_for_headers(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+    match do_list_identities(&state, account_id).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 fn err_response(status: StatusCode, error: &str, detail: Option<&str>) -> Response {
@@ -458,6 +552,104 @@ pub(crate) async fn identity_for_token(
         Err(e) => {
             tracing::error!(error = %e, "auth lookup failed");
             Err(ApiError::server("store_error"))
+        }
+    }
+}
+
+/// Who a bearer token authenticates: a single identity (capability token) or a whole account
+/// (API key), which may own many identities.
+pub(crate) enum Principal {
+    Identity(store::StoredIdentity),
+    Account(String),
+}
+
+/// Resolve a bearer token to a principal. `pk_…` = API key → account; otherwise a capability token.
+pub(crate) async fn principal_for_token(
+    state: &AppState,
+    token: Option<&str>,
+) -> Result<Principal, ApiError> {
+    let token = token.ok_or_else(|| ApiError::unauthorized("missing bearer token"))?;
+    if is_api_key(token) {
+        match state.store.account_for_key(sha256(token.as_bytes())).await {
+            Ok(Some(a)) => Ok(Principal::Account(a)),
+            Ok(None) => Err(ApiError::unauthorized("unknown API key")),
+            Err(e) => {
+                tracing::error!(error = %e, "api-key lookup failed");
+                Err(ApiError::server("store_error"))
+            }
+        }
+    } else {
+        identity_for_token(state, Some(token))
+            .await
+            .map(Principal::Identity)
+    }
+}
+
+/// Require an API-key account (for account-management endpoints).
+async fn account_for_headers(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
+    match principal_for_token(state, bearer(headers)).await? {
+        Principal::Account(a) => Ok(a),
+        Principal::Identity(_) => Err(ApiError::bad(
+            "use_api_key",
+            "this endpoint needs an account API key, not a capability token",
+        )),
+    }
+}
+
+/// Pick which identity a messaging request acts as. A capability token names exactly one. An account
+/// uses `explicit` if given (ownership-checked), else its sole identity — and refuses when ambiguous.
+async fn resolve_acting_identity(
+    state: &AppState,
+    principal: Principal,
+    explicit: Option<&str>,
+) -> Result<store::StoredIdentity, ApiError> {
+    match principal {
+        Principal::Identity(id) => {
+            if explicit.is_some_and(|a| a != id.address) {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "wrong_identity",
+                    "this capability token is bound to a different identity",
+                ));
+            }
+            Ok(id)
+        }
+        Principal::Account(account) => {
+            if let Some(addr) = explicit {
+                return state
+                    .store
+                    .get_in_account(account, addr.to_string())
+                    .await
+                    .map_err(|_| ApiError::server("store_error"))?
+                    .ok_or_else(|| {
+                        ApiError::new(
+                            StatusCode::FORBIDDEN,
+                            "not_in_account",
+                            "that identity is not in your account",
+                        )
+                    });
+            }
+            let mut owned = state
+                .store
+                .list_by_account(account.clone())
+                .await
+                .map_err(|_| ApiError::server("store_error"))?;
+            match owned.len() {
+                1 => state
+                    .store
+                    .get_in_account(account, owned.remove(0).0)
+                    .await
+                    .map_err(|_| ApiError::server("store_error"))?
+                    .ok_or_else(|| ApiError::server("store_error")),
+                0 => Err(ApiError::bad(
+                    "no_identity",
+                    "your account has no identities yet — create one first",
+                )),
+                _ => Err(ApiError::bad(
+                    "identity_required",
+                    "your account has multiple identities — pass `identity` (or `from`) to choose one",
+                )),
+            }
         }
     }
 }
@@ -587,10 +779,23 @@ pub(crate) async fn do_ack(
     }
 }
 
+/// Resolve which identity a messaging request acts as, from the header token + an optional selector.
+async fn acting_identity(
+    state: &AppState,
+    headers: &HeaderMap,
+    explicit: Option<&str>,
+) -> Result<store::StoredIdentity, ApiError> {
+    let principal = principal_for_token(state, bearer(headers)).await?;
+    resolve_acting_identity(state, principal, explicit).await
+}
+
 #[derive(serde::Deserialize)]
 struct SendReq {
     to: String,
     body: String,
+    /// Which of your identities to send as (API-key accounts with more than one).
+    #[serde(default)]
+    from: Option<String>,
 }
 
 /// `POST /v1/send` — seal a message to a hosted recipient and enqueue it.
@@ -599,7 +804,7 @@ async fn send(
     headers: HeaderMap,
     Json(req): Json<SendReq>,
 ) -> Response {
-    let me = match identity_for_token(&state, bearer(&headers)).await {
+    let me = match acting_identity(&state, &headers, req.from.as_deref()).await {
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
@@ -609,9 +814,19 @@ async fn send(
     }
 }
 
-/// `GET /v1/inbox` — return opened plaintext messages for the authenticated identity.
-async fn inbox(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let me = match identity_for_token(&state, bearer(&headers)).await {
+#[derive(serde::Deserialize)]
+struct InboxQuery {
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `GET /v1/inbox` — return opened plaintext messages for the acting identity.
+async fn inbox(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
@@ -624,15 +839,17 @@ async fn inbox(State(state): State<AppState>, headers: HeaderMap) -> Response {
 #[derive(serde::Deserialize)]
 struct AckReq {
     message_id: String,
+    #[serde(default)]
+    identity: Option<String>,
 }
 
-/// `POST /v1/ack` — mark one of the authenticated identity's messages read.
+/// `POST /v1/ack` — mark one of the acting identity's messages read.
 async fn ack(
     State(state): State<AppState>,
     headers: HeaderMap,
     Json(req): Json<AckReq>,
 ) -> Response {
-    let me = match identity_for_token(&state, bearer(&headers)).await {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };

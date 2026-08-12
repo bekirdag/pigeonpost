@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS identities (
     wrapped_ct    BLOB NOT NULL,
     cap_hash      BLOB NOT NULL,
     label         TEXT,
-    created_at    INTEGER NOT NULL
+    created_at    INTEGER NOT NULL,
+    account_id    TEXT
 );
 CREATE INDEX IF NOT EXISTS identities_by_cap ON identities(cap_hash);
 
@@ -34,7 +35,25 @@ CREATE TABLE IF NOT EXISTS messages (
     read       INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages(recipient);
+
+CREATE TABLE IF NOT EXISTS accounts (
+    id         TEXT PRIMARY KEY,
+    created_at INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS api_keys (
+    key_hash   BLOB PRIMARY KEY,
+    account_id TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
 ";
+
+// Run after SCHEMA. The ALTER adds account_id to identity tables created before accounts existed; on
+// a fresh DB (column already present) it errors "duplicate column name", which open() ignores. The
+// index is created afterwards, once the column is guaranteed to exist.
+const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE identities ADD COLUMN account_id TEXT",
+    "CREATE INDEX IF NOT EXISTS identities_by_account ON identities(account_id)",
+];
 
 #[derive(Debug, thiserror::Error)]
 pub enum StoreError {
@@ -59,6 +78,8 @@ pub struct StoredIdentity {
     pub cap_hash: [u8; 32],
     pub label: Option<String>,
     pub created_at: u64,
+    /// The owning account (API-key tier), or `None` for an anonymous ephemeral identity.
+    pub account_id: Option<String>,
 }
 
 /// What a retention sweep removed.
@@ -89,6 +110,7 @@ struct IdRow {
     cap: Vec<u8>,
     label: Option<String>,
     created_at: i64,
+    account_id: Option<String>,
 }
 
 fn arr<const N: usize>(v: Vec<u8>, what: &'static str) -> Result<[u8; N], StoreError> {
@@ -107,11 +129,11 @@ fn id_from_row(r: IdRow) -> Result<StoredIdentity, StoreError> {
         cap_hash: arr(r.cap, "cap_hash")?,
         label: r.label,
         created_at: r.created_at as u64,
+        account_id: r.account_id,
     })
 }
 
-const ID_COLS: &str =
-    "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at";
+const ID_COLS: &str = "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id";
 
 fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
     Ok(IdRow {
@@ -123,6 +145,7 @@ fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
         cap: row.get(5)?,
         label: row.get(6)?,
         created_at: row.get(7)?,
+        account_id: row.get(8)?,
     })
 }
 
@@ -146,6 +169,14 @@ impl Store {
         };
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
+        for stmt in MIGRATIONS {
+            if let Err(e) = conn.execute(stmt, []) {
+                // "duplicate column name" means the migration already applied (fresh DB) — benign.
+                if !e.to_string().contains("duplicate column name") {
+                    return Err(e.into());
+                }
+            }
+        }
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })
@@ -157,8 +188,8 @@ impl Store {
             let c = conn.lock().expect("store lock");
             c.execute(
                 "INSERT INTO identities
-                   (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                   (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     id.address,
                     &id.ed25519_pub[..],
@@ -168,6 +199,7 @@ impl Store {
                     &id.cap_hash[..],
                     id.label,
                     id.created_at as i64,
+                    id.account_id,
                 ],
             )?;
             Ok(())
@@ -185,6 +217,86 @@ impl Store {
         })
         .await
         .map_err(|_| StoreError::Join)?
+    }
+
+    /// Create an account with the given id and its first API key (hash).
+    pub async fn create_account(
+        &self,
+        account_id: String,
+        key_hash: [u8; 32],
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            tx.execute(
+                "INSERT INTO accounts (id, created_at) VALUES (?1, ?2)",
+                params![account_id, now as i64],
+            )?;
+            tx.execute(
+                "INSERT INTO api_keys (key_hash, account_id, created_at) VALUES (?1, ?2, ?3)",
+                params![&key_hash[..], account_id, now as i64],
+            )?;
+            tx.commit()?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The account an API key authenticates, if any.
+    pub async fn account_for_key(&self, key_hash: [u8; 32]) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            Ok(c.query_row(
+                "SELECT account_id FROM api_keys WHERE key_hash = ?1",
+                params![&key_hash[..]],
+                |r| r.get(0),
+            )
+            .optional()?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Addresses (and labels) of every identity owned by an account, oldest first.
+    pub async fn list_by_account(
+        &self,
+        account_id: String,
+    ) -> Result<Vec<(String, Option<String>)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(String, Option<String>)>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT address, label FROM identities WHERE account_id = ?1 ORDER BY created_at ASC",
+            )?;
+            let rows = stmt.query_map(params![account_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Resolve one of an account's identities by address (ownership-checked).
+    pub async fn get_in_account(
+        &self,
+        account_id: String,
+        address: String,
+    ) -> Result<Option<StoredIdentity>, StoreError> {
+        self.query_one(
+            format!("SELECT {ID_COLS} FROM identities WHERE address = ?1 AND account_id = ?2"),
+            move |c, sql| {
+                c.query_row(sql, params![address, account_id], map_id_row)
+                    .optional()
+            },
+        )
+        .await
     }
 
     /// Resolve the identity a capability token authenticates (bearer auth).
@@ -338,6 +450,7 @@ mod tests {
             cap_hash: [0; 32],
             label: Some("repo:test".into()),
             created_at: 0,
+            account_id: None,
         }
     }
 
@@ -402,6 +515,24 @@ mod tests {
             created_at,
             read: false,
         }
+    }
+
+    #[tokio::test]
+    async fn account_api_key_and_ownership() {
+        let store = Store::open(":memory:").unwrap();
+        store.create_account("acct_1".into(), [7; 32], 0).await.unwrap();
+        assert_eq!(store.account_for_key([7; 32]).await.unwrap().as_deref(), Some("acct_1"));
+        assert_eq!(store.account_for_key([9; 32]).await.unwrap(), None);
+
+        let mut a = sample("/k/mine");
+        a.account_id = Some("acct_1".into());
+        store.insert(a).await.unwrap();
+        store.insert(sample("/k/anon")).await.unwrap(); // no account
+
+        let owned = store.list_by_account("acct_1".into()).await.unwrap();
+        assert_eq!(owned, vec![("/k/mine".to_string(), Some("repo:test".to_string()))]);
+        assert!(store.get_in_account("acct_1".into(), "/k/mine".into()).await.unwrap().is_some());
+        assert!(store.get_in_account("acct_1".into(), "/k/anon".into()).await.unwrap().is_none());
     }
 
     #[tokio::test]
