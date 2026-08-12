@@ -254,7 +254,8 @@
       <div class="ac-card">
         <h3>Security</h3>
         <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
-        <a class="btn btn-secondary" id="ac-2fa" href="${cfg.oidc.issuer}/account/#/security/signingin" target="_blank" rel="noopener">Set up two-factor authentication</a>
+        <a class="btn btn-secondary" id="ac-2fa" href="${cfg.oidc.issuer}/account/#/security/signingin" target="_blank" rel="noopener">Manage two-factor authentication</a>
+        <p class="ac-note" style="margin-top:10px">Opens your account security page → <em>Signing in</em> → <em>Two-factor authentication</em>.</p>
       </div>
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
     $("#ac-logout").onclick = logout;
