@@ -80,7 +80,15 @@ jobs:
           python3 site-developers/build.py >/dev/null
           git diff --exit-code -- site-developers
           forbidden_word="$(printf '%s%s' 'e' 'mail')"
-          if git grep -n -i -w "$forbidden_word" -- .; then
+          # The core protocol, docs, and marketing pages must use Pigeonpost/message/inbox
+          # vocabulary. The signed-in SaaS surface and the CLA are exempt: there the word denotes
+          # the member's actual address for OIDC/billing, or reserved-handle data — not messaging.
+          if git grep -n -i -w "$forbidden_word" -- . \
+              ':(exclude)site/account.js' \
+              ':(exclude)site/account.html' \
+              ':(exclude)site/account-config.js' \
+              ':(exclude)site/reserved.js' \
+              ':(exclude)CLA.md'; then
             echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
             exit 1
           fi

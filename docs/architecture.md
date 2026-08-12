@@ -68,8 +68,8 @@ So the namespace splits in two, with different rules, because the tiers have dif
 provider gate applies only to the optional human-readable tier.
 
 **Cost follows the gate.** Everything gated by something the applicant already holds is free: key
-addresses (a keypair), provider handles (`/github/…`, `/google/…`), and email handles
-(`/name@domain`, an OAuth-verified address) are all free and always will be — they cannot be squatted
+addresses (a keypair), provider handles (`/github/…`, `/google/…`), and OAuth-verified address
+handles (`/name@domain`) are all free and always will be — they cannot be squatted
 because the upstream already decided who owns the identity. The one tier with no upstream to lean on
 is the **flat handle** (`/wodo`): a chosen, unprefixed name that only the operator can adjudicate.
 That tier is the paid one, and the only thing sold. Its grammar, reserved-name set, and pricing are
