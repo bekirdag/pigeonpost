@@ -996,7 +996,7 @@ fn nonempty_legacy_schema_requires_a_matching_signed_checkpoint() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     let (migration_minute, migration_admissions): (i64, i64) = connection
         .query_row(
             "SELECT window_minute, admissions FROM global_binding_admission WHERE singleton = 1",
@@ -1046,6 +1046,14 @@ fn schema_v4_upgrade_discards_unbound_ephemeral_challenges() {
              );
              CREATE INDEX identity_challenges_expiry
                  ON identity_challenges (expires_at_ms, consumed_at_ms);
+             DROP INDEX current_bindings_by_subject;
+             DROP TABLE current_bindings;
+             CREATE TABLE current_bindings (
+                 handle TEXT PRIMARY KEY,
+                 pubkey TEXT NOT NULL,
+                 subject TEXT NOT NULL UNIQUE,
+                 seq INTEGER NOT NULL UNIQUE REFERENCES entries(seq)
+             );
              DELETE FROM schema_migrations WHERE version >= 5;
              INSERT INTO schema_migrations
                  (version, applied_at_ms, source_schema, authorization_checkpoint)
@@ -1068,7 +1076,7 @@ fn schema_v4_upgrade_discards_unbound_ephemeral_challenges() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     let remaining: i64 = connection
         .query_row("SELECT COUNT(*) FROM identity_challenges", [], |row| {
             row.get(0)
@@ -1140,6 +1148,14 @@ fn schema_v5_directory_projection_migrates_to_independent_key_streams() {
              );
              CREATE INDEX identity_challenges_expiry
                  ON identity_challenges (expires_at_ms, consumed_at_ms);
+             DROP INDEX current_bindings_by_subject;
+             DROP TABLE current_bindings;
+             CREATE TABLE current_bindings (
+                 handle TEXT PRIMARY KEY,
+                 pubkey TEXT NOT NULL,
+                 subject TEXT NOT NULL UNIQUE,
+                 seq INTEGER NOT NULL UNIQUE REFERENCES entries(seq)
+             );
              DELETE FROM schema_migrations WHERE version >= 6;
              INSERT INTO schema_migrations
                  (version, applied_at_ms, source_schema, authorization_checkpoint)
@@ -1167,7 +1183,7 @@ fn schema_v5_directory_projection_migrates_to_independent_key_streams() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     let claim_streams: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM directory_mutations WHERE endpoint = ?1",
@@ -1204,6 +1220,14 @@ fn schema_v6_upgrade_adds_durable_global_binding_admission() {
              );
              CREATE INDEX identity_challenges_expiry
                  ON identity_challenges (expires_at_ms, consumed_at_ms);
+             DROP INDEX current_bindings_by_subject;
+             DROP TABLE current_bindings;
+             CREATE TABLE current_bindings (
+                 handle TEXT PRIMARY KEY,
+                 pubkey TEXT NOT NULL,
+                 subject TEXT NOT NULL UNIQUE,
+                 seq INTEGER NOT NULL UNIQUE REFERENCES entries(seq)
+             );
              DELETE FROM schema_migrations WHERE version >= 7;
              INSERT INTO schema_migrations
                  (version, applied_at_ms, source_schema, authorization_checkpoint)
@@ -1218,7 +1242,7 @@ fn schema_v6_upgrade_adds_durable_global_binding_admission() {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .unwrap();
-    assert_eq!(version, 8);
+    assert_eq!(version, 9);
     let state: (i64, i64) = connection
         .query_row(
             "SELECT window_minute, admissions FROM global_binding_admission WHERE singleton = 1",
