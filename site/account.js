@@ -267,6 +267,17 @@
       </div>
       ${searchBlock()}
       <div class="ac-card"><h3>Your handles</h3><div id="ac-subs"><p class="muted">Loading…</p></div></div>
+      <div class="ac-card">
+        <h3>Connect an AI agent</h3>
+        <p class="muted">Give a Claude or ChatGPT agent a hosted Pigeonpost inbox — it sends and
+          receives messages through an MCP connector tied to this account.</p>
+        <div id="ac-pb-list"><p class="muted">Loading…</p></div>
+        <div class="ac-actions" style="justify-content:flex-start;margin-top:12px">
+          <button class="btn btn-secondary" id="ac-pb-create">Create an inbox</button>
+          <button class="btn btn-secondary" id="ac-pb-key">Reveal connector key</button>
+        </div>
+        <div id="ac-pb-out"></div>
+      </div>
       <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
       <div class="ac-card"><h3>Payment method</h3><div id="ac-pay"><p class="muted">Loading…</p></div></div>
       <div class="ac-card">
@@ -278,8 +289,69 @@
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
     $("#ac-logout").onclick = logout;
     $("#ac-2fa").onclick = setupTotp;
+    $("#ac-pb-create").onclick = pbCreateInbox;
+    $("#ac-pb-key").onclick = pbRevealKey;
     wireSearch(true);
     loadOverview();
+    loadPostbox();
+  }
+
+  // ---- hosted postbox (MCP connector) --------------------------------------------------------
+  // The postbox is a separate origin; it accepts this member token (validated against the realm)
+  // and resolves it to an account. CORS on the postbox allows pigeonpost.dev.
+
+  const POSTBOX = "https://postbox.pigeonpost.dev";
+  async function pbFetch(path, opts) {
+    const o = opts || {};
+    const res = await fetch(POSTBOX + path, {
+      method: o.method || "GET",
+      headers: Object.assign(
+        { authorization: `Bearer ${getToken()}`, accept: "application/json" },
+        o.body ? { "content-type": "application/json" } : {},
+      ),
+      body: o.body,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      const e = new Error(body.detail || body.error || `postbox ${res.status}`);
+      e.status = res.status;
+      throw e;
+    }
+    return body;
+  }
+
+  async function loadPostbox() {
+    const box = $("#ac-pb-list"); if (!box) return;
+    try {
+      const { identities } = await pbFetch("/v1/identities");
+      box.innerHTML = identities.length
+        ? identities.map((i) => `<div class="ac-row"><span class="mono">${esc(i.address)}</span><span class="muted">${esc(i.label || "")}</span></div>`).join("")
+        : `<p class="muted">No inboxes yet — create one for your agent.</p>`;
+    } catch (e) {
+      box.innerHTML = `<p class="muted">${e.status === 401 ? "Sign in again to manage inboxes." : "Could not reach the postbox."}</p>`;
+    }
+  }
+
+  async function pbCreateInbox() {
+    const label = prompt("Label for this inbox (e.g. repo:acme/api):", "");
+    if (label === null) return;
+    try {
+      await pbFetch("/v1/identities", { method: "POST", body: JSON.stringify({ label }) });
+      loadPostbox();
+      toast("Inbox created.");
+    } catch (e) { toast("Could not create inbox: " + e.message); }
+  }
+
+  async function pbRevealKey() {
+    try {
+      const { api_key } = await pbFetch("/v1/api-keys", { method: "POST" });
+      const cfg = JSON.stringify({
+        mcpServers: { pigeonpost: { url: "https://mcp.pigeonpost.dev/mcp", headers: { Authorization: "Bearer " + api_key } } },
+      }, null, 2);
+      $("#ac-pb-out").innerHTML =
+        `<p class="ac-warn">Save this connector key — it's shown once. Paste the config into your Claude/ChatGPT MCP settings.</p>
+         <pre class="ac-pre">${esc(cfg)}</pre>`;
+    } catch (e) { toast("Could not create a connector key: " + e.message); }
   }
 
   function searchBlock() {
