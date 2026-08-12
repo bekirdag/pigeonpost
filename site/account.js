@@ -481,7 +481,14 @@
   async function addCard() {
     try {
       const body = await apiAction("/v1/billing/payment-methods/setup", {});
-      if (body.setupUrl) { window.location.href = body.setupUrl; return; }
+      if (body.setupUrl) {
+        // Stash the session so we can finalise the card on return even if MASAAS sends the browser
+        // back to a bare /account with no completion params (which is what it does today).
+        if (body.sessionId) SS.setItem("pp_card_session", body.sessionId);
+        if (body.provider) SS.setItem("pp_card_provider", body.provider);
+        window.location.href = body.setupUrl;
+        return;
+      }
       toast(body.error || "Could not start card setup.");
     } catch (e) { toast("Could not add a card: " + e.message); }
   }
@@ -505,8 +512,35 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("on"), 4000);
   }
 
+  // Coming back from the hosted card page, finalise the payment method before the account renders, so
+  // the card shows immediately instead of "No card on file". The session id comes from whatever MASAAS
+  // appended (matching the shared backend's params) or, failing that, the token we stashed on the way
+  // out. Runs only when there's something to complete.
+  async function completeCardSetupIfReturning() {
+    if (!getToken()) return;
+    const params = new URLSearchParams(window.location.search);
+    const stashed = SS.getItem("pp_card_session");
+    const returned = params.get("payment_setup") === "success" || params.get("added") === "card";
+    if (!stashed && !returned) return;
+    const sessionId = params.get("payment_setup_session") || params.get("token") || params.get("session_id") || stashed;
+    const provider = params.get("provider") || SS.getItem("pp_card_provider") || undefined;
+    SS.removeItem("pp_card_session"); SS.removeItem("pp_card_provider");
+    // Strip the card-setup params so a reload doesn't retry a spent session.
+    ["payment_setup", "payment_setup_session", "token", "session_id", "provider", "added"].forEach((k) => params.delete(k));
+    const q = params.toString();
+    history.replaceState({}, "", (cfg.oidc.redirectPath || "/account") + (q ? "?" + q : ""));
+    if (!sessionId) return; // nothing to finalise; the overview will reflect whatever MASAAS has
+    try {
+      await apiAction("/v1/billing/payment-methods/complete", { sessionId, provider });
+      toast("Card saved.");
+    } catch (e) {
+      toast("Could not finish saving the card: " + e.message);
+    }
+  }
+
   document.addEventListener("DOMContentLoaded", async () => {
     await completeLoginIfReturning();
+    await completeCardSetupIfReturning();
     render();
   });
 })();

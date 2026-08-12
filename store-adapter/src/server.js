@@ -137,13 +137,28 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { paymentMethods: list(await masaas.listPaymentMethods(token)) }, origin);
     }
 
-    // Add a card: MASAAS returns a hosted setup URL; the browser redirects to it.
+    // Add a card: MASAAS returns a hosted setup URL; the browser redirects to it. The return URL is
+    // kept query-free so MASAAS can append its own completion params cleanly; we also hand back the
+    // session id so the browser can complete even when MASAAS returns the URL verbatim.
     if (method === "POST" && path === "/v1/billing/payment-methods/setup") {
       const { billingProfileId } = await readJson(req);
-      const session = await masaas.paymentSetupSession(token, back("/account?added=card"), back("/account"), billingProfileId);
+      const session = await masaas.paymentSetupSession(token, back("/account"), back("/account"), billingProfileId);
       const url = pickHostedUrl(session);
       if (!url) return send(res, 502, { error: "no hosted setup url returned", session }, origin);
-      return send(res, 200, { setupUrl: url }, origin);
+      return send(res, 200, { setupUrl: url, sessionId: pickSessionId(session), provider: pickProvider(session) }, origin);
+    }
+
+    // Finish adding a card: the hosted page captured it at the gateway, but MASAAS only persists the
+    // payment method once we complete the session with the token it handed back on the return URL.
+    if (method === "POST" && path === "/v1/billing/payment-methods/complete") {
+      const { sessionId, provider, billingProfileId } = await readJson(req);
+      if (!sessionId) return send(res, 400, { error: "sessionId required" }, origin);
+      const paymentMethod = await masaas.completePaymentSession(token, {
+        session_id: sessionId,
+        ...(provider ? { provider } : {}),
+        ...(billingProfileId ? { billing_profile_id: billingProfileId } : {}),
+      });
+      return send(res, 200, { paymentMethod }, origin);
     }
 
     // Buy a handle: subscribe to the plan, then hand back the hosted payment URL.
@@ -166,6 +181,17 @@ function pickHostedUrl(session) {
   const s = session && (session.session || session.setup || session);
   return s?.hosted_url || s?.hostedUrl || s?.checkout_url || s?.checkoutUrl ||
     s?.redirect_url || s?.redirectUrl || s?.url || null;
+}
+// The token that MASAAS wants back at complete-session time. MASAAS does not append it to the return
+// URL when the URL already carries a query, so the browser stashes this before redirecting.
+function pickSessionId(session) {
+  const s = session && (session.session || session.setup || session);
+  return s?.session_id || s?.sessionId || s?.payment_setup_session || s?.paymentSetupSession ||
+    s?.id || s?.token || null;
+}
+function pickProvider(session) {
+  const s = session && (session.session || session.setup || session);
+  return s?.provider || s?.gateway || null;
 }
 function list(payload) {
   if (Array.isArray(payload)) return payload;
