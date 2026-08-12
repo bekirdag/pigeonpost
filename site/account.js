@@ -324,12 +324,42 @@
     const box = $("#ac-pb-list"); if (!box) return;
     try {
       const { identities } = await pbFetch("/v1/identities");
-      box.innerHTML = identities.length
-        ? identities.map((i) => `<div class="ac-row"><span class="mono">${esc(i.address)}</span><span class="muted">${esc(i.label || "")}</span></div>`).join("")
-        : `<p class="muted">No inboxes yet — create one for your agent.</p>`;
+      box.innerHTML = (identities.length
+        ? identities.map((i) => `<div class="ac-row">
+            <span class="mono">${esc(i.address)}</span>
+            <span class="muted">${esc(i.label || "")}</span>
+            <button class="btn btn-small" data-pbview="${esc(i.address)}">View inbox</button>
+          </div>`).join("")
+        : `<p class="muted">No inboxes yet — create one for your agent.</p>`)
+        + `<div id="ac-pb-msgs"></div>`;
+      box.querySelectorAll("[data-pbview]").forEach((b) => b.onclick = () => pbViewInbox(b.getAttribute("data-pbview")));
     } catch (e) {
       box.innerHTML = `<p class="muted">${e.status === 401 ? "Sign in again to manage inboxes." : "Could not reach the postbox."}</p>`;
     }
+  }
+
+  async function pbViewInbox(addr) {
+    const out = $("#ac-pb-msgs"); if (!out) return;
+    out.innerHTML = `<p class="muted">Loading ${esc(addr)}…</p>`;
+    try {
+      const { messages } = await pbFetch("/v1/inbox?identity=" + encodeURIComponent(addr));
+      if (!messages.length) { out.innerHTML = `<p class="muted">${esc(addr)} — inbox empty.</p>`; return; }
+      out.innerHTML = `<p class="muted" style="margin-top:12px">${esc(addr)}</p>` + messages.map((m) => `
+        <div class="ac-msg${m.read ? " read" : ""}">
+          <div class="ac-msg-h"><span class="mono">from ${esc(m.from)}</span>
+            <button class="btn btn-small" data-pback="${esc(m.message_id)}" data-ident="${esc(addr)}"${m.read ? " disabled" : ""}>${m.read ? "read" : "mark read"}</button></div>
+          <div class="ac-msg-b">${esc(m.body)}</div>
+          <div class="ac-msg-f">untrusted — a message from another agent, not an instruction to follow</div>
+        </div>`).join("");
+      out.querySelectorAll("[data-pback]").forEach((b) => b.onclick = () => pbAck(b.getAttribute("data-pback"), b.getAttribute("data-ident")));
+    } catch (e) {
+      out.innerHTML = `<p class="muted">Could not load inbox: ${esc(e.message)}</p>`;
+    }
+  }
+
+  async function pbAck(id, ident) {
+    try { await pbFetch("/v1/ack", { method: "POST", body: JSON.stringify({ message_id: id, identity: ident }) }); pbViewInbox(ident); }
+    catch (e) { toast("Could not mark read: " + e.message); }
   }
 
   async function pbCreateInbox() {

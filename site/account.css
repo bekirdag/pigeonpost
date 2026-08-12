@@ -25,6 +25,11 @@
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
 .ac-pre { background: #f7f9fb; border: 1px solid #e6e9ee; border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; margin-top: 10px; }
 .ac-warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
+.ac-msg { border: 1px solid #e6e9ee; border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: #fff; }
+.ac-msg.read { opacity: .68; }
+.ac-msg-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; }
+.ac-msg-b { margin: 6px 0 4px; font-size: 14.5px; color: #14181f; white-space: pre-wrap; word-break: break-word; }
+.ac-msg-f { font-size: 11.5px; color: #6b7480; }
 .ac-remember { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
 .ac-remember input { width: 15px; height: 15px; accent-color: var(--accent, #3b82f6); cursor: pointer; }
 .ac-note { font-size: 13.5px; color: var(--muted); margin-top: 16px; }
