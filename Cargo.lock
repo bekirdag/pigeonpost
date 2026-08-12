@@ -1369,11 +1369,19 @@ name = "pigeonpost-postbox"
 version = "0.2.0"
 dependencies = [
  "axum",
+ "chacha20poly1305",
+ "hmac",
+ "pigeonpost-core",
+ "rand_core 0.6.4",
  "serde",
  "serde_json",
+ "sha2",
+ "subtle",
+ "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "zeroize",
 ]
 
 [[package]]

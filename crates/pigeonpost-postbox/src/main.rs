@@ -4,11 +4,16 @@
 //! (`postbox.pigeonpost.dev` / `mcp.pigeonpost.dev`) that will serve a remote MCP connector, a
 //! zero-terminal web inbox, key custody, and hosted lofts.
 //!
-//! This binary is a **scaffold**. It stands up the process skeleton — config from env, structured
-//! logging, graceful shutdown, a container healthcheck, the reaper entrypoint, and the HTTP surface
-//! (`/health`, `/mcp`, `/v1/*`) — with the two API surfaces returning `501 Not Implemented`. The
-//! real P0 logic (anonymous `/k/` creation with proof-of-work, `send`/`inbox`/`read`, the key vault,
-//! accounts, quotas) is intentionally not here yet.
+//! Built so far (P0, incremental):
+//! - process skeleton: config from env, structured logging, graceful shutdown, container
+//!   healthcheck, reaper entrypoint;
+//! - proof-of-work anti-abuse (`GET /v1/pow/challenge`) — `pow`;
+//! - anonymous `/k/` identity creation (`POST /v1/identities`), PoW-gated: mints a keypair, seals
+//!   the seed in the `vault`, stores it (in-memory for now — `store`), returns the address + a
+//!   one-time capability token.
+//!
+//! Not yet here: `send`/`inbox`/`read`, persistent (Postgres) storage, accounts/OAuth, quotas, and
+//! the MCP surface (`/mcp` still returns `501`). See the design doc below.
 //!
 //! Design: `docs/planning/hosted-postbox-architecture-2026-08-12.md`.
 //!
@@ -20,14 +25,19 @@
 use axum::{
     extract::State,
     http::StatusCode,
-    response::IntoResponse,
+    response::{IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
 };
+use pigeonpost_core::{keys, Identity};
 use serde_json::json;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
+use zeroize::Zeroize;
 
 mod pow;
+mod store;
+mod vault;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
 const POW_TTL_SECS: u64 = 120;
@@ -36,6 +46,8 @@ const POW_TTL_SECS: u64 = 120;
 #[derive(Clone)]
 struct AppState {
     pow: Arc<pow::Pow>,
+    vault: Arc<vault::Vault>,
+    store: Arc<store::Store>,
 }
 
 /// Runtime configuration, entirely from environment (see the plan's Appendix A). Secrets
@@ -180,7 +192,50 @@ fn build_state(cfg: &Config) -> AppState {
             cfg.pow_max_bits,
             POW_TTL_SECS,
         )),
+        vault: Arc::new(vault::Vault::new(load_master_key())),
+        store: Arc::new(store::Store::new()),
     }
+}
+
+/// The vault master key. P0 derives it as `SHA-256` of the sealed file named by
+/// `POSTBOX_KMS=sealed-file:/path` (the file *is* the secret; disk perms protect it). Production
+/// replaces this with an age envelope or a KMS/HSM. Missing/unreadable → ephemeral key + warn: fine
+/// for dev, but managed keys won't survive a restart or validate across replicas.
+fn load_master_key() -> [u8; 32] {
+    if let Some(path) = std::env::var("POSTBOX_KMS")
+        .ok()
+        .and_then(|s| s.strip_prefix("sealed-file:").map(str::to_string))
+    {
+        match std::fs::read(&path) {
+            Ok(bytes) if !bytes.is_empty() => return sha256(&bytes),
+            _ => tracing::warn!(
+                path,
+                "POSTBOX_KMS sealed-file unreadable/empty — using an ephemeral vault key"
+            ),
+        }
+    }
+    let mut key = [0u8; 32];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut key);
+    tracing::warn!("no POSTBOX_KMS master key — using an ephemeral vault key (managed keys won't survive a restart)");
+    key
+}
+
+fn sha256(bytes: &[u8]) -> [u8; 32] {
+    let mut h = Sha256::new();
+    h.update(bytes);
+    h.finalize().into()
+}
+
+/// A one-time capability token bound to an ephemeral identity (plan §11).
+fn gen_cap_token() -> String {
+    let mut raw = [0u8; 32];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut raw);
+    let mut s = String::from("cap_");
+    for b in raw {
+        use std::fmt::Write;
+        let _ = write!(s, "{b:02x}");
+    }
+    s
 }
 
 fn build_router(state: AppState) -> Router {
@@ -236,37 +291,72 @@ struct CreateIdentityReq {
     label: Option<String>,
 }
 
-/// `POST /v1/identities` — anonymous `/k/` creation, gated on proof-of-work. The PoW gate is live;
-/// the actual keypair minting + capability token land with the key-vault increment, so a *passing*
-/// proof currently returns 501 (and burns the challenge, proving single-use end to end).
+/// `POST /v1/identities` — anonymous `/k/` creation, gated on proof-of-work. Mints a keypair, seals
+/// its seed in the vault, stores the identity, and returns the `/k/` address plus a one-time
+/// capability token (the only credential for this ephemeral identity).
+///
+/// P0 storage is in-memory (see `store`), so identities don't yet survive a restart; that's the
+/// next increment. Custody here is *managed* — the seed is sealed at rest and only ever unwrapped
+/// into short-lived memory.
 async fn create_identity(
     State(state): State<AppState>,
     Json(req): Json<CreateIdentityReq>,
-) -> impl IntoResponse {
+) -> Response {
     let now = now_unix();
-    match state
+    if let Err(e) = state
         .pow
         .consume(&req.pow_challenge, &req.pow_solution, now)
     {
-        Ok(v) => {
-            tracing::debug!(bits = v.bits, "proof-of-work accepted for create_identity");
-            (
-                StatusCode::NOT_IMPLEMENTED,
-                Json(json!({
-                    "error": "not_implemented",
-                    "detail": "proof-of-work accepted; /k/ identity minting lands with the key-vault increment",
-                })),
-            )
-        }
-        Err(e) => (
+        return (
             StatusCode::BAD_REQUEST,
             Json(json!({
                 "error": "pow_required",
                 "detail": e.to_string(),
                 "hint": "GET /v1/pow/challenge, solve it, and resubmit as pow_challenge + pow_solution",
             })),
-        ),
+        )
+            .into_response();
     }
+
+    let identity = Identity::generate();
+    let address = identity.address().as_str().to_string();
+    let ed25519_pub = identity.verifying_key().to_bytes();
+    let x25519_pub = keys::x25519_public(&identity);
+
+    let mut seed = identity.to_seed();
+    let wrapped_seed = match state.vault.wrap(&seed) {
+        Ok(w) => w,
+        Err(e) => {
+            seed.zeroize();
+            tracing::error!(error = %e, "vault seal failed");
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({ "error": "vault_error" })),
+            )
+                .into_response();
+        }
+    };
+    seed.zeroize();
+
+    let cap_token = gen_cap_token();
+    let cap_hash = sha256(cap_token.as_bytes());
+
+    state.store.insert(store::StoredIdentity {
+        address: address.clone(),
+        wrapped_seed,
+        ed25519_pub,
+        x25519_pub,
+        cap_hash,
+        label: req.label.clone(),
+        created_at: now,
+    });
+    tracing::info!(address = %address, total = state.store.len(), "minted /k/ identity");
+
+    (
+        StatusCode::CREATED,
+        Json(json!({ "address": address, "capability_token": cap_token })),
+    )
+        .into_response()
 }
 
 async fn mcp_stub() -> impl IntoResponse {
@@ -360,6 +450,8 @@ mod tests {
     fn router_builds_without_route_conflict() {
         let state = AppState {
             pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
+            vault: Arc::new(vault::Vault::new([0u8; 32])),
+            store: Arc::new(store::Store::new()),
         };
         let _ = build_router(state);
     }
