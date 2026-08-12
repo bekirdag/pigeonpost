@@ -704,7 +704,10 @@ impl State {
     fn init(mut conn: Connection) -> Result<Self> {
         conn.pragma_update(None, "journal_mode", "WAL")?;
         conn.pragma_update(None, "synchronous", "FULL")?;
-        conn.pragma_update(None, "busy_timeout", 5_000)?;
+        // Separate agent processes share this WAL, and `synchronous = FULL` fsyncs every commit, so
+        // under heavy multi-connection write contention a single write can wait a while for the lock.
+        // 30s gives enough headroom to serialize rather than surface a spurious SQLITE_BUSY.
+        conn.pragma_update(None, "busy_timeout", 30_000)?;
         // This reduces payload remnants in ordinary SQLite pages, but WAL frames, filesystem
         // snapshots, and backups remain outside SQLite's guarantee. Public documentation therefore
         // promises logical deletion only.
