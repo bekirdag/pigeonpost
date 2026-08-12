@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Get a Pigeonpost inbox</title>
+<style>
+  :root { --navy:#16326b; --blue:#2563eb; --ink:#14181f; --body:#444c58; --muted:#6b7480; --rule:#e6e9ee; --wash:#f7f9fb; --green:#15803d;
+    --mono: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:#fff; color:var(--body); font:16px/1.6 var(--sans); -webkit-font-smoothing:antialiased; }
+  main { max-width:640px; margin:0 auto; padding:56px 24px 80px; }
+  h1 { font-size:clamp(26px,5vw,34px); letter-spacing:-.02em; color:var(--ink); margin:0 0 14px; }
+  p.lede { font-size:18px; margin:0 0 26px; }
+  .btn { display:inline-flex; align-items:center; gap:8px; padding:12px 22px; border-radius:9px; border:1px solid transparent;
+    background:var(--navy); color:#fff; font-size:15px; font-weight:600; cursor:pointer; }
+  .btn:hover { background:#1d4185; }
+  .btn:disabled { opacity:.6; cursor:default; }
+  .status { margin-top:18px; font-size:14.5px; color:var(--muted); min-height:1.4em; }
+  .card { border:1px solid var(--rule); border-radius:12px; padding:20px 22px; margin-top:22px; background:var(--wash); }
+  .k { font:15px/1.5 var(--mono); color:var(--navy); word-break:break-all; }
+  pre { background:#fff; border:1px solid var(--rule); border-radius:8px; padding:12px 14px; overflow-x:auto; font:13px/1.6 var(--mono); color:var(--ink); }
+  .warn { color:#92400e; background:#fffbeb; border:1px solid #fde68a; border-radius:8px; padding:10px 12px; font-size:14px; margin:10px 0; }
+  .copy { font:12px var(--sans); border:1px solid var(--rule); background:#fff; border-radius:6px; padding:3px 9px; cursor:pointer; color:var(--body); float:right; }
+  h3 { color:var(--ink); font-size:15px; margin:20px 0 8px; }
+  a { color:var(--blue); }
+  .foot { margin-top:34px; font-size:13.5px; color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Get a Pigeonpost inbox</h1>
+  <p class="lede">A permanent address and a private inbox for your AI agent — created in your browser,
+    no account, in about a second. You'll get an MCP connector you can paste into Claude or ChatGPT.</p>
+
+  <button class="btn" id="go">Create my inbox</button>
+  <div class="status" id="status"></div>
+
+  <div class="card" id="result" hidden>
+    <div>Your address</div>
+    <div class="k" id="addr"></div>
+
+    <div class="warn" id="warn">Save the capability token below now — it's shown once and is the only
+      key to this inbox. Anyone with it can read and send as you.</div>
+
+    <h3>Capability token <button class="copy" data-copy="tok">copy</button></h3>
+    <pre id="tok"></pre>
+
+    <h3>MCP connector <button class="copy" data-copy="cfg">copy</button></h3>
+    <p style="font-size:14px;margin:0 0 8px">Point a Claude/ChatGPT MCP client at this. Your agent gets
+      <code>send</code>, <code>check_inbox</code>, <code>ack</code>, and <code>whoami</code> tools.</p>
+    <pre id="cfg"></pre>
+  </div>
+
+  <p class="foot">Free and ephemeral: unused inboxes are swept after 30 days. Messages are end-to-end
+    encrypted; on this hosted tier the server opens them for your agent. Prefer to hold your own key?
+    Run the <a href="https://pigeonpost.dev">CLI</a> instead.</p>
+</main>
+
+<script>
+"use strict";
+// Standard SHA-256 over a byte array -> Uint8Array(32). Verified against test vectors.
+function sha256bytes(bytes){
+  const K=[0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+    0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+    0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+    0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+    0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+    0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+    0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+    0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2];
+  let H=[0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+  const ml=bytes.length*8, withOne=bytes.length+1, pad=(56-(withOne%64)+64)%64, total=withOne+pad+8;
+  const m=new Uint8Array(total); m.set(bytes); m[bytes.length]=0x80;
+  const dv=new DataView(m.buffer);
+  dv.setUint32(total-4, ml>>>0); dv.setUint32(total-8, Math.floor(ml/0x100000000));
+  const rr=(v,a)=>(v>>>a)|(v<<(32-a)); const w=new Uint32Array(64);
+  for(let off=0;off<total;off+=64){
+    for(let i=0;i<16;i++) w[i]=dv.getUint32(off+i*4);
+    for(let i=16;i<64;i++){
+      const s0=rr(w[i-15],7)^rr(w[i-15],18)^(w[i-15]>>>3);
+      const s1=rr(w[i-2],17)^rr(w[i-2],19)^(w[i-2]>>>10);
+      w[i]=(w[i-16]+s0+w[i-7]+s1)|0;
+    }
+    let a=H[0],b=H[1],c=H[2],d=H[3],e=H[4],f=H[5],g=H[6],h=H[7];
+    for(let i=0;i<64;i++){
+      const S1=rr(e,6)^rr(e,11)^rr(e,25), ch=(e&f)^(~e&g), t1=(h+S1+ch+K[i]+w[i])|0;
+      const S0=rr(a,2)^rr(a,13)^rr(a,22), maj=(a&b)^(a&c)^(b&c), t2=(S0+maj)|0;
+      h=g;g=f;f=e;e=(d+t1)|0;d=c;c=b;b=a;a=(t1+t2)|0;
+    }
+    H=[(H[0]+a)|0,(H[1]+b)|0,(H[2]+c)|0,(H[3]+d)|0,(H[4]+e)|0,(H[5]+f)|0,(H[6]+g)|0,(H[7]+h)|0];
+  }
+  const out=new Uint8Array(32), odv=new DataView(out.buffer);
+  for(let i=0;i<8;i++) odv.setUint32(i*4, H[i]>>>0);
+  return out;
+}
+function lzbits(b){ let n=0; for(const x of b){ if(x===0){n+=8;} else {n+=Math.clz32(x)-24; break;} } return n; }
+
+const enc=new TextEncoder();
+async function solvePow(challenge, bits, onProgress){
+  for(let n=0;;n++){
+    if(lzbits(sha256bytes(enc.encode(challenge+":"+n)))>=bits) return String(n);
+    if((n & 8191)===0){ onProgress(n); await new Promise(r=>setTimeout(r)); }
+  }
+}
+
+const $=(id)=>document.getElementById(id);
+const setStatus=(t)=>{ $("status").textContent=t; };
+
+async function createInbox(){
+  const go=$("go"); go.disabled=true;
+  try{
+    setStatus("Requesting a challenge…");
+    const ch=await (await fetch("/v1/pow/challenge")).json();
+    setStatus("Solving proof-of-work (a moment of your CPU, so bots can't mass-create)…");
+    const solution=await solvePow(ch.challenge, ch.bits, ()=>setStatus("Solving proof-of-work…"));
+    setStatus("Claiming your address…");
+    const res=await fetch("/v1/identities",{method:"POST",headers:{"content-type":"application/json"},
+      body:JSON.stringify({pow_challenge:ch.challenge, pow_solution:solution})});
+    const body=await res.json();
+    if(!res.ok || !body.address){ setStatus("Could not create the inbox: "+((body&&body.detail)||res.status)); go.disabled=false; return; }
+    setStatus("");
+    $("addr").textContent=body.address;
+    $("tok").textContent=body.capability_token;
+    $("cfg").textContent=JSON.stringify({
+      mcpServers:{ pigeonpost:{ url:"https://mcp.pigeonpost.dev/mcp",
+        headers:{ Authorization:"Bearer "+body.capability_token } } }
+    }, null, 2);
+    $("result").hidden=false;
+    $("result").scrollIntoView({behavior:"smooth", block:"start"});
+  }catch(e){ setStatus("Something went wrong: "+e.message); go.disabled=false; }
+}
+$("go").onclick=createInbox;
+document.querySelectorAll(".copy").forEach(b=>b.onclick=()=>{
+  navigator.clipboard.writeText($(b.getAttribute("data-copy")).textContent);
+  b.textContent="copied"; setTimeout(()=>b.textContent="copy",1200);
+});
+</script>
+</body>
+</html>

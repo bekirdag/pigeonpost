@@ -29,7 +29,7 @@
 use axum::{
     extract::State,
     http::{header, HeaderMap, StatusCode},
-    response::{IntoResponse, Response},
+    response::{Html, IntoResponse, Response},
     routing::{any, get, post},
     Json, Router,
 };
@@ -256,6 +256,7 @@ fn gen_cap_token() -> String {
 
 fn build_router(state: AppState) -> Router {
     Router::new()
+        .route("/", get(onboard))
         .route("/health", get(health))
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
@@ -273,6 +274,12 @@ fn now_unix() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0)
+}
+
+/// `GET /` — the self-serve onboarding page: solves the PoW in-browser, mints an inbox, and hands
+/// back a paste-ready MCP connector config. Static, embedded in the binary.
+async fn onboard() -> Html<&'static str> {
+    Html(include_str!("onboard.html"))
 }
 
 async fn health() -> impl IntoResponse {
