@@ -2765,7 +2765,10 @@ mod tests {
             .register(&renamed, &renamed_key, &renamed_signature, &proof, source)
             .await
             .expect("a renamed account may also claim its new spelling");
-        assert_eq!(registry.resolve(&renamed).unwrap().pubkey, hex(&renamed_key));
+        assert_eq!(
+            registry.resolve(&renamed).unwrap().pubkey,
+            hex(&renamed_key)
+        );
         assert_eq!(
             registry.resolve(&original).unwrap().pubkey,
             hex(&rotated_key)

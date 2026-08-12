@@ -3852,7 +3852,10 @@ mod handle_quota_tests {
     #[test]
     fn the_quota_is_per_account_not_global() {
         let (mut conn, key) = store();
-        for (index, handle) in ["/github/a1", "/github/a2", "/github/a3"].iter().enumerate() {
+        for (index, handle) in ["/github/a1", "/github/a2", "/github/a3"]
+            .iter()
+            .enumerate()
+        {
             register(&mut conn, &key, handle, "github:aaa", index as u8 + 1).unwrap();
         }
         register(&mut conn, &key, "/github/b1", "github:bbb", 9)
@@ -3864,7 +3867,10 @@ mod handle_quota_tests {
     #[test]
     fn rotation_at_the_limit_still_succeeds() {
         let (mut conn, key) = store();
-        for (index, handle) in ["/github/r1", "/github/r2", "/github/r3"].iter().enumerate() {
+        for (index, handle) in ["/github/r1", "/github/r2", "/github/r3"]
+            .iter()
+            .enumerate()
+        {
             register(&mut conn, &key, handle, "github:rot", index as u8 + 1).unwrap();
         }
 
