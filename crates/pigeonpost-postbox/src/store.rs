@@ -38,7 +38,8 @@ CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages(recipient);
 
 CREATE TABLE IF NOT EXISTS accounts (
     id         TEXT PRIMARY KEY,
-    created_at INTEGER NOT NULL
+    created_at INTEGER NOT NULL,
+    oidc_sub   TEXT
 );
 CREATE TABLE IF NOT EXISTS api_keys (
     key_hash   BLOB PRIMARY KEY,
@@ -47,12 +48,15 @@ CREATE TABLE IF NOT EXISTS api_keys (
 );
 ";
 
-// Run after SCHEMA. The ALTER adds account_id to identity tables created before accounts existed; on
-// a fresh DB (column already present) it errors "duplicate column name", which open() ignores. The
-// index is created afterwards, once the column is guaranteed to exist.
+// Run after SCHEMA. ALTERs add columns to tables created before those features existed; on a fresh
+// DB (column already present) they error "duplicate column name", which open() ignores. Indexes come
+// afterwards, once their columns are guaranteed to exist. (SQLite unique indexes treat NULLs as
+// distinct, so many API-key accounts can share a NULL oidc_sub.)
 const MIGRATIONS: &[&str] = &[
     "ALTER TABLE identities ADD COLUMN account_id TEXT",
     "CREATE INDEX IF NOT EXISTS identities_by_account ON identities(account_id)",
+    "ALTER TABLE accounts ADD COLUMN oidc_sub TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS accounts_by_sub ON accounts(oidc_sub)",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -269,6 +273,41 @@ impl Store {
             )?;
             tx.commit()?;
             Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Get (or create) the account for an OIDC subject. `candidate_id` is used only when creating.
+    pub async fn account_for_sub(
+        &self,
+        sub: String,
+        candidate_id: String,
+        now: u64,
+    ) -> Result<String, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let existing: Option<String> = tx
+                .query_row(
+                    "SELECT id FROM accounts WHERE oidc_sub = ?1",
+                    params![sub],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            let id = match existing {
+                Some(id) => id,
+                None => {
+                    tx.execute(
+                        "INSERT INTO accounts (id, created_at, oidc_sub) VALUES (?1, ?2, ?3)",
+                        params![candidate_id, now as i64, sub],
+                    )?;
+                    candidate_id
+                }
+            };
+            tx.commit()?;
+            Ok(id)
         })
         .await
         .map_err(|_| StoreError::Join)?

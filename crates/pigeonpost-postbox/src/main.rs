@@ -19,10 +19,13 @@
 //! - accounts + API keys (`POST /v1/accounts`): one key creates and drives many identities without
 //!   per-inbox PoW (the multi-mailbox model), with `identity`/`from` selection;
 //! - quotas: a per-account identity cap and a per-inbox message cap, so one proof-of-work can't be
-//!   parlayed into unbounded identities/messages (disk protection).
+//!   parlayed into unbounded identities/messages (disk protection);
+//! - OAuth-backed accounts (`oidc`): a pigeonpost-prod member JWT (validated against the realm JWKS,
+//!   issuer + expiry) is a third auth method — its subject maps to an account, tying inboxes to a
+//!   real login.
 //!
-//! Not yet here: cross-box delivery (resolving external recipient keys), OAuth-backed accounts, and
-//! Postgres. See the design doc below.
+//! Not yet here: cross-box delivery (resolving external recipient keys) and Postgres. See the design
+//! doc below.
 //!
 //! Design: `docs/planning/hosted-postbox-architecture-2026-08-12.md`.
 //!
@@ -45,6 +48,7 @@ use std::sync::Arc;
 use zeroize::Zeroize;
 
 mod mcp;
+mod oidc;
 mod pow;
 mod store;
 mod vault;
@@ -58,6 +62,7 @@ struct AppState {
     pow: Arc<pow::Pow>,
     vault: Arc<vault::Vault>,
     store: Arc<store::Store>,
+    oidc: Arc<oidc::Oidc>,
     /// Max identities one account may hold (identity quota).
     max_identities: usize,
     /// Max messages one inbox may hold before senders are refused (inbox quota).
@@ -219,6 +224,10 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         )),
         vault: Arc::new(vault::Vault::new(load_master_key())),
         store: Arc::new(store::Store::open(&cfg.db_path)?),
+        oidc: Arc::new(oidc::Oidc::new(env_or(
+            "OIDC_ISSUER",
+            "https://auth.pigeonpost.dev/realms/pigeonpost-prod",
+        ))),
         max_identities: cfg.max_identities_per_account,
         max_inbox: cfg.max_inbox_messages,
     })
@@ -260,6 +269,13 @@ fn hex_str(bytes: &[u8]) -> String {
         let _ = write!(s, "{b:02x}");
     }
     s
+}
+
+/// Hex of `n` cryptographically-random bytes.
+fn rand_hex(n: usize) -> String {
+    let mut b = vec![0u8; n];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
+    hex_str(&b)
 }
 
 /// A one-time capability token bound to an ephemeral identity (plan §11).
@@ -416,21 +432,26 @@ async fn create_identity(
         Err(e) => e.into_response(),
     };
     match bearer(&headers) {
-        Some(tok) if is_api_key(tok) => match state.store.account_for_key(sha256(tok.as_bytes())).await {
-            Ok(Some(account_id)) => created(do_create_identity(&state, Some(account_id), req.label).await),
-            Ok(None) => ApiError::unauthorized("unknown API key").into_response(),
-            Err(e) => {
-                tracing::error!(error = %e, "api-key lookup failed");
-                ApiError::server("store_error").into_response()
+        // Authenticated (API key or member JWT) → create under that account, no PoW.
+        Some(tok) => match principal_for_token(&state, Some(tok)).await {
+            Ok(Principal::Account(account_id)) => {
+                created(do_create_identity(&state, Some(account_id), req.label).await)
             }
+            Ok(Principal::Identity(_)) => err_response(
+                StatusCode::BAD_REQUEST,
+                "use_api_key",
+                Some(
+                    "capability tokens can't create identities — use an account API key or sign in",
+                ),
+            ),
+            Err(e) => e.into_response(),
         },
-        Some(_) => err_response(
-            StatusCode::BAD_REQUEST,
-            "use_api_key",
-            Some("capability tokens can't create identities — create an account (POST /v1/accounts) and use its API key"),
-        ),
+        // Anonymous → proof-of-work gated (ephemeral, no account).
         None => {
-            if let Err(e) = state.pow.consume(&req.pow_challenge, &req.pow_solution, now_unix()) {
+            if let Err(e) = state
+                .pow
+                .consume(&req.pow_challenge, &req.pow_solution, now_unix())
+            {
                 return err_response(
                     StatusCode::BAD_REQUEST,
                     "pow_required",
@@ -460,22 +481,8 @@ async fn create_account(
             )),
         );
     }
-    let account_id = format!(
-        "acct_{}",
-        hex_str(&{
-            let mut b = [0u8; 12];
-            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
-            b
-        })
-    );
-    let api_key = format!(
-        "pk_live_{}",
-        hex_str(&{
-            let mut b = [0u8; 32];
-            rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut b);
-            b
-        })
-    );
+    let account_id = format!("acct_{}", rand_hex(12));
+    let api_key = format!("pk_live_{}", rand_hex(32));
     match state
         .store
         .create_account(account_id.clone(), sha256(api_key.as_bytes()), now_unix())
@@ -609,6 +616,18 @@ pub(crate) async fn principal_for_token(
                 Err(ApiError::server("store_error"))
             }
         }
+    } else if token.starts_with("eyJ") {
+        // A pigeonpost-prod member JWT → validate → subject → get-or-create that subject's account.
+        let claims = state.oidc.validate(token).await.map_err(|e| {
+            tracing::debug!(error = %e, "member-token validation failed");
+            ApiError::unauthorized("invalid member token")
+        })?;
+        let account = state
+            .store
+            .account_for_sub(claims.sub, format!("acct_{}", rand_hex(12)), now_unix())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        Ok(Principal::Account(account))
     } else {
         identity_for_token(state, Some(token))
             .await
@@ -1030,6 +1049,7 @@ mod tests {
             pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
             vault: Arc::new(vault::Vault::new([0u8; 32])),
             store: Arc::new(store::Store::open(":memory:").unwrap()),
+            oidc: Arc::new(oidc::Oidc::new("https://auth.example/realms/x".into())),
             max_identities: 5,
             max_inbox: 1000,
         };
