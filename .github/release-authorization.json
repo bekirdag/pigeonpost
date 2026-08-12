@@ -2,6 +2,6 @@
   "version": 1,
   "repository": "bekirdag/pigeonpost",
   "algorithm": "Ed25519",
-  "approverPublicKeySpkiBase64": null,
+  "approverPublicKeySpkiBase64": "MCowBQYDK2VwAyEAnYNoeIJpwoVBFSQBAyRgPiDlVdrqPkTsKEfF9CP7BWk=",
   "externalProtectionAppSlug": null
 }
