@@ -3,7 +3,8 @@
 The Dockerized hosted plane (remote MCP + key custody + inbox hosting) for mass adoption.
 Design: [`docs/planning/hosted-postbox-architecture-2026-08-12.md`](../../docs/planning/hosted-postbox-architecture-2026-08-12.md) *(gitignored planning doc)*.
 
-**Status: P0 in progress.** Live: proof-of-work anti-abuse (`GET /v1/pow/challenge`); PoW-gated
+**Status: P0 live** at `https://postbox.pigeonpost.dev` / `https://mcp.pigeonpost.dev`. Proof-of-work
+anti-abuse (`GET /v1/pow/challenge`); PoW-gated
 anonymous `/k/` identity creation (`POST /v1/identities`) — mints a keypair, seals the seed in the
 vault, persists to SQLite, returns a capability token; the capability-token-authed messaging loop
 (`POST /v1/send` hosted→hosted, `GET /v1/inbox`, `POST /v1/ack`); and the **MCP connector**
@@ -15,9 +16,28 @@ capability token as its bearer. Not yet built: cross-box delivery, accounts/OAut
 
 - Box: **`159.69.201.24`** — `postbox.pigeonpost.dev` (A) + `mcp.pigeonpost.dev` (CNAME), both
   **grey-cloud** (not Cloudflare-proxied) so MCP streaming isn't cut and Caddy can auto-issue TLS.
-- Firewall the box to **80/443 only**; rely on PoW + app rate limits for abuse (no edge WAF on grey).
+- Both grey-cloud so MCP streaming isn't cut by an edge proxy.
 
-## Bring it up
+## Production deploy (as actually live — 2026-08-12)
+
+`159.69.201.24` is a **shared box** (`web`) already running Apache on 80/443 (many vhosts + Drone +
+the pigeonpost loft) with old Docker 18.09 and no `docker compose`. So production does **not** use
+the Compose/Caddy stack below — it mirrors the loft's proven pattern: a loopback container behind an
+Apache vhost with certbot TLS. The Compose stack stays valid for a *dedicated* box.
+
+Live setup (SSH `-p 34251 root@159.69.201.24`):
+- Source at `/opt/pigeonpost-src` (rsync of `crates/` + manifests + `deploy/`); runtime state at
+  `/opt/pigeonpost-postbox` (`postbox.env`, `master.age`, `data/`) owned by uid `65532`.
+- Image built on the box (**bullseye base** — 18.09's seccomp blocks bookworm's `clone3`):
+  `docker build -f deploy/postbox/Dockerfile -t pigeonpost-postbox:0.2.0 .`
+- Two containers, `--restart unless-stopped`: `pigeonpost-postbox` (`-p 127.0.0.1:8990:8990`) and
+  `pigeonpost-postbox-reaper` (`--reaper`), sharing `/opt/pigeonpost-postbox/data`.
+- Apache vhost `pigeonpost-postbox.conf` proxies `postbox.` + `mcp.pigeonpost.dev` → `127.0.0.1:8990`
+  (always `apache2ctl configtest` before reload); `certbot --apache` issued the cert + HTTP→HTTPS.
+- **Redeploy:** rsync the tree, rebuild the image, `docker rm -f` + re-`docker run` both containers.
+  Data and TLS persist.
+
+## Bring it up (dedicated box, Compose)
 
 ```sh
 # on 159.69.201.24, in this directory
