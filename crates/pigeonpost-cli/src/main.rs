@@ -228,6 +228,26 @@ enum PostboxAction {
         address: Option<String>,
     },
 
+    /// Send a message from a hosted mailbox.
+    Send {
+        /// Recipient address, e.g. /k/…
+        to: String,
+        /// Message text, or a JSON request envelope for a peer that granted you a verb.
+        body: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Read a hosted mailbox.
+    Inbox {
+        /// Wait up to this many seconds for mail instead of answering at once, returning as soon
+        /// as something arrives. The server caps it at 60.
+        #[arg(long)]
+        wait: Option<u64>,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
     /// Destroy a hosted inbox and forget its token here. Cannot be undone.
     Delete {
         /// Confirm. Without it this only tells you what would be destroyed.
@@ -723,18 +743,29 @@ enum LoftAction {
     },
 }
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
+fn main() -> std::process::ExitCode {
     tracing_subscriber::fmt()
         .with_env_filter(pigeonpost_log_filter())
         .with_writer(std::io::stderr)
         .init();
 
     let cli = Cli::parse();
-    let runtime = tokio::runtime::Builder::new_multi_thread()
+    let result = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
-        .build()?;
+        .build()
+        .map_err(Into::into)
+        .and_then(|runtime| runtime.block_on(run(cli)));
 
-    runtime.block_on(run(cli))
+    // Print with Display, not the `Result` return that `main` would otherwise use: that formats
+    // with Debug, so a message wearing quotes and literal \n escapes is what the user reads.
+    // Several of these errors are multi-line by design and unreadable that way.
+    match result {
+        Ok(()) => std::process::ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("error: {error}");
+            std::process::ExitCode::FAILURE
+        }
+    }
 }
 
 /// Limit operator-selected verbosity to first-party targets. Global `trace` enables Axum's
@@ -956,6 +987,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             PostboxAction::List => postbox_cmd::list(&home, cli.json),
             PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),
+            PostboxAction::Send { to, body, which } => {
+                postbox_cmd::send_message(&home, which.address.as_deref(), to, body, cli.json).await
+            }
+            PostboxAction::Inbox { wait, which } => {
+                postbox_cmd::show_inbox(&home, which.address.as_deref(), *wait, cli.json).await
+            }
             PostboxAction::Delete { yes, which } => {
                 postbox_cmd::delete_inbox(&home, which.address.as_deref(), *yes, cli.json).await
             }
