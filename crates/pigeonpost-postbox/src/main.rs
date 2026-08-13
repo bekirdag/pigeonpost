@@ -75,6 +75,15 @@ struct AppState {
     mint_limits: MintLimits,
     /// How many trusted reverse proxies sit in front of us (see [`resolve_client_ip`]).
     trusted_proxy_hops: usize,
+    /// Raised whenever any message is enqueued, to release long-polling `GET /v1/inbox?wait=N`
+    /// callers the moment their mail lands instead of on their next timer.
+    ///
+    /// Deliberately one global signal rather than a registry of per-address channels: a wake is
+    /// cheap (each waiter re-checks its own unread count and goes back to sleep), signals only
+    /// fire on a real send, and a single `Notify` has no lifecycle to leak. If this ever hosts
+    /// enough concurrent waiters that the wasted wakeups matter, that is the point to key it by
+    /// recipient — not before.
+    inbox_signal: Arc<tokio::sync::Notify>,
 }
 
 /// Per-IP ceilings on unauthenticated (proof-of-work) minting. The PoW makes one mint cost a
@@ -275,6 +284,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             lifetime: cfg.mint_per_ip_lifetime,
         },
         trusted_proxy_hops: cfg.trusted_proxy_hops,
+        inbox_signal: Arc::new(tokio::sync::Notify::new()),
     })
 }
 
@@ -1415,7 +1425,49 @@ pub(crate) async fn do_send(
             ApiError::server("store_error")
         })?;
     tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, "message sealed + enqueued");
+    // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
+    // immediately re-reads the store is guaranteed to see this message.
+    state.inbox_signal.notify_waiters();
     Ok(json!({ "message_id": message_id }))
+}
+
+/// Longest a caller may hold an inbox request open. Apache fronts this container with
+/// `ProxyPass … timeout=120`, so the ceiling stays well under the proxy's patience — a long poll
+/// that outlives its proxy is a 504 and a confused client, not a feature.
+const MAX_INBOX_WAIT_SECS: u64 = 60;
+
+/// Hold an inbox request open until mail arrives or `wait` elapses.
+///
+/// The alternative — every agent re-asking on a timer — is what makes a mesh of twenty idle
+/// agents expensive. This way an idle agent costs one parked connection and no queries, and still
+/// sees a message within milliseconds of it landing.
+async fn await_mail(state: &AppState, address: &str, wait: u64) {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(wait);
+    loop {
+        // Register interest *before* looking at the store. The other order has a lost-wakeup
+        // hole: a send landing between the read and the wait would notify nobody, and this
+        // caller would sleep through mail that was already there.
+        let notified = state.inbox_signal.notified();
+        tokio::pin!(notified);
+        notified.as_mut().enable();
+
+        match state.store.unread_count(address.to_string()).await {
+            Ok(0) => {}
+            // Mail waiting, or a store we can't question — either way stop waiting and let the
+            // ordinary read path produce the answer (or the error).
+            _ => return,
+        }
+
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        if remaining.is_zero() {
+            return;
+        }
+        // The signal is global, so a wake means "somebody got mail", not "you did". Falling back
+        // into the loop re-checks this inbox rather than trusting the wake.
+        if tokio::time::timeout(remaining, notified).await.is_err() {
+            return;
+        }
+    }
 }
 
 /// Open every message waiting for `me` and return the plaintext (managed custody).
@@ -1566,6 +1618,10 @@ async fn send(
 struct InboxQuery {
     #[serde(default)]
     identity: Option<String>,
+    /// Seconds to hold the request open when the inbox is empty, capped at
+    /// [`MAX_INBOX_WAIT_SECS`]. Absent or 0 answers immediately, as it always did.
+    #[serde(default)]
+    wait: Option<u64>,
 }
 
 #[derive(serde::Deserialize)]
@@ -1685,7 +1741,8 @@ async fn put_policy(
     }
 }
 
-/// `GET /v1/inbox` — return opened plaintext messages for the acting identity.
+/// `GET /v1/inbox[?wait=N]` — return opened plaintext messages for the acting identity, optionally
+/// holding the request open until mail arrives.
 async fn inbox(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -1695,6 +1752,11 @@ async fn inbox(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
+    // Clamp rather than reject: an over-eager `wait=600` is a client that wants to be told when
+    // mail arrives, and answering it in 60s serves that better than an error does.
+    if let Some(wait) = q.wait.filter(|w| *w > 0) {
+        await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
+    }
     match do_inbox(&state, &me).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
@@ -1897,6 +1959,7 @@ mod tests {
             max_inbox: 1000,
             mint_limits: limits,
             trusted_proxy_hops: 0,
+            inbox_signal: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -2337,6 +2400,97 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_long_poll_returns_the_moment_mail_lands() {
+        // The promise of Phase 4: an idle agent learns about a message when it arrives, not when
+        // its next timer happens to fire.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        let sender_state = state.clone();
+        let bob_address = bob.address.clone();
+        let sending = tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+            do_send(&sender_state, &alice, &bob_address, "wake up")
+                .await
+                .unwrap();
+        });
+
+        // A budget far longer than the send takes: if the signal were dropped this would sit here
+        // for the full sixty seconds and blow the slack below.
+        let started = std::time::Instant::now();
+        await_mail(&state, &bob.address, 60).await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "waited {:?} — a long poll must wake on arrival, not time out",
+            started.elapsed()
+        );
+        sending.await.unwrap();
+
+        let inbox = do_inbox(&state, &bob).await.unwrap();
+        assert_eq!(inbox["messages"].as_array().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn waiting_ends_at_the_budget_when_nothing_arrives() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let started = std::time::Instant::now();
+        await_mail(&state, &me.address, 1).await;
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(900),
+            "an empty inbox must wait out its budget, not return at once"
+        );
+        assert!(do_inbox(&state, &me).await.unwrap()["messages"]
+            .as_array()
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn mail_already_waiting_is_answered_without_a_wait() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "already here")
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        await_mail(&state, &bob.address, 60).await;
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "unread mail present: there is nothing to wait for"
+        );
+    }
+
+    #[tokio::test]
+    async fn acked_mail_is_not_news() {
+        // Waiting on the *total* would make an agent holding one un-acked message spin instead of
+        // wait, so the budget is spent only while the inbox is genuinely quiet.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let sent = do_send(&state, &alice, &bob.address, "old news")
+            .await
+            .unwrap();
+        do_ack(
+            &state,
+            &bob,
+            sent["message_id"].as_str().unwrap().to_string(),
+        )
+        .await
+        .unwrap();
+
+        let started = std::time::Instant::now();
+        await_mail(&state, &bob.address, 1).await;
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(900),
+            "a read message must not count as new mail"
+        );
+    }
+
+    #[tokio::test]
     async fn granting_verbs_is_a_raise_only_a_human_can_make() {
         let state = test_state();
         let me = mint(&state).await;
@@ -2500,6 +2654,7 @@ mod tests {
                 lifetime: 1000,
             },
             trusted_proxy_hops: 0,
+            inbox_signal: Arc::new(tokio::sync::Notify::new()),
         };
         let _ = build_router(state);
     }

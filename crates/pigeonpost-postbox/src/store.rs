@@ -383,6 +383,17 @@ impl Store {
         .await
     }
 
+    /// Messages this inbox has not acked. This — not the total — is what a long poll waits on:
+    /// an inbox holding only already-read mail is quiet, and waiting on the total would make a
+    /// caller with one un-acked message spin instead of wait.
+    pub async fn unread_count(&self, recipient: String) -> Result<usize, StoreError> {
+        self.count_where(
+            "SELECT COUNT(*) FROM messages WHERE recipient = ?1 AND read = 0",
+            recipient,
+        )
+        .await
+    }
+
     /// Record one unauthenticated mint against the caller's IP. Best-effort accounting: a failure
     /// here must never fail the mint the caller already earned with a proof-of-work.
     pub async fn record_mint(

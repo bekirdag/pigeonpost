@@ -9,6 +9,13 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const verifier = path.join(repoRoot, "deploy/acceptance/verify-release-assets.mjs");
+// Read from the package rather than pinning a literal: this suite is about the *shape* of a
+// release — which assets exist, how SBOMs bind to them, what the tarball may contain — none of
+// which is version-specific. Hardcoding the number only guarantees the suite breaks on the next
+// bump, which is exactly what it did.
+const releaseVersion = JSON.parse(
+  fs.readFileSync(path.join(repoRoot, "npm/package.json"), "utf8"),
+).version;
 const onlineAssets = [
   "pigeonpost-darwin-arm64",
   "pigeonpost-darwin-x64",
@@ -52,7 +59,7 @@ function spdxFixture(artifact, digest) {
     dataLicense: "CC0-1.0",
     SPDXID: "SPDXRef-DOCUMENT",
     name: artifact,
-    documentNamespace: `https://pigeonpost.dev/sbom/v0.2.0/${artifact}`,
+    documentNamespace: `https://pigeonpost.dev/sbom/v${releaseVersion}/${artifact}`,
     creationInfo: {
       creators: ["Organization: Anchore, Inc", "Tool: syft-1.50.0"],
       created: "2026-01-01T00:00:00Z",
@@ -74,7 +81,7 @@ function spdxFixture(artifact, digest) {
       {
         name: cargoRoot,
         SPDXID: cargoId,
-        versionInfo: "0.2.0",
+        versionInfo: releaseVersion,
         supplier: "NOASSERTION",
         downloadLocation: "NOASSERTION",
         filesAnalyzed: false,
@@ -86,7 +93,7 @@ function spdxFixture(artifact, digest) {
           {
             referenceCategory: "PACKAGE-MANAGER",
             referenceType: "purl",
-            referenceLocator: `pkg:cargo/${cargoRoot}@0.2.0`,
+            referenceLocator: `pkg:cargo/${cargoRoot}@${releaseVersion}`,
           },
         ],
       },
@@ -159,7 +166,7 @@ function releaseFixture(context, variant = "valid") {
   const targetSbom = JSON.parse(fs.readFileSync(targetSbomPath, "utf8"));
   if (variant === "mismatched-sbom") {
     targetSbom.documentNamespace =
-      "https://pigeonpost.dev/sbom/v0.2.0/pigeonpost-linux-x64";
+      `https://pigeonpost.dev/sbom/v${releaseVersion}/pigeonpost-linux-x64`;
   } else if (variant === "empty-sbom") {
     targetSbom.packages = [];
   } else if (variant === "unrelated-sbom") {
@@ -225,7 +232,7 @@ function releaseFixture(context, variant = "valid") {
   ]);
   assert.equal(packed.status, 0, `${packed.stdout}\n${packed.stderr}`);
   assert.equal(
-    fs.existsSync(path.join(dist, "bekirdag-pigeonpost-0.2.0.tgz")),
+    fs.existsSync(path.join(dist, `bekirdag-pigeonpost-${releaseVersion}.tgz`)),
     true,
   );
 
@@ -240,7 +247,7 @@ function releaseFixture(context, variant = "valid") {
 function runVerifier({ dist, root, serverSource }) {
   return spawnSync(
     process.execPath,
-    [verifier, dist, "0.2.0", "bekirdag/pigeonpost", serverSource],
+    [verifier, dist, releaseVersion, "bekirdag/pigeonpost", serverSource],
     {
       cwd: root,
       encoding: "utf8",
