@@ -55,6 +55,7 @@ mod oidc;
 mod pow;
 mod store;
 mod vault;
+mod verbs;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
 const POW_TTL_SECS: u64 = 120;
@@ -896,18 +897,16 @@ fn validate_enum(value: &str, allowed: [&str; 2], field: &'static str) -> Result
     ))
 }
 
-/// The autonomy that actually applies to a message from `peer`, given the contact row (if any) and
-/// the inbox's stranger-defaults.
-fn effective_autonomy(
-    contact: Option<&store::Contact>,
-    policy: store::InboxPolicy,
-) -> &'static str {
+/// Whether a human has said this sender's mail may drive work at all — the Phase 2 question, and
+/// only half the answer. What they may drive is `contacts.allowed_verbs`, applied per message in
+/// [`verbs::decide`].
+fn sender_is_auto(contact: Option<&store::Contact>, policy: store::InboxPolicy) -> bool {
     match contact {
-        Some(c) if c.admission == ADMISSION_BLOCK => "blocked",
-        Some(c) if c.autonomy == AUTONOMY_AUTO => AUTONOMY_AUTO,
+        Some(c) if c.admission == ADMISSION_BLOCK => false,
+        Some(c) if c.autonomy == AUTONOMY_AUTO => true,
         // `auto_accept_known` lifts *known* contacts only; strangers are never swept up by it.
-        Some(_) if policy.auto_accept_known => AUTONOMY_AUTO,
-        _ => AUTONOMY_REVIEW,
+        Some(_) => policy.auto_accept_known,
+        None => false,
     }
 }
 
@@ -917,6 +916,7 @@ fn contact_json(c: &store::Contact) -> serde_json::Value {
         "alias": c.alias,
         "admission": c.admission,
         "autonomy": c.autonomy,
+        "allowed_verbs": c.allowed_verbs,
         "created_at": c.created_at,
         "updated_at": c.updated_at,
     })
@@ -938,6 +938,7 @@ fn refuse_raise(what: &'static str) -> ApiError {
 }
 
 /// Add or amend a contact. Shared by REST (human) and MCP (agent, lower-only).
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn do_set_contact(
     state: &AppState,
     me: &store::StoredIdentity,
@@ -945,6 +946,7 @@ pub(crate) async fn do_set_contact(
     alias: Option<String>,
     admission: Option<String>,
     autonomy: Option<String>,
+    allowed_verbs: Option<Vec<String>>,
     actor: TrustActor,
 ) -> Result<serde_json::Value, ApiError> {
     if !peer.starts_with("/k/") {
@@ -962,10 +964,20 @@ pub(crate) async fn do_set_contact(
     if let Some(a) = &autonomy {
         validate_enum(a, [AUTONOMY_REVIEW, AUTONOMY_AUTO], "autonomy")?;
     }
+    // Refuse a bad grant now rather than storing one that could never match. A denied verb is not
+    // a typo to be shrugged off — it is someone asking for the one thing this design will not sell.
+    if let Some(v) = &allowed_verbs {
+        verbs::validate_grant(v).map_err(|detail| ApiError::bad("invalid_verb", &detail))?;
+    }
 
     if actor == TrustActor::Agent {
         if autonomy.as_deref() == Some(AUTONOMY_AUTO) {
             return Err(refuse_raise("autonomy=auto"));
+        }
+        // Granting a verb is the sharpest raise there is — it is the thing `auto` was narrowed
+        // down to. Clearing the list is a lower, so an agent may still revoke its own exposure.
+        if allowed_verbs.as_ref().is_some_and(|v| !v.is_empty()) {
+            return Err(refuse_raise("granting verbs"));
         }
         // A blocked peer is frozen against the agent: any write that isn't re-affirming the block
         // is refused outright, rather than silently ignored. Letting it report success would tell
@@ -990,6 +1002,7 @@ pub(crate) async fn do_set_contact(
             alias,
             admission,
             autonomy,
+            allowed_verbs,
             now: now_unix(),
         })
         .await
@@ -999,7 +1012,8 @@ pub(crate) async fn do_set_contact(
         })?;
     tracing::info!(
         owner = %contact.owner, peer = %contact.peer,
-        admission = %contact.admission, autonomy = %contact.autonomy, ?actor,
+        admission = %contact.admission, autonomy = %contact.autonomy,
+        allowed_verbs = %contact.allowed_verbs.join(","), ?actor,
         "contact set"
     );
     Ok(contact_json(&contact))
@@ -1022,6 +1036,13 @@ pub(crate) async fn do_list_contacts(
     Ok(json!({
         "contacts": contacts.iter().map(contact_json).collect::<Vec<_>>(),
         "policy": policy_json(policy),
+        // Published because a closed vocabulary nobody can enumerate is just an outage. A sender
+        // needs to know which verbs exist to form a request; a human needs to know which are
+        // grantable before deciding what to hand out, and which never will be.
+        "vocabulary": {
+            "grantable": verbs::grantable(),
+            "never_auto": verbs::denied(),
+        },
     }))
 }
 
@@ -1431,6 +1452,37 @@ pub(crate) async fn do_inbox(
         if let Ok((from_vk, body)) = envelope::open(&me_identity, &wrap) {
             let from = Address::from_pubkey(&from_vk).as_str().to_string();
             let contact = contacts.iter().find(|c| c.peer == from);
+            let granted = contact.map(|c| c.allowed_verbs.as_slice()).unwrap_or(&[]);
+
+            // The two halves meet here: *who* the recipient trusts (Phase 2) and *what* this
+            // particular message asks for (Phase 3). Only when both say yes does the message
+            // arrive marked `auto`.
+            let decision = verbs::decide(body.as_str(), sender_is_auto(contact, policy), granted);
+
+            // Log every message a trusted sender could have had acted on, whichever way it went —
+            // an `auto` peer reaching for a denied verb is the signal worth having, and it is
+            // invisible if only the successes are recorded.
+            match &decision {
+                verbs::Decision::Auto { verb } => tracing::info!(
+                    to = %me.address, from = %from, verb = %verb, message_id = %m.id,
+                    outcome = "auto", "scoped request auto-accepted"
+                ),
+                verbs::Decision::Review { held, verb } if *held != verbs::Held::SenderNotAuto => {
+                    tracing::info!(
+                        to = %me.address, from = %from, verb = verb.as_deref().unwrap_or("-"),
+                        message_id = %m.id, outcome = held.as_str(), "scoped request held"
+                    )
+                }
+                verbs::Decision::Review { .. } => {}
+            }
+
+            let (autonomy, held_because, verb) = match &decision {
+                verbs::Decision::Auto { verb } => (AUTONOMY_AUTO, None, Some(verb.clone())),
+                verbs::Decision::Review { held, verb } => {
+                    (AUTONOMY_REVIEW, Some(held.as_str()), verb.clone())
+                }
+            };
+
             out.push(json!({
                 "message_id": m.id,
                 "from": from,
@@ -1440,7 +1492,13 @@ pub(crate) async fn do_inbox(
                 "untrusted": true,
                 "sender_known": contact.is_some(),
                 "alias": contact.and_then(|c| c.alias.clone()),
-                "autonomy": effective_autonomy(contact, policy),
+                "autonomy": autonomy,
+                // The verb this message named, if it named a recognisable one at all — worth
+                // showing even when held, since it is what the human is being asked to approve.
+                "verb": verb,
+                // Absent when `auto`; otherwise why, so an agent can tell "nobody trusts you"
+                // from "you asked for the wrong thing".
+                "held_because": held_because,
                 "received_at": m.created_at,
                 "read": m.read,
             }));
@@ -1519,6 +1577,9 @@ struct ContactReq {
     admission: Option<String>,
     #[serde(default)]
     autonomy: Option<String>,
+    /// Omitted leaves the stored grants alone; `[]` revokes them all.
+    #[serde(default)]
+    allowed_verbs: Option<Vec<String>>,
     #[serde(default)]
     identity: Option<String>,
 }
@@ -1574,6 +1635,7 @@ async fn put_contact(
         req.alias,
         req.admission,
         req.autonomy,
+        req.allowed_verbs,
         TrustActor::Human,
     )
     .await
@@ -1885,40 +1947,47 @@ mod tests {
             alias: None,
             admission: admission.into(),
             autonomy: autonomy.into(),
+            allowed_verbs: Vec::new(),
             created_at: 0,
             updated_at: 0,
         }
     }
 
+    /// Most trust tests predate scoped verbs and don't grant any; this keeps their call sites
+    /// about the axis they're actually exercising.
+    async fn set_contact(
+        state: &AppState,
+        me: &store::StoredIdentity,
+        peer: String,
+        alias: Option<String>,
+        admission: Option<String>,
+        autonomy: Option<String>,
+        actor: TrustActor,
+    ) -> Result<serde_json::Value, ApiError> {
+        do_set_contact(state, me, peer, alias, admission, autonomy, None, actor).await
+    }
+
     #[test]
-    fn autonomy_is_review_unless_deliberately_granted() {
+    fn a_sender_is_auto_only_when_a_human_said_so() {
         let manual = store::InboxPolicy::default();
         let known_auto = store::InboxPolicy {
             accept_all: true,
             auto_accept_known: true,
         };
 
-        assert_eq!(effective_autonomy(None, manual), "review");
-        assert_eq!(
-            effective_autonomy(None, known_auto),
-            "review",
+        assert!(!sender_is_auto(None, manual));
+        assert!(
+            !sender_is_auto(None, known_auto),
             "auto_accept_known must never sweep up strangers"
         );
-        assert_eq!(
-            effective_autonomy(Some(&contact("allow", "review")), manual),
-            "review"
-        );
-        assert_eq!(
-            effective_autonomy(Some(&contact("allow", "auto")), manual),
-            "auto"
-        );
-        assert_eq!(
-            effective_autonomy(Some(&contact("allow", "review")), known_auto),
-            "auto"
-        );
-        assert_eq!(
-            effective_autonomy(Some(&contact("block", "auto")), known_auto),
-            "blocked",
+        assert!(!sender_is_auto(Some(&contact("allow", "review")), manual));
+        assert!(sender_is_auto(Some(&contact("allow", "auto")), manual));
+        assert!(sender_is_auto(
+            Some(&contact("allow", "review")),
+            known_auto
+        ));
+        assert!(
+            !sender_is_auto(Some(&contact("block", "auto")), known_auto),
             "a block outranks every autonomy grant"
         );
     }
@@ -1944,7 +2013,7 @@ mod tests {
         let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
 
         // Allowed: note a sender, block a sender.
-        assert!(do_set_contact(
+        assert!(set_contact(
             &state,
             &me,
             peer.clone(),
@@ -1957,7 +2026,7 @@ mod tests {
         .is_ok());
 
         // Refused: granting itself autonomy.
-        let err = do_set_contact(
+        let err = set_contact(
             &state,
             &me,
             peer.clone(),
@@ -1981,7 +2050,7 @@ mod tests {
         );
 
         // An agent re-noting a contact must not quietly revoke a grant the human made.
-        do_set_contact(
+        set_contact(
             &state,
             &me,
             peer.clone(),
@@ -1992,7 +2061,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let after = do_set_contact(
+        let after = set_contact(
             &state,
             &me,
             peer.clone(),
@@ -2009,7 +2078,7 @@ mod tests {
         );
 
         // A human may do both.
-        assert!(do_set_contact(
+        assert!(set_contact(
             &state,
             &me,
             peer.clone(),
@@ -2032,7 +2101,7 @@ mod tests {
         let state = test_state();
         let me = mint(&state).await;
         let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
-        do_set_contact(
+        set_contact(
             &state,
             &me,
             peer.clone(),
@@ -2045,7 +2114,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(
-            do_set_contact(
+            set_contact(
                 &state,
                 &me,
                 peer.clone(),
@@ -2060,7 +2129,7 @@ mod tests {
             "human_required"
         );
         assert_eq!(
-            do_set_contact(
+            set_contact(
                 &state,
                 &me,
                 peer.clone(),
@@ -2075,7 +2144,7 @@ mod tests {
             "human_required"
         );
         assert!(
-            do_set_contact(
+            set_contact(
                 &state,
                 &me,
                 peer.clone(),
@@ -2108,7 +2177,7 @@ mod tests {
         let me = mint(&state).await;
         let human = TrustActor::Human;
 
-        let err = do_set_contact(
+        let err = set_contact(
             &state,
             &me,
             "bekir@example.com".into(),
@@ -2121,7 +2190,7 @@ mod tests {
         .unwrap_err();
         assert_eq!(err.code, "invalid_peer");
 
-        let err = do_set_contact(&state, &me, me.address.clone(), None, None, None, human)
+        let err = set_contact(&state, &me, me.address.clone(), None, None, None, human)
             .await
             .unwrap_err();
         assert_eq!(
@@ -2129,7 +2198,7 @@ mod tests {
             "an inbox listing itself would make its own messages 'known'"
         );
 
-        let err = do_set_contact(
+        let err = set_contact(
             &state,
             &me,
             "/k/other".into(),
@@ -2153,7 +2222,7 @@ mod tests {
         assert!(do_send(&state, &alice, &bob.address, "hello").await.is_ok());
 
         // Blocked: refused, and nothing reaches bob's inbox.
-        do_set_contact(
+        set_contact(
             &state,
             &bob,
             alice.address.clone(),
@@ -2187,7 +2256,7 @@ mod tests {
                 .code,
             "not_admitted"
         );
-        do_set_contact(
+        set_contact(
             &state,
             &bob,
             carol.address.clone(),
@@ -2217,6 +2286,7 @@ mod tests {
             Some("agent-A".into()),
             None,
             Some("auto".into()),
+            Some(vec!["run_tests".into()]),
             TrustActor::Human,
         )
         .await
@@ -2224,33 +2294,193 @@ mod tests {
         do_send(&state, &alice, &bob.address, "from a friend")
             .await
             .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            r#"{"v":1,"verb":"run_tests","args":{"target":"crates/x"}}"#,
+        )
+        .await
+        .unwrap();
         do_send(&state, &stranger, &bob.address, "from nobody")
             .await
             .unwrap();
 
         let inbox = do_inbox(&state, &bob).await.unwrap();
         let messages = inbox["messages"].as_array().unwrap();
-        assert_eq!(messages.len(), 2);
+        assert_eq!(messages.len(), 3);
+        let find = |pred: &dyn Fn(&serde_json::Value) -> bool| {
+            messages.iter().find(|m| pred(m)).unwrap().clone()
+        };
 
-        let known = messages
-            .iter()
-            .find(|m| m["from"] == alice.address.as_str())
-            .unwrap();
-        assert_eq!(known["sender_known"], true);
-        assert_eq!(known["alias"], "agent-A");
-        assert_eq!(known["autonomy"], "auto");
+        // Prose from a fully trusted sender is still a human's call — the Phase 3 guarantee.
+        let prose = find(&|m| m["body"] == "from a friend");
+        assert_eq!(prose["sender_known"], true);
+        assert_eq!(prose["alias"], "agent-A");
+        assert_eq!(prose["autonomy"], "review");
+        assert_eq!(prose["held_because"], "not_a_request");
+
+        // The same sender, asking for exactly what they were granted.
+        let scoped = find(&|m| m["verb"] == "run_tests");
+        assert_eq!(scoped["autonomy"], "auto");
+        assert_eq!(scoped["held_because"], serde_json::Value::Null);
         assert_eq!(
-            known["untrusted"], true,
+            scoped["untrusted"], true,
             "auto is a decision about the sender, not a claim about the text"
         );
 
-        let unknown = messages
-            .iter()
-            .find(|m| m["from"] == stranger.address.as_str())
-            .unwrap();
+        let unknown = find(&|m| m["from"] == stranger.address.as_str());
         assert_eq!(unknown["sender_known"], false);
         assert_eq!(unknown["alias"], serde_json::Value::Null);
         assert_eq!(unknown["autonomy"], "review");
+        assert_eq!(unknown["held_because"], "sender_not_auto");
+    }
+
+    #[tokio::test]
+    async fn granting_verbs_is_a_raise_only_a_human_can_make() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
+
+        // A human grants; the agent may not.
+        do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            None,
+            None,
+            Some("auto".into()),
+            Some(vec!["run_tests".into(), "report_status".into()]),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            do_set_contact(
+                &state,
+                &me,
+                peer.clone(),
+                None,
+                None,
+                None,
+                Some(vec!["read_file".into()]),
+                TrustActor::Agent,
+            )
+            .await
+            .expect_err("an agent widening its own exposure is the exact move to stop")
+            .code,
+            "human_required"
+        );
+
+        // Revoking is a lower, so the agent may still do it — and a plain agent write must not
+        // silently drop the human's grants either.
+        let after = do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            Some("renamed".into()),
+            None,
+            None,
+            None,
+            TrustActor::Agent,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            after["allowed_verbs"],
+            json!(["run_tests", "report_status"])
+        );
+
+        let cleared = do_set_contact(
+            &state,
+            &me,
+            peer,
+            None,
+            None,
+            None,
+            Some(vec![]),
+            TrustActor::Agent,
+        )
+        .await
+        .expect("clearing its own grants is a lower");
+        assert_eq!(cleared["allowed_verbs"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn a_grant_of_a_denied_or_unknown_verb_is_refused_at_the_source() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
+
+        for (bad, why) in [
+            ("deploy", "no policy may grant a deploy"),
+            ("execute_command", "an unknown verb could never match"),
+        ] {
+            let err = do_set_contact(
+                &state,
+                &me,
+                peer.clone(),
+                None,
+                None,
+                None,
+                Some(vec![bad.into()]),
+                TrustActor::Human,
+            )
+            .await
+            .expect_err(why);
+            assert_eq!(err.code, "invalid_verb");
+            assert_eq!(err.status, StatusCode::BAD_REQUEST);
+        }
+    }
+
+    #[tokio::test]
+    async fn an_auto_contact_with_no_grants_gets_nothing() {
+        // The migration case: a contact carried over from before scoped verbs existed. Its `auto`
+        // must have stopped meaning "act on anything from this sender".
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        set_contact(
+            &state,
+            &bob,
+            alice.address.clone(),
+            None,
+            None,
+            Some("auto".into()),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            r#"{"v":1,"verb":"run_tests"}"#,
+        )
+        .await
+        .unwrap();
+
+        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let m = &inbox["messages"].as_array().unwrap()[0];
+        assert_eq!(m["autonomy"], "review");
+        assert_eq!(m["held_because"], "verb_not_granted");
+        assert_eq!(m["verb"], "run_tests");
+    }
+
+    #[tokio::test]
+    async fn the_verb_vocabulary_is_published_to_whoever_asks() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let v = do_list_contacts(&state, &me).await.unwrap();
+        assert!(v["vocabulary"]["grantable"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("run_tests")));
+        assert!(v["vocabulary"]["never_auto"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("deploy")));
     }
 
     /// Guards against a matchit route conflict between `/v1/pow/challenge` and the `/v1/{*rest}`

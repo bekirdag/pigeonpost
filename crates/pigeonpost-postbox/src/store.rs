@@ -61,19 +61,23 @@ CREATE TABLE IF NOT EXISTS mint_events (
 );
 CREATE INDEX IF NOT EXISTS mint_events_by_ip ON mint_events(ip, created_at);
 
--- Who an inbox knows, and on what terms. Two independent axes, deliberately not collapsed:
---   admission — may this peer's mail be delivered at all      (allow | block)
---   autonomy  — may my agent act on it without a human        (review | auto)
+-- Who an inbox knows, and on what terms. Three axes, deliberately not collapsed:
+--   admission     — may this peer's mail be delivered at all  (allow | block)
+--   autonomy      — may my agent act on it without a human    (review | auto)
+--   allowed_verbs — to do which specific things               (JSON array; NULL/[] = none)
 -- `allow` is the admission default because the postbox has always delivered to anyone; `review`
--- is the autonomy default because trusting a sender's identity is not trusting their instructions.
+-- is the autonomy default because trusting a sender's identity is not trusting their instructions;
+-- and the verb list starts empty because `auto` with no verbs grants nothing, which is the right
+-- resting state for a switch this sharp.
 CREATE TABLE IF NOT EXISTS contacts (
-    owner      TEXT NOT NULL,
-    peer       TEXT NOT NULL,
-    alias      TEXT,
-    admission  TEXT NOT NULL DEFAULT 'allow',
-    autonomy   TEXT NOT NULL DEFAULT 'review',
-    created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
+    owner         TEXT NOT NULL,
+    peer          TEXT NOT NULL,
+    alias         TEXT,
+    admission     TEXT NOT NULL DEFAULT 'allow',
+    autonomy      TEXT NOT NULL DEFAULT 'review',
+    allowed_verbs TEXT,
+    created_at    INTEGER NOT NULL,
+    updated_at    INTEGER NOT NULL,
     PRIMARY KEY (owner, peer)
 );
 
@@ -99,6 +103,10 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE api_keys ADD COLUMN prefix TEXT",
     "UPDATE api_keys SET id = lower(hex(randomblob(8))) WHERE id IS NULL",
     "CREATE INDEX IF NOT EXISTS api_keys_by_account ON api_keys(account_id)",
+    // Contacts written before the scoped request envelope existed get a NULL verb list, i.e. no
+    // grants. Any `auto` they already carried therefore stops meaning "act on any prose from this
+    // sender" the moment this ships — which is the migration we want, not one to paper over.
+    "ALTER TABLE contacts ADD COLUMN allowed_verbs TEXT",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -209,6 +217,9 @@ pub struct Contact {
     pub admission: String,
     /// `review` | `auto` — whether the recipient's agent may act without a human.
     pub autonomy: String,
+    /// Which request verbs this peer may have acted on. Empty — the default — means `autonomy`
+    /// alone grants nothing, because every message still has to name a verb on this list.
+    pub allowed_verbs: Vec<String>,
     pub created_at: u64,
     pub updated_at: u64,
 }
@@ -220,6 +231,8 @@ pub struct ContactUpdate {
     pub alias: Option<String>,
     pub admission: Option<String>,
     pub autonomy: Option<String>,
+    /// `Some(vec![])` clears every grant; `None` leaves the stored list alone.
+    pub allowed_verbs: Option<Vec<String>>,
     pub now: u64,
 }
 
@@ -243,6 +256,10 @@ impl Default for InboxPolicy {
     }
 }
 
+/// The contact columns, in the order `map_contact_row` reads them.
+const CONTACT_COLS: &str =
+    "owner, peer, alias, admission, autonomy, allowed_verbs, created_at, updated_at";
+
 fn map_contact_row(row: &rusqlite::Row) -> rusqlite::Result<Contact> {
     Ok(Contact {
         owner: row.get(0)?,
@@ -250,8 +267,15 @@ fn map_contact_row(row: &rusqlite::Row) -> rusqlite::Result<Contact> {
         alias: row.get(2)?,
         admission: row.get(3)?,
         autonomy: row.get(4)?,
-        created_at: row.get::<_, i64>(5)? as u64,
-        updated_at: row.get::<_, i64>(6)? as u64,
+        // Unreadable JSON degrades to "no grants" rather than erroring the whole read: a corrupt
+        // verb list must never be the reason an inbox can't be listed, and failing it closed costs
+        // the owner one re-grant.
+        allowed_verbs: row
+            .get::<_, Option<String>>(5)?
+            .and_then(|s| serde_json::from_str::<Vec<String>>(&s).ok())
+            .unwrap_or_default(),
+        created_at: row.get::<_, i64>(6)? as u64,
+        updated_at: row.get::<_, i64>(7)? as u64,
     })
 }
 
@@ -420,25 +444,40 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// Upsert one contact. `alias`/`admission`/`autonomy` left as `None` keep their stored value,
-    /// so a caller may change one axis without knowing the other.
+    /// Upsert one contact. Fields left as `None` keep their stored value, so a caller may change
+    /// one axis without knowing the others.
     pub async fn upsert_contact(&self, c: ContactUpdate) -> Result<Contact, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Contact, StoreError> {
             let conn = conn.lock().expect("store lock");
+            // Serialized here rather than in the caller so the column's encoding stays the store's
+            // business. An empty grant is stored as `[]`, distinct from NULL only in intent.
+            let verbs = c
+                .allowed_verbs
+                .as_ref()
+                .map(|v| serde_json::to_string(v).expect("Vec<String> always serializes"));
             conn.execute(
-                "INSERT INTO contacts (owner, peer, alias, admission, autonomy, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, COALESCE(?4, 'allow'), COALESCE(?5, 'review'), ?6, ?6)
+                "INSERT INTO contacts
+                     (owner, peer, alias, admission, autonomy, allowed_verbs, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, COALESCE(?4, 'allow'), COALESCE(?5, 'review'), ?6, ?7, ?7)
                  ON CONFLICT(owner, peer) DO UPDATE SET
-                     alias      = COALESCE(?3, alias),
-                     admission  = COALESCE(?4, admission),
-                     autonomy   = COALESCE(?5, autonomy),
-                     updated_at = ?6",
-                params![c.owner, c.peer, c.alias, c.admission, c.autonomy, c.now as i64],
+                     alias         = COALESCE(?3, alias),
+                     admission     = COALESCE(?4, admission),
+                     autonomy      = COALESCE(?5, autonomy),
+                     allowed_verbs = COALESCE(?6, allowed_verbs),
+                     updated_at    = ?7",
+                params![
+                    c.owner,
+                    c.peer,
+                    c.alias,
+                    c.admission,
+                    c.autonomy,
+                    verbs,
+                    c.now as i64
+                ],
             )?;
             conn.query_row(
-                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
-                   FROM contacts WHERE owner = ?1 AND peer = ?2",
+                &format!("SELECT {CONTACT_COLS} FROM contacts WHERE owner = ?1 AND peer = ?2"),
                 params![c.owner, c.peer],
                 map_contact_row,
             )
@@ -458,8 +497,7 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<Option<Contact>, StoreError> {
             let conn = conn.lock().expect("store lock");
             conn.query_row(
-                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
-                   FROM contacts WHERE owner = ?1 AND peer = ?2",
+                &format!("SELECT {CONTACT_COLS} FROM contacts WHERE owner = ?1 AND peer = ?2"),
                 params![owner, peer],
                 map_contact_row,
             )
@@ -474,10 +512,9 @@ impl Store {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Contact>, StoreError> {
             let conn = conn.lock().expect("store lock");
-            let mut stmt = conn.prepare(
-                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
-                   FROM contacts WHERE owner = ?1 ORDER BY created_at",
-            )?;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {CONTACT_COLS} FROM contacts WHERE owner = ?1 ORDER BY created_at"
+            ))?;
             let rows = stmt.query_map(params![owner], map_contact_row)?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
@@ -1016,6 +1053,7 @@ mod tests {
             alias: None,
             admission,
             autonomy,
+            allowed_verbs: None,
             now,
         };
 

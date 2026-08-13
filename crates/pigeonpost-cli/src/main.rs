@@ -241,9 +241,18 @@ enum PostboxAction {
         /// A name for them, e.g. "agent-B on suku".
         #[arg(long)]
         alias: Option<String>,
-        /// Also let this agent act on their messages without asking you first.
+        /// Also let this agent act on their requests without asking you first — but only the
+        /// verbs you grant with --verb. On its own, --auto grants nothing.
         #[arg(long)]
         auto: bool,
+        /// A request this sender may have acted on, e.g. --verb run_tests. Repeatable; replaces
+        /// the sender's current grants. Run `pigeonpost postbox contacts` to see the verbs.
+        #[arg(long = "verb", conflicts_with = "no_verbs")]
+        verbs: Vec<String>,
+        /// Revoke every verb this sender was granted. Their mail keeps arriving; none of it is
+        /// acted on without you.
+        #[arg(long = "no-verbs")]
+        no_verbs: bool,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -945,8 +954,20 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 peer,
                 alias,
                 auto,
+                verbs,
+                no_verbs,
                 which,
             } => {
+                // An empty --verb list is "leave the grants alone", not "revoke": someone renaming
+                // a contact shouldn't silently strip what they granted it last week. Revoking is
+                // what --no-verbs is for.
+                let grants = if *no_verbs {
+                    Some(&[][..])
+                } else if verbs.is_empty() {
+                    None
+                } else {
+                    Some(verbs.as_slice())
+                };
                 postbox_cmd::set_contact(
                     &home,
                     which.address.as_deref(),
@@ -954,18 +975,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     alias.as_deref(),
                     Some("allow"),
                     Some(if *auto { "auto" } else { "review" }),
+                    grants,
                     cli.json,
                 )
                 .await
             }
             PostboxAction::Block { peer, which } => {
+                // Blocking also strips the verbs: a peer you've stopped accepting mail from must
+                // not keep a standing grant waiting to take effect if they're ever unblocked.
                 postbox_cmd::set_contact(
                     &home,
                     which.address.as_deref(),
                     peer,
                     None,
                     Some("block"),
-                    None,
+                    Some("review"),
+                    Some(&[]),
                     cli.json,
                 )
                 .await

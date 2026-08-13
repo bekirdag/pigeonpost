@@ -199,6 +199,7 @@ pub fn print_token(home: &Path, address: Option<&str>) -> Result<(), Error> {
 ///
 /// This is the *human* path. The postbox refuses to raise trust for a request that arrives over
 /// MCP, so `--auto` only works from here — from a terminal, by someone holding the token.
+#[allow(clippy::too_many_arguments)]
 pub async fn set_contact(
     home: &Path,
     as_address: Option<&str>,
@@ -206,6 +207,7 @@ pub async fn set_contact(
     alias: Option<&str>,
     admission: Option<&str>,
     autonomy: Option<&str>,
+    verbs: Option<&[String]>,
     json: bool,
 ) -> Result<(), Error> {
     let credential = credential_for(home, as_address)?;
@@ -219,6 +221,9 @@ pub async fn set_contact(
             body[k] = serde_json::json!(v);
         }
     }
+    if let Some(v) = verbs {
+        body["allowed_verbs"] = serde_json::json!(v);
+    }
     let value = request(
         &credential,
         reqwest::Method::PUT,
@@ -231,19 +236,54 @@ pub async fn set_contact(
         println!("{value}");
         return Ok(());
     }
+    let granted = verb_list(&value["allowed_verbs"]);
     println!(
-        "{} → admission {}, autonomy {}",
+        "{} → admission {}, autonomy {}, verbs {}",
         value["peer"].as_str().unwrap_or(peer),
         value["admission"].as_str().unwrap_or("?"),
         value["autonomy"].as_str().unwrap_or("?"),
+        if granted.is_empty() {
+            "none".to_string()
+        } else {
+            granted.join(", ")
+        },
     );
     if autonomy == Some("auto") {
         println!();
-        println!("Note: `auto` means this agent may act on that sender's messages without asking");
-        println!("you first. Their address is proven, but nothing checks that what they send is");
-        println!("safe to obey — a compromised or confused peer inherits your agent's reach.");
+        if granted.is_empty() {
+            // Saying nothing here would leave someone believing they'd delegated something. They
+            // haven't: with no verbs, `auto` is a switch wired to nothing.
+            println!("Note: `auto` grants nothing on its own — every message still has to name a");
+            println!("verb you granted this sender. Add some with `--verb`, e.g.");
+            println!("  pigeonpost postbox allow {peer} --auto --verb report_status");
+            println!("Until then their messages keep arriving for your review.");
+        } else {
+            println!(
+                "Note: this agent may now act on that sender's {} request(s) above without",
+                granted.len()
+            );
+            println!(
+                "asking you first. Their address is proven, but nothing checks that what they"
+            );
+            println!(
+                "send is safe to obey — a compromised or confused peer inherits whatever those"
+            );
+            println!("verbs reach. Anything else they send still comes to you.");
+        }
     }
     Ok(())
+}
+
+/// The `allowed_verbs` array as plain strings, for display.
+fn verb_list(value: &serde_json::Value) -> Vec<String> {
+    value
+        .as_array()
+        .map(|a| {
+            a.iter()
+                .filter_map(|v| v.as_str().map(str::to_string))
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 /// Forget a contact; the peer reverts to whatever strangers get.
@@ -292,15 +332,32 @@ pub async fn show_contacts(home: &Path, as_address: Option<&str>, json: bool) ->
     let contacts = value["contacts"].as_array().cloned().unwrap_or_default();
     if contacts.is_empty() {
         println!("no contacts yet");
-        return Ok(());
     }
-    for c in contacts {
+    for c in &contacts {
+        let granted = verb_list(&c["allowed_verbs"]);
         println!(
-            "  {}  {}  {}/{}",
+            "  {}  {}  {}/{}  {}",
             c["peer"].as_str().unwrap_or("?"),
             c["alias"].as_str().unwrap_or("-"),
             c["admission"].as_str().unwrap_or("?"),
             c["autonomy"].as_str().unwrap_or("?"),
+            if granted.is_empty() {
+                "no verbs".to_string()
+            } else {
+                granted.join(",")
+            },
+        );
+    }
+
+    // The vocabulary is closed, so printing it is the only way someone learns what they may grant
+    // — and, just as usefully, what nobody can.
+    let grantable = verb_list(&value["vocabulary"]["grantable"]);
+    if !grantable.is_empty() {
+        println!();
+        println!("grantable verbs: {}", grantable.join(", "));
+        println!(
+            "never auto:      {}",
+            verb_list(&value["vocabulary"]["never_auto"]).join(", ")
         );
     }
     Ok(())
