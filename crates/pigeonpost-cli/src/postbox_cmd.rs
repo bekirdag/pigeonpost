@@ -401,6 +401,64 @@ pub async fn set_policy(
     Ok(())
 }
 
+/// Destroy a hosted inbox and forget its token locally.
+///
+/// A self-served `/k/` inbox belongs to no account, so its capability token is the only credential
+/// that will ever refer to it. Without this, minting one was a one-way door: the address stayed up
+/// until the server's reaper eventually noticed it had gone quiet.
+pub async fn delete_inbox(
+    home: &Path,
+    as_address: Option<&str>,
+    yes: bool,
+    json: bool,
+) -> Result<(), Error> {
+    let credential = credential_for(home, as_address)?;
+    if !yes {
+        return Err(format!(
+            "this destroys {} and every message in it, and cannot be undone.\n\
+             The address is derived from a key, so it can never be minted again.\n\
+             Re-run with --yes to confirm.",
+            credential.address
+        )
+        .into());
+    }
+
+    let path = format!("/v1/identities?identity={}", urlencode(&credential.address));
+    let deleted = request(&credential, reqwest::Method::DELETE, &path, None).await;
+
+    // Drop the local record even when the server had already forgotten the mailbox (reaped, or
+    // deleted from another box). Keeping a token for an address that no longer exists helps nobody
+    // — and leaving a live secret on disk after being asked to delete it is worse.
+    let mut creds = load(home)?;
+    let before = creds.identities.len();
+    creds.identities.retain(|c| c.address != credential.address);
+    let removed_locally = creds.identities.len() != before;
+    write_credentials(home, &creds)?;
+
+    match deleted {
+        Ok(_) => {
+            if json {
+                println!(
+                    "{}",
+                    serde_json::json!({ "address": credential.address, "deleted": true })
+                );
+            } else {
+                println!(
+                    "{} deleted; its token is no longer on this box",
+                    credential.address
+                );
+            }
+            Ok(())
+        }
+        Err(e) if removed_locally => Err(format!(
+            "{} was removed from this box, but the postbox refused the delete: {e}",
+            credential.address
+        )
+        .into()),
+        Err(e) => Err(e),
+    }
+}
+
 /// One authenticated call to the postbox, with the mailbox's capability token.
 async fn request(
     credential: &Credential,
@@ -516,11 +574,15 @@ fn load(home: &Path) -> Result<Credentials, Error> {
 /// Append a credential, owner-only. Written via a temp file + rename so a crash can't leave a
 /// half-written file where the previous tokens used to be.
 fn save(home: &Path, credential: &Credential) -> Result<PathBuf, Error> {
-    std::fs::create_dir_all(home)?;
-    let path = credentials_path(home);
     let mut creds = load(home)?;
     creds.identities.push(credential.clone());
-    let body = serde_json::to_vec_pretty(&creds)?;
+    write_credentials(home, &creds)
+}
+
+fn write_credentials(home: &Path, creds: &Credentials) -> Result<PathBuf, Error> {
+    std::fs::create_dir_all(home)?;
+    let path = credentials_path(home);
+    let body = serde_json::to_vec_pretty(creds)?;
 
     let tmp = path.with_extension("json.tmp");
     let mut file = std::fs::File::create(&tmp)?;

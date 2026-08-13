@@ -228,6 +228,15 @@ enum PostboxAction {
         address: Option<String>,
     },
 
+    /// Destroy a hosted inbox and forget its token here. Cannot be undone.
+    Delete {
+        /// Confirm. Without it this only tells you what would be destroyed.
+        #[arg(long)]
+        yes: bool,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
     /// Show a hosted inbox's contacts and the terms strangers get.
     Contacts {
         #[command(flatten)]
@@ -947,6 +956,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             PostboxAction::List => postbox_cmd::list(&home, cli.json),
             PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),
+            PostboxAction::Delete { yes, which } => {
+                postbox_cmd::delete_inbox(&home, which.address.as_deref(), *yes, cli.json).await
+            }
             PostboxAction::Contacts { which } => {
                 postbox_cmd::show_contacts(&home, which.address.as_deref(), cli.json).await
             }

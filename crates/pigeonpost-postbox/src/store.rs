@@ -734,22 +734,42 @@ impl Store {
     }
 
     /// Delete one of an account's identities and everything in/for its inbox (ownership-scoped).
+    /// Delete one identity and everything it owns.
+    ///
+    /// `account_id` scopes the delete to an account's own inboxes. `None` means the caller proved
+    /// control of the mailbox itself with its capability token — the only credential an
+    /// anonymously minted `/k/` address ever has, and so the only way one can be destroyed.
     pub async fn delete_identity(
         &self,
-        account_id: String,
+        account_id: Option<String>,
         address: String,
     ) -> Result<bool, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
             let mut c = conn.lock().expect("store lock");
             let tx = c.transaction()?;
-            let removed = tx.execute(
-                "DELETE FROM identities WHERE address = ?1 AND account_id = ?2",
-                params![address, account_id],
-            )?;
+            let removed = match &account_id {
+                Some(account) => tx.execute(
+                    "DELETE FROM identities WHERE address = ?1 AND account_id = ?2",
+                    params![address, account],
+                )?,
+                None => tx.execute(
+                    "DELETE FROM identities WHERE address = ?1",
+                    params![address],
+                )?,
+            };
             if removed > 0 {
                 tx.execute(
                     "DELETE FROM messages WHERE recipient = ?1 OR sender = ?1",
+                    params![address],
+                )?;
+                // The inbox's own trust state goes with it. Rows where this address is somebody
+                // *else's* peer are left alone: that is their contact book, not ours to edit, and
+                // an address is derived from a key so a deleted one can never be re-minted and
+                // inherit the terms.
+                tx.execute("DELETE FROM contacts WHERE owner = ?1", params![address])?;
+                tx.execute(
+                    "DELETE FROM inbox_policy WHERE address = ?1",
                     params![address],
                 )?;
             }
@@ -1296,18 +1316,18 @@ mod tests {
 
         // wrong account can't delete it
         assert!(!store
-            .delete_identity("acct_other".into(), "/k/mine".into())
+            .delete_identity(Some("acct_other".into()), "/k/mine".into())
             .await
             .unwrap());
         assert!(store.get("/k/mine".into()).await.unwrap().is_some());
 
         // owner deletes it: identity and its messages go
         assert!(store
-            .delete_identity("acct_1".into(), "/k/mine".into())
+            .delete_identity(Some("acct_1".into()), "/k/mine".into())
             .await
             .unwrap());
         assert!(!store
-            .delete_identity("acct_1".into(), "/k/mine".into())
+            .delete_identity(Some("acct_1".into()), "/k/mine".into())
             .await
             .unwrap()); // idempotent
         assert!(store.get("/k/mine".into()).await.unwrap().is_none());

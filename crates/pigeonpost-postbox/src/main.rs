@@ -709,11 +709,24 @@ async fn delete_identity(
     headers: HeaderMap,
     Query(q): Query<DeleteIdentityQuery>,
 ) -> Response {
-    let account = match account_for_headers(&state, &headers).await {
-        Ok(a) => a,
+    // Two callers, two credentials. An account API key may delete any inbox it owns. A capability
+    // token may delete exactly one inbox — its own — which is what makes a self-served `/k/`
+    // address destroyable at all: it has no account, so before this it could only be waited out.
+    let scope = match principal_for_token(&state, bearer(&headers)).await {
+        Ok(Principal::Account(a)) => Some(a),
+        Ok(Principal::Identity(me)) => {
+            if me.address != q.identity {
+                return err_response(
+                    StatusCode::FORBIDDEN,
+                    "forbidden",
+                    Some("a capability token can only delete its own inbox"),
+                );
+            }
+            None
+        }
         Err(e) => return e.into_response(),
     };
-    match state.store.delete_identity(account, q.identity).await {
+    match state.store.delete_identity(scope, q.identity).await {
         Ok(true) => (StatusCode::OK, Json(json!({ "deleted": true }))).into_response(),
         Ok(false) => err_response(
             StatusCode::NOT_FOUND,
@@ -2397,6 +2410,78 @@ mod tests {
         assert_eq!(unknown["alias"], serde_json::Value::Null);
         assert_eq!(unknown["autonomy"], "review");
         assert_eq!(unknown["held_because"], "sender_not_auto");
+    }
+
+    #[tokio::test]
+    async fn a_mailbox_can_delete_itself_and_takes_its_state_with_it() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(&state, &alice, &bob.address, "hello")
+            .await
+            .unwrap();
+        do_set_contact(
+            &state,
+            &bob,
+            alice.address.clone(),
+            Some("agent-A".into()),
+            None,
+            Some("auto".into()),
+            Some(vec!["run_tests".into()]),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        do_set_policy(&state, &bob, Some(false), None, TrustActor::Human)
+            .await
+            .unwrap();
+
+        assert!(state
+            .store
+            .delete_identity(None, bob.address.clone())
+            .await
+            .unwrap());
+
+        // Gone, and nothing of it left behind to be inherited by anyone.
+        assert!(state
+            .store
+            .get(bob.address.clone())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(
+            state.store.inbox_count(bob.address.clone()).await.unwrap(),
+            0
+        );
+        assert!(state
+            .store
+            .list_contacts(bob.address.clone())
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            state.store.inbox_policy(bob.address).await.unwrap(),
+            store::InboxPolicy::default(),
+            "a deleted inbox must not leave a policy row for its address"
+        );
+    }
+
+    #[tokio::test]
+    async fn an_account_scoped_delete_still_refuses_someone_elses_inbox() {
+        // The self-delete path widened the store call to an unscoped one; the account path must
+        // not have widened with it.
+        let state = test_state();
+        let victim = mint(&state).await;
+        assert!(
+            !state
+                .store
+                .delete_identity(Some("acct_someone_else".into()), victim.address.clone())
+                .await
+                .unwrap(),
+            "an account may only delete inboxes it owns"
+        );
+        assert!(state.store.get(victim.address).await.unwrap().is_some());
     }
 
     #[tokio::test]
