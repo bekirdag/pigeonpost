@@ -20,6 +20,8 @@
 //!   per-inbox PoW (the multi-mailbox model), with `identity`/`from` selection;
 //! - quotas: a per-account identity cap and a per-inbox message cap, so one proof-of-work can't be
 //!   parlayed into unbounded identities/messages (disk protection);
+//! - a per-IP mint budget (window + lifetime) on the unauthenticated create paths, so self-serve
+//!   minting can be cheap for one honest agent without being cheap for a botnet;
 //! - OAuth-backed accounts (`oidc`): a pigeonpost-prod member JWT (validated against the realm JWKS,
 //!   issuer + expiry) is a third auth method — its subject maps to an account, tying inboxes to a
 //!   real login.
@@ -35,7 +37,7 @@
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
 
 use axum::{
-    extract::{Query, Request, State},
+    extract::{Extension, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::{Html, IntoResponse, Response},
@@ -68,6 +70,24 @@ struct AppState {
     max_identities: usize,
     /// Max messages one inbox may hold before senders are refused (inbox quota).
     max_inbox: usize,
+    /// Per-IP ceilings on unauthenticated mints.
+    mint_limits: MintLimits,
+    /// How many trusted reverse proxies sit in front of us (see [`resolve_client_ip`]).
+    trusted_proxy_hops: usize,
+}
+
+/// Per-IP ceilings on unauthenticated (proof-of-work) minting. The PoW makes one mint cost a
+/// moment; these make a *flood* cost more than a botnet wants to pay, without a human in the loop
+/// for the honest single agent.
+#[derive(Debug, Clone, Copy)]
+struct MintLimits {
+    /// Mints allowed inside one rolling window. A small burst, so a box onboarding a handful of
+    /// agents at once isn't told to come back in an hour between each.
+    per_window: usize,
+    /// Length of that rolling window.
+    window_secs: u64,
+    /// Mints one IP may ever make.
+    lifetime: usize,
 }
 
 /// Runtime configuration, entirely from environment (see the plan's Appendix A). Secrets
@@ -89,6 +109,10 @@ struct Config {
     reaper_interval_secs: u64,
     max_identities_per_account: usize,
     max_inbox_messages: usize,
+    mint_per_ip_window: usize,
+    mint_window_secs: u64,
+    mint_per_ip_lifetime: usize,
+    trusted_proxy_hops: usize,
 }
 
 impl Config {
@@ -103,8 +127,16 @@ impl Config {
             pow_max_bits: env_num("POW_MAX_BITS", 26),
             ephemeral_retention_days: env_num("EPHEMERAL_RETENTION_DAYS", 30),
             reaper_interval_secs: env_num("REAPER_INTERVAL_SECS", 3600),
-            max_identities_per_account: env_num("EPHEMERAL_MAX_IDENTITIES", 5),
+            // An account is a bookkeeping unit for one operator's fleet, not the abuse boundary —
+            // per-IP mint limits are. A single box may legitimately run dozens of agents.
+            max_identities_per_account: env_num("EPHEMERAL_MAX_IDENTITIES", 50),
             max_inbox_messages: env_num("MAX_INBOX_MESSAGES", 1000),
+            mint_per_ip_window: env_num("MINT_PER_IP_WINDOW", 5),
+            mint_window_secs: env_num("MINT_WINDOW_SECS", 3600),
+            mint_per_ip_lifetime: env_num("MINT_PER_IP_LIFETIME", 1000),
+            // 0 = trust the socket peer. Behind the production Apache front this must be 1, or
+            // every caller looks like the proxy and shares one budget.
+            trusted_proxy_hops: env_num("TRUSTED_PROXY_HOPS", 0),
         }
     }
 }
@@ -192,9 +224,14 @@ async fn serve(cfg: Config) {
         "pigeonpost-postbox listening (/v1 REST + /mcp connector live)"
     );
 
-    if let Err(e) = axum::serve(listener, build_router(state))
-        .with_graceful_shutdown(shutdown_signal())
-        .await
+    // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
+    // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
+    if let Err(e) = axum::serve(
+        listener,
+        build_router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
     {
         tracing::error!(error = %e, "server error");
         std::process::exit(1);
@@ -231,6 +268,12 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         ))),
         max_identities: cfg.max_identities_per_account,
         max_inbox: cfg.max_inbox_messages,
+        mint_limits: MintLimits {
+            per_window: cfg.mint_per_ip_window,
+            window_secs: cfg.mint_window_secs,
+            lifetime: cfg.mint_per_ip_lifetime,
+        },
+        trusted_proxy_hops: cfg.trusted_proxy_hops,
     })
 }
 
@@ -317,9 +360,19 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
+        .route(
+            "/v1/contacts",
+            get(get_contacts).put(put_contact).delete(delete_contact),
+        )
+        .route("/v1/policy", axum::routing::put(put_policy))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .layer(middleware::from_fn(cors))
+        // Outermost of the two, so every handler (and `cors`) sees a resolved `ClientIp`.
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            client_ip_layer,
+        ))
         .with_state(state)
 }
 
@@ -446,6 +499,7 @@ fn is_api_key(token: &str) -> bool {
 /// create (it authenticates one existing identity).
 async fn create_identity(
     State(state): State<AppState>,
+    Extension(client_ip): Extension<ClientIp>,
     headers: HeaderMap,
     Json(req): Json<CreateIdentityReq>,
 ) -> Response {
@@ -468,8 +522,11 @@ async fn create_identity(
             ),
             Err(e) => e.into_response(),
         },
-        // Anonymous → proof-of-work gated (ephemeral, no account).
+        // Anonymous → per-IP budget, then proof-of-work gated (ephemeral, no account).
         None => {
+            if let Err(e) = check_mint_budget(&state, client_ip.as_str()).await {
+                return e.into_response();
+            }
             if let Err(e) = state
                 .pow
                 .consume(&req.pow_challenge, &req.pow_solution, now_unix())
@@ -480,8 +537,25 @@ async fn create_identity(
                     Some(&format!("{e}. GET /v1/pow/challenge, solve it, resubmit as pow_challenge + pow_solution")),
                 );
             }
-            created(do_create_identity(&state, None, req.label).await)
+            let result = do_create_identity(&state, None, req.label).await;
+            if let Ok(v) = &result {
+                let address = v["address"].as_str().map(String::from);
+                record_mint(&state, client_ip.as_str(), "identity", address).await;
+            }
+            created(result)
         }
+    }
+}
+
+/// Book an unauthenticated mint against its source IP. Best-effort: the caller has already earned
+/// the inbox, so a bookkeeping failure is logged, not surfaced.
+async fn record_mint(state: &AppState, ip: &str, kind: &'static str, address: Option<String>) {
+    if let Err(e) = state
+        .store
+        .record_mint(ip.to_string(), kind, address, now_unix())
+        .await
+    {
+        tracing::error!(error = %e, %ip, kind, "recording mint event failed");
     }
 }
 
@@ -489,8 +563,14 @@ async fn create_identity(
 /// key then creates and drives many identities without further PoW.
 async fn create_account(
     State(state): State<AppState>,
+    Extension(client_ip): Extension<ClientIp>,
     Json(req): Json<CreateIdentityReq>,
 ) -> Response {
+    // Same budget as a bare inbox: an account is otherwise a way to turn one proof-of-work into
+    // `max_identities` inboxes.
+    if let Err(e) = check_mint_budget(&state, client_ip.as_str()).await {
+        return e.into_response();
+    }
     if let Err(e) = state
         .pow
         .consume(&req.pow_challenge, &req.pow_solution, now_unix())
@@ -512,6 +592,7 @@ async fn create_account(
     {
         Ok(()) => {
             tracing::info!(account = %account_id, "account created");
+            record_mint(&state, client_ip.as_str(), "account", None).await;
             (
                 StatusCode::CREATED,
                 Json(json!({ "account_id": account_id, "api_key": api_key })),
@@ -673,6 +754,337 @@ async fn cors(req: Request, next: Next) -> Response {
     resp
 }
 
+/// The caller's IP as the abuse controls see it. Inserted by [`client_ip_layer`] on every request.
+#[derive(Clone, Debug)]
+struct ClientIp(String);
+
+impl ClientIp {
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+/// Resolve and attach the caller's IP once, so handlers don't each re-derive it.
+async fn client_ip_layer(State(state): State<AppState>, mut req: Request, next: Next) -> Response {
+    let peer = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|c| c.0.ip().to_string());
+    let ip = resolve_client_ip(req.headers(), peer.as_deref(), state.trusted_proxy_hops);
+    req.extensions_mut().insert(ClientIp(ip));
+    next.run(req).await
+}
+
+/// The socket peer, or — when `hops` trusted reverse proxies sit in front — the hop that many
+/// entries from the end of `X-Forwarded-For`.
+///
+/// Counting from the *end* is what makes this unspoofable: a client may prepend anything it likes
+/// to the header, but each trusted proxy appends the address it actually saw, so the entry `hops`
+/// from the right is the one our own front door observed. Counting from the left would let any
+/// caller pick its own rate-limit bucket. `hops` must therefore match the real deployment: too
+/// high and a client-supplied entry wins.
+fn resolve_client_ip(headers: &HeaderMap, peer: Option<&str>, hops: usize) -> String {
+    if hops > 0 {
+        if let Some(xff) = headers
+            .get("x-forwarded-for")
+            .and_then(|v| v.to_str().ok())
+            .filter(|v| !v.trim().is_empty())
+        {
+            let chain: Vec<&str> = xff
+                .split(',')
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .collect();
+            if let Some(ip) = chain.len().checked_sub(hops).and_then(|i| chain.get(i)) {
+                return (*ip).to_string();
+            }
+            // Shorter chain than configured: the request didn't traverse the expected proxies.
+            // Fall back to the leftmost entry rather than to the peer, which would be the proxy.
+            if let Some(first) = chain.first() {
+                return (*first).to_string();
+            }
+        }
+    }
+    peer.unwrap_or("unknown").to_string()
+}
+
+/// Refuse an unauthenticated mint when the caller's IP is over its window or lifetime budget.
+/// Checked *before* the proof-of-work is consumed, so a throttled caller isn't made to burn CPU
+/// only to be turned away.
+async fn check_mint_budget(state: &AppState, ip: &str) -> Result<(), ApiError> {
+    let now = now_unix();
+    let since = now.saturating_sub(state.mint_limits.window_secs);
+    let (recent, lifetime) = state
+        .store
+        .mint_counts(ip.to_string(), since)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "mint counts failed");
+            ApiError::server("store_error")
+        })?;
+
+    if lifetime >= state.mint_limits.lifetime {
+        tracing::warn!(%ip, lifetime, "mint refused: lifetime cap");
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "mint_lifetime_cap",
+            format!(
+                "this address has minted its lifetime limit of {} inboxes",
+                state.mint_limits.lifetime
+            ),
+        ));
+    }
+    if recent >= state.mint_limits.per_window {
+        let retry_after = state
+            .store
+            .oldest_mint_in_window(ip.to_string(), since)
+            .await
+            .ok()
+            .flatten()
+            .map(|oldest| {
+                (oldest + state.mint_limits.window_secs)
+                    .saturating_sub(now)
+                    .max(1)
+            })
+            .unwrap_or(state.mint_limits.window_secs);
+        tracing::warn!(%ip, recent, retry_after, "mint refused: rate limit");
+        return Err(ApiError::new(
+            StatusCode::TOO_MANY_REQUESTS,
+            "mint_rate_limited",
+            format!(
+                "{} inboxes already minted from this address in the last {}s — retry in {}s, or use an account API key",
+                recent, state.mint_limits.window_secs, retry_after
+            ),
+        )
+        .with_retry_after(retry_after));
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------------------------
+// Contacts and trust policy
+//
+// Two axes, kept separate on purpose. **Admission** is "may this peer's mail be delivered", the
+// same question the local loft answers with allow/block. **Autonomy** is "may my agent act on it
+// without a human" — a different question with a much sharper edge, because knowing who sent a
+// message is not knowing that the message is safe to obey.
+// ---------------------------------------------------------------------------------------------
+
+const ADMISSION_ALLOW: &str = "allow";
+const ADMISSION_BLOCK: &str = "block";
+const AUTONOMY_REVIEW: &str = "review";
+const AUTONOMY_AUTO: &str = "auto";
+
+/// Who is asking for a trust change. Agents may lower their own trust settings but never raise
+/// them: an agent that can grant itself `auto` is one crafted message away from granting a
+/// stranger the same, which would make the whole policy decorative.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TrustActor {
+    /// REST/CLI — a person at a terminal with the capability token.
+    Human,
+    /// The MCP connector, i.e. the agent itself.
+    Agent,
+}
+
+fn validate_enum(value: &str, allowed: [&str; 2], field: &'static str) -> Result<(), ApiError> {
+    if allowed.contains(&value) {
+        return Ok(());
+    }
+    Err(ApiError::bad(
+        "invalid_policy",
+        &format!("{field} must be {} or {}", allowed[0], allowed[1]),
+    ))
+}
+
+/// The autonomy that actually applies to a message from `peer`, given the contact row (if any) and
+/// the inbox's stranger-defaults.
+fn effective_autonomy(
+    contact: Option<&store::Contact>,
+    policy: store::InboxPolicy,
+) -> &'static str {
+    match contact {
+        Some(c) if c.admission == ADMISSION_BLOCK => "blocked",
+        Some(c) if c.autonomy == AUTONOMY_AUTO => AUTONOMY_AUTO,
+        // `auto_accept_known` lifts *known* contacts only; strangers are never swept up by it.
+        Some(_) if policy.auto_accept_known => AUTONOMY_AUTO,
+        _ => AUTONOMY_REVIEW,
+    }
+}
+
+fn contact_json(c: &store::Contact) -> serde_json::Value {
+    json!({
+        "peer": c.peer,
+        "alias": c.alias,
+        "admission": c.admission,
+        "autonomy": c.autonomy,
+        "created_at": c.created_at,
+        "updated_at": c.updated_at,
+    })
+}
+
+fn policy_json(p: store::InboxPolicy) -> serde_json::Value {
+    json!({ "accept_all": p.accept_all, "auto_accept_known": p.auto_accept_known })
+}
+
+fn refuse_raise(what: &'static str) -> ApiError {
+    ApiError::new(
+        StatusCode::FORBIDDEN,
+        "human_required",
+        format!(
+            "raising trust ({what}) has to come from a person: run `pigeonpost postbox …` with \
+             this mailbox's capability token. An agent may lower its own trust, never raise it."
+        ),
+    )
+}
+
+/// Add or amend a contact. Shared by REST (human) and MCP (agent, lower-only).
+pub(crate) async fn do_set_contact(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    peer: String,
+    alias: Option<String>,
+    admission: Option<String>,
+    autonomy: Option<String>,
+    actor: TrustActor,
+) -> Result<serde_json::Value, ApiError> {
+    if !peer.starts_with("/k/") {
+        return Err(ApiError::bad("invalid_peer", "peer must be a /k/ address"));
+    }
+    if peer == me.address {
+        return Err(ApiError::bad(
+            "invalid_peer",
+            "an inbox cannot list itself as a contact",
+        ));
+    }
+    if let Some(a) = &admission {
+        validate_enum(a, [ADMISSION_ALLOW, ADMISSION_BLOCK], "admission")?;
+    }
+    if let Some(a) = &autonomy {
+        validate_enum(a, [AUTONOMY_REVIEW, AUTONOMY_AUTO], "autonomy")?;
+    }
+
+    if actor == TrustActor::Agent {
+        if autonomy.as_deref() == Some(AUTONOMY_AUTO) {
+            return Err(refuse_raise("autonomy=auto"));
+        }
+        // A blocked peer is frozen against the agent: any write that isn't re-affirming the block
+        // is refused outright, rather than silently ignored. Letting it report success would tell
+        // the agent it had befriended someone it is still refusing mail from. A message that talks
+        // its recipient into un-blocking its accomplice is exactly the move this guard stops.
+        let blocked = state
+            .store
+            .contact(me.address.clone(), peer.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?
+            .is_some_and(|c| c.admission == ADMISSION_BLOCK);
+        if blocked && admission.as_deref() != Some(ADMISSION_BLOCK) {
+            return Err(refuse_raise("amending a blocked peer"));
+        }
+    }
+
+    let contact = state
+        .store
+        .upsert_contact(store::ContactUpdate {
+            owner: me.address.clone(),
+            peer,
+            alias,
+            admission,
+            autonomy,
+            now: now_unix(),
+        })
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "contact upsert failed");
+            ApiError::server("store_error")
+        })?;
+    tracing::info!(
+        owner = %contact.owner, peer = %contact.peer,
+        admission = %contact.admission, autonomy = %contact.autonomy, ?actor,
+        "contact set"
+    );
+    Ok(contact_json(&contact))
+}
+
+pub(crate) async fn do_list_contacts(
+    state: &AppState,
+    me: &store::StoredIdentity,
+) -> Result<serde_json::Value, ApiError> {
+    let contacts = state
+        .store
+        .list_contacts(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    let policy = state
+        .store
+        .inbox_policy(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    Ok(json!({
+        "contacts": contacts.iter().map(contact_json).collect::<Vec<_>>(),
+        "policy": policy_json(policy),
+    }))
+}
+
+pub(crate) async fn do_delete_contact(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    peer: String,
+    actor: TrustActor,
+) -> Result<serde_json::Value, ApiError> {
+    if actor == TrustActor::Agent {
+        // Forgetting a blocked peer would restore them to stranger terms — a raise by deletion.
+        let existing = state
+            .store
+            .contact(me.address.clone(), peer.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        if existing.is_some_and(|c| c.admission == ADMISSION_BLOCK) {
+            return Err(refuse_raise("forgetting a blocked peer"));
+        }
+    }
+    let removed = state
+        .store
+        .delete_contact(me.address.clone(), peer)
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    Ok(json!({ "removed": removed }))
+}
+
+pub(crate) async fn do_set_policy(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    accept_all: Option<bool>,
+    auto_accept_known: Option<bool>,
+    actor: TrustActor,
+) -> Result<serde_json::Value, ApiError> {
+    if actor == TrustActor::Agent {
+        if auto_accept_known == Some(true) {
+            return Err(refuse_raise("auto_accept_known=true"));
+        }
+        if accept_all == Some(true) {
+            return Err(refuse_raise("accept_all=true"));
+        }
+    }
+    let policy = state
+        .store
+        .set_inbox_policy(
+            me.address.clone(),
+            accept_all,
+            auto_accept_known,
+            now_unix(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "policy write failed");
+            ApiError::server("store_error")
+        })?;
+    tracing::info!(
+        address = %me.address, accept_all = policy.accept_all,
+        auto_accept_known = policy.auto_accept_known, ?actor, "inbox policy set"
+    );
+    Ok(policy_json(policy))
+}
+
 /// `GET /v1/identities` — list the API-key account's identities.
 async fn list_identities(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let account_id = match account_for_headers(&state, &headers).await {
@@ -695,10 +1107,13 @@ fn err_response(status: StatusCode, error: &str, detail: Option<&str>) -> Respon
 
 /// A failed operation. Carries the HTTP status the REST layer uses; the MCP layer ignores the status
 /// and surfaces `message` as an error tool-result. Small, so it's fine as a `Result` error type.
+#[derive(Debug)]
 pub(crate) struct ApiError {
     pub status: StatusCode,
     pub code: &'static str,
     pub message: String,
+    /// Seconds to put in a `Retry-After` header (rate limits). REST only; MCP just reads `message`.
+    pub retry_after: Option<u64>,
 }
 
 impl ApiError {
@@ -707,7 +1122,12 @@ impl ApiError {
             status,
             code,
             message: message.into(),
+            retry_after: None,
         }
+    }
+    fn with_retry_after(mut self, secs: u64) -> Self {
+        self.retry_after = Some(secs);
+        self
     }
     fn unauthorized(msg: &str) -> Self {
         Self::new(StatusCode::UNAUTHORIZED, "unauthorized", msg)
@@ -719,7 +1139,13 @@ impl ApiError {
         Self::new(StatusCode::INTERNAL_SERVER_ERROR, code, code)
     }
     fn into_response(self) -> Response {
-        err_response(self.status, self.code, Some(&self.message))
+        let mut resp = err_response(self.status, self.code, Some(&self.message));
+        if let Some(secs) = self.retry_after {
+            if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
+                resp.headers_mut().insert(header::RETRY_AFTER, v);
+            }
+        }
+        resp
     }
 }
 
@@ -899,6 +1325,33 @@ pub(crate) async fn do_send(
             )
         })?;
 
+    // Admission: refused here rather than filtered on read, so a blocked sender never occupies
+    // the recipient's disk or quota. The error is deliberately the same shape for "blocked" and
+    // "closed to strangers" — a sender learns it wasn't accepted, not how the recipient's book
+    // is arranged.
+    let contact = state
+        .store
+        .contact(recipient.address.clone(), sender.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    let policy = state
+        .store
+        .inbox_policy(recipient.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    let admitted = match &contact {
+        Some(c) => c.admission != ADMISSION_BLOCK,
+        None => policy.accept_all,
+    };
+    if !admitted {
+        tracing::info!(from = %sender.address, to = %recipient.address, "send refused: not admitted");
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "not_admitted",
+            "the recipient is not accepting mail from you",
+        ));
+    }
+
     // Inbox quota: don't let one recipient's inbox grow without bound (disk protection).
     let held = state
         .store
@@ -958,6 +1411,16 @@ pub(crate) async fn do_inbox(
             ApiError::server("store_error")
         })?;
     let me_identity = open_identity(state, me)?;
+    let contacts = state
+        .store
+        .list_contacts(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    let policy = state
+        .store
+        .inbox_policy(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
 
     let mut out = Vec::new();
     for m in messages {
@@ -966,17 +1429,24 @@ pub(crate) async fn do_inbox(
             Err(_) => continue,
         };
         if let Ok((from_vk, body)) = envelope::open(&me_identity, &wrap) {
+            let from = Address::from_pubkey(&from_vk).as_str().to_string();
+            let contact = contacts.iter().find(|c| c.peer == from);
             out.push(json!({
                 "message_id": m.id,
-                "from": Address::from_pubkey(&from_vk).as_str(),
+                "from": from,
                 "body": body.as_str(),
+                // Stays true at every autonomy level: `auto` says the recipient chose to act on
+                // this sender's messages, not that the text stopped being someone else's input.
                 "untrusted": true,
+                "sender_known": contact.is_some(),
+                "alias": contact.and_then(|c| c.alias.clone()),
+                "autonomy": effective_autonomy(contact, policy),
                 "received_at": m.created_at,
                 "read": m.read,
             }));
         }
     }
-    Ok(json!({ "messages": out }))
+    Ok(json!({ "messages": out, "policy": policy_json(policy) }))
 }
 
 /// Mark one of `me`'s messages read (scoped to the recipient).
@@ -1038,6 +1508,119 @@ async fn send(
 struct InboxQuery {
     #[serde(default)]
     identity: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ContactReq {
+    peer: String,
+    #[serde(default)]
+    alias: Option<String>,
+    #[serde(default)]
+    admission: Option<String>,
+    #[serde(default)]
+    autonomy: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct ContactQuery {
+    peer: String,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+#[derive(serde::Deserialize)]
+struct PolicyReq {
+    #[serde(default)]
+    accept_all: Option<bool>,
+    #[serde(default)]
+    auto_accept_known: Option<bool>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `GET /v1/contacts` — this inbox's contacts and its stranger-defaults.
+async fn get_contacts(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match do_list_contacts(&state, &me).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `PUT /v1/contacts` — add or amend a contact. This is the *human* path: a caller holding the
+/// capability token at a terminal, which is why it may raise trust where MCP may not.
+async fn put_contact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ContactReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match do_set_contact(
+        &state,
+        &me,
+        req.peer,
+        req.alias,
+        req.admission,
+        req.autonomy,
+        TrustActor::Human,
+    )
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `DELETE /v1/contacts?peer=/k/…` — forget a contact.
+async fn delete_contact(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ContactQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match do_delete_contact(&state, &me, q.peer, TrustActor::Human).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// `PUT /v1/policy` — set this inbox's stranger-defaults.
+async fn put_policy(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<PolicyReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match do_set_policy(
+        &state,
+        &me,
+        req.accept_all,
+        req.auto_accept_known,
+        TrustActor::Human,
+    )
+    .await
+    {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 /// `GET /v1/inbox` — return opened plaintext messages for the acting identity.
@@ -1197,6 +1780,479 @@ mod tests {
         assert_eq!(port_from_bind("garbage"), 8990);
     }
 
+    fn xff(value: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert("x-forwarded-for", HeaderValue::from_str(value).unwrap());
+        h
+    }
+
+    #[test]
+    fn client_ip_ignores_forwarded_header_when_no_proxy_is_trusted() {
+        let ip = resolve_client_ip(&xff("1.2.3.4"), Some("198.51.100.7"), 0);
+        assert_eq!(ip, "198.51.100.7");
+    }
+
+    #[test]
+    fn client_ip_takes_the_hop_the_trusted_proxy_observed() {
+        // Apache appends the peer it saw, so with one trusted proxy the last entry is the truth
+        // and the client's own prepended value is ignored.
+        let ip = resolve_client_ip(&xff("9.9.9.9, 203.0.113.5"), Some("172.18.0.1"), 1);
+        assert_eq!(ip, "203.0.113.5");
+
+        // A direct client through that proxy leaves a single entry.
+        let ip = resolve_client_ip(&xff("203.0.113.5"), Some("172.18.0.1"), 1);
+        assert_eq!(ip, "203.0.113.5");
+    }
+
+    #[test]
+    fn client_ip_falls_back_when_the_chain_is_shorter_than_configured() {
+        // Two proxies configured but only one hop present: prefer the leftmost entry over the
+        // peer, which would be the proxy and would pool every caller into one bucket.
+        let ip = resolve_client_ip(&xff("203.0.113.5"), Some("172.18.0.1"), 2);
+        assert_eq!(ip, "203.0.113.5");
+    }
+
+    #[test]
+    fn client_ip_falls_back_to_peer_without_a_usable_header() {
+        assert_eq!(
+            resolve_client_ip(&xff("   "), Some("198.51.100.7"), 1),
+            "198.51.100.7"
+        );
+        assert_eq!(
+            resolve_client_ip(&HeaderMap::new(), None, 0),
+            "unknown",
+            "no peer and no header must still yield a stable bucket key"
+        );
+    }
+
+    fn state_with_limits(limits: MintLimits) -> AppState {
+        AppState {
+            pow: Arc::new(pow::Pow::new(b"k".to_vec(), 8, 24, 120)),
+            vault: Arc::new(vault::Vault::new([0u8; 32])),
+            store: Arc::new(store::Store::open(":memory:").unwrap()),
+            oidc: Arc::new(oidc::Oidc::new("https://auth.example/realms/x".into())),
+            max_identities: 5,
+            max_inbox: 1000,
+            mint_limits: limits,
+            trusted_proxy_hops: 0,
+        }
+    }
+
+    #[tokio::test]
+    async fn mint_budget_refuses_over_the_window_with_a_retry_after() {
+        let state = state_with_limits(MintLimits {
+            per_window: 2,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        for _ in 0..2 {
+            assert!(check_mint_budget(&state, "203.0.113.5").await.is_ok());
+            record_mint(&state, "203.0.113.5", "identity", None).await;
+        }
+
+        let err = check_mint_budget(&state, "203.0.113.5")
+            .await
+            .expect_err("third mint in the window is refused");
+        assert_eq!(err.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(err.code, "mint_rate_limited");
+        let retry = err.retry_after.expect("rate limits carry Retry-After");
+        assert!(retry > 0 && retry <= 3600, "retry_after was {retry}");
+
+        // Another IP is unaffected.
+        assert!(check_mint_budget(&state, "198.51.100.4").await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn mint_budget_refuses_over_the_lifetime_cap() {
+        let state = state_with_limits(MintLimits {
+            per_window: 100,
+            window_secs: 3600,
+            lifetime: 1,
+        });
+        record_mint(&state, "203.0.113.5", "identity", None).await;
+
+        let err = check_mint_budget(&state, "203.0.113.5")
+            .await
+            .expect_err("lifetime cap is a hard stop");
+        assert_eq!(err.code, "mint_lifetime_cap");
+        assert_eq!(err.status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    fn contact(admission: &str, autonomy: &str) -> store::Contact {
+        store::Contact {
+            owner: "/k/me".into(),
+            peer: "/k/them".into(),
+            alias: None,
+            admission: admission.into(),
+            autonomy: autonomy.into(),
+            created_at: 0,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn autonomy_is_review_unless_deliberately_granted() {
+        let manual = store::InboxPolicy::default();
+        let known_auto = store::InboxPolicy {
+            accept_all: true,
+            auto_accept_known: true,
+        };
+
+        assert_eq!(effective_autonomy(None, manual), "review");
+        assert_eq!(
+            effective_autonomy(None, known_auto),
+            "review",
+            "auto_accept_known must never sweep up strangers"
+        );
+        assert_eq!(
+            effective_autonomy(Some(&contact("allow", "review")), manual),
+            "review"
+        );
+        assert_eq!(
+            effective_autonomy(Some(&contact("allow", "auto")), manual),
+            "auto"
+        );
+        assert_eq!(
+            effective_autonomy(Some(&contact("allow", "review")), known_auto),
+            "auto"
+        );
+        assert_eq!(
+            effective_autonomy(Some(&contact("block", "auto")), known_auto),
+            "blocked",
+            "a block outranks every autonomy grant"
+        );
+    }
+
+    async fn mint(state: &AppState) -> store::StoredIdentity {
+        let v = do_create_identity(state, None, None).await.unwrap();
+        let address = v["address"].as_str().unwrap().to_string();
+        state.store.get(address).await.unwrap().unwrap()
+    }
+
+    fn test_state() -> AppState {
+        state_with_limits(MintLimits {
+            per_window: 100,
+            window_secs: 3600,
+            lifetime: 1000,
+        })
+    }
+
+    #[tokio::test]
+    async fn an_agent_may_lower_its_own_trust_but_never_raise_it() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
+
+        // Allowed: note a sender, block a sender.
+        assert!(do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            Some("agent-B".into()),
+            None,
+            Some("review".into()),
+            TrustActor::Agent,
+        )
+        .await
+        .is_ok());
+
+        // Refused: granting itself autonomy.
+        let err = do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            None,
+            None,
+            Some("auto".into()),
+            TrustActor::Agent,
+        )
+        .await
+        .expect_err("an agent must not grant itself auto");
+        assert_eq!(err.code, "human_required");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+
+        // Refused: the same switch at inbox level.
+        assert_eq!(
+            do_set_policy(&state, &me, None, Some(true), TrustActor::Agent)
+                .await
+                .expect_err("auto_accept_known is a human decision")
+                .code,
+            "human_required"
+        );
+
+        // An agent re-noting a contact must not quietly revoke a grant the human made.
+        do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            None,
+            None,
+            Some("auto".into()),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        let after = do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            Some("renamed".into()),
+            None,
+            None,
+            TrustActor::Agent,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            after["autonomy"], "auto",
+            "an agent write must not reset autonomy"
+        );
+
+        // A human may do both.
+        assert!(do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            None,
+            None,
+            Some("auto".into()),
+            TrustActor::Human,
+        )
+        .await
+        .is_ok());
+        assert!(
+            do_set_policy(&state, &me, None, Some(true), TrustActor::Human)
+                .await
+                .is_ok()
+        );
+    }
+
+    #[tokio::test]
+    async fn an_agent_cannot_undo_a_block_by_amending_or_forgetting_it() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
+        do_set_contact(
+            &state,
+            &me,
+            peer.clone(),
+            None,
+            Some("block".into()),
+            None,
+            TrustActor::Agent,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(
+            do_set_contact(
+                &state,
+                &me,
+                peer.clone(),
+                None,
+                Some("allow".into()),
+                None,
+                TrustActor::Agent,
+            )
+            .await
+            .expect_err("unblocking is a raise")
+            .code,
+            "human_required"
+        );
+        assert_eq!(
+            do_set_contact(
+                &state,
+                &me,
+                peer.clone(),
+                None,
+                None,
+                None,
+                TrustActor::Agent
+            )
+            .await
+            .expect_err("re-noting a blocked peer must fail loudly, not quietly no-op")
+            .code,
+            "human_required"
+        );
+        assert!(
+            do_set_contact(
+                &state,
+                &me,
+                peer.clone(),
+                Some("spammer".into()),
+                Some("block".into()),
+                None,
+                TrustActor::Agent,
+            )
+            .await
+            .is_ok(),
+            "re-affirming the block is still allowed"
+        );
+        assert_eq!(
+            do_delete_contact(&state, &me, peer.clone(), TrustActor::Agent)
+                .await
+                .expect_err("forgetting a block is a raise by another route")
+                .code,
+            "human_required"
+        );
+
+        // The human path clears it.
+        assert!(do_delete_contact(&state, &me, peer, TrustActor::Human)
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn contact_writes_are_validated() {
+        let state = test_state();
+        let me = mint(&state).await;
+        let human = TrustActor::Human;
+
+        let err = do_set_contact(
+            &state,
+            &me,
+            "bekir@example.com".into(),
+            None,
+            None,
+            None,
+            human,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "invalid_peer");
+
+        let err = do_set_contact(&state, &me, me.address.clone(), None, None, None, human)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err.code, "invalid_peer",
+            "an inbox listing itself would make its own messages 'known'"
+        );
+
+        let err = do_set_contact(
+            &state,
+            &me,
+            "/k/other".into(),
+            None,
+            Some("maybe".into()),
+            None,
+            human,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "invalid_policy");
+    }
+
+    #[tokio::test]
+    async fn admission_is_enforced_at_send_time() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        // Open by default.
+        assert!(do_send(&state, &alice, &bob.address, "hello").await.is_ok());
+
+        // Blocked: refused, and nothing reaches bob's inbox.
+        do_set_contact(
+            &state,
+            &bob,
+            alice.address.clone(),
+            None,
+            Some("block".into()),
+            None,
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        let err = do_send(&state, &alice, &bob.address, "again")
+            .await
+            .expect_err("a blocked sender is refused");
+        assert_eq!(err.code, "not_admitted");
+        assert_eq!(err.status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            state.store.inbox_count(bob.address.clone()).await.unwrap(),
+            1,
+            "a refused message must not consume the recipient's quota"
+        );
+
+        // Closed to strangers, but a known contact still gets through.
+        let carol = mint(&state).await;
+        do_set_policy(&state, &bob, Some(false), None, TrustActor::Human)
+            .await
+            .unwrap();
+        assert_eq!(
+            do_send(&state, &carol, &bob.address, "hi")
+                .await
+                .unwrap_err()
+                .code,
+            "not_admitted"
+        );
+        do_set_contact(
+            &state,
+            &bob,
+            carol.address.clone(),
+            None,
+            None,
+            None,
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        assert!(do_send(&state, &carol, &bob.address, "hi again")
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn inbox_labels_each_message_with_what_the_recipient_decided() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let stranger = mint(&state).await;
+
+        do_set_contact(
+            &state,
+            &bob,
+            alice.address.clone(),
+            Some("agent-A".into()),
+            None,
+            Some("auto".into()),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        do_send(&state, &alice, &bob.address, "from a friend")
+            .await
+            .unwrap();
+        do_send(&state, &stranger, &bob.address, "from nobody")
+            .await
+            .unwrap();
+
+        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let messages = inbox["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 2);
+
+        let known = messages
+            .iter()
+            .find(|m| m["from"] == alice.address.as_str())
+            .unwrap();
+        assert_eq!(known["sender_known"], true);
+        assert_eq!(known["alias"], "agent-A");
+        assert_eq!(known["autonomy"], "auto");
+        assert_eq!(
+            known["untrusted"], true,
+            "auto is a decision about the sender, not a claim about the text"
+        );
+
+        let unknown = messages
+            .iter()
+            .find(|m| m["from"] == stranger.address.as_str())
+            .unwrap();
+        assert_eq!(unknown["sender_known"], false);
+        assert_eq!(unknown["alias"], serde_json::Value::Null);
+        assert_eq!(unknown["autonomy"], "review");
+    }
+
     /// Guards against a matchit route conflict between `/v1/pow/challenge` and the `/v1/{*rest}`
     /// catch-all — Router construction panics on conflict, so building it here is the assertion.
     #[test]
@@ -1208,6 +2264,12 @@ mod tests {
             oidc: Arc::new(oidc::Oidc::new("https://auth.example/realms/x".into())),
             max_identities: 5,
             max_inbox: 1000,
+            mint_limits: MintLimits {
+                per_window: 5,
+                window_secs: 3600,
+                lifetime: 1000,
+            },
+            trusted_proxy_hops: 0,
         };
         let _ = build_router(state);
     }

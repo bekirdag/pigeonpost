@@ -10,6 +10,7 @@ mod install_cmd;
 mod loft_cmd;
 mod loft_key;
 mod output;
+mod postbox_cmd;
 mod registry_cmd;
 mod runtime_config;
 mod submit_cmd;
@@ -198,6 +199,89 @@ enum Command {
         #[command(subcommand)]
         action: DirectoryAction,
     },
+
+    /// Mint and manage inboxes hosted on a postbox (no local loft required).
+    Postbox {
+        #[command(subcommand)]
+        action: PostboxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum PostboxAction {
+    /// Mint a hosted inbox and save its capability token here.
+    New {
+        /// Postbox to mint on.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+        /// A name for this mailbox, e.g. the agent it belongs to.
+        #[arg(long)]
+        label: Option<String>,
+    },
+
+    /// List hosted mailboxes minted from this home. Never prints tokens.
+    List,
+
+    /// Print one mailbox's capability token, for piping into an MCP config.
+    Token {
+        /// Address, e.g. /k/… — optional when only one mailbox is on file.
+        address: Option<String>,
+    },
+
+    /// Show a hosted inbox's contacts and the terms strangers get.
+    Contacts {
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Know a sender: their mail is admitted and arrives labelled.
+    Allow {
+        /// Their address, e.g. /k/…
+        peer: String,
+        /// A name for them, e.g. "agent-B on suku".
+        #[arg(long)]
+        alias: Option<String>,
+        /// Also let this agent act on their messages without asking you first.
+        #[arg(long)]
+        auto: bool,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Stop accepting mail from a sender.
+    Block {
+        /// Their address, e.g. /k/…
+        peer: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Forget a sender; they revert to whatever strangers get.
+    Forget {
+        /// Their address, e.g. /k/…
+        peer: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Set what a hosted inbox does about senders with no contact entry.
+    Policy {
+        /// Accept mail from strangers.
+        #[arg(long)]
+        accept_all: Option<bool>,
+        /// Let this agent act on any known contact's messages without asking you first.
+        #[arg(long)]
+        auto_accept_known: Option<bool>,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+}
+
+#[derive(Args)]
+struct PostboxIdentity {
+    /// Which hosted mailbox to act as — required when this home holds more than one.
+    #[arg(long = "as")]
+    address: Option<String>,
 }
 
 #[derive(Subcommand)]
@@ -845,6 +929,67 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .await;
     }
 
+    // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
+    // above — they must not mint an identity in someone's home as a side effect.
+    if let Command::Postbox { action } = &cli.command {
+        return match action {
+            PostboxAction::New { postbox, label } => {
+                postbox_cmd::new_inbox(&home, postbox, label.as_deref(), cli.json).await
+            }
+            PostboxAction::List => postbox_cmd::list(&home, cli.json),
+            PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),
+            PostboxAction::Contacts { which } => {
+                postbox_cmd::show_contacts(&home, which.address.as_deref(), cli.json).await
+            }
+            PostboxAction::Allow {
+                peer,
+                alias,
+                auto,
+                which,
+            } => {
+                postbox_cmd::set_contact(
+                    &home,
+                    which.address.as_deref(),
+                    peer,
+                    alias.as_deref(),
+                    Some("allow"),
+                    Some(if *auto { "auto" } else { "review" }),
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Block { peer, which } => {
+                postbox_cmd::set_contact(
+                    &home,
+                    which.address.as_deref(),
+                    peer,
+                    None,
+                    Some("block"),
+                    None,
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Forget { peer, which } => {
+                postbox_cmd::forget_contact(&home, which.address.as_deref(), peer, cli.json).await
+            }
+            PostboxAction::Policy {
+                accept_all,
+                auto_accept_known,
+                which,
+            } => {
+                postbox_cmd::set_policy(
+                    &home,
+                    which.address.as_deref(),
+                    *accept_all,
+                    *auto_accept_known,
+                    cli.json,
+                )
+                .await
+            }
+        };
+    }
+
     let agent = Agent::open_with_options(
         &home,
         AgentOpenOptions {
@@ -1337,7 +1482,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             DirectoryAction::Serve { .. } => unreachable!("handled before identity setup"),
         },
 
-        Command::Registry { .. } | Command::Install { .. } => {
+        Command::Registry { .. } | Command::Install { .. } | Command::Postbox { .. } => {
             unreachable!("handled before identity setup")
         }
     }

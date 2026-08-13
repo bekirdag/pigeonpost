@@ -48,6 +48,42 @@ CREATE TABLE IF NOT EXISTS api_keys (
     id         TEXT,
     prefix     TEXT
 );
+
+-- One row per *unauthenticated* mint (anonymous identity or account creation), keyed by the
+-- caller's IP. Feeds the per-IP rate limit that replaces the old account-quota-only ceiling, and
+-- is the raw signal the reputation work scores mint sources against.
+CREATE TABLE IF NOT EXISTS mint_events (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    ip         TEXT NOT NULL,
+    kind       TEXT NOT NULL,
+    address    TEXT,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mint_events_by_ip ON mint_events(ip, created_at);
+
+-- Who an inbox knows, and on what terms. Two independent axes, deliberately not collapsed:
+--   admission — may this peer's mail be delivered at all      (allow | block)
+--   autonomy  — may my agent act on it without a human        (review | auto)
+-- `allow` is the admission default because the postbox has always delivered to anyone; `review`
+-- is the autonomy default because trusting a sender's identity is not trusting their instructions.
+CREATE TABLE IF NOT EXISTS contacts (
+    owner      TEXT NOT NULL,
+    peer       TEXT NOT NULL,
+    alias      TEXT,
+    admission  TEXT NOT NULL DEFAULT 'allow',
+    autonomy   TEXT NOT NULL DEFAULT 'review',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, peer)
+);
+
+-- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
+CREATE TABLE IF NOT EXISTS inbox_policy (
+    address           TEXT PRIMARY KEY,
+    accept_all        INTEGER NOT NULL DEFAULT 1,
+    auto_accept_known INTEGER NOT NULL DEFAULT 0,
+    updated_at        INTEGER NOT NULL
+);
 ";
 
 // Run after SCHEMA. ALTERs add columns to tables created before those features existed; on a fresh
@@ -163,6 +199,62 @@ fn id_from_row(r: IdRow) -> Result<StoredIdentity, StoreError> {
     })
 }
 
+/// A peer an inbox knows, and the terms it knows them on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Contact {
+    pub owner: String,
+    pub peer: String,
+    pub alias: Option<String>,
+    /// `allow` | `block` — whether their mail is delivered at all.
+    pub admission: String,
+    /// `review` | `auto` — whether the recipient's agent may act without a human.
+    pub autonomy: String,
+    pub created_at: u64,
+    pub updated_at: u64,
+}
+
+/// A partial contact write. `None` means "leave whatever is stored".
+pub struct ContactUpdate {
+    pub owner: String,
+    pub peer: String,
+    pub alias: Option<String>,
+    pub admission: Option<String>,
+    pub autonomy: Option<String>,
+    pub now: u64,
+}
+
+/// What an inbox does about senders it has no contact row for.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct InboxPolicy {
+    /// Accept mail from strangers. On by default — the postbox has always been open, and closing
+    /// it by default would silently break every existing mailbox.
+    pub accept_all: bool,
+    /// Treat *known* contacts as `auto` even when their row says `review`. Off by default, and
+    /// only a human can turn it on.
+    pub auto_accept_known: bool,
+}
+
+impl Default for InboxPolicy {
+    fn default() -> Self {
+        InboxPolicy {
+            accept_all: true,
+            auto_accept_known: false,
+        }
+    }
+}
+
+fn map_contact_row(row: &rusqlite::Row) -> rusqlite::Result<Contact> {
+    Ok(Contact {
+        owner: row.get(0)?,
+        peer: row.get(1)?,
+        alias: row.get(2)?,
+        admission: row.get(3)?,
+        autonomy: row.get(4)?,
+        created_at: row.get::<_, i64>(5)? as u64,
+        updated_at: row.get::<_, i64>(6)? as u64,
+    })
+}
+
 const ID_COLS: &str = "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id";
 
 fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
@@ -265,6 +357,206 @@ impl Store {
             recipient,
         )
         .await
+    }
+
+    /// Record one unauthenticated mint against the caller's IP. Best-effort accounting: a failure
+    /// here must never fail the mint the caller already earned with a proof-of-work.
+    pub async fn record_mint(
+        &self,
+        ip: String,
+        kind: &'static str,
+        address: Option<String>,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO mint_events (ip, kind, address, created_at) VALUES (?1, ?2, ?3, ?4)",
+                params![ip, kind, address, now as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Mints from one IP: `(within the window starting at `since`, lifetime)`. Both come from one
+    /// query so a burst can't slip between two reads.
+    pub async fn mint_counts(&self, ip: String, since: u64) -> Result<(usize, usize), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(usize, usize), StoreError> {
+            let c = conn.lock().expect("store lock");
+            let (recent, total): (i64, i64) = c.query_row(
+                "SELECT COALESCE(SUM(created_at >= ?2), 0), COUNT(*)
+                   FROM mint_events WHERE ip = ?1",
+                params![ip, since as i64],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((recent as usize, total as usize))
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// When the oldest mint inside the current window happened — the point at which a
+    /// rate-limited caller regains a slot. `None` when the IP has no mints in the window.
+    pub async fn oldest_mint_in_window(
+        &self,
+        ip: String,
+        since: u64,
+    ) -> Result<Option<u64>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<u64>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let at: Option<i64> = c.query_row(
+                "SELECT MIN(created_at) FROM mint_events WHERE ip = ?1 AND created_at >= ?2",
+                params![ip, since as i64],
+                |r| r.get(0),
+            )?;
+            Ok(at.map(|v| v as u64))
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Upsert one contact. `alias`/`admission`/`autonomy` left as `None` keep their stored value,
+    /// so a caller may change one axis without knowing the other.
+    pub async fn upsert_contact(&self, c: ContactUpdate) -> Result<Contact, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Contact, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            conn.execute(
+                "INSERT INTO contacts (owner, peer, alias, admission, autonomy, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, COALESCE(?4, 'allow'), COALESCE(?5, 'review'), ?6, ?6)
+                 ON CONFLICT(owner, peer) DO UPDATE SET
+                     alias      = COALESCE(?3, alias),
+                     admission  = COALESCE(?4, admission),
+                     autonomy   = COALESCE(?5, autonomy),
+                     updated_at = ?6",
+                params![c.owner, c.peer, c.alias, c.admission, c.autonomy, c.now as i64],
+            )?;
+            conn.query_row(
+                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
+                   FROM contacts WHERE owner = ?1 AND peer = ?2",
+                params![c.owner, c.peer],
+                map_contact_row,
+            )
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// One contact row, or `None` when the peer is a stranger.
+    pub async fn contact(
+        &self,
+        owner: String,
+        peer: String,
+    ) -> Result<Option<Contact>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<Contact>, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            conn.query_row(
+                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
+                   FROM contacts WHERE owner = ?1 AND peer = ?2",
+                params![owner, peer],
+                map_contact_row,
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    pub async fn list_contacts(&self, owner: String) -> Result<Vec<Contact>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Contact>, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            let mut stmt = conn.prepare(
+                "SELECT owner, peer, alias, admission, autonomy, created_at, updated_at
+                   FROM contacts WHERE owner = ?1 ORDER BY created_at",
+            )?;
+            let rows = stmt.query_map(params![owner], map_contact_row)?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Remove a contact, returning whether one was there. The peer reverts to stranger terms.
+    pub async fn delete_contact(&self, owner: String, peer: String) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            let n = conn.execute(
+                "DELETE FROM contacts WHERE owner = ?1 AND peer = ?2",
+                params![owner, peer],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// An inbox's stranger-defaults, or [`InboxPolicy::default`] when it has never set any.
+    pub async fn inbox_policy(&self, address: String) -> Result<InboxPolicy, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<InboxPolicy, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            let found = conn
+                .query_row(
+                    "SELECT accept_all, auto_accept_known FROM inbox_policy WHERE address = ?1",
+                    params![address],
+                    |r| {
+                        Ok(InboxPolicy {
+                            accept_all: r.get::<_, i64>(0)? != 0,
+                            auto_accept_known: r.get::<_, i64>(1)? != 0,
+                        })
+                    },
+                )
+                .optional()?;
+            Ok(found.unwrap_or_default())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Set an inbox's stranger-defaults. `None` fields keep their stored value.
+    pub async fn set_inbox_policy(
+        &self,
+        address: String,
+        accept_all: Option<bool>,
+        auto_accept_known: Option<bool>,
+        now: u64,
+    ) -> Result<InboxPolicy, StoreError> {
+        let current = self.inbox_policy(address.clone()).await?;
+        let next = InboxPolicy {
+            accept_all: accept_all.unwrap_or(current.accept_all),
+            auto_accept_known: auto_accept_known.unwrap_or(current.auto_accept_known),
+        };
+        let conn = self.conn.clone();
+        let stored = next;
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let conn = conn.lock().expect("store lock");
+            conn.execute(
+                "INSERT INTO inbox_policy (address, accept_all, auto_accept_known, updated_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(address) DO UPDATE SET
+                     accept_all = ?2, auto_accept_known = ?3, updated_at = ?4",
+                params![
+                    address,
+                    stored.accept_all as i64,
+                    stored.auto_accept_known as i64,
+                    now as i64
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)??;
+        Ok(next)
     }
 
     async fn count_where(&self, sql: &'static str, arg: String) -> Result<usize, StoreError> {
@@ -679,6 +971,146 @@ mod tests {
             .mark_read("m1".into(), "/k/other".into())
             .await
             .unwrap());
+    }
+
+    #[tokio::test]
+    async fn mint_events_count_per_ip_and_window() {
+        let store = Store::open(":memory:").unwrap();
+        let ip = "203.0.113.9".to_string();
+        for (i, at) in [100u64, 200, 5_000].into_iter().enumerate() {
+            store
+                .record_mint(ip.clone(), "identity", Some(format!("/k/a{i}")), at)
+                .await
+                .unwrap();
+        }
+        // A different IP keeps its own budget.
+        store
+            .record_mint("198.51.100.4".into(), "account", None, 5_000)
+            .await
+            .unwrap();
+
+        // Window starting at 1_000 excludes the two early mints; lifetime counts all three.
+        let (recent, lifetime) = store.mint_counts(ip.clone(), 1_000).await.unwrap();
+        assert_eq!((recent, lifetime), (1, 3));
+
+        let (recent, lifetime) = store.mint_counts(ip.clone(), 0).await.unwrap();
+        assert_eq!((recent, lifetime), (3, 3));
+
+        assert_eq!(
+            store.oldest_mint_in_window(ip.clone(), 150).await.unwrap(),
+            Some(200)
+        );
+        assert_eq!(
+            store.oldest_mint_in_window(ip, 9_000).await.unwrap(),
+            None,
+            "no mints inside the window means nothing to wait for"
+        );
+    }
+
+    #[tokio::test]
+    async fn contacts_upsert_preserves_unset_axes() {
+        let store = Store::open(":memory:").unwrap();
+        let base = |admission, autonomy, now| ContactUpdate {
+            owner: "/k/me".into(),
+            peer: "/k/them".into(),
+            alias: None,
+            admission,
+            autonomy,
+            now,
+        };
+
+        let c = store.upsert_contact(base(None, None, 10)).await.unwrap();
+        assert_eq!(
+            (c.admission.as_str(), c.autonomy.as_str()),
+            ("allow", "review")
+        );
+        assert_eq!(c.created_at, 10);
+
+        // Change one axis; the other and the creation time survive.
+        let c = store
+            .upsert_contact(base(None, Some("auto".into()), 20))
+            .await
+            .unwrap();
+        assert_eq!(
+            (c.admission.as_str(), c.autonomy.as_str()),
+            ("allow", "auto")
+        );
+        assert_eq!((c.created_at, c.updated_at), (10, 20));
+
+        let c = store
+            .upsert_contact(ContactUpdate {
+                alias: Some("agent-B".into()),
+                ..base(Some("block".into()), None, 30)
+            })
+            .await
+            .unwrap();
+        assert_eq!(c.autonomy, "auto", "unset axis must not be reset");
+        assert_eq!(c.alias.as_deref(), Some("agent-B"));
+
+        assert_eq!(store.list_contacts("/k/me".into()).await.unwrap().len(), 1);
+        assert!(store
+            .list_contacts("/k/other".into())
+            .await
+            .unwrap()
+            .is_empty());
+
+        assert!(store
+            .delete_contact("/k/me".into(), "/k/them".into())
+            .await
+            .unwrap());
+        assert!(
+            !store
+                .delete_contact("/k/me".into(), "/k/them".into())
+                .await
+                .unwrap(),
+            "deleting twice reports nothing removed"
+        );
+        assert!(store
+            .contact("/k/me".into(), "/k/them".into())
+            .await
+            .unwrap()
+            .is_none());
+    }
+
+    #[tokio::test]
+    async fn inbox_policy_defaults_open_and_manual() {
+        let store = Store::open(":memory:").unwrap();
+        let default = store.inbox_policy("/k/me".into()).await.unwrap();
+        assert_eq!(
+            default,
+            InboxPolicy {
+                accept_all: true,
+                auto_accept_known: false
+            },
+            "an inbox that never set a policy stays open to strangers and manual"
+        );
+
+        let set = store
+            .set_inbox_policy("/k/me".into(), Some(false), None, 5)
+            .await
+            .unwrap();
+        assert!(!set.accept_all);
+        assert!(!set.auto_accept_known, "unset field keeps its value");
+
+        let set = store
+            .set_inbox_policy("/k/me".into(), None, Some(true), 6)
+            .await
+            .unwrap();
+        assert_eq!(
+            (set.accept_all, set.auto_accept_known),
+            (false, true),
+            "each field is independently persistent"
+        );
+        assert_eq!(store.inbox_policy("/k/me".into()).await.unwrap(), set);
+    }
+
+    #[tokio::test]
+    async fn mint_counts_are_zero_for_an_unseen_ip() {
+        let store = Store::open(":memory:").unwrap();
+        assert_eq!(
+            store.mint_counts("192.0.2.1".into(), 0).await.unwrap(),
+            (0, 0)
+        );
     }
 
     fn msg(id: &str, recipient: &str, created_at: u64) -> Message {

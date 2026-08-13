@@ -10,8 +10,9 @@
 //! them), and message bodies are always flagged untrusted.
 
 use crate::{
-    do_ack, do_create_identity, do_inbox, do_list_identities, do_send, principal_for_token,
-    resolve_acting_identity, ApiError, AppState, Principal,
+    do_ack, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_send,
+    do_set_contact, principal_for_token, resolve_acting_identity, ApiError, AppState, Principal,
+    TrustActor,
 };
 use serde_json::{json, Value};
 
@@ -101,6 +102,38 @@ fn tools_list_result() -> Value {
                 "required": ["message_id"],
                 "additionalProperties": false
             }
+        },
+        {
+            "name": "list_pigeonpost_contacts",
+            "description": "List the senders this inbox knows, with their admission (allow/block) and autonomy (review/auto), plus the defaults applied to strangers.",
+            "inputSchema": { "type": "object", "properties": identity_prop, "additionalProperties": false }
+        },
+        {
+            "name": "add_pigeonpost_contact",
+            "description": "Note a sender as known, so their messages arrive labelled. This records who they are; it does not decide that their instructions may be followed. Autonomy stays 'review' — only the person holding this mailbox's token can grant 'auto', via the pigeonpost CLI.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "peer": { "type": "string", "description": "Their address, e.g. /k/abc…" },
+                    "alias": { "type": "string", "description": "A name for them, e.g. 'agent-B on suku'." },
+                    "identity": { "type": "string" }
+                },
+                "required": ["peer"],
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "block_pigeonpost_sender",
+            "description": "Stop accepting mail from an address. Takes effect at send time, so nothing further from them reaches this inbox. Unblocking has to be done by a person with the CLI.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "peer": { "type": "string", "description": "Their address, e.g. /k/abc…" },
+                    "identity": { "type": "string" }
+                },
+                "required": ["peer"],
+                "additionalProperties": false
+            }
         }
     ]})
 }
@@ -136,7 +169,10 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         "whoami"
         | "send_pigeonpost_message"
         | "check_pigeonpost_inbox"
-        | "ack_pigeonpost_message" => {
+        | "ack_pigeonpost_message"
+        | "list_pigeonpost_contacts"
+        | "add_pigeonpost_contact"
+        | "block_pigeonpost_sender" => {
             let me = match resolve_acting_identity(state, principal, arg_str("identity").as_deref())
                 .await
             {
@@ -150,6 +186,42 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                     _ => return Ok(tool_error("send requires string 'to' and 'body'")),
                 },
                 "check_pigeonpost_inbox" => do_inbox(state, &me).await,
+                "list_pigeonpost_contacts" => do_list_contacts(state, &me).await,
+                // Both contact tools go in as `TrustActor::Agent`, which is what stops an agent
+                // talking itself into `auto` or into unblocking someone.
+                // Autonomy is left unset rather than pinned to "review": new contacts default to
+                // review in the store anyway, and passing it explicitly would let an agent revoke
+                // a human's `auto` grant just by re-noting a contact it already knew.
+                "add_pigeonpost_contact" => match arg_str("peer") {
+                    Some(peer) => {
+                        do_set_contact(
+                            state,
+                            &me,
+                            peer,
+                            arg_str("alias"),
+                            None,
+                            None,
+                            TrustActor::Agent,
+                        )
+                        .await
+                    }
+                    None => return Ok(tool_error("add_pigeonpost_contact requires 'peer'")),
+                },
+                "block_pigeonpost_sender" => match arg_str("peer") {
+                    Some(peer) => {
+                        do_set_contact(
+                            state,
+                            &me,
+                            peer,
+                            arg_str("alias"),
+                            Some("block".into()),
+                            None,
+                            TrustActor::Agent,
+                        )
+                        .await
+                    }
+                    None => return Ok(tool_error("block_pigeonpost_sender requires 'peer'")),
+                },
                 _ /* ack */ => match arg_str("message_id") {
                     Some(id) => do_ack(state, &me, id).await,
                     None => return Ok(tool_error("ack requires string 'message_id'")),
