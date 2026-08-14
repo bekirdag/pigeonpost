@@ -866,7 +866,14 @@ mod tests {
 
     #[test]
     fn provider_user_agent_tracks_the_package_release() {
-        assert_eq!(PROVIDER_USER_AGENT, "pigeonpost-registry/0.2.0");
+        // Compared against the package version rather than a literal: the property under test is
+        // that the UA *tracks* the release, and a pinned string asserts the opposite — it fails on
+        // every bump for no reason, which is exactly what it did on 0.3.0.
+        assert_eq!(
+            PROVIDER_USER_AGENT,
+            format!("pigeonpost-registry/{}", env!("CARGO_PKG_VERSION"))
+        );
+        assert!(PROVIDER_USER_AGENT.starts_with("pigeonpost-registry/"));
     }
 
     #[test]

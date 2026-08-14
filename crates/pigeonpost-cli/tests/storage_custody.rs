@@ -114,7 +114,12 @@ mod unix {
     }
 
     fn address_in_use(output: &Output) -> bool {
-        String::from_utf8_lossy(&output.stderr).contains("AddrInUse")
+        // Both spellings: `AddrInUse` is how the io error kind prints under Debug, "Address
+        // already in use" how it reads under Display. The CLI now reports failures with Display
+        // so its messages are legible, and a probe for "did this lose the bind race" should not
+        // be the thing that pins which formatter the binary uses.
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        stderr.contains("AddrInUse") || stderr.contains("Address already in use")
     }
 
     fn exited_output(child: &mut ChildGuard) -> Option<Output> {
