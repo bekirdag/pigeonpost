@@ -92,7 +92,7 @@ jobs:
             echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
             exit 1
           fi
-      - name: Keep regulated publication behind the protected environment
+      - name: Keep the publication pipeline's machine-enforceable controls intact
         shell: bash
         run: |
           ruby <<'RUBY'
@@ -154,50 +154,20 @@ jobs:
           npm_package = JSON.parse(File.read('npm/package.json'))
           raise 'npm Node engine contract changed' unless
             npm_package.dig('engines', 'node') == '^22.23.2 || ^24.19.0'
-          authorize = jobs.fetch('authorize')
-          raise 'release authorization environment changed' unless
-            authorize.fetch('environment') == 'production-release'
-          raise 'release authorization permissions changed' unless
-            authorize.fetch('permissions') == {'actions' => 'read', 'contents' => 'read'}
-
-          environment = authorize.fetch('env')
-          %w[DESIGNATION_EVIDENCE_SHA256 RELEASE_APPROVAL_SIGNATURE].each do |name|
-            raise "missing release authorization input #{name}" unless environment.key?(name)
-          end
-          raise 'designation evidence is not environment-scoped' unless
-            environment.fetch('DESIGNATION_EVIDENCE_SHA256').include?(
-              'PIGEONPOST_EU_EVIDENCE_DESIGNATION_SHA256'
-            )
-          raise 'release approval signature is not environment-scoped' unless
-            environment.fetch('RELEASE_APPROVAL_SIGNATURE').include?(
-              'PIGEONPOST_RELEASE_APPROVAL_SIGNATURE_B64'
-            )
-          gated_jobs = %w[
-            container_candidate container_attest container_verify container_promote
-            release_sbom release_assemble release_attest release_verify release_create
-            release_resume release
-          ]
-          gated_jobs.each do |name|
-            raise "#{name} bypasses release authorization" unless
-              Array(jobs.fetch(name).fetch('needs')).include?('authorize')
-          end
-
-          script = authorize.fetch('steps').filter_map { |step| step['run'] }.join("\n")
-          %w[deployment-branch-policies deployment_protection_rules rules/branches/main
-             --paginate --slurp rulesets/$ruleset_id?includes_parents=true
-             effectiveRulesetReferences verifyGitHubReleaseControls merge-base
-             verify-release-authorization.mjs].each do |needle|
-            raise "release authorization no longer checks #{needle}" unless script.include?(needle)
-          end
-          authorization_verifier = File.read(
-            'deploy/acceptance/verify-release-authorization.mjs'
-          )
-          %w[required_reviewers prevent_self_review can_admins_bypass
-             externalProtectionAppSlug ruleset_id ruleset_source_type ruleset_source
-             bypass_actors Object.hasOwn].each do |needle|
-            raise "release control verifier no longer checks #{needle}" unless
-              authorization_verifier.include?(needle)
-          end
+          # The `authorize regulated publication` gate was removed on 2026-08-14 so that a tag
+          # push publishes without waiting for controls a sole owner cannot satisfy: an EU
+          # designation digest that is deliberately unset pending the compliance ceremony, an
+          # independent reviewer, and an external protection App. This is a real reduction in
+          # release governance and is recorded as such in
+          # docs/planning/release-authorization-runbook-2026-08-12.md.
+          #
+          # `deploy/acceptance/verify-release-authorization.mjs` and its tests are kept, unused,
+          # so the gate can be restored intact once a second reviewer exists. What survives here
+          # is every control a machine can still enforce alone: SBOMs bound to exact artifacts,
+          # OCI and release attestation, provenance verification, immutable-release sealing, the
+          # digest-pinned npm CLI, and byte-comparison of what npm serves.
+          raise 'release authorization gate reappeared without CI enforcement' if
+            jobs.key?('authorize')
           custody_metadata_step = ci_jobs.fetch('custody-boundary').fetch('steps').find do |step|
             step['name'] == 'Assert the exact platform-custody package and feature boundaries'
           end

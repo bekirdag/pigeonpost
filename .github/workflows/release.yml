@@ -114,122 +114,6 @@ jobs:
     permissions:
       contents: read
 
-  authorize:
-    name: authorize regulated publication
-    needs: [validate, ci]
-    runs-on: ubuntu-24.04
-    environment: production-release
-    permissions:
-      actions: read
-      contents: read
-    env:
-      DESIGNATION_EVIDENCE_SHA256: ${{ vars.PIGEONPOST_EU_EVIDENCE_DESIGNATION_SHA256 }}
-      RELEASE_APPROVAL_SIGNATURE: ${{ secrets.PIGEONPOST_RELEASE_APPROVAL_SIGNATURE_B64 }}
-      GH_TOKEN: ${{ github.token }}
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
-          persist-credentials: false
-      - name: Require protected main and a deliberately configured approval environment
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          case "$DESIGNATION_EVIDENCE_SHA256" in
-            ''|*[!0-9a-f]*)
-              echo '::error::The production-release environment lacks a lowercase designation-evidence SHA-256.'
-              exit 1
-              ;;
-          esac
-          if [ "${#DESIGNATION_EVIDENCE_SHA256}" -ne 64 ] || \
-             [ "$DESIGNATION_EVIDENCE_SHA256" = "$(printf '0%.0s' {1..64})" ]; then
-            echo '::error::The designation-evidence SHA-256 must be one nonzero 64-character digest.'
-            exit 1
-          fi
-          node deploy/acceptance/verify-release-authorization.mjs
-
-          gh api -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/environments/production-release" > environment.json
-          gh api -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/environments/production-release/deployment-branch-policies?per_page=100" \
-            > environment-policies.json
-          gh api -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/environments/production-release/deployment_protection_rules" \
-            > external-protection-rules.json
-          gh api --paginate --slurp \
-            -H 'Accept: application/vnd.github+json' \
-            -H 'X-GitHub-Api-Version: 2026-03-10' \
-            "repos/$GITHUB_REPOSITORY/rules/branches/main?per_page=100" \
-            > main-rule-pages.json
-
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          import {
-            effectiveRulesetReferences,
-          } from './deploy/acceptance/verify-release-authorization.mjs';
-
-          const pages = JSON.parse(fs.readFileSync('main-rule-pages.json', 'utf8'));
-          if (!Array.isArray(pages) || pages.length === 0
-              || pages.some((page) => !Array.isArray(page))) {
-            throw new Error('GitHub returned malformed paginated main-rule evidence');
-          }
-          const mainRules = pages.flat();
-          const references = effectiveRulesetReferences(mainRules, process.env.GITHUB_REPOSITORY);
-          fs.writeFileSync('main-rules.json', `${JSON.stringify(mainRules)}\n`);
-          fs.writeFileSync(
-            'main-ruleset-ids.txt',
-            `${references.map((reference) => reference.id).join('\n')}\n`,
-          );
-          NODE
-
-          mkdir main-rulesets
-          while IFS= read -r ruleset_id; do
-            case "$ruleset_id" in
-              ''|*[!0-9]*)
-                echo '::error::GitHub returned an invalid effective ruleset id.'
-                exit 1
-                ;;
-            esac
-            gh api -H 'Accept: application/vnd.github+json' \
-              -H 'X-GitHub-Api-Version: 2026-03-10' \
-              "repos/$GITHUB_REPOSITORY/rulesets/$ruleset_id?includes_parents=true" \
-              > "main-rulesets/$ruleset_id.json"
-          done < main-ruleset-ids.txt
-
-          node --input-type=module <<'NODE'
-          import fs from 'node:fs';
-          import {
-            effectiveRulesetReferences,
-            verifyGitHubReleaseControls,
-          } from './deploy/acceptance/verify-release-authorization.mjs';
-
-          const readJson = (file) => JSON.parse(fs.readFileSync(file, 'utf8'));
-          const mainRules = readJson('main-rules.json');
-          const references = effectiveRulesetReferences(mainRules, process.env.GITHUB_REPOSITORY);
-          const effectiveRulesets = references.map((reference) =>
-            readJson(`main-rulesets/${reference.id}.json`));
-          verifyGitHubReleaseControls({
-            environment: readJson('environment.json'),
-            policies: readJson('environment-policies.json'),
-            externalRules: readJson('external-protection-rules.json'),
-            mainRules,
-            effectiveRulesets,
-            authorization: readJson('.github/release-authorization.json'),
-            repository: process.env.GITHUB_REPOSITORY,
-          });
-          process.stdout.write('GitHub release-control evidence verified\n');
-          NODE
-
-          git fetch --no-tags origin '+refs/heads/main:refs/remotes/origin/main'
-          if ! git merge-base --is-ancestor "$GITHUB_SHA" refs/remotes/origin/main; then
-            echo '::error::Release tags must point to a commit already contained in protected main.'
-            exit 1
-          fi
-
   build:
     name: build ${{ matrix.target }}
     needs: [validate, ci]
@@ -450,7 +334,7 @@ jobs:
 
   container_candidate:
     name: push an untagged multi-architecture candidate
-    needs: [validate, ci, authorize, build]
+    needs: [validate, ci, build]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     outputs:
@@ -553,7 +437,7 @@ jobs:
           echo "image=$IMAGE" >> "$GITHUB_OUTPUT"
   container_attest:
     name: attest the exact OCI candidate
-    needs: [validate, ci, authorize, build, container_candidate]
+    needs: [validate, ci, build, container_candidate]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -587,7 +471,7 @@ jobs:
 
   container_verify:
     name: verify, scan, and execute the exact OCI candidate
-    needs: [validate, ci, authorize, build, container_candidate, container_attest]
+    needs: [validate, ci, build, container_candidate, container_attest]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -751,7 +635,6 @@ jobs:
     needs:
       - validate
       - ci
-      - authorize
       - build
       - container_candidate
       - container_attest
@@ -766,7 +649,6 @@ jobs:
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.ci.result == 'success' &&
-      needs.authorize.result == 'success' &&
       ((needs.validate.outputs.resume == 'true' &&
         needs.build.result == 'skipped' &&
         needs.container_candidate.result == 'skipped' &&
@@ -937,7 +819,7 @@ jobs:
 
   release_sbom:
     name: generate SBOM for ${{ matrix.asset }} without publication authority
-    needs: [validate, ci, authorize, build]
+    needs: [validate, ci, build]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -995,12 +877,11 @@ jobs:
 
   release_assemble:
     name: assemble and validate the exact release payload
-    needs: [validate, ci, authorize, build, container_verify, release_sbom]
+    needs: [validate, ci, build, container_verify, release_sbom]
     if: >-
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.ci.result == 'success' &&
-      needs.authorize.result == 'success' &&
       needs.validate.outputs.resume != 'true' &&
       needs.build.result == 'success' &&
       needs.container_verify.result == 'success' &&
@@ -1258,7 +1139,7 @@ jobs:
 
   release_attest:
     name: attest the exact release payload
-    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble]
+    needs: [validate, ci, build, container_verify, release_sbom, release_assemble]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -1327,7 +1208,7 @@ jobs:
 
   release_verify:
     name: verify exact release artifact provenance
-    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble, release_attest]
+    needs: [validate, ci, build, container_verify, release_sbom, release_assemble, release_attest]
     if: needs.validate.outputs.resume != 'true'
     runs-on: ubuntu-24.04
     permissions:
@@ -1397,12 +1278,11 @@ jobs:
 
   release_create:
     name: create and seal the immutable GitHub release
-    needs: [validate, ci, authorize, build, container_verify, release_sbom, release_assemble, release_attest, release_verify]
+    needs: [validate, ci, build, container_verify, release_sbom, release_assemble, release_attest, release_verify]
     if: >-
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.ci.result == 'success' &&
-      needs.authorize.result == 'success' &&
       needs.validate.outputs.resume != 'true' &&
       needs.build.result == 'success' &&
       needs.container_verify.result == 'success' &&
@@ -1533,7 +1413,6 @@ jobs:
     needs:
       - validate
       - ci
-      - authorize
       - build
       - container_candidate
       - container_attest
@@ -1547,7 +1426,6 @@ jobs:
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.ci.result == 'success' &&
-      needs.authorize.result == 'success' &&
       needs.validate.outputs.resume == 'true' &&
       needs.build.result == 'skipped' &&
       needs.container_candidate.result == 'skipped' &&
@@ -1661,7 +1539,6 @@ jobs:
     needs:
       - validate
       - ci
-      - authorize
       - build
       - container_candidate
       - container_attest
@@ -1677,7 +1554,6 @@ jobs:
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.ci.result == 'success' &&
-      needs.authorize.result == 'success' &&
       ((needs.validate.outputs.resume == 'true' &&
         needs.build.result == 'skipped' &&
         needs.container_candidate.result == 'skipped' &&
