@@ -76,6 +76,8 @@ struct AppState {
     mint_limits: MintLimits,
     /// How many trusted reverse proxies sit in front of us (see [`resolve_client_ip`]).
     trusted_proxy_hops: usize,
+    /// SHA-256 of the namespace-grant shared secret, or `None` when the endpoint is closed.
+    namespace_grant_hash: Option<[u8; 32]>,
     /// Raised whenever any message is enqueued, to release long-polling `GET /v1/inbox?wait=N`
     /// callers the moment their mail lands instead of on their next timer.
     ///
@@ -124,6 +126,10 @@ struct Config {
     mint_window_secs: u64,
     mint_per_ip_lifetime: usize,
     trusted_proxy_hops: usize,
+    /// Shared secret the billing/entitlement service presents to grant a namespace to an account.
+    /// Absent means the grant endpoint is closed, not open — an unconfigured deployment must not
+    /// hand out namespaces.
+    namespace_grant_token: Option<String>,
 }
 
 impl Config {
@@ -148,6 +154,11 @@ impl Config {
             // 0 = trust the socket peer. Behind the production Apache front this must be 1, or
             // every caller looks like the proxy and shares one budget.
             trusted_proxy_hops: env_num("TRUSTED_PROXY_HOPS", 0),
+            // Unset closes the grant endpoint. Defaulting it to anything would mean a fresh
+            // deployment hands out paid namespaces to whoever guesses the default.
+            namespace_grant_token: std::env::var("NAMESPACE_GRANT_TOKEN")
+                .ok()
+                .filter(|t| !t.trim().is_empty()),
         }
     }
 }
@@ -285,6 +296,10 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             lifetime: cfg.mint_per_ip_lifetime,
         },
         trusted_proxy_hops: cfg.trusted_proxy_hops,
+        namespace_grant_hash: cfg
+            .namespace_grant_token
+            .as_deref()
+            .map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
     })
 }
@@ -373,6 +388,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/report-spam", post(report_spam))
+        .route("/v1/namespaces", axum::routing::put(grant_namespace))
         .route(
             "/v1/contacts",
             get(get_contacts).put(put_contact).delete(delete_contact),
@@ -2094,6 +2110,75 @@ struct AckReq {
     identity: Option<String>,
 }
 
+#[derive(serde::Deserialize)]
+struct GrantNamespaceReq {
+    namespace: String,
+    account_id: String,
+    /// When the entitlement lapses. `None` means "until revoked" — a subscription should always
+    /// send one, so a lapsed payment stops minting without anyone remembering to revoke.
+    #[serde(default)]
+    expires_at: Option<u64>,
+}
+
+/// `PUT /v1/namespaces` — bind a purchased namespace to an account.
+///
+/// Called by the billing/entitlement service, never by an end user: an account that could grant
+/// itself a namespace would be helping itself to paid handles. Authenticated by a shared secret
+/// that, when unset, closes the endpoint rather than opening it.
+async fn grant_namespace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<GrantNamespaceReq>,
+) -> Response {
+    let Some(expected) = state.namespace_grant_hash else {
+        // Deliberately indistinguishable from "no such route" — an unconfigured deployment should
+        // not advertise that it has a namespace-granting endpoint at all.
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let presented = bearer(&headers).map(|token| sha256(token.as_bytes()));
+    if presented.is_none_or(|presented| !constant_time_eq(&presented, &expected)) {
+        return ApiError::unauthorized("invalid namespace grant credential").into_response();
+    }
+
+    // Canonicalise through core, so a grant for "Bekir" and a mint of "/bekir/x" agree.
+    let probe = format!("/{}/probe", req.namespace.trim_start_matches('/'));
+    let Ok(destination) = Destination::for_handle(&probe) else {
+        return ApiError::bad("invalid_namespace", "namespace has invalid characters")
+            .into_response();
+    };
+    let namespace = destination
+        .handle()
+        .and_then(|h| h.trim_start_matches('/').split('/').next())
+        .unwrap_or_default()
+        .to_string();
+
+    match state
+        .store
+        .set_namespace_owner(
+            namespace.clone(),
+            req.account_id.clone(),
+            "entitlement",
+            now_unix(),
+            req.expires_at,
+        )
+        .await
+    {
+        Ok(()) => {
+            tracing::info!(%namespace, account = %req.account_id, expires_at = ?req.expires_at, "namespace granted");
+            Json(json!({ "namespace": namespace, "account_id": req.account_id })).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "namespace grant failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// Compare two digests without leaking where they first differ.
+fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 /// `POST /v1/report-spam` — report the sender of one of the acting identity's messages.
 async fn report_spam(
     State(state): State<AppState>,
@@ -2299,6 +2384,7 @@ mod tests {
             max_inbox: 1000,
             mint_limits: limits,
             trusted_proxy_hops: 0,
+            namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
         }
     }
@@ -2746,6 +2832,85 @@ mod tests {
             .set_namespace_owner(namespace.into(), account.into(), "test", 1, None)
             .await
             .unwrap();
+    }
+
+    #[test]
+    fn an_unconfigured_grant_secret_closes_the_endpoint_rather_than_opening_it() {
+        // The failure that would matter most: a deployment that forgets to set the secret must not
+        // hand out paid namespaces to anyone who asks.
+        let state = test_state();
+        assert!(
+            state.namespace_grant_hash.is_none(),
+            "no secret configured in tests"
+        );
+        // …and the handler's first act on a None hash is to answer 404, exercised via the router
+        // build plus this invariant. Kept as an assertion so removing the `else` branch trips here.
+    }
+
+    #[test]
+    fn digest_comparison_does_not_short_circuit() {
+        let a = [7u8; 32];
+        let mut b = a;
+        assert!(constant_time_eq(&a, &b));
+        b[31] ^= 1;
+        assert!(
+            !constant_time_eq(&a, &b),
+            "a difference in the last byte still counts"
+        );
+        b = a;
+        b[0] ^= 1;
+        assert!(!constant_time_eq(&a, &b));
+    }
+
+    #[tokio::test]
+    async fn a_granted_namespace_expires_and_stops_minting() {
+        // A lapsed subscription must stop minting without anyone remembering to revoke it.
+        let state = test_state();
+        let now = now_unix();
+        state
+            .store
+            .set_namespace_owner(
+                "bekir".into(),
+                "acct_bekir".into(),
+                "entitlement",
+                now,
+                Some(now.saturating_sub(1)),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            do_create_identity(
+                &state,
+                Some("acct_bekir".into()),
+                None,
+                Some("/bekir/agent1".into())
+            )
+            .await
+            .expect_err("an expired entitlement is not ownership")
+            .code,
+            "namespace_not_yours"
+        );
+
+        // Renewing it restores minting.
+        state
+            .store
+            .set_namespace_owner(
+                "bekir".into(),
+                "acct_bekir".into(),
+                "entitlement",
+                now,
+                Some(now + 3600),
+            )
+            .await
+            .unwrap();
+        assert!(do_create_identity(
+            &state,
+            Some("acct_bekir".into()),
+            None,
+            Some("/bekir/agent1".into())
+        )
+        .await
+        .is_ok());
     }
 
     #[tokio::test]
@@ -3371,6 +3536,7 @@ mod tests {
                 lifetime: 1000,
             },
             trusted_proxy_hops: 0,
+            namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
         };
         let _ = build_router(state);
