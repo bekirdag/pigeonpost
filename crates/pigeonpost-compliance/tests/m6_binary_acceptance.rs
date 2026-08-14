@@ -207,7 +207,16 @@ impl Captures {
         stdin: Option<&[u8]>,
     ) -> Output {
         let output = self.invoke(label, binary, args, environment, stdin);
-        assert!(output.status.success(), "{label} failed");
+        // Include what the binary actually said. Asserting on the label alone means a failure here
+        // reports only which step broke and none of why, which turns a one-line diagnosis into a
+        // CI round trip.
+        assert!(
+            output.status.success(),
+            "{label} failed ({})\n--- stdout ---\n{}\n--- stderr ---\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
         output
     }
 }
