@@ -9,6 +9,7 @@ mod handle_cmd;
 mod install_cmd;
 mod loft_cmd;
 mod loft_key;
+mod login_cmd;
 mod output;
 mod postbox_cmd;
 mod registry_cmd;
@@ -200,6 +201,26 @@ enum Command {
         #[command(subcommand)]
         action: DirectoryAction,
     },
+
+    /// Sign this terminal in to a Pigeonpost account.
+    Login {
+        /// Authenticate by typing a short code into a browser on another device. Use this on a
+        /// machine with no browser of its own.
+        #[arg(long)]
+        device: bool,
+        /// The account issuer to authenticate against.
+        #[arg(long, env = "PIGEONPOST_ISSUER", default_value = login_cmd::DEFAULT_ISSUER)]
+        issuer: String,
+        /// Print the URL and wait, without trying to launch a browser.
+        #[arg(long)]
+        no_browser: bool,
+    },
+
+    /// Show whether this machine is signed in. Never prints a token.
+    Whoami,
+
+    /// Forget this machine's session.
+    Logout,
 
     /// Mint and manage inboxes hosted on a postbox (no local loft required).
     Postbox {
@@ -1024,6 +1045,25 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         .await;
     }
 
+    // Signing in touches no agent identity, so like the read-only commands it must not create one
+    // as a side effect of being run.
+    match &cli.command {
+        Command::Login {
+            device,
+            issuer,
+            no_browser,
+        } => {
+            return if *device {
+                login_cmd::login_device(&home, issuer).await
+            } else {
+                login_cmd::login_browser(&home, issuer, !*no_browser).await
+            };
+        }
+        Command::Whoami => return login_cmd::status(&home, cli.json),
+        Command::Logout => return login_cmd::logout(&home),
+        _ => {}
+    }
+
     // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
     // above — they must not mint an identity in someone's home as a side effect.
     if let Command::Postbox { action } = &cli.command {
@@ -1647,7 +1687,12 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             DirectoryAction::Serve { .. } => unreachable!("handled before identity setup"),
         },
 
-        Command::Registry { .. } | Command::Install { .. } | Command::Postbox { .. } => {
+        Command::Registry { .. }
+        | Command::Install { .. }
+        | Command::Postbox { .. }
+        | Command::Login { .. }
+        | Command::Whoami
+        | Command::Logout => {
             unreachable!("handled before identity setup")
         }
     }
