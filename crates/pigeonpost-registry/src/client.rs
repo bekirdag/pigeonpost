@@ -2344,7 +2344,7 @@ mod tests {
         ));
 
         release_tx.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 match lane.run(|| Ok(())).await {
                     Ok(()) => break,

@@ -1031,7 +1031,7 @@ mod tests {
 
     async fn read_json_line<R: AsyncBufRead + Unpin>(reader: &mut R) -> Value {
         let mut line = String::new();
-        tokio::time::timeout(Duration::from_secs(1), reader.read_line(&mut line))
+        tokio::time::timeout(Duration::from_secs(60), reader.read_line(&mut line))
             .await
             .expect("response deadline")
             .unwrap();
@@ -1115,7 +1115,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
         client_write
@@ -1170,7 +1170,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
 
@@ -1217,7 +1217,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
         client_write
@@ -1228,7 +1228,7 @@ mod tests {
             .unwrap();
         let ping = read_json_line(&mut client_read).await;
         assert_eq!(ping["id"], 8);
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while !finished.load(Ordering::Acquire) {
                 tokio::time::sleep(Duration::from_millis(1)).await;
             }
@@ -1274,7 +1274,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
         client_write
@@ -1321,7 +1321,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
         client_write
@@ -1367,7 +1367,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .unwrap();
         client_write

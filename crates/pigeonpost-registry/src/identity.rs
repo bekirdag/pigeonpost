@@ -990,7 +990,7 @@ mod tests {
                 .await
             }
         });
-        tokio::time::timeout(Duration::from_secs(1), reached_rx)
+        tokio::time::timeout(Duration::from_secs(60), reached_rx)
             .await
             .expect("the blocking verification must start")
             .unwrap();

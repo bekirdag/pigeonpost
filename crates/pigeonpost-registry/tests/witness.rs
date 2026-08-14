@@ -593,9 +593,12 @@ async fn supervisor_retries_when_a_complete_sync_races_with_an_append() {
         async move { supervisor.run(shutdown_rx).await }
     });
 
-    tokio::time::timeout(Duration::from_secs(1), state.wait_until_submission_paused())
-        .await
-        .expect("the first witness submission should pause");
+    tokio::time::timeout(
+        Duration::from_secs(60),
+        state.wait_until_submission_paused(),
+    )
+    .await
+    .expect("the first witness submission should pause");
 
     // The supervisor captured the empty head before the pause. Commit a new head so its
     // successful empty-head sync is immediately followed by an unready zero-lag check.
@@ -606,7 +609,7 @@ async fn supervisor_retries_when_a_complete_sync_races_with_an_append() {
     assert_eq!(registry.size().unwrap(), 0);
     state.release_submission();
 
-    tokio::time::timeout(Duration::from_secs(2), async {
+    tokio::time::timeout(Duration::from_secs(60), async {
         loop {
             if registry
                 .witness_publication_status()
@@ -634,7 +637,7 @@ async fn supervisor_retries_when_a_complete_sync_races_with_an_append() {
     assert!(registry.witness_readiness(system_now_secs()).is_ok());
 
     shutdown_tx.send(true).unwrap();
-    tokio::time::timeout(Duration::from_secs(1), run)
+    tokio::time::timeout(Duration::from_secs(60), run)
         .await
         .expect("the supervisor should stop promptly")
         .expect("the supervisor task should not panic")

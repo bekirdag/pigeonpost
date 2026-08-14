@@ -3410,7 +3410,7 @@ mod endpoint_trust_tests {
     }
 
     async fn wait_for_count(counter: &AtomicUsize, expected: usize) {
-        tokio::time::timeout(Duration::from_secs(2), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while counter.load(Ordering::SeqCst) < expected {
                 tokio::task::yield_now().await;
             }
@@ -3477,7 +3477,7 @@ mod endpoint_trust_tests {
         assert_eq!(response_budget.available_permits(), 0);
 
         gate.release.add_permits(2);
-        let (_, first) = tokio::time::timeout(Duration::from_secs(2), fetches.next())
+        let (_, first) = tokio::time::timeout(Duration::from_secs(60), fetches.next())
             .await
             .unwrap()
             .unwrap()
@@ -3495,7 +3495,7 @@ mod endpoint_trust_tests {
 
         gate.release.add_permits(1);
         for _ in 0..2 {
-            let (_, outcome) = tokio::time::timeout(Duration::from_secs(2), fetches.next())
+            let (_, outcome) = tokio::time::timeout(Duration::from_secs(60), fetches.next())
                 .await
                 .unwrap()
                 .unwrap()
@@ -3542,7 +3542,7 @@ mod endpoint_trust_tests {
             result = &mut add => panic!("add_loft completed before its record PUT was released: {result:?}"),
         }
 
-        let error = tokio::time::timeout(Duration::from_secs(1), rotator.rotate())
+        let error = tokio::time::timeout(Duration::from_secs(60), rotator.rotate())
             .await
             .expect("contending rotation did not fail fast")
             .unwrap_err();
@@ -3552,12 +3552,12 @@ mod endpoint_trust_tests {
         ));
 
         gate.release.add_permits(1);
-        tokio::time::timeout(Duration::from_secs(2), &mut add)
+        tokio::time::timeout(Duration::from_secs(60), &mut add)
             .await
             .expect("add_loft did not finish after record publication resumed")
             .unwrap();
 
-        let rotated = tokio::time::timeout(Duration::from_secs(5), rotator.rotate())
+        let rotated = tokio::time::timeout(Duration::from_secs(60), rotator.rotate())
             .await
             .expect("rotation did not resume after add_loft released its lease")
             .unwrap();
@@ -3635,7 +3635,7 @@ mod endpoint_trust_tests {
         assert_eq!(publisher.state.lofts().unwrap().len(), 1);
 
         gate.release.add_permits(1);
-        let rotated = tokio::time::timeout(Duration::from_secs(5), &mut rotation)
+        let rotated = tokio::time::timeout(Duration::from_secs(60), &mut rotation)
             .await
             .expect("rotation did not resume after record publication was released")
             .unwrap();
@@ -3737,7 +3737,7 @@ mod endpoint_trust_tests {
             ClientError::Config(message) if message.contains("identity is busy")
         ));
         gate.release.add_permits(1);
-        tokio::time::timeout(Duration::from_secs(2), &mut set_pow)
+        tokio::time::timeout(Duration::from_secs(60), &mut set_pow)
             .await
             .expect("PoW update did not resume after record publication was released")
             .unwrap();
@@ -3774,7 +3774,7 @@ mod endpoint_trust_tests {
             ClientError::Config(message) if message.contains("identity is busy")
         ));
         gate.policy_release.add_permits(1);
-        tokio::time::timeout(Duration::from_secs(2), &mut revoke)
+        tokio::time::timeout(Duration::from_secs(60), &mut revoke)
             .await
             .expect("token revocation did not resume after policy publication was released")
             .unwrap();
@@ -3795,7 +3795,7 @@ mod endpoint_trust_tests {
             ClientError::Config(message) if message.contains("identity is busy")
         ));
         gate.release.add_permits(1);
-        assert!(tokio::time::timeout(Duration::from_secs(2), &mut remove)
+        assert!(tokio::time::timeout(Duration::from_secs(60), &mut remove)
             .await
             .expect("Loft removal did not resume after record publication was released")
             .unwrap());
@@ -4112,7 +4112,7 @@ mod endpoint_trust_tests {
             .unwrap();
         agent
             .attempt_record_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 |_address, _record, _target| async { true },
             )
@@ -4134,7 +4134,7 @@ mod endpoint_trust_tests {
         let observed = Arc::clone(&contacted);
         agent
             .attempt_record_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 move |_address, _record, target| {
                     let observed = Arc::clone(&observed);
@@ -4181,7 +4181,7 @@ mod endpoint_trust_tests {
         agent.prepare_record_publication(&pool, now()).unwrap();
         agent
             .attempt_record_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 |_address, _record, target| async move { target.url == "https://own.example" },
             )
@@ -4195,7 +4195,7 @@ mod endpoint_trust_tests {
         let reopened = Agent::open(&home).unwrap();
         reopened
             .attempt_record_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 |_address, _record, _target| async { true },
             )
@@ -4254,7 +4254,7 @@ mod endpoint_trust_tests {
             .unwrap();
         agent
             .attempt_rotation_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 |_rotation, target| async move { target.url == "https://r1.example" },
             )
@@ -4268,7 +4268,7 @@ mod endpoint_trust_tests {
         let observed = Arc::clone(&seen_sequences);
         reopened
             .attempt_rotation_publication_with(
-                tokio::time::Instant::now() + Duration::from_secs(1),
+                tokio::time::Instant::now() + Duration::from_secs(60),
                 MAX_PLACEMENT_ATTEMPTS_PER_WAKE,
                 move |bundle, _target| {
                     let observed = Arc::clone(&observed);

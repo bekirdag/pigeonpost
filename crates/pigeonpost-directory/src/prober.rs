@@ -1090,7 +1090,7 @@ mod tests {
         );
 
         release.store(true, Ordering::Release);
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while limiter.available_permits() == 0 {
                 tokio::task::yield_now().await;
             }

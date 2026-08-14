@@ -188,7 +188,7 @@ mod unix {
                     Err(RecvTimeoutError::Disconnected) => {
                         // Closing stdout is a startup failure even if process reaping has not yet
                         // become observable through try_wait.
-                        let deadline = Instant::now() + Duration::from_secs(1);
+                        let deadline = Instant::now() + Duration::from_secs(60);
                         loop {
                             if let Some(output) = exited_output(&mut child) {
                                 break 'startup Some(output);

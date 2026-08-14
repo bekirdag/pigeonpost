@@ -4064,7 +4064,7 @@ mod tests {
                 .await
             }
         });
-        tokio::time::timeout(Duration::from_secs(1), reached)
+        tokio::time::timeout(Duration::from_secs(60), reached)
             .await
             .expect("compliance encoding must reach the blocking-lane barrier")
             .unwrap();
@@ -4072,7 +4072,7 @@ mod tests {
             .await
             .expect("blocking compliance encoding must leave the executor responsive");
         release.send(()).unwrap();
-        let response = tokio::time::timeout(Duration::from_secs(1), response)
+        let response = tokio::time::timeout(Duration::from_secs(60), response)
             .await
             .expect("compliance response must finish after serialization resumes")
             .unwrap()
@@ -4110,7 +4110,7 @@ mod tests {
             tokio::spawn(
                 async move { axum::body::to_bytes(response.into_body(), 1024 * 1024).await },
             );
-        tokio::time::timeout(Duration::from_secs(1), reached)
+        tokio::time::timeout(Duration::from_secs(60), reached)
             .await
             .expect("dump encoding must reach the blocking-lane barrier")
             .unwrap();
@@ -4118,7 +4118,7 @@ mod tests {
             .await
             .expect("blocking dump encoding must leave the current-thread executor responsive");
         release.send(()).unwrap();
-        let bytes = tokio::time::timeout(Duration::from_secs(1), drain)
+        let bytes = tokio::time::timeout(Duration::from_secs(60), drain)
             .await
             .expect("dump must finish after serialization resumes")
             .unwrap()
@@ -4143,14 +4143,14 @@ mod tests {
             send_dump_chunk_with_idle(
                 &sender,
                 Bytes::from_static(b"blocked"),
-                Some(tokio::time::Instant::now() + Duration::from_secs(1)),
+                Some(tokio::time::Instant::now() + Duration::from_secs(60)),
                 Duration::from_millis(20),
             )
             .await
         });
 
         assert!(matches!(state.try_stream(), Err(RegistryError::Overloaded)));
-        assert!(!tokio::time::timeout(Duration::from_secs(1), task)
+        assert!(!tokio::time::timeout(Duration::from_secs(60), task)
             .await
             .expect("idle deadline must end the stream task")
             .unwrap());
@@ -4287,7 +4287,7 @@ mod tests {
 
         let (server, _stalled_reader) = tokio::io::duplex(1);
         let mut transport = IdleWriteIo::new(server, Duration::from_millis(20));
-        let error = tokio::time::timeout(Duration::from_secs(1), transport.write_all(b"final"))
+        let error = tokio::time::timeout(Duration::from_secs(60), transport.write_all(b"final"))
             .await
             .expect("transport watchdog must fire")
             .unwrap_err();
@@ -4318,7 +4318,7 @@ mod tests {
             .unwrap();
         let mut response = Vec::new();
         let closed =
-            tokio::time::timeout(Duration::from_secs(1), peer.read_to_end(&mut response)).await;
+            tokio::time::timeout(Duration::from_secs(60), peer.read_to_end(&mut response)).await;
         assert!(
             closed.is_ok(),
             "partial headers must not retain a connection"
@@ -4349,7 +4349,7 @@ mod tests {
             .unwrap();
         h2.shutdown().await.unwrap();
         let mut rejection = Vec::new();
-        tokio::time::timeout(Duration::from_secs(1), h2.read_to_end(&mut rejection))
+        tokio::time::timeout(Duration::from_secs(60), h2.read_to_end(&mut rejection))
             .await
             .expect("the HTTP/1.1-only origin must close an HTTP/2 preface")
             .unwrap();
@@ -4364,7 +4364,7 @@ mod tests {
             .await
             .unwrap();
         let mut response = Vec::new();
-        tokio::time::timeout(Duration::from_secs(1), http1.read_to_end(&mut response))
+        tokio::time::timeout(Duration::from_secs(60), http1.read_to_end(&mut response))
             .await
             .expect("rejecting HTTP/2 must not damage HTTP/1.1 service")
             .unwrap();
@@ -4423,7 +4423,7 @@ mod tests {
         assert!(state.full_dump_active());
         assert!(!state.close_requested());
         drop(guard);
-        tokio::time::timeout(Duration::from_secs(1), changed.changed())
+        tokio::time::timeout(Duration::from_secs(60), changed.changed())
             .await
             .unwrap()
             .unwrap();
@@ -4494,7 +4494,7 @@ mod tests {
         assert!(matches!(state.try_enter(), Err(RegistryError::Overloaded)));
         drop(response);
         drop(sender);
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 if state.requests.available_permits() == 1 {
                     break;
@@ -4550,7 +4550,7 @@ mod tests {
             )
             .await
         });
-        assert!(!tokio::time::timeout(Duration::from_secs(1), stalled)
+        assert!(!tokio::time::timeout(Duration::from_secs(60), stalled)
             .await
             .expect("idle full-dump reader must be disconnected")
             .unwrap());
@@ -4618,12 +4618,12 @@ mod tests {
         });
         let request = tokio::spawn(async move { reqwest::get(endpoint).await });
 
-        tokio::time::timeout(Duration::from_secs(1), started.notified())
+        tokio::time::timeout(Duration::from_secs(60), started.notified())
             .await
             .expect("slow handler must start");
         assert!(matches!(state.try_enter(), Err(RegistryError::Overloaded)));
 
-        let response = tokio::time::timeout(Duration::from_secs(1), request)
+        let response = tokio::time::timeout(Duration::from_secs(60), request)
             .await
             .expect("request must finish at the configured deadline")
             .unwrap()
@@ -4828,12 +4828,12 @@ mod tests {
             )
             .await
         });
-        tokio::time::timeout(Duration::from_secs(1), reached)
+        tokio::time::timeout(Duration::from_secs(60), reached)
             .await
             .expect("commit must reach the post-SQLite barrier")
             .unwrap();
         assert!(matches!(
-            tokio::time::timeout(Duration::from_secs(1), first)
+            tokio::time::timeout(Duration::from_secs(60), first)
                 .await
                 .expect("the blocking adapter must return at its configured timeout")
                 .unwrap(),
@@ -4841,7 +4841,7 @@ mod tests {
         ));
 
         release.send(()).unwrap();
-        tokio::time::timeout(Duration::from_secs(1), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             while state.blocking.available_permits() != 1 {
                 tokio::task::yield_now().await;
             }

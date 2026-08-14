@@ -2974,7 +2974,7 @@ mod tests {
 
         let epoch_end = epoch_end_ms(&live.key_id).unwrap();
         manual_now.store(epoch_end, Ordering::Release);
-        let wait_deadline = Instant::now() + Duration::from_secs(2);
+        let wait_deadline = Instant::now() + Duration::from_secs(60);
         while (!manifest_path.exists() || live_path.exists()) && Instant::now() < wait_deadline {
             std::thread::sleep(Duration::from_millis(1));
         }

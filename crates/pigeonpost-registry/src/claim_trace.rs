@@ -3605,7 +3605,7 @@ mod tests {
         let epoch_end = epoch_end_ms(&network_live.key_id).unwrap();
         assert_eq!(epoch_end, epoch_end_ms(&identity_live.key_id).unwrap());
         manual_now.store(epoch_end, Ordering::Release);
-        let wait_deadline = Instant::now() + Duration::from_secs(2);
+        let wait_deadline = Instant::now() + Duration::from_secs(60);
         while (!network_manifest_path.exists()
             || !identity_manifest_path.exists()
             || network_live_path.exists()

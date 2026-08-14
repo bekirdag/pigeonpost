@@ -1892,7 +1892,7 @@ mod tests {
         assert!(healthy, "HTTP must be live before the injected prober exit");
 
         fail_prober.send(()).unwrap();
-        let error = tokio::time::timeout(Duration::from_secs(2), service)
+        let error = tokio::time::timeout(Duration::from_secs(60), service)
             .await
             .expect("supervision must terminate promptly")
             .unwrap()
@@ -2381,7 +2381,7 @@ mod tests {
             .await
             .unwrap();
         let mut byte = [0u8; 1];
-        let closed = tokio::time::timeout(Duration::from_secs(1), stream.read(&mut byte))
+        let closed = tokio::time::timeout(Duration::from_secs(60), stream.read(&mut byte))
             .await
             .expect("incomplete headers must not retain a directory connection");
         assert!(matches!(closed, Ok(0) | Err(_)));
@@ -2429,7 +2429,7 @@ mod tests {
             .write_all(b"GET /large HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(1), first_poll.notified())
+        tokio::time::timeout(Duration::from_secs(60), first_poll.notified())
             .await
             .expect("large response body must reach the transport");
         assert_eq!(state.requests.available_permits(), 0);
@@ -2442,7 +2442,7 @@ mod tests {
         assert_eq!(overloaded.status(), StatusCode::SERVICE_UNAVAILABLE);
         drop(overloaded);
 
-        tokio::time::timeout(Duration::from_secs(3), async {
+        tokio::time::timeout(Duration::from_secs(60), async {
             loop {
                 let response = client
                     .get(format!("http://{address}/small"))

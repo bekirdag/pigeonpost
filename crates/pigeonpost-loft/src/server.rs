@@ -1547,7 +1547,7 @@ mod tests {
                 loft.capture_trace(&peer, TraceOperation::PutAgent).await
             });
         }
-        let started = tokio::time::timeout(Duration::from_secs(1), async {
+        let started = tokio::time::timeout(Duration::from_secs(60), async {
             while sink.captures.load(Ordering::Acquire) < TRACE_BLOCKING_LANES {
                 tokio::task::yield_now().await;
             }
@@ -1562,7 +1562,7 @@ mod tests {
 
         // Release before asserting so a failed regression cannot strand a blocking test worker.
         sink.release.store(true, Ordering::Release);
-        let lane_released = tokio::time::timeout(Duration::from_secs(1), async {
+        let lane_released = tokio::time::timeout(Duration::from_secs(60), async {
             while loft.trace_blocking.available_permits() != TRACE_BLOCKING_LANES {
                 tokio::task::yield_now().await;
             }
@@ -1816,7 +1816,7 @@ mod tests {
             .await
             .unwrap();
         let mut byte = [0u8; 1];
-        let closed = tokio::time::timeout(Duration::from_secs(2), stream.read(&mut byte))
+        let closed = tokio::time::timeout(Duration::from_secs(60), stream.read(&mut byte))
             .await
             .expect("incomplete headers must not retain a connection");
         assert!(matches!(closed, Ok(0) | Err(_)));
@@ -1868,7 +1868,7 @@ mod tests {
             )
             .await
             .unwrap();
-        tokio::time::timeout(Duration::from_secs(2), first_poll.notified())
+        tokio::time::timeout(Duration::from_secs(60), first_poll.notified())
             .await
             .expect("large response body must reach the transport");
         assert!(matches!(

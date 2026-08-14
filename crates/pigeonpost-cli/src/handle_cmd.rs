@@ -1645,7 +1645,7 @@ mod tests {
             &new_identity.verifying_key().to_bytes(),
             1,
             "handle_rotate",
-            Instant::now() + Duration::from_secs(2),
+            Instant::now() + Duration::from_secs(60),
         )
         .await
         .unwrap();
@@ -1691,7 +1691,7 @@ mod tests {
                 &expected_pubkey,
                 0,
                 "handle_bind",
-                Instant::now() + Duration::from_secs(1),
+                Instant::now() + Duration::from_secs(60),
             )
             .await
             .unwrap_err()

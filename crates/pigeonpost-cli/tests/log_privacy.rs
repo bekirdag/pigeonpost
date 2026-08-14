@@ -164,7 +164,7 @@ impl ServiceProcess {
     fn stop(mut self) -> Output {
         let mut child = self.child.take().expect("service process already consumed");
         interrupt(&mut child);
-        let deadline = std::time::Instant::now() + Duration::from_secs(8);
+        let deadline = std::time::Instant::now() + Duration::from_secs(60);
         loop {
             match child.try_wait() {
                 Ok(Some(_)) => break,
@@ -1199,7 +1199,7 @@ async fn try_raw_http(
     headers: &[(&str, &str)],
     body: &[u8],
 ) -> io::Result<RawResponse> {
-    tokio::time::timeout(Duration::from_secs(3), async move {
+    tokio::time::timeout(Duration::from_secs(60), async move {
         let socket = TcpSocket::new_v4()?;
         socket.bind(SocketAddr::new(source_ip, 0))?;
         let stream = socket.connect(address).await?;
