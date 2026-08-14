@@ -1409,7 +1409,11 @@ mod tests {
             Err(DirectoryError::NotFound)
         ));
 
-        let recovery_deadline = Instant::now() + Duration::from_secs(4);
+        // Generous because it is a ceiling, not a target: the loop leaves the moment the
+        // supervisor has consumed the reservation, so a longer bound costs a correct build
+        // nothing and only buys patience on a loaded CI runner. At 4s this went red on Linux
+        // while asserting behaviour that was working.
+        let recovery_deadline = Instant::now() + Duration::from_secs(60);
         while directory.has_pending_mutations().unwrap() && Instant::now() < recovery_deadline {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
@@ -1466,7 +1470,7 @@ mod tests {
             log,
         ))
         .await;
-        let deadline = Instant::now() + Duration::from_secs(4);
+        let deadline = Instant::now() + Duration::from_secs(60);
         while directory.has_pending_mutations().unwrap() && Instant::now() < deadline {
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
