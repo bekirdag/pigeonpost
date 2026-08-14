@@ -53,6 +53,7 @@ use zeroize::Zeroize;
 mod mcp;
 mod oidc;
 mod pow;
+mod reputation;
 mod store;
 mod vault;
 mod verbs;
@@ -371,6 +372,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
+        .route("/v1/report-spam", post(report_spam))
         .route(
             "/v1/contacts",
             get(get_contacts).put(put_contact).delete(delete_contact),
@@ -832,12 +834,144 @@ fn resolve_client_ip(headers: &HeaderMap, peer: Option<&str>, hops: usize) -> St
     peer.unwrap_or("unknown").to_string()
 }
 
+// ---------------------------------------------------------------------------------------------
+// Reputation
+//
+// What an address has earned, as opposed to what a human granted it. See `reputation.rs` for the
+// policy; this half is the plumbing that reads the store and applies it.
+// ---------------------------------------------------------------------------------------------
+
+/// Where an identity sits on the tier ladder.
+///
+/// The postbox only ever sees `/k/` addresses, so today this is "did someone create an account for
+/// it". The handle tiers exist in [`reputation::Tier`] and become reachable when the postbox
+/// learns about registry handles.
+fn tier_of(identity: &store::StoredIdentity) -> reputation::Tier {
+    match identity.account_id {
+        Some(_) => reputation::Tier::Account,
+        None => reputation::Tier::Anonymous,
+    }
+}
+
+/// A sender's current score: their tier's starting point, less what they have been reported for.
+async fn sender_score(state: &AppState, identity: &store::StoredIdentity) -> i64 {
+    let reports = state
+        .store
+        .reports_against(identity.address.clone())
+        .await
+        .unwrap_or(0);
+    reputation::after_reports(tier_of(identity).prior(), reports)
+}
+
+/// An IP's score. An IP has no tier — it starts neutral and only moves down, because "this address
+/// has never been reported" is not evidence of anything.
+async fn ip_score(state: &AppState, ip: &str) -> i64 {
+    let reports = state
+        .store
+        .reports_against(ip.to_string())
+        .await
+        .unwrap_or(0);
+    reputation::after_reports(0, reports)
+}
+
+/// Record a spam report against the sender of one of `me`'s messages.
+///
+/// Reporting is a *lowering* of trust in someone else, so an agent may do it — unlike every write
+/// in the contacts layer, there is no way to widen your own exposure with it.
+pub(crate) async fn do_report_spam(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    message_id: String,
+) -> Result<serde_json::Value, ApiError> {
+    // Scoped to the reporter's own inbox: you can only report mail somebody actually sent you,
+    // which is what stops this being a way to attack a stranger's standing from nowhere.
+    let sender = state
+        .store
+        .message_sender(message_id.clone(), me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "not_found",
+                "no such message in your inbox",
+            )
+        })?;
+    if sender == me.address {
+        return Err(ApiError::bad(
+            "invalid_report",
+            "an inbox cannot report itself",
+        ));
+    }
+
+    // A buried reporter's reports do not count. Otherwise minting inboxes becomes a way to
+    // manufacture downvotes — the same flood this is meant to price, aimed at reputations.
+    let my_score = sender_score(state, me).await;
+    if !reputation::report_counts(my_score) {
+        tracing::warn!(reporter = %me.address, score = my_score, "spam report ignored: reporter is buried");
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "reporter_not_in_good_standing",
+            "this inbox's own standing is too low for its reports to count",
+        ));
+    }
+
+    let counted = state
+        .store
+        .record_spam_report(
+            message_id.clone(),
+            me.address.clone(),
+            sender.clone(),
+            now_unix(),
+        )
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "spam report failed");
+            ApiError::server("store_error")
+        })?;
+
+    let reports = state
+        .store
+        .reports_against(sender.clone())
+        .await
+        .unwrap_or(0);
+    tracing::info!(
+        reporter = %me.address, %sender, %message_id, counted, reports,
+        "spam reported"
+    );
+    Ok(json!({
+        "reported": counted,
+        "sender": sender,
+        "reports_against_sender": reports,
+        // Said plainly because "already reported" is a success from the caller's point of view —
+        // the outcome they wanted holds — and retrying would be the wrong reaction.
+        "detail": if counted { "report recorded" } else { "this message was already reported" },
+    }))
+}
+
 /// Refuse an unauthenticated mint when the caller's IP is over its window or lifetime budget.
 /// Checked *before* the proof-of-work is consumed, so a throttled caller isn't made to burn CPU
 /// only to be turned away.
 async fn check_mint_budget(state: &AppState, ip: &str) -> Result<(), ApiError> {
     let now = now_unix();
     let since = now.saturating_sub(state.mint_limits.window_secs);
+
+    // An IP that keeps producing inboxes recipients report loses the right to produce them. This
+    // sits ahead of the ordinary budget because it is a stronger statement than "too many, too
+    // fast" — it is "these were unwanted".
+    let standing = ip_score(state, ip).await;
+    let allowance = match reputation::mint_allowance(state.mint_limits.per_window, standing) {
+        None => {
+            tracing::warn!(%ip, standing, "mint refused: source halted by reports");
+            return Err(ApiError::new(
+                StatusCode::TOO_MANY_REQUESTS,
+                "mint_source_halted",
+                "inboxes minted from this address have been reported as spam repeatedly; \
+                 it can no longer mint. Use an account API key.",
+            ));
+        }
+        Some(a) => a,
+    };
     let (recent, lifetime) = state
         .store
         .mint_counts(ip.to_string(), since)
@@ -858,7 +992,7 @@ async fn check_mint_budget(state: &AppState, ip: &str) -> Result<(), ApiError> {
             ),
         ));
     }
-    if recent >= state.mint_limits.per_window {
+    if recent >= allowance {
         let retry_after = state
             .store
             .oldest_mint_in_window(ip.to_string(), since)
@@ -871,13 +1005,14 @@ async fn check_mint_budget(state: &AppState, ip: &str) -> Result<(), ApiError> {
                     .max(1)
             })
             .unwrap_or(state.mint_limits.window_secs);
-        tracing::warn!(%ip, recent, retry_after, "mint refused: rate limit");
+        tracing::warn!(%ip, recent, allowance, retry_after, "mint refused: rate limit");
         return Err(ApiError::new(
             StatusCode::TOO_MANY_REQUESTS,
             "mint_rate_limited",
             format!(
-                "{} inboxes already minted from this address in the last {}s — retry in {}s, or use an account API key",
-                recent, state.mint_limits.window_secs, retry_after
+                "{} inboxes already minted from this address in the last {}s (allowance {}) — \
+                 retry in {}s, or use an account API key",
+                recent, state.mint_limits.window_secs, allowance, retry_after
             ),
         )
         .with_retry_after(retry_after));
@@ -1396,6 +1531,37 @@ pub(crate) async fn do_send(
         ));
     }
 
+    // A sender nobody at this inbox has vouched for, with nothing earned, gets a trickle rather
+    // than a firehose. Only strangers: once the recipient has added a contact, that human decision
+    // outranks anything the score inferred. Refused loudly, never dropped silently — the sender is
+    // told to slow down, and the recipient is not quietly edited.
+    if contact.is_none() {
+        let standing = sender_score(state, sender).await;
+        if reputation::throttles_strangers(standing) {
+            let since = now_unix().saturating_sub(reputation::STRANGER_WINDOW_SECS);
+            let already = state
+                .store
+                .messages_between_since(sender.address.clone(), recipient.address.clone(), since)
+                .await
+                .map_err(|_| ApiError::server("store_error"))?;
+            if already >= reputation::STRANGER_MESSAGES_PER_WINDOW {
+                tracing::info!(
+                    from = %sender.address, to = %recipient.address, standing, already,
+                    "send refused: stranger throttle"
+                );
+                return Err(ApiError::new(
+                    StatusCode::TOO_MANY_REQUESTS,
+                    "stranger_rate_limited",
+                    format!(
+                        "you have sent {already} messages to this inbox in the last hour and they \
+                         have not added you as a contact. Wait, or ask them to add you.",
+                    ),
+                )
+                .with_retry_after(reputation::STRANGER_WINDOW_SECS));
+            }
+        }
+    }
+
     // Inbox quota: don't let one recipient's inbox grow without bound (disk protection).
     let held = state
         .store
@@ -1508,6 +1674,21 @@ pub(crate) async fn do_inbox(
         .await
         .map_err(|_| ApiError::server("store_error"))?;
 
+    // Score each distinct sender once rather than per message: an inbox full of mail from one
+    // flooding address is exactly the case where the naive version does the most redundant work.
+    let mut sender_reputation: std::collections::HashMap<String, (i64, reputation::Tier)> =
+        std::collections::HashMap::new();
+    for address in messages
+        .iter()
+        .map(|m| m.sender.clone())
+        .collect::<std::collections::BTreeSet<_>>()
+    {
+        if let Ok(Some(identity)) = state.store.get(address.clone()).await {
+            let score = sender_score(state, &identity).await;
+            sender_reputation.insert(address, (score, tier_of(&identity)));
+        }
+    }
+
     let mut out = Vec::new();
     for m in messages {
         let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
@@ -1548,10 +1729,22 @@ pub(crate) async fn do_inbox(
                 }
             };
 
+            // What this sender has earned, alongside what the recipient granted. Stamped as words
+            // as well as a number: an agent should not have to guess the scale to know that
+            // "reported_repeatedly" deserves more suspicion than "unproven".
+            let (score, tier) = sender_reputation
+                .get(&from)
+                .copied()
+                .unwrap_or((0, reputation::Tier::Anonymous));
+            let standing = reputation::standing(score);
+
             out.push(json!({
                 "message_id": m.id,
                 "from": from,
                 "body": body.as_str(),
+                "sender_score": score,
+                "sender_standing": standing,
+                "sender_tier": tier.as_str(),
                 // Stays true at every autonomy level: `auto` says the recipient chose to act on
                 // this sender's messages, not that the text stopped being someone else's input.
                 "untrusted": true,
@@ -1781,6 +1974,22 @@ struct AckReq {
     message_id: String,
     #[serde(default)]
     identity: Option<String>,
+}
+
+/// `POST /v1/report-spam` — report the sender of one of the acting identity's messages.
+async fn report_spam(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AckReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match do_report_spam(&state, &me, req.message_id).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
+    }
 }
 
 /// `POST /v1/ack` — mark one of the acting identity's messages read.
@@ -2410,6 +2619,175 @@ mod tests {
         assert_eq!(unknown["alias"], serde_json::Value::Null);
         assert_eq!(unknown["autonomy"], "review");
         assert_eq!(unknown["held_because"], "sender_not_auto");
+    }
+
+    #[tokio::test]
+    async fn a_report_lowers_the_sender_and_the_source_that_minted_them() {
+        let state = test_state();
+        let spammer = mint(&state).await;
+        let victim = mint(&state).await;
+        // Anonymous mints are recorded against their source IP by the Phase 1 path; do the same
+        // here so the report has a source to charge.
+        state
+            .store
+            .record_mint(
+                "198.51.100.7".into(),
+                "identity",
+                Some(spammer.address.clone()),
+                1,
+            )
+            .await
+            .unwrap();
+
+        let sent = do_send(&state, &spammer, &victim.address, "buy my thing")
+            .await
+            .unwrap();
+        let id = sent["message_id"].as_str().unwrap().to_string();
+
+        let before_sender = sender_score(&state, &spammer).await;
+        let before_ip = ip_score(&state, "198.51.100.7").await;
+
+        let report = do_report_spam(&state, &victim, id.clone()).await.unwrap();
+        assert_eq!(report["reported"], true);
+
+        assert!(
+            sender_score(&state, &spammer).await < before_sender,
+            "a report must measurably cost the sender"
+        );
+        assert!(
+            ip_score(&state, "198.51.100.7").await < before_ip,
+            "and the source, or burning the inbox and minting another is free"
+        );
+
+        // Idempotent: re-reporting the same message must not charge twice.
+        let again = do_report_spam(&state, &victim, id).await.unwrap();
+        assert_eq!(again["reported"], false);
+        assert_eq!(again["reports_against_sender"], 1);
+    }
+
+    #[tokio::test]
+    async fn only_mail_actually_sent_to_you_can_be_reported() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let bystander = mint(&state).await;
+        let sent = do_send(&state, &alice, &bob.address, "hello")
+            .await
+            .unwrap();
+        let id = sent["message_id"].as_str().unwrap().to_string();
+
+        assert_eq!(
+            do_report_spam(&state, &bystander, id)
+                .await
+                .expect_err("reporting a message you never received is how this becomes a weapon")
+                .code,
+            "not_found"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_flooding_source_is_throttled_and_then_halted() {
+        let state = state_with_limits(MintLimits {
+            per_window: 5,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        let ip = "203.0.113.99";
+        assert!(check_mint_budget(&state, ip).await.is_ok());
+
+        // Enough reports to cross the throttle, then the halt.
+        let victim = mint(&state).await;
+        for i in 0..4 {
+            let spammer = mint(&state).await;
+            state
+                .store
+                .record_mint(ip.into(), "identity", Some(spammer.address.clone()), 1)
+                .await
+                .unwrap();
+            let sent = do_send(&state, &spammer, &victim.address, &format!("spam {i}"))
+                .await
+                .unwrap();
+            do_report_spam(
+                &state,
+                &victim,
+                sent["message_id"].as_str().unwrap().to_string(),
+            )
+            .await
+            .unwrap();
+        }
+
+        let err = check_mint_budget(&state, ip)
+            .await
+            .expect_err("a source that keeps producing reported inboxes must stop producing them");
+        assert_eq!(err.code, "mint_source_halted");
+        assert_eq!(err.status, StatusCode::TOO_MANY_REQUESTS);
+    }
+
+    #[tokio::test]
+    async fn a_low_scoring_stranger_is_slowed_but_never_silently_dropped() {
+        let state = test_state();
+        let stranger = mint(&state).await;
+        let victim = mint(&state).await;
+
+        for i in 0..reputation::STRANGER_MESSAGES_PER_WINDOW {
+            do_send(&state, &stranger, &victim.address, &format!("hi {i}"))
+                .await
+                .expect("an introduction should get through");
+        }
+        let err = do_send(&state, &stranger, &victim.address, "and again")
+            .await
+            .expect_err("a stranger nobody vouched for gets a trickle, not a firehose");
+        assert_eq!(err.code, "stranger_rate_limited");
+        assert_eq!(err.status, StatusCode::TOO_MANY_REQUESTS);
+        assert!(
+            err.retry_after.is_some(),
+            "a throttled sender must be told when to come back"
+        );
+
+        // The recipient vouching for them outranks the score entirely.
+        do_set_contact(
+            &state,
+            &victim,
+            stranger.address.clone(),
+            Some("a friend".into()),
+            None,
+            None,
+            None,
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        assert!(
+            do_send(&state, &stranger, &victim.address, "now known")
+                .await
+                .is_ok(),
+            "a human saying 'I know them' beats anything the score inferred"
+        );
+    }
+
+    #[tokio::test]
+    async fn inbox_messages_carry_the_senders_standing() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let sent = do_send(&state, &alice, &bob.address, "hello")
+            .await
+            .unwrap();
+
+        let first = do_inbox(&state, &bob).await.unwrap();
+        assert_eq!(first["messages"][0]["sender_standing"], "unproven");
+
+        do_report_spam(
+            &state,
+            &bob,
+            sent["message_id"].as_str().unwrap().to_string(),
+        )
+        .await
+        .unwrap();
+
+        let after = do_inbox(&state, &bob).await.unwrap();
+        assert_eq!(after["messages"][0]["sender_standing"], "reported");
+        assert!(after["messages"][0]["sender_score"].as_i64().unwrap() < 0);
     }
 
     #[tokio::test]

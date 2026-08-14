@@ -10,9 +10,9 @@
 //! them), and message bodies are always flagged untrusted.
 
 use crate::{
-    do_ack, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_send,
-    do_set_contact, principal_for_token, resolve_acting_identity, ApiError, AppState, Principal,
-    TrustActor,
+    do_ack, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_report_spam,
+    do_send, do_set_contact, principal_for_token, resolve_acting_identity, ApiError, AppState,
+    Principal, TrustActor,
 };
 use serde_json::{json, Value};
 
@@ -111,6 +111,19 @@ fn tools_list_result() -> Value {
             }
         },
         {
+            "name": "report_pigeonpost_spam",
+            "description": "Report a message in your inbox as spam or abuse. This lowers the sender's standing and the standing of the source that minted them, so a flood becomes expensive rather than free. Report unsolicited bulk mail, not messages you merely disagree with — reports from an inbox whose own standing is poor stop counting.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "message_id": { "type": "string", "description": "The message_id from check_pigeonpost_inbox." },
+                    "identity": { "type": "string" }
+                },
+                "required": ["message_id"],
+                "additionalProperties": false
+            }
+        },
+        {
             "name": "list_pigeonpost_contacts",
             "description": "List the senders this inbox knows, with their admission (allow/block), autonomy (review/auto) and the request verbs each was granted, plus the defaults applied to strangers and the full verb vocabulary — which verbs can be granted, and which are never auto-accepted for anyone.",
             "inputSchema": { "type": "object", "properties": identity_prop, "additionalProperties": false }
@@ -178,6 +191,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         | "check_pigeonpost_inbox"
         | "ack_pigeonpost_message"
         | "list_pigeonpost_contacts"
+        | "report_pigeonpost_spam"
         | "add_pigeonpost_contact"
         | "block_pigeonpost_sender" => {
             let me = match resolve_acting_identity(state, principal, arg_str("identity").as_deref())
@@ -191,6 +205,12 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                 "send_pigeonpost_message" => match (arg_str("to"), arg_str("body")) {
                     (Some(to), Some(body)) => do_send(state, &me, &to, &body).await,
                     _ => return Ok(tool_error("send requires string 'to' and 'body'")),
+                },
+                // Reporting only ever lowers trust in somebody else, so unlike every write in
+                // the contacts layer there is no way to widen your own exposure with it.
+                "report_pigeonpost_spam" => match arg_str("message_id") {
+                    Some(id) => do_report_spam(state, &me, id).await,
+                    None => return Ok(tool_error("report_pigeonpost_spam requires 'message_id'")),
                 },
                 "check_pigeonpost_inbox" => {
                     if let Some(w) = args

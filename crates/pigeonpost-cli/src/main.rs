@@ -248,6 +248,24 @@ enum PostboxAction {
         which: PostboxIdentity,
     },
 
+    /// Watch a hosted inbox, printing messages as they arrive. Acks what it prints.
+    Watch {
+        /// Seconds to hold each poll open. The server caps it at 60.
+        #[arg(long, default_value_t = 25)]
+        wait: u64,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Report a message as spam. Lowers its sender's standing and that of the source that
+    /// minted them.
+    Report {
+        /// The message_id from `pigeonpost postbox inbox`.
+        message_id: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
     /// Destroy a hosted inbox and forget its token here. Cannot be undone.
     Delete {
         /// Confirm. Without it this only tells you what would be destroyed.
@@ -992,6 +1010,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             PostboxAction::Inbox { wait, which } => {
                 postbox_cmd::show_inbox(&home, which.address.as_deref(), *wait, cli.json).await
+            }
+            PostboxAction::Watch { wait, which } => {
+                postbox_cmd::watch_inbox(&home, which.address.as_deref(), *wait, cli.json).await
+            }
+            PostboxAction::Report { message_id, which } => {
+                postbox_cmd::report_spam(&home, which.address.as_deref(), message_id, cli.json)
+                    .await
             }
             PostboxAction::Delete { yes, which } => {
                 postbox_cmd::delete_inbox(&home, which.address.as_deref(), *yes, cli.json).await

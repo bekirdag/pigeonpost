@@ -81,6 +81,27 @@ CREATE TABLE IF NOT EXISTS contacts (
     PRIMARY KEY (owner, peer)
 );
 
+-- Upheld spam reports, keyed by message so a recipient re-reporting the same message cannot
+-- charge its sender twice. `reporter` is kept so a reporter that turns out to be the abuser can
+-- have its reports reconsidered.
+CREATE TABLE IF NOT EXISTS spam_reports (
+    message_id TEXT PRIMARY KEY,
+    reporter   TEXT NOT NULL,
+    sender     TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS spam_reports_by_sender ON spam_reports(sender);
+
+-- What a subject has earned, as opposed to what a human granted it. `subject` is either a `/k/`
+-- address (kind='sender') or an IP (kind='mint_ip'); one table because the arithmetic is the same
+-- and only the lookup key differs.
+CREATE TABLE IF NOT EXISTS reputation (
+    subject    TEXT PRIMARY KEY,
+    kind       TEXT NOT NULL,
+    reports    INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL
+);
+
 -- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
 CREATE TABLE IF NOT EXISTS inbox_policy (
     address           TEXT PRIMARY KEY,
@@ -392,6 +413,125 @@ impl Store {
             recipient,
         )
         .await
+    }
+
+    /// How many upheld reports a subject carries. Reports, not a score: the score is derived from
+    /// this plus the subject's tier, so a mailbox that later gains an account is re-scored rather
+    /// than stuck with whatever number was written when it was anonymous.
+    pub async fn reports_against(&self, subject: String) -> Result<u32, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<u32, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n: Option<i64> = c
+                .query_row(
+                    "SELECT reports FROM reputation WHERE subject = ?1",
+                    params![subject],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(n.unwrap_or(0).max(0) as u32)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Record one spam report and charge it to the sender and to the IP that minted them.
+    ///
+    /// Returns `false` when this message was already reported — the message id is the primary key
+    /// precisely so a recipient cannot charge the same message twice by asking twice.
+    pub async fn record_spam_report(
+        &self,
+        message_id: String,
+        reporter: String,
+        sender: String,
+        now: u64,
+    ) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let inserted = tx.execute(
+                "INSERT OR IGNORE INTO spam_reports (message_id, reporter, sender, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![message_id, reporter, sender, now as i64],
+            )?;
+            if inserted == 0 {
+                return Ok(false);
+            }
+
+            let charge = |subject: &str, kind: &str| -> rusqlite::Result<()> {
+                tx.execute(
+                    "INSERT INTO reputation (subject, kind, reports, updated_at)
+                     VALUES (?1, ?2, 1, ?3)
+                     ON CONFLICT(subject) DO UPDATE SET
+                         reports = reports + 1, updated_at = ?3",
+                    params![subject, kind, now as i64],
+                )?;
+                Ok(())
+            };
+            charge(&sender, "sender")?;
+
+            // Charge the source too, or a flood just burns the reported inbox and mints another.
+            let minting_ip: Option<String> = tx
+                .query_row(
+                    "SELECT ip FROM mint_events WHERE address = ?1 ORDER BY id LIMIT 1",
+                    params![sender],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(ip) = minting_ip {
+                charge(&ip, "mint_ip")?;
+            }
+
+            tx.commit()?;
+            Ok(true)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The sender of one message in `recipient`'s inbox. `None` when it isn't theirs to report.
+    pub async fn message_sender(
+        &self,
+        message_id: String,
+        recipient: String,
+    ) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.query_row(
+                "SELECT sender FROM messages WHERE id = ?1 AND recipient = ?2",
+                params![message_id, recipient],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Messages `sender` has put in `recipient`'s inbox since `since` — the stranger throttle's
+    /// input. Counts delivered messages, so acking or reading does not reopen the allowance.
+    pub async fn messages_between_since(
+        &self,
+        sender: String,
+        recipient: String,
+        since: u64,
+    ) -> Result<usize, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n: i64 = c.query_row(
+                "SELECT COUNT(*) FROM messages
+                  WHERE sender = ?1 AND recipient = ?2 AND created_at >= ?3",
+                params![sender, recipient, since as i64],
+                |r| r.get(0),
+            )?;
+            Ok(n as usize)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
     }
 
     /// Record one unauthenticated mint against the caller's IP. Best-effort accounting: a failure
