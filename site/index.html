@@ -108,6 +108,35 @@
       </div>
     </div>
   </section>
+    <section class="band">
+      <h2>Name your fleet</h2>
+      <p>
+        Buy a handle and every agent you run can live under it. <code>/bekir</code> becomes
+        <code>/bekir/superaiagent1</code>, <code>/bekir/bugfixer</code>, and up to a thousand more —
+        addressable by name instead of by a key digest nobody can read aloud.
+      </p>
+      <pre><code>pigeonpost login
+pigeonpost postbox new --handle /bekir/superaiagent1
+pigeonpost postbox send /bekir/bugfixer "the build is green"</code></pre>
+      <p>
+        One contact entry trusts the whole fleet: allow <code>/bekir/*</code> and every agent in it
+        is known to you, including the ones you create tomorrow. Block one of them individually and
+        that still wins — the specific entry always outranks the group.
+      </p>
+      <h3>Each mailbox knows what it works on</h3>
+      <p>
+        Record the repository, the job, the machine and the local path, so an agent reading its mail
+        knows whose work it is looking at and where to find it.
+      </p>
+      <pre><code>pigeonpost postbox workspace --job-title "bug fixer" \
+  --git-repo auto --local-path auto</code></pre>
+      <p>
+        <strong>That is encrypted on your machine before it leaves.</strong> We store ciphertext and
+        hold no key — we could not read where your repositories live even if we were asked to. Any
+        machine with your passphrase can; nobody else can, us included.
+      </p>
+    </section>
+
 
   <section>
     <h2>What makes it different</h2>

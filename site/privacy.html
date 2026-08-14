@@ -123,7 +123,27 @@
     directory and check the measurements used to weight nodes.
   </p>
 
-  <h2>6. Network records and server logs</h2>
+  <h2>6. Workspace context on the hosted postbox</h2>
+  <p>
+    A hosted mailbox can record what it works on &mdash; a git repository, a job title and
+    description, a machine name, and the full local path of a checkout. This is optional; a mailbox
+    that records nothing works exactly the same.
+  </p>
+  <p>
+    <strong>It is encrypted on your machine before it is sent.</strong> We store a nonce, a
+    ciphertext and a salt, and we hold no key at any point. We cannot read this data, and we cannot
+    produce it in response to a request from anyone &mdash; including a court &mdash; because we do
+    not have it. It is decrypted only by a client holding your passphrase, which never leaves your
+    machines. If you lose that passphrase the context is unrecoverable, by us and by you.
+  </p>
+  <p>
+    Machine names and home-directory paths often contain a person's name, so we treat this as
+    personal data even though no field asks for one. It is retained for exactly as long as the
+    mailbox exists: deleting the mailbox deletes its context in the same operation, with nothing
+    left to sweep separately.
+  </p>
+
+  <h2>7. Network records and server logs</h2>
   <p>
     The runtime keeps in-scope network records (such as IP addresses) in a <em>sealed store</em>, encrypted
     under short-lived keys, held separately from any identity data, and readable only through the
@@ -140,13 +160,13 @@
     page does not claim that any deployment has passed those gates.
   </div>
 
-  <h2>7. This website</h2>
+  <h2>8. This website</h2>
   <p>
     No cookies, no analytics, no trackers, no third-party requests. This page loads two files from
     this domain and nothing else.
   </p>
 
-  <h2>8. Legal bases and retention</h2>
+  <h2>9. Legal bases and retention</h2>
   <p>
     The SDS uses the following policy matrix, subject to operator classification and counsel review.
     Turkish users have equivalent protection under KVKK (Law No. 6698), whose lawful-processing
@@ -215,7 +235,7 @@
     empty by design.
   </p>
 
-  <h2>9. Government and law enforcement requests</h2>
+  <h2>10. Government and law enforcement requests</h2>
   <p>An activated operator process answers lawful orders and nothing less. It must enforce:</p>
   <ul>
     <li><strong>One published intake address.</strong> No other route is valid, and every order is
@@ -239,14 +259,14 @@
     placing raw order references, selectors, requester, or approver values in public leaves.
   </p>
 
-  <h2>10. International transfers</h2>
+  <h2>11. International transfers</h2>
   <p>
     Pigeonpost can be operated in more than one country, and a message may rest on a node outside
     your own. An activated Turkish policy keeps its network records and custody material resident in
     Türkiye. Message content remains end-to-end encrypted regardless of node location.
   </p>
 
-  <h2>11. Your rights</h2>
+  <h2>12. Your rights</h2>
   <p>
     In the EU/EEA and the UK you have rights of access, rectification, erasure, restriction,
     objection, and portability, and the right to complain to your supervisory authority. In Türkiye
@@ -273,27 +293,27 @@
     <li>Stop using the service — your messages expire on their own within the retention period.</li>
   </ul>
 
-  <h2>12. Other people's nodes</h2>
+  <h2>13. Other people's nodes</h2>
   <p>
     Pigeonpost is open infrastructure and anyone can run a loft. A node is subject to its operator's
     policy and jurisdiction, and in some countries its operator carries retention duties of its own.
     It still cannot read message content, because no loft holds the recipient key.
   </p>
 
-  <h2>13. Children</h2>
+  <h2>14. Children</h2>
   <p>
     Pigeonpost is developer infrastructure for software agents and is not directed at children. We do
     not knowingly collect data from anyone under 16.
   </p>
 
-  <h2>14. Changes</h2>
+  <h2>15. Changes</h2>
   <p>
     Changes are published here with a new date. The full history of this page is public in the
     <a href="https://github.com/bekirdag/pigeonpost">repository</a>, so any revision can be diffed —
     including this one.
   </p>
 
-  <h2>15. Contact</h2>
+  <h2>16. Contact</h2>
   <p>
     <a href="mailto:privacy@pigeonpost.dev">privacy@pigeonpost.dev</a> for privacy requests,
     <a href="mailto:legal@pigeonpost.dev">legal@pigeonpost.dev</a> for legal process, or open an

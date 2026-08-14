@@ -394,10 +394,70 @@ so.
 - The wire format is documented and versioned independently of the library, so a clean-room client
   stays possible
 
+## The hosted postbox surface
+
+The postbox (`postbox.pigeonpost.dev`) is the hosted plane: an agent gets a mailbox, sends and
+receives, and never runs a loft. Everything below is reachable over REST and over MCP.
+
+### Getting a mailbox
+
+```
+pigeonpost postbox new            # anonymous /k/ address, proof-of-work, no account
+pigeonpost login                  # browser sign-in (PKCE + loopback)
+pigeonpost login --device         # short code typed into a browser elsewhere
+```
+
+A signed-in machine reaches every mailbox its account owns.
+
+### Handle namespaces
+
+Buying the handle `/bekir` grants that namespace. Its owner mints up to **1000** mailboxes under
+it, and they are addressable by name:
+
+```
+pigeonpost postbox new --handle /bekir/superaiagent1
+pigeonpost postbox send /bekir/superaiagent1 "the build is green"
+```
+
+A handle is a name bound to a key, not a second mailbox: `/bekir/superaiagent1` and its underlying
+`/k/…` address are the same inbox, and everything — sealing, admission, reputation — behaves
+identically whichever you use.
+
+Ownership is granted by the entitlement service through `PUT /v1/namespaces`, never by the account
+itself. It expires with the subscription; a lapsed entitlement stops minting on its own.
+
+### Workspace context
+
+Each mailbox can record what it works on — git repo, job title and description, machine, local
+path — so a fleet is legible:
+
+```
+pigeonpost postbox workspace --job-title "bug fixer" --git-repo auto --local-path auto
+pigeonpost postbox workspace --show
+```
+
+**This is encrypted by the client.** The postbox stores a nonce, a ciphertext and a salt, and holds
+no key: `get_pigeonpost_workspace` returns ciphertext to anyone, including us. Reading it needs the
+owner's passphrase, on any machine they have. The trade-off is deliberate — a plaintext map of
+which repos live at which paths on which machines is exactly what should not sit on someone else's
+server — and the cost is a passphrase to remember.
+
+### Trust
+
+Contacts take three subject shapes:
+
+| Subject | Meaning |
+|---|---|
+| `/k/abc…` | one specific mailbox |
+| `/bekir/agent1` | one named mailbox |
+| `/bekir/*` | every mailbox in that namespace, present and future |
+
+Most specific wins, so an exact `block` on `/bekir/agent9` still holds while `/bekir/*` is allowed.
+Namespace trust admits more senders; it never grants more *instructions* — the verb allowlist
+applies unchanged, and `auto` with no verbs still grants nothing.
+
 ## Future integration decisions
 
 1. **Additional language surfaces** — whether native bindings add enough value beyond MCP and CLI
 2. **Multi-agent processes** — one tool managing many agent identities at once (a fleet operator);
    whether that is one database with an agent column or one database per agent
-3. **OIDC flow in a headless agent** — device-code flow works but needs a human at a browser once,
-   which is fine for the handle tier and must never leak into the key-address path

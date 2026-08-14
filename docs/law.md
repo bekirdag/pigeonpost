@@ -457,3 +457,29 @@ Checked 2026-08-08. Links are inputs to counsel review, not substitutes for it.
 - EU: [Regulation (EU) 2023/1543](https://eur-lex.europa.eu/legal-content/EN/TXT/?qid=1659727831419&uri=CELEX%3A32023R1543), [Directive (EU) 2023/1544](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A32023L1544), [European Electronic Communications Code](https://eur-lex.europa.eu/legal-content/EN/TXT/?uri=CELEX%3A02018L1972-20181217), [GDPR](https://eur-lex.europa.eu/eli/reg/2016/679/oj), and [EDPB Guidelines 02/2024, final version](https://www.edpb.europa.eu/documents/guideline/guidelines-022024-on-article-48-gdpr_en)
 - EU July 2026 interim measure: [Council final approval summary](https://www.consilium.europa.eu/en/press/press-releases/2026/07/23/fighting-child-sexual-abuse-online-interim-measure-protecting-children-to-be-reinstated/)
 - Türkiye: [Law No. 5651 official legislation record](https://www.mevzuat.gov.tr/mevzuat?MevzuatNo=5651&MevzuatTertip=5&MevzuatTur=1) and [KVKK cross-border transfer guidance](https://www.kvkk.gov.tr/Icerik/2053/Yurtdisina-Aktarim)
+
+## Workspace context is personal data
+
+Added 2026-08-14 with the handle-namespace work.
+
+A mailbox may record what it works on: git repository, job title and description, machine name, and
+the full local path of a checkout such as `/Users/bekir/Documents/apps/generic`. Machine names and
+home-directory paths routinely contain a person's name, so this is personal data under GDPR Art. 4
+even though no field asks for one.
+
+Two facts that shape the obligations:
+
+- **It is client-encrypted.** The postbox stores a nonce, ciphertext and salt and holds no key, so
+  we cannot read it, disclose it on request, or hand it to a processor. Erasure and export are
+  still ours to provide, and both are satisfied by the ciphertext: deleting the mailbox deletes the
+  context with it (enforced in the same transaction, with a test), and export returns the blob the
+  owner can decrypt.
+- **A breach discloses less than the same table in plaintext would.** An attacker with the database
+  learns that a mailbox has context and roughly its size. That is a materially smaller notification
+  than "we lost a map of which repositories live at which paths on which machines".
+
+Retention follows the mailbox: no separate clock, nothing to forget to sweep.
+
+The deferred EU-representative designation (above) becomes more pressing rather than less. Holding
+this category of data for EU users without a designated representative is a gap to close before
+handle sales open, not after.
