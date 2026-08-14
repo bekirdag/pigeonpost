@@ -1968,7 +1968,17 @@ mod tests {
         pause.release.notify_one();
         let error = claiming.await.unwrap_err().to_string();
         *CLAIM_PROOF_TEST_PAUSE.lock().unwrap() = None;
-        assert!(error.contains("identity changed"), "{error}");
+        // Two refusals are correct here and which one appears is a timing detail: if the rotation
+        // has already released its lease the claim sees the key changed underneath it, and if it
+        // has not, the claim sees the identity still busy. Pinning one made this fail on loaded
+        // runners while the behaviour under test was working.
+        //
+        // The property this test is named for is the assertion below — that neither refusal
+        // reaches the registry. That stays exact.
+        assert!(
+            error.contains("identity changed") || error.contains("identity is busy"),
+            "expected the claim to be refused for a changed or busy identity, got: {error}"
+        );
         assert_eq!(register_calls.load(Ordering::SeqCst), 0);
         let reopened = Agent::open(&home).unwrap();
         assert_ne!(reopened.verifying_key(), signed_key);
