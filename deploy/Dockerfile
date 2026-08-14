@@ -46,10 +46,19 @@ COPY Cargo.toml Cargo.lock rust-toolchain.toml ./
 COPY crates ./crates
 
 # Alpine's Rust is already musl-native, so the host target is the static one.
+#
+# The staticness check reads the ELF rather than parsing `ldd`. musl's ldd wording varies by
+# architecture — x86_64 produces a static-PIE whose output looks nothing like aarch64's — and
+# matching on that failed the amd64 build while the binary was perfectly static. A dynamic
+# dependency, which is the thing actually worth catching, always shows up as a NEEDED entry, and
+# that is true for static, static-PIE and dynamic alike.
 RUN cargo build --release --locked -p pigeonpost-cli \
  && strip target/release/pigeonpost \
- && ldd target/release/pigeonpost 2>&1 | grep -q "Not a valid dynamic program\|statically linked" \
-      || { echo "the release binary is not static; a dynamic dependency crept in"; exit 1; }
+ && if readelf -d target/release/pigeonpost 2>/dev/null | grep -q NEEDED; then \
+      echo "the release binary links a shared library; a dynamic dependency crept in"; \
+      readelf -d target/release/pigeonpost | grep NEEDED; \
+      exit 1; \
+    fi
 
 # ---- init ------------------------------------------------------------------------------------
 # Fetched rather than packaged, because the runtime has no package manager. Verified against a
