@@ -718,8 +718,13 @@ jobs:
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
             --json isDraft,isImmutable > release-state.json
           test "$(node -p "require('./release-state.json').isDraft")" = false
-          test "$(node -p "require('./release-state.json').isImmutable")" = true
-          gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          # Immutability verified when the repository provides it; see the note in release_create.
+          # Enabling immutable releases restores this check with no workflow change.
+          if [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ]; then
+            gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          else
+            echo "::warning::Promoting aliases for a mutable release; enable immutable releases to restore attestation verification here."
+          fi
 
           mkdir released-pointer
           gh release download "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
@@ -1410,28 +1415,50 @@ jobs:
         run: |
           set -euo pipefail
           gh release edit "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --draft=false --latest
-      - name: Require an immutable published release
+      # Immutability is verified when the repository provides it, and is no longer a hard
+      # requirement (relaxed 2026-08-14, owner's decision).
+      #
+      # GitHub's immutable releases are a repository setting that is currently off here. With it
+      # off there is no release attestation to check at all — `gh release verify` answers "no
+      # attestations for tag" — so requiring it blocked every release rather than proving anything.
+      # This is a real reduction: an immutable release cannot be altered after publication, and a
+      # mutable one can.
+      #
+      # What survives is everything the pipeline can still establish on its own, and it is most of
+      # the value: the asset set and every asset's digest were compared against the built artifacts
+      # in the step above, SHA256SUMS was verified to cover exactly that set, and the OCI candidate
+      # was attested and provenance-verified before any of this ran.
+      #
+      # To restore the control, enable immutable releases on the repository; this step then checks
+      # it again automatically, with no workflow change.
+      - name: Require a published release, and verify immutability when available
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           gh release verify --help >/dev/null
-          verified=false
+          published=false
           for _ in 1 2 3 4 5 6 7 8 9 10 11 12; do
             if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
                 --json isDraft,isImmutable > release-state.json && \
-                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ] && \
-                [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ] && \
-                gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null; then
-              verified=true
+                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ]; then
+              published=true
               break
             fi
             sleep 5
           done
-          if [ "$verified" != true ]; then
-            echo '::error::The published release did not become immutable with a valid GitHub release attestation. Inspect it before any retry; this workflow will not delete it.'
+          if [ "$published" != true ]; then
+            echo '::error::The release did not reach a published, non-draft state. Inspect it before any retry; this workflow will not delete it.'
             exit 1
+          fi
+          if [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ]; then
+            # Immutable releases carry an attestation, and a failure to verify it is fatal: an
+            # immutable release that cannot be verified is worse than a mutable one.
+            gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+            echo "release is immutable and its attestation verified"
+          else
+            echo "::warning::Published without GitHub immutable releases, so there is no release attestation to verify. Enable immutable releases on this repository to restore that control."
           fi
 
   release_resume:
