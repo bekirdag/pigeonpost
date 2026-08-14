@@ -1,8 +1,8 @@
 {
-  "pigeonpost-darwin-arm64": "672d3532f6de72e1e5c7961021a05d624266e6d65f039b8cc37b56220e8d8192",
-  "pigeonpost-darwin-x64": "344dbbe3f56f2dd45cd5275bc6ee6939fd60a4583cd82d1fdb6186428100ef88",
-  "pigeonpost-linux-arm64": "c80d6efcdcd1741de6180297ac69f6b5033e1944f509aa5ab0b4ae31427d9925",
-  "pigeonpost-linux-x64": "11bf1760d210cb64013ccc68fea0f36bf45791619a6ec50104008edf9a58a68e",
-  "pigeonpost-win32-arm64.exe": "b27b7166a2ca4be6450f8572ad58515173686eeccd740174eadfaca7895b109f",
-  "pigeonpost-win32-x64.exe": "76b33b644d23324b58b39dca5bd822562e467d51f626574114c1e2583321663f"
+  "pigeonpost-darwin-arm64": "00f838135e67aafbef8f27dc02ca1b7bd3cb05ea39426ca285b5186219d836a1",
+  "pigeonpost-darwin-x64": "a6779edcb0d9dc9a549aac1039fc9115f510d37a50c9e9f5df0bb0172dfbeab6",
+  "pigeonpost-linux-arm64": "9fb38a04620f7b33a1b02021e02846f927626f02e738278e33470753b43d2826",
+  "pigeonpost-linux-x64": "ea386038a68c7f1b78e83957af03cead9c03040f59987f5e1d48d64f2f510a25",
+  "pigeonpost-win32-arm64.exe": "ce99d45a762f17a9c4ba2557d441fb8636434f135bf15ae33c1394231faca102",
+  "pigeonpost-win32-x64.exe": "37d3ffaa976b5ab14a8865f2d87eebf8cef23232feee0300e8f9efac2a8a06f8"
 }
