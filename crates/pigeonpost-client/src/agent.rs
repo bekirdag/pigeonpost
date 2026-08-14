@@ -519,6 +519,19 @@ impl Agent {
         // so a policy update cannot revive one after the deadline.
         let lofts = self.state.lofts_for_drain_with_local_trust(now())?;
         let total = lofts.len();
+        // A policy that reached no loft while lofts are still configured is not in force anywhere,
+        // and reporting success for it is the worst possible answer: the caller believes a spam
+        // floor, a token requirement or an attribution requirement protects them while every loft
+        // still applies the permissive default and accepts unstamped mail.
+        //
+        // Having *no* lofts is different and legitimate — a removed or fully expired route leaves
+        // nothing to tell and nothing to deliver through, which is the drain-to-expiry case.
+        if total == 0 && !self.state.lofts_with_local_trust()?.is_empty() {
+            return Err(ClientError::PolicyIncomplete {
+                succeeded: 0,
+                total: self.state.lofts_with_local_trust()?.len(),
+            });
+        }
 
         for (url, loft_pubkey, allow_local) in lofts {
             let Some(loft_pubkey) = loft_pubkey else {
