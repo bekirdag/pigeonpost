@@ -2444,11 +2444,16 @@ mod tests {
 
         tokio::time::timeout(Duration::from_secs(60), async {
             loop {
-                let response = client
-                    .get(format!("http://{address}/small"))
-                    .send()
-                    .await
-                    .unwrap();
+                // A transport error here is part of what is being waited for, not a failure: the
+                // server is reaping the stalled reader while this polls it, and on Windows an
+                // in-flight connection aborts (os error 10053) rather than answering. The property
+                // under test is that admission is released *eventually*, so a dropped connection
+                // is retried like any other not-yet-ready answer.
+                let Ok(response) = client.get(format!("http://{address}/small")).send().await
+                else {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                    continue;
+                };
                 let status = response.status();
                 drop(response);
                 if status == StatusCode::OK {
