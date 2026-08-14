@@ -1665,6 +1665,15 @@ jobs:
   npm_publish:
     name: publish npm launcher with OIDC
     needs: [validate, release]
+    # `release` tolerates skipped ancestors with `!cancelled()`, because exactly one of the build
+    # path and the resume path runs and the other is skipped by design. Without a status function
+    # of its own this job inherits the default `success()`, which treats a skip anywhere upstream
+    # as "do not run" — so it was skipped on every successful release, silently, no matter what
+    # else was fixed. The explicit checks below keep it as strict as the default was meant to be.
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.release.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
@@ -1785,6 +1794,11 @@ jobs:
   mcp_publish:
     name: publish MCP Registry metadata with OIDC
     needs: [validate, npm_publish]
+    # Same inherited-skip hazard as npm_publish above.
+    if: >-
+      !cancelled() &&
+      needs.validate.result == 'success' &&
+      needs.npm_publish.result == 'success'
     runs-on: ubuntu-24.04
     permissions:
       contents: read
