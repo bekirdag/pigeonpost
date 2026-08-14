@@ -1147,7 +1147,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pigeonpost-cli"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "clap",
@@ -1181,7 +1181,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-client"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "ed25519-dalek",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-compliance"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1237,14 +1237,14 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-compliance-format"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "serde",
 ]
 
 [[package]]
 name = "pigeonpost-compliance-seal"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1262,7 +1262,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-core"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "chacha20poly1305",
  "curve25519-dalek",
@@ -1284,7 +1284,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-directory"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "ed25519-dalek",
@@ -1315,7 +1315,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-loft"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "ed25519-dalek",
@@ -1348,7 +1348,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-mcp"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "ed25519-dalek",
  "fs2",
@@ -1366,7 +1366,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-postbox"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "axum",
  "chacha20poly1305",
@@ -1389,7 +1389,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-registry"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "async-trait",
  "axum",
@@ -1423,7 +1423,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-unix-custody"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "rustix",
  "tempfile",
@@ -1431,7 +1431,7 @@ dependencies = [
 
 [[package]]
 name = "pigeonpost-windows-custody"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "tempfile",
  "windows-permissions",
