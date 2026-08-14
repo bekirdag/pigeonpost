@@ -344,9 +344,12 @@ jobs:
           # thing standing between a swapped release and PID 1 in every deployment.
           raise 'the fetched init is no longer checksum-verified' unless
             dockerfile.include?('sha256sum -c -')
-          # A dynamic dependency creeping back in would silently reintroduce a libc to have CVEs in.
-          raise 'the product image no longer asserts its binary is static' unless
-            dockerfile.include?('is not static')
+          # A dynamic dependency creeping back in would silently reintroduce a libc to have CVEs in,
+          # so the build must still assert its own output. Matched on the mechanism rather than on
+          # the wording of the failure message: pinning the message is what broke this guard the
+          # first time the message was improved.
+          raise 'the product image no longer asserts its binary links nothing' unless
+            dockerfile.include?('readelf -d') && dockerfile.include?('NEEDED')
           musl_toolchain = File.read('deploy/Dockerfile.release-musl')
           %w[
             rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
