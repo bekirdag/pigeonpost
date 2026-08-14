@@ -2069,20 +2069,84 @@ pub(crate) mod windows_custody {
             .access_mode(GENERIC_READ | GENERIC_WRITE | READ_CONTROL | WRITE_DAC | WRITE_OWNER)
             .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE)
             .custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
-        let (mut file, created) = match create.open(path) {
-            Ok(file) => (file, true),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                (open_existing_file(path, true)?, false)
+        match create.open(path) {
+            Ok(mut file) => {
+                protect_private_file(&mut file, path)?;
+                verify_private_handle(&file, path, false)?;
+                verify_same_named_object(&file, path, false)?;
+                parents.verify()?;
+                return Ok((file, true));
             }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(error) => return Err(error.into()),
-        };
-        if created {
-            protect_private_file(&mut file, path)?;
         }
-        verify_private_handle(&file, path, false)?;
-        verify_same_named_object(&file, path, false)?;
-        parents.verify()?;
-        Ok((file, created))
+
+        // Somebody else created it. They may still be between `create_new` and
+        // `protect_private_file`, during which the file carries the parent's inherited security
+        // rather than the owner-only one — so an open here can legitimately see an ownership or
+        // DACL that is about to become correct. Retry rather than fail the whole open.
+        //
+        // This is safe to retry because the acceptance condition never softens: every attempt
+        // re-runs the full `verify_private_handle` check, so a file that is genuinely somebody
+        // else's still fails after the budget. Waiting cannot turn a foreign file into ours.
+        //
+        // It does NOT close the underlying window — for those few instructions the file really is
+        // inheritably-permissioned on disk. Closing that needs the descriptor supplied at
+        // CreateFile via SECURITY_ATTRIBUTES, the way create_private_directory already does it.
+        // See docs/planning/SESSION-HANDOFF.md.
+        const CONTENDED_OPEN_ATTEMPTS: u32 = 200;
+        let mut last: Option<ClientError> = None;
+        for attempt in 0..CONTENDED_OPEN_ATTEMPTS {
+            match open_existing_file(path, true).and_then(|file| {
+                verify_private_handle(&file, path, false)?;
+                verify_same_named_object(&file, path, false)?;
+                parents.verify()?;
+                Ok(file)
+            }) {
+                Ok(file) => return Ok((file, false)),
+                Err(error) if is_transient_contended_open(&error) => {
+                    last = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(if attempt < 20 {
+                        1
+                    } else {
+                        5
+                    }));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            custody_error(
+                path,
+                "could not be opened while another process was creating it",
+            )
+        }))
+    }
+
+    /// Whether an error is one a concurrent creator can produce mid-flight, as opposed to a real
+    /// custody failure.
+    ///
+    /// Deliberately narrow. Anything not listed here — a wrong DACL shape, a hard-link count above
+    /// one, a reparse point — is a finding, not a race, and must surface immediately.
+    fn is_transient_contended_open(error: &ClientError) -> bool {
+        match error {
+            // The creator has not applied the owner-only descriptor yet.
+            ClientError::Config(message) => {
+                message.contains("must be owned by the current user")
+                    || message.contains("must grant access only to the current user")
+            }
+            ClientError::Io(io) => matches!(
+                io.raw_os_error(),
+                // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND: a losing creator removing its
+                // temporary between our open and our stat.
+                Some(2) | Some(3)
+                // ERROR_ACCESS_DENIED: returned for a delete-pending file.
+                | Some(5)
+                // ERROR_SHARING_VIOLATION: another handle is open without share-delete.
+                | Some(32)
+            ),
+            _ => false,
+        }
     }
 
     /// Assign the current user as owner and apply a protected, current-user-only DACL to a file

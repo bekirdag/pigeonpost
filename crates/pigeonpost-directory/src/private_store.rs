@@ -1045,8 +1045,52 @@ pub fn load_or_create_secret32(
     }
     #[cfg(not(unix))]
     {
-        load_or_create_secret32_nonunix(path, candidate)
+        // Windows refuses to rename onto, or delete, a file that another handle holds open
+        // without share-delete, so a loser in a creation race sees ERROR_SHARING_VIOLATION where
+        // POSIX simply succeeds. It is transient by construction: it means a rival creator is
+        // mid-publish, which is exactly the case this function exists to resolve.
+        //
+        // Only the errors a concurrent creator can produce are retried; a wrong DACL, a stray
+        // hard link or a reparse point still fails on the first attempt, because those are
+        // findings rather than contention.
+        const CONTENDED_ATTEMPTS: u32 = 200;
+        let mut last = None;
+        for attempt in 0..CONTENDED_ATTEMPTS {
+            match load_or_create_secret32_nonunix(path, candidate) {
+                Ok(result) => return Ok(result),
+                Err(error) if is_transient_creation_race(&error) => {
+                    last = Some(error);
+                    std::thread::sleep(std::time::Duration::from_millis(if attempt < 20 {
+                        1
+                    } else {
+                        5
+                    }));
+                }
+                Err(error) => return Err(error),
+            }
+        }
+        Err(last.unwrap_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "private storage {} stayed contended by other creators",
+                    path.display()
+                ),
+            )
+        }))
     }
+}
+
+/// Whether an error is one a rival creator can produce mid-flight on Windows.
+#[cfg(not(unix))]
+fn is_transient_creation_race(error: &io::Error) -> bool {
+    matches!(
+        error.raw_os_error(),
+        // ERROR_FILE_NOT_FOUND / ERROR_PATH_NOT_FOUND: a loser removed its temporary between our
+        // steps. ERROR_ACCESS_DENIED: the destination is delete-pending.
+        // ERROR_SHARING_VIOLATION: a rival holds it open without share-delete.
+        Some(2) | Some(3) | Some(5) | Some(32)
+    )
 }
 
 #[cfg(unix)]
