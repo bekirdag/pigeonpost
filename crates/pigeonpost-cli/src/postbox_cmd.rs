@@ -260,6 +260,154 @@ pub async fn show_inbox(
     Ok(())
 }
 
+/// Store this mailbox's workspace context, encrypted here so the postbox never sees it.
+pub async fn set_workspace(
+    home: &Path,
+    as_address: Option<&str>,
+    update: crate::workspace_cmd::Workspace,
+    json: bool,
+) -> Result<(), Error> {
+    let credential = credential_for(home, as_address)?;
+
+    // Read-modify-write, so setting one field edits rather than silently wiping the rest. The
+    // existing salt is reused when there is one: rotating it would need the old passphrase and the
+    // new one at once for no benefit.
+    let existing = request(&credential, reqwest::Method::GET, "/v1/workspace", None).await;
+    let (current, salt, pass) = match &existing {
+        Ok(value) => {
+            let pass = crate::workspace_cmd::passphrase(false)?;
+            let salt = decode_b64(value["kdf_salt"].as_str().unwrap_or_default())?;
+            let nonce = decode_b64(value["nonce"].as_str().unwrap_or_default())?;
+            let ciphertext = decode_b64(value["ciphertext"].as_str().unwrap_or_default())?;
+            let current =
+                crate::workspace_cmd::open(&ciphertext, &credential.address, &pass, &salt, &nonce)?;
+            (current, salt, pass)
+        }
+        // No context yet: this is the first write, so confirm the passphrase — getting it wrong
+        // here would encrypt everything under a typo nobody can reproduce.
+        Err(_) => (
+            crate::workspace_cmd::Workspace::default(),
+            crate::workspace_cmd::random_bytes::<16>().to_vec(),
+            crate::workspace_cmd::passphrase(true)?,
+        ),
+    };
+
+    let merged = current.merged_with(update);
+    let nonce = crate::workspace_cmd::random_bytes::<24>();
+    let ciphertext =
+        crate::workspace_cmd::seal(&merged, &credential.address, &pass, &salt, &nonce)?;
+
+    request(
+        &credential,
+        reqwest::Method::PUT,
+        "/v1/workspace",
+        Some(serde_json::json!({
+            "nonce": encode_b64(&nonce),
+            "ciphertext": encode_b64(&ciphertext),
+            "kdf_salt": encode_b64(&salt),
+        })),
+    )
+    .await?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "address": credential.address, "stored": true })
+        );
+    } else {
+        println!("workspace context stored for {}", credential.address);
+        println!("{}", crate::workspace_cmd::describe(&merged));
+        println!();
+        println!("Encrypted on this machine — the postbox holds ciphertext and no key.");
+        println!("Any machine with this passphrase can read it; without it, nobody can.");
+    }
+    Ok(())
+}
+
+/// Show this mailbox's workspace context.
+pub async fn show_workspace(
+    home: &Path,
+    as_address: Option<&str>,
+    json: bool,
+) -> Result<(), Error> {
+    let credential = credential_for(home, as_address)?;
+    let value = request(&credential, reqwest::Method::GET, "/v1/workspace", None)
+        .await
+        .map_err(|e| {
+            format!(
+                "no workspace context on file for {} ({e})",
+                credential.address
+            )
+        })?;
+    let pass = crate::workspace_cmd::passphrase(false)?;
+    let workspace = crate::workspace_cmd::open(
+        &decode_b64(value["ciphertext"].as_str().unwrap_or_default())?,
+        &credential.address,
+        &pass,
+        &decode_b64(value["kdf_salt"].as_str().unwrap_or_default())?,
+        &decode_b64(value["nonce"].as_str().unwrap_or_default())?,
+    )?;
+    if json {
+        println!("{}", serde_json::to_string(&workspace)?);
+    } else {
+        println!("{}", credential.address);
+        println!("{}", crate::workspace_cmd::describe(&workspace));
+    }
+    Ok(())
+}
+
+fn encode_b64(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn decode_b64(text: &str) -> Result<Vec<u8>, Error> {
+    let value = |c: u8| -> Result<u32, Error> {
+        Ok(match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err("workspace context is not valid base64".into()),
+        })
+    };
+    let raw: Vec<u8> = text
+        .bytes()
+        .filter(|c| *c != b'=' && !c.is_ascii_whitespace())
+        .collect();
+    let mut out = Vec::with_capacity(raw.len() * 3 / 4);
+    for chunk in raw.chunks(4) {
+        if chunk.len() < 2 {
+            return Err("workspace context is not valid base64".into());
+        }
+        let mut n = 0u32;
+        for (i, c) in chunk.iter().enumerate() {
+            n |= value(*c)? << (18 - 6 * i);
+        }
+        for i in 0..chunk.len() - 1 {
+            out.push(((n >> (16 - 8 * i)) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
 /// Report a message as spam, charging its sender and the source that minted them.
 pub async fn report_spam(
     home: &Path,

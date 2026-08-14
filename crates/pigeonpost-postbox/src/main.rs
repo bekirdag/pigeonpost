@@ -389,6 +389,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/ack", post(ack))
         .route("/v1/report-spam", post(report_spam))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
+        .route("/v1/workspace", get(get_workspace).put(put_workspace))
         .route(
             "/v1/contacts",
             get(get_contacts).put(put_contact).delete(delete_contact),
@@ -2173,6 +2174,157 @@ struct AckReq {
 }
 
 #[derive(serde::Deserialize)]
+struct WorkspaceReq {
+    /// Base64 of the XChaCha20-Poly1305 nonce, ciphertext, and the KDF salt the owner's client
+    /// used. All three are opaque here: the postbox stores bytes and never holds a key.
+    nonce: String,
+    ciphertext: String,
+    kdf_salt: String,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `PUT /v1/workspace` — store this mailbox's encrypted workspace context.
+///
+/// The plaintext — repo, job title, machine, local path — never reaches this server. It is
+/// encrypted by the owner's client under a key derived from their passphrase, so an operator with
+/// database access learns only that context exists and roughly how big it is.
+async fn put_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<WorkspaceReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let (Ok(nonce), Ok(ciphertext), Ok(salt)) = (
+        b64_decode(&req.nonce),
+        b64_decode(&req.ciphertext),
+        b64_decode(&req.kdf_salt),
+    ) else {
+        return ApiError::bad(
+            "invalid_workspace",
+            "nonce, ciphertext and kdf_salt must be base64",
+        )
+        .into_response();
+    };
+    // Bounded for the same reason a request envelope is: this is context about work, not a place
+    // to park data, and an unbounded blob is an unbounded bill.
+    const MAX_WORKSPACE_BYTES: usize = 8192;
+    if ciphertext.len() > MAX_WORKSPACE_BYTES {
+        return ApiError::bad(
+            "invalid_workspace",
+            "workspace context is limited to 8 KiB of ciphertext",
+        )
+        .into_response();
+    }
+    if nonce.len() != 24 || salt.is_empty() {
+        return ApiError::bad("invalid_workspace", "expected a 24-byte nonce and a salt")
+            .into_response();
+    }
+
+    match state
+        .store
+        .put_workspace(me.address.clone(), nonce, ciphertext, salt, now_unix())
+        .await
+    {
+        Ok(()) => {
+            tracing::info!(address = %me.address, "workspace context stored");
+            Json(json!({ "ok": true })).into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "workspace store failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `GET /v1/workspace` — fetch this mailbox's encrypted workspace context.
+async fn get_workspace(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.workspace(me.address).await {
+        Ok(Some((nonce, ciphertext, salt, updated_at))) => Json(json!({
+            "nonce": b64_encode(&nonce),
+            "ciphertext": b64_encode(&ciphertext),
+            "kdf_salt": b64_encode(&salt),
+            "updated_at": updated_at,
+        }))
+        .into_response(),
+        Ok(None) => err_response(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            Some("no workspace context set"),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "workspace read failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// Minimal standard base64. Hand-rolled to avoid a dependency for two functions, and because the
+/// alphabet is fixed by the wire format rather than a matter of taste.
+fn b64_encode(bytes: &[u8]) -> String {
+    const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b = [
+            chunk[0],
+            *chunk.get(1).unwrap_or(&0),
+            *chunk.get(2).unwrap_or(&0),
+        ];
+        let n = (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2]);
+        for i in 0..4 {
+            if i <= chunk.len() {
+                out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+fn b64_decode(text: &str) -> Result<Vec<u8>, ()> {
+    let value = |c: u8| -> Result<u32, ()> {
+        Ok(match c {
+            b'A'..=b'Z' => u32::from(c - b'A'),
+            b'a'..=b'z' => u32::from(c - b'a') + 26,
+            b'0'..=b'9' => u32::from(c - b'0') + 52,
+            b'+' => 62,
+            b'/' => 63,
+            _ => return Err(()),
+        })
+    };
+    let raw: Vec<u8> = text
+        .bytes()
+        .filter(|c| *c != b'=' && !c.is_ascii_whitespace())
+        .collect();
+    let mut out = Vec::with_capacity(raw.len() * 3 / 4);
+    for chunk in raw.chunks(4) {
+        if chunk.len() < 2 {
+            return Err(());
+        }
+        let mut n = 0u32;
+        for (i, c) in chunk.iter().enumerate() {
+            n |= value(*c)? << (18 - 6 * i);
+        }
+        for i in 0..chunk.len() - 1 {
+            out.push(((n >> (16 - 8 * i)) & 0xff) as u8);
+        }
+    }
+    Ok(out)
+}
+
+#[derive(serde::Deserialize)]
 struct GrantNamespaceReq {
     namespace: String,
     account_id: String,
@@ -2935,6 +3087,78 @@ mod tests {
             .await
             .unwrap()
             .unwrap()
+    }
+
+    #[test]
+    fn base64_round_trips_every_length_remainder() {
+        for len in 0..40usize {
+            let bytes: Vec<u8> = (0..len).map(|i| (i * 7 + 13) as u8).collect();
+            let encoded = b64_encode(&bytes);
+            assert_eq!(
+                b64_decode(&encoded).expect("own output must decode"),
+                bytes,
+                "round trip failed at length {len}"
+            );
+        }
+        assert!(b64_decode("not base64!").is_err());
+    }
+
+    #[tokio::test]
+    async fn the_postbox_stores_workspace_context_it_cannot_read() {
+        // The property that matters: what comes back is exactly what went in, and the server never
+        // had a key for it. Anything resembling plaintext in the database would be the bug.
+        let state = test_state();
+        let me = mint(&state).await;
+        let nonce = vec![9u8; 24];
+        let ciphertext = b"opaque-to-this-server".to_vec();
+        let salt = vec![3u8; 16];
+
+        state
+            .store
+            .put_workspace(
+                me.address.clone(),
+                nonce.clone(),
+                ciphertext.clone(),
+                salt.clone(),
+                42,
+            )
+            .await
+            .unwrap();
+        let (n, c, s, updated) = state
+            .store
+            .workspace(me.address.clone())
+            .await
+            .unwrap()
+            .expect("stored context should come back");
+        assert_eq!((n, c, s, updated), (nonce, ciphertext, salt, 42));
+
+        // Replacing it keeps one row rather than accumulating history the owner cannot see.
+        state
+            .store
+            .put_workspace(
+                me.address.clone(),
+                vec![1; 24],
+                b"second".to_vec(),
+                vec![4; 16],
+                43,
+            )
+            .await
+            .unwrap();
+        let (_, c, _, updated) = state
+            .store
+            .workspace(me.address.clone())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!((c, updated), (b"second".to_vec(), 43));
+
+        // Deleting the mailbox takes its context with it.
+        state
+            .store
+            .delete_identity(None, me.address.clone())
+            .await
+            .unwrap();
+        assert!(state.store.workspace(me.address).await.unwrap().is_none());
     }
 
     #[tokio::test]

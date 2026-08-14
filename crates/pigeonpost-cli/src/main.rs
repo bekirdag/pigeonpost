@@ -17,6 +17,7 @@ mod submit_cmd;
 #[cfg(test)]
 mod test_support;
 mod trust_cmd;
+mod workspace_cmd;
 
 use std::path::PathBuf;
 
@@ -262,6 +263,33 @@ enum PostboxAction {
     Report {
         /// The message_id from `pigeonpost postbox inbox`.
         message_id: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Record what this mailbox works on. Encrypted here; the postbox never sees it.
+    Workspace {
+        /// Git repository this agent works on. `auto` reads it from the current directory.
+        #[arg(long)]
+        git_repo: Option<String>,
+        /// What this agent is for, e.g. "main developer", "bug fixer", "issue reviewer".
+        #[arg(long)]
+        job_title: Option<String>,
+        /// A longer description of the job.
+        #[arg(long)]
+        job_description: Option<String>,
+        /// Machine this agent runs on. Defaults to this host's name when omitted on a first write.
+        #[arg(long)]
+        machine: Option<String>,
+        /// Full local path of the checkout, e.g. /Users/bekir/Documents/apps/generic.
+        #[arg(long)]
+        local_path: Option<String>,
+        /// Anything else worth knowing.
+        #[arg(long)]
+        notes: Option<String>,
+        /// Show the stored context instead of changing it.
+        #[arg(long)]
+        show: bool,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -1017,6 +1045,44 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             PostboxAction::Report { message_id, which } => {
                 postbox_cmd::report_spam(&home, which.address.as_deref(), message_id, cli.json)
                     .await
+            }
+            PostboxAction::Workspace {
+                git_repo,
+                job_title,
+                job_description,
+                machine,
+                local_path,
+                notes,
+                show,
+                which,
+            } => {
+                if *show {
+                    return postbox_cmd::show_workspace(&home, which.address.as_deref(), cli.json)
+                        .await;
+                }
+                // Convenience only where it cannot be wrong: `--git-repo auto` reads the current
+                // checkout's origin, and the machine name is filled in from this host. Neither
+                // overrides anything the caller actually typed.
+                let git_repo = match git_repo.as_deref() {
+                    Some("auto") => workspace_cmd::git_remote(&std::env::current_dir()?),
+                    other => other.map(str::to_string),
+                };
+                let local_path = match local_path.as_deref() {
+                    Some("auto") => Some(std::env::current_dir()?.display().to_string()),
+                    other => other.map(str::to_string),
+                };
+                let update = workspace_cmd::Workspace {
+                    git_repo,
+                    job_title: job_title.clone(),
+                    job_description: job_description.clone(),
+                    machine: machine.clone().or_else(workspace_cmd::this_machine),
+                    local_path,
+                    notes: notes.clone(),
+                };
+                if update.is_empty() {
+                    return Err("nothing to set — pass a field, or --show to read it".into());
+                }
+                postbox_cmd::set_workspace(&home, which.address.as_deref(), update, cli.json).await
             }
             PostboxAction::Delete { yes, which } => {
                 postbox_cmd::delete_inbox(&home, which.address.as_deref(), *yes, cli.json).await

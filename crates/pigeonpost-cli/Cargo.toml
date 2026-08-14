@@ -39,6 +39,10 @@ rpassword.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
+# Passphrase -> workspace key. A memory-hard KDF, because the alternative on a human-chosen
+# secret is an offline guessing attack against whatever the server stores.
+argon2.workspace = true
+chacha20poly1305.workspace = true
 toml.workspace = true
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

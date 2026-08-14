@@ -116,6 +116,17 @@ CREATE TABLE IF NOT EXISTS reputation (
     updated_at INTEGER NOT NULL
 );
 
+-- Workspace context for one mailbox: which repo it works on, what its job is, which machine and
+-- path it lives at. Stored as opaque ciphertext — the postbox holds the bytes and the salt, never
+-- a key, so an operator with database access learns nothing but that context exists and its size.
+CREATE TABLE IF NOT EXISTS workspace_context (
+    address    TEXT PRIMARY KEY,
+    nonce      BLOB NOT NULL,
+    ciphertext BLOB NOT NULL,
+    kdf_salt   BLOB NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
 -- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
 CREATE TABLE IF NOT EXISTS inbox_policy (
     address           TEXT PRIMARY KEY,
@@ -777,6 +788,55 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Store one mailbox's encrypted workspace context, replacing any previous one.
+    pub async fn put_workspace(
+        &self,
+        address: String,
+        nonce: Vec<u8>,
+        ciphertext: Vec<u8>,
+        kdf_salt: Vec<u8>,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO workspace_context (address, nonce, ciphertext, kdf_salt, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(address) DO UPDATE SET
+                     nonce = ?2, ciphertext = ?3, kdf_salt = ?4, updated_at = ?5",
+                params![address, nonce, ciphertext, kdf_salt, now as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Fetch one mailbox's encrypted workspace context: `(nonce, ciphertext, salt, updated_at)`.
+    #[allow(clippy::type_complexity)]
+    pub async fn workspace(
+        &self,
+        address: String,
+    ) -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, u64)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(
+            move || -> Result<Option<(Vec<u8>, Vec<u8>, Vec<u8>, u64)>, StoreError> {
+                let c = conn.lock().expect("store lock");
+                c.query_row(
+                    "SELECT nonce, ciphertext, kdf_salt, updated_at
+                       FROM workspace_context WHERE address = ?1",
+                    params![address],
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get::<_, i64>(3)? as u64)),
+                )
+                .optional()
+                .map_err(Into::into)
+            },
+        )
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// The contact governing `peer`: their own row if they have one, otherwise their namespace's.
     ///
     /// Most specific wins, decided in SQL so the two lookups cannot disagree. An exact row for
@@ -1080,6 +1140,13 @@ impl Store {
                 tx.execute("DELETE FROM contacts WHERE owner = ?1", params![address])?;
                 tx.execute(
                     "DELETE FROM inbox_policy WHERE address = ?1",
+                    params![address],
+                )?;
+                // Workspace context describes a repo, a machine and a filesystem path. Leaving it
+                // behind after the mailbox is gone would be keeping reconnaissance data about a
+                // person who asked to be deleted.
+                tx.execute(
+                    "DELETE FROM workspace_context WHERE address = ?1",
                     params![address],
                 )?;
             }
