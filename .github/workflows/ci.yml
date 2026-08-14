@@ -324,17 +324,29 @@ jobs:
           end
 
           dockerfile = File.read('deploy/Dockerfile')
+          # The product image is a static musl binary on distroless/static (2026-08-14). Debian
+          # trixie was dropped because it carries critical CVEs in curl, perl-base and libc6 that
+          # Debian marks won't-fix, so no base bump could clear the release scan. Every image and
+          # package input stays pinned by digest or exact version, so churn fails closed.
           %w[
-            rust:1.88.0-trixie@sha256:f2a17efbe58b00470be6e73dbea79705a789ee20ee8de2dcdaf73c0c6091f1db
-            debian:trixie-slim@sha256:3a39a0592364683e6bab97937b72cad5a8fa6dcbbee90edb3bb48c7f8e94f258
-            CA_CERTIFICATES_VERSION=20250419
-            CURL_VERSION=8.14.1-2+deb13u4
-            TINI_VERSION=0.19.0-3+b7
+            rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+            static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
+            MUSL_VERSION=1.2.5-r12
+            TINI_VERSION=v0.19.0
+            TINI_SHA256_AMD64=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
+            TINI_SHA256_ARM64=eae1d3aa50c48fb23b8cbdf4e369d0910dfc538566bfd09df89a774aa84a48b9
           ].each do |needle|
-            raise "official Trixie image input changed: #{needle}" unless dockerfile.include?(needle)
+            raise "official product-image input changed: #{needle}" unless dockerfile.include?(needle)
           end
           raise 'Bullseye must not remain the official product-image base' if
             dockerfile.match?(/(?:BUILD_BASE|RUNTIME_BASE)=.*bullseye/i)
+          # tini is fetched rather than packaged now, so the checksum verification is the only
+          # thing standing between a swapped release and PID 1 in every deployment.
+          raise 'the fetched init is no longer checksum-verified' unless
+            dockerfile.include?('sha256sum -c -')
+          # A dynamic dependency creeping back in would silently reintroduce a libc to have CVEs in.
+          raise 'the product image no longer asserts its binary is static' unless
+            dockerfile.include?('is not static')
           musl_toolchain = File.read('deploy/Dockerfile.release-musl')
           %w[
             rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
