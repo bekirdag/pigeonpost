@@ -449,9 +449,13 @@ if PIGEONPOST_HOME="$run_root/discovery" "$binary" directory bootstrap \
   echo "composed acceptance: empty safe directory unexpectedly bootstrapped" >&2
   exit 1
 fi
+# Match either spelling of the refusal: `NoLofts` is the error variant's Debug name, "no lofts
+# configured" its Display text. The CLI now reports failures with Display so users read the
+# sentence rather than the enum, and this check is about *which* refusal happened, not about which
+# formatter produced it.
 if [[ "$refresh_output" != "refreshed 1 signed directory snapshot(s)" \
     || -s "$bootstrap_stdout" \
-    || ! $(<"$bootstrap_stderr") =~ NoLofts ]]; then
+    || ! $(<"$bootstrap_stderr") =~ (NoLofts|no\ lofts\ configured) ]]; then
   echo "composed acceptance: directory refresh/bootstrap did not report the expected NoLofts refusal" >&2
   exit 1
 fi
