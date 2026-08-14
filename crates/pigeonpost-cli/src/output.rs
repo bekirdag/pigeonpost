@@ -106,6 +106,39 @@ fn is_bidi_control(character: char) -> bool {
     )
 }
 
+/// Resolve on SIGINT (Ctrl-C) or, on Unix, SIGTERM.
+///
+/// SIGTERM is what `docker stop`, `systemctl stop` and most supervisors send. Waiting only on
+/// Ctrl-C means a service ignores every one of them and is eventually SIGKILLed, which takes the
+/// process down mid-write instead of letting it finish the batch it is in. Inside a container that
+/// was masked by tini forwarding the signal to a non-PID-1 child, where the default action applies
+/// — so this looked fine there and was broken everywhere else.
+pub async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut signal) => {
+                signal.recv().await;
+            }
+            // No handler available: wait forever rather than resolve, or the caller would shut
+            // down instantly on a platform quirk.
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => {}
+        _ = terminate => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

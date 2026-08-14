@@ -208,10 +208,7 @@ pub async fn serve(options: ServeOptions) -> Result<(), Box<dyn std::error::Erro
         resolved.capacity_gb
     );
     println!("  retention  {} days", resolved.retention_days);
-    pigeonpost_loft::serve(listener, loft, async {
-        let _ = tokio::signal::ctrl_c().await;
-    })
-    .await?;
+    pigeonpost_loft::serve(listener, loft, crate::output::shutdown_signal()).await?;
 
     println!("loft stopped");
     Ok(())

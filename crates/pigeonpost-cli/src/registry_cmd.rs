@@ -1408,7 +1408,7 @@ async fn run_supervised(
         Server(Result<pigeonpost_registry::Result<()>, tokio::task::JoinError>),
     }
     let stop = tokio::select! {
-        _ = tokio::signal::ctrl_c() => Stop::Requested,
+        _ = crate::output::shutdown_signal() => Stop::Requested,
         result = &mut server_task => Stop::Server(result),
     };
 

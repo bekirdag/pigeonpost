@@ -135,7 +135,7 @@ pub async fn serve(bind: &str, dir: &Path) -> Result<(), Box<dyn std::error::Err
             result?;
             return Err("directory service stopped unexpectedly".into());
         }
-        _ = tokio::signal::ctrl_c() => {
+        _ = crate::output::shutdown_signal() => {
             let _ = stop.send(true);
             service.await?;
         }
