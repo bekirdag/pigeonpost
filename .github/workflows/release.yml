@@ -1307,7 +1307,12 @@ jobs:
             fi
             sleep 5
           done
-          test "$verified" = true
+          if [ "$verified" != true ]; then
+            # `test x = y` exits 1 with no output, which makes a real provenance failure look like
+            # a mystery. Say which check failed.
+            echo '::error::Release artifact provenance could not be verified against this workflow, ref and commit.'
+            exit 1
+          fi
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: release-verified
@@ -1512,26 +1517,36 @@ jobs:
         with:
           node-version: "24.19.0"
 
-      - name: Require the immutable release attestation
+      # Third and last place that required immutability; see release_create for why it is now
+      # conditional. The payload this job resumes from is re-downloaded and compared against the
+      # built artifacts in the next step regardless, which is the check that catches an altered
+      # release when immutability is unavailable.
+      - name: Require a published release, and its attestation when immutability is available
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
           set -euo pipefail
           gh release verify --help >/dev/null
-          verified=false
+          published=false
           for _ in 1 2 3 4 5 6; do
             if gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
                 --json isDraft,isImmutable > release-state.json && \
-                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ] && \
-                [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ] && \
-                gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null; then
-              verified=true
+                [ "$(node -p "require('./release-state.json').isDraft")" = "false" ]; then
+              published=true
               break
             fi
             sleep 5
           done
-          test "$verified" = true
+          if [ "$published" != true ]; then
+            echo '::error::No published release to resume from.'
+            exit 1
+          fi
+          if [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ]; then
+            gh release verify "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
+          else
+            echo "::warning::Resuming from a mutable release; enable immutable releases to restore attestation verification."
+          fi
 
       - name: Download and validate the immutable payload
         id: release_assets
