@@ -15,7 +15,7 @@ require_command node
 
 # The release image is distroless, so readiness has to be probed from a separate container sharing
 # its network namespace. Pinned by digest like every other image input here.
-PROBE_IMAGE=${PIGEONPOST_PROBE_IMAGE:-docker.io/library/busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23}
+PROBE_IMAGE=${PIGEONPOST_PROBE_IMAGE:-docker.io/library/busybox@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23}
 
 : "${PIGEONPOST_IMAGE:?Set PIGEONPOST_IMAGE to one exact child-manifest digest}"
 platform=${PIGEONPOST_PLATFORM:-linux/amd64}
@@ -92,9 +92,11 @@ docker run --detach \
 # distroless: no shell, no curl, nothing to exec. The loft also refuses a non-loopback bind without
 # pool.domain, so publishing a host port is not an option either — it must be probed from inside
 # that namespace. This is the same `--network container:` trick the agent helper below already uses.
+# Deliberately no `--platform`: the probe shares the loft's *network namespace*, not its
+# architecture, so it runs natively and needs no emulation. Passing one is also impossible here —
+# docker refuses `--platform` together with an `@sha256:` reference ("cannot overwrite digest").
 readiness_probe() {
   docker run --rm \
-    --platform "$platform" \
     --network "container:$loft_name" \
     --read-only \
     --security-opt no-new-privileges:true \
@@ -113,14 +115,17 @@ for _ in {1..90}; do
       exit 1
       ;;
   esac
-  if readiness_probe >/dev/null 2>&1; then
+  if probe_output=$(readiness_probe 2>&1); then
     ready=true
     break
   fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then
+  # Print why. Swallowing this cost a full release cycle to diagnose: the loft was up and logging
+  # normally, and the only visible symptom was that the probe never succeeded.
   echo "container acceptance: exact image did not become healthy" >&2
+  echo "container acceptance: last readiness probe said: ${probe_output:-<no output>}" >&2
   docker logs "$loft_name" >&2 || true
   exit 1
 fi
