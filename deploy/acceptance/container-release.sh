@@ -13,6 +13,10 @@ require_command() {
 require_command docker
 require_command node
 
+# The release image is distroless, so readiness has to be probed from a separate container sharing
+# its network namespace. Pinned by digest like every other image input here.
+PROBE_IMAGE=${PIGEONPOST_PROBE_IMAGE:-docker.io/library/busybox:1.37.0-musl@sha256:fc6dddc4c44b1bfe37f41cae8e67d1693828e8f42a91862816d7953e2c9d3f23}
+
 : "${PIGEONPOST_IMAGE:?Set PIGEONPOST_IMAGE to one exact child-manifest digest}"
 platform=${PIGEONPOST_PLATFORM:-linux/amd64}
 mode=${1:---full}
@@ -75,11 +79,6 @@ docker run --detach \
   --cap-drop ALL \
   --pids-limit 256 \
   --ulimit nofile=8192:8192 \
-  --health-cmd 'curl --fail --silent --show-error --max-time 3 --noproxy "*" http://127.0.0.1:7717/ready' \
-  --health-interval 1s \
-  --health-timeout 5s \
-  --health-retries 30 \
-  --health-start-period 1s \
   --volume "$loft_volume:/var/lib/pigeonpost" \
   "$PIGEONPOST_IMAGE" \
   loft serve \
@@ -88,21 +87,36 @@ docker run --detach \
   --capacity-gb=1 \
   --retention-days=1 >/dev/null
 
+# Probed from a sidecar sharing the loft's network namespace, not by a docker healthcheck.
+# `--health-cmd` always runs through /bin/sh inside the container and the release image is
+# distroless: no shell, no curl, nothing to exec. The loft also refuses a non-loopback bind without
+# pool.domain, so publishing a host port is not an option either — it must be probed from inside
+# that namespace. This is the same `--network container:` trick the agent helper below already uses.
+readiness_probe() {
+  docker run --rm \
+    --platform "$platform" \
+    --network "container:$loft_name" \
+    --read-only \
+    --security-opt no-new-privileges:true \
+    --cap-drop ALL \
+    "$PROBE_IMAGE" \
+    wget -q -O /dev/null -T 3 http://127.0.0.1:7717/ready
+}
+
 ready=false
 for _ in {1..90}; do
-  state=$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{end}}' \
-    "$loft_name")
+  state=$(docker inspect --format '{{.State.Status}}' "$loft_name")
   case "$state" in
-    'running healthy')
-      ready=true
-      break
-      ;;
     exited*|dead*)
       echo "container acceptance: exact image exited before readiness: $state" >&2
       docker logs "$loft_name" >&2 || true
       exit 1
       ;;
   esac
+  if readiness_probe >/dev/null 2>&1; then
+    ready=true
+    break
+  fi
   sleep 1
 done
 if [[ "$ready" != true ]]; then
@@ -111,14 +125,14 @@ if [[ "$ready" != true ]]; then
   exit 1
 fi
 
-test "$(docker exec "$loft_name" id -u)" = 10001
-docker exec "$loft_name" sh -ceu '
-  if touch /pigeonpost-root-must-stay-read-only 2>/dev/null; then
-    exit 1
-  fi
-  touch /tmp/pigeonpost-tmpfs-is-writable
-  rm /tmp/pigeonpost-tmpfs-is-writable
-'
+# Asserted from the image and the running container rather than by executing inside it: a
+# distroless image has no `id`, no `sh`, and nothing else to exec. What actually needs guarding is
+# that the *image* declares an unprivileged user — the read-only rootfs and tmpfs are flags this
+# script passes itself, and docker enforces them whether or not we can observe them from inside.
+test "$(docker inspect --format '{{.Config.User}}' "$PIGEONPOST_IMAGE")" = '10001:10001'
+test "$(docker inspect --format '{{.HostConfig.ReadonlyRootfs}}' "$loft_name")" = 'true'
+test "$(docker inspect --format '{{.Config.Entrypoint}}' "$PIGEONPOST_IMAGE")" \
+  = '[/usr/bin/tini -- /usr/local/bin/pigeonpost]'
 
 if [[ "$mode" == --ready-only ]]; then
   echo "container acceptance: $platform exact image reached /ready under production constraints"
