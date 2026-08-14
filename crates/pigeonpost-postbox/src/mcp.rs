@@ -62,7 +62,14 @@ fn tools_list_result() -> Value {
         {
             "name": "create_pigeonpost_identity",
             "description": "Create a new Pigeonpost inbox (a /k/ address) under your account. Use one per repo or agent. Requires an account API key.",
-            "inputSchema": { "type": "object", "properties": { "label": { "type": "string", "description": "Optional tag, e.g. 'repo:acme/api'." } }, "additionalProperties": false }
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "label": { "type": "string", "description": "Optional tag, e.g. 'repo:acme/api'." },
+                    "handle": { "type": "string", "description": "Mint under a namespace your account owns, e.g. '/bekir/superaiagent1', so the mailbox has a readable name instead of a key digest. Omit for a plain /k/ address." }
+                },
+                "additionalProperties": false
+            }
         },
         {
             "name": "list_pigeonpost_identities",
@@ -124,6 +131,11 @@ fn tools_list_result() -> Value {
             }
         },
         {
+            "name": "get_pigeonpost_workspace",
+            "description": "Fetch this mailbox's workspace context: which git repo it works on, its job title and description, the machine it runs on and the local path of the checkout. Returns ciphertext — the postbox stores it encrypted and holds no key, so it can only be read by a client with the owner's passphrase (the `pigeonpost postbox workspace --show` command). Use this to learn what a mailbox is for before acting on its mail.",
+            "inputSchema": { "type": "object", "properties": identity_prop, "additionalProperties": false }
+        },
+        {
             "name": "list_pigeonpost_contacts",
             "description": "List the senders this inbox knows, with their admission (allow/block), autonomy (review/auto) and the request verbs each was granted, plus the defaults applied to strangers and the full verb vocabulary — which verbs can be granted, and which are never auto-accepted for anyone.",
             "inputSchema": { "type": "object", "properties": identity_prop, "additionalProperties": false }
@@ -134,7 +146,7 @@ fn tools_list_result() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "peer": { "type": "string", "description": "Their address, e.g. /k/abc…" },
+                    "peer": { "type": "string", "description": "Their address (/k/abc… or /bekir/agent1), or a whole namespace as /bekir/* to note everyone in one fleet." },
                     "alias": { "type": "string", "description": "A name for them, e.g. 'agent-B on suku'." },
                     "identity": { "type": "string" }
                 },
@@ -194,6 +206,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         | "ack_pigeonpost_message"
         | "list_pigeonpost_contacts"
         | "report_pigeonpost_spam"
+        | "get_pigeonpost_workspace"
         | "add_pigeonpost_contact"
         | "block_pigeonpost_sender" => {
             let me = match resolve_acting_identity(state, principal, arg_str("identity").as_deref())
@@ -226,6 +239,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                     do_inbox(state, &me).await
                 }
                 "list_pigeonpost_contacts" => do_list_contacts(state, &me).await,
+                "get_pigeonpost_workspace" => crate::do_get_workspace(state, &me).await,
                 // Both contact tools go in as `TrustActor::Agent`, which is what stops an agent
                 // talking itself into `auto` or into unblocking someone.
                 // Autonomy is left unset rather than pinned to "review": new contacts default to

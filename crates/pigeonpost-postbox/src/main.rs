@@ -2240,6 +2240,34 @@ async fn put_workspace(
     }
 }
 
+/// Fetch a mailbox's encrypted workspace context. Shared by REST and MCP.
+pub(crate) async fn do_get_workspace(
+    state: &AppState,
+    me: &store::StoredIdentity,
+) -> Result<serde_json::Value, ApiError> {
+    match state.store.workspace(me.address.clone()).await {
+        Ok(Some((nonce, ciphertext, salt, updated_at))) => Ok(json!({
+            "address": me.address,
+            "nonce": b64_encode(&nonce),
+            "ciphertext": b64_encode(&ciphertext),
+            "kdf_salt": b64_encode(&salt),
+            "updated_at": updated_at,
+            // Said out loud because an agent receiving base64 should not conclude the server is
+            // withholding it: nobody here can read this, by design.
+            "encrypted": "This postbox holds no key for this context. Decrypt it with the owner's passphrase via `pigeonpost postbox workspace --show`.",
+        })),
+        Ok(None) => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "not_found",
+            "no workspace context set",
+        )),
+        Err(e) => {
+            tracing::error!(error = %e, "workspace read failed");
+            Err(ApiError::server("store_error"))
+        }
+    }
+}
+
 /// `GET /v1/workspace` — fetch this mailbox's encrypted workspace context.
 async fn get_workspace(
     State(state): State<AppState>,
