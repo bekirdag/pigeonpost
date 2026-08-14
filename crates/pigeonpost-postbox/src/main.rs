@@ -1616,6 +1616,37 @@ fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identit
 
 // ---- core operations, shared by the REST handlers and the MCP tools ----
 
+/// Resolve a destination to a hosted mailbox, by `/k/` address or by handle.
+///
+/// A handle is a name bound to a key, so both forms land on the same row and the sealing below is
+/// identical either way. Addressing a fleet by `/bekir/deployer` rather than by a base32 digest is
+/// the entire point of buying a namespace.
+async fn resolve_recipient(
+    state: &AppState,
+    to: &str,
+) -> Result<Option<store::StoredIdentity>, ApiError> {
+    let store_error = |e: store::StoreError| {
+        tracing::error!(error = %e, "recipient lookup failed");
+        ApiError::server("store_error")
+    };
+    if let Some(found) = state.store.get(to.to_string()).await.map_err(store_error)? {
+        return Ok(Some(found));
+    }
+    // Canonicalise before the lookup so `/Bekir/Agent1` reaches the same mailbox as `/bekir/agent1`
+    // — the handle stored at mint time is already canonical.
+    let Ok(destination) = Destination::for_handle(to) else {
+        return Ok(None);
+    };
+    let Some(handle) = destination.handle() else {
+        return Ok(None);
+    };
+    state
+        .store
+        .get_by_handle(handle.to_string())
+        .await
+        .map_err(store_error)
+}
+
 /// Seal a message from `sender` to a hosted recipient and enqueue it.
 pub(crate) async fn do_send(
     state: &AppState,
@@ -1623,20 +1654,12 @@ pub(crate) async fn do_send(
     to: &str,
     body: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    let recipient = state
-        .store
-        .get(to.to_string())
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "recipient lookup failed");
-            ApiError::server("store_error")
-        })?
-        .ok_or_else(|| {
-            ApiError::bad(
-                "recipient_unresolved",
-                "only hosted recipients are deliverable in this build",
-            )
-        })?;
+    let recipient = resolve_recipient(state, to).await?.ok_or_else(|| {
+        ApiError::bad(
+            "recipient_unresolved",
+            "only hosted recipients are deliverable in this build",
+        )
+    })?;
 
     // Admission: refused here rather than filtered on read, so a blocked sender never occupies
     // the recipient's disk or quota. The error is deliberately the same shape for "blocked" and
@@ -2860,6 +2883,52 @@ mod tests {
         b = a;
         b[0] ^= 1;
         assert!(!constant_time_eq(&a, &b));
+    }
+
+    #[tokio::test]
+    async fn a_handle_mailbox_is_reachable_by_name() {
+        // Addressing a fleet by /bekir/deployer instead of a base32 digest is the point of buying
+        // a namespace, so delivery has to accept the name.
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+        let minted = do_create_identity(
+            &state,
+            Some("acct_bekir".into()),
+            None,
+            Some("/bekir/deployer".into()),
+        )
+        .await
+        .unwrap();
+        let k_address = minted["address"].as_str().unwrap().to_string();
+        let sender = mint(&state).await;
+
+        do_send(&state, &sender, "/bekir/deployer", "by name")
+            .await
+            .expect("a handle must be deliverable");
+        // Case is folded on the way in, so a differently-cased name is the same mailbox.
+        do_send(&state, &sender, "/BEKIR/Deployer", "by name, shouted")
+            .await
+            .expect("handles are canonicalised before lookup");
+        // The underlying /k/ address still works — a handle is a name for a key, not a new mailbox.
+        do_send(&state, &sender, &k_address, "by key")
+            .await
+            .expect("the key-derived address is unchanged");
+
+        let recipient = state.store.get(k_address).await.unwrap().unwrap();
+        let inbox = do_inbox(&state, &recipient).await.unwrap();
+        assert_eq!(
+            inbox["messages"].as_array().unwrap().len(),
+            3,
+            "all three routes reach one mailbox"
+        );
+
+        assert_eq!(
+            do_send(&state, &sender, "/bekir/nobody", "into the void")
+                .await
+                .unwrap_err()
+                .code,
+            "recipient_unresolved"
+        );
     }
 
     #[tokio::test]
