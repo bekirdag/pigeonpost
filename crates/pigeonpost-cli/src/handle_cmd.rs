@@ -1961,7 +1961,23 @@ mod tests {
             result = &mut claiming => panic!("claim completed before proof pause: {result:?}"),
         }
 
-        let rotation = rotator.rotate().await.unwrap();
+        // The claim reaches its proof pause *around* the point it releases the identity lease, so
+        // whether the lease is free the instant the pause fires is a race the test has no way to
+        // observe directly. Retry while it is still held rather than assuming: "busy" here is the
+        // precondition not being ready yet, not the behaviour under test failing.
+        let rotation_deadline = std::time::Instant::now() + Duration::from_secs(60);
+        let rotation = loop {
+            match rotator.rotate().await {
+                Ok(rotation) => break rotation,
+                Err(error)
+                    if error.to_string().contains("identity is busy")
+                        && std::time::Instant::now() < rotation_deadline =>
+                {
+                    tokio::time::sleep(Duration::from_millis(25)).await;
+                }
+                Err(error) => panic!("rotation during the proof pause failed: {error}"),
+            }
+        };
         assert_eq!(rotation.from, publisher.address());
         assert_ne!(rotation.to, rotation.from);
 
