@@ -1236,8 +1236,20 @@ pub(crate) async fn do_set_contact(
     allowed_verbs: Option<Vec<String>>,
     actor: TrustActor,
 ) -> Result<serde_json::Value, ApiError> {
+    // Three shapes are addressable: a /k/ mailbox, a handle mailbox, and a whole namespace.
+    let is_namespace = peer.ends_with("/*");
     if !peer.starts_with("/k/") {
-        return Err(ApiError::bad("invalid_peer", "peer must be a /k/ address"));
+        let probe = if is_namespace {
+            peer.replace("/*", "/probe")
+        } else {
+            peer.to_string()
+        };
+        if Destination::for_handle(&probe).is_err() {
+            return Err(ApiError::bad(
+                "invalid_peer",
+                "peer must be a /k/ address, a handle, or a namespace like /bekir/*",
+            ));
+        }
     }
     if peer == me.address {
         return Err(ApiError::bad(
@@ -1665,9 +1677,16 @@ pub(crate) async fn do_send(
     // the recipient's disk or quota. The error is deliberately the same shape for "blocked" and
     // "closed to strangers" — a sender learns it wasn't accepted, not how the recipient's book
     // is arranged.
+    // The governing contact: the sender's own row if they have one, else their namespace's. A
+    // handle sender is addressed by name here rather than by /k/ digest, because a fleet is
+    // trusted as `/bekir/*`, not as a list of digests.
+    let sender_subject = sender
+        .handle
+        .clone()
+        .unwrap_or_else(|| sender.address.clone());
     let contact = state
         .store
-        .contact(recipient.address.clone(), sender.address.clone())
+        .governing_contact(recipient.address.clone(), sender_subject.clone())
         .await
         .map_err(|_| ApiError::server("store_error"))?;
     let policy = state
@@ -1835,6 +1854,10 @@ pub(crate) async fn do_inbox(
     // flooding address is exactly the case where the naive version does the most redundant work.
     let mut sender_reputation: std::collections::HashMap<String, (i64, reputation::Tier)> =
         std::collections::HashMap::new();
+    // Senders are stored by /k/ address, but a handle sender is *trusted* by name, so the
+    // matching below needs the mapping.
+    let mut sender_handles: std::collections::HashMap<String, String> =
+        std::collections::HashMap::new();
     for address in messages
         .iter()
         .map(|m| m.sender.clone())
@@ -1842,6 +1865,9 @@ pub(crate) async fn do_inbox(
     {
         if let Ok(Some(identity)) = state.store.get(address.clone()).await {
             let score = sender_score(state, &identity).await;
+            if let Some(handle) = identity.handle.clone() {
+                sender_handles.insert(address.clone(), handle);
+            }
             sender_reputation.insert(address, (score, tier_of(&identity)));
         }
     }
@@ -1854,7 +1880,16 @@ pub(crate) async fn do_inbox(
         };
         if let Ok((from_vk, body)) = envelope::open(&me_identity, &wrap) {
             let from = Address::from_pubkey(&from_vk).as_str().to_string();
-            let contact = contacts.iter().find(|c| c.peer == from);
+            // Match the sender's own row first, then their namespace's. Most specific wins, so an
+            // exact block on one agent still outranks trusting its whole fleet.
+            let subject = sender_handles
+                .get(&from)
+                .cloned()
+                .unwrap_or_else(|| from.clone());
+            let contact = contacts.iter().find(|c| c.peer == subject).or_else(|| {
+                store::namespace_wildcard(&subject)
+                    .and_then(|wildcard| contacts.iter().find(|c| c.peer == wildcard))
+            });
             let granted = contact.map(|c| c.allowed_verbs.as_slice()).unwrap_or(&[]);
 
             // The two halves meet here: *who* the recipient trusts (Phase 2) and *what* this
@@ -1907,6 +1942,10 @@ pub(crate) async fn do_inbox(
                 "untrusted": true,
                 "sender_known": contact.is_some(),
                 "alias": contact.and_then(|c| c.alias.clone()),
+                // Which entry spoke for this sender. A fleet-wide grant and a personal one are
+                // very different amounts of trust, and an agent should be able to tell them apart.
+                "matched_contact": contact.map(|c| c.peer.clone()),
+                "sender_handle": sender_handles.get(&from),
                 "autonomy": autonomy,
                 // The verb this message named, if it named a recognisable one at all — worth
                 // showing even when held, since it is what the human is being asked to approve.
@@ -2883,6 +2922,128 @@ mod tests {
         b = a;
         b[0] ^= 1;
         assert!(!constant_time_eq(&a, &b));
+    }
+
+    /// Mint a handle mailbox under an owned namespace and return its stored identity.
+    async fn mint_handle(state: &AppState, handle: &str, account: &str) -> store::StoredIdentity {
+        let v = do_create_identity(state, Some(account.into()), None, Some(handle.into()))
+            .await
+            .unwrap();
+        state
+            .store
+            .get(v["address"].as_str().unwrap().to_string())
+            .await
+            .unwrap()
+            .unwrap()
+    }
+
+    #[tokio::test]
+    async fn trusting_a_namespace_covers_its_whole_fleet() {
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+        let bob = mint(&state).await;
+        let agent1 = mint_handle(&state, "/bekir/agent1", "acct_bekir").await;
+        let agent9 = mint_handle(&state, "/bekir/agent9", "acct_bekir").await;
+
+        do_set_contact(
+            &state,
+            &bob,
+            "/bekir/*".into(),
+            Some("bekir's fleet".into()),
+            None,
+            Some("auto".into()),
+            Some(vec!["report_status".into()]),
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+
+        // A mailbox bob has never seen is covered because of who it belongs to.
+        do_send(
+            &state,
+            &agent9,
+            &bob.address,
+            r#"{"v":1,"verb":"report_status"}"#,
+        )
+        .await
+        .unwrap();
+        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let m = &inbox["messages"].as_array().unwrap()[0];
+        assert_eq!(m["autonomy"], "auto");
+        assert_eq!(m["sender_known"], true);
+        assert_eq!(
+            m["matched_contact"], "/bekir/*",
+            "the recipient should be able to see it was a fleet-wide grant, not a personal one"
+        );
+        assert_eq!(m["sender_handle"], "/bekir/agent9");
+
+        // An exact entry outranks the namespace, so one agent can be disowned without the rest.
+        do_set_contact(
+            &state,
+            &bob,
+            "/bekir/agent1".into(),
+            None,
+            Some("block".into()),
+            None,
+            None,
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            do_send(&state, &agent1, &bob.address, "still me")
+                .await
+                .expect_err("an exact block beats a namespace allow")
+                .code,
+            "not_admitted"
+        );
+        // …and the rest of the fleet is unaffected.
+        assert!(do_send(&state, &agent9, &bob.address, "unaffected")
+            .await
+            .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_namespace_grant_still_obeys_the_verb_allowlist() {
+        // Trusting more senders must not mean trusting more instructions.
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+        let bob = mint(&state).await;
+        let agent = mint_handle(&state, "/bekir/agent1", "acct_bekir").await;
+        do_set_contact(
+            &state,
+            &bob,
+            "/bekir/*".into(),
+            None,
+            None,
+            Some("auto".into()),
+            None, // auto, but no verbs granted
+            TrustActor::Human,
+        )
+        .await
+        .unwrap();
+
+        do_send(&state, &agent, &bob.address, r#"{"v":1,"verb":"deploy"}"#)
+            .await
+            .unwrap();
+        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let m = &inbox["messages"].as_array().unwrap()[0];
+        assert_eq!(m["autonomy"], "review");
+        assert_eq!(m["held_because"], "verb_denied");
+    }
+
+    #[tokio::test]
+    async fn a_k_address_has_no_namespace_to_belong_to() {
+        // `/k/…` splits on `/` like a handle does; it must not be read as namespace `k`.
+        assert_eq!(
+            store::namespace_wildcard("/bekir/agent1").as_deref(),
+            Some("/bekir/*")
+        );
+        assert_eq!(
+            store::namespace_wildcard("/k/2dehf8j788jmq6qnk04nj44fng"),
+            None
+        );
+        assert_eq!(store::namespace_wildcard("/bekir"), None);
     }
 
     #[tokio::test]

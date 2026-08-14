@@ -299,6 +299,19 @@ impl Default for InboxPolicy {
     }
 }
 
+/// The namespace-wide contact that would cover `peer`, e.g. `/bekir/*` for `/bekir/agent1`.
+///
+/// `None` for a `/k/` address: those have no namespace to belong to, so nothing but an exact row
+/// can ever speak for them.
+pub fn namespace_wildcard(peer: &str) -> Option<String> {
+    let rest = peer.strip_prefix('/')?;
+    let (namespace, name) = rest.split_once('/')?;
+    if namespace.is_empty() || name.is_empty() || namespace == "k" {
+        return None;
+    }
+    Some(format!("/{namespace}/*"))
+}
+
 /// The contact columns, in the order `map_contact_row` reads them.
 const CONTACT_COLS: &str =
     "owner, peer, alias, admission, autonomy, allowed_verbs, created_at, updated_at";
@@ -758,6 +771,37 @@ impl Store {
                 params![c.owner, c.peer],
                 map_contact_row,
             )
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The contact governing `peer`: their own row if they have one, otherwise their namespace's.
+    ///
+    /// Most specific wins, decided in SQL so the two lookups cannot disagree. An exact row for
+    /// `/bekir/agent9` therefore still outranks `/bekir/*`, which is what lets one bad agent be
+    /// blocked without disowning the whole fleet.
+    pub async fn governing_contact(
+        &self,
+        owner: String,
+        peer: String,
+    ) -> Result<Option<Contact>, StoreError> {
+        let wildcard = namespace_wildcard(&peer);
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<Contact>, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            conn.query_row(
+                &format!(
+                    "SELECT {CONTACT_COLS} FROM contacts
+                      WHERE owner = ?1 AND (peer = ?2 OR (?3 IS NOT NULL AND peer = ?3))
+                      ORDER BY CASE WHEN peer = ?2 THEN 0 ELSE 1 END
+                      LIMIT 1"
+                ),
+                params![owner, peer, wildcard],
+                map_contact_row,
+            )
+            .optional()
             .map_err(Into::into)
         })
         .await
