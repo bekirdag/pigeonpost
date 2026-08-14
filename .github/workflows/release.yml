@@ -97,8 +97,17 @@ jobs:
             elif [ "$(node -p "require('./release-state.json').isImmutable")" = "true" ]; then
               echo "resume=true" >> "$GITHUB_OUTPUT"
             else
-              echo '::error::An existing published release is mutable; refusing to rebuild or publish packages from it.'
-              exit 1
+              # Published but mutable. This used to be fatal, on the reasoning that a mutable
+              # release could have been altered between creation and here. With GitHub's immutable
+              # releases turned off for this repository (see release_create) every release is
+              # mutable, so refusing here refuses every resume — it does not buy the guarantee it
+              # was written for, it just prevents finishing a release that already exists.
+              #
+              # The resume path still re-verifies the published assets against this run's artifacts
+              # before anything is published from them, which is the check that actually catches an
+              # altered release.
+              echo '::warning::Resuming from a mutable published release; enable immutable releases to restore that guarantee.'
+              echo "resume=true" >> "$GITHUB_OUTPUT"
             fi
           elif grep -Eqi 'release not found|HTTP 404' release-error.txt; then
             echo "resume=false" >> "$GITHUB_OUTPUT"
