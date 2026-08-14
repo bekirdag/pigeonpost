@@ -81,6 +81,20 @@ CREATE TABLE IF NOT EXISTS contacts (
     PRIMARY KEY (owner, peer)
 );
 
+-- Which account owns a purchased handle namespace, cached from the registry.
+--
+-- The registry stays the public record of who bought `/bekir`; this is the operational binding the
+-- postbox needs to answer \"may this caller mint under it\". `expires_at` keeps it a cache rather
+-- than a second source of truth — past it, the answer is re-fetched instead of assumed.
+CREATE TABLE IF NOT EXISTS namespaces (
+    namespace   TEXT PRIMARY KEY,
+    account_id  TEXT NOT NULL,
+    source      TEXT NOT NULL,
+    verified_at INTEGER NOT NULL,
+    expires_at  INTEGER
+);
+CREATE INDEX IF NOT EXISTS namespaces_by_account ON namespaces(account_id);
+
 -- Upheld spam reports, keyed by message so a recipient re-reporting the same message cannot
 -- charge its sender twice. `reporter` is kept so a reporter that turns out to be the abuser can
 -- have its reports reconsidered.
@@ -124,6 +138,10 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE api_keys ADD COLUMN prefix TEXT",
     "UPDATE api_keys SET id = lower(hex(randomblob(8))) WHERE id IS NULL",
     "CREATE INDEX IF NOT EXISTS api_keys_by_account ON api_keys(account_id)",
+    // A handle mailbox is one name bound to one key, so the index is unique. NULL for every `/k/`
+    // mailbox, and SQLite treats NULLs as distinct, so unlimited anonymous mints still coexist.
+    "ALTER TABLE identities ADD COLUMN handle TEXT",
+    "CREATE UNIQUE INDEX IF NOT EXISTS identities_by_handle ON identities(handle)",
     // Contacts written before the scoped request envelope existed get a NULL verb list, i.e. no
     // grants. Any `auto` they already carried therefore stops meaning "act on any prose from this
     // sender" the moment this ships — which is the migration we want, not one to paper over.
@@ -155,6 +173,8 @@ pub struct StoredIdentity {
     pub created_at: u64,
     /// The owning account (API-key tier), or `None` for an anonymous ephemeral identity.
     pub account_id: Option<String>,
+    /// The handle this mailbox answers to, e.g. `/bekir/agent1`, or `None` for a bare `/k/` one.
+    pub handle: Option<String>,
 }
 
 /// What a retention sweep removed.
@@ -206,6 +226,7 @@ struct IdRow {
     label: Option<String>,
     created_at: i64,
     account_id: Option<String>,
+    handle: Option<String>,
 }
 
 fn arr<const N: usize>(v: Vec<u8>, what: &'static str) -> Result<[u8; N], StoreError> {
@@ -225,6 +246,7 @@ fn id_from_row(r: IdRow) -> Result<StoredIdentity, StoreError> {
         label: r.label,
         created_at: r.created_at as u64,
         account_id: r.account_id,
+        handle: r.handle,
     })
 }
 
@@ -300,7 +322,7 @@ fn map_contact_row(row: &rusqlite::Row) -> rusqlite::Result<Contact> {
     })
 }
 
-const ID_COLS: &str = "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id";
+const ID_COLS: &str = "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id, handle";
 
 fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
     Ok(IdRow {
@@ -313,6 +335,7 @@ fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
         label: row.get(6)?,
         created_at: row.get(7)?,
         account_id: row.get(8)?,
+        handle: row.get(9)?,
     })
 }
 
@@ -355,8 +378,8 @@ impl Store {
             let c = conn.lock().expect("store lock");
             c.execute(
                 "INSERT INTO identities
-                   (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                   (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id, handle)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     id.address,
                     &id.ed25519_pub[..],
@@ -367,6 +390,7 @@ impl Store {
                     id.label,
                     id.created_at as i64,
                     id.account_id,
+                    id.handle,
                 ],
             )?;
             Ok(())
@@ -413,6 +437,108 @@ impl Store {
             recipient,
         )
         .await
+    }
+
+    /// Which account owns a purchased namespace, if the cached binding is still fresh.
+    ///
+    /// Returns `None` both for "nobody owns it" and for "the cache has expired", because the
+    /// caller's next move is the same either way: ask the registry rather than assume.
+    pub async fn namespace_owner(
+        &self,
+        namespace: String,
+        now: u64,
+    ) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.query_row(
+                "SELECT account_id FROM namespaces
+                  WHERE namespace = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+                params![namespace, now as i64],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Record or refresh a namespace binding.
+    ///
+    /// Only tests call this today: nothing yet syncs ownership from the registry, which is the
+    /// remaining piece of Phase 1. Left public and unused rather than deleted because the mint
+    /// path already reads what it writes, and the read half is worthless without it.
+    #[allow(dead_code)]
+    pub async fn set_namespace_owner(
+        &self,
+        namespace: String,
+        account_id: String,
+        source: &'static str,
+        now: u64,
+        expires_at: Option<u64>,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(namespace) DO UPDATE SET
+                     account_id = ?2, source = ?3, verified_at = ?4, expires_at = ?5",
+                params![
+                    namespace,
+                    account_id,
+                    source,
+                    now as i64,
+                    expires_at.map(|v| v as i64)
+                ],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// How many mailboxes already exist under one namespace — the per-handle ceiling's input.
+    ///
+    /// Counted from `identities` rather than a running total, so it cannot drift away from the
+    /// mailboxes that actually exist after deletions.
+    pub async fn count_for_namespace(&self, namespace: String) -> Result<usize, StoreError> {
+        let prefix = format!("{namespace}/");
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n: i64 = c.query_row(
+                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
+                params![prefix],
+                |r| r.get(0),
+            )?;
+            Ok(n as usize)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Resolve a handle to its hosted mailbox.
+    pub async fn get_by_handle(
+        &self,
+        handle: String,
+    ) -> Result<Option<StoredIdentity>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<StoredIdentity>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let row = c
+                .query_row(
+                    &format!("SELECT {ID_COLS} FROM identities WHERE handle = ?1"),
+                    params![handle],
+                    map_id_row,
+                )
+                .optional()?;
+            row.map(id_from_row).transpose()
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
     }
 
     /// How many upheld reports a subject carries. Reports, not a score: the score is derived from
@@ -1126,6 +1252,7 @@ mod tests {
             label: Some("repo:test".into()),
             created_at: 0,
             account_id: None,
+            handle: None,
         }
     }
 

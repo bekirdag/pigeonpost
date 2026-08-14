@@ -44,7 +44,7 @@ use axum::{
     routing::{any, delete, get, post},
     Json, Router,
 };
-use pigeonpost_core::{envelope, keys, Address, Identity};
+use pigeonpost_core::{envelope, keys, Address, Destination, Identity};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use std::sync::Arc;
@@ -434,17 +434,120 @@ struct CreateIdentityReq {
     pow_solution: String,
     #[serde(default)]
     label: Option<String>,
+    /// Mint under a purchased namespace, e.g. `/bekir/agent1`. Needs an account that owns it;
+    /// the anonymous proof-of-work path never accepts one.
+    #[serde(default)]
+    handle: Option<String>,
 }
 
 /// Mint a keypair, seal its seed in the vault, store it (optionally under an account), and return the
 /// `/k/` address plus a one-time capability token. Shared by the REST handler and the MCP tool.
+/// Ceiling on mailboxes under one purchased namespace.
+const MAX_HANDLE_MAILBOXES: usize = 1000;
+
+/// Authorise `handle` for `account_id` and return its canonical form.
+///
+/// Ownership is the postbox's cached view of the registry's answer (see the `namespaces` table).
+/// **Reserved-name policy is deliberately not enforced here**: the postbox cannot sell a handle,
+/// only honour one that was sold, so `docs/reserved-names.md` belongs at the point of sale. Doing
+/// it in both places would let the two lists drift and quietly strand a name someone paid for.
+async fn authorize_handle(
+    state: &AppState,
+    account_id: Option<&str>,
+    handle: &str,
+) -> Result<String, ApiError> {
+    let account = account_id.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::FORBIDDEN,
+            "account_required",
+            "minting under a handle needs an account — sign in, or use an account API key",
+        )
+    })?;
+
+    // Canonicalise through core so the postbox and every client agree on what the name *is*,
+    // rather than each lower-casing and trimming to its own taste.
+    let destination = Destination::for_handle(handle)
+        .map_err(|_| ApiError::bad("invalid_handle", "expected /<namespace>/<name>"))?;
+    let canonical = destination
+        .handle()
+        .ok_or_else(|| ApiError::bad("invalid_handle", "not a handle destination"))?
+        .to_string();
+    let namespace = canonical
+        .trim_start_matches('/')
+        .split('/')
+        .next()
+        .unwrap_or_default()
+        .to_string();
+
+    let owner = state
+        .store
+        .namespace_owner(namespace.clone(), now_unix())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    match owner {
+        Some(owner) if owner == account => {}
+        Some(_) => {
+            // Same refusal shape as "unknown", so probing this endpoint does not enumerate which
+            // namespaces are sold and to whom.
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "namespace_not_yours",
+                format!("/{namespace} is not a namespace this account may mint under"),
+            ));
+        }
+        None => {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "namespace_not_yours",
+                format!("/{namespace} is not a namespace this account may mint under"),
+            ));
+        }
+    }
+
+    let held = state
+        .store
+        .count_for_namespace(format!("/{namespace}"))
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    if held >= MAX_HANDLE_MAILBOXES {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "namespace_quota",
+            format!("/{namespace} already holds its limit of {MAX_HANDLE_MAILBOXES} mailboxes"),
+        ));
+    }
+
+    if state
+        .store
+        .get_by_handle(canonical.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?
+        .is_some()
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "handle_taken",
+            format!("{canonical} already exists"),
+        ));
+    }
+    Ok(canonical)
+}
+
 async fn do_create_identity(
     state: &AppState,
     account_id: Option<String>,
     label: Option<String>,
+    handle: Option<String>,
 ) -> Result<serde_json::Value, ApiError> {
-    // Identity quota: an account can't mint unlimited inboxes off a single proof-of-work.
-    if let Some(acc) = &account_id {
+    let handle = match handle {
+        Some(requested) => Some(authorize_handle(state, account_id.as_deref(), &requested).await?),
+        None => None,
+    };
+
+    // Identity quota: an account can't mint unlimited inboxes off a single proof-of-work. Handle
+    // mailboxes are bounded by their namespace's own ceiling instead — a paid namespace is exactly
+    // the case this quota exists to distinguish from an anonymous burst.
+    if let Some(acc) = &account_id.clone().filter(|_| handle.is_none()) {
         let held = state
             .store
             .count_for_account(acc.clone())
@@ -492,6 +595,7 @@ async fn do_create_identity(
             label,
             created_at: now_unix(),
             account_id,
+            handle: handle.clone(),
         })
         .await
         .map_err(|e| {
@@ -499,8 +603,17 @@ async fn do_create_identity(
             ApiError::server("store_error")
         })?;
     let total = state.store.count().await.unwrap_or(0);
-    tracing::info!(address = %address, total, "minted /k/ identity");
-    Ok(json!({ "address": address, "capability_token": cap_token }))
+    match &handle {
+        Some(handle) => tracing::info!(address = %address, %handle, total, "minted handle mailbox"),
+        None => tracing::info!(address = %address, total, "minted /k/ identity"),
+    }
+    Ok(json!({
+        "address": address,
+        // The handle is the name callers will actually use; the /k/ address stays the key-derived
+        // identity underneath it, and both are returned so nothing has to guess the mapping.
+        "handle": handle,
+        "capability_token": cap_token
+    }))
 }
 
 fn is_api_key(token: &str) -> bool {
@@ -524,7 +637,7 @@ async fn create_identity(
         // Authenticated (API key or member JWT) → create under that account, no PoW.
         Some(tok) => match principal_for_token(&state, Some(tok)).await {
             Ok(Principal::Account(account_id)) => {
-                created(do_create_identity(&state, Some(account_id), req.label).await)
+                created(do_create_identity(&state, Some(account_id), req.label, req.handle).await)
             }
             Ok(Principal::Identity(_)) => err_response(
                 StatusCode::BAD_REQUEST,
@@ -550,7 +663,7 @@ async fn create_identity(
                     Some(&format!("{e}. GET /v1/pow/challenge, solve it, resubmit as pow_challenge + pow_solution")),
                 );
             }
-            let result = do_create_identity(&state, None, req.label).await;
+            let result = do_create_identity(&state, None, req.label, None).await;
             if let Ok(v) = &result {
                 let address = v["address"].as_str().map(String::from);
                 record_mint(&state, client_ip.as_str(), "identity", address).await;
@@ -1357,6 +1470,11 @@ pub(crate) async fn identity_for_token(
 
 /// Who a bearer token authenticates: a single identity (capability token) or a whole account
 /// (API key), which may own many identities.
+// One variant carries a whole StoredIdentity and the other an account id, so the enum is as big
+// as the identity. That is fine here: a Principal is resolved once per request, moved, and
+// dropped — it is never held in bulk, so boxing would trade a real allocation for a notional
+// saving.
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum Principal {
     Identity(store::StoredIdentity),
     Account(String),
@@ -2278,7 +2396,7 @@ mod tests {
     }
 
     async fn mint(state: &AppState) -> store::StoredIdentity {
-        let v = do_create_identity(state, None, None).await.unwrap();
+        let v = do_create_identity(state, None, None, None).await.unwrap();
         let address = v["address"].as_str().unwrap().to_string();
         state.store.get(address).await.unwrap().unwrap()
     }
@@ -2619,6 +2737,142 @@ mod tests {
         assert_eq!(unknown["alias"], serde_json::Value::Null);
         assert_eq!(unknown["autonomy"], "review");
         assert_eq!(unknown["held_because"], "sender_not_auto");
+    }
+
+    /// Pretend the registry told us `namespace` belongs to `account`.
+    async fn own_namespace(state: &AppState, namespace: &str, account: &str) {
+        state
+            .store
+            .set_namespace_owner(namespace.into(), account.into(), "test", 1, None)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_namespace_owner_mints_under_it_and_nobody_else_can() {
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+
+        let minted = do_create_identity(
+            &state,
+            Some("acct_bekir".into()),
+            None,
+            Some("/bekir/superaiagent1".into()),
+        )
+        .await
+        .unwrap();
+        assert_eq!(minted["handle"], "/bekir/superaiagent1");
+        // The /k/ address is still the key-derived identity underneath the name.
+        assert!(minted["address"].as_str().unwrap().starts_with("/k/"));
+
+        // Someone else's account may not mint there.
+        assert_eq!(
+            do_create_identity(
+                &state,
+                Some("acct_someone_else".into()),
+                None,
+                Some("/bekir/agent2".into()),
+            )
+            .await
+            .expect_err("a namespace is not a free-for-all")
+            .code,
+            "namespace_not_yours"
+        );
+
+        // An unsold namespace refuses identically, so probing cannot enumerate what is sold.
+        assert_eq!(
+            do_create_identity(
+                &state,
+                Some("acct_bekir".into()),
+                None,
+                Some("/someoneelse/agent1".into()),
+            )
+            .await
+            .unwrap_err()
+            .code,
+            "namespace_not_yours"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_handle_is_one_mailbox_and_needs_an_account() {
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+        let mint = |handle: &str| {
+            do_create_identity(&state, Some("acct_bekir".into()), None, Some(handle.into()))
+        };
+
+        mint("/bekir/agent1").await.unwrap();
+        assert_eq!(
+            mint("/bekir/agent1").await.unwrap_err().code,
+            "handle_taken",
+            "one name is one mailbox"
+        );
+        // Canonicalisation is core's job, so case must not smuggle a duplicate past it.
+        assert_eq!(
+            mint("/BEKIR/Agent1").await.unwrap_err().code,
+            "handle_taken"
+        );
+
+        // The anonymous proof-of-work path has no account, so it cannot reach a namespace at all.
+        assert_eq!(
+            do_create_identity(&state, None, None, Some("/bekir/agent9".into()))
+                .await
+                .unwrap_err()
+                .code,
+            "account_required"
+        );
+        assert_eq!(
+            do_create_identity(&state, Some("acct_bekir".into()), None, Some("nope".into()))
+                .await
+                .unwrap_err()
+                .code,
+            "invalid_handle"
+        );
+    }
+
+    #[tokio::test]
+    async fn handle_mailboxes_are_capped_per_namespace() {
+        let state = test_state();
+        own_namespace(&state, "bekir", "acct_bekir").await;
+        // Counting is by stored handle, so seed the rows directly rather than minting 1000 keys.
+        for i in 0..MAX_HANDLE_MAILBOXES {
+            state
+                .store
+                .insert(store::StoredIdentity {
+                    address: format!("/k/seed{i}"),
+                    wrapped_seed: state.vault.wrap(&[0u8; 32]).unwrap(),
+                    ed25519_pub: [0; 32],
+                    x25519_pub: [0; 32],
+                    cap_hash: [i as u8; 32],
+                    label: None,
+                    created_at: 0,
+                    account_id: Some("acct_bekir".into()),
+                    handle: Some(format!("/bekir/agent{i}")),
+                })
+                .await
+                .unwrap();
+        }
+        let err = do_create_identity(
+            &state,
+            Some("acct_bekir".into()),
+            None,
+            Some("/bekir/one-too-many".into()),
+        )
+        .await
+        .expect_err("1000 is the ceiling");
+        assert_eq!(err.code, "namespace_quota");
+
+        // A different namespace is unaffected — the ceiling is per handle, not per account.
+        own_namespace(&state, "someoneelse", "acct_bekir").await;
+        assert!(do_create_identity(
+            &state,
+            Some("acct_bekir".into()),
+            None,
+            Some("/someoneelse/agent1".into()),
+        )
+        .await
+        .is_ok());
     }
 
     #[tokio::test]

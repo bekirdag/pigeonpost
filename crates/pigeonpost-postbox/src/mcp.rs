@@ -171,7 +171,9 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
     // Account-management tools need an API-key account; messaging tools act as a resolved identity.
     let outcome: Result<Value, ApiError> = match name {
         "create_pigeonpost_identity" => match principal {
-            Principal::Account(a) => do_create_identity(state, Some(a), arg_str("label")).await,
+            Principal::Account(a) => {
+                do_create_identity(state, Some(a), arg_str("label"), arg_str("handle")).await
+            }
             Principal::Identity(_) => {
                 return Ok(tool_error(
                     "create_pigeonpost_identity needs an account API key",
