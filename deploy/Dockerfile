@@ -31,8 +31,18 @@ ARG TINI_VERSION=v0.19.0
 ARG TINI_SHA256_AMD64=c5b0666b4cb676901f90dfcb37106783c5fe2077b04590973b885950611b30ee
 ARG TINI_SHA256_ARM64=eae1d3aa50c48fb23b8cbdf4e369d0910dfc538566bfd09df89a774aa84a48b9
 
+# Where the release binary comes from: `compile` builds it here (the default, so `docker build .`
+# still works for local use and for deploy/acceptance/install-defaults.sh), `prebuilt` takes the
+# one the release matrix already built on a native runner.
+#
+# The release passes `prebuilt` because building arm64 in this Dockerfile means QEMU: ~70 minutes
+# of emulated compilation for a binary the pipeline had already produced natively minutes earlier.
+# Reusing it is not only faster, it is stricter — the image then provably contains the same bytes
+# as the published linux asset, rather than a second build that merely ought to match.
+ARG BINARY_STAGE=compile
+
 # ---- build ----------------------------------------------------------------------------------
-FROM ${BUILD_BASE} AS build
+FROM ${BUILD_BASE} AS compile
 
 ARG MUSL_VERSION
 # The digest-pinned Rust/Alpine image carries a compiler but no C development headers, and both
@@ -58,12 +68,29 @@ RUN cargo build --release --locked -p pigeonpost-cli \
       echo "the release binary links a shared library; a dynamic dependency crept in"; \
       readelf -d target/release/pigeonpost | grep NEEDED; \
       exit 1; \
+    fi \
+ && install -D target/release/pigeonpost /out/pigeonpost
+
+# ---- prebuilt -------------------------------------------------------------------------------
+# Only built when BINARY_STAGE selects it, so the missing `dist/` costs a source build nothing:
+# BuildKit builds only the stages the target actually depends on.
+FROM --platform=$BUILDPLATFORM ${BUILD_BASE} AS prebuilt
+
+ARG TARGETARCH
+COPY dist/linux/${TARGETARCH}/pigeonpost /out/pigeonpost
+RUN chmod 0755 /out/pigeonpost \
+ && if readelf -d /out/pigeonpost 2>/dev/null | grep -q NEEDED; then \
+      echo "the prebuilt release binary links a shared library"; exit 1; \
     fi
+
+# ---- binary ---------------------------------------------------------------------------------
+# Indirection so the runtime copies from one place regardless of which route produced it.
+FROM ${BINARY_STAGE} AS binary
 
 # ---- init ------------------------------------------------------------------------------------
 # Fetched rather than packaged, because the runtime has no package manager. Verified against a
 # pinned digest, so a compromised or swapped release fails the build instead of shipping.
-FROM ${BUILD_BASE} AS init
+FROM --platform=$BUILDPLATFORM ${BUILD_BASE} AS init
 
 ARG TINI_VERSION
 ARG TINI_SHA256_AMD64
@@ -84,7 +111,7 @@ RUN set -eux; \
 # distroless ships a `nonroot` user at uid 65532, but this image has always run as 10001 and host
 # bind mounts on deployed nodes are owned accordingly. Changing it would silently break every
 # existing volume, so the account is carried over rather than adopted.
-FROM ${BUILD_BASE} AS rootfs
+FROM --platform=$BUILDPLATFORM ${BUILD_BASE} AS rootfs
 
 RUN set -eux; \
     addgroup -g 10001 pigeonpost; \
@@ -108,7 +135,7 @@ COPY --from=rootfs /passwd /etc/passwd
 COPY --from=rootfs /group /etc/group
 COPY --from=rootfs --chown=10001:10001 /rootfs/var /var
 COPY --from=init /tini /usr/bin/tini
-COPY --from=build --chown=0:0 /src/target/release/pigeonpost /usr/local/bin/pigeonpost
+COPY --from=binary --chown=0:0 /out/pigeonpost /usr/local/bin/pigeonpost
 
 # `USER` takes a numeric id because there is no shell to resolve a name against, and a numeric id
 # is what the kernel and the host's bind mounts agree on anyway.

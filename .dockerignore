@@ -4,3 +4,5 @@
 !rust-toolchain.toml
 !crates/
 !crates/**
+!dist/
+!dist/**

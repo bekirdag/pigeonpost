@@ -350,6 +350,20 @@ jobs:
           # first time the message was improved.
           raise 'the product image no longer asserts its binary links nothing' unless
             dockerfile.include?('readelf -d') && dockerfile.include?('NEEDED')
+          # The release builds the image from the linux binaries it already produced on native
+          # runners; compiling them again inside the image would mean emulating arm64 under QEMU.
+          # `compile` stays the default so a plain `docker build .` — and install-defaults.sh —
+          # still work from source.
+          raise 'the product image lost its prebuilt-binary route' unless
+            dockerfile.include?('BINARY_STAGE=compile') &&
+            dockerfile.include?('AS prebuilt') &&
+            dockerfile.include?('${BINARY_STAGE} AS binary')
+          release_image_step = jobs.fetch('container_candidate').fetch('steps').find do |step|
+            step.dig('with', 'file') == 'deploy/Dockerfile'
+          end
+          raise 'the release no longer builds the product image' unless release_image_step
+          raise 'the release image no longer reuses the natively built linux binaries' unless
+            release_image_step.dig('with', 'build-args').to_s.include?('BINARY_STAGE=prebuilt')
           musl_toolchain = File.read('deploy/Dockerfile.release-musl')
           %w[
             rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
@@ -373,8 +387,13 @@ jobs:
           raise 'candidate is no longer pushed without a tag' unless
             output.include?('push-by-digest=true') && output.include?('name-canonical=true')
           raise 'candidate build creates a discoverable tag' if image_build.fetch('with').key?('tags')
-          raise 'candidate overrides the audited Dockerfile inputs' if
-            image_build.fetch('with').key?('build-args')
+          # Build args could otherwise swap BUILD_BASE or RUNTIME_BASE and defeat the digest pins
+          # audited above, so the allowance is exact rather than general: only the stage selector,
+          # only with the value that reuses the natively built binaries.
+          provided_build_args = image_build.fetch('with').fetch('build-args', '')
+            .to_s.split("\n").map(&:strip).reject(&:empty?)
+          raise 'candidate overrides the audited Dockerfile inputs' unless
+            (provided_build_args - ['BINARY_STAGE=prebuilt']).empty?
           pre_release_alias_check = jobs.fetch('container_candidate').fetch('steps').find do |step|
             step['name'] == 'Require stable aliases to be absent before immutable release creation'
           end.fetch('run')
