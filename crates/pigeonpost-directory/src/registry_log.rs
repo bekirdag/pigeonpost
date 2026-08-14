@@ -1409,19 +1409,30 @@ mod tests {
             Err(DirectoryError::NotFound)
         ));
 
-        // Generous because it is a ceiling, not a target: the loop leaves the moment the
-        // supervisor has consumed the reservation, so a longer bound costs a correct build
-        // nothing and only buys patience on a loaded CI runner. At 4s this went red on Linux
-        // while asserting behaviour that was working.
+        // Wait for the end state, not for one step on the way to it. Recovery consumes the
+        // reservation, publishes the entry, and appends the leaf; polling only the first and then
+        // asserting the other two is a race, and it is the race that made this test flaky rather
+        // than the length of the budget. The deadline is a ceiling: the loop leaves as soon as
+        // recovery is complete, so a generous bound costs a correct build nothing.
         let recovery_deadline = Instant::now() + Duration::from_secs(60);
-        while directory.has_pending_mutations().unwrap() && Instant::now() < recovery_deadline {
+        loop {
+            let recovered = !directory.has_pending_mutations().unwrap()
+                && directory.entry("https://loft.example").is_ok()
+                && registry.size().unwrap() == 1;
+            if recovered || Instant::now() >= recovery_deadline {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
+        // Restated exactly, so a timeout still fails on the specific thing that did not happen.
         assert!(
             !directory.has_pending_mutations().unwrap(),
             "the supervisor must consume the orphaned reservation"
         );
-        assert!(directory.entry("https://loft.example").is_ok());
+        assert!(
+            directory.entry("https://loft.example").is_ok(),
+            "recovery must publish the entry it reserved"
+        );
         assert_eq!(
             registry.size().unwrap(),
             1,
@@ -1470,8 +1481,16 @@ mod tests {
             log,
         ))
         .await;
+        // Same shape as the recovery test above: wait for every part of the end state, or a fast
+        // runner observes the gap between consuming the reservation and publishing the entry.
         let deadline = Instant::now() + Duration::from_secs(60);
-        while directory.has_pending_mutations().unwrap() && Instant::now() < deadline {
+        loop {
+            let recovered = !directory.has_pending_mutations().unwrap()
+                && directory.entry("https://loft.example").is_ok()
+                && registry.size().unwrap() == 1;
+            if recovered || Instant::now() >= deadline {
+                break;
+            }
             tokio::time::sleep(Duration::from_millis(25)).await;
         }
         assert!(!directory.has_pending_mutations().unwrap());
