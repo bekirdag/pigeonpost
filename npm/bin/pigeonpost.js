@@ -17,7 +17,26 @@ const path = require('node:path');
 
 const { version } = require('../package.json');
 
-const DOWNLOAD_TIMEOUT_MS = 30_000;
+// The release binary is ~21 MB, so 30s demanded roughly 700 KB/s just to finish the first run —
+// a link at 370 KB/s failed with a bare "download timed out" and no way to retry differently. This
+// is a ceiling on a stalled transfer, not a target, so it costs a fast connection nothing.
+// PIGEONPOST_DOWNLOAD_TIMEOUT_MS overrides it for a genuinely slow or metered link.
+const DEFAULT_DOWNLOAD_TIMEOUT_MS = 300_000;
+
+function configuredDownloadTimeoutMs() {
+  const raw = process.env.PIGEONPOST_DOWNLOAD_TIMEOUT_MS;
+  if (raw === undefined) return DEFAULT_DOWNLOAD_TIMEOUT_MS;
+  const parsed = Number(raw);
+  // A malformed override must not silently become 0 and fail every download instantly.
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(
+      `PIGEONPOST_DOWNLOAD_TIMEOUT_MS must be a positive number of milliseconds; got ${raw}`,
+    );
+  }
+  return parsed;
+}
+
+const DOWNLOAD_TIMEOUT_MS = configuredDownloadTimeoutMs();
 const MAX_DOWNLOAD_BYTES = 64 * 1024 * 1024;
 const MAX_REDIRECTS = 3;
 const STALE_RUN_DIRECTORY_AGE_MS = 7 * 24 * 60 * 60 * 1000;

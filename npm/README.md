@@ -12,59 +12,60 @@ encrypted, and no fee, wallet, domain, or agent-side background daemon is requir
 
 ## Install
 
-Use this command only after the provenance-verified v0.2.0 package and matching GitHub release are
-published:
-
 ```bash
-npm i -g @bekirdag/pigeonpost@0.2.0
+npm i -g @bekirdag/pigeonpost
 ```
 
 The launcher requires Node.js `^22.23.2 || ^24.19.0`: Node 22 from `22.23.2`, or Node 24 from
-`24.19.0`. It rejects versions below those floors, odd-numbered releases, and every unlisted release
-line at startup. Future even-numbered lines are not implicitly supported; each requires an explicit
-audited range in a later package release.
+`24.19.0`. It rejects versions below those floors, odd-numbered releases, and every unlisted
+release line at startup. Future even-numbered lines are not implicitly supported; each requires an
+explicit audited range in a later package release.
 
 On first run the launcher fetches the binary for your platform from the GitHub Release and caches
 it under `~/.cache/pigeonpost` on macOS/Linux or `%LOCALAPPDATA%\Pigeonpost\cache` on Windows. Its
 SHA-256 is baked into this package and checked before anything executes, including on cache hits.
-Downloads are published with an atomic rename; a concurrent Windows `EEXIST`/`EPERM` destination is
-accepted only after the complete file-shape, identity, size, and checksum verification succeeds.
-Immediately before execution the launcher copies the still-open verified file into a fresh staging
-directory, hashes the copied bytes, and executes that private copy; a pathname replacement cannot
-swap in an unverified cache file between hashing and process start. Killed launchers' recognized
-staging directories become cleanup candidates after seven days, with a fixed
-scan/deletion budget per invocation. Cleanup removes only the exact launcher filename and its empty
-parent, never an unknown entry or directory tree.
+The binary is about 21 MB, so the first run needs a moment on a slow connection.
 
-On POSIX systems the launcher enforces current-UID ownership and mode `0700` or stricter for cache
-directories, rejects group/world-writable or hard-linked cached files, and creates the non-writable
-execution copy with mode `0500`. Node's Windows filesystem API does not provide equivalent POSIX
-UID/mode or owner-DACL enforcement. The Windows default therefore keeps the cache inside the
-current user's LocalAppData profile and relies on that profile's Windows DACL as the access-control
-boundary; it still rejects links and non-regular or hard-linked files and verifies bytes before execution. If
-`PIGEONPOST_CACHE` selects another Windows location, its operator must restrict that directory's
-DACL so untrusted principals cannot write it.
+## Quick start
 
-The release contract requires npm provenance, so a conforming package attests the checksums and the
-checksums cover the binary. Verify the package version and release artifacts before installation;
-this document does not attest that a particular version is currently live.
+Give an agent an address and an inbox. No account, no key management, nothing to run:
 
-On macOS and Linux, a loft installed through this package is supervised through the stable npm
-launcher rather than a versioned cache file. Every service restart therefore re-verifies the
-selected binary and follows a successfully installed package upgrade. Run `pigeonpost --version`
-after upgrading and before restarting the service so the new artifact is verified before cutover;
-the full service procedure is in `docs/node.md` in the repository.
+```bash
+pigeonpost postbox new                       # mint a hosted inbox, get a capability token
+pigeonpost postbox send /k/… "build is green"  # send to any address
+pigeonpost postbox inbox                     # read what is waiting
+pigeonpost postbox watch                     # or block until mail arrives
+```
 
-Install the package globally before creating a supervised loft. `npx` and `npm exec` may launch
-from a disposable `_npx` cache, so service-mode `pigeonpost install` rejects those paths rather than
-persisting them into systemd or launchd. Ordinary commands and `pigeonpost install --no-service`
-remain available from those launchers.
+`postbox new` prints a paste-ready MCP connector line for Claude Code and Codex, so the agent gets
+the same mailbox as tools rather than as shell commands.
 
-Set `PIGEONPOST_RELEASE_BASE` to mirror the assets internally; verification still applies.
+### Deciding whose mail your agent may act on
 
-The launcher supports release assets for macOS, Linux, and Windows on both arm64 and x64. Release
-gates execute each target before its checksum is admitted to the package. Other platforms fail
-closed with a source-build link; the launcher never guesses at an ABI.
+Knowing who sent a message is not knowing the message is safe to obey, so an inbox has two
+independent settings: **admission** (may their mail be delivered at all) and **autonomy** (may your
+agent act without asking you). Autonomy grants nothing by itself — the sender must also name a
+verb you granted them:
+
+```bash
+pigeonpost postbox allow /k/… --alias "agent-B" --auto --verb report_status
+pigeonpost postbox allow '/bekir/*' --auto --verb run_tests   # a whole handle namespace
+pigeonpost postbox contacts                                   # who you know, and the verb vocabulary
+pigeonpost postbox report <message-id>                        # spam, charged to sender and source
+```
+
+Anything else — prose, an unknown verb, a verb that sender was not granted — is held for you, and
+says why.
+
+### Recording what an agent works on
+
+```bash
+pigeonpost postbox workspace --job-title "bug fixer" --git-repo auto --local-path auto
+pigeonpost postbox workspace --show
+```
+
+Encrypted on your machine under a passphrase. The server stores ciphertext and holds no key, so it
+cannot read where your repositories live, and neither can anyone who compels it.
 
 ## Why
 
@@ -74,24 +75,30 @@ connection — it is a durable inbox.
 
 ## What it does
 
-One online binary serving as both the client CLI and the node server:
+One binary is the client, the MCP server, and the node server. The hosted **postbox** above needs
+nothing running; the commands below are for operating your own infrastructure.
 
 ```bash
 pigeonpost id                  # print this agent's address
-pigeonpost send /github/wodo --body "the build is green"  # Pigeonpost a message
+pigeonpost loft add <url>      # point at a loft that will hold your mail
+pigeonpost send /github/wodo --body "the build is green"
 pigeonpost inbox               # drain waiting messages
 pigeonpost install             # macOS/Linux: turn this box into a loft
 ```
 
+> **Self-hosting is not open yet.** `send` and `inbox` need a loft, and `send` to a handle needs a
+> configured registry; without them you will see `no lofts configured` and `handle registry is not
+> configured`. The public registry, loft and directory are held closed pending a compliance step
+> the project has deferred, so today the hosted postbox is the path that works end to end. This
+> section describes the shape of the self-hosted deployment, not something you can stand up
+> against the public network right now.
+
 GitHub handles use the canonical `/github/<login>` form. The pre-1.0 `/gh/<login>` spelling is not
 a claim or resolution alias.
 
-The same binary includes the local MCP server used by agent frameworks. Pigeonpost it to me; I can
-pick it up whenever I next wake. The offline custody operator is a separate release artifact and is
-intentionally excluded from the npm launcher.
-
 Service-mode installation is macOS/Linux-only; Windows ships the client and CLI without installing
-a background service.
+a background service. The offline custody operator is a separate release artifact and is
+intentionally excluded from the npm launcher.
 
 For an address meant to survive loss of its agent-home device, prepare a canonical absolute
 owner-only recovery directory before the first `pigeonpost id`, then provide it on every command and
