@@ -388,6 +388,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/report-spam", post(report_spam))
+        .route("/v1/identities/handle", post(bind_identity_handle))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
         .route("/v1/workspace", get(get_workspace).put(put_workspace))
         .route(
@@ -459,8 +460,11 @@ struct CreateIdentityReq {
 
 /// Mint a keypair, seal its seed in the vault, store it (optionally under an account), and return the
 /// `/k/` address plus a one-time capability token. Shared by the REST handler and the MCP tool.
-/// Ceiling on mailboxes under one purchased namespace.
-const MAX_HANDLE_MAILBOXES: usize = 1000;
+/// Ceiling on mailboxes under one purchased namespace, per paid account.
+///
+/// Enforced inside the writer transaction that creates the mailbox, never as a separate read —
+/// see `Store::insert_under_namespace`.
+const MAX_HANDLE_MAILBOXES: usize = 100;
 
 /// Authorise `handle` for `account_id` and return its canonical form.
 ///
@@ -472,7 +476,7 @@ async fn authorize_handle(
     state: &AppState,
     account_id: Option<&str>,
     handle: &str,
-) -> Result<String, ApiError> {
+) -> Result<(String, String), ApiError> {
     let account = account_id.ok_or_else(|| {
         ApiError::new(
             StatusCode::FORBIDDEN,
@@ -521,18 +525,9 @@ async fn authorize_handle(
         }
     }
 
-    let held = state
-        .store
-        .count_for_namespace(format!("/{namespace}"))
-        .await
-        .map_err(|_| ApiError::server("store_error"))?;
-    if held >= MAX_HANDLE_MAILBOXES {
-        return Err(ApiError::new(
-            StatusCode::FORBIDDEN,
-            "namespace_quota",
-            format!("/{namespace} already holds its limit of {MAX_HANDLE_MAILBOXES} mailboxes"),
-        ));
-    }
+    // The quota is deliberately *not* checked here. A count taken now and acted on after the
+    // keypair is generated is a check against a stale number: two mints racing at the boundary
+    // would both read a free slot. `insert_under_namespace` counts inside the write instead.
 
     if state
         .store
@@ -547,7 +542,7 @@ async fn authorize_handle(
             format!("{canonical} already exists"),
         ));
     }
-    Ok(canonical)
+    Ok((canonical, namespace))
 }
 
 async fn do_create_identity(
@@ -556,9 +551,13 @@ async fn do_create_identity(
     label: Option<String>,
     handle: Option<String>,
 ) -> Result<serde_json::Value, ApiError> {
-    let handle = match handle {
-        Some(requested) => Some(authorize_handle(state, account_id.as_deref(), &requested).await?),
-        None => None,
+    let (handle, namespace) = match handle {
+        Some(requested) => {
+            let (canonical, namespace) =
+                authorize_handle(state, account_id.as_deref(), &requested).await?;
+            (Some(canonical), Some(namespace))
+        }
+        None => (None, None),
     };
 
     // Identity quota: an account can't mint unlimited inboxes off a single proof-of-work. Handle
@@ -601,24 +600,42 @@ async fn do_create_identity(
     let cap_token = gen_cap_token();
     let cap_hash = sha256(cap_token.as_bytes());
 
-    state
-        .store
-        .insert(store::StoredIdentity {
-            address: address.clone(),
-            wrapped_seed,
-            ed25519_pub,
-            x25519_pub,
-            cap_hash,
-            label,
-            created_at: now_unix(),
-            account_id,
-            handle: handle.clone(),
-        })
-        .await
-        .map_err(|e| {
+    let record = store::StoredIdentity {
+        address: address.clone(),
+        wrapped_seed,
+        ed25519_pub,
+        x25519_pub,
+        cap_hash,
+        label,
+        created_at: now_unix(),
+        account_id,
+        handle: handle.clone(),
+    };
+    match &namespace {
+        Some(namespace) => {
+            let outcome = state
+                .store
+                .insert_under_namespace(record, format!("/{namespace}"), MAX_HANDLE_MAILBOXES)
+                .await
+                .map_err(|e| {
+                    tracing::error!(error = %e, "store insert failed");
+                    ApiError::server("store_error")
+                })?;
+            if outcome == store::QuotaOutcome::Full {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "namespace_quota",
+                    format!(
+                        "/{namespace} already holds its limit of {MAX_HANDLE_MAILBOXES} mailboxes"
+                    ),
+                ));
+            }
+        }
+        None => state.store.insert(record).await.map_err(|e| {
             tracing::error!(error = %e, "store insert failed");
             ApiError::server("store_error")
-        })?;
+        })?,
+    }
     let total = state.store.count().await.unwrap_or(0);
     match &handle {
         Some(handle) => tracing::info!(address = %address, %handle, total, "minted handle mailbox"),
@@ -631,6 +648,98 @@ async fn do_create_identity(
         "handle": handle,
         "capability_token": cap_token
     }))
+}
+
+/// `POST /v1/identities/handle` — give a mailbox you already own a readable name.
+///
+/// The mailbox an agent already runs is the one its MCP config, its contacts, and its waiting mail
+/// all point at. Without this, joining a namespace means minting a *different* mailbox and
+/// abandoning that — so an agent that started anonymously could never be brought into the fleet,
+/// only replaced. Binds the name to the mailbox that exists instead.
+async fn bind_identity_handle(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<BindHandleReq>,
+) -> Response {
+    let account = match principal_for_token(&state, bearer(&headers)).await {
+        Ok(Principal::Account(account)) => account,
+        Ok(Principal::Identity(_)) => {
+            // A capability token is the mailbox's own credential, not the account's. Naming a
+            // mailbox spends a slot in a namespace the *account* paid for, so it is the account
+            // that has to authorise it.
+            return ApiError::new(
+                StatusCode::FORBIDDEN,
+                "account_required",
+                "naming a mailbox needs the account — sign in, or use an account API key",
+            )
+            .into_response();
+        }
+        Err(e) => return e.into_response(),
+    };
+    match do_bind_handle(&state, account, req.address, req.handle).await {
+        Ok(body) => Json(body).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
+/// Bind a handle to an existing mailbox. Shared by the REST handler and the MCP tool so the two
+/// cannot drift on who is allowed to do it or what it refuses.
+async fn do_bind_handle(
+    state: &AppState,
+    account: String,
+    address: String,
+    handle: String,
+) -> Result<serde_json::Value, ApiError> {
+    let (canonical, namespace) =
+        authorize_handle(state, Some(account.as_str()), &handle).await?;
+
+    match state
+        .store
+        .bind_handle(
+            address.clone(),
+            canonical.clone(),
+            account,
+            format!("/{namespace}"),
+            MAX_HANDLE_MAILBOXES,
+        )
+        .await
+    {
+        Ok(store::BindOutcome::Bound) => {
+            tracing::info!(%address, handle = %canonical, "handle bound to mailbox");
+            Ok(json!({ "address": address, "handle": canonical }))
+        }
+        Ok(store::BindOutcome::NoSuchMailbox) => Err(ApiError::new(
+            StatusCode::NOT_FOUND,
+            "unknown_mailbox",
+            format!("no mailbox at {address} on this postbox"),
+        )),
+        Ok(store::BindOutcome::NotYours) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "not_your_mailbox",
+            "that mailbox belongs to another account",
+        )),
+        Ok(store::BindOutcome::AlreadyNamed(current)) => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "already_named",
+            format!(
+                "that mailbox already answers to {current}; renaming would strand everyone who trusts the old name"
+            ),
+        )),
+        Ok(store::BindOutcome::Taken) => Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "handle_taken",
+            format!("{canonical} already exists"),
+        )),
+        Ok(store::BindOutcome::Full) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "namespace_quota",
+            format!("/{namespace} already holds its limit of {MAX_HANDLE_MAILBOXES} mailboxes"),
+        )),
+        Err(e) => {
+            tracing::error!(error = %e, "handle bind failed");
+            Err(ApiError::server("store_error"))
+        }
+    }
 }
 
 fn is_api_key(token: &str) -> bool {
@@ -2369,6 +2478,13 @@ fn b64_decode(text: &str) -> Result<Vec<u8>, ()> {
         }
     }
     Ok(out)
+}
+
+#[derive(serde::Deserialize)]
+struct BindHandleReq {
+    /// The `/k/` mailbox to name. Its own address, not the handle it wants.
+    address: String,
+    handle: String,
 }
 
 #[derive(serde::Deserialize)]

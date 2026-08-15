@@ -239,6 +239,21 @@ enum PostboxAction {
         /// A name for this mailbox, e.g. the agent it belongs to.
         #[arg(long)]
         label: Option<String>,
+        /// Mint under a namespace your account owns, e.g. --handle /bekir/agent1, so the mailbox
+        /// has a readable name. Requires `pigeonpost login`; no proof-of-work is asked for.
+        #[arg(long)]
+        handle: Option<String>,
+    },
+
+    /// Give a mailbox you already own a readable name, e.g. /k/… → /bekir/agent1.
+    ///
+    /// Keeps the address, its capability token, its waiting mail, and every contact entry that
+    /// already trusts it. Requires `pigeonpost login`.
+    Name {
+        /// The name to give it, e.g. /bekir/agent1.
+        handle: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
     },
 
     /// List hosted mailboxes minted from this home. Never prints tokens.
@@ -1059,7 +1074,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 login_cmd::login_browser(&home, issuer, !*no_browser).await
             };
         }
-        Command::Whoami => return login_cmd::status(&home, cli.json),
+        Command::Whoami => return login_cmd::status(&home, cli.json).await,
         Command::Logout => return login_cmd::logout(&home),
         _ => {}
     }
@@ -1068,8 +1083,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // above — they must not mint an identity in someone's home as a side effect.
     if let Command::Postbox { action } = &cli.command {
         return match action {
-            PostboxAction::New { postbox, label } => {
-                postbox_cmd::new_inbox(&home, postbox, label.as_deref(), cli.json).await
+            PostboxAction::New {
+                postbox,
+                label,
+                handle,
+            } => {
+                postbox_cmd::new_inbox(
+                    &home,
+                    postbox,
+                    label.as_deref(),
+                    handle.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Name { handle, which } => {
+                postbox_cmd::name_mailbox(&home, which.address.as_deref(), handle, cli.json).await
             }
             PostboxAction::List => postbox_cmd::list(&home, cli.json),
             PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),

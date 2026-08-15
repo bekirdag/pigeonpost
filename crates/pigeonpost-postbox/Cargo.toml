@@ -28,7 +28,7 @@ subtle.workspace = true
 rand_core.workspace = true
 thiserror.workspace = true
 # identity minting + key custody
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.4.3" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.0" }
 chacha20poly1305.workspace = true
 zeroize.workspace = true
 # persistence — bundled SQLite (embedded, no external DB), matching the registry crate. Postgres is

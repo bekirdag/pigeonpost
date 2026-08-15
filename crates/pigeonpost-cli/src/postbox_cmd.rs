@@ -40,6 +40,10 @@ struct Challenge {
 struct Minted {
     address: String,
     capability_token: String,
+    /// Set when the mailbox was minted under a namespace. The `/k/` address is still the mailbox's
+    /// identity; the handle is a readable alias for it.
+    #[serde(default)]
+    handle: Option<String>,
 }
 
 /// One hosted mailbox this machine owns.
@@ -65,44 +69,55 @@ pub async fn new_inbox(
     home: &Path,
     base_url: &str,
     label: Option<&str>,
+    handle: Option<&str>,
     json: bool,
 ) -> Result<(), Error> {
     let base = base_url.trim_end_matches('/').to_string();
     let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
 
-    let challenge: Challenge = http
-        .get(format!("{base}/v1/pow/challenge"))
-        .send()
-        .await?
-        .error_for_status()?
-        .json()
-        .await?;
-    if challenge.bits > MAX_POW_BITS {
-        return Err(format!(
-            "{base} asked for a {}-bit proof-of-work; refusing above {MAX_POW_BITS}",
-            challenge.bits
-        )
-        .into());
-    }
-
-    // Hashing is CPU-bound: keep it off the async runtime's worker.
-    let puzzle = challenge.challenge.clone();
-    let bits = challenge.bits;
-    let solution = tokio::task::spawn_blocking(move || solve(&puzzle, bits)).await?;
-
-    let mut body = serde_json::json!({
-        "pow_challenge": challenge.challenge,
-        "pow_solution": solution,
-    });
+    // Two ways to earn a mailbox, and they are alternatives rather than a sequence.
+    //
+    // A `/k/` mailbox is anonymous, so it is rate-limited by proof-of-work — the only cost an
+    // anonymous caller can be asked to pay. A handle mailbox is already gated by something
+    // stronger: an account that owns the namespace. Making a signed-in caller also burn CPU would
+    // charge twice for one seat.
+    let mut body = serde_json::json!({});
     if let Some(l) = label {
         body["label"] = serde_json::json!(l);
     }
+    let mut request = http.post(format!("{base}/v1/identities"));
 
-    let resp = http
-        .post(format!("{base}/v1/identities"))
-        .json(&body)
-        .send()
-        .await?;
+    if let Some(handle) = handle {
+        body["handle"] = serde_json::json!(handle);
+        // Goes through `access_token`, which refreshes first — minting is exactly the command
+        // someone runs an hour after signing in.
+        let token = crate::login_cmd::access_token(home).await?;
+        request = request.bearer_auth(token);
+    } else {
+        let challenge: Challenge = http
+            .get(format!("{base}/v1/pow/challenge"))
+            .send()
+            .await?
+            .error_for_status()?
+            .json()
+            .await?;
+        if challenge.bits > MAX_POW_BITS {
+            return Err(format!(
+                "{base} asked for a {}-bit proof-of-work; refusing above {MAX_POW_BITS}",
+                challenge.bits
+            )
+            .into());
+        }
+
+        // Hashing is CPU-bound: keep it off the async runtime's worker.
+        let puzzle = challenge.challenge.clone();
+        let bits = challenge.bits;
+        let solution = tokio::task::spawn_blocking(move || solve(&puzzle, bits)).await?;
+        body["pow_challenge"] = serde_json::json!(challenge.challenge);
+        body["pow_solution"] = serde_json::json!(solution);
+    }
+
+    let resp = request.json(&body).send().await?;
     let status = resp.status();
     if !status.is_success() {
         let detail: serde_json::Value = resp.json().await.unwrap_or_default();
@@ -115,11 +130,16 @@ pub async fn new_inbox(
     }
     let minted: Minted = resp.json().await?;
 
+    // With no label of its own, a handle mailbox labels itself with its handle — otherwise
+    // `postbox list` shows a column of key digests and no way to tell the agents apart.
+    let stored_label = label
+        .map(str::to_string)
+        .or_else(|| minted.handle.clone());
     let credential = Credential {
         base_url: base.clone(),
         address: minted.address.clone(),
         capability_token: minted.capability_token.clone(),
-        label: label.map(str::to_string),
+        label: stored_label.clone(),
         created_at: now_unix(),
     };
     let path = save(home, &credential)?;
@@ -131,15 +151,19 @@ pub async fn new_inbox(
             "{}",
             serde_json::json!({
                 "address": minted.address,
+                "handle": minted.handle,
                 "base_url": base,
-                "label": label,
+                "label": stored_label,
                 "credentials": path.display().to_string(),
             })
         );
         return Ok(());
     }
 
-    println!("inbox {} minted on {}", minted.address, base);
+    match &minted.handle {
+        Some(handle) => println!("inbox {handle} minted on {base}  ({})", minted.address),
+        None => println!("inbox {} minted on {}", minted.address, base),
+    }
     println!("capability token saved to {}", path.display());
     println!();
     println!("Connect an agent to it:");
@@ -167,15 +191,21 @@ pub async fn new_inbox(
 /// wrong guess would apply a trust change to somebody else's inbox.
 fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Error> {
     let creds = load(home)?;
+    // Match the handle as readily as the /k/ address. Once a mailbox is named, its handle is what
+    // everything else — the docs, its peers, the agent's own config — calls it, so `--as
+    // /bekir/agent1` has to work or the name is only half real.
     let found = match address {
-        Some(a) => creds.identities.iter().find(|c| c.address == a),
+        Some(a) => creds
+            .identities
+            .iter()
+            .find(|c| c.address == a || c.label.as_deref() == Some(a)),
         None if creds.identities.len() == 1 => creds.identities.first(),
         None if creds.identities.is_empty() => {
             return Err("no hosted mailboxes on file — run: pigeonpost postbox new".into())
         }
         None => {
             return Err(format!(
-                "{} mailboxes on file — name one with --as /k/…",
+                "{} mailboxes on file — name one with --as /k/… or --as /namespace/name",
                 creds.identities.len()
             )
             .into())
@@ -184,6 +214,70 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
     found
         .cloned()
         .ok_or_else(|| "no such mailbox in this home".into())
+}
+
+/// Give a mailbox this home already owns a readable name under a namespace the account owns.
+///
+/// The point of doing this in place, rather than minting a fresh handle mailbox, is that the
+/// address someone already runs is the one their MCP config, their peers' contact entries, and
+/// their waiting mail all point at. Renaming keeps all of it.
+pub async fn name_mailbox(
+    home: &Path,
+    address: Option<&str>,
+    handle: &str,
+    json: bool,
+) -> Result<(), Error> {
+    let credential = credential_for(home, address)?;
+    // Authenticated as the *account*, not as the mailbox: the slot being spent belongs to the
+    // namespace the account paid for. The mailbox's own token cannot authorise it.
+    let token = crate::login_cmd::access_token(home).await?;
+    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let base = credential.base_url.trim_end_matches('/').to_string();
+
+    let resp = http
+        .post(format!("{base}/v1/identities/handle"))
+        .bearer_auth(token)
+        .json(&serde_json::json!({ "address": credential.address, "handle": handle }))
+        .send()
+        .await?;
+    let status = resp.status();
+    if !status.is_success() {
+        let detail: serde_json::Value = resp.json().await.unwrap_or_default();
+        let message = detail["detail"]
+            .as_str()
+            .or_else(|| detail["error"].as_str())
+            .unwrap_or("no detail")
+            .to_string();
+        return Err(format!("{base} refused the rename ({status}): {message}").into());
+    }
+    let named: serde_json::Value = resp.json().await?;
+    let bound = named["handle"].as_str().unwrap_or(handle).to_string();
+
+    // Keep the local label in step, so `postbox list` stops showing a bare key digest.
+    relabel(home, &credential.address, &bound)?;
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({ "address": credential.address, "handle": bound })
+        );
+    } else {
+        println!("{} is now {}", credential.address, bound);
+        println!();
+        println!("Its address, token, and waiting mail are unchanged — only the name is new.");
+        println!("Peers who trust {bound} (or its whole namespace) will now match it.");
+    }
+    Ok(())
+}
+
+/// Point a stored credential's label at its new handle. Best-effort by design: the rename already
+/// succeeded on the server, so a local bookkeeping failure must not report the whole thing failed.
+fn relabel(home: &Path, address: &str, handle: &str) -> Result<(), Error> {
+    let mut creds = load(home)?;
+    if let Some(c) = creds.identities.iter_mut().find(|c| c.address == address) {
+        c.label = Some(handle.to_string());
+    }
+    write_credentials(home, &creds).map(|_| ())
 }
 
 /// Print the capability token for `address` (or the only one on file). Kept separate from `new` so
@@ -1045,5 +1139,46 @@ mod tests {
         assert!(print_token(home.path(), None).is_err());
         assert!(print_token(home.path(), Some("/k/bbb")).is_ok());
         assert!(print_token(home.path(), Some("/k/zzz")).is_err());
+    }
+}
+
+#[cfg(test)]
+mod selection_tests {
+    use super::*;
+
+    fn cred(address: &str, label: Option<&str>) -> Credential {
+        Credential {
+            base_url: "https://postbox.example".into(),
+            address: address.into(),
+            capability_token: "t".into(),
+            label: label.map(str::to_string),
+            created_at: 0,
+        }
+    }
+
+    fn home_with(creds: Vec<Credential>) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        let body = serde_json::to_vec_pretty(&Credentials { identities: creds }).unwrap();
+        std::fs::write(dir.path().join(CREDENTIALS_FILE), body).unwrap();
+        dir
+    }
+
+    /// Once a mailbox is named, its handle is what everything calls it — so `--as` has to take it.
+    #[test]
+    fn as_accepts_the_handle_as_well_as_the_address() {
+        let dir = home_with(vec![
+            cred("/k/aaa", Some("/bekir/agent1")),
+            cred("/k/bbb", Some("/bekir/agent2")),
+        ]);
+        let by_handle = credential_for(dir.path(), Some("/bekir/agent2")).unwrap();
+        assert_eq!(by_handle.address, "/k/bbb");
+        let by_address = credential_for(dir.path(), Some("/k/aaa")).unwrap();
+        assert_eq!(by_address.address, "/k/aaa");
+    }
+
+    #[test]
+    fn an_unknown_name_is_refused_rather_than_guessed() {
+        let dir = home_with(vec![cred("/k/aaa", Some("/bekir/agent1"))]);
+        assert!(credential_for(dir.path(), Some("/bekir/nope")).is_err());
     }
 }

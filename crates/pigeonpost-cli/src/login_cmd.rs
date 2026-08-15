@@ -34,6 +34,22 @@ pub const DEFAULT_ISSUER: &str = "https://auth.pigeonpost.dev/realms/pigeonpost-
 const CREDENTIALS_FILE: &str = "auth.json";
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 
+/// Refresh this far before the token actually expires. A request that takes two seconds must not
+/// arrive holding a token that expired one second ago, and clocks drift.
+const REFRESH_SKEW: u64 = 60;
+
+/// Sent on every call to the issuer. Cloudflare fronts `auth.pigeonpost.dev` and answers requests
+/// carrying a default library User-Agent with `error code: 1010`, which surfaces as an
+/// indistinguishable 403 — so identify ourselves rather than inherit whatever reqwest sends.
+const USER_AGENT: &str = concat!("pigeonpost-cli/", env!("CARGO_PKG_VERSION"));
+
+fn http_client() -> Result<reqwest::Client, Error> {
+    Ok(reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .user_agent(USER_AGENT)
+        .build()?)
+}
+
 /// A signed-in session. `refresh_token` is a password-equivalent: it mints access tokens for every
 /// mailbox this account owns.
 #[derive(Serialize, Deserialize, Clone)]
@@ -46,6 +62,15 @@ pub struct Session {
     pub expires_at: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub account: Option<String>,
+    /// Who signed in. Optional because a session written before these fields existed must keep
+    /// working — an upgrade that silently demanded a fresh login would be a worse bug than the
+    /// missing name it fixes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub email: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub subject: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +87,54 @@ struct TokenResponse {
     refresh_token: String,
     #[serde(default)]
     expires_in: Option<u64>,
+    /// Present on the flows that ask for `openid`. Carries the human-readable identity; the access
+    /// token is the postbox's business, not ours to read for display.
+    #[serde(default)]
+    id_token: Option<String>,
+}
+
+/// The identity claims worth showing a person. Everything is optional: a realm is free to omit any
+/// of them, and a missing name should degrade to "signed in" rather than fail the command.
+#[derive(Default, Deserialize)]
+struct IdClaims {
+    #[serde(default)]
+    preferred_username: Option<String>,
+    #[serde(default)]
+    email: Option<String>,
+    #[serde(default)]
+    sub: Option<String>,
+}
+
+/// Read a JWT's claims **without verifying it**.
+///
+/// Safe only because of what it is used for: display, and only of a token this process just
+/// received over TLS from the issuer it chose. Nothing is authorised on the strength of these
+/// claims — the postbox validates the token itself, against the realm's JWKS, on every request.
+fn claims_of(jwt: &str) -> IdClaims {
+    fn b64url_decode(s: &str) -> Option<Vec<u8>> {
+        const A: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let mut out = Vec::new();
+        let mut acc: u32 = 0;
+        let mut bits = 0u32;
+        for c in s.bytes() {
+            if c == b'=' {
+                break;
+            }
+            let v = A.iter().position(|&a| a == c)? as u32;
+            acc = (acc << 6) | v;
+            bits += 6;
+            if bits >= 8 {
+                bits -= 8;
+                out.push((acc >> bits) as u8);
+            }
+        }
+        Some(out)
+    }
+    jwt.split('.')
+        .nth(1)
+        .and_then(b64url_decode)
+        .and_then(|raw| serde_json::from_slice(&raw).ok())
+        .unwrap_or_default()
 }
 
 #[derive(Deserialize)]
@@ -82,7 +155,7 @@ async fn discover(issuer: &str) -> Result<Endpoints, Error> {
         "{}/.well-known/openid-configuration",
         issuer.trim_end_matches('/')
     );
-    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let http = http_client()?;
     Ok(http
         .get(url)
         .send()
@@ -167,7 +240,7 @@ pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
     let device_endpoint = endpoints.device_authorization_endpoint.ok_or(
         "this issuer does not advertise the device authorization grant; use `pigeonpost login`",
     )?;
-    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let http = http_client()?;
 
     let auth: DeviceAuth = http
         .post(&device_endpoint)
@@ -302,7 +375,7 @@ async fn exchange_code(
     verifier: &str,
     redirect: &str,
 ) -> Result<TokenResponse, Error> {
-    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let http = http_client()?;
     let response = http
         .post(token_endpoint)
         .form(&[
@@ -329,36 +402,149 @@ async fn exchange_code(
 }
 
 fn session_from(issuer: &str, token: TokenResponse) -> Session {
+    let claims = token.id_token.as_deref().map(claims_of).unwrap_or_default();
     Session {
         issuer: issuer.to_string(),
         refresh_token: token.refresh_token,
         access_token: token.access_token,
         expires_at: now_unix() + token.expires_in.unwrap_or(300),
         account: None,
+        username: claims.preferred_username,
+        email: claims.email,
+        subject: claims.sub,
     }
 }
 
-/// Show whether this machine is signed in. Deliberately never prints a token.
-pub fn status(home: &Path, json: bool) -> Result<(), Error> {
-    match load(home)? {
-        Some(session) => {
-            let remaining = session.expires_at.saturating_sub(now_unix());
+/// Trade the refresh token for a new access token.
+///
+/// Keycloak's refresh token here is `typ: Offline` and carries no expiry, so a session survives
+/// indefinitely unless it is revoked — the thing that expires every five minutes is the *access*
+/// token, which is why this exists.
+async fn refresh(session: &Session) -> Result<Session, Error> {
+    let endpoints = discover(&session.issuer).await?;
+    let response = http_client()?
+        .post(&endpoints.token_endpoint)
+        .form(&[
+            ("grant_type", "refresh_token"),
+            ("client_id", CLIENT_ID),
+            ("refresh_token", session.refresh_token.as_str()),
+        ])
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        let status = response.status();
+        let detail: serde_json::Value = response.json().await.unwrap_or_default();
+        let reason = detail["error_description"]
+            .as_str()
+            .or_else(|| detail["error"].as_str())
+            .unwrap_or("no detail");
+        // A refused refresh is nearly always a revoked or superseded session, and the only way out
+        // is a fresh login. Say so, rather than leaving a bare 400 for someone to interpret.
+        return Err(format!(
+            "this machine's sign-in is no longer valid ({status}: {reason}) — run: pigeonpost login"
+        )
+        .into());
+    }
+    let token: TokenResponse = response.json().await?;
+    let mut next = session_from(&session.issuer, token);
+    // A refresh response need not repeat the identity claims; keep what login established.
+    next.account = session.account.clone();
+    next.username = next.username.or_else(|| session.username.clone());
+    next.email = next.email.or_else(|| session.email.clone());
+    next.subject = next.subject.or_else(|| session.subject.clone());
+    Ok(next)
+}
+
+/// The access token for account-scoped calls, refreshed and re-persisted when it is close to
+/// expiry. Every caller that authenticates as the *account* (rather than as one mailbox) must go
+/// through here — reading `auth.json` directly is how a command ends up holding a stale token.
+pub async fn access_token(home: &Path) -> Result<String, Error> {
+    let session = load(home)?.ok_or("not signed in — run: pigeonpost login")?;
+    if session.expires_at > now_unix() + REFRESH_SKEW {
+        return Ok(session.access_token);
+    }
+    let refreshed = refresh(&session).await?;
+    save(home, refreshed.clone())?;
+    Ok(refreshed.access_token)
+}
+
+/// The signed-in session, refreshed first. For callers that need the identity, not just the token.
+pub async fn current_session(home: &Path) -> Result<Session, Error> {
+    let session = load(home)?.ok_or("not signed in — run: pigeonpost login")?;
+    if session.expires_at > now_unix() + REFRESH_SKEW {
+        return Ok(session);
+    }
+    let refreshed = refresh(&session).await?;
+    save(home, refreshed.clone())?;
+    Ok(refreshed)
+}
+
+/// Show *who* is signed in on this machine. Deliberately never prints a token.
+///
+/// Refreshes first, so the answer reflects a session that still works rather than one that merely
+/// exists on disk — "signed in" is not useful if the next command would 401.
+pub async fn status(home: &Path, json: bool) -> Result<(), Error> {
+    let Some(stored) = load(home)? else {
+        if json {
+            println!("{}", serde_json::json!({ "signed_in": false }));
+        } else {
+            println!("not signed in — run: pigeonpost login");
+        }
+        return Ok(());
+    };
+
+    // A session too old to refresh is not a session. Report that plainly instead of printing a
+    // name next to a token that would be rejected.
+    let session = match current_session(home).await {
+        Ok(session) => session,
+        Err(e) => {
             if json {
                 println!(
                     "{}",
                     serde_json::json!({
-                        "signed_in": true,
-                        "issuer": session.issuer,
-                        "access_token_expires_in": remaining,
+                        "signed_in": false,
+                        "issuer": stored.issuer,
+                        "detail": e.to_string(),
                     })
                 );
             } else {
-                println!("signed in to {}", session.issuer);
-                println!("access token expires in {remaining}s (refreshed automatically)");
+                println!("not signed in: {e}");
             }
+            return Ok(());
         }
-        None if json => println!("{}", serde_json::json!({ "signed_in": false })),
-        None => println!("not signed in — run: pigeonpost login"),
+    };
+
+    // Fall back to the access token for a session written before the identity fields existed, so
+    // an upgrade does not force a re-login just to learn a name we can already read.
+    let fallback = claims_of(&session.access_token);
+    let username = session
+        .username
+        .clone()
+        .or(fallback.preferred_username)
+        .unwrap_or_else(|| "(unknown)".into());
+    let email = session.email.clone().or(fallback.email);
+    let subject = session.subject.clone().or(fallback.sub);
+    let remaining = session.expires_at.saturating_sub(now_unix());
+
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "signed_in": true,
+                "username": username,
+                "email": email,
+                "subject": subject,
+                "issuer": session.issuer,
+                "access_token_expires_in": remaining,
+            })
+        );
+    } else {
+        match &email {
+            Some(email) => println!("signed in as {username} <{email}>"),
+            None => println!("signed in as {username}"),
+        }
+        println!("  issuer:  {}", session.issuer);
+        println!("  renews:  in {remaining}s, automatically");
     }
     Ok(())
 }
@@ -531,13 +717,51 @@ mod tests {
             access_token: "SECRET-ACCESS".into(),
             expires_at: now_unix() + 60,
             account: None,
+            username: Some("bekir".into()),
+            email: Some("bekir@example.com".into()),
+            subject: Some("15369298-b830".into()),
         };
         let rendered = serde_json::json!({
             "signed_in": true,
+            "username": session.username,
+            "email": session.email,
+            "subject": session.subject,
             "issuer": session.issuer,
             "access_token_expires_in": session.expires_at.saturating_sub(now_unix()),
         })
         .to_string();
         assert!(!rendered.contains("SECRET"));
+        // The identity is the whole point of the command, so pin that it is actually there —
+        // a "safe" rendering that printed nothing would also pass the assertion above.
+        assert!(rendered.contains("bekir"));
+    }
+
+    /// A session written before the identity fields existed must still load, or an upgrade would
+    /// silently sign everyone out.
+    #[test]
+    fn an_older_session_file_still_loads() {
+        let older = r#"{
+            "issuer": "https://auth.example/realms/x",
+            "refresh_token": "r",
+            "access_token": "a",
+            "expires_at": 1
+        }"#;
+        let session: Session = serde_json::from_str(older).expect("older session must still parse");
+        assert_eq!(session.username, None);
+        assert_eq!(session.issuer, "https://auth.example/realms/x");
+    }
+
+    /// The claims reader is display-only, so it must never panic on input it did not expect.
+    #[test]
+    fn claims_of_survives_rubbish() {
+        assert_eq!(claims_of("").preferred_username, None);
+        assert_eq!(claims_of("not-a-jwt").preferred_username, None);
+        assert_eq!(claims_of("a.!!!!.c").preferred_username, None);
+        // A real shape, base64url with no padding.
+        let body = "eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJiZWtpciJ9";
+        assert_eq!(
+            claims_of(&format!("x.{body}.y")).preferred_username.as_deref(),
+            Some("bekir")
+        );
     }
 }

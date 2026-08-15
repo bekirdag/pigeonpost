@@ -314,6 +314,29 @@ impl Default for InboxPolicy {
 ///
 /// `None` for a `/k/` address: those have no namespace to belong to, so nothing but an exact row
 /// can ever speak for them.
+/// Whether a namespace had room for one more mailbox at the moment of the write.
+#[derive(Debug, PartialEq, Eq)]
+pub enum QuotaOutcome {
+    Inserted,
+    Full,
+}
+
+/// What happened when an existing mailbox asked for a name.
+#[derive(Debug, PartialEq, Eq)]
+pub enum BindOutcome {
+    Bound,
+    /// No mailbox at that address on this postbox.
+    NoSuchMailbox,
+    /// The mailbox exists but belongs to another account.
+    NotYours,
+    /// It already answers to this handle; carries the current one so the caller can say which.
+    AlreadyNamed(String),
+    /// Another mailbox got that handle first.
+    Taken,
+    /// The namespace is at its ceiling.
+    Full,
+}
+
 pub fn namespace_wildcard(peer: &str) -> Option<String> {
     let rest = peer.strip_prefix('/')?;
     let (namespace, name) = rest.split_once('/')?;
@@ -539,6 +562,129 @@ impl Store {
                 |r| r.get(0),
             )?;
             Ok(n as usize)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Insert a mailbox that carries a handle, refusing it if the namespace is already at `max`.
+    ///
+    /// The count and the insert share one lock and one transaction. Checking the quota in a
+    /// separate call would let two mints racing at the boundary both see a free slot and both
+    /// take it — the admission race `docs/architecture.md` describes for registry claims, which
+    /// the registry avoids by counting inside the writer transaction. Same discipline here.
+    pub async fn insert_under_namespace(
+        &self,
+        id: StoredIdentity,
+        namespace: String,
+        max: usize,
+    ) -> Result<QuotaOutcome, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<QuotaOutcome, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let prefix = format!("{namespace}/");
+            let held: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
+                params![prefix],
+                |r| r.get(0),
+            )?;
+            if held as usize >= max {
+                return Ok(QuotaOutcome::Full);
+            }
+            tx.execute(
+                "INSERT INTO identities
+                   (address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id, handle)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                params![
+                    id.address,
+                    &id.ed25519_pub[..],
+                    &id.x25519_pub[..],
+                    &id.wrapped_seed.nonce[..],
+                    id.wrapped_seed.ct,
+                    &id.cap_hash[..],
+                    id.label,
+                    id.created_at as i64,
+                    id.account_id,
+                    id.handle,
+                ],
+            )?;
+            tx.commit()?;
+            Ok(QuotaOutcome::Inserted)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Give an existing `/k/` mailbox a handle.
+    ///
+    /// The mailbox someone already runs is the one their agent is configured against, so the way
+    /// into a namespace cannot be "mint a new one and move" — that would cost them their address,
+    /// their contacts' trust entries, and their mail. This binds the name to the mailbox they have.
+    ///
+    /// Deliberately refuses a mailbox that already carries a handle: rebinding means deciding what
+    /// happens to everyone who trusts the old name, which is a different feature.
+    ///
+    /// One transaction, for the same reason as `insert_under_namespace`.
+    pub async fn bind_handle(
+        &self,
+        address: String,
+        handle: String,
+        account: String,
+        namespace: String,
+        max: usize,
+    ) -> Result<BindOutcome, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<BindOutcome, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+
+            let existing: Option<(Option<String>, Option<String>)> = tx
+                .query_row(
+                    "SELECT account_id, handle FROM identities WHERE address = ?1",
+                    params![address],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            let Some((owner, current)) = existing else {
+                return Ok(BindOutcome::NoSuchMailbox);
+            };
+            // Same refusal for "not yours" as for "no such mailbox" would be kinder to probing,
+            // but the caller already had to authenticate as an account to get here, and telling
+            // an owner apart from a stranger matters more for a command someone runs by hand.
+            if owner.as_deref() != Some(account.as_str()) {
+                return Ok(BindOutcome::NotYours);
+            }
+            if let Some(current) = current {
+                return Ok(BindOutcome::AlreadyNamed(current));
+            }
+
+            let prefix = format!("{namespace}/");
+            let held: i64 = tx.query_row(
+                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
+                params![prefix],
+                |r| r.get(0),
+            )?;
+            if held as usize >= max {
+                return Ok(BindOutcome::Full);
+            }
+
+            // The unique index on `handle` is what actually decides the winner between two callers
+            // asking for the same name; this turns its error into an answer rather than a 500.
+            match tx.execute(
+                "UPDATE identities SET handle = ?1 WHERE address = ?2",
+                params![handle, address],
+            ) {
+                Ok(_) => {}
+                Err(rusqlite::Error::SqliteFailure(e, _))
+                    if e.code == rusqlite::ErrorCode::ConstraintViolation =>
+                {
+                    return Ok(BindOutcome::Taken);
+                }
+                Err(e) => return Err(e.into()),
+            }
+            tx.commit()?;
+            Ok(BindOutcome::Bound)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -1747,5 +1893,174 @@ mod tests {
         let remaining = store.list_for("/k/fresh".into()).await.unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id, "new");
+    }
+}
+
+#[cfg(test)]
+mod handle_binding_tests {
+    use super::*;
+
+    fn owned(addr: &str, account: &str, handle: Option<&str>) -> StoredIdentity {
+        StoredIdentity {
+            address: addr.to_string(),
+            wrapped_seed: Wrapped {
+                nonce: [0; 24],
+                ct: vec![1, 2, 3],
+            },
+            ed25519_pub: [0; 32],
+            x25519_pub: [0; 32],
+            cap_hash: [0; 32],
+            label: None,
+            created_at: 0,
+            account_id: Some(account.to_string()),
+            handle: handle.map(str::to_string),
+        }
+    }
+
+    /// The whole point of the retrofit: the address does not move.
+    #[tokio::test]
+    async fn binding_keeps_the_address() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(owned("/k/aaa", "acct_1", None)).await.unwrap();
+
+        let outcome = store
+            .bind_handle(
+                "/k/aaa".into(),
+                "/bekir/agent1".into(),
+                "acct_1".into(),
+                "/bekir".into(),
+                100,
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(outcome, BindOutcome::Bound);
+        let found = store.get_by_handle("/bekir/agent1".into()).await.unwrap();
+        assert_eq!(found.unwrap().address, "/k/aaa");
+    }
+
+    #[tokio::test]
+    async fn another_accounts_mailbox_is_refused() {
+        let store = Store::open(":memory:").unwrap();
+        store.insert(owned("/k/aaa", "acct_1", None)).await.unwrap();
+        let outcome = store
+            .bind_handle(
+                "/k/aaa".into(),
+                "/bekir/agent1".into(),
+                "acct_2".into(),
+                "/bekir".into(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, BindOutcome::NotYours);
+    }
+
+    /// Renaming would strand every contact entry trusting the old name, so it is refused outright.
+    #[tokio::test]
+    async fn a_named_mailbox_will_not_be_renamed() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(owned("/k/aaa", "acct_1", Some("/bekir/first")))
+            .await
+            .unwrap();
+        let outcome = store
+            .bind_handle(
+                "/k/aaa".into(),
+                "/bekir/second".into(),
+                "acct_1".into(),
+                "/bekir".into(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, BindOutcome::AlreadyNamed("/bekir/first".into()));
+    }
+
+    #[tokio::test]
+    async fn a_taken_handle_is_refused() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(owned("/k/aaa", "acct_1", Some("/bekir/agent1")))
+            .await
+            .unwrap();
+        store.insert(owned("/k/bbb", "acct_1", None)).await.unwrap();
+        let outcome = store
+            .bind_handle(
+                "/k/bbb".into(),
+                "/bekir/agent1".into(),
+                "acct_1".into(),
+                "/bekir".into(),
+                100,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, BindOutcome::Taken);
+    }
+
+    #[tokio::test]
+    async fn the_ceiling_is_enforced_on_both_paths() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(owned("/k/held", "acct_1", Some("/bekir/held")))
+            .await
+            .unwrap();
+
+        // Minting into a full namespace.
+        let outcome = store
+            .insert_under_namespace(
+                owned("/k/new", "acct_1", Some("/bekir/new")),
+                "/bekir".into(),
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, QuotaOutcome::Full);
+
+        // …and naming an existing mailbox into one.
+        store.insert(owned("/k/bbb", "acct_1", None)).await.unwrap();
+        let outcome = store
+            .bind_handle(
+                "/k/bbb".into(),
+                "/bekir/agent1".into(),
+                "acct_1".into(),
+                "/bekir".into(),
+                1,
+            )
+            .await
+            .unwrap();
+        assert_eq!(outcome, BindOutcome::Full);
+    }
+
+    /// The race the quota moved inside the transaction to close.
+    ///
+    /// Both mints read the same count if the check happens before the write. Exactly one may win.
+    #[tokio::test]
+    async fn concurrent_mints_at_the_boundary_yield_one_winner() {
+        let store = Store::open(":memory:").unwrap();
+        // One slot left out of two.
+        store
+            .insert(owned("/k/held", "acct_1", Some("/bekir/held")))
+            .await
+            .unwrap();
+
+        let a = store.insert_under_namespace(
+            owned("/k/aaa", "acct_1", Some("/bekir/a")),
+            "/bekir".into(),
+            2,
+        );
+        let b = store.insert_under_namespace(
+            owned("/k/bbb", "acct_1", Some("/bekir/b")),
+            "/bekir".into(),
+            2,
+        );
+        let (a, b) = tokio::join!(a, b);
+
+        let inserted = [a.unwrap(), b.unwrap()]
+            .into_iter()
+            .filter(|o| *o == QuotaOutcome::Inserted)
+            .count();
+        assert_eq!(inserted, 1, "exactly one mint may take the last slot");
+        assert_eq!(store.count_for_namespace("/bekir".into()).await.unwrap(), 2);
     }
 }

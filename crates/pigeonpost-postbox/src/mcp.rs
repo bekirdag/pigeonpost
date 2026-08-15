@@ -10,7 +10,7 @@
 //! them), and message bodies are always flagged untrusted.
 
 use crate::{
-    do_ack, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_report_spam,
+    do_ack, do_bind_handle, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_report_spam,
     do_send, do_set_contact, principal_for_token, resolve_acting_identity, ApiError, AppState,
     Principal, TrustActor,
 };
@@ -61,13 +61,26 @@ fn tools_list_result() -> Value {
     json!({ "tools": [
         {
             "name": "create_pigeonpost_identity",
-            "description": "Create a new Pigeonpost inbox (a /k/ address) under your account. Use one per repo or agent. Requires an account API key.",
+            "description": "Create a new Pigeonpost inbox under your account — a /k/ address, or a named one if you pass a handle. Use one per repo or agent. Requires account credentials (an API key, or a signed-in session).",
             "inputSchema": {
                 "type": "object",
                 "properties": {
                     "label": { "type": "string", "description": "Optional tag, e.g. 'repo:acme/api'." },
                     "handle": { "type": "string", "description": "Mint under a namespace your account owns, e.g. '/bekir/superaiagent1', so the mailbox has a readable name instead of a key digest. Omit for a plain /k/ address." }
                 },
+                "additionalProperties": false
+            }
+        },
+        {
+            "name": "name_pigeonpost_mailbox",
+            "description": "Give a mailbox you already own a readable name under a namespace your account owns — e.g. turn /k/abc… into '/bekir/agent1'. Use this when the mailbox already exists: it keeps its address, its waiting mail, and every contact entry that already trusts it. Requires an account API key. A mailbox that already has a handle cannot be renamed.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "address": { "type": "string", "description": "The /k/… mailbox to name." },
+                    "handle": { "type": "string", "description": "The name to give it, e.g. '/bekir/agent1'." }
+                },
+                "required": ["address", "handle"],
                 "additionalProperties": false
             }
         },
@@ -190,6 +203,21 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                 return Ok(tool_error(
                     "create_pigeonpost_identity needs an account API key",
                 ))
+            }
+        },
+        "name_pigeonpost_mailbox" => match principal {
+            Principal::Account(account) => match (arg_str("address"), arg_str("handle")) {
+                (Some(address), Some(handle)) => {
+                    do_bind_handle(state, account, address, handle).await
+                }
+                _ => {
+                    return Ok(tool_error(
+                        "name_pigeonpost_mailbox requires 'address' and 'handle'",
+                    ))
+                }
+            },
+            Principal::Identity(_) => {
+                return Ok(tool_error("name_pigeonpost_mailbox needs an account API key"))
             }
         },
         "list_pigeonpost_identities" => match principal {
