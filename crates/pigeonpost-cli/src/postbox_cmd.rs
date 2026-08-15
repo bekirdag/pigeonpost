@@ -92,12 +92,29 @@ pub async fn new_inbox(
     }
     let mut request = http.post(format!("{base}/v1/identities"));
 
-    if let Some(handle) = handle {
-        body["handle"] = serde_json::json!(handle);
-        // Goes through `access_token`, which refreshes first — minting is exactly the command
-        // someone runs an hour after signing in.
-        let token = crate::login_cmd::access_token(home).await?;
+    // Mint under the account whenever this machine is signed in, named or not.
+    //
+    // An anonymous mailbox belongs to nobody, which means it never appears in `/v1/identities` and
+    // so is invisible to the browser inbox and to any other machine on the same account. Someone
+    // who has signed in has already paid a stronger cost than proof-of-work, and almost certainly
+    // wants the mailbox they just made to be *theirs*. Staying anonymous is still available by
+    // signing out, or on a machine that never signed in.
+    // Not signed in, or a session too old to refresh: fall through to the anonymous path rather
+    // than failing. A free inbox must not require an account.
+    let session = crate::login_cmd::access_token(home).await.ok();
+
+    if let Some(token) = session {
+        if let Some(handle) = handle {
+            body["handle"] = serde_json::json!(handle);
+        }
         request = request.bearer_auth(token);
+    } else if let Some(handle) = handle {
+        // A name needs an account to own the namespace, so there is no anonymous path here.
+        let _ = handle;
+        return Err(
+            "naming a mailbox needs an account — run: pigeonpost login, or omit --handle for a free inbox"
+                .into(),
+        );
     } else {
         let challenge: Challenge = http
             .get(format!("{base}/v1/pow/challenge"))

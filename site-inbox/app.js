@@ -1114,8 +1114,35 @@
     try {
       await loadIdentities();
       if (!state.me) {
-        $("signin-note").textContent =
-          "This account has no mailboxes yet. Create one with `pigeonpost postbox new`.";
+        // Signing in used to end here, telling someone who had just authenticated in a browser to
+        // go and install a command line tool. An account holder needs no proof-of-work to mint —
+        // the postbox creates under the account on the strength of this very token — so the whole
+        // remaining step is one call the page can already make.
+        $("signin-note").textContent = "You are signed in, but have no inbox yet.";
+        const create = $("create-inbox-btn");
+        create.hidden = false;
+        create.disabled = false;
+        create.onclick = async () => {
+          create.disabled = true;
+          $("signin-note").textContent = "Creating your inbox…";
+          try {
+            await api("/v1/identities", { method: "POST", body: {} });
+            $("signin-note").textContent = "";
+            create.hidden = true;
+            // Resume where boot() left off rather than re-running it: boot wires the event
+            // handlers, and running it twice would bind every one of them a second time.
+            await loadIdentities();
+            if (state.me) {
+              renderMe();
+              await loadAll();
+              startPolling();
+            }
+          } catch (err) {
+            create.disabled = false;
+            $("signin-note").textContent =
+              "Could not create an inbox: " + (err && err.message ? err.message : "unknown error");
+          }
+        };
         render();
         return;
       }
