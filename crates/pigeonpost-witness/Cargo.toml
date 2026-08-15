@@ -1,0 +1,26 @@
+[package]
+name = "pigeonpost-witness"
+description = "C2SP tlog-witness service: independently observes a Pigeonpost registry log and cosigns checkpoints it has verified as append-only."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+
+[[bin]]
+name = "pigeonpost-witness"
+path = "src/main.rs"
+
+[dependencies]
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.6", default-features = false }
+axum = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
+ed25519-dalek.workspace = true
+sha2.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+tempfile = "3"
