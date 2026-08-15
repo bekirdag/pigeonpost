@@ -1100,7 +1100,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             PostboxAction::Name { handle, which } => {
                 postbox_cmd::name_mailbox(&home, which.address.as_deref(), handle, cli.json).await
             }
-            PostboxAction::List => postbox_cmd::list(&home, cli.json),
+            PostboxAction::List => postbox_cmd::list(&home, cli.json).await,
             PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),
             PostboxAction::Send { to, body, which } => {
                 postbox_cmd::send_message(&home, which.address.as_deref(), to, body, cli.json).await

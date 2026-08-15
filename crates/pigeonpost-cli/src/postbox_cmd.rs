@@ -55,6 +55,11 @@ pub struct Credential {
     pub capability_token: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub label: Option<String>,
+    /// The readable name this mailbox answers to, when it has one. Recorded separately from
+    /// `label` because a label is whatever the operator typed, while this is the server's answer —
+    /// and only this one decides whether namespace trust matches.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub handle: Option<String>,
     pub created_at: u64,
 }
 
@@ -138,6 +143,7 @@ pub async fn new_inbox(
         address: minted.address.clone(),
         capability_token: minted.capability_token.clone(),
         label: stored_label.clone(),
+        handle: minted.handle.clone(),
         created_at: now_unix(),
     };
     let path = save(home, &credential)?;
@@ -281,6 +287,7 @@ fn relabel(home: &Path, address: &str, handle: &str) -> Result<(), Error> {
     let mut creds = load(home)?;
     if let Some(c) = creds.identities.iter_mut().find(|c| c.address == address) {
         c.label = Some(handle.to_string());
+        c.handle = Some(handle.to_string());
     }
     write_credentials(home, &creds).map(|_| ())
 }
@@ -954,31 +961,80 @@ fn urlencode(value: &str) -> String {
 }
 
 /// List the mailboxes minted from this home. Never prints tokens.
-pub fn list(home: &Path, json: bool) -> Result<(), Error> {
+/// List this home's mailboxes, asking each postbox what name it actually answers to.
+///
+/// The handle is fetched rather than read from the local record on purpose. A label is whatever
+/// the operator typed and a token can be copied between machines, so the local file cannot answer
+/// "will a `/namespace/*` trust rule match me?" — only the server can, and getting that wrong
+/// silently means an agent believes it is in a fleet that has never seen it.
+///
+/// Never prints tokens. Falls back to what is on file when a postbox is unreachable, marked as
+/// such rather than presented as fact.
+pub async fn list(home: &Path, json: bool) -> Result<(), Error> {
     let creds = load(home)?;
+    if creds.identities.is_empty() && !json {
+        println!("no hosted mailboxes yet — run: pigeonpost postbox new");
+        return Ok(());
+    }
+
+    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let mut rows = Vec::new();
+    for c in &creds.identities {
+        let base = c.base_url.trim_end_matches('/');
+        let fetched = http
+            .get(format!("{base}/v1/whoami"))
+            .bearer_auth(&c.capability_token)
+            .send()
+            .await
+            .ok()
+            .filter(|r| r.status().is_success());
+        let (handle, reachable) = match fetched {
+            Some(response) => match response.json::<serde_json::Value>().await {
+                Ok(body) => (body["handle"].as_str().map(str::to_string), true),
+                Err(_) => (c.handle.clone(), false),
+            },
+            None => (c.handle.clone(), false),
+        };
+        rows.push((c, handle, reachable));
+    }
+
     if json {
-        let rows: Vec<_> = creds
-            .identities
+        let out: Vec<_> = rows
             .iter()
-            .map(|c| {
+            .map(|(c, handle, reachable)| {
                 serde_json::json!({
                     "address": c.address,
-                    "base_url": c.base_url,
+                    "handle": handle,
                     "label": c.label,
+                    "base_url": c.base_url,
+                    "handle_confirmed": reachable,
                     "created_at": c.created_at,
                 })
             })
             .collect();
-        println!("{}", serde_json::json!({ "identities": rows }));
+        println!("{}", serde_json::json!({ "identities": out }));
         return Ok(());
     }
-    if creds.identities.is_empty() {
-        println!("no hosted mailboxes yet — run: pigeonpost postbox new");
-        return Ok(());
-    }
-    for c in &creds.identities {
+
+    let mut unnamed = 0;
+    for (c, handle, reachable) in &rows {
+        let name = match (handle, reachable) {
+            (Some(h), _) => h.clone(),
+            (None, true) => {
+                unnamed += 1;
+                "(no handle)".to_string()
+            }
+            (None, false) => "(unreachable)".to_string(),
+        };
         let label = c.label.as_deref().unwrap_or("-");
-        println!("{}  {}  {}", c.address, label, c.base_url);
+        println!("{}  {}  {}  {}", c.address, name, label, c.base_url);
+    }
+    if unnamed > 0 {
+        println!();
+        println!(
+            "{unnamed} mailbox(es) have no handle, so a /namespace/* trust rule will not match them."
+        );
+        println!("Give one a name with:  pigeonpost postbox name /namespace/name --as <address>");
     }
     Ok(())
 }
@@ -1095,6 +1151,7 @@ mod tests {
             address: "/k/aaa".into(),
             capability_token: "cap_a".into(),
             label: Some("agent-A".into()),
+            handle: None,
             created_at: 1,
         };
         let b = Credential {
@@ -1128,6 +1185,7 @@ mod tests {
             address: "/k/aaa".into(),
             capability_token: "cap_a".into(),
             label: None,
+            handle: None,
             created_at: 1,
         };
         save(home.path(), &a).unwrap();
@@ -1157,6 +1215,7 @@ mod selection_tests {
             address: address.into(),
             capability_token: "t".into(),
             label: label.map(str::to_string),
+            handle: None,
             created_at: 0,
         }
     }

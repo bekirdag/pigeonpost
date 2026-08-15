@@ -92,7 +92,7 @@ fn tools_list_result() -> Value {
         },
         {
             "name": "whoami",
-            "description": "Return the Pigeonpost address this connection acts as.",
+            "description": "Return the Pigeonpost address this connection acts as, and its handle if it has one. A null handle means this mailbox has no readable name, so trust rules written against a namespace will not match it.",
             "inputSchema": { "type": "object", "properties": identity_prop, "additionalProperties": false }
         },
         {
@@ -254,7 +254,10 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                 Err(e) => return Ok(tool_error(&e.message)),
             };
             match name {
-                "whoami" => Ok(json!({ "address": me.address })),
+                // The handle is returned alongside the address because this is the tool agents
+                // are told to confirm setup with. Returning the address alone reads as "naming
+                // failed" to an agent that just named its mailbox, which is the opposite of true.
+                "whoami" => Ok(json!({ "address": me.address, "handle": me.handle })),
                 "send_pigeonpost_message" => match (arg_str("to"), arg_str("body")) {
                     (Some(to), Some(body)) => do_send(state, &me, &to, &body).await,
                     _ => return Ok(tool_error("send requires string 'to' and 'body'")),

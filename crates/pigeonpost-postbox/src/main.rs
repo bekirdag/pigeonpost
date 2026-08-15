@@ -388,6 +388,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/report-spam", post(report_spam))
+        .route("/v1/whoami", get(whoami))
         .route("/v1/identities/handle", post(bind_identity_handle))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
         .route("/v1/workspace", get(get_workspace).put(put_workspace))
@@ -2411,6 +2412,22 @@ pub(crate) async fn do_get_workspace(
 }
 
 /// `GET /v1/workspace` — fetch this mailbox's encrypted workspace context.
+/// `GET /v1/whoami` — the address this capability token acts as, and its handle if it has one.
+///
+/// Exists because "am I named?" is not answerable from the client's own records: a token can be
+/// copied between machines, and a locally chosen label is not a handle. Namespace trust matches on
+/// the handle alone, so an agent checking whether a fleet rule will match it has to ask the server.
+async fn whoami(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(me) => Json(json!({ "address": me.address, "handle": me.handle })).into_response(),
+        Err(e) => e.into_response(),
+    }
+}
+
 async fn get_workspace(
     State(state): State<AppState>,
     headers: HeaderMap,
