@@ -132,9 +132,7 @@ pub async fn new_inbox(
 
     // With no label of its own, a handle mailbox labels itself with its handle — otherwise
     // `postbox list` shows a column of key digests and no way to tell the agents apart.
-    let stored_label = label
-        .map(str::to_string)
-        .or_else(|| minted.handle.clone());
+    let stored_label = label.map(str::to_string).or_else(|| minted.handle.clone());
     let credential = Credential {
         base_url: base.clone(),
         address: minted.address.clone(),

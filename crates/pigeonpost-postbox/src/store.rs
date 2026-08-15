@@ -550,26 +550,6 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// How many mailboxes already exist under one namespace — the per-handle ceiling's input.
-    ///
-    /// Counted from `identities` rather than a running total, so it cannot drift away from the
-    /// mailboxes that actually exist after deletions.
-    pub async fn count_for_namespace(&self, namespace: String) -> Result<usize, StoreError> {
-        let prefix = format!("{namespace}/");
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
-            let c = conn.lock().expect("store lock");
-            let n: i64 = c.query_row(
-                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
-                params![prefix],
-                |r| r.get(0),
-            )?;
-            Ok(n as usize)
-        })
-        .await
-        .map_err(|_| StoreError::Join)?
-    }
-
     /// Insert a mailbox that carries a handle, refusing it if the namespace is already at `max`.
     ///
     /// The count and the insert share one lock and one transaction. Checking the quota in a
@@ -2133,6 +2113,9 @@ mod handle_binding_tests {
             .filter(|o| *o == QuotaOutcome::Inserted)
             .count();
         assert_eq!(inserted, 1, "exactly one mint may take the last slot");
-        assert_eq!(store.count_for_namespace("/bekir".into()).await.unwrap(), 2);
+        // …and the loser left nothing behind: exactly one of the two names exists.
+        let a = store.get_by_handle("/bekir/a".into()).await.unwrap();
+        let b = store.get_by_handle("/bekir/b".into()).await.unwrap();
+        assert_eq!(a.is_some() as u8 + b.is_some() as u8, 1);
     }
 }

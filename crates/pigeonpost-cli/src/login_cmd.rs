@@ -760,7 +760,9 @@ mod tests {
         // A real shape, base64url with no padding.
         let body = "eyJwcmVmZXJyZWRfdXNlcm5hbWUiOiJiZWtpciJ9";
         assert_eq!(
-            claims_of(&format!("x.{body}.y")).preferred_username.as_deref(),
+            claims_of(&format!("x.{body}.y"))
+                .preferred_username
+                .as_deref(),
             Some("bekir")
         );
     }

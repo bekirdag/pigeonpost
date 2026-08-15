@@ -10,9 +10,9 @@
 //! them), and message bodies are always flagged untrusted.
 
 use crate::{
-    do_ack, do_bind_handle, do_create_identity, do_inbox, do_list_contacts, do_list_identities, do_report_spam,
-    do_send, do_set_contact, principal_for_token, resolve_acting_identity, ApiError, AppState,
-    Principal, TrustActor,
+    do_ack, do_bind_handle, do_create_identity, do_inbox, do_list_contacts, do_list_identities,
+    do_report_spam, do_send, do_set_contact, principal_for_token, resolve_acting_identity,
+    ApiError, AppState, Principal, TrustActor,
 };
 use serde_json::{json, Value};
 
@@ -209,8 +209,14 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         "name_pigeonpost_mailbox" => match principal {
             Principal::Account(account) => match (arg_str("address"), arg_str("handle")) {
                 (Some(address), Some(handle)) => {
-                    do_bind_handle(state, account, address, handle, arg_str("capability_token").as_deref())
-                        .await
+                    do_bind_handle(
+                        state,
+                        account,
+                        address,
+                        handle,
+                        arg_str("capability_token").as_deref(),
+                    )
+                    .await
                 }
                 _ => {
                     return Ok(tool_error(
@@ -219,7 +225,9 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                 }
             },
             Principal::Identity(_) => {
-                return Ok(tool_error("name_pigeonpost_mailbox needs an account API key"))
+                return Ok(tool_error(
+                    "name_pigeonpost_mailbox needs an account API key",
+                ))
             }
         },
         "list_pigeonpost_identities" => match principal {

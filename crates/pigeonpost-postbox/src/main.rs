@@ -699,8 +699,7 @@ async fn do_bind_handle(
     handle: String,
     capability_token: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
-    let (canonical, namespace) =
-        authorize_handle(state, Some(account.as_str()), &handle).await?;
+    let (canonical, namespace) = authorize_handle(state, Some(account.as_str()), &handle).await?;
 
     match state
         .store
