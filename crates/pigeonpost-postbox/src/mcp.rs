@@ -78,7 +78,8 @@ fn tools_list_result() -> Value {
                 "type": "object",
                 "properties": {
                     "address": { "type": "string", "description": "The /k/… mailbox to name." },
-                    "handle": { "type": "string", "description": "The name to give it, e.g. '/bekir/agent1'." }
+                    "handle": { "type": "string", "description": "The name to give it, e.g. '/bekir/agent1'." },
+                    "capability_token": { "type": "string", "description": "That mailbox's capability token. Needed only when the mailbox belongs to no account yet — it proves you hold the mailbox before the account adopts it." }
                 },
                 "required": ["address", "handle"],
                 "additionalProperties": false
@@ -208,7 +209,8 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         "name_pigeonpost_mailbox" => match principal {
             Principal::Account(account) => match (arg_str("address"), arg_str("handle")) {
                 (Some(address), Some(handle)) => {
-                    do_bind_handle(state, account, address, handle).await
+                    do_bind_handle(state, account, address, handle, arg_str("capability_token").as_deref())
+                        .await
                 }
                 _ => {
                     return Ok(tool_error(

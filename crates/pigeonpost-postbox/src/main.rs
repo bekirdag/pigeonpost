@@ -676,7 +676,15 @@ async fn bind_identity_handle(
         }
         Err(e) => return e.into_response(),
     };
-    match do_bind_handle(&state, account, req.address, req.handle).await {
+    match do_bind_handle(
+        &state,
+        account,
+        req.address,
+        req.handle,
+        req.capability_token.as_deref(),
+    )
+    .await
+    {
         Ok(body) => Json(body).into_response(),
         Err(e) => e.into_response(),
     }
@@ -689,6 +697,7 @@ async fn do_bind_handle(
     account: String,
     address: String,
     handle: String,
+    capability_token: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
     let (canonical, namespace) =
         authorize_handle(state, Some(account.as_str()), &handle).await?;
@@ -701,6 +710,7 @@ async fn do_bind_handle(
             account,
             format!("/{namespace}"),
             MAX_HANDLE_MAILBOXES,
+            capability_token.map(|t| sha256(t.as_bytes())),
         )
         .await
     {
@@ -717,6 +727,11 @@ async fn do_bind_handle(
             StatusCode::FORBIDDEN,
             "not_your_mailbox",
             "that mailbox belongs to another account",
+        )),
+        Ok(store::BindOutcome::ProofRequired) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "proof_required",
+            "that mailbox belongs to no account — send its capability token to prove you hold it",
         )),
         Ok(store::BindOutcome::AlreadyNamed(current)) => Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -2485,6 +2500,11 @@ struct BindHandleReq {
     /// The `/k/` mailbox to name. Its own address, not the handle it wants.
     address: String,
     handle: String,
+    /// That mailbox's capability token — required only when the mailbox belongs to no account
+    /// yet, as proof of control before the account adopts it. Ignored for a mailbox the account
+    /// already owns, which needs no second credential.
+    #[serde(default)]
+    capability_token: Option<String>,
 }
 
 #[derive(serde::Deserialize)]

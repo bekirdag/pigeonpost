@@ -237,7 +237,14 @@ pub async fn name_mailbox(
     let resp = http
         .post(format!("{base}/v1/identities/handle"))
         .bearer_auth(token)
-        .json(&serde_json::json!({ "address": credential.address, "handle": handle }))
+        // The capability token proves this box actually holds the mailbox. The server only needs
+        // it when the mailbox belongs to no account yet — which is the common case for one an
+        // agent minted for itself — and ignores it otherwise.
+        .json(&serde_json::json!({
+            "address": credential.address,
+            "handle": handle,
+            "capability_token": credential.capability_token,
+        }))
         .send()
         .await?;
     let status = resp.status();

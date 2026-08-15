@@ -327,8 +327,11 @@ pub enum BindOutcome {
     Bound,
     /// No mailbox at that address on this postbox.
     NoSuchMailbox,
-    /// The mailbox exists but belongs to another account.
+    /// The mailbox exists but belongs to another account, or the proof of control did not match.
     NotYours,
+    /// The mailbox belongs to no account, so control of it must be proven with its capability
+    /// token before an account may adopt and name it.
+    ProofRequired,
     /// It already answers to this handle; carries the current one so the caller can say which.
     AlreadyNamed(String),
     /// Another mailbox got that handle first.
@@ -633,28 +636,54 @@ impl Store {
         account: String,
         namespace: String,
         max: usize,
+        proof: Option<[u8; 32]>,
     ) -> Result<BindOutcome, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<BindOutcome, StoreError> {
             let mut c = conn.lock().expect("store lock");
             let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
-            let existing: Option<(Option<String>, Option<String>)> = tx
+            let existing: Option<(Option<String>, Option<String>, Vec<u8>)> = tx
                 .query_row(
-                    "SELECT account_id, handle FROM identities WHERE address = ?1",
+                    "SELECT account_id, handle, cap_hash FROM identities WHERE address = ?1",
                     params![address],
-                    |r| Ok((r.get(0)?, r.get(1)?)),
+                    |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
                 )
                 .optional()?;
-            let Some((owner, current)) = existing else {
+            let Some((owner, current, cap_hash)) = existing else {
                 return Ok(BindOutcome::NoSuchMailbox);
             };
-            // Same refusal for "not yours" as for "no such mailbox" would be kinder to probing,
-            // but the caller already had to authenticate as an account to get here, and telling
-            // an owner apart from a stranger matters more for a command someone runs by hand.
-            if owner.as_deref() != Some(account.as_str()) {
-                return Ok(BindOutcome::NotYours);
+
+            // Two ways to be allowed to name a mailbox, and the second is the one that matters.
+            //
+            // An account naming a mailbox it already owns is the easy case. But the mailbox this
+            // feature exists for is the one an agent minted anonymously, before anyone bought a
+            // namespace — it has no account at all. Refusing those would strand exactly the
+            // agents the retrofit is for.
+            //
+            // Letting an account claim *any* unowned mailbox would be far worse: anyone could
+            // seize anyone else's anonymous inbox by guessing an address. So an unowned mailbox
+            // is adopted only on proof of *control* — the capability token, which is the sole
+            // credential that mailbox has. Compared as a hash, in constant time.
+            let owned_by_caller = owner.as_deref() == Some(account.as_str());
+            if !owned_by_caller {
+                if owner.is_some() {
+                    return Ok(BindOutcome::NotYours);
+                }
+                let Some(proof) = proof else {
+                    return Ok(BindOutcome::ProofRequired);
+                };
+                let matches = cap_hash.len() == 32
+                    && cap_hash
+                        .iter()
+                        .zip(proof.iter())
+                        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
+                        == 0;
+                if !matches {
+                    return Ok(BindOutcome::NotYours);
+                }
             }
+
             if let Some(current) = current {
                 return Ok(BindOutcome::AlreadyNamed(current));
             }
@@ -671,9 +700,12 @@ impl Store {
 
             // The unique index on `handle` is what actually decides the winner between two callers
             // asking for the same name; this turns its error into an answer rather than a 500.
+            // Adopt it into the account at the same time: from here it spends a slot in that
+            // account's namespace and must list under it, so ownership and name have to land
+            // together or a crash between them would leave a named mailbox nobody owns.
             match tx.execute(
-                "UPDATE identities SET handle = ?1 WHERE address = ?2",
-                params![handle, address],
+                "UPDATE identities SET handle = ?1, account_id = ?2 WHERE address = ?3",
+                params![handle, account, address],
             ) {
                 Ok(_) => {}
                 Err(rusqlite::Error::SqliteFailure(e, _))
@@ -1930,6 +1962,7 @@ mod handle_binding_tests {
                 "acct_1".into(),
                 "/bekir".into(),
                 100,
+                None,
             )
             .await
             .unwrap();
@@ -1937,6 +1970,41 @@ mod handle_binding_tests {
         assert_eq!(outcome, BindOutcome::Bound);
         let found = store.get_by_handle("/bekir/agent1".into()).await.unwrap();
         assert_eq!(found.unwrap().address, "/k/aaa");
+    }
+
+    /// The mailbox this feature exists for: minted anonymously, owned by nobody. It is adopted on
+    /// proof of control, and refused without it.
+    #[tokio::test]
+    async fn an_unowned_mailbox_is_adopted_only_on_proof() {
+        let store = Store::open(":memory:").unwrap();
+        let mut id = owned("/k/orphan", "unused", None);
+        id.account_id = None;
+        id.cap_hash = [7; 32];
+        store.insert(id).await.unwrap();
+
+        let bind = |proof| {
+            store.bind_handle(
+                "/k/orphan".into(),
+                "/bekir/adopted".into(),
+                "acct_1".into(),
+                "/bekir".into(),
+                100,
+                proof,
+            )
+        };
+
+        assert_eq!(bind(None).await.unwrap(), BindOutcome::ProofRequired);
+        assert_eq!(bind(Some([9; 32])).await.unwrap(), BindOutcome::NotYours);
+        assert_eq!(bind(Some([7; 32])).await.unwrap(), BindOutcome::Bound);
+
+        // Naming it also moves it into the account, since it now spends that namespace's slot.
+        let found = store
+            .get_by_handle("/bekir/adopted".into())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(found.address, "/k/orphan");
+        assert_eq!(found.account_id.as_deref(), Some("acct_1"));
     }
 
     #[tokio::test]
@@ -1950,6 +2018,7 @@ mod handle_binding_tests {
                 "acct_2".into(),
                 "/bekir".into(),
                 100,
+                None,
             )
             .await
             .unwrap();
@@ -1971,6 +2040,7 @@ mod handle_binding_tests {
                 "acct_1".into(),
                 "/bekir".into(),
                 100,
+                None,
             )
             .await
             .unwrap();
@@ -1992,6 +2062,7 @@ mod handle_binding_tests {
                 "acct_1".into(),
                 "/bekir".into(),
                 100,
+                None,
             )
             .await
             .unwrap();
@@ -2026,6 +2097,7 @@ mod handle_binding_tests {
                 "acct_1".into(),
                 "/bekir".into(),
                 1,
+                None,
             )
             .await
             .unwrap();
