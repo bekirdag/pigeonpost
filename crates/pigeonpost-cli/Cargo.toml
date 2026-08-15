@@ -20,14 +20,14 @@ name = "pigeonpost"
 path = "src/main.rs"
 
 [dependencies]
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.0" }
-pigeonpost-client = { path = "../pigeonpost-client", version = "0.5.0" }
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.5.0" }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.0" }
-pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.5.0" }
-pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.5.0" }
-pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.5.0" }
-pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.0" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.1" }
+pigeonpost-client = { path = "../pigeonpost-client", version = "0.5.1" }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.5.1" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.1" }
+pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.5.1" }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.5.1" }
+pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.5.1" }
+pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.1" }
 axum = "0.8"
 ed25519-dalek.workspace = true
 fs2 = "0.4"
