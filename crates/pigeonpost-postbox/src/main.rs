@@ -1629,6 +1629,13 @@ fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identit
 
 // ---- core operations, shared by the REST handlers and the MCP tools ----
 
+/// Whether `to` is shaped like something this postbox could ever deliver to.
+///
+/// Separates "you mistyped" from "nobody is there", which are otherwise the same refusal.
+fn is_addressable(to: &str) -> bool {
+    Address::parse(to).is_ok() || Destination::for_handle(to).is_ok()
+}
+
 /// Resolve a destination to a hosted mailbox, by `/k/` address or by handle.
 ///
 /// A handle is a name bound to a key, so both forms land on the same row and the sealing below is
@@ -1667,12 +1674,24 @@ pub(crate) async fn do_send(
     to: &str,
     body: &str,
 ) -> Result<serde_json::Value, ApiError> {
-    let recipient = resolve_recipient(state, to).await?.ok_or_else(|| {
-        ApiError::bad(
-            "recipient_unresolved",
-            "only hosted recipients are deliverable in this build",
-        )
-    })?;
+    // Two different mistakes deserve two different answers. Telling someone who mistyped an address
+    // that "only hosted recipients are deliverable" sends them looking for a delivery feature when
+    // the real problem is a typo — and mistyping an address is the most common newcomer mistake.
+    let recipient =
+        match resolve_recipient(state, to).await? {
+            Some(found) => found,
+            None if !is_addressable(to) => return Err(ApiError::bad(
+                "invalid_recipient",
+                "not a Pigeonpost address — expected a /k/ address or a handle like /bekir/agent1",
+            )),
+            None => {
+                return Err(ApiError::new(
+                    StatusCode::NOT_FOUND,
+                    "recipient_unresolved",
+                    format!("no mailbox at {to} on this postbox"),
+                ))
+            }
+        };
 
     // Admission: refused here rather than filtered on read, so a blocked sender never occupies
     // the recipient's disk or quota. The error is deliberately the same shape for "blocked" and
@@ -3296,6 +3315,32 @@ mod tests {
             None
         );
         assert_eq!(store::namespace_wildcard("/bekir"), None);
+    }
+
+    #[tokio::test]
+    async fn a_mistyped_address_says_so_instead_of_blaming_delivery() {
+        // Mistyping an address is the most common newcomer mistake, and the two failures need
+        // different answers: fix your typo, versus that mailbox does not exist here.
+        let state = test_state();
+        let sender = mint(&state).await;
+
+        let malformed = do_send(&state, &sender, "not-an-address", "hi")
+            .await
+            .expect_err("a malformed destination is not deliverable");
+        assert_eq!(malformed.code, "invalid_recipient");
+        assert!(
+            malformed.message.contains("not a Pigeonpost address"),
+            "should name the real problem, got: {}",
+            malformed.message
+        );
+
+        // Well-formed but nobody home: a different code, and it names the address back.
+        let absent = do_send(&state, &sender, "/k/2dehf8j788jmq6qnk04nj44fng", "hi")
+            .await
+            .expect_err("no such mailbox");
+        assert_eq!(absent.code, "recipient_unresolved");
+        assert_eq!(absent.status, StatusCode::NOT_FOUND);
+        assert!(absent.message.contains("/k/2dehf8j788jmq6qnk04nj44fng"));
     }
 
     #[tokio::test]
