@@ -37,7 +37,11 @@ tmp/
 /docs/planning/
 
 # Unapproved future naming/payment proposal; excluded from the v0.2 SDS contract.
+# The generated export and its checker stay outside the contract with the document they serve —
+# and the export lists namespace words the shipped-tree vocabulary guard forbids.
 /docs/reserved-names.md
+/docs/reserved-names.txt
+/docs/reserved-names-check.py
 
 # Credentials — never commit
 .creds
@@ -45,3 +49,8 @@ tmp/
 
 # Build inspection artifacts
 server-dependency-tree.txt
+
+# Local-only staging for `docker build --build-arg BINARY_STAGE=prebuilt`, which reads
+# dist/linux/<arch>/pigeonpost. Release binaries are downloaded per build, never committed —
+# a tracked one is picked up as a stray release asset and fails payload assembly.
+dist/
