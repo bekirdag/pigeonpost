@@ -83,11 +83,17 @@ jobs:
           # The core protocol, docs, and marketing pages must use Pigeonpost/message/inbox
           # vocabulary. The signed-in SaaS surface and the CLA are exempt: there the word denotes
           # the member's actual address for OIDC/billing, or reserved-handle data — not messaging.
+          #
+          # login_cmd.rs is the CLI's half of that same signed-in surface. It reads the standard
+          # OIDC claim of that name off the ID token so `whoami` can say who is signed in; the
+          # claim's key is fixed by the spec, not chosen by us. Nothing there addresses a mailbox
+          # — Pigeonpost messaging in that file is only ever a /k/ address or a handle.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \
               ':(exclude)site/reserved.js' \
+              ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)CLA.md'; then
             echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
             exit 1
