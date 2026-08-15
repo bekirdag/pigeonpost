@@ -245,6 +245,44 @@ enum PostboxAction {
         handle: Option<String>,
     },
 
+    /// Become reachable in one command: take a name, trust a fleet, and say what you work on.
+    ///
+    /// Safe to re-run. Names the mailbox already on this box rather than minting a second one,
+    /// and asks which if there is more than one candidate.
+    Onboard {
+        /// The name to take, e.g. /bekir/docdex.
+        #[arg(long)]
+        handle: String,
+        /// Postbox to use when minting.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
+        /// Name this specific mailbox. Pass `new` to mint a fresh one instead.
+        #[arg(long = "as")]
+        address: Option<String>,
+        /// A fleet to admit, e.g. --trust "/bekir/*".
+        #[arg(long)]
+        trust: Option<String>,
+        /// A request this fleet may have acted on without asking a human. Repeatable. With none,
+        /// the fleet is only labelled.
+        #[arg(long = "verb")]
+        verbs: Vec<String>,
+        /// Git repository this agent works on. `auto` reads it from the current directory.
+        #[arg(long)]
+        git_repo: Option<String>,
+        /// What this agent is for, e.g. "docdex maintainer".
+        #[arg(long)]
+        job_title: Option<String>,
+        /// A longer description of the job.
+        #[arg(long)]
+        job_description: Option<String>,
+        /// Full local path of the checkout. `auto` uses the current directory.
+        #[arg(long)]
+        local_path: Option<String>,
+        /// Anything else worth knowing.
+        #[arg(long)]
+        notes: Option<String>,
+    },
+
     /// Give a mailbox you already own a readable name, e.g. /k/… → /bekir/agent1.
     ///
     /// Keeps the address, its capability token, its waiting mail, and every contact entry that
@@ -1093,6 +1131,56 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     postbox,
                     label.as_deref(),
                     handle.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Onboard {
+                handle,
+                postbox,
+                address,
+                trust,
+                verbs,
+                git_repo,
+                job_title,
+                job_description,
+                local_path,
+                notes,
+            } => {
+                let git_repo = match git_repo.as_deref() {
+                    Some("auto") => workspace_cmd::git_remote(&std::env::current_dir()?),
+                    other => other.map(str::to_string),
+                };
+                let local_path = match local_path.as_deref() {
+                    Some("auto") => Some(std::env::current_dir()?.display().to_string()),
+                    other => other.map(str::to_string),
+                };
+                // Build without the host name first: it is filled in for free, so including it
+                // unconditionally would make "no workspace fields given" indistinguishable from
+                // "set the machine", and write a workspace nobody asked for.
+                let mut workspace = workspace_cmd::Workspace {
+                    git_repo,
+                    job_title: job_title.clone(),
+                    job_description: job_description.clone(),
+                    machine: None,
+                    local_path,
+                    notes: notes.clone(),
+                };
+                if !workspace.is_empty() {
+                    workspace.machine = workspace_cmd::this_machine();
+                }
+                // `--as new` says "mint a fresh one" out loud, rather than by omission.
+                let mint_fresh = address.as_deref() == Some("new");
+                let as_address = address.as_deref().filter(|a| *a != "new");
+                postbox_cmd::onboard(
+                    &home,
+                    postbox,
+                    handle,
+                    as_address,
+                    mint_fresh,
+                    trust.as_deref(),
+                    verbs,
+                    workspace,
                     cli.json,
                 )
                 .await

@@ -225,6 +225,21 @@ button { font: inherit; color: inherit; }
 }
 .threads li { margin: 0; }
 
+/* Section heading inside the list. Your own agents sit above everyone else. */
+.group-head {
+  padding: 14px 14px 5px;
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: #fff;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+.group-head + .thread-row { border-top: 1px solid var(--rule); }
+
 .thread-row {
   width: 100%;
   display: flex;
@@ -431,6 +446,7 @@ button { font: inherit; color: inherit; }
 .peer-info dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .peer-info .mono { font-family: var(--mono); font-size: 12px; }
 .peer-info .note { color: var(--muted); margin: 10px 0 0; max-width: 70ch; }
+.peer-info .open-mailbox { margin-top: 12px; padding: 8px 15px; font-size: 14px; }
 
 /* ---- composer ----------------------------------------------------------------------------- */
 

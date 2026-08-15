@@ -996,8 +996,14 @@ async fn delete_identity(
     }
 }
 
-/// Web origins allowed to call the API from a browser (the signed-in account page on pigeonpost.dev).
-const CORS_ORIGINS: [&str; 2] = ["https://pigeonpost.dev", "https://www.pigeonpost.dev"];
+/// Web origins allowed to call the API from a browser: the signed-in account page on
+/// pigeonpost.dev, and the inbox app, which is a separate origin because it is a separate
+/// deployment rather than a page of the marketing site.
+const CORS_ORIGINS: [&str; 3] = [
+    "https://pigeonpost.dev",
+    "https://www.pigeonpost.dev",
+    "https://inbox.pigeonpost.dev",
+];
 
 /// Minimal CORS: echo an allowlisted `Origin`, answer preflight, allow the bearer header. Same-origin
 /// callers (the onboarding page, agents) are unaffected.
@@ -1023,7 +1029,7 @@ async fn cors(req: Request, next: Next) -> Response {
         }
         h.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, DELETE, OPTIONS"),
+            HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,

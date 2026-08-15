@@ -158,7 +158,22 @@ pub fn passphrase(confirm: bool) -> Result<String, Error> {
             return Ok(value);
         }
     }
-    let entered = rpassword::prompt_password("workspace passphrase: ")?;
+    // An agent runs with no terminal, so the prompt fails with a bare "Device not configured"
+    // that says nothing about what to do. Name the way through instead.
+    let entered = rpassword::prompt_password("workspace passphrase: ").map_err(|e| {
+        if matches!(
+            e.kind(),
+            std::io::ErrorKind::NotFound | std::io::ErrorKind::Other
+        ) {
+            format!(
+                "no terminal to read a workspace passphrase from ({e}). \
+Set PIGEONPOST_WORKSPACE_PASSPHRASE instead — the context is encrypted with it, so the postbox \
+never sees what this agent works on."
+            )
+        } else {
+            e.to_string()
+        }
+    })?;
     if entered.is_empty() {
         return Err("an empty passphrase would leave this readable by anyone".into());
     }

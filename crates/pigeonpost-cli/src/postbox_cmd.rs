@@ -220,6 +220,124 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
         .ok_or_else(|| "no such mailbox in this home".into())
 }
 
+/// Everything an agent needs to become reachable, in one command.
+///
+/// Onboarding was four steps across two credentials, and the failure modes were all silent: mint a
+/// second mailbox instead of naming the one you have, record a contact that grants nothing, or
+/// stop at "connect MCP" and never say what you work on. Each step is still available separately;
+/// this runs them in the order that cannot strand you.
+///
+/// Deliberately not automatic about *which* mailbox: with several on file it asks rather than
+/// guessing, because naming the wrong one cannot be undone.
+#[allow(clippy::too_many_arguments)]
+pub async fn onboard(
+    home: &Path,
+    base_url: &str,
+    handle: &str,
+    as_address: Option<&str>,
+    mint_fresh: bool,
+    trust: Option<&str>,
+    verbs: &[String],
+    workspace: crate::workspace_cmd::Workspace,
+    json: bool,
+) -> Result<(), Error> {
+    let existing = load(home)?;
+
+    // Already onboarded under this name: re-running must be safe, because an agent that cannot
+    // tell whether it ran this before will run it again.
+    let already = existing
+        .identities
+        .iter()
+        .find(|c| c.handle.as_deref() == Some(handle))
+        .map(|c| c.address.clone());
+
+    let address = match (already, as_address) {
+        (Some(address), _) => {
+            println!("already named {handle} ({address}) — leaving it alone");
+            address
+        }
+        (None, Some(target)) => {
+            name_mailbox(home, Some(target), handle, false).await?;
+            credential_for(home, Some(handle))?.address
+        }
+        (None, None) if mint_fresh => {
+            new_inbox(home, base_url, None, Some(handle), false).await?;
+            credential_for(home, Some(handle))?.address
+        }
+        (None, None) => {
+            // One unnamed mailbox is unambiguous, and naming it is almost always what was meant —
+            // minting a second one would abandon the address its peers already know.
+            let unnamed: Vec<_> = existing
+                .identities
+                .iter()
+                .filter(|c| c.handle.is_none())
+                .collect();
+            match unnamed.len() {
+                0 => {
+                    new_inbox(home, base_url, None, Some(handle), false).await?;
+                    credential_for(home, Some(handle))?.address
+                }
+                1 => {
+                    let target = unnamed[0].address.clone();
+                    println!("naming the mailbox already on this box rather than minting a second");
+                    name_mailbox(home, Some(&target), handle, false).await?;
+                    target
+                }
+                n => {
+                    return Err(format!(
+                        "{n} unnamed mailboxes here — say which to name with --as /k/…, or none of them with --as new"
+                    )
+                    .into())
+                }
+            }
+        }
+    };
+
+    if let Some(peer) = trust {
+        println!();
+        let autonomy = if verbs.is_empty() { "review" } else { "auto" };
+        set_contact(
+            home,
+            Some(&address),
+            peer,
+            Some("my fleet"),
+            Some("allow"),
+            Some(autonomy),
+            Some(verbs),
+            false,
+        )
+        .await?;
+        if verbs.is_empty() {
+            println!(
+                "no --verb given, so {peer} is only labelled; their requests still wait for a human."
+            );
+        }
+    }
+
+    if !workspace.is_empty() {
+        println!();
+        set_workspace(home, Some(&address), workspace, false).await?;
+    }
+
+    println!();
+    println!("{handle} is ready.");
+    println!();
+    println!("Read mail with the CLI — no MCP server and no restart needed:");
+    println!("  pigeonpost postbox watch --wait 25 --as {handle}   # returns as mail lands");
+    println!("  pigeonpost postbox inbox --as {handle}             # one look");
+    println!();
+    println!("Connect it as an MCP server too, if you want the tools in-session:");
+    println!("  pigeonpost postbox token {handle}");
+    if json {
+        println!();
+        println!(
+            "{}",
+            serde_json::json!({ "address": address, "handle": handle })
+        );
+    }
+    Ok(())
+}
+
 /// Give a mailbox this home already owns a readable name under a namespace the account owns.
 ///
 /// The point of doing this in place, rather than minting a fresh handle mailbox, is that the
