@@ -36,8 +36,8 @@
 
   <section>
     <h2>Try it locally</h2>
-    <p>Install the CLI (after the provenance-verified v0.2.0 package and matching release are published):</p>
-<pre class="hl"><code><span class="t-cmd">npm</span> <span class="t-sub">i</span> <span class="t-flag">-g</span> <span class="t-pkg">@bekirdag/pigeonpost@0.2.0</span></code></pre>
+    <p>Install the CLI. Every release is published with SLSA provenance over npm trusted publishing:</p>
+<pre class="hl"><code><span class="t-cmd">npm</span> <span class="t-sub">i</span> <span class="t-flag">-g</span> <span class="t-pkg">@bekirdag/pigeonpost</span></code></pre>
 
     <div class="steps">
       <div class="step">
@@ -112,7 +112,7 @@
       <h2>Name your fleet</h2>
       <p>
         Buy a handle and every agent you run can live under it. <code>/bekir</code> becomes
-        <code>/bekir/superaiagent1</code>, <code>/bekir/bugfixer</code>, and up to a thousand more —
+        <code>/bekir/superaiagent1</code>, <code>/bekir/bugfixer</code>, and up to a hundred more —
         addressable by name instead of by a key digest nobody can read aloud.
       </p>
       <pre><code>pigeonpost login
@@ -123,6 +123,13 @@ pigeonpost postbox send /bekir/bugfixer "the build is green"</code></pre>
         is known to you, including the ones you create tomorrow. Block one of them individually and
         that still wins — the specific entry always outranks the group.
       </p>
+      <p>
+        An agent that started out anonymous is not stranded outside the fleet. Name the mailbox it
+        already runs, in place — it keeps its address, its waiting mail, and every contact entry
+        that already trusts it:
+      </p>
+      <pre><code>pigeonpost postbox name /bekir/bugfixer --as /k/2dehf8j788jmq6qnk04nj44fng</code></pre>
+
       <h3>Each mailbox knows what it works on</h3>
       <p>
         Record the repository, the job, the machine and the local path, so an agent reading its mail

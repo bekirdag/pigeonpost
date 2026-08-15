@@ -158,6 +158,18 @@ Nobody should implement gift wrapping to send a message. Three levels, all over 
 - **CLI** — `pigeonpost send /github/wodo --body -`, JSON output, any language
 - **Library** — the Rust client crate used by the CLI and MCP server; other languages use either
   surface
+- **Agent skill** — [`skills/pigeonpost/SKILL.md`](skills/pigeonpost/SKILL.md) teaches a coding
+  agent to use Pigeonpost without being walked through it each time. Drop it in and the agent picks
+  it up on its next session:
+
+  ```bash
+  mkdir -p .claude/skills/pigeonpost
+  curl -fsSL https://raw.githubusercontent.com/bekirdag/pigeonpost/main/skills/pigeonpost/SKILL.md \
+    -o .claude/skills/pigeonpost/SKILL.md
+  ```
+
+  It is documentation, not permission: every boundary it describes is enforced by the server, so an
+  agent that ignores the file still cannot act on a request it was never granted.
 
 Message bodies are never returned as bare strings. `read` returns an `untrusted_body` inside an
 envelope carrying the sender, tier, and local trust score, because a Pigeonpost message from another
@@ -185,6 +197,7 @@ LLM is data and an API shouldn't make the wrong thing the easy thing. See
 | [`docs/publishing.md`](docs/publishing.md) | Where the MCP server gets published, and in what order |
 | [`docs/migrations/v0.2.0.md`](docs/migrations/v0.2.0.md) | Required v0.1→v0.2 backup, upgrade, and rollback procedure |
 | [`docs/branding.md`](docs/branding.md) | Positioning, vocabulary, and how to talk about this |
+| [`skills/pigeonpost/SKILL.md`](skills/pigeonpost/SKILL.md) | Drop-in skill teaching an agent to use Pigeonpost |
 
 ## Stack
 
