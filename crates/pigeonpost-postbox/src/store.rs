@@ -40,7 +40,9 @@ CREATE TABLE IF NOT EXISTS messages (
     direction  TEXT NOT NULL DEFAULT 'in'
 );
 CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages(recipient);
-CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner);
+-- The index on `owner` lives in MIGRATIONS, not here: on a database created before that column
+-- existed this batch runs first, and indexing a column the ALTER has not added yet fails the whole
+-- open.
 
 CREATE TABLE IF NOT EXISTS accounts (
     id         TEXT PRIMARY KEY,
@@ -1554,6 +1556,58 @@ impl Store {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn mail_written_before_the_sent_copy_existed_still_reads() {
+        // The live database predates `owner` and `direction`. Its rows are all delivered mail, and
+        // they must keep reading correctly — this is the migration that runs against real inboxes.
+        let dir = std::env::temp_dir().join(format!("pp-migrate-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("legacy.db");
+        let path_str = path.to_str().unwrap().to_string();
+
+        // Exactly the pre-change table.
+        {
+            let c = rusqlite::Connection::open(&path).unwrap();
+            c.execute_batch(
+                "CREATE TABLE messages (
+                     id TEXT PRIMARY KEY, recipient TEXT NOT NULL, sender TEXT NOT NULL,
+                     wrap_blob BLOB NOT NULL, created_at INTEGER NOT NULL,
+                     read INTEGER NOT NULL DEFAULT 0
+                 );",
+            )
+            .unwrap();
+            c.execute(
+                "INSERT INTO messages (id, recipient, sender, wrap_blob, created_at, read)
+                 VALUES ('old1', '/k/bob', '/k/alice', X'010203', 1000, 0)",
+                [],
+            )
+            .unwrap();
+        }
+
+        let store = Store::open(&path_str).unwrap();
+
+        let msgs = store.list_for("/k/bob".into()).await.unwrap();
+        assert_eq!(
+            msgs.len(),
+            1,
+            "pre-existing mail must survive the migration"
+        );
+        assert_eq!(msgs[0].id, "old1");
+        assert_eq!(msgs[0].owner, "/k/bob", "backfilled from the recipient");
+        assert!(!msgs[0].outgoing, "everything written before was delivered");
+
+        // And the counts it feeds still see it.
+        assert_eq!(store.inbox_count("/k/bob".into()).await.unwrap(), 1);
+        assert_eq!(store.unread_count("/k/bob".into()).await.unwrap(), 1);
+        assert!(store
+            .mark_read("old1".into(), "/k/bob".into())
+            .await
+            .unwrap());
+        assert_eq!(store.unread_count("/k/bob".into()).await.unwrap(), 0);
+
+        std::fs::remove_dir_all(&dir).ok();
+    }
+
     fn sample(addr: &str) -> StoredIdentity {
         StoredIdentity {
             address: addr.to_string(),
@@ -1604,6 +1658,8 @@ mod tests {
                 wrap_blob: serde_json::to_vec(&wrap).unwrap(),
                 created_at: 1000,
                 read: false,
+                owner: bob_addr.clone(),
+                outgoing: false,
             })
             .await
             .unwrap();
@@ -1772,6 +1828,8 @@ mod tests {
             wrap_blob: vec![1, 2, 3],
             created_at,
             read: false,
+            owner: recipient.into(),
+            outgoing: false,
         }
     }
 

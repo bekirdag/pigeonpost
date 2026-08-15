@@ -464,7 +464,7 @@ pub async fn access_token(home: &Path) -> Result<String, Error> {
         return Ok(session.access_token);
     }
     let refreshed = refresh(&session).await?;
-    save(home, refreshed.clone())?;
+    save_refreshed(home, refreshed.clone())?;
     Ok(refreshed.access_token)
 }
 
@@ -475,7 +475,7 @@ pub async fn current_session(home: &Path) -> Result<Session, Error> {
         return Ok(session);
     }
     let refreshed = refresh(&session).await?;
-    save(home, refreshed.clone())?;
+    save_refreshed(home, refreshed.clone())?;
     Ok(refreshed)
 }
 
@@ -554,14 +554,33 @@ pub fn logout(home: &Path) -> Result<(), Error> {
     let path = credentials_path(home);
     match std::fs::remove_file(&path) {
         Ok(()) => println!("signed out; {} removed", path.display()),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("not signed in"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            // Removing the machine session from under an agent that merely borrows it would sign
+            // out every other agent on the box, which is not what "log out of this one" means.
+            // Say where it is instead, so the choice stays the operator's.
+            match machine_session_path().filter(|p| p.exists()) {
+                Some(shared) => {
+                    println!("nothing to sign out of here.");
+                    println!(
+                        "This home borrows the machine session at {} — sign that out with:",
+                        shared.display()
+                    );
+                    println!(
+                        "  pigeonpost logout --home {}",
+                        shared.parent().unwrap_or(&shared).display()
+                    );
+                    println!("which signs out every agent on this box.");
+                }
+                None => println!("not signed in"),
+            }
+        }
         Err(e) => return Err(e.into()),
     }
     Ok(())
 }
 
 pub fn load(home: &Path) -> Result<Option<Session>, Error> {
-    match std::fs::read(credentials_path(home)) {
+    match std::fs::read(session_path(home)) {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(e) => Err(e.into()),
@@ -569,8 +588,21 @@ pub fn load(home: &Path) -> Result<Option<Session>, Error> {
 }
 
 fn save(home: &Path, session: Session) -> Result<(), Error> {
-    std::fs::create_dir_all(home)?;
-    let path = credentials_path(home);
+    save_to(&credentials_path(home), session)
+}
+
+/// Persist a refreshed session over the file it was read from. Writing it into the agent's own
+/// home instead would leave the machine session stale and make every agent refresh separately —
+/// and quietly scatter copies of a token that mints under the whole account.
+fn save_refreshed(home: &Path, session: Session) -> Result<(), Error> {
+    save_to(&session_path(home), session)
+}
+
+fn save_to(path: &Path, session: Session) -> Result<(), Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let path = path.to_path_buf();
     let body = serde_json::to_vec_pretty(&session)?;
     let tmp = path.with_extension("json.tmp");
     let mut file = std::fs::File::create(&tmp)?;
@@ -584,6 +616,34 @@ fn save(home: &Path, session: Session) -> Result<(), Error> {
 
 fn credentials_path(home: &Path) -> PathBuf {
     home.join(CREDENTIALS_FILE)
+}
+
+/// The machine-wide session, used when `home` has none of its own.
+///
+/// One box runs many agents — typically one per repository — and each wants its own mailbox, which
+/// means its own `PIGEONPOST_HOME` so that no command needs `--as` and no agent can touch another's
+/// credentials. But signing in is a property of the *person at the machine*, not of any one agent,
+/// so requiring a login per home would mean logging in once per repository.
+///
+/// So the two are separated: mailboxes live in whatever home the agent was given, while the
+/// session is looked up in that home first and then here. Sign in once; every agent on the box
+/// mints under it.
+fn machine_session_path() -> Option<PathBuf> {
+    std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|h| h.join(".pigeonpost").join(CREDENTIALS_FILE))
+}
+
+/// Where this home's session actually is: its own file, else the machine-wide one.
+fn session_path(home: &Path) -> PathBuf {
+    let local = credentials_path(home);
+    if local.exists() {
+        return local;
+    }
+    match machine_session_path() {
+        Some(shared) if shared.exists() => shared,
+        _ => local,
+    }
 }
 
 /// Owner-only before a byte is written, so the token is never briefly world-readable.

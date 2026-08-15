@@ -2031,6 +2031,7 @@ async fn await_mail(state: &AppState, address: &str, wait: u64) {
 pub(crate) async fn do_inbox(
     state: &AppState,
     me: &store::StoredIdentity,
+    include_sent: bool,
 ) -> Result<serde_json::Value, ApiError> {
     let messages = state
         .store
@@ -2268,6 +2269,10 @@ async fn send(
 struct InboxQuery {
     #[serde(default)]
     identity: Option<String>,
+    /// Include this mailbox's own sent copies, turning the listing into a conversation. Off by
+    /// default: every existing caller reads this list as mail addressed to them.
+    #[serde(default)]
+    include_sent: bool,
     /// Seconds to hold the request open when the inbox is empty, capped at
     /// [`MAX_INBOX_WAIT_SECS`]. Absent or 0 answers immediately, as it always did.
     #[serde(default)]
@@ -2407,7 +2412,7 @@ async fn inbox(
     if let Some(wait) = q.wait.filter(|w| *w > 0) {
         await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
     }
-    match do_inbox(&state, &me).await {
+    match do_inbox(&state, &me, q.include_sent).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -3312,7 +3317,7 @@ mod tests {
             .await
             .unwrap();
 
-        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false).await.unwrap();
         let messages = inbox["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
         let find = |pred: &dyn Fn(&serde_json::Value) -> bool| {
@@ -3494,7 +3499,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "auto");
         assert_eq!(m["sender_known"], true);
@@ -3553,7 +3558,7 @@ mod tests {
         do_send(&state, &agent, &bob.address, r#"{"v":1,"verb":"deploy"}"#)
             .await
             .unwrap();
-        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_denied");
@@ -3629,7 +3634,7 @@ mod tests {
             .expect("the key-derived address is unchanged");
 
         let recipient = state.store.get(k_address).await.unwrap().unwrap();
-        let inbox = do_inbox(&state, &recipient).await.unwrap();
+        let inbox = do_inbox(&state, &recipient, false).await.unwrap();
         assert_eq!(
             inbox["messages"].as_array().unwrap().len(),
             3,
@@ -3976,7 +3981,7 @@ mod tests {
             .await
             .unwrap();
 
-        let first = do_inbox(&state, &bob).await.unwrap();
+        let first = do_inbox(&state, &bob, false).await.unwrap();
         assert_eq!(first["messages"][0]["sender_standing"], "unproven");
 
         do_report_spam(
@@ -3987,7 +3992,7 @@ mod tests {
         .await
         .unwrap();
 
-        let after = do_inbox(&state, &bob).await.unwrap();
+        let after = do_inbox(&state, &bob, false).await.unwrap();
         assert_eq!(after["messages"][0]["sender_standing"], "reported");
         assert!(after["messages"][0]["sender_score"].as_i64().unwrap() < 0);
     }
@@ -4092,7 +4097,7 @@ mod tests {
         );
         sending.await.unwrap();
 
-        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false).await.unwrap();
         assert_eq!(inbox["messages"].as_array().unwrap().len(), 1);
     }
 
@@ -4106,7 +4111,7 @@ mod tests {
             started.elapsed() >= std::time::Duration::from_millis(900),
             "an empty inbox must wait out its budget, not return at once"
         );
-        assert!(do_inbox(&state, &me).await.unwrap()["messages"]
+        assert!(do_inbox(&state, &me, false).await.unwrap()["messages"]
             .as_array()
             .unwrap()
             .is_empty());
@@ -4153,6 +4158,89 @@ mod tests {
             started.elapsed() >= std::time::Duration::from_millis(900),
             "a read message must not count as new mail"
         );
+    }
+
+    #[tokio::test]
+    async fn a_sender_can_read_back_what_they_sent() {
+        // The delivered copy is sealed to the recipient, so without a second copy sealed to the
+        // sender a conversation can only ever be seen from one end.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "the build is green")
+            .await
+            .unwrap();
+
+        let conversation = do_inbox(&state, &alice, true).await.unwrap();
+        let messages = conversation["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 1, "the sender should see their own message");
+        assert_eq!(messages[0]["direction"], "out");
+        assert_eq!(messages[0]["body"], "the build is green");
+        assert_eq!(
+            messages[0]["peer"], bob.address,
+            "the counterparty is who it went to, not who wrote it"
+        );
+
+        // Bob sees the same exchange from his end.
+        let bobs = do_inbox(&state, &bob, true).await.unwrap();
+        let bobs_messages = bobs["messages"].as_array().unwrap();
+        assert_eq!(bobs_messages.len(), 1);
+        assert_eq!(bobs_messages[0]["direction"], "in");
+        assert_eq!(bobs_messages[0]["peer"], alice.address);
+    }
+
+    #[tokio::test]
+    async fn a_sent_copy_is_invisible_to_every_caller_that_did_not_ask() {
+        // The CLI and the MCP tool read this list as "mail addressed to me". Quietly adding the
+        // caller's own messages would have an agent reading its own words as someone's request.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "status?")
+            .await
+            .unwrap();
+
+        let inbox = do_inbox(&state, &alice, false).await.unwrap();
+        assert!(
+            inbox["messages"].as_array().unwrap().is_empty(),
+            "a sent message is not inbox mail"
+        );
+    }
+
+    #[tokio::test]
+    async fn sending_does_not_wake_the_senders_own_long_poll() {
+        // A sent copy lands in the sender's own mailbox. If it counted as news, every send would
+        // instantly return the sender's own long poll with their own message.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "anyone there?")
+            .await
+            .unwrap();
+
+        let started = std::time::Instant::now();
+        await_mail(&state, &alice.address, 1).await;
+        assert!(
+            started.elapsed() >= std::time::Duration::from_millis(900),
+            "your own sent message must not count as new mail"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_sent_copy_does_not_spend_the_stranger_allowance() {
+        // The throttle counts what a stranger delivered. Counting the sender's own copy as well
+        // would halve everyone's allowance the moment sent copies started being stored.
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "one").await.unwrap();
+
+        let delivered = state
+            .store
+            .messages_between_since(alice.address.clone(), bob.address.clone(), 0)
+            .await
+            .unwrap();
+        assert_eq!(delivered, 1, "one send is one delivered message");
     }
 
     #[tokio::test]
@@ -4280,7 +4368,7 @@ mod tests {
         .await
         .unwrap();
 
-        let inbox = do_inbox(&state, &bob).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_not_granted");

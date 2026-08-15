@@ -49,6 +49,12 @@ struct Cli {
     #[arg(long, env = "PIGEONPOST_HOME", global = true)]
     home: Option<PathBuf>,
 
+    /// Which agent on this machine to act as, e.g. --agent docdex. Shorthand for a home under
+    /// ~/.pigeonpost/agents/<name>, so several agents on one box keep separate mailboxes without
+    /// anyone tracking directory paths. Ignored when --home is given explicitly.
+    #[arg(long, env = "PIGEONPOST_AGENT", global = true)]
+    agent: Option<String>,
+
     /// Existing owner-only directory holding the independently custodied successor key.
     #[arg(long, env = "PIGEONPOST_RECOVERY_DIR", global = true)]
     recovery_dir: Option<PathBuf>,
@@ -250,9 +256,10 @@ enum PostboxAction {
     /// Safe to re-run. Names the mailbox already on this box rather than minting a second one,
     /// and asks which if there is more than one candidate.
     Onboard {
-        /// The name to take, e.g. /bekir/docdex.
+        /// A readable name under a namespace the signed-in account owns, e.g. /bekir/docdex.
+        /// Omit it to take a free anonymous /k/ inbox instead, which needs no account at all.
         #[arg(long)]
-        handle: String,
+        handle: Option<String>,
         /// Postbox to use when minting.
         #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
         postbox: String,
@@ -1035,7 +1042,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         return directory_cmd::serve(bind, dir).await;
     }
 
-    let home = cli.home.clone().unwrap_or_else(default_home);
+    // --home wins when both are given: it is the more specific instruction, and silently
+    // redirecting an explicit path would be the worst kind of helpful.
+    let home = match (cli.home.clone(), cli.agent.as_deref()) {
+        (Some(home), _) => home,
+        (None, Some(agent)) => agent_home(agent)?,
+        (None, None) => default_home(),
+    };
 
     // Read-only commands must not mint keys on someone's machine as a side effect of looking
     // something up, so they run before any identity exists.
@@ -1175,7 +1188,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 postbox_cmd::onboard(
                     &home,
                     postbox,
-                    handle,
+                    handle.as_deref(),
+                    cli.agent.as_deref(),
                     as_address,
                     mint_fresh,
                     trust.as_deref(),
@@ -2111,6 +2125,33 @@ fn validate_body_bytes(bytes: &[u8]) -> std::io::Result<String> {
         )
     })?;
     Ok(body.trim_end().to_string())
+}
+
+/// One agent's home under the machine's Pigeonpost directory.
+///
+/// Separate directories rather than one shared file, because a box runs many agents — typically
+/// one per repository — and a shared mailbox list means every command needs `--as`, one agent can
+/// read another's capability token, and onboarding has to guess which mailbox it is allowed to
+/// touch. A directory per agent removes all three at once. The session stays machine-wide, so this
+/// costs nothing at sign-in.
+///
+/// Deliberately not inside the repository: a credentials file under a checkout is one `git add -A`
+/// away from being published, which has happened in this project before.
+fn agent_home(agent: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+    let trimmed = agent.trim();
+    if trimmed.is_empty()
+        || trimmed.len() > 64
+        || !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        || trimmed.starts_with('.')
+    {
+        return Err(format!(
+            "--agent must be a short plain name like `docdex` (letters, digits, - _ .), not {agent:?}"
+        )
+        .into());
+    }
+    Ok(default_home().join("agents").join(trimmed))
 }
 
 fn default_home() -> PathBuf {

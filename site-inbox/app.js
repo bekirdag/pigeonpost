@@ -1,11 +1,9 @@
 // Pigeonpost inbox — a messenger over the hosted postbox.
 //
-// Shape of the thing: the postbox stores mail addressed *to* you. It does not store what you send,
-// because a sent message is sealed to the recipient's key and this server holds no copy you could
-// open. So a conversation here is assembled from two sources — inbound from the server, outbound
-// from this browser (see `Outbound`). That is the one place this app keeps state of its own, and it
-// is deliberately isolated behind an async interface so a server-side sent copy can replace it
-// without the views noticing.
+// Shape of the thing: the postbox stores both halves of a conversation. A delivered message is
+// sealed to the recipient, and a sent one is sealed a second time to the sender, so
+// `/v1/inbox?include_sent=1` returns a thread rather than an inbox. The only state this app keeps
+// of its own is `Pending`: the seconds between pressing send and the next poll.
 //
 // Message bodies arrive from other agents. They are inserted with textContent, never as markup, and
 // nothing in a body is ever acted on by this app.
@@ -272,39 +270,38 @@
     return path + (path.includes("?") ? "&" : "?") + "identity=" + encodeURIComponent(address);
   };
 
-  // ---- outbound history (this browser) --------------------------------------------------------
+  // ---- messages in flight ---------------------------------------------------------------------
 
-  // The one piece of local state. Keyed by the sending mailbox so two mailboxes on one account do
-  // not blend, and shaped like the server's messages so the thread builder treats both alike.
+  // Sent messages now come from the server: the postbox keeps a copy of each one sealed to the
+  // sender, and `/v1/inbox?include_sent=1` returns both halves of a conversation. What is left here
+  // is only the gap between pressing send and the next poll — an optimistic row so the message
+  // appears immediately, dropped once the server's own copy arrives.
   //
-  // Replacing this with a server-side sent copy means reimplementing `list` and `add` against the
-  // API; nothing outside this object knows where the messages came from.
-  const Outbound = {
-    key: (mailbox) => "ppi_sent:" + mailbox,
+  // In memory on purpose. A message that failed to send is worth showing until the page is
+  // reloaded and worth forgetting after: it does not exist anywhere else, and persisting it would
+  // recreate the per-device history this replaced.
+  const Pending = {
+    rows: [],
 
-    async list(mailbox) {
-      try {
-        return JSON.parse(LS.getItem(this.key(mailbox)) || "[]");
-      } catch (_) {
-        return [];
-      }
-    },
-
-    async add(mailbox, record) {
-      const all = await this.list(mailbox);
-      all.push(record);
-      // A browser store is finite and a thread is not. Keep the most recent slice; the server holds
-      // the inbound half of history regardless, so this trims what we invented, never what we were sent.
-      const trimmed = all.slice(-2000);
-      LS.setItem(this.key(mailbox), JSON.stringify(trimmed));
+    add(record) {
+      this.rows.push(record);
       return record;
     },
 
-    async update(mailbox, localId, patch) {
-      const all = await this.list(mailbox);
-      const row = all.find((m) => m.local_id === localId);
-      if (row) Object.assign(row, patch);
-      LS.setItem(this.key(mailbox), JSON.stringify(all));
+    // Drop optimistic rows the server has now confirmed. Matched on the id the send call returned,
+    // so a repeated message is never mistaken for its own echo.
+    reconcile(serverIds) {
+      this.rows = this.rows.filter(
+        (r) => r.status === "failed" || !(r.sent_copy_id && serverIds.has(r.sent_copy_id)),
+      );
+    },
+
+    forMailbox(address) {
+      return this.rows.filter((r) => r.mailbox === address);
+    },
+
+    clear() {
+      this.rows = [];
     },
   };
 
@@ -315,7 +312,6 @@
       me: null,          // { address, handle }
       identities: [],    // [{ address, handle, label }]
       inbound: [],       // messages from the server
-      outbound: [],      // messages from this browser
       contacts: [],      // contact rows, including wildcards
       policy: null,
       openPeer: null,    // peer key of the open thread
@@ -325,17 +321,21 @@
   }
   let state = freshState();
 
-  // A peer is identified by handle when it has one, because that is what trust matches on and what
-  // a person recognises. Falls back to the key address.
-  const peerKeyOf = (msg) => msg.sender_handle || msg.from;
+  // Who a message is a conversation *with* — the other end, whichever way it went. The server says
+  // so directly now; `sender_handle`/`from` are the pre-conversation shape, kept as a fallback so a
+  // cached page against an older postbox still groups received mail correctly.
+  const peerKeyOf = (msg) => msg.peer_handle || msg.peer || msg.sender_handle || msg.from;
 
-  // Outbound is addressed however the user typed it. Normalise through what the server has told us
-  // about this peer, so sending to /k/… and hearing back from /bekir/agent1 is one conversation.
+  // A pending row is addressed however the user typed it. Normalise through what the server has
+  // told us about this peer, so sending to /k/… and hearing back from /bekir/agent1 is one
+  // conversation rather than two.
   function normalisePeer(target) {
     if (!target) return target;
     for (const m of state.inbound) {
-      if (m.from === target && m.sender_handle) return m.sender_handle;
-      if (m.sender_handle === target) return m.sender_handle;
+      if ((m.peer === target || m.from === target) && (m.peer_handle || m.sender_handle)) {
+        return m.peer_handle || m.sender_handle;
+      }
+      if (m.peer_handle === target || m.sender_handle === target) return target;
     }
     return target;
   }
@@ -381,8 +381,20 @@
       return threads.get(peer);
     };
 
+    // One list, both directions. `direction` comes from the server; its absence means an older
+    // postbox that only ever returned received mail.
     for (const m of state.inbound) {
       const t = touch(peerKeyOf(m));
+      if (m.direction === "out") {
+        t.messages.push({
+          kind: "out",
+          id: m.message_id,
+          at: m.sent_at || m.received_at,
+          body: m.body,
+          status: "sent",
+        });
+        continue;
+      }
       t.messages.push({
         kind: "in",
         id: m.message_id,
@@ -403,7 +415,8 @@
       if (m.autonomy === "review" && m.verb) t.held += 1;
     }
 
-    for (const m of state.outbound) {
+    // Messages sent since the last poll, plus any that failed outright.
+    for (const m of Pending.forMailbox(state.me ? state.me.address : "")) {
       const t = touch(normalisePeer(m.to));
       t.messages.push({
         kind: "out",
@@ -821,7 +834,9 @@
       else history.replaceState({ thread: peer }, "");
     }
     render();
-    $("compose").focus({ preventScroll: true });
+    // Desktop only. On a phone, focusing the composer raises the keyboard over the thread you just
+    // opened — you came to read it, and typing is a second decision you make by tapping the box.
+    if (!onPhone()) $("compose").focus({ preventScroll: true });
 
     // Opening a conversation is reading it. Acknowledging clears the unread mark server-side, which
     // is also what tells an agent sharing this mailbox that the message has been dealt with — so it
@@ -839,23 +854,30 @@
 
   async function sendMessage(text) {
     const to = state.openPeer;
-    const record = {
+    const record = Pending.add({
       local_id: "local_" + randomString(8),
+      mailbox: state.me.address,
       to,
       body: text,
       at: Math.floor(Date.now() / 1000),
       status: "sending",
-    };
-    await Outbound.add(state.me.address, record);
-    state.outbound.push(record);
+    });
     render();
 
     try {
-      await api("/v1/send", { method: "POST", body: { to, body: text, from: state.me.address } });
-      await Outbound.update(state.me.address, record.local_id, { status: "sent" });
+      const sent = await api("/v1/send", {
+        method: "POST",
+        body: { to, body: text, from: state.me.address },
+      });
+      // The id of the server's own copy. Holding it is what lets the optimistic row retire the
+      // moment that copy comes back, instead of the message appearing twice for a poll.
+      record.sent_copy_id = sent.sent_copy_id || null;
       record.status = "sent";
+      // Nothing to reconcile against if the postbox did not keep a copy; drop the optimistic row
+      // and let the next poll be the truth.
+      if (!record.sent_copy_id) Pending.reconcile(new Set());
+      loadInbox().then(render).catch(() => {});
     } catch (e) {
-      await Outbound.update(state.me.address, record.local_id, { status: "failed" });
       record.status = "failed";
       toast(sendFailure(e));
     }
@@ -881,7 +903,7 @@
     state.openPeer = null;
     state.showInfo = false;
     state.inbound = [];
-    state.outbound = await Outbound.list(identity.address);
+    Pending.clear();
     renderIdentityMenu();
     render();
     await loadAll();
@@ -908,7 +930,6 @@
     const chosen = resolved.find((i) => i.address === remembered) || resolved[0] || null;
     if (chosen) {
       state.me = { address: chosen.address, handle: chosen.handle };
-      state.outbound = await Outbound.list(chosen.address);
     }
     renderIdentityMenu();
   }
@@ -919,9 +940,17 @@
   }
 
   async function loadInbox(signal) {
-    const body = await api(withIdentity("/v1/inbox"), { signal });
+    // include_sent turns the listing into a conversation. Opt-in on the wire, because every other
+    // caller of this endpoint reads it as mail addressed to them.
+    const body = await api(withIdentity("/v1/inbox") + "&include_sent=1", { signal });
+    adopt(body);
+  }
+
+  // Take a server listing as the truth, and retire any optimistic row it now accounts for.
+  function adopt(body) {
     state.inbound = body.messages || [];
     state.policy = body.policy || null;
+    Pending.reconcile(new Set(state.inbound.map((m) => m.message_id)));
   }
 
   async function loadContacts() {
@@ -951,12 +980,12 @@
     while (polling) {
       pollController = new AbortController();
       try {
-        const path = withIdentity("/v1/inbox") + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
+        const path = withIdentity("/v1/inbox") + "&include_sent=1"
+          + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
         if (!polling) break;
         const before = state.inbound.length;
-        state.inbound = body.messages || [];
-        state.policy = body.policy || null;
+        adopt(body);
         if (state.inbound.length !== before) render();
         else renderThreadList();
         backoff = 1000;

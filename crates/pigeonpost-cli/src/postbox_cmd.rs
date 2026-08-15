@@ -233,7 +233,8 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
 pub async fn onboard(
     home: &Path,
     base_url: &str,
-    handle: &str,
+    handle: Option<&str>,
+    agent: Option<&str>,
     as_address: Option<&str>,
     mint_fresh: bool,
     trust: Option<&str>,
@@ -243,30 +244,42 @@ pub async fn onboard(
 ) -> Result<(), Error> {
     let existing = load(home)?;
 
-    // Already onboarded under this name: re-running must be safe, because an agent that cannot
-    // tell whether it ran this before will run it again.
-    let already = existing
-        .identities
-        .iter()
-        .find(|c| c.handle.as_deref() == Some(handle))
-        .map(|c| c.address.clone());
+    // Already set up here: re-running must be safe, because an agent that cannot tell whether it
+    // ran this before will run it again.
+    let already = match handle {
+        Some(handle) => existing
+            .identities
+            .iter()
+            .find(|c| c.handle.as_deref() == Some(handle))
+            .map(|c| c.address.clone()),
+        // Without a handle there is nothing to match on but "this home already has one", which is
+        // exactly the right answer for a per-agent home.
+        None if existing.identities.len() == 1 && !mint_fresh && as_address.is_none() => {
+            Some(existing.identities[0].address.clone())
+        }
+        None => None,
+    };
 
-    let address = match (already, as_address) {
-        (Some(address), _) => {
-            println!("already named {handle} ({address}) — leaving it alone");
+    let address = match (already, handle, as_address) {
+        (Some(address), _, _) => {
+            println!("already set up here ({address}) — leaving it alone");
             address
         }
-        (None, Some(target)) => {
+        // A free inbox: no account, no sign-in, proof-of-work instead. This is the path for an
+        // agent whose owner has not bought a namespace, and it must not be harder than the paid one.
+        (None, None, _) => {
+            new_inbox(home, base_url, None, None, false).await?;
+            credential_for(home, None)?.address
+        }
+        (None, Some(handle), Some(target)) => {
             name_mailbox(home, Some(target), handle, false).await?;
             credential_for(home, Some(handle))?.address
         }
-        (None, None) if mint_fresh => {
+        (None, Some(handle), None) if mint_fresh => {
             new_inbox(home, base_url, None, Some(handle), false).await?;
             credential_for(home, Some(handle))?.address
         }
-        (None, None) => {
-            // One unnamed mailbox is unambiguous, and naming it is almost always what was meant —
-            // minting a second one would abandon the address its peers already know.
+        (None, Some(handle), None) => {
             let unnamed: Vec<_> = existing
                 .identities
                 .iter()
@@ -277,15 +290,23 @@ pub async fn onboard(
                     new_inbox(home, base_url, None, Some(handle), false).await?;
                     credential_for(home, Some(handle))?.address
                 }
-                1 => {
+                // Only when it is the *only* mailbox here. One unnamed mailbox sitting beside
+                // named ones means this home is shared, and the unnamed one belongs to whichever
+                // agent has not finished onboarding — naming it would take its address.
+                1 if existing.identities.len() == 1 => {
                     let target = unnamed[0].address.clone();
-                    println!("naming the mailbox already on this box rather than minting a second");
+                    println!(
+                        "naming the mailbox already in this home rather than minting a second"
+                    );
                     name_mailbox(home, Some(&target), handle, false).await?;
                     target
                 }
-                n => {
+                _ => {
                     return Err(format!(
-                        "{n} unnamed mailboxes here — say which to name with --as /k/…, or none of them with --as new"
+                        "this home already holds {} mailbox(es), so it is not clear which to name. \
+Say which with --as /k/…, or mint a fresh one with --as new. \
+Agents that each want their own mailbox should each use --agent <name>.",
+                        existing.identities.len()
                     )
                     .into())
                 }
@@ -319,15 +340,33 @@ pub async fn onboard(
         set_workspace(home, Some(&address), workspace, false).await?;
     }
 
+    // With one mailbox in this home nothing has to be disambiguated, so do not teach `--as`:
+    // an agent that copies these lines into a loop would carry the flag around forever.
+    // Carry the scope into every line printed. An agent copies these verbatim into a loop, and a
+    // command without it silently acts on the default home instead of this one.
+    let scope = agent.map(|a| format!("--agent {a} ")).unwrap_or_default();
+    let sole = load(home)?.identities.len() == 1;
+    let name = handle.unwrap_or(&address);
+    let as_flag = if sole {
+        String::new()
+    } else {
+        format!(" --as {name}")
+    };
+
     println!();
-    println!("{handle} is ready.");
+    println!("{name} is ready.");
     println!();
     println!("Read mail with the CLI — no MCP server and no restart needed:");
-    println!("  pigeonpost postbox watch --wait 25 --as {handle}   # returns as mail lands");
-    println!("  pigeonpost postbox inbox --as {handle}             # one look");
+    println!("  pigeonpost {scope}postbox watch --wait 25{as_flag}   # returns as mail lands");
+    println!("  pigeonpost {scope}postbox inbox{as_flag}             # one look");
+    if sole {
+        println!();
+        println!("This home holds only this mailbox, so no --as is needed — every");
+        println!("command run with the same --agent acts as {name}.");
+    }
     println!();
     println!("Connect it as an MCP server too, if you want the tools in-session:");
-    println!("  pigeonpost postbox token {handle}");
+    println!("  pigeonpost {scope}postbox token{as_flag}");
     if json {
         println!();
         println!(
@@ -1152,7 +1191,14 @@ pub async fn list(home: &Path, json: bool) -> Result<(), Error> {
         println!(
             "{unnamed} mailbox(es) have no handle, so a /namespace/* trust rule will not match them."
         );
-        println!("Give one a name with:  pigeonpost postbox name /namespace/name --as <address>");
+        // Only teach --as when it is actually needed; a single-mailbox home does not need it.
+        if rows.len() == 1 {
+            println!("Give it a name with:  pigeonpost postbox name /namespace/name");
+        } else {
+            println!(
+                "Give one a name with:  pigeonpost postbox name /namespace/name --as <address>"
+            );
+        }
     }
     Ok(())
 }

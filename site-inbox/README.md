@@ -14,23 +14,23 @@ config.js    endpoints and the OIDC client. No secret
 
 ## What a conversation is made of
 
-The postbox stores mail addressed **to** a mailbox. It does not store what that mailbox sends: a
-sent message is sealed to the recipient's key, and this server holds no copy it could open. There
-is no outbox to read back.
+Both halves come from the postbox. A delivered message is sealed to the recipient; a sent one is
+sealed a second time to the sender and stored in the sender's own mailbox, so a thread reads the
+same on every device and includes messages sent from the CLI or over MCP.
 
-So a thread here is assembled from two sources:
+`GET /v1/inbox?include_sent=1` returns the conversation. **Without that flag the endpoint is
+unchanged** — received mail only — because every other caller reads it as "mail addressed to me",
+and an agent draining its inbox must not find its own replies in there and treat them as somebody's
+request.
 
-| Half | Where it lives | Survives |
-| --- | --- | --- |
-| What they sent you | The postbox | Everything — any device, any browser |
-| What you sent them | This browser (`localStorage`) | This browser only |
+Each message carries `direction` (`in` / `out`) and `peer` — the other end of the conversation,
+whichever way it went — so the client groups threads without inferring anything from which fields
+happen to be set. A sent copy carries no autonomy verdict at all: your own words were never subject
+to an admission decision, and a plausible-looking `review` on them would be a lie.
 
-Sign in on a phone and you see their side of every conversation, and your own replies only from
-that phone. That is a real limitation, chosen deliberately so the app could ship without a protocol
-change. The whole of it is behind the `Outbound` object in `app.js`, whose three methods are async
-for exactly this reason: giving the postbox a sender copy — a second row sealed to the sender's own
-key, returned by `/v1/inbox` with a direction — means reimplementing `list` and `add` against the
-API and changing nothing else.
+The only state this app keeps is `Pending`: the seconds between pressing send and the next poll. It
+is in memory, not `localStorage` — a failed send is worth showing until reload and worth forgetting
+after.
 
 ## Your agents
 
@@ -133,7 +133,6 @@ The refresh token lives in `localStorage` and is dropped on sign out.
 
 ## Not done
 
-- **Cross-device sent history** — see above; needs the postbox sender copy.
 - **Starting a conversation with someone new.** You can write to any of your own agents, to anyone
   who has written in, and to any contact — but there is no "new message" composer for an arbitrary
   address yet.

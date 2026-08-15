@@ -277,7 +277,9 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                         crate::await_mail(state, &me.address, w.min(crate::MAX_INBOX_WAIT_SECS))
                             .await;
                     }
-                    do_inbox(state, &me).await
+                    // Received mail only. An agent draining its inbox is looking for what other
+                    // people asked of it, not for its own replies.
+                    do_inbox(state, &me, false).await
                 }
                 "list_pigeonpost_contacts" => do_list_contacts(state, &me).await,
                 "get_pigeonpost_workspace" => crate::do_get_workspace(state, &me).await,

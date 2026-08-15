@@ -31,6 +31,10 @@ body {
   font: 15px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
   overscroll-behavior: none;
+  /* Nothing in this layout is ever meant to scroll sideways: the panes scroll vertically and wide
+     content ellipsises. A horizontal scroll here is always a bug, and one that hides the right-hand
+     side of every row on a phone rather than announcing itself. */
+  overflow-x: hidden;
 }
 
 [hidden] { display: none !important; }
@@ -82,11 +86,16 @@ button { font: inherit; color: inherit; }
   overflow: hidden;
 }
 
+/* min-width: 0 on both panes is load-bearing, not defensive. A grid item defaults to
+   `min-width: auto`, so a track sized `1fr` still refuses to go narrower than its content's
+   min-content width — and a nowrap message preview has a very wide one. Without this the pane grows
+   past the viewport and the timestamp and unread badge are pushed off the right edge. */
 .pane-list {
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   background: #fff;
 }
 
@@ -94,6 +103,7 @@ button { font: inherit; color: inherit; }
   display: flex;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   background: var(--wash);
 }
 
@@ -507,20 +517,27 @@ button { font: inherit; color: inherit; }
 /* ---- phone: one pane at a time ------------------------------------------------------------ */
 
 @media (max-width: 780px) {
-  .app { grid-template-columns: 1fr; }
+  .app { grid-template-columns: minmax(0, 1fr); }
 
   .pane-list { border-right: 0; }
 
-  /* The thread rides over the list and slides in, which is what makes back feel like back. */
+  /* The thread rides over the list and slides in, which is what makes back feel like back.
+     Parked off-screen it must not widen the document — hence the overflow guard on body — and it
+     must not be reachable by tab or a screen reader, hence visibility rather than transform alone. */
   .pane-thread {
     position: fixed;
     inset: 0;
     z-index: 30;
     transform: translateX(100%);
-    transition: transform .22s ease;
+    visibility: hidden;
+    transition: transform .22s ease, visibility 0s linear .22s;
     background: var(--wash);
   }
-  .pane-thread[data-open="true"] { transform: translateX(0); }
+  .pane-thread[data-open="true"] {
+    transform: translateX(0);
+    visibility: visible;
+    transition: transform .22s ease, visibility 0s;
+  }
 
   .thread-head .back { display: grid; }
 

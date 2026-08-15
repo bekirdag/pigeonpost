@@ -25,7 +25,8 @@ const INBOX = {
       message_id: "m1", from: "/k/aaaa1111bbbb2222cccc3333dd", body: "the build is green",
       sender_score: 3, sender_standing: "unproven", sender_tier: "handle", untrusted: true,
       sender_known: true, alias: null, matched_contact: "/bekir/*",
-      sender_handle: "/bekir/agent1", autonomy: "review", verb: null,
+      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      direction: "in", autonomy: "review", verb: null,
       held_because: "not_a_request", received_at: now - 7200, read: true,
     },
     {
@@ -33,15 +34,24 @@ const INBOX = {
       body: JSON.stringify({ v: 1, verb: "run_tests", args: { suite: "unit" }, note: "before the tag" }),
       sender_score: 3, sender_standing: "unproven", sender_tier: "handle", untrusted: true,
       sender_known: true, alias: null, matched_contact: "/bekir/*",
-      sender_handle: "/bekir/agent1", autonomy: "review", verb: "run_tests",
+      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      direction: "in", autonomy: "review", verb: "run_tests",
       held_because: "verb_denied", received_at: now - 600, read: false,
     },
     {
       message_id: "m3", from: "/k/eeee5555ffff6666gggg7777hh", body: "hello from a stranger",
       sender_score: 0, sender_standing: "unproven", sender_tier: "anonymous", untrusted: true,
       sender_known: false, alias: null, matched_contact: null,
-      sender_handle: null, autonomy: "review", verb: null,
+      sender_handle: null, peer: "/k/eeee5555ffff6666gggg7777hh", peer_handle: null,
+      direction: "in", autonomy: "review", verb: null,
       held_because: "sender_not_auto", received_at: now - 60, read: false,
+    },
+    // The sender's own copy, which is what makes a thread a conversation.
+    {
+      message_id: "m_out1", direction: "out", from: "/k/cz6900v2h90vnwefj7g7ezvbh4",
+      to: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      body: "on it, running now", untrusted: false, autonomy: null,
+      sent_at: now - 3600, received_at: now - 3600, read: true,
     },
   ],
   policy: { accept_all: true, auto_accept_known: false },
@@ -78,7 +88,7 @@ function fakeFetch(url, opts = {}) {
   }
   if (path.startsWith("/v1/contacts")) return json(CONTACTS);
   if (path.startsWith("/v1/ack")) return json({ ok: true });
-  if (path.startsWith("/v1/send")) return json({ message_id: "sent1" }, true, 201);
+  if (path.startsWith("/v1/send")) return json({ message_id: "sent1", sent_copy_id: "copy1" }, true, 201);
   return json({ error: "not_found" }, false, 404);
 }
 
@@ -152,6 +162,7 @@ check("named peer uses its contact alias", names[1], "my fleet");
 check("unread badge on stranger", text(otherRows[0].querySelector(".dot")), "1");
 check("held badge on fleet thread", text(otherRows[1].querySelector(".pill-held")), "held");
 check("request preview reads as a request", text(otherRows[1].querySelector(".tr-preview")), "asks to run tests");
+check("the conversation was requested, not just the inbox", calls.some((c) => c.path.includes("include_sent=1")), true);
 
 console.log("\n— open a thread —");
 otherRows[1].click();
@@ -160,12 +171,16 @@ check("thread header name", text($("peer-name")), "my fleet");
 check("thread header address", text($("peer-sub")), "/bekir/agent1");
 check("composer shown", $("composer").hidden, false);
 const bubbles = [...$("messages").querySelectorAll(".bubble")];
-check("two messages rendered", bubbles.length, 2);
+check("both sides of the conversation rendered", bubbles.length, 3);
 check("plain body is text", text(bubbles[0].querySelector(".text")), "the build is green");
-check("request renders its verb", text(bubbles[1].querySelector(".verb")), "run_tests");
-check("request renders args", bubbles[1].querySelector(".args").textContent.includes('"suite": "unit"'), true);
-check("request renders the note", text(bubbles[1].querySelector(".why")), "before the tag");
-check("held reason is spelled out", text(bubbles[1].querySelector(".reason")), "that verb was not granted to this sender");
+// The server's own copy of what this mailbox sent, in the middle of the thread by time.
+const mineRows = [...$("messages").querySelectorAll("li.mine")];
+check("the sent message is on my side", mineRows.length, 1);
+check("the sent message reads back", text(mineRows[0].querySelector(".text")), "on it, running now");
+check("request renders its verb", text(bubbles[2].querySelector(".verb")), "run_tests");
+check("request renders args", bubbles[2].querySelector(".args").textContent.includes('"suite": "unit"'), true);
+check("request renders the note", text(bubbles[2].querySelector(".why")), "before the tag");
+check("held reason is spelled out", text(bubbles[2].querySelector(".reason")), "that verb was not granted to this sender");
 check("acked the unread message", calls.some((c) => c.path.startsWith("/v1/ack") && c.body.message_id === "m2"), true);
 
 console.log("\n— body is never markup —");
@@ -197,10 +212,9 @@ check("send addressed to the peer", sendCall && sendCall.body.to, "/bekir/agent1
 check("send carries the body", sendCall && sendCall.body.body, "on it");
 check("send names the sending mailbox", sendCall && sendCall.body.from, "/k/cz6900v2h90vnwefj7g7ezvbh4");
 const mine = [...$("messages").querySelectorAll("li.mine .text")];
-check("outbound rendered in the thread", text(mine[mine.length - 1]), "on it");
-const stored = JSON.parse(window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4") || "[]");
-check("outbound persisted locally", stored.length, 1);
-check("outbound recorded as sent", stored[0].status, "sent");
+check("outbound appears immediately", mine.some((el) => text(el) === "on it"), true);
+// Nothing is written to the browser any more — the postbox keeps the sent copy.
+check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
 
 console.log("\n— peer normalisation —");
 // Two sub-agents plus the two conversations: replying did not fork a third conversation.
@@ -237,6 +251,34 @@ console.log("\n— back closes the thread —");
 $("back-btn").click();
 await settle(40);
 check("thread closed", $("composer").hidden, true);
+
+console.log("\n— phone: opening a thread must not raise the keyboard —");
+// Narrow the window so the app's own media query reports a phone, then open a thread the way a
+// tap does and check nothing took focus. On desktop the composer is focused; on a phone that is
+// the keyboard covering the conversation you just opened.
+window.innerWidth = 400;
+window.document.activeElement.blur();
+[...$("threads").querySelectorAll(".thread-row")][0].click();
+await settle(80);
+check("composer did not steal focus on a phone",
+  window.document.activeElement === window.document.body ||
+  window.document.activeElement.id !== "compose", true);
+
+window.innerWidth = 1200;
+[...$("threads").querySelectorAll(".thread-row")][0].click();
+await settle(80);
+check("composer is focused on desktop", window.document.activeElement.id, "compose");
+
+console.log("\n— mobile layout —");
+// jsdom does not lay out, so these assert the rules that fixed a real bug: a grid item defaults to
+// min-width:auto, so a nowrap preview pushed the pane wider than the phone and cut off the
+// timestamp and unread badge on the right.
+const css = readFileSync(`${APP}/app.css`, "utf8");
+check("panes may shrink below their content", /\.pane-list\s*\{[^}]*min-width:\s*0/s.test(css), true);
+check("thread pane may shrink too", /\.pane-thread\s*\{[^}]*min-width:\s*0/s.test(css), true);
+check("phone column is minmax(0, 1fr)", css.includes("grid-template-columns: minmax(0, 1fr)"), true);
+check("no sideways scroll", /body\s*\{[^}]*overflow-x:\s*hidden/s.test(css), true);
+check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
 
 console.log(`\n${errors.length} script error(s)`);
 errors.forEach((e) => console.log("  " + e.split("\n")[0]));
