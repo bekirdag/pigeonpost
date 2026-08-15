@@ -81,9 +81,21 @@ function assertSupportedNodeVersion(value = process.versions.node) {
       floor && (minor > floor[0] || (minor === floor[0] && patch >= floor[1]));
     if (supportedFloor) return;
   }
+  // Say which Node was found and how to get a supported one. The bare range left people staring
+  // at a version string with nothing to act on — including, repeatedly, the person who wrote it.
+  // Homebrew's `node` formula tracks Current, so `brew install node` lands on a line this package
+  // does not support yet, and `npm i -g` under it succeeds and leaves a binary that refuses to run.
   throw new Error(
-    `Pigeonpost requires Node.js ${SUPPORTED_NODE_ENGINE_RANGE} ` +
-      '(supported LTS lines: 22 and 24)'
+    `Pigeonpost requires Node.js ${SUPPORTED_NODE_ENGINE_RANGE} (supported LTS lines: 22 and 24), ` +
+      `but this is Node ${value}.\n` +
+      '\n' +
+      'Install a supported line and reinstall Pigeonpost under it:\n' +
+      '\n' +
+      '  nvm install 24.19.0 && nvm alias default 24.19.0\n' +
+      '  npm i -g @bekirdag/pigeonpost\n' +
+      '\n' +
+      "If `node -v` already reports a supported version, another copy is shadowing this one: run\n" +
+      '`which -a pigeonpost`, remove the one outside your current Node prefix, and open a new shell.'
   );
 }
 
