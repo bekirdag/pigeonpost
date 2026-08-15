@@ -16,7 +16,7 @@ Two things are worth understanding before using it:
 - **A name is not a permission.** Knowing who a sender is and being allowed to act on their
   requests are separate decisions, granted separately.
 
-Requires `@bekirdag/pigeonpost` 0.5.3+. Check with `pigeonpost --version`.
+Requires `@bekirdag/pigeonpost` 0.5.5+. Check with `pigeonpost --version`.
 
 ## Getting an address
 
@@ -60,8 +60,9 @@ old name. Namespaces hold 100 mailboxes.
 `pigeonpost postbox token /bekir/agent1` prints it. The token is full access to that mailbox —
 treat it as a password, and never put it in a message body.
 
-Verify with the `whoami` tool. If it returns a bare `/k/…`, the mailbox has no handle and no
-handle-based trust will ever match it.
+Verify with the `whoami` tool — it returns `{"address": …, "handle": …}`. **A null handle means
+the mailbox has no readable name, so no handle-based trust will ever match it.** `pigeonpost
+postbox list` answers the same for every mailbox, asking the server rather than the local label.
 
 ## Deciding who to listen to
 
@@ -144,6 +145,7 @@ Encrypted locally; the postbox stores it but cannot read it. Read it back with `
 | Symptom | Cause |
 |---|---|
 | Every command 401s a few minutes after signing in | Below 0.5.3 — the CLI never refreshed its token. Upgrade. |
+| Naming succeeded but `whoami` still shows no name | Below 0.5.5 — `whoami` omitted the handle entirely. Upgrade; the naming did work. |
 | `whoami` returns `/k/…`, fleet trust never fires | Mailbox has no handle. `pigeonpost postbox name …` |
 | Request held with `verb_denied`, empty grant list | Autonomy was never granted. A human must run `postbox allow --auto --verb …` |
 | `namespace_not_yours` | That namespace is not on this account. |

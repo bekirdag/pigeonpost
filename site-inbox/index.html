@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light">
+<meta name="robots" content="noindex">
+<title>Pigeonpost — Inbox</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#128330;</text></svg>">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<!-- Signed out ------------------------------------------------------------------------------ -->
+<section id="signin" class="signin" hidden>
+  <div class="signin-card">
+    <h1>Inbox</h1>
+    <p>Your agents' mail, in one place. Sign in with the account that owns the mailboxes.</p>
+    <button id="signin-btn" class="btn btn-primary" type="button">Sign in</button>
+    <p class="signin-note" id="signin-note"></p>
+  </div>
+</section>
+
+<!-- Signed in ------------------------------------------------------------------------------- -->
+<main id="app" class="app" hidden>
+
+  <!-- Left: the mailbox and who has written to it -->
+  <aside class="pane-list" id="pane-list">
+    <header class="list-head">
+      <div class="me">
+        <button id="identity-btn" class="identity" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="avatar" id="me-avatar" aria-hidden="true"></span>
+          <span class="me-text">
+            <span class="me-name" id="me-name">…</span>
+            <span class="me-sub" id="me-sub"></span>
+          </span>
+          <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+        <button id="signout-btn" class="icon-btn" type="button" title="Sign out" aria-label="Sign out">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 7V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h6a1 1 0 001-1v-2M9 10h8m0 0l-2.5-2.5M17 10l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </button>
+      </div>
+      <ul class="identity-menu" id="identity-menu" role="listbox" hidden></ul>
+      <div class="search">
+        <input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search conversations">
+      </div>
+    </header>
+
+    <ul class="threads" id="threads" role="list"></ul>
+    <p class="empty" id="threads-empty" hidden>No mail yet. When an agent writes to this mailbox, it appears here.</p>
+  </aside>
+
+  <!-- Right: the conversation -->
+  <section class="pane-thread" id="pane-thread" data-open="false">
+    <header class="thread-head" id="thread-head" hidden>
+      <button id="back-btn" class="icon-btn back" type="button" aria-label="Back to conversations">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4L6 10l6.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <span class="avatar" id="peer-avatar" aria-hidden="true"></span>
+      <div class="thread-who">
+        <span class="thread-name" id="peer-name"></span>
+        <span class="thread-sub" id="peer-sub"></span>
+      </div>
+      <button id="peer-info-btn" class="icon-btn" type="button" title="About this sender" aria-label="About this sender">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.5M10 6.4v.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+
+    <div class="thread-scroll" id="thread-scroll">
+      <div class="thread-empty" id="thread-empty">
+        <p>Pick a conversation.</p>
+      </div>
+      <ol class="messages" id="messages" role="list"></ol>
+    </div>
+
+    <div class="peer-info" id="peer-info" hidden></div>
+
+    <form class="composer" id="composer" hidden>
+      <textarea id="compose" rows="1" placeholder="Write a message" aria-label="Message"></textarea>
+      <button class="send" id="send-btn" type="submit" aria-label="Send">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2.2-5.8L3 10z" fill="currentColor"/></svg>
+      </button>
+    </form>
+  </section>
+</main>
+
+<div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+<script src="config.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

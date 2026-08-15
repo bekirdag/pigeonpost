@@ -1,0 +1,516 @@
+/* Pigeonpost inbox — one stylesheet, no dependencies, no fonts to fetch.
+   Tokens are the site's (site/style.css) so this reads as the same product: white ground, navy
+   accent, the same rule and wash greys. The layout is the only new idea here — a two-pane
+   messenger that collapses to one pane on a phone. */
+
+:root {
+  --navy: #16326b;
+  --blue: #2563eb;
+  --green: #22c55e;
+  --amber: #b45309;
+  --ink: #14181f;
+  --body: #444c58;
+  --muted: #6b7480;
+  --rule: #e6e9ee;
+  --wash: #f7f9fb;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --list-w: 360px;
+  --head-h: 60px;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; height: 100%; }
+
+body {
+  margin: 0;
+  height: 100%;
+  background: #fff;
+  color: var(--body);
+  font: 15px/1.55 var(--sans);
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior: none;
+}
+
+[hidden] { display: none !important; }
+
+button { font: inherit; color: inherit; }
+
+/* ---- signed out --------------------------------------------------------------------------- */
+
+.signin {
+  min-height: 100dvh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+}
+.signin-card { max-width: 34ch; text-align: center; }
+.signin-card h1 {
+  font-size: 30px;
+  line-height: 1.18;
+  letter-spacing: -0.022em;
+  color: var(--ink);
+  font-weight: 700;
+  margin: 0 0 12px;
+}
+.signin-card p { margin: 0 0 22px; color: var(--body); }
+.signin-note { font-size: 13px; color: var(--muted); margin-top: 18px !important; }
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  padding: 11px 20px;
+  border-radius: 8px;
+  font-size: 15px;
+  font-weight: 550;
+  text-decoration: none;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: background .15s ease, border-color .15s ease;
+}
+.btn-primary { background: var(--navy); color: #fff; }
+.btn-primary:hover { background: #1d4185; }
+
+/* ---- app frame ---------------------------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-columns: var(--list-w) minmax(0, 1fr);
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.pane-list {
+  border-right: 1px solid var(--rule);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #fff;
+}
+
+.pane-thread {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--wash);
+}
+
+/* ---- list header -------------------------------------------------------------------------- */
+
+.list-head {
+  border-bottom: 1px solid var(--rule);
+  padding: 10px 12px 12px;
+  flex: none;
+  position: relative;
+}
+
+.me { display: flex; align-items: center; gap: 6px; }
+
+.identity {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+}
+.identity:hover { background: var(--wash); }
+.me-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.me-name {
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.me-sub {
+  color: var(--muted);
+  font-size: 12px;
+  font-family: var(--mono);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.chev { width: 16px; height: 16px; flex: none; color: var(--muted); }
+
+.icon-btn {
+  flex: none;
+  width: 34px; height: 34px;
+  display: grid; place-items: center;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.icon-btn:hover { background: var(--wash); color: var(--ink); }
+.icon-btn svg { width: 19px; height: 19px; }
+
+.identity-menu {
+  position: absolute;
+  z-index: 20;
+  top: 52px; left: 12px; right: 12px;
+  margin: 0; padding: 5px;
+  list-style: none;
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(20, 24, 31, .12);
+  max-height: 60vh; overflow-y: auto;
+}
+.identity-menu li { margin: 0; }
+.identity-menu button {
+  width: 100%;
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 9px;
+  border: 0; border-radius: 7px;
+  background: none; cursor: pointer; text-align: left;
+}
+.identity-menu button:hover { background: var(--wash); }
+.identity-menu .mi-name { color: var(--ink); font-weight: 550; font-size: 14px; }
+.identity-menu .mi-sub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.identity-menu .mi-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.identity-menu .mi-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.identity-menu [aria-selected="true"] { background: var(--wash); }
+
+.search { margin-top: 10px; }
+.search input {
+  width: 100%;
+  padding: 8px 12px;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  outline: none;
+}
+.search input:focus { border-color: #cfd5de; background: #fff; }
+
+/* ---- avatars ------------------------------------------------------------------------------ */
+
+.avatar {
+  flex: none;
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--navy);
+  color: #fff;
+  font-size: 13.5px;
+  font-weight: 600;
+  letter-spacing: .01em;
+  text-transform: uppercase;
+  user-select: none;
+}
+.avatar[data-tone="1"] { background: #16326b; }
+.avatar[data-tone="2"] { background: #2563eb; }
+.avatar[data-tone="3"] { background: #0f766e; }
+.avatar[data-tone="4"] { background: #7c3aed; }
+.avatar[data-tone="5"] { background: #b45309; }
+.avatar[data-tone="6"] { background: #be123c; }
+
+/* ---- thread list -------------------------------------------------------------------------- */
+
+.threads {
+  list-style: none;
+  margin: 0; padding: 4px 0 20px;
+  overflow-y: auto;
+  flex: 1;
+  min-height: 0;
+  -webkit-overflow-scrolling: touch;
+}
+.threads li { margin: 0; }
+
+.thread-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 10px 14px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  text-align: left;
+  border-bottom: 1px solid var(--rule);
+}
+.thread-row:hover { background: var(--wash); }
+.thread-row[aria-current="true"] { background: #eef2f9; }
+
+.tr-text { flex: 1; min-width: 0; }
+.tr-top { display: flex; align-items: baseline; gap: 8px; }
+.tr-name {
+  flex: 1; min-width: 0;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 14.5px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tr-time { flex: none; color: var(--muted); font-size: 11.5px; }
+.tr-bottom { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+.tr-preview {
+  flex: 1; min-width: 0;
+  color: var(--muted);
+  font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.tr-badges { flex: none; display: flex; align-items: center; gap: 6px; }
+
+.dot {
+  min-width: 18px; height: 18px;
+  padding: 0 5px;
+  border-radius: 9px;
+  background: var(--navy);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 650;
+  display: grid; place-items: center;
+}
+.pill {
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  text-transform: uppercase;
+  padding: 2px 6px;
+  border-radius: 5px;
+  border: 1px solid;
+}
+.pill-held { color: var(--amber); border-color: #fcd9a4; background: #fff8ee; }
+.pill-auto { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
+.pill-blocked { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
+
+.empty {
+  color: var(--muted);
+  font-size: 13.5px;
+  padding: 22px 18px;
+  margin: 0;
+}
+
+/* ---- thread ------------------------------------------------------------------------------- */
+
+.thread-head {
+  flex: none;
+  height: var(--head-h);
+  display: flex;
+  align-items: center;
+  gap: 11px;
+  padding: 0 12px;
+  background: #fff;
+  border-bottom: 1px solid var(--rule);
+}
+.thread-head .back { display: none; }
+.thread-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.thread-name {
+  color: var(--ink); font-weight: 600; font-size: 15px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.thread-sub {
+  color: var(--muted); font-size: 12px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+
+.thread-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  padding: 18px 0 8px;
+}
+.thread-empty {
+  height: 100%;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.messages {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0 16px 10px;
+  max-width: 760px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.messages li { margin: 0; display: flex; }
+.messages li.mine { justify-content: flex-end; }
+
+.bubble {
+  max-width: min(78%, 560px);
+  padding: 8px 12px 6px;
+  border-radius: 12px;
+  background: #fff;
+  border: 1px solid var(--rule);
+  box-shadow: 0 1px 1px rgba(20, 24, 31, .03);
+}
+.mine .bubble {
+  background: var(--navy);
+  border-color: var(--navy);
+  color: #fff;
+}
+.bubble .text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  color: var(--ink);
+  font-size: 14.5px;
+  line-height: 1.5;
+}
+.mine .bubble .text { color: #fff; }
+
+.bubble .meta {
+  margin-top: 3px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.mine .bubble .meta { color: rgba(255, 255, 255, .72); }
+.bubble .meta .failed { color: #be123c; font-weight: 600; }
+.mine .bubble .meta .failed { color: #fecdd3; }
+
+/* A day separator, so a thread spanning weeks reads as one. */
+.daybreak {
+  align-self: center;
+  margin: 10px 0 2px;
+  font-size: 11.5px;
+  color: var(--muted);
+  background: #fff;
+  border: 1px solid var(--rule);
+  border-radius: 20px;
+  padding: 3px 12px;
+}
+.messages li.sep { justify-content: center; }
+
+/* A scoped request is an envelope, not prose — render it as the structured thing it is. */
+.request {
+  margin-top: 6px;
+  border-top: 1px solid var(--rule);
+  padding-top: 6px;
+}
+.request .verb {
+  font-family: var(--mono);
+  font-size: 12.5px;
+  color: var(--ink);
+  font-weight: 600;
+}
+.request .args {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--body);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 4px 0 0;
+}
+.request .why { font-size: 12.5px; color: var(--muted); margin: 4px 0 0; }
+.decision { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
+.decision .reason { font-size: 11.5px; color: var(--muted); }
+
+/* ---- sender info -------------------------------------------------------------------------- */
+
+.peer-info {
+  flex: none;
+  background: #fff;
+  border-top: 1px solid var(--rule);
+  padding: 12px 16px 14px;
+  font-size: 13px;
+}
+.peer-info dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 14px;
+  max-width: 760px;
+}
+.peer-info dt { color: var(--muted); }
+.peer-info dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.peer-info .mono { font-family: var(--mono); font-size: 12px; }
+.peer-info .note { color: var(--muted); margin: 10px 0 0; max-width: 70ch; }
+
+/* ---- composer ----------------------------------------------------------------------------- */
+
+.composer {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
+  background: #fff;
+  border-top: 1px solid var(--rule);
+}
+.composer textarea {
+  flex: 1;
+  resize: none;
+  max-height: 40vh;
+  padding: 9px 13px;
+  font: inherit;
+  font-size: 14.5px;
+  line-height: 1.5;
+  color: var(--ink);
+  background: var(--wash);
+  border: 1px solid var(--rule);
+  border-radius: 18px;
+  outline: none;
+}
+.composer textarea:focus { border-color: #cfd5de; background: #fff; }
+.send {
+  flex: none;
+  width: 38px; height: 38px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--navy);
+  color: #fff;
+  display: grid; place-items: center;
+  cursor: pointer;
+}
+.send:disabled { background: #c3cbd8; cursor: default; }
+.send svg { width: 18px; height: 18px; margin-left: -1px; }
+
+/* ---- toast -------------------------------------------------------------------------------- */
+
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(22px + env(safe-area-inset-bottom));
+  transform: translateX(-50%);
+  z-index: 60;
+  max-width: min(92vw, 460px);
+  background: var(--ink);
+  color: #fff;
+  font-size: 13.5px;
+  padding: 10px 15px;
+  border-radius: 9px;
+  box-shadow: 0 8px 28px rgba(20, 24, 31, .22);
+}
+
+/* ---- phone: one pane at a time ------------------------------------------------------------ */
+
+@media (max-width: 780px) {
+  .app { grid-template-columns: 1fr; }
+
+  .pane-list { border-right: 0; }
+
+  /* The thread rides over the list and slides in, which is what makes back feel like back. */
+  .pane-thread {
+    position: fixed;
+    inset: 0;
+    z-index: 30;
+    transform: translateX(100%);
+    transition: transform .22s ease;
+    background: var(--wash);
+  }
+  .pane-thread[data-open="true"] { transform: translateX(0); }
+
+  .thread-head .back { display: grid; }
+
+  .bubble { max-width: 86%; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .pane-thread { transition: none; }
+}
