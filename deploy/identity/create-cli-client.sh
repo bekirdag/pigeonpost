@@ -38,6 +38,14 @@ fi
 # so leaving the key out keeps whatever was there before. Clearing it explicitly makes this script
 # idempotent against a client that was previously created with the mandate.
 #
+# `consentRequired` is on, and the device grant is why. Keycloak needs three things to approve a
+# device: the user code, an authenticated session, and consent. Turn consent off and the first two
+# are already satisfied the moment someone opens `verification_uri_complete` while signed in --
+# the link carries the code, so the flow completes with no approval step at all and possession of
+# that URL becomes the entire authorisation. RFC 8628 §5.4 describes exactly this: the completion
+# URI is meant for convenience, not to stand in for the user saying yes. It also costs the
+# authorization-code flow one screen on first use, which is the correct price.
+#
 # The loopback redirect must be port-wildcarded: the CLI binds 127.0.0.1:0 and the OS
 # chooses the port, so it cannot be registered ahead of time.
 payload='{
@@ -46,6 +54,7 @@ payload='{
   "description": "Public client for `pigeonpost login` (authorization code + PKCE) and `pigeonpost login --device`.",
   "enabled": true,
   "publicClient": true,
+  "consentRequired": true,
   "standardFlowEnabled": true,
   "directAccessGrantsEnabled": false,
   "serviceAccountsEnabled": false,

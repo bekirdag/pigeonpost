@@ -1905,6 +1905,9 @@ pub(crate) async fn do_send(
     let sender_identity = open_identity(state, sender)?;
     let recipient_vk = keys::verifying_key_from_bytes(&recipient.ed25519_pub)
         .map_err(|_| ApiError::server("bad_recipient_key"))?;
+    // The sender's own key, to seal their copy of what they sent.
+    let sender_vk = keys::verifying_key_from_bytes(&sender.ed25519_pub)
+        .map_err(|_| ApiError::server("bad_sender_key"))?;
 
     let now = now_unix();
     let wrap = envelope::wrap(&sender_identity, &recipient_vk, body, now).map_err(|e| {
@@ -1923,6 +1926,8 @@ pub(crate) async fn do_send(
             wrap_blob: blob,
             created_at: now,
             read: false,
+            owner: recipient.address.clone(),
+            outgoing: false,
         })
         .await
         .map_err(|e| {
@@ -1930,10 +1935,57 @@ pub(crate) async fn do_send(
             ApiError::server("store_error")
         })?;
     tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, "message sealed + enqueued");
+
+    // The sender's own copy, sealed to the sender's key. Without it a conversation is only ever
+    // half visible: the delivered copy is sealed to the recipient, so nobody — including this
+    // server — can show the sender what they wrote.
+    //
+    // Sealed separately rather than by storing the plaintext: the postbox's promise is that mail at
+    // rest is ciphertext, and a sent copy is mail. Stored read, because its owner is the one who
+    // wrote it, which also keeps it from waking their own long poll.
+    //
+    // Best-effort: the message is already delivered by this point, and failing the call now would
+    // tell the caller their send failed when it did not. A missing sent copy costs the sender their
+    // own history, not the recipient their mail.
+    let sent_copy_id = match envelope::wrap(&sender_identity, &sender_vk, body, now) {
+        Ok(copy) => {
+            let copy_id = hex_str(&copy.id());
+            match serde_json::to_vec(&copy) {
+                Ok(copy_blob) => {
+                    let stored = state
+                        .store
+                        .enqueue(store::Message {
+                            id: copy_id.clone(),
+                            recipient: recipient.address.clone(),
+                            sender: sender.address.clone(),
+                            wrap_blob: copy_blob,
+                            created_at: now,
+                            read: true,
+                            owner: sender.address.clone(),
+                            outgoing: true,
+                        })
+                        .await;
+                    match stored {
+                        Ok(()) => Some(copy_id),
+                        Err(e) => {
+                            tracing::warn!(error = %e, from = %sender.address, "sent copy not stored");
+                            None
+                        }
+                    }
+                }
+                Err(_) => None,
+            }
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, from = %sender.address, "sent copy not sealed");
+            None
+        }
+    };
+
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.
     state.inbox_signal.notify_waiters();
-    Ok(json!({ "message_id": message_id }))
+    Ok(json!({ "message_id": message_id, "sent_copy_id": sent_copy_id }))
 }
 
 /// Longest a caller may hold an inbox request open. Apache fronts this container with
@@ -2008,9 +2060,12 @@ pub(crate) async fn do_inbox(
     // matching below needs the mapping.
     let mut sender_handles: std::collections::HashMap<String, String> =
         std::collections::HashMap::new();
+    // Both ends of every row: a sent copy's counterparty is its recipient, and it needs the same
+    // handle lookup a sender gets, or an outgoing message would name a peer the inbox cannot match
+    // against its own contacts.
     for address in messages
         .iter()
-        .map(|m| m.sender.clone())
+        .flat_map(|m| [m.sender.clone(), m.recipient.clone()])
         .collect::<std::collections::BTreeSet<_>>()
     {
         if let Ok(Some(identity)) = state.store.get(address.clone()).await {
@@ -2024,23 +2079,60 @@ pub(crate) async fn do_inbox(
 
     let mut out = Vec::new();
     for m in messages {
+        // Sent copies are opt-in. Every existing caller — the CLI's `postbox inbox`, the MCP tool an
+        // agent drains on wake — treats this list as "mail addressed to me", and quietly adding the
+        // caller's own messages to it would have agents reading their own words as someone's
+        // instruction. Only a client that asked for a conversation gets both halves.
+        if m.outgoing && !include_sent {
+            continue;
+        }
         let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
             Ok(w) => w,
             Err(_) => continue,
         };
         if let Ok((from_vk, body)) = envelope::open(&me_identity, &wrap) {
             let from = Address::from_pubkey(&from_vk).as_str().to_string();
-            // Match the sender's own row first, then their namespace's. Most specific wins, so an
+            // Who the conversation is *with*. For received mail that is whoever wrote it; for a
+            // sent copy the sender is this mailbox, so the counterparty is the address it went to.
+            let peer = if m.outgoing {
+                m.recipient.clone()
+            } else {
+                from.clone()
+            };
+            // Match the peer's own row first, then their namespace's. Most specific wins, so an
             // exact block on one agent still outranks trusting its whole fleet.
             let subject = sender_handles
-                .get(&from)
+                .get(&peer)
                 .cloned()
-                .unwrap_or_else(|| from.clone());
+                .unwrap_or_else(|| peer.clone());
             let contact = contacts.iter().find(|c| c.peer == subject).or_else(|| {
                 store::namespace_wildcard(&subject)
                     .and_then(|wildcard| contacts.iter().find(|c| c.peer == wildcard))
             });
             let granted = contact.map(|c| c.allowed_verbs.as_slice()).unwrap_or(&[]);
+
+            // A sent copy is this mailbox's own words. There is no admission question to answer
+            // about it, so it carries no autonomy verdict at all rather than a misleading `review`.
+            if m.outgoing {
+                out.push(json!({
+                    "message_id": m.id,
+                    "direction": "out",
+                    "from": from,
+                    "to": m.recipient,
+                    "peer": peer,
+                    "peer_handle": sender_handles.get(&peer),
+                    "body": body.as_str(),
+                    "alias": contact.and_then(|c| c.alias.clone()),
+                    // Your own message is not untrusted input, and it was never subject to a
+                    // decision — say so with absent fields rather than plausible-looking ones.
+                    "untrusted": false,
+                    "autonomy": serde_json::Value::Null,
+                    "sent_at": m.created_at,
+                    "received_at": m.created_at,
+                    "read": true,
+                }));
+                continue;
+            }
 
             // The two halves meet here: *who* the recipient trusts (Phase 2) and *what* this
             // particular message asks for (Phase 3). Only when both say yes does the message
@@ -2082,7 +2174,13 @@ pub(crate) async fn do_inbox(
 
             out.push(json!({
                 "message_id": m.id,
+                // Always present, so a client reading a conversation does not have to infer which
+                // way a message went from which fields happen to be set.
+                "direction": "in",
                 "from": from,
+                "to": me.address,
+                "peer": peer,
+                "peer_handle": sender_handles.get(&peer),
                 "body": body.as_str(),
                 "sender_score": score,
                 "sender_standing": standing,

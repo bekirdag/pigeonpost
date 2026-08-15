@@ -40,3 +40,15 @@ Both the script and the CLI were exercised against a real Keycloak 26 before thi
 `login --device` completes a full device-code + consent round trip, writes `auth.json` at 0600 with
 refresh and access tokens, `whoami` reports the session without printing a token, and `logout`
 removes it.
+
+
+## Consent is required, deliberately (2026-08-15)
+
+`pigeonpost-cli` sets `consentRequired: true`. Without it the device grant approves itself: opening
+`verification_uri_complete` while signed in supplies the user code *and* the session, and with no
+consent step left, the flow completes without anyone approving anything. Observed on prod — the
+browser went straight to `/device/status` and the CLI reported a successful sign-in.
+
+The completion URI exists so a code need not be retyped, not so it can replace the user's decision
+(RFC 8628 §5.4). Leave consent on. The cost is one approval screen the first time a person uses
+the CLI, which is what an approval is.

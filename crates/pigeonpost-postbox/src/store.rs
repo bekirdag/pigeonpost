@@ -26,15 +26,21 @@ CREATE TABLE IF NOT EXISTS identities (
 );
 CREATE INDEX IF NOT EXISTS identities_by_cap ON identities(cap_hash);
 
+-- One row per copy of a message, not per message: a delivered copy sealed to the recipient, and —
+-- when the sender is hosted here — a sent copy sealed to the sender. `owner` is whose mailbox the
+-- row lives in; `sender`/`recipient` describe the message itself.
 CREATE TABLE IF NOT EXISTS messages (
     id         TEXT PRIMARY KEY,
     recipient  TEXT NOT NULL,
     sender     TEXT NOT NULL,
     wrap_blob  BLOB NOT NULL,
     created_at INTEGER NOT NULL,
-    read       INTEGER NOT NULL DEFAULT 0
+    read       INTEGER NOT NULL DEFAULT 0,
+    owner      TEXT,
+    direction  TEXT NOT NULL DEFAULT 'in'
 );
 CREATE INDEX IF NOT EXISTS messages_by_recipient ON messages(recipient);
+CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner);
 
 CREATE TABLE IF NOT EXISTS accounts (
     id         TEXT PRIMARY KEY,
@@ -157,6 +163,17 @@ const MIGRATIONS: &[&str] = &[
     // grants. Any `auto` they already carried therefore stops meaning "act on any prose from this
     // sender" the moment this ships — which is the migration we want, not one to paper over.
     "ALTER TABLE contacts ADD COLUMN allowed_verbs TEXT",
+    // A conversation has two sides. Until now the postbox stored only the delivered copy, sealed to
+    // the recipient, so a sender could never read back what they sent — their own outbox existed
+    // nowhere. `owner` is the mailbox a row lives in, which is what every lookup actually means;
+    // `sender` and `recipient` keep describing the message rather than doubling as the location.
+    //
+    // A sent copy is a second row: owner = sender, direction = 'out', sealed to the sender's own
+    // key. Every pre-existing row is a delivered one, so it backfills to owner = recipient.
+    "ALTER TABLE messages ADD COLUMN owner TEXT",
+    "ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'in'",
+    "UPDATE messages SET owner = recipient WHERE owner IS NULL",
+    "CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner)",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -204,6 +221,11 @@ pub struct Message {
     pub wrap_blob: Vec<u8>,
     pub created_at: u64,
     pub read: bool,
+    /// Whose mailbox this copy lives in. For a delivered copy that is the recipient; for a sent
+    /// copy, the sender.
+    pub owner: String,
+    /// `true` when this is the sender's own copy, sealed to the sender's key.
+    pub outgoing: bool,
 }
 
 /// A new API key's storable fields: the secret hash, a revocable id, and a display prefix.
@@ -469,11 +491,12 @@ impl Store {
         .await
     }
 
-    /// How many messages an inbox holds (inbox quota check).
-    pub async fn inbox_count(&self, recipient: String) -> Result<usize, StoreError> {
+    /// How many copies a mailbox holds (inbox quota check). Counts sent copies too: they occupy the
+    /// same disk, and the quota exists to bound disk.
+    pub async fn inbox_count(&self, owner: String) -> Result<usize, StoreError> {
         self.count_where(
-            "SELECT COUNT(*) FROM messages WHERE recipient = ?1",
-            recipient,
+            "SELECT COUNT(*) FROM messages WHERE COALESCE(owner, recipient) = ?1",
+            owner,
         )
         .await
     }
@@ -481,10 +504,14 @@ impl Store {
     /// Messages this inbox has not acked. This — not the total — is what a long poll waits on:
     /// an inbox holding only already-read mail is quiet, and waiting on the total would make a
     /// caller with one un-acked message spin instead of wait.
-    pub async fn unread_count(&self, recipient: String) -> Result<usize, StoreError> {
+    /// Received and un-acked only. A sent copy must never wake a long poll: the caller is the one
+    /// who wrote it, and waking them with their own message would turn every send into a spurious
+    /// "you have mail".
+    pub async fn unread_count(&self, owner: String) -> Result<usize, StoreError> {
         self.count_where(
-            "SELECT COUNT(*) FROM messages WHERE recipient = ?1 AND read = 0",
-            recipient,
+            "SELECT COUNT(*) FROM messages
+              WHERE COALESCE(owner, recipient) = ?1 AND read = 0 AND direction = 'in'",
+            owner,
         )
         .await
     }
@@ -808,7 +835,10 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
             let c = conn.lock().expect("store lock");
             c.query_row(
-                "SELECT sender FROM messages WHERE id = ?1 AND recipient = ?2",
+                // Received mail only: you can report what was sent to you, never your own copy of
+                // what you sent.
+                "SELECT sender FROM messages
+                  WHERE id = ?1 AND COALESCE(owner, recipient) = ?2 AND direction = 'in'",
                 params![message_id, recipient],
                 |r| r.get(0),
             )
@@ -831,8 +861,11 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
             let c = conn.lock().expect("store lock");
             let n: i64 = c.query_row(
+                // Delivered copies only. Counting the sender's own copy as well would halve the
+                // stranger allowance the moment sent copies started being stored.
                 "SELECT COUNT(*) FROM messages
-                  WHERE sender = ?1 AND recipient = ?2 AND created_at >= ?3",
+                  WHERE sender = ?1 AND recipient = ?2 AND created_at >= ?3
+                    AND direction = 'in'",
                 params![sender, recipient, since as i64],
                 |r| r.get(0),
             )?;
@@ -1288,7 +1321,8 @@ impl Store {
             };
             if removed > 0 {
                 tx.execute(
-                    "DELETE FROM messages WHERE recipient = ?1 OR sender = ?1",
+                    "DELETE FROM messages
+                      WHERE recipient = ?1 OR sender = ?1 OR owner = ?1",
                     params![address],
                 )?;
                 // The inbox's own trust state goes with it. Rows where this address is somebody
@@ -1413,15 +1447,18 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
             let c = conn.lock().expect("store lock");
             c.execute(
-                "INSERT INTO messages (id, recipient, sender, wrap_blob, created_at, read)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                "INSERT INTO messages
+                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     m.id,
                     m.recipient,
                     m.sender,
                     m.wrap_blob,
                     m.created_at as i64,
-                    m.read as i64
+                    m.read as i64,
+                    m.owner,
+                    if m.outgoing { "out" } else { "in" }
                 ],
             )?;
             Ok(())
@@ -1430,16 +1467,21 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// Messages waiting for `recipient`, oldest first.
-    pub async fn list_for(&self, recipient: String) -> Result<Vec<Message>, StoreError> {
+    /// Every copy in `owner`'s mailbox, received and sent, oldest first — the whole conversation
+    /// rather than half of it.
+    ///
+    /// `owner` is coalesced to `recipient` so a row written before that column existed still reads
+    /// correctly even if the backfill has not run.
+    pub async fn list_for(&self, owner: String) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Message>, StoreError> {
             let c = conn.lock().expect("store lock");
             let mut stmt = c.prepare(
-                "SELECT id, recipient, sender, wrap_blob, created_at, read
-                 FROM messages WHERE recipient = ?1 ORDER BY created_at ASC",
+                "SELECT id, recipient, sender, wrap_blob, created_at, read,
+                        COALESCE(owner, recipient), direction
+                 FROM messages WHERE COALESCE(owner, recipient) = ?1 ORDER BY created_at ASC",
             )?;
-            let rows = stmt.query_map(params![recipient], |row| {
+            let rows = stmt.query_map(params![owner], |row| {
                 Ok(Message {
                     id: row.get(0)?,
                     recipient: row.get(1)?,
@@ -1447,6 +1489,8 @@ impl Store {
                     wrap_blob: row.get(3)?,
                     created_at: row.get::<_, i64>(4)? as u64,
                     read: row.get::<_, i64>(5)? != 0,
+                    owner: row.get(6)?,
+                    outgoing: row.get::<_, String>(7)? == "out",
                 })
             })?;
             let mut out = Vec::new();
@@ -1465,7 +1509,8 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
             let c = conn.lock().expect("store lock");
             let n = c.execute(
-                "UPDATE messages SET read = 1 WHERE id = ?1 AND recipient = ?2",
+                "UPDATE messages SET read = 1
+                  WHERE id = ?1 AND COALESCE(owner, recipient) = ?2",
                 params![id, recipient],
             )?;
             Ok(n > 0)
@@ -1486,7 +1531,8 @@ impl Store {
                 "DELETE FROM messages
                  WHERE created_at < ?1
                     OR recipient IN (SELECT address FROM identities WHERE created_at < ?1)
-                    OR sender    IN (SELECT address FROM identities WHERE created_at < ?1)",
+                    OR sender    IN (SELECT address FROM identities WHERE created_at < ?1)
+                    OR owner     IN (SELECT address FROM identities WHERE created_at < ?1)",
                 params![cutoff as i64],
             )?;
             let identities = tx.execute(
