@@ -2032,6 +2032,7 @@ pub(crate) async fn do_inbox(
     state: &AppState,
     me: &store::StoredIdentity,
     include_sent: bool,
+    include_read: bool,
 ) -> Result<serde_json::Value, ApiError> {
     let messages = state
         .store
@@ -2085,6 +2086,15 @@ pub(crate) async fn do_inbox(
         // caller's own messages to it would have agents reading their own words as someone's
         // instruction. Only a client that asked for a conversation gets both halves.
         if m.outgoing && !include_sent {
+            continue;
+        }
+        // Acknowledged mail drops out of the listing. It used to stay, which made `ack` look
+        // broken: an agent acked a message, saw it again on the next poll, and concluded the
+        // acknowledgement had not worked. Worse, an agent polling every few minutes had to
+        // re-derive "what is actually new" from ids it remembered itself — which is the job this
+        // endpoint exists to do. Sent copies are never filtered this way: they carry no read
+        // state, and a conversation view wants both halves.
+        if !m.outgoing && m.read && !include_read {
             continue;
         }
         let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
@@ -2273,6 +2283,10 @@ struct InboxQuery {
     /// default: every existing caller reads this list as mail addressed to them.
     #[serde(default)]
     include_sent: bool,
+    /// Include mail that has already been acknowledged. Off by default, so a poll returns what is
+    /// new rather than the whole history — the reason `ack` exists.
+    #[serde(default)]
+    include_read: bool,
     /// Seconds to hold the request open when the inbox is empty, capped at
     /// [`MAX_INBOX_WAIT_SECS`]. Absent or 0 answers immediately, as it always did.
     #[serde(default)]
@@ -2412,7 +2426,7 @@ async fn inbox(
     if let Some(wait) = q.wait.filter(|w| *w > 0) {
         await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
     }
-    match do_inbox(&state, &me, q.include_sent).await {
+    match do_inbox(&state, &me, q.include_sent, q.include_read).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -3283,6 +3297,39 @@ mod tests {
             .is_ok());
     }
 
+    /// An agent that polls every few minutes has to be able to tell new mail from mail it already
+    /// handled. Acknowledging is how it says so, so acknowledged mail must leave the listing —
+    /// otherwise `ack` looks broken and the agent ends up tracking message ids itself.
+    #[tokio::test]
+    async fn acknowledged_mail_leaves_the_listing() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(&state, &alice, &bob.address, "first")
+            .await
+            .unwrap();
+        do_send(&state, &alice, &bob.address, "second")
+            .await
+            .unwrap();
+
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let messages = inbox["messages"].as_array().unwrap().clone();
+        assert_eq!(messages.len(), 2);
+
+        let first = messages[0]["message_id"].as_str().unwrap().to_string();
+        do_ack(&state, &bob, first.clone()).await.unwrap();
+
+        let after = do_inbox(&state, &bob, false, false).await.unwrap();
+        let left = after["messages"].as_array().unwrap();
+        assert_eq!(left.len(), 1, "an acknowledged message must not come back");
+        assert_ne!(left[0]["message_id"].as_str().unwrap(), first);
+
+        // …but it is not deleted: history stays available to anything that asks for it.
+        let history = do_inbox(&state, &bob, false, true).await.unwrap();
+        assert_eq!(history["messages"].as_array().unwrap().len(), 2);
+    }
+
     #[tokio::test]
     async fn inbox_labels_each_message_with_what_the_recipient_decided() {
         let state = test_state();
@@ -3317,7 +3364,7 @@ mod tests {
             .await
             .unwrap();
 
-        let inbox = do_inbox(&state, &bob, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
         let messages = inbox["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
         let find = |pred: &dyn Fn(&serde_json::Value) -> bool| {
@@ -3499,7 +3546,7 @@ mod tests {
         )
         .await
         .unwrap();
-        let inbox = do_inbox(&state, &bob, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "auto");
         assert_eq!(m["sender_known"], true);
@@ -3558,7 +3605,7 @@ mod tests {
         do_send(&state, &agent, &bob.address, r#"{"v":1,"verb":"deploy"}"#)
             .await
             .unwrap();
-        let inbox = do_inbox(&state, &bob, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_denied");
@@ -3634,7 +3681,7 @@ mod tests {
             .expect("the key-derived address is unchanged");
 
         let recipient = state.store.get(k_address).await.unwrap().unwrap();
-        let inbox = do_inbox(&state, &recipient, false).await.unwrap();
+        let inbox = do_inbox(&state, &recipient, false, false).await.unwrap();
         assert_eq!(
             inbox["messages"].as_array().unwrap().len(),
             3,
@@ -3981,7 +4028,7 @@ mod tests {
             .await
             .unwrap();
 
-        let first = do_inbox(&state, &bob, false).await.unwrap();
+        let first = do_inbox(&state, &bob, false, false).await.unwrap();
         assert_eq!(first["messages"][0]["sender_standing"], "unproven");
 
         do_report_spam(
@@ -3992,7 +4039,7 @@ mod tests {
         .await
         .unwrap();
 
-        let after = do_inbox(&state, &bob, false).await.unwrap();
+        let after = do_inbox(&state, &bob, false, false).await.unwrap();
         assert_eq!(after["messages"][0]["sender_standing"], "reported");
         assert!(after["messages"][0]["sender_score"].as_i64().unwrap() < 0);
     }
@@ -4097,7 +4144,7 @@ mod tests {
         );
         sending.await.unwrap();
 
-        let inbox = do_inbox(&state, &bob, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
         assert_eq!(inbox["messages"].as_array().unwrap().len(), 1);
     }
 
@@ -4111,10 +4158,12 @@ mod tests {
             started.elapsed() >= std::time::Duration::from_millis(900),
             "an empty inbox must wait out its budget, not return at once"
         );
-        assert!(do_inbox(&state, &me, false).await.unwrap()["messages"]
-            .as_array()
-            .unwrap()
-            .is_empty());
+        assert!(
+            do_inbox(&state, &me, false, false).await.unwrap()["messages"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
     }
 
     #[tokio::test]
@@ -4171,7 +4220,7 @@ mod tests {
             .await
             .unwrap();
 
-        let conversation = do_inbox(&state, &alice, true).await.unwrap();
+        let conversation = do_inbox(&state, &alice, true, false).await.unwrap();
         let messages = conversation["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1, "the sender should see their own message");
         assert_eq!(messages[0]["direction"], "out");
@@ -4182,7 +4231,7 @@ mod tests {
         );
 
         // Bob sees the same exchange from his end.
-        let bobs = do_inbox(&state, &bob, true).await.unwrap();
+        let bobs = do_inbox(&state, &bob, true, false).await.unwrap();
         let bobs_messages = bobs["messages"].as_array().unwrap();
         assert_eq!(bobs_messages.len(), 1);
         assert_eq!(bobs_messages[0]["direction"], "in");
@@ -4200,7 +4249,7 @@ mod tests {
             .await
             .unwrap();
 
-        let inbox = do_inbox(&state, &alice, false).await.unwrap();
+        let inbox = do_inbox(&state, &alice, false, false).await.unwrap();
         assert!(
             inbox["messages"].as_array().unwrap().is_empty(),
             "a sent message is not inbox mail"
@@ -4368,7 +4417,7 @@ mod tests {
         .await
         .unwrap();
 
-        let inbox = do_inbox(&state, &bob, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_not_granted");

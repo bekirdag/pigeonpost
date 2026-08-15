@@ -320,12 +320,15 @@ enum PostboxAction {
         which: PostboxIdentity,
     },
 
-    /// Read a hosted mailbox.
+    /// Read a hosted mailbox. Shows what you have not acknowledged yet.
     Inbox {
         /// Wait up to this many seconds for mail instead of answering at once, returning as soon
         /// as something arrives. The server caps it at 60.
         #[arg(long)]
         wait: Option<u64>,
+        /// Include mail you already acknowledged, i.e. the whole history rather than what is new.
+        #[arg(long)]
+        all: bool,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -1207,8 +1210,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             PostboxAction::Send { to, body, which } => {
                 postbox_cmd::send_message(&home, which.address.as_deref(), to, body, cli.json).await
             }
-            PostboxAction::Inbox { wait, which } => {
-                postbox_cmd::show_inbox(&home, which.address.as_deref(), *wait, cli.json).await
+            PostboxAction::Inbox { wait, all, which } => {
+                postbox_cmd::show_inbox(&home, which.address.as_deref(), *wait, *all, cli.json)
+                    .await
             }
             PostboxAction::Watch { wait, which } => {
                 postbox_cmd::watch_inbox(&home, which.address.as_deref(), *wait, cli.json).await

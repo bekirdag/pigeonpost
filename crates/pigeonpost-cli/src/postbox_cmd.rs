@@ -493,12 +493,14 @@ pub async fn show_inbox(
     home: &Path,
     as_address: Option<&str>,
     wait: Option<u64>,
+    all: bool,
     json: bool,
 ) -> Result<(), Error> {
     let credential = credential_for(home, as_address)?;
+    let read = if all { "&include_read=true" } else { "" };
     let path = match wait.filter(|w| *w > 0) {
-        Some(w) => format!("/v1/inbox?wait={w}"),
-        None => "/v1/inbox".to_string(),
+        Some(w) => format!("/v1/inbox?wait={w}{read}"),
+        None => format!("/v1/inbox?include_read={all}"),
     };
     // A long poll legitimately outlives the ordinary request timeout, so give the client enough
     // rope for the server's own ceiling plus a margin for the round trip.

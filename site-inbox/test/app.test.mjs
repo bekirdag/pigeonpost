@@ -83,6 +83,13 @@ function fakeFetch(url, opts = {}) {
     return json({ address, handle: handles[address.slice(0, 5)] || null });
   }
   if (path.startsWith("/v1/inbox")) {
+    // axum + serde deserialize a bool from `true`/`false` only. `include_sent=1` is a 400 before the
+    // request is even authenticated — which is exactly how this shipped broken once, because the
+    // fixture used to accept any query string.
+    const flag = new URL("https://x" + path).searchParams.get("include_sent");
+    if (flag !== null && flag !== "true" && flag !== "false") {
+      return json({ error: "bad_request", detail: `Failed to deserialize query string: include_sent: provided string was not \`true\` or \`false\`` }, false, 400);
+    }
     if (path.includes("wait=")) return new Promise(() => {}); // long poll: never resolves in the test
     return json(INBOX);
   }
@@ -162,7 +169,7 @@ check("named peer uses its contact alias", names[1], "my fleet");
 check("unread badge on stranger", text(otherRows[0].querySelector(".dot")), "1");
 check("held badge on fleet thread", text(otherRows[1].querySelector(".pill-held")), "held");
 check("request preview reads as a request", text(otherRows[1].querySelector(".tr-preview")), "asks to run tests");
-check("the conversation was requested, not just the inbox", calls.some((c) => c.path.includes("include_sent=1")), true);
+check("the conversation was requested, not just the inbox", calls.some((c) => c.path.includes("include_sent=true")), true);
 
 console.log("\n— open a thread —");
 otherRows[1].click();
@@ -277,7 +284,12 @@ const css = readFileSync(`${APP}/app.css`, "utf8");
 check("panes may shrink below their content", /\.pane-list\s*\{[^}]*min-width:\s*0/s.test(css), true);
 check("thread pane may shrink too", /\.pane-thread\s*\{[^}]*min-width:\s*0/s.test(css), true);
 check("phone column is minmax(0, 1fr)", css.includes("grid-template-columns: minmax(0, 1fr)"), true);
-check("no sideways scroll", /body\s*\{[^}]*overflow-x:\s*hidden/s.test(css), true);
+check("document never scrolls at all", /body\s*\{[^}]*overflow:\s*hidden/s.test(css), true);
+check("both scrollers refuse sideways scroll", (css.match(/overflow-x:\s*hidden/g) || []).length >= 2, true);
+// A single viewport unit is a single point of failure: a browser that does not know `dvh` drops the
+// declaration, the shell loses its height, and the composer floats off the bottom of a grown page.
+check("viewport height has a fallback chain", /height:\s*100vh;[\s\S]{0,200}height:\s*100svh;[\s\S]{0,200}height:\s*100dvh;/.test(css), true);
+check("flex items may shrink below their longest word", /\.messages li \{[^}]*min-width:\s*0/s.test(css), true);
 check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
 
 console.log(`\n${errors.length} script error(s)`);

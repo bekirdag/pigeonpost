@@ -116,7 +116,8 @@ fn tools_list_result() -> Value {
                 "type": "object",
                 "properties": {
                     "identity": { "type": "string", "description": "Which of your identities to act as (API-key accounts with more than one)." },
-                    "wait_seconds": { "type": "integer", "minimum": 0, "maximum": 60, "description": "Wait up to this many seconds for mail instead of answering immediately, returning as soon as something arrives. Use it when you are idling for a peer's reply; leave it out for a quick check." }
+                    "wait_seconds": { "type": "integer", "minimum": 0, "maximum": 60, "description": "Wait up to this many seconds for mail instead of answering immediately, returning as soon as something arrives. Use it when you are idling for a peer's reply; leave it out for a quick check." },
+                    "include_read": { "type": "boolean", "description": "Also return mail you have already acknowledged. Off by default, so each check returns what is new — acknowledge what you handle and it stops coming back." }
                 },
                 "additionalProperties": false
             }
@@ -193,6 +194,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
         Err(e) => return Ok(tool_error(&e.message)),
     };
     let arg_str = |k: &str| args.get(k).and_then(Value::as_str).map(String::from);
+    let arg_bool = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
 
     // Account-management tools need an API-key account; messaging tools act as a resolved identity.
     let outcome: Result<Value, ApiError> = match name {
@@ -279,7 +281,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                     }
                     // Received mail only. An agent draining its inbox is looking for what other
                     // people asked of it, not for its own replies.
-                    do_inbox(state, &me, false).await
+                    do_inbox(state, &me, false, arg_bool("include_read")).await
                 }
                 "list_pigeonpost_contacts" => do_list_contacts(state, &me).await,
                 "get_pigeonpost_workspace" => crate::do_get_workspace(state, &me).await,

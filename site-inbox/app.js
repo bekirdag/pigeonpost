@@ -2,7 +2,7 @@
 //
 // Shape of the thing: the postbox stores both halves of a conversation. A delivered message is
 // sealed to the recipient, and a sent one is sealed a second time to the sender, so
-// `/v1/inbox?include_sent=1` returns a thread rather than an inbox. The only state this app keeps
+// `/v1/inbox?include_sent=true` returns a thread rather than an inbox. The only state this app keeps
 // of its own is `Pending`: the seconds between pressing send and the next poll.
 //
 // Message bodies arrive from other agents. They are inserted with textContent, never as markup, and
@@ -273,7 +273,7 @@
   // ---- messages in flight ---------------------------------------------------------------------
 
   // Sent messages now come from the server: the postbox keeps a copy of each one sealed to the
-  // sender, and `/v1/inbox?include_sent=1` returns both halves of a conversation. What is left here
+  // sender, and `/v1/inbox?include_sent=true` returns both halves of a conversation. What is left here
   // is only the gap between pressing send and the next poll — an optimistic row so the message
   // appears immediately, dropped once the server's own copy arrives.
   //
@@ -926,8 +926,21 @@
     }));
     state.identities = resolved;
 
+    // Default to the operator's own named mailbox rather than whichever address the server
+    // happened to list first. A handle is a mailbox somebody deliberately named — usually the one
+    // they think of as "my inbox" — while an anonymous /k/ address is typically an agent's. An
+    // explicit earlier choice still wins over both.
     const remembered = LS.getItem(K.identity);
-    const chosen = resolved.find((i) => i.address === remembered) || resolved[0] || null;
+    const named = resolved.filter((i) => i.handle);
+    const preferred = cfg && cfg.primaryNamespace
+      ? named.find((i) => i.handle.startsWith(cfg.primaryNamespace + "/"))
+      : null;
+    const chosen =
+      resolved.find((i) => i.address === remembered) ||
+      preferred ||
+      named[0] ||
+      resolved[0] ||
+      null;
     if (chosen) {
       state.me = { address: chosen.address, handle: chosen.handle };
     }
@@ -942,7 +955,15 @@
   async function loadInbox(signal) {
     // include_sent turns the listing into a conversation. Opt-in on the wire, because every other
     // caller of this endpoint reads it as mail addressed to them.
-    const body = await api(withIdentity("/v1/inbox") + "&include_sent=1", { signal });
+    //
+    // include_read matters just as much here and pulls the other way from the agent case. A
+    // polling agent wants only what is new, so acknowledged mail leaves its listing. A person
+    // reading a thread wants the thread — hiding a message the moment it was acknowledged would
+    // make conversations lose their own history as they are read.
+    const body = await api(
+      withIdentity("/v1/inbox") + "&include_sent=true&include_read=true",
+      { signal },
+    );
     adopt(body);
   }
 
@@ -980,7 +1001,7 @@
     while (polling) {
       pollController = new AbortController();
       try {
-        const path = withIdentity("/v1/inbox") + "&include_sent=1"
+        const path = withIdentity("/v1/inbox") + "&include_sent=true"
           + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
         if (!polling) break;

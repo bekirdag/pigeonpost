@@ -7,6 +7,11 @@ window.PIGEONPOST_INBOX = {
   // validates it against the realm and resolves it to the account that owns these mailboxes.
   postbox: "https://postbox.pigeonpost.dev",
 
+  // Which namespace is "mine". When several mailboxes are on the account, the one under this
+  // namespace opens by default — the operator's own inbox rather than whichever agent's address
+  // the server happened to list first. Sub-agent mailboxes stay one click away in the picker.
+  primaryNamespace: "/bekir",
+
   oidc: {
     issuer: "https://auth.pigeonpost.dev/realms/pigeonpost-prod",
     // Shared with the account surface on pigeonpost.dev. Public client, PKCE S256.
