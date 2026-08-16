@@ -40,6 +40,7 @@ use axum::{
     extract::{Extension, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
+    response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse, Response},
     routing::{any, delete, get, post},
     Json, Router,
@@ -388,6 +389,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/report-spam", post(report_spam))
+        .route("/v1/events", get(events))
         .route("/v1/whoami", get(whoami))
         .route("/v1/identities/handle", post(bind_identity_handle))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
@@ -2535,6 +2537,113 @@ pub(crate) async fn do_get_workspace(
 }
 
 /// `GET /v1/workspace` — fetch this mailbox's encrypted workspace context.
+/// How many events one poll of the store will emit before yielding. A daemon reconnecting after a
+/// long sleep should catch up in bounded chunks rather than building one enormous response.
+const EVENT_BATCH: usize = 256;
+
+/// `GET /v1/events` — one Server-Sent Events stream per **account**.
+///
+/// Per account rather than per mailbox on purpose: a twenty-agent fleet holding a long poll each is
+/// twenty sockets and twenty wakeups, while the thing that actually wants to know is the one daemon
+/// on that machine. It learns *that* mail arrived and for which mailbox, then fetches the message
+/// through the ordinary authenticated path.
+///
+/// Only metadata crosses this stream — no bodies. That keeps it cheap enough to hold open, and
+/// means a stream leaking would disclose who wrote to whom rather than what they said.
+///
+/// `Last-Event-ID` is honoured, so a daemon that was asleep resumes exactly where it stopped:
+/// SQLite's rowid is monotonic and never reused for appended rows, which is precisely the property
+/// a resumption cursor needs. Without an id the stream starts at *now*, because a daemon starting
+/// for the first time wants what happens next, not a replay of everything the account ever received.
+async fn events(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<EventsQuery>,
+) -> Response {
+    let account = match account_for_headers(&state, &headers).await {
+        Ok(account) => account,
+        Err(e) => return e.into_response(),
+    };
+
+    let resume = q.last_event_id.or_else(|| {
+        headers
+            .get("last-event-id")
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<i64>().ok())
+    });
+    let start = match resume {
+        Some(cursor) => cursor,
+        None => match state.store.latest_message_cursor().await {
+            Ok(cursor) => cursor,
+            Err(e) => {
+                tracing::error!(error = %e, "events cursor read failed");
+                return ApiError::server("store_error").into_response();
+            }
+        },
+    };
+
+    tracing::info!(%account, start, "event stream opened");
+    let stream = async_stream::stream! {
+        let mut cursor = start;
+        loop {
+            // Register interest before reading, for the same lost-wakeup reason `await_mail`
+            // documents: mail landing between the read and the wait would notify nobody.
+            let notified = state.inbox_signal.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+
+            // Re-read the account's mailboxes each pass, so a mailbox minted while the stream is
+            // open starts producing events without the daemon reconnecting.
+            let owners: Vec<String> = match state.store.list_by_account(account.clone()).await {
+                Ok(rows) => rows.into_iter().map(|(address, _)| address).collect(),
+                Err(e) => {
+                    tracing::error!(error = %e, "events identity read failed");
+                    break;
+                }
+            };
+
+            match state.store.incoming_after(owners, cursor, EVENT_BATCH).await {
+                Ok(rows) => {
+                    for (rowid, message) in rows {
+                        cursor = rowid;
+                        let payload = json!({
+                            "event_id": rowid,
+                            "mailbox": message.owner,
+                            "message_id": message.id,
+                            "sender": message.sender,
+                            "created_at": message.created_at,
+                        });
+                        yield Ok::<Event, std::convert::Infallible>(
+                            Event::default().id(rowid.to_string()).event("mail").data(payload.to_string()),
+                        );
+                    }
+                }
+                Err(e) => {
+                    tracing::error!(error = %e, "events read failed");
+                    break;
+                }
+            }
+
+            notified.await;
+        }
+    };
+
+    // The keep-alive is what makes this survive the middleboxes between a laptop and here: an idle
+    // stream that sends nothing for minutes gets closed by something in between, and the daemon
+    // would rediscover that only when mail failed to arrive.
+    Sse::new(stream)
+        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+        .into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct EventsQuery {
+    /// Resume point. The `Last-Event-ID` header is the standard channel and is honoured too; this
+    /// exists because not every client can set headers on an EventSource.
+    #[serde(default)]
+    last_event_id: Option<i64>,
+}
+
 /// `GET /v1/whoami` — the address this capability token acts as, and its handle if it has one.
 ///
 /// Exists because "am I named?" is not answerable from the client's own records: a token can be

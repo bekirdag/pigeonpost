@@ -1474,6 +1474,86 @@ impl Store {
     ///
     /// `owner` is coalesced to `recipient` so a row written before that column existed still reads
     /// correctly even if the backfill has not run.
+    /// Incoming messages for any of `owners` newer than `after`, with the cursor to resume from.
+    ///
+    /// The cursor is SQLite's `rowid`: monotonic, assigned at insert, and never reused while rows
+    /// are only appended. That makes it exactly the resumption token an event stream needs — a
+    /// client that reconnects with the last id it saw gets everything since and nothing twice,
+    /// without the server holding per-client state.
+    ///
+    /// Sent copies are excluded: a stream exists to say "someone wrote to you", and echoing a
+    /// mailbox's own outgoing mail back at it would wake an agent to read its own words.
+    pub async fn incoming_after(
+        &self,
+        owners: Vec<String>,
+        after: i64,
+        limit: usize,
+    ) -> Result<Vec<(i64, Message)>, StoreError> {
+        if owners.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<(i64, Message)>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let placeholders = owners.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql = format!(
+                "SELECT rowid, id, recipient, sender, wrap_blob, created_at, read,
+                        COALESCE(owner, recipient), direction
+                 FROM messages
+                 WHERE COALESCE(owner, recipient) IN ({placeholders})
+                   AND rowid > ?
+                   AND direction != 'out'
+                 ORDER BY rowid ASC LIMIT ?"
+            );
+            let mut stmt = c.prepare(&sql)?;
+            let mut params: Vec<Box<dyn rusqlite::ToSql>> = owners
+                .iter()
+                .map(|o| Box::new(o.clone()) as Box<dyn rusqlite::ToSql>)
+                .collect();
+            params.push(Box::new(after));
+            params.push(Box::new(limit as i64));
+            let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+            let rows = stmt.query_map(refs.as_slice(), |row| {
+                Ok((
+                    row.get::<_, i64>(0)?,
+                    Message {
+                        id: row.get(1)?,
+                        recipient: row.get(2)?,
+                        sender: row.get(3)?,
+                        wrap_blob: row.get(4)?,
+                        created_at: row.get::<_, i64>(5)? as u64,
+                        read: row.get::<_, i64>(6)? != 0,
+                        owner: row.get(7)?,
+                        outgoing: row.get::<_, String>(8)? == "out",
+                    },
+                ))
+            })?;
+            let mut out = Vec::new();
+            for r in rows {
+                out.push(r?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The highest message rowid, so a stream can start from "only what happens next" rather than
+    /// replaying a mailbox's whole history to a daemon that just connected.
+    pub async fn latest_message_cursor(&self) -> Result<i64, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<i64, StoreError> {
+            let c = conn.lock().expect("store lock");
+            Ok(
+                c.query_row("SELECT COALESCE(MAX(rowid), 0) FROM messages", [], |r| {
+                    r.get(0)
+                })?,
+            )
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     pub async fn list_for(&self, owner: String) -> Result<Vec<Message>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Message>, StoreError> {
@@ -2221,5 +2301,148 @@ mod handle_binding_tests {
         let a = store.get_by_handle("/bekir/a".into()).await.unwrap();
         let b = store.get_by_handle("/bekir/b".into()).await.unwrap();
         assert_eq!(a.is_some() as u8 + b.is_some() as u8, 1);
+    }
+}
+
+#[cfg(test)]
+mod event_cursor_tests {
+    use super::*;
+
+    fn msg(id: &str, owner: &str, sender: &str, outgoing: bool) -> Message {
+        Message {
+            id: id.into(),
+            recipient: owner.into(),
+            sender: sender.into(),
+            wrap_blob: vec![1, 2, 3],
+            created_at: 0,
+            read: false,
+            owner: owner.into(),
+            outgoing,
+        }
+    }
+
+    /// The cursor is the resumption contract: everything after it, nothing twice.
+    #[tokio::test]
+    async fn the_cursor_returns_each_message_exactly_once() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .enqueue(msg("m1", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("m2", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+
+        let first = store
+            .incoming_after(vec!["/k/bob".into()], 0, 64)
+            .await
+            .unwrap();
+        assert_eq!(first.len(), 2);
+        assert!(first[0].0 < first[1].0, "cursors must increase");
+
+        // Resuming from the last id yields nothing — the daemon does not reprocess.
+        let resumed = store
+            .incoming_after(vec!["/k/bob".into()], first[1].0, 64)
+            .await
+            .unwrap();
+        assert!(resumed.is_empty());
+
+        // …and a message arriving after that point is picked up from the same cursor.
+        store
+            .enqueue(msg("m3", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+        let next = store
+            .incoming_after(vec!["/k/bob".into()], first[1].0, 64)
+            .await
+            .unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].1.id, "m3");
+    }
+
+    /// Echoing a mailbox's own sent copies back would wake an agent to read its own words.
+    #[tokio::test]
+    async fn sent_copies_never_appear_in_the_stream() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .enqueue(msg("in", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("out", "/k/bob", "/k/bob", true))
+            .await
+            .unwrap();
+
+        let rows = store
+            .incoming_after(vec!["/k/bob".into()], 0, 64)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].1.id, "in");
+    }
+
+    /// One stream serves a whole account, so it must span that account's mailboxes and no others.
+    #[tokio::test]
+    async fn the_stream_spans_the_account_and_stops_there() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .enqueue(msg("a", "/k/one", "/k/x", false))
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("b", "/k/two", "/k/x", false))
+            .await
+            .unwrap();
+        store
+            .enqueue(msg("c", "/k/other", "/k/x", false))
+            .await
+            .unwrap();
+
+        let rows = store
+            .incoming_after(vec!["/k/one".into(), "/k/two".into()], 0, 64)
+            .await
+            .unwrap();
+        let ids: Vec<_> = rows.iter().map(|(_, m)| m.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec!["a", "b"],
+            "another account's mail must not leak in"
+        );
+    }
+
+    /// A daemon connecting for the first time wants what happens next, not a replay of history.
+    #[tokio::test]
+    async fn a_fresh_stream_starts_after_existing_mail() {
+        let store = Store::open(":memory:").unwrap();
+        assert_eq!(store.latest_message_cursor().await.unwrap(), 0);
+        store
+            .enqueue(msg("old", "/k/bob", "/k/alice", false))
+            .await
+            .unwrap();
+
+        let start = store.latest_message_cursor().await.unwrap();
+        assert!(start > 0);
+        assert!(store
+            .incoming_after(vec!["/k/bob".into()], start, 64)
+            .await
+            .unwrap()
+            .is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_batch_is_bounded_so_a_long_sleep_catches_up_in_chunks() {
+        let store = Store::open(":memory:").unwrap();
+        for i in 0..10 {
+            store
+                .enqueue(msg(&format!("m{i}"), "/k/bob", "/k/alice", false))
+                .await
+                .unwrap();
+        }
+        let rows = store
+            .incoming_after(vec!["/k/bob".into()], 0, 4)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 4);
     }
 }
