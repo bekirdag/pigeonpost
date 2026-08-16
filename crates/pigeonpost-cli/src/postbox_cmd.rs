@@ -626,8 +626,12 @@ pub async fn claim_github(home: &Path, base_url: &str, json: bool) -> Result<(),
 async fn describe_failure(context: &str, response: reqwest::Response) -> Error {
     let status = response.status();
     let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
-    let detail = body["message"]
+    // `detail` first: the postbox puts the sentence a person can act on there and keeps `error` as
+    // a stable machine code. Preferring the code prints "github_device_flow_disabled" at somebody
+    // who needed to be told which checkbox to tick.
+    let detail = body["detail"]
         .as_str()
+        .or_else(|| body["message"].as_str())
         .or_else(|| body["error"].as_str())
         .map(str::to_string)
         .unwrap_or_else(|| status.to_string());

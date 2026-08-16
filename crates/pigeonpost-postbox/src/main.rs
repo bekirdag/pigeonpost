@@ -2866,6 +2866,19 @@ async fn start_github_claim(State(state): State<AppState>, headers: HeaderMap) -
             "interval": grant.interval,
         }))
         .into_response(),
+        // The operator's mistake and GitHub being down are different problems with different
+        // fixes, and the first is the one a fresh OAuth app has by default. Say which.
+        Err(github::GithubError::Refused(reason)) if reason == "device_flow_disabled" => {
+            tracing::error!("the configured GitHub OAuth app does not have Device Flow enabled");
+            err_response(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "github_device_flow_disabled",
+                Some(
+                    "this postbox's GitHub OAuth app does not have Device Flow enabled — \
+                     the app owner must tick it in the app's settings",
+                ),
+            )
+        }
         Err(e) => {
             tracing::warn!(error = %e, "github device start failed");
             err_response(

@@ -94,13 +94,23 @@ impl Github {
             .send()
             .await
             .map_err(|_| GithubError::Unreachable)?;
-        if !response.status().is_success() {
-            return Err(GithubError::Refused(response.status().to_string()));
-        }
-        response
-            .json::<DeviceGrant>()
+        let status = response.status();
+        let body: serde_json::Value = response
+            .json()
             .await
-            .map_err(|_| GithubError::Unreachable)
+            .map_err(|_| GithubError::Unreachable)?;
+
+        // GitHub answers a refused device-code request with HTTP 200 and an `error` field, so the
+        // status says nothing. Reading it is what separates "this app has Device Flow switched off"
+        // — a one-checkbox setup mistake, and the state a fresh OAuth app is in by default — from a
+        // network fault. Reporting the former as "unreachable" sends someone looking at DNS.
+        if let Some(error) = body.get("error").and_then(|v| v.as_str()) {
+            return Err(GithubError::Refused(error.to_string()));
+        }
+        if !status.is_success() {
+            return Err(GithubError::Refused(status.to_string()));
+        }
+        serde_json::from_value(body).map_err(|_| GithubError::Unreachable)
     }
 
     /// Exchange an approved device code for a token, then ask GitHub who approved it.
