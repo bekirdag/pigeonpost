@@ -1123,6 +1123,22 @@ fn serve_http_request(
     state: &Arc<Mutex<HttpState>>,
     log_path: &Path,
 ) -> Result<(), String> {
+    // Put the accepted socket back into blocking mode before anything reads from it.
+    //
+    // The listener is non-blocking so the worker can poll `accept` and still notice the stop flag.
+    // On Linux that is the end of it: `accept` returns a blocking socket regardless. The BSD
+    // sockets macOS inherits from do the opposite — the accepted socket inherits `O_NONBLOCK` from
+    // its listener — so without this the read below returns `WouldBlock` the instant the client's
+    // bytes have not arrived yet, and `read_http_request` propagates that as a hard failure. The
+    // read timeout is no defence: a timeout means nothing on a socket that never blocks.
+    //
+    // It is a race, so it presented as an intermittent macOS-only release failure with whichever
+    // request happened to lose — `loft add` reporting "signed placement remains pending at some
+    // lofts", or the send afterwards reporting "no loft we asked is holding a record for that
+    // address". Same cause, and neither has anything to do with lofts.
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| error.to_string())?;
     stream
         .set_read_timeout(Some(Duration::from_secs(5)))
         .map_err(|error| error.to_string())?;
