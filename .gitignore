@@ -54,3 +54,6 @@ server-dependency-tree.txt
 # dist/linux/<arch>/pigeonpost. Release binaries are downloaded per build, never committed —
 # a tracked one is picked up as a stray release asset and fails payload assembly.
 dist/
+
+# pigeonpost: holds this repo's mailbox token
+.mcp.json
