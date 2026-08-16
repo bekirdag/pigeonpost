@@ -93,8 +93,14 @@ fn notify(summary: &str, body: &str) {
         .arg(body)
         .status();
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    let attempt: std::io::Result<std::process::ExitStatus> =
-        Err(std::io::Error::other("unsupported"));
+    let attempt: std::io::Result<std::process::ExitStatus> = {
+        // No desktop notifier is wired up here yet. The spool is the delivery guarantee, so a
+        // platform without notifications still gets its mail — it just gets it silently.
+        let _ = (summary, body);
+        Err(std::io::Error::other(
+            "no desktop notifier on this platform",
+        ))
+    };
     let _ = attempt;
 }
 

@@ -1996,7 +1996,26 @@ mod tests {
             "expected the claim to be refused for a changed or busy identity, got: {error}"
         );
         assert_eq!(register_calls.load(Ordering::SeqCst), 0);
-        let reopened = Agent::open(&home).unwrap();
+        // The rotation releases its identity lease as it finishes, and "finishes" is not the same
+        // instant as "the awaited future returned". Reopening immediately therefore races the
+        // release and fails with "identity is busy" on a loaded runner — which is contention, not
+        // the behaviour under test. Wait for the lease the same way a caller would, with a ceiling
+        // that catches a genuine hang rather than a stopwatch that measures the runner's mood.
+        let reopened = {
+            let deadline = std::time::Instant::now() + Duration::from_secs(60);
+            loop {
+                match Agent::open(&home) {
+                    Ok(agent) => break agent,
+                    Err(error)
+                        if error.to_string().contains("identity is busy")
+                            && std::time::Instant::now() < deadline =>
+                    {
+                        tokio::time::sleep(Duration::from_millis(25)).await;
+                    }
+                    Err(error) => panic!("reopening the rotated identity failed: {error}"),
+                }
+            }
+        };
         assert_ne!(reopened.verifying_key(), signed_key);
     }
 
