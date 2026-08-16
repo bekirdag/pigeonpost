@@ -547,7 +547,7 @@ Agents that each want their own mailbox should each use --agent <name>.",
 /// waits. The postbox holds the OAuth app's credentials and does the exchange, so nothing secret
 /// passes through here and there is nothing for an agent to configure.
 pub async fn claim_github(home: &Path, base_url: &str, json: bool) -> Result<(), Error> {
-    let token = crate::login_cmd::access_token(home).await?;
+    let mut token = crate::login_cmd::access_token(home).await?;
     let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
     let base = base_url.trim_end_matches('/').to_string();
 
@@ -585,12 +585,36 @@ pub async fn claim_github(home: &Path, base_url: &str, json: bool) -> Result<(),
         }
         tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
 
-        let polled = http
+        // A poll that could not be sent is not a failed login.
+        //
+        // This loop is open for as long as it takes somebody to find their phone, unlock it, and
+        // approve — minutes, not seconds. Over that window a dropped keep-alive or a moment of
+        // flaky wifi is ordinary, and treating one as fatal throws away an approval the person has
+        // already given: the device code is spent, and they are asked to start again for a reason
+        // that had nothing to do with them. Keep polling until the code itself expires, which is
+        // the deadline that actually means something.
+        let polled = match http
             .post(format!("{base}/v1/github/claim"))
             .bearer_auth(&token)
             .json(&serde_json::json!({ "device_code": device_code }))
             .send()
-            .await?;
+            .await
+        {
+            Ok(response) => response,
+            Err(_) => continue,
+        };
+        // The session's access token lives about five minutes and this wait can outlast it. Renew
+        // and carry on rather than reporting a login failure for a credential that has simply
+        // aged out mid-wait — again, the person has already done their part by then.
+        if polled.status() == reqwest::StatusCode::UNAUTHORIZED {
+            match crate::login_cmd::access_token(home).await {
+                Ok(fresh) => {
+                    token = fresh;
+                    continue;
+                }
+                Err(e) => return Err(format!("session expired during approval: {e}").into()),
+            }
+        }
         if !polled.status().is_success() {
             return Err(describe_failure("GitHub login failed", polled).await);
         }
