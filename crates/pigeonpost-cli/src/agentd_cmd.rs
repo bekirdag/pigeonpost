@@ -344,6 +344,10 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
 ///
 /// An agent home is `<machine>/agents/<name>`, and the daemon does not run per agent — so an agent
 /// reading its own home would find an empty spool and conclude, wrongly, that it had no mail.
+pub(crate) fn machine_home_of(home: &Path) -> PathBuf {
+    machine_home(home)
+}
+
 fn machine_home(home: &Path) -> PathBuf {
     let looks_like_agent_home = home
         .parent()

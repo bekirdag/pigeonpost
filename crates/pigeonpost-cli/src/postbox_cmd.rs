@@ -237,6 +237,58 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
         .ok_or_else(|| "no such mailbox in this home".into())
 }
 
+/// Every home on this machine that might already hold a mailbox: the machine home and each agent.
+fn sibling_homes(home: &Path) -> Vec<PathBuf> {
+    let machine = crate::agentd_cmd::machine_home_of(home);
+    let mut homes = vec![machine.clone()];
+    if let Ok(entries) = std::fs::read_dir(machine.join("agents")) {
+        for entry in entries.flatten() {
+            if entry.path() != home {
+                homes.push(entry.path());
+            }
+        }
+    }
+    homes.retain(|h| h != home);
+    homes
+}
+
+/// Find a mailbox this machine already holds for `handle`, wherever its credential ended up.
+///
+/// A mailbox minted before per-agent homes existed lives in the machine home, and one registered by
+/// hand may have no recorded handle at all — so matching on the local record alone misses exactly
+/// the mailboxes people want to adopt. The server is asked instead, which is the only party that
+/// knows what a token actually answers to.
+async fn find_existing(home: &Path, handle: &str) -> Option<Credential> {
+    let http = reqwest::Client::builder()
+        .timeout(HTTP_TIMEOUT)
+        .build()
+        .ok()?;
+    for other in sibling_homes(home) {
+        let Ok(creds) = load(&other) else { continue };
+        for credential in creds.identities {
+            if credential.handle.as_deref() == Some(handle) {
+                return Some(credential);
+            }
+            let base = credential.base_url.trim_end_matches('/');
+            let answered = http
+                .get(format!("{base}/v1/whoami"))
+                .bearer_auth(&credential.capability_token)
+                .send()
+                .await
+                .ok()?
+                .json::<serde_json::Value>()
+                .await
+                .ok()?;
+            if answered.get("handle").and_then(|h| h.as_str()) == Some(handle) {
+                let mut adopted = credential.clone();
+                adopted.handle = Some(handle.to_string());
+                return Some(adopted);
+            }
+        }
+    }
+    None
+}
+
 /// Everything an agent needs to become reachable, in one command.
 ///
 /// Onboarding was four steps across two credentials, and the failure modes were all silent: mint a
@@ -292,6 +344,45 @@ pub async fn onboard(
             name_mailbox(home, Some(target), handle, false).await?;
             credential_for(home, Some(handle))?.address
         }
+        // A mailbox this machine already holds, kept somewhere else: adopt the credential rather
+        // than minting a second one or failing on a handle that is already taken. This is the
+        // "I had this mailbox before" case, and it is the common one on a machine that has been
+        // running agents for a while.
+        (None, Some(handle), None) if !mint_fresh => match find_existing(home, handle).await {
+            Some(existing) => {
+                let address = existing.address.clone();
+                save(home, &existing)?;
+                println!("adopted the existing {handle} ({address}) into this home");
+                address
+            }
+            None => {
+                let unnamed: Vec<_> = existing
+                    .identities
+                    .iter()
+                    .filter(|c| c.handle.is_none())
+                    .collect();
+                match unnamed.len() {
+                        0 => {
+                            new_inbox(home, base_url, None, Some(handle), false).await?;
+                            credential_for(home, Some(handle))?.address
+                        }
+                        1 if existing.identities.len() == 1 => {
+                            let target = unnamed[0].address.clone();
+                            println!("naming the mailbox already in this home rather than minting a second");
+                            name_mailbox(home, Some(&target), handle, false).await?;
+                            target
+                        }
+                        _ => {
+                            return Err(format!(
+                                "this home already holds {} mailbox(es), so it is not clear which to name. \
+Say which with --as /k/…, or mint a fresh one with --as new.",
+                                existing.identities.len()
+                            )
+                            .into())
+                        }
+                    }
+            }
+        },
         (None, Some(handle), None) if mint_fresh => {
             new_inbox(home, base_url, None, Some(handle), false).await?;
             credential_for(home, Some(handle))?.address
@@ -1421,6 +1512,25 @@ mod selection_tests {
         assert_eq!(by_handle.address, "/k/bbb");
         let by_address = credential_for(dir.path(), Some("/k/aaa")).unwrap();
         assert_eq!(by_address.address, "/k/aaa");
+    }
+
+    /// Adoption has to look where a mailbox from before per-agent homes would actually be: the
+    /// machine home, and the other agents beside this one.
+    #[test]
+    fn adoption_searches_the_machine_home_and_siblings() {
+        let machine = tempfile::tempdir().unwrap();
+        let me = machine.path().join("agents").join("mine");
+        let neighbour = machine.path().join("agents").join("theirs");
+        std::fs::create_dir_all(&me).unwrap();
+        std::fs::create_dir_all(&neighbour).unwrap();
+
+        let searched = sibling_homes(&me);
+        assert!(
+            searched.contains(&machine.path().to_path_buf()),
+            "the machine home"
+        );
+        assert!(searched.contains(&neighbour), "a sibling agent");
+        assert!(!searched.contains(&me), "never itself");
     }
 
     #[test]

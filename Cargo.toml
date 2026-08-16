@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/pigeonpost-compliance-format", "crates/pigeonpost-compliance-seal", "crates/pigeonpost-compliance", "crates/pigeonpost-core", "crates/pigeonpost-loft", "crates/pigeonpost-client", "crates/pigeonpost-cli", "crates/pigeonpost-registry", "crates/pigeonpost-witness", "crates/pigeonpost-directory", "crates/pigeonpost-mcp", "crates/pigeonpost-postbox", "crates/pigeonpost-windows-custody", "crates/pigeonpost-unix-custody"]
 
 [workspace.package]
-version = "0.5.11"
+version = "0.5.12"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/bekirdag/pigeonpost"
@@ -29,8 +29,8 @@ zeroize = { version = "1.8", features = ["derive"] }
 subtle = "2.6"
 serde-big-array = "0.5"
 url = "2.5"
-pigeonpost-compliance-format = { path = "crates/pigeonpost-compliance-format", version = "0.5.11" }
-pigeonpost-unix-custody = { path = "crates/pigeonpost-unix-custody", version = "0.5.11" }
+pigeonpost-compliance-format = { path = "crates/pigeonpost-compliance-format", version = "0.5.12" }
+pigeonpost-unix-custody = { path = "crates/pigeonpost-unix-custody", version = "0.5.12" }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 
 [profile.release]

@@ -15,7 +15,7 @@ name = "pigeonpost-witness"
 path = "src/main.rs"
 
 [dependencies]
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.11", default-features = false }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.12", default-features = false }
 axum = "0.8"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "signal"] }
 ed25519-dalek.workspace = true
