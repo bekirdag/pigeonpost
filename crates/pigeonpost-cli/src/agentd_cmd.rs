@@ -1,0 +1,304 @@
+//! `pigeonpost agentd` — the resident process that turns mail into a wake-up.
+//!
+//! Neither Claude Code nor Codex is a server. Both exist only while a session runs, so there is
+//! nothing to push into when nobody is working, and no vendor mechanism to start a session from
+//! outside. "Notify the agent" therefore has to mean: *something resident receives the push and
+//! records it where an agent will see it*. This is that resident thing. Every alternative design
+//! collapses back into polling.
+//!
+//! It holds one `GET /v1/events` stream per account and does nothing dangerous with what arrives:
+//! a desktop notification, and an append to a per-mailbox spool. Executing requests is a later
+//! phase deliberately — a daemon that both listens and acts is a much larger thing to get right,
+//! and this half alone removes the five-minute loop.
+//!
+//! A sleeping laptop still cannot be woken. Mail waits, and the cursor means none of it is missed.
+
+use std::io::Write;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+type Error = Box<dyn std::error::Error>;
+
+/// Where the resume cursor lives. One per home, because one stream covers the whole account.
+const CURSOR_FILE: &str = "agentd-cursor";
+const SPOOL_DIR: &str = "spool";
+const LOG_FILE: &str = "agentd.log";
+
+/// Reconnect backoff. Starts fast because the common disconnect is a laptop lid, not an outage.
+const BACKOFF_MIN: Duration = Duration::from_secs(2);
+const BACKOFF_MAX: Duration = Duration::from_secs(60);
+
+fn cursor_path(home: &Path) -> PathBuf {
+    home.join(CURSOR_FILE)
+}
+
+fn read_cursor(home: &Path) -> Option<i64> {
+    std::fs::read_to_string(cursor_path(home))
+        .ok()?
+        .trim()
+        .parse()
+        .ok()
+}
+
+/// Persist the cursor *after* the event is spooled, never before. The two orders differ in what
+/// they lose: writing first loses mail on a crash, writing after can only re-deliver something the
+/// spool already has, which the spool's own dedupe absorbs.
+fn write_cursor(home: &Path, cursor: i64) -> Result<(), Error> {
+    let path = cursor_path(home);
+    let tmp = path.with_extension("tmp");
+    std::fs::write(&tmp, cursor.to_string())?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
+}
+
+/// A mailbox address is not a filename: `/k/…` and `/bekir/agent1` both contain separators.
+fn spool_file(home: &Path, mailbox: &str) -> PathBuf {
+    let safe: String = mailbox
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
+        .collect();
+    home.join(SPOOL_DIR).join(format!("{safe}.jsonl"))
+}
+
+fn log_line(home: &Path, line: &str) {
+    let stamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(home.join(LOG_FILE))
+    {
+        let _ = writeln!(f, "{stamp} {line}");
+    }
+    eprintln!("{line}");
+}
+
+/// Tell the person at the machine. Best-effort by design: a missing notifier must not stop the
+/// spool being written, which is the delivery guarantee.
+fn notify(summary: &str, body: &str) {
+    #[cfg(target_os = "macos")]
+    let attempt = std::process::Command::new("osascript")
+        .arg("-e")
+        .arg(format!(
+            "display notification {} with title {}",
+            applescript_quote(body),
+            applescript_quote(summary)
+        ))
+        .status();
+    #[cfg(target_os = "linux")]
+    let attempt = std::process::Command::new("notify-send")
+        .arg(summary)
+        .arg(body)
+        .status();
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    let attempt: std::io::Result<std::process::ExitStatus> =
+        Err(std::io::Error::other("unsupported"));
+    let _ = attempt;
+}
+
+#[cfg(target_os = "macos")]
+fn applescript_quote(value: &str) -> String {
+    // AppleScript string literals escape backslash and quote, and nothing else.
+    format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\""))
+}
+
+/// One event off the wire.
+#[derive(serde::Deserialize)]
+struct MailEvent {
+    event_id: i64,
+    mailbox: String,
+    message_id: String,
+    sender: String,
+}
+
+/// Run in the foreground, holding the stream. This is what the service manager starts.
+pub async fn run(home: &Path, once: bool) -> Result<(), Error> {
+    std::fs::create_dir_all(home.join(SPOOL_DIR))?;
+    log_line(home, "agentd starting");
+
+    let mut backoff = BACKOFF_MIN;
+    loop {
+        match stream_once(home).await {
+            Ok(()) => {
+                // A clean end of stream is the server closing an idle connection; reconnect
+                // promptly rather than treating it as a failure.
+                backoff = BACKOFF_MIN;
+            }
+            Err(e) => {
+                log_line(home, &format!("stream ended: {e}"));
+                backoff = (backoff * 2).min(BACKOFF_MAX);
+            }
+        }
+        if once {
+            return Ok(());
+        }
+        tokio::time::sleep(backoff).await;
+    }
+}
+
+async fn stream_once(home: &Path) -> Result<(), Error> {
+    // Fetched per connection, so a daemon running for weeks keeps working: the access token lives
+    // five minutes, and reconnecting is exactly when a fresh one is free to obtain.
+    let token = crate::login_cmd::access_token(home).await?;
+    let base = std::env::var("PIGEONPOST_POSTBOX")
+        .unwrap_or_else(|_| crate::postbox_cmd::DEFAULT_POSTBOX.to_string());
+    let base = base.trim_end_matches('/').to_string();
+
+    let mut url = format!("{base}/v1/events");
+    if let Some(cursor) = read_cursor(home) {
+        url.push_str(&format!("?last_event_id={cursor}"));
+    }
+
+    // No overall timeout: the point of this request is to stay open. The server's keep-alive is
+    // what proves the connection is still alive.
+    let http = reqwest::Client::builder()
+        .user_agent(concat!("pigeonpost-agentd/", env!("CARGO_PKG_VERSION")))
+        .build()?;
+    let response = http
+        .get(&url)
+        .bearer_auth(token)
+        .header("accept", "text/event-stream")
+        .send()
+        .await?;
+    if !response.status().is_success() {
+        return Err(format!(
+            "the postbox refused the event stream: {}",
+            response.status()
+        )
+        .into());
+    }
+    log_line(home, "listening");
+
+    let mut stream = response.bytes_stream();
+    let mut buffer = String::new();
+    use futures_util::StreamExt;
+    while let Some(chunk) = stream.next().await {
+        buffer.push_str(&String::from_utf8_lossy(&chunk?));
+        // SSE frames are separated by a blank line; anything after the last one is a partial
+        // frame still arriving and must stay in the buffer.
+        while let Some(split) = buffer.find("\n\n") {
+            let frame = buffer[..split].to_string();
+            buffer.drain(..split + 2);
+            if let Some(data) = frame
+                .lines()
+                .find_map(|line| line.strip_prefix("data:").map(str::trim))
+            {
+                if let Ok(event) = serde_json::from_str::<MailEvent>(data) {
+                    handle(home, &event)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
+    let path = spool_file(home, &event.mailbox);
+    // Dedupe on event id: a reconnect that overlaps by one, or a cursor written after a crash,
+    // must not show the same message twice to whoever reads the spool.
+    if let Ok(existing) = std::fs::read_to_string(&path) {
+        if existing
+            .lines()
+            .any(|line| line.contains(&format!("\"event_id\":{}", event.event_id)))
+        {
+            return Ok(());
+        }
+    }
+    let record = serde_json::json!({
+        "event_id": event.event_id,
+        "mailbox": event.mailbox,
+        "message_id": event.message_id,
+        "sender": event.sender,
+        "noticed_at": std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0),
+    });
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)?;
+    writeln!(file, "{record}")?;
+
+    notify(
+        "Pigeonpost",
+        &format!("new mail for {} from {}", event.mailbox, event.sender),
+    );
+    log_line(
+        home,
+        &format!(
+            "mail {} for {} from {}",
+            &event.message_id[..12.min(event.message_id.len())],
+            event.mailbox,
+            event.sender
+        ),
+    );
+    write_cursor(home, event.event_id)?;
+    Ok(())
+}
+
+/// Show what the daemon has seen, without needing the service manager's own tooling.
+pub fn status(home: &Path, json: bool) -> Result<(), Error> {
+    let cursor = read_cursor(home);
+    let spool = home.join(SPOOL_DIR);
+    let mut waiting = Vec::new();
+    if let Ok(entries) = std::fs::read_dir(&spool) {
+        for entry in entries.flatten() {
+            let count = std::fs::read_to_string(entry.path())
+                .map(|s| s.lines().count())
+                .unwrap_or(0);
+            if count > 0 {
+                waiting.push((entry.file_name().to_string_lossy().to_string(), count));
+            }
+        }
+    }
+    if json {
+        println!(
+            "{}",
+            serde_json::json!({
+                "cursor": cursor,
+                "spool": waiting.iter().map(|(f, c)| serde_json::json!({"file": f, "events": c})).collect::<Vec<_>>(),
+            })
+        );
+        return Ok(());
+    }
+    match cursor {
+        Some(c) => println!("last event seen: {c}"),
+        None => println!("no events seen yet"),
+    }
+    if waiting.is_empty() {
+        println!("spool is empty");
+    } else {
+        for (file, count) in waiting {
+            println!("  {file}: {count} event(s)");
+        }
+    }
+    println!("log: {}", home.join(LOG_FILE).display());
+    Ok(())
+}
+
+/// Print and clear the spool. Draining is what an agent session does at start-up, so this is the
+/// command a hook calls rather than a human.
+pub fn drain(home: &Path, keep: bool) -> Result<(), Error> {
+    let spool = home.join(SPOOL_DIR);
+    let mut any = false;
+    if let Ok(entries) = std::fs::read_dir(&spool) {
+        for entry in entries.flatten() {
+            let body = std::fs::read_to_string(entry.path()).unwrap_or_default();
+            if body.trim().is_empty() {
+                continue;
+            }
+            any = true;
+            print!("{body}");
+            if !keep {
+                let _ = std::fs::write(entry.path(), "");
+            }
+        }
+    }
+    if !any {
+        println!("no new mail");
+    }
+    Ok(())
+}

@@ -4,6 +4,7 @@
 //! agent uses, and the `loft` verb that turns the host into a node. An operator who can Pigeonpost
 //! a message is one command away from hosting.
 
+mod agentd_cmd;
 mod directory_cmd;
 mod handle_cmd;
 mod install_cmd;
@@ -222,6 +223,12 @@ enum Command {
         no_browser: bool,
     },
 
+    /// The resident process that turns incoming mail into a wake-up, so nothing has to poll.
+    Agentd {
+        #[command(subcommand)]
+        action: AgentdAction,
+    },
+
     /// Show whether this machine is signed in. Never prints a token.
     Whoami,
 
@@ -232,6 +239,24 @@ enum Command {
     Postbox {
         #[command(subcommand)]
         action: PostboxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum AgentdAction {
+    /// Hold the event stream in the foreground. This is what a service manager starts.
+    Run {
+        /// Handle one connection and exit, instead of reconnecting forever. For testing.
+        #[arg(long)]
+        once: bool,
+    },
+    /// What the daemon has seen, and what is waiting in the spool.
+    Status,
+    /// Print the spooled events and clear them. What a session start-up hook calls.
+    Drain {
+        /// Print without clearing.
+        #[arg(long)]
+        keep: bool,
     },
 }
 
@@ -1129,6 +1154,15 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             };
         }
         Command::Whoami => return login_cmd::status(&home, cli.json).await,
+        // Like the read-only commands above, the daemon must not mint an identity in someone's
+        // home as a side effect of being started by a service manager.
+        Command::Agentd { action } => {
+            return match action {
+                AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
+                AgentdAction::Status => agentd_cmd::status(&home, cli.json),
+                AgentdAction::Drain { keep } => agentd_cmd::drain(&home, *keep),
+            }
+        }
         Command::Logout => return login_cmd::logout(&home),
         _ => {}
     }
@@ -1345,6 +1379,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cli.command {
+        // Handled before the agent identity is opened, above, and that arm returns.
+        Command::Agentd { .. } => unreachable!("agentd is dispatched before this point"),
         Command::Id => {
             if cli.json {
                 println!(
