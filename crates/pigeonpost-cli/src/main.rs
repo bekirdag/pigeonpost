@@ -254,6 +254,12 @@ enum AgentdAction {
     Install,
     /// Stop the daemon and remove its service unit.
     Uninstall,
+    /// Show the session-hook configuration that surfaces mail inside a running session.
+    Hooks {
+        /// Merge it into ~/.claude/settings.json instead of printing it.
+        #[arg(long)]
+        install: bool,
+    },
     /// What the daemon has seen, and what is waiting in the spool.
     Status,
     /// Print the spooled events and clear them. What a session start-up hook calls.
@@ -1163,6 +1169,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Agentd { action } => {
             return match action {
                 AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
+                AgentdAction::Hooks { install } => agentd_cmd::hooks(&home, *install),
                 AgentdAction::Install => agentd_cmd::install(&home),
                 AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
                 AgentdAction::Status => agentd_cmd::status(&home, cli.json),
