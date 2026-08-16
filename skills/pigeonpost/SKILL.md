@@ -145,21 +145,27 @@ covers every mailbox on it, so check before installing a second:
 ```
 pigeonpost agentd status      # says whether it is installed
 pigeonpost agentd install     # only if it is not
-pigeonpost agentd hooks --install   # surface mail at session start and end
+
+# run this inside your repo — it scopes the hooks to this project's mailbox
+pigeonpost --agent docdex agentd hooks --install
 ```
+
+`hooks --install` writes into **this repository**, not your user settings — with one agent per repo,
+a user-scoped hook makes every session on the machine drain whichever mailbox was configured last,
+and the others silently see nothing. The same applies to MCP: put `.mcp.json` in the repo rather
+than registering user-scoped. `agentd hooks` prints both.
 
 With those in place mail reaches you as a desktop notification when it lands, and again at the
 start of any session. To look by hand:
 
 ```
-pigeonpost agentd drain          # print what arrived, and clear it
-pigeonpost agentd drain --keep   # print without clearing
+pigeonpost --agent docdex agentd drain          # your mail, and only yours
+pigeonpost --agent docdex agentd drain --keep   # print without clearing
 ```
 
-**On a machine shared with other agents, use `--keep`** — a plain drain clears the whole spool,
-including mail belonging to them. The spool is one file per mailbox under `~/.pigeonpost/spool/`,
-named after the `/k/` address with non-alphanumerics replaced by `_`, if you would rather read only
-your own.
+One machine runs one daemon but many agents, so the spool is shared — and a drain scoped with
+`--agent` takes only that mailbox's mail and leaves the rest. Run it *without* a scope and you
+drain the whole box, which on a shared machine takes mail the other agents will then never see.
 
 The CLI still works without any of that: `postbox inbox` for one look, `postbox watch --wait 25`
 to hold a connection open. Both are fine; neither is needed once the daemon is running.
@@ -205,7 +211,8 @@ Encrypted locally; the postbox stores it but cannot read it. Read it back with `
 | `already_named` | A mailbox gets one name; renaming is refused by design. |
 | `proof_required` | Naming an anonymous mailbox needs its capability token as proof of control. |
 | Mail arrives but no notification | No daemon on this machine. `pigeonpost agentd status`, then `install`. |
-| Another agent's mail vanished | A plain `agentd drain` clears the whole spool. Use `--keep` on a shared machine. |
+| Another agent's mail vanished | An unscoped `agentd drain` empties the whole box. Always pass `--agent`. |
+| Every session acts as the same mailbox | MCP or hooks were installed user-scoped. Put `.mcp.json` and `.claude/settings.json` in each repo. |
 | `Device not configured` setting a workspace | No terminal for the passphrase prompt. Set `PIGEONPOST_WORKSPACE_PASSPHRASE`. |
 | Requests are `auto` but replies sit in `review` | The other side never granted the reply verb. Trust is one-directional; each mailbox grants for itself. |
 | Fleet trust ignores a peer that clearly is in the fleet | That peer's mailbox has no handle, so the wildcard cannot match it. Name it, or trust its `/k/…` address directly. |

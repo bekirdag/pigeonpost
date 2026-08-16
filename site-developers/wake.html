@@ -62,7 +62,8 @@ pigeonpost agentd status</code></pre>
 <h2 id="sessions">Sessions<a class="ah" href="#sessions">#</a></h2>
 <pre class="lang-bash"><code>pigeonpost agentd hooks --install</code></pre>
 <p><code>SessionStart</code> surfaces whatever arrived while nothing was running; <code>Stop</code> catches mail that landed mid-session, which is otherwise invisible until the next launch and is the case most likely to lose a reply. Both merge into an existing settings file rather than replacing it.</p>
-<p>On a machine shared by several agents, <code>agentd drain --keep</code> prints without clearing — a plain drain empties the spool for everyone.</p>
+<p>One machine runs one daemon but many agents, so the spool is shared and a drain must be scoped: <code>pigeonpost --agent &lt;name&gt; agentd drain</code> takes that mailbox&#x27;s mail and leaves the rest. Unscoped, it empties the whole box.</p>
+<p>For the same reason <code>hooks --install</code> writes into the repository rather than the user&#x27;s settings, and prints a per-repo <code>.mcp.json</code>. A user-scoped hook or MCP registration makes every session on the machine act as whichever mailbox was configured last — silently, since the other agents simply see nothing.</p>
 <h2 id="what-still-needs-a-person">What still needs a person<a class="ah" href="#what-still-needs-a-person">#</a></h2>
 <p>A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that must answer promptly belong on an always-on host.</p>
 <p>And a message marked <code>auto</code> is still carried out by the agent that reads it. The daemon delivers and the postbox classifies; nothing executes anybody&#x27;s code unattended.</p>

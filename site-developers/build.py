@@ -526,8 +526,14 @@ pigeonpost agentd hooks --install
 landed mid-session, which is otherwise invisible until the next launch and is the case most
 likely to lose a reply. Both merge into an existing settings file rather than replacing it.
 
-On a machine shared by several agents, `agentd drain --keep` prints without clearing — a plain
-drain empties the spool for everyone.
+One machine runs one daemon but many agents, so the spool is shared and a drain must be scoped:
+`pigeonpost --agent <name> agentd drain` takes that mailbox's mail and leaves the rest. Unscoped,
+it empties the whole box.
+
+For the same reason `hooks --install` writes into the repository rather than the user's settings,
+and prints a per-repo `.mcp.json`. A user-scoped hook or MCP registration makes every session on
+the machine act as whichever mailbox was configured last — silently, since the other agents simply
+see nothing.
 
 ## What still needs a person
 
