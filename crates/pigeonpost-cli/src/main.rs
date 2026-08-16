@@ -257,9 +257,13 @@ enum AgentdAction {
     Uninstall,
     /// Show the session-hook configuration that surfaces mail inside a running session.
     Hooks {
-        /// Merge it into ~/.claude/settings.json instead of printing it.
+        /// Merge it into the settings file instead of printing it.
         #[arg(long)]
         install: bool,
+        /// Install for every project on this machine rather than just this repository. With one
+        /// agent per repo this makes every session drain one mailbox; prefer the default.
+        #[arg(long)]
+        global: bool,
     },
     /// Stop acting on anything unattended, immediately. The kill switch.
     Pause,
@@ -1176,7 +1180,9 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
                 AgentdAction::Pause => agentd_cmd::pause(&home),
                 AgentdAction::Resume => agentd_cmd::resume(&home),
-                AgentdAction::Hooks { install } => agentd_cmd::hooks(&home, *install),
+                AgentdAction::Hooks { install, global } => {
+                    agentd_cmd::hooks(&home, *install, *global)
+                }
                 AgentdAction::Install => agentd_cmd::install(&home),
                 AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
                 AgentdAction::Status => agentd_cmd::status(&home, cli.json),
