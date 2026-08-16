@@ -193,6 +193,41 @@
     renewalTimer = setTimeout(() => { renewSession(); }, (seconds - 25) * 1000);
   }
 
+  // Seconds left on a stored access token, read from its own `exp`.
+  //
+  // Renewal used to be scheduled only when a token arrived — at sign-in or at a refresh — which
+  // left the commonest case unscheduled: a reload picks the token up from storage, and no timer
+  // exists for it. The session then ran until something 401'd, and recovering reactively means
+  // spending the refresh token at whatever moment a poll happens to fail. With a realm that
+  // rotates refresh tokens that is exactly when concurrent callers race and one loses, so the
+  // session died "after a while" instead of renewing quietly.
+  //
+  // Not a security check: the postbox validates every token itself. This only decides when to ask
+  // for the next one, so an unreadable token simply means "renew now".
+  function secondsLeftOn(token) {
+    try {
+      const payload = token.split(".")[1];
+      const json = atob(payload.replace(/-/g, "+").replace(/_/g, "/"));
+      const exp = Number(JSON.parse(json).exp);
+      if (!exp) return 0;
+      return exp - Math.floor(Date.now() / 1000);
+    } catch (_) {
+      return 0;
+    }
+  }
+
+  // Pick up a stored session: renew it now if it is spent, otherwise schedule the renewal it never
+  // got. Called on boot, and whenever the tab comes back after being hidden — a background tab's
+  // timers are throttled or coalesced, so a laptop that slept through the renewal wakes up holding
+  // a dead token and would otherwise discover it by failing.
+  async function resumeSession() {
+    const token = getToken();
+    if (!token) return;
+    const left = secondsLeftOn(token);
+    if (left < 60) await renewSession();
+    else scheduleRenewal(left);
+  }
+
   async function renewSession() {
     const refresh = getRefresh();
     if (!refresh) return false;
@@ -434,16 +469,37 @@
       touch(c.peer);
     }
 
-    // Your own agents are always present, silent or not. Marking the row rather than building a
-    // second list keeps one row per peer: an agent you talk to daily and one you have never written
-    // to are the same kind of thing, and should not appear twice.
+    // Mark the threads that are your own agents, but do not *create* rows for them.
+    //
+    // This list is correspondence. A fleet of a dozen agents that have never written to each other
+    // would otherwise fill it with a dozen empty conversations, burying the handful that are real —
+    // and the more agents someone runs, the worse it gets. Every mailbox on the account is still one
+    // click away in the identity picker, which is where "switch to my other mailbox" belongs;
+    // that is a different question from "who have I been talking to".
     for (const id of ownAgents()) {
-      const t = touch(identityKey(id));
+      const t = threads.get(identityKey(id));
+      if (!t) continue;
       t.mine = true;
       t.identity = id;
     }
 
+    // One row per message, whatever it came from.
+    //
+    // A message reaches this list from two places — the server's listing and the optimistic row
+    // held between pressing send and the next poll — and they are retired against each other by id.
+    // That reconciliation is correct, but it is timing-dependent, and a conversation showing the
+    // same sentence twice is the kind of wrong that makes someone distrust the whole page. Identity
+    // is the message id, so enforce it here where every source has already been merged, rather than
+    // trusting each source to have behaved.
     for (const t of threads.values()) {
+      const seen = new Set();
+      t.messages = t.messages.filter((m) => {
+        const key = m.id;
+        if (!key) return true; // a failed local row has no server id and is still worth showing
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
       t.messages.sort((a, b) => a.at - b.at);
       t.last = t.messages.length ? t.messages[t.messages.length - 1].at : 0;
       t.contact = contactFor(t.peer);
@@ -540,9 +596,9 @@
     list.textContent = "";
     $("threads-empty").hidden = threads.length > 0;
 
-    // Your own agents sit at the top under their own heading. They are the reason this app exists
-    // for a namespace owner, and burying a silent agent below every stranger who ever wrote in
-    // would be the wrong way round.
+    // Your own agents sit at the top under their own heading — the ones you have actually
+    // corresponded with. A namespace owner's own fleet is who they most want to find, and burying
+    // it below every stranger who ever wrote in would be the wrong way round.
     const mine = shown.filter((t) => t.mine);
     const others = shown.filter((t) => !t.mine);
 
@@ -1015,7 +1071,15 @@
     while (polling) {
       pollController = new AbortController();
       try {
-        const path = withIdentity("/v1/inbox") + "&include_sent=true"
+        // `include_read=true` is not optional here, even though this is the *polling* call.
+        //
+        // The server drops acknowledged inbound mail from a listing that does not ask for it —
+        // right for an agent draining what is new, wrong for a person reading a thread. And
+        // `adopt` takes each listing as the whole truth. Omitting it therefore did not merely fail
+        // to add new mail: the first poll after load replaced a full conversation with only its
+        // unread part, so messages appeared and then vanished a few seconds later. The two calls
+        // must ask the same question, or they answer each other.
+        const path = withIdentity("/v1/inbox") + "&include_sent=true&include_read=true"
           + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
         if (!polling) break;
@@ -1123,6 +1187,13 @@
       render();
       return;
     }
+    // Before the first call, not after it fails.
+    await resumeSession();
+    // A tab that slept through its renewal timer wakes holding a dead token; catch that on the way
+    // back rather than on the next request.
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden) resumeSession();
+    });
     render();
 
     try {

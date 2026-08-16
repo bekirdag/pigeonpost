@@ -46,6 +46,16 @@ const INBOX = {
       direction: "in", autonomy: "review", verb: null,
       held_because: "sender_not_auto", received_at: now - 60, read: false,
     },
+    // An own agent that *has* corresponded. It belongs in the list; `scratch`, which never has,
+    // does not — that contrast is the point of the two fixtures.
+    {
+      message_id: "m_docdex", from: "/k/zz1111v2h90vnwefj7g7ezvbh9", body: "index rebuilt",
+      sender_score: 3, sender_standing: "unproven", sender_tier: "handle", untrusted: true,
+      sender_known: true, alias: null, matched_contact: "/bekir/*",
+      sender_handle: "/bekir/docdex", peer: "/bekir/docdex", peer_handle: "/bekir/docdex",
+      direction: "in", autonomy: "review", verb: null,
+      held_because: "not_a_request", received_at: now - 10800, read: true,
+    },
     // The sender's own copy, which is what makes a thread a conversation.
     {
       message_id: "m_out1", direction: "out", from: "/k/cz6900v2h90vnwefj7g7ezvbh4",
@@ -143,25 +153,27 @@ check("mailbox name", text($("me-name")), "su_iam");
 check("mailbox handle", text($("me-sub")), "/bekir/su_iam");
 check("identity switcher enabled (2 mailboxes)", $("identity-btn").disabled, false);
 
-console.log("\n— your agents are listed first —");
+console.log("\n— the list is correspondence, not a directory —");
 const groups = [...$("threads").children];
-check("first row is the agents heading", text(groups[0]), "Your agents");
 const agentRows = [];
 const otherRows = [];
-let bucket = agentRows;
-for (const el of groups.slice(1)) {
-  if (el.classList.contains("group-head")) { bucket = otherRows; continue; }
+let bucket = otherRows;
+for (const el of groups) {
+  if (el.classList.contains("group-head")) {
+    bucket = text(el) === "Your agents" ? agentRows : otherRows;
+    continue;
+  }
   bucket.push(el.querySelector(".thread-row"));
 }
-const agentNames = agentRows.map((r) => text(r.querySelector(".tr-name")));
-// The acting mailbox is not in its own list — you cannot write to yourself.
-check("both sub-agents listed, acting mailbox excluded", agentRows.length, 2);
-check("named agent uses its handle", agentNames.includes("docdex"), true);
-check("unnamed agent falls back to its label", agentNames.includes("scratch"), true);
-check("silent agent shows its address, not 'no messages'", text(agentRows.find((r) => text(r.querySelector(".tr-name")) === "docdex").querySelector(".tr-preview")), "/bekir/docdex");
-check("unnamed agent is warned about", text(agentRows.find((r) => text(r.querySelector(".tr-name")) === "scratch").querySelector(".tr-preview")), "No handle — fleet trust will not match it");
+const allNames = [...agentRows, ...otherRows].map((r) => text(r.querySelector(".tr-name")));
+// `docdex` and `scratch` are on the account and have never exchanged a message. A fleet of a dozen
+// such agents would bury the conversations that are real, so they belong in the identity picker
+// rather than in this list.
+check("an own agent you have corresponded with is listed", allNames.includes("docdex"), true);
+check("a silent own agent is not", allNames.includes("scratch"), false);
+check("every mailbox is still reachable from the picker", $("identity-btn").disabled, false);
 
-console.log("\n— conversations below —");
+console.log("\n— conversations —");
 const names = otherRows.map((r) => text(r.querySelector(".tr-name")));
 // A key address is shown as a key address — truncated, but still recognisably /k/.
 check("newest conversation first (stranger)", names[0], "/k/eeee5555f…");
@@ -224,8 +236,9 @@ check("outbound appears immediately", mine.some((el) => text(el) === "on it"), t
 check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
 
 console.log("\n— peer normalisation —");
-// Two sub-agents plus the two conversations: replying did not fork a third conversation.
-check("sent to the handle, no new thread", [...$("threads").querySelectorAll(".thread-row")].length, 4);
+// The two conversations, and still two: replying to `/bekir/agent1` by handle must land in the
+// thread its `/k/` messages already built, not fork a third.
+check("sent to the handle, no new thread", [...$("threads").querySelectorAll(".thread-row")].length, 3);
 
 console.log("\n— chatting with your own agent —");
 const docdexRow = [...$("threads").querySelectorAll(".thread-row")]
@@ -252,7 +265,9 @@ $("peer-info").querySelector(".open-mailbox").click();
 await settle(150);
 check("now acting as the agent", text($("me-sub")), "/bekir/docdex");
 check("its own row is gone from the agent list", [...$("threads").querySelectorAll(".tr-name")].every((n) => text(n) !== "docdex"), true);
-check("the previous mailbox is now an agent row", [...$("threads").querySelectorAll(".tr-name")].some((n) => text(n) === "su_iam"), true);
+// It is not promoted into the list just for being an own mailbox — the list stays correspondence.
+// Switching back to it is the picker's job, and the picker still offers it.
+check("the previous mailbox is reachable from the picker", $("identity-btn").disabled, false);
 
 console.log("\n— back closes the thread —");
 $("back-btn").click();
