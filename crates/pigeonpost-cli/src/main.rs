@@ -250,6 +250,10 @@ enum AgentdAction {
         #[arg(long)]
         once: bool,
     },
+    /// Install the daemon with this machine's service manager and start it.
+    Install,
+    /// Stop the daemon and remove its service unit.
+    Uninstall,
     /// What the daemon has seen, and what is waiting in the spool.
     Status,
     /// Print the spooled events and clear them. What a session start-up hook calls.
@@ -1159,6 +1163,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Agentd { action } => {
             return match action {
                 AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
+                AgentdAction::Install => agentd_cmd::install(&home),
+                AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
                 AgentdAction::Status => agentd_cmd::status(&home, cli.json),
                 AgentdAction::Drain { keep } => agentd_cmd::drain(&home, *keep),
             }

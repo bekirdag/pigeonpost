@@ -259,6 +259,7 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             "{}",
             serde_json::json!({
                 "cursor": cursor,
+                "service_unit": installed_unit().map(|p| p.display().to_string()),
                 "spool": waiting.iter().map(|(f, c)| serde_json::json!({"file": f, "events": c})).collect::<Vec<_>>(),
             })
         );
@@ -274,6 +275,10 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
         for (file, count) in waiting {
             println!("  {file}: {count} event(s)");
         }
+    }
+    match installed_unit() {
+        Some(unit) => println!("service: installed at {}", unit.display()),
+        None => println!("service: not installed — run `pigeonpost agentd install`"),
     }
     println!("log: {}", home.join(LOG_FILE).display());
     Ok(())
@@ -301,4 +306,202 @@ pub fn drain(home: &Path, keep: bool) -> Result<(), Error> {
         println!("no new mail");
     }
     Ok(())
+}
+
+// ---- service installation ---------------------------------------------------------------------
+//
+// Explicit, never a package-install side effect. A background process that starts because someone
+// ran `npm i` is a process nobody chose to run, and this one holds a credential for the account.
+
+const SERVICE_LABEL: &str = "dev.pigeonpost.agentd";
+
+/// The binary a service manager should start. `current_exe` rather than a name on `PATH`, because
+/// a unit resolved through `PATH` starts whatever happens to be installed later.
+fn program() -> Result<PathBuf, Error> {
+    std::env::current_exe().map_err(|e| format!("cannot resolve this binary's path: {e}").into())
+}
+
+#[cfg(target_os = "macos")]
+fn unit_path() -> Result<PathBuf, Error> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join("Library/LaunchAgents")
+        .join(format!("{SERVICE_LABEL}.plist")))
+}
+
+#[cfg(target_os = "linux")]
+fn unit_path() -> Result<PathBuf, Error> {
+    let base = std::env::var_os("XDG_CONFIG_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config")))
+        .ok_or("neither XDG_CONFIG_HOME nor HOME is set")?;
+    Ok(base.join("systemd/user/pigeonpost-agentd.service"))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn unit_path() -> Result<PathBuf, Error> {
+    Err("automatic installation is not implemented for this platform yet — run `pigeonpost agentd run` under your own supervisor".into())
+}
+
+/// Install the daemon with this machine's service manager and start it.
+pub fn install(home: &Path) -> Result<(), Error> {
+    // Refuse rather than install something that cannot work: without a session the daemon would
+    // start, fail to authenticate, and retry forever while looking healthy to the service manager.
+    if crate::login_cmd::load(home)?.is_none() {
+        return Err(
+            "not signed in — run `pigeonpost login` first, or the daemon will start and fail to authenticate"
+                .into(),
+        );
+    }
+    let program = program()?;
+    let path = unit_path()?;
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&path, unit_body(&program, home)?)?;
+    load_service(&path)?;
+    println!("installed {}", path.display());
+    println!("  program: {}", program.display());
+    println!("  home:    {}", home.display());
+    println!();
+    println!("It holds one event stream and writes new mail to the spool. Check it with:");
+    println!("  pigeonpost agentd status");
+    Ok(())
+}
+
+/// Stop the daemon and remove the unit.
+pub fn uninstall(home: &Path) -> Result<(), Error> {
+    let _ = home;
+    let path = unit_path()?;
+    unload_service(&path)?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => println!("removed {}", path.display()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("not installed"),
+        Err(e) => return Err(e.into()),
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
+    // KeepAlive rather than RunAtLoad alone: the daemon's whole job is to be there when mail
+    // arrives, so launchd restarting it after a crash or a logout is the behaviour wanted.
+    Ok(format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{label}</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>{program}</string>
+    <string>--home</string>
+    <string>{home}</string>
+    <string>agentd</string>
+    <string>run</string>
+  </array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>{home}/agentd.out</string>
+  <key>StandardErrorPath</key><string>{home}/agentd.err</string>
+</dict>
+</plist>
+"#,
+        label = SERVICE_LABEL,
+        program = program.display(),
+        home = home.display(),
+    ))
+}
+
+#[cfg(target_os = "linux")]
+fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
+    Ok(format!(
+        r#"[Unit]
+Description=Pigeonpost agent daemon
+After=network-online.target
+
+[Service]
+ExecStart={program} --home {home} agentd run
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
+"#,
+        program = program.display(),
+        home = home.display(),
+    ))
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn unit_body(_program: &Path, _home: &Path) -> Result<String, Error> {
+    Err("automatic installation is not implemented for this platform yet".into())
+}
+
+#[cfg(target_os = "macos")]
+fn load_service(path: &Path) -> Result<(), Error> {
+    // Unload first so `install` is idempotent: re-running it after an upgrade should replace the
+    // running daemon rather than fail because one is already registered.
+    // Silenced: when nothing is loaded this prints an I/O error that reads like a failure but is
+    // just "there was nothing to unload".
+    let _ = std::process::Command::new("launchctl")
+        .args(["unload", &path.display().to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    let status = std::process::Command::new("launchctl")
+        .args(["load", &path.display().to_string()])
+        .status()?;
+    if !status.success() {
+        return Err("launchctl load failed".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+fn unload_service(path: &Path) -> Result<(), Error> {
+    let _ = std::process::Command::new("launchctl")
+        .args(["unload", &path.display().to_string()])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn load_service(_path: &Path) -> Result<(), Error> {
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "daemon-reload"])
+        .status();
+    let status = std::process::Command::new("systemctl")
+        .args(["--user", "enable", "--now", "pigeonpost-agentd.service"])
+        .status()?;
+    if !status.success() {
+        return Err("systemctl --user enable failed; on a headless box you may need `loginctl enable-linger $USER`".into());
+    }
+    Ok(())
+}
+
+#[cfg(target_os = "linux")]
+fn unload_service(_path: &Path) -> Result<(), Error> {
+    let _ = std::process::Command::new("systemctl")
+        .args(["--user", "disable", "--now", "pigeonpost-agentd.service"])
+        .status();
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn load_service(_path: &Path) -> Result<(), Error> {
+    Err("automatic installation is not implemented for this platform yet".into())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+fn unload_service(_path: &Path) -> Result<(), Error> {
+    Ok(())
+}
+
+/// Whether a unit is installed, for `status` to report. Being installed is not the same as
+/// running, and saying so plainly beats implying either.
+pub fn installed_unit() -> Option<PathBuf> {
+    unit_path().ok().filter(|p| p.exists())
 }
