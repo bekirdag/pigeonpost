@@ -932,9 +932,23 @@
     // explicit earlier choice still wins over both.
     const remembered = LS.getItem(K.identity);
     const named = resolved.filter((i) => i.handle);
-    const preferred = cfg && cfg.primaryNamespace
-      ? named.find((i) => i.handle.startsWith(cfg.primaryNamespace + "/"))
-      : null;
+
+    // Within the operator's own namespace, `main` is the one that answers for the namespace itself
+    // — mail addressed to `/bekir` rather than to `/bekir/agent1` lands there. So it is what
+    // "my inbox" means, and opening any other mailbox of theirs by default would hide exactly the
+    // mail a person sent them directly. Falling back to the first named mailbox in the namespace
+    // keeps this working before a `main` exists.
+    const inNamespace = (i) =>
+      cfg && cfg.primaryNamespace && i.handle.startsWith(cfg.primaryNamespace + "/");
+    // A /github/<login> mailbox is personal by construction: the postbox only mints one for a
+    // login the account has proved it controls. So for someone who signed in that way it is "their"
+    // inbox, in the same sense /bekir/main is for a bought namespace.
+    const preferred =
+      named.find((i) => inNamespace(i) && i.handle === cfg.primaryNamespace + "/main") ||
+      named.find(inNamespace) ||
+      named.find((i) => i.handle.startsWith("/github/")) ||
+      named.find((i) => i.handle.endsWith("/main")) ||
+      null;
     const chosen =
       resolved.find((i) => i.address === remembered) ||
       preferred ||
