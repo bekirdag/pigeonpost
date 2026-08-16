@@ -496,7 +496,9 @@ Agents that each want their own mailbox should each use --agent <name>.",
             Ok(()) => true,
             Err(e) => {
                 println!("could not wire up this repository: {e}");
-                println!("Run `pigeonpost {scope}agentd hooks --install` here once that is sorted.");
+                println!(
+                    "Run `pigeonpost {scope}agentd hooks --install` here once that is sorted."
+                );
                 false
             }
         }
@@ -562,7 +564,10 @@ pub async fn claim_github(home: &Path, base_url: &str, json: bool) -> Result<(),
     let uri = grant["verification_uri"]
         .as_str()
         .unwrap_or("https://github.com/login/device");
-    let device_code = grant["device_code"].as_str().unwrap_or_default().to_string();
+    let device_code = grant["device_code"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
     // GitHub's own floor. Polling faster than this earns a `slow_down` and a longer wait, so the
     // interval it hands back is the one to respect rather than a guess.
     let mut interval = grant["interval"].as_u64().unwrap_or(5).max(1);

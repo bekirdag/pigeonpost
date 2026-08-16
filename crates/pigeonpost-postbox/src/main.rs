@@ -522,11 +522,7 @@ async fn authorize_handle(
     // `PROVIDER_NAMESPACES`. Asking `namespace_owner` about `/github` would be asking who bought
     // the whole of GitHub, and the honest answer is nobody.
     if PROVIDER_NAMESPACES.contains(&namespace.as_str()) {
-        let login = canonical
-            .rsplit('/')
-            .next()
-            .unwrap_or_default()
-            .to_string();
+        let login = canonical.rsplit('/').next().unwrap_or_default().to_string();
         let proved = state
             .store
             .provider_identity_owner(namespace.clone(), login.clone())
@@ -3317,7 +3313,10 @@ mod tests {
             .unwrap();
 
         assert!(
-            resolve_recipient(&state, "/github").await.unwrap().is_none(),
+            resolve_recipient(&state, "/github")
+                .await
+                .unwrap()
+                .is_none(),
             "the provider namespace as a whole belongs to nobody"
         );
         let found = resolve_recipient(&state, "/github/ada").await.unwrap();

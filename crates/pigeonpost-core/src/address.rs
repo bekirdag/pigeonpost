@@ -373,7 +373,11 @@ mod tests {
         assert_eq!(namespace_root("/Bekir").as_deref(), Some("bekir"));
         // A trailing slash is a typo, not a second address.
         assert_eq!(namespace_root("/bekir/").as_deref(), Some("bekir"));
-        assert_eq!(namespace_root("bekir"), None, "a handle always leads with /");
+        assert_eq!(
+            namespace_root("bekir"),
+            None,
+            "a handle always leads with /"
+        );
     }
 
     /// A namespace is not a mailbox and a mailbox is not a namespace. Confusing the two would make
@@ -396,7 +400,11 @@ mod tests {
         assert_eq!(namespace_root("/-leading"), None);
         assert_eq!(namespace_root("/trailing-"), None);
         assert_eq!(namespace_root("/"), None);
-        assert_eq!(namespace_root("/gh"), None, "the pre-1.0 abbreviation stays refused");
+        assert_eq!(
+            namespace_root("/gh"),
+            None,
+            "the pre-1.0 abbreviation stays refused"
+        );
         assert_eq!(
             namespace_root(&format!("/{}", "x".repeat(MAX_HANDLE_NAMESPACE_BYTES + 1))),
             None

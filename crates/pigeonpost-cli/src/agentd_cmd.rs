@@ -445,7 +445,10 @@ fn stop_hook_already_continuing() -> bool {
     }
     serde_json::from_str::<serde_json::Value>(&input)
         .ok()
-        .and_then(|v| v.get("stop_hook_active").and_then(serde_json::Value::as_bool))
+        .and_then(|v| {
+            v.get("stop_hook_active")
+                .and_then(serde_json::Value::as_bool)
+        })
         .unwrap_or(false)
 }
 
@@ -813,8 +816,12 @@ pub(crate) const DEFAULT_MCP_URL: &str = "https://postbox.pigeonpost.dev/mcp";
 fn write_project_mcp(dir: &Path, token: &str, url: &str) -> Result<PathBuf, Error> {
     let path = dir.join(".mcp.json");
     let mut root: serde_json::Value = match std::fs::read_to_string(&path) {
-        Ok(body) if !body.trim().is_empty() => serde_json::from_str(&body)
-            .map_err(|e| format!("{} is not valid JSON ({e}); not touching it", path.display()))?,
+        Ok(body) if !body.trim().is_empty() => serde_json::from_str(&body).map_err(|e| {
+            format!(
+                "{} is not valid JSON ({e}); not touching it",
+                path.display()
+            )
+        })?,
         _ => serde_json::json!({}),
     };
     root.as_object_mut()
@@ -1119,7 +1126,10 @@ mod tests {
     /// "no new mail". The Stop hook must hand the mail back instead.
     #[test]
     fn the_stop_hook_hands_mail_back_rather_than_swallowing_it() {
-        let hooks = claude_hooks(Path::new("/usr/local/bin/pigeonpost"), Path::new("/home/agent"));
+        let hooks = claude_hooks(
+            Path::new("/usr/local/bin/pigeonpost"),
+            Path::new("/home/agent"),
+        );
 
         let command = |event: &str| {
             hooks[event][0]["hooks"][0]["command"]

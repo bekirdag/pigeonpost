@@ -1875,7 +1875,11 @@ mod tests {
             .await
             .unwrap();
 
-        let found = store.namespace_inbox("bekir".into()).await.unwrap().unwrap();
+        let found = store
+            .namespace_inbox("bekir".into())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(
             found.address, "/k/main",
             "main answers for the namespace even though it was created last"
@@ -1896,7 +1900,11 @@ mod tests {
             .await
             .unwrap();
 
-        let found = store.namespace_inbox("bekir".into()).await.unwrap().unwrap();
+        let found = store
+            .namespace_inbox("bekir".into())
+            .await
+            .unwrap()
+            .unwrap();
         assert_eq!(found.address, "/k/first", "oldest, so the answer is stable");
     }
 
@@ -1910,7 +1918,11 @@ mod tests {
             .await
             .unwrap();
         assert!(
-            store.namespace_inbox("bekir".into()).await.unwrap().is_none(),
+            store
+                .namespace_inbox("bekir".into())
+                .await
+                .unwrap()
+                .is_none(),
             "a namespace with no mailboxes has no inbox, however similar its neighbour"
         );
     }
@@ -1921,14 +1933,26 @@ mod tests {
     async fn a_reused_provider_login_is_refused_rather_than_transferred() {
         let store = Store::open(":memory:").unwrap();
         store
-            .record_provider_identity("github".into(), "ada".into(), "1".into(), "acct-a".into(), 0)
+            .record_provider_identity(
+                "github".into(),
+                "ada".into(),
+                "1".into(),
+                "acct-a".into(),
+                0,
+            )
             .await
             .unwrap()
             .unwrap();
 
         // Same person, same account, run twice: setup gets re-run, and that must be fine.
         assert!(store
-            .record_provider_identity("github".into(), "ada".into(), "1".into(), "acct-a".into(), 1)
+            .record_provider_identity(
+                "github".into(),
+                "ada".into(),
+                "1".into(),
+                "acct-a".into(),
+                1
+            )
             .await
             .unwrap()
             .is_ok());
