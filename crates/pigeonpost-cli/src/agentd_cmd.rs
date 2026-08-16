@@ -384,8 +384,19 @@ fn own_mailboxes(home: &Path) -> Option<Vec<String>> {
 /// start would swallow every other agent's mail, and they would never learn it existed.
 pub fn drain(home: &Path, keep: bool) -> Result<(), Error> {
     let machine = machine_home(home);
+    let scoped_to_an_agent = machine != home;
     let mine = own_mailboxes(home);
     let spool = machine.join(SPOOL_DIR);
+
+    // An agent home with no mailbox list is the dangerous case: falling back to "no filter" would
+    // drain the whole box on behalf of an agent that owns none of it, and the fleet would never
+    // learn the mail existed. That happens whenever hooks are installed for an agent before it has
+    // onboarded, which is an easy order to get wrong.
+    if scoped_to_an_agent && mine.is_none() {
+        println!("no mailbox here yet — nothing of this agent's to drain.");
+        println!("Take one first:  pigeonpost postbox onboard --handle /namespace/name");
+        return Ok(());
+    }
 
     let wanted: Option<Vec<PathBuf>> = mine
         .as_ref()
@@ -446,17 +457,37 @@ fn program() -> Result<PathBuf, Error> {
         return Ok(exe);
     }
 
-    // Running through the launcher. Find the stable command it was invoked as.
-    if let Some(stable) = resolve_on_path("pigeonpost").filter(|p| !is_ephemeral(p)) {
-        return Ok(stable);
+    // Running through the npm launcher, whose unpack directory is deleted on exit. Resolving the
+    // `pigeonpost` on PATH is *not* the answer: that is the launcher's JavaScript entry point, and
+    // a service manager runs it with a bare environment where `#!/usr/bin/env node` finds no node
+    // — the daemon then dies with "env: node: No such file or directory". So copy the native
+    // binary we are already running to a fixed location and record that. It is self-contained,
+    // needs no interpreter, and re-running install after an upgrade refreshes it.
+    let stable = service_binary_path()?;
+    if let Some(parent) = stable.parent() {
+        std::fs::create_dir_all(parent)?;
     }
-    Err(format!(
-        "this build is running from a temporary directory ({}) that will not exist later, and no \
-stable `pigeonpost` was found on PATH. Install the CLI so it has a fixed location — for example \
-`npm i -g @bekirdag/pigeonpost` — then run this again.",
-        exe.display()
-    )
-    .into())
+    // Replace via a temporary file: overwriting a binary that a running daemon is executing can
+    // fail or, worse, leave a half-written file where a service manager expects a program.
+    let staging = stable.with_extension("new");
+    std::fs::copy(&exe, &staging)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&staging, std::fs::Permissions::from_mode(0o755))?;
+    }
+    std::fs::rename(&staging, &stable)?;
+    Ok(stable)
+}
+
+/// Where a copy of the native binary lives for service managers to start.
+fn service_binary_path() -> Result<PathBuf, Error> {
+    let home = std::env::var_os("HOME").ok_or("HOME is not set")?;
+    Ok(PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("pigeonpost")
+        .join("pigeonpost"))
 }
 
 /// True for the launcher's per-execution unpack directory, which is removed on exit.
@@ -466,18 +497,6 @@ fn is_ephemeral(path: &Path) -> bool {
             .to_str()
             .is_some_and(|name| name.starts_with("exec-"))
     }) && path.to_string_lossy().contains(".cache")
-}
-
-fn resolve_on_path(name: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
-        .map(|candidate| {
-            // Resolve symlinks so the recorded path survives the shim being repointed, but keep
-            // the original if it cannot be canonicalised.
-            std::fs::canonicalize(&candidate).unwrap_or(candidate)
-        })
 }
 
 #[cfg(target_os = "macos")]
@@ -715,6 +734,18 @@ fn settings_target(global: bool) -> Result<PathBuf, Error> {
 /// the user's settings makes every session on the box drain one mailbox — which is what happened
 /// before this defaulted correctly, and it is silent: the other agents simply never see their mail.
 pub fn hooks(home: &Path, install: bool, global: bool) -> Result<(), Error> {
+    // Installing a hook for an agent that has not onboarded produces a hook that drains on behalf
+    // of a mailbox that does not exist. Say so at the point of the mistake rather than letting it
+    // be discovered later as missing mail.
+    if install && machine_home(home) != home && own_mailboxes(home).is_none() {
+        return Err(format!(
+            "no mailbox in {} yet — `agentd hooks` only wires up an existing mailbox, it does not \
+create one. Run `pigeonpost postbox onboard --handle /namespace/name` first (add --agent to keep \
+it in this folder), then install the hooks.",
+            home.display()
+        )
+        .into());
+    }
     let program = program()?;
     let hooks = claude_hooks(&program, home);
     let token_hint = format!("pigeonpost --home {} postbox token", home.display());
@@ -874,6 +905,42 @@ mod tests {
             !std::fs::read_to_string(&theirs).unwrap().trim().is_empty(),
             "another agent's mail must be left where it is"
         );
+    }
+
+    /// The case that bites when hooks are installed before onboarding: an agent that owns no
+    /// mailbox must drain nothing, not everything. Falling back to "no filter" empties the box on
+    /// behalf of an agent with no claim to any of it.
+    #[test]
+    fn an_agent_with_no_mailbox_drains_nothing() {
+        let machine = tempfile::tempdir().unwrap();
+        let agent_home = machine.path().join("agents").join("newcomer");
+        std::fs::create_dir_all(&agent_home).unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+
+        let someone_else = spool_file(machine.path(), "/k/theirs");
+        std::fs::write(&someone_else, "{\"event_id\":9}\n").unwrap();
+
+        drain(&agent_home, false).unwrap();
+
+        assert!(
+            !std::fs::read_to_string(&someone_else)
+                .unwrap()
+                .trim()
+                .is_empty(),
+            "an agent with no mailbox must not empty anybody else's"
+        );
+    }
+
+    /// The machine home legitimately owns the whole spool, so it still drains all of it.
+    #[test]
+    fn the_machine_home_still_drains_everything() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        let one = spool_file(machine.path(), "/k/one");
+        std::fs::write(&one, "{\"event_id\":1}\n").unwrap();
+
+        drain(machine.path(), false).unwrap();
+        assert!(std::fs::read_to_string(&one).unwrap().trim().is_empty());
     }
 
     /// A path under the launcher's per-run unpack directory is gone by the time a hook fires.

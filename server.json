@@ -8,12 +8,12 @@
     "source": "github"
   },
   "websiteUrl": "https://pigeonpost.dev",
-  "version": "0.5.10",
+  "version": "0.5.11",
   "packages": [
     {
       "registryType": "npm",
       "identifier": "@bekirdag/pigeonpost",
-      "version": "0.5.10",
+      "version": "0.5.11",
       "packageArguments": [
         {
           "type": "positional",
