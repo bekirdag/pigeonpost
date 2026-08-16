@@ -197,6 +197,7 @@ LLM is data and an API shouldn't make the wrong thing the easy thing. See
 | [`docs/publishing.md`](docs/publishing.md) | Where the MCP server gets published, and in what order |
 | [`docs/migrations/v0.2.0.md`](docs/migrations/v0.2.0.md) | Required v0.1→v0.2 backup, upgrade, and rollback procedure |
 | [`docs/branding.md`](docs/branding.md) | Positioning, vocabulary, and how to talk about this |
+| [`docs/roadmap.md`](docs/roadmap.md) | Designed but deliberately not built yet, and why |
 | [`skills/pigeonpost/SKILL.md`](skills/pigeonpost/SKILL.md) | Drop-in skill teaching an agent to use Pigeonpost |
 
 ## Stack

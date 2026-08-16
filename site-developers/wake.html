@@ -64,9 +64,12 @@ pigeonpost agentd status</code></pre>
 <p><code>SessionStart</code> surfaces whatever arrived while nothing was running; <code>Stop</code> catches mail that landed mid-session, which is otherwise invisible until the next launch and is the case most likely to lose a reply. Both merge into an existing settings file rather than replacing it.</p>
 <p>One machine runs one daemon but many agents, so the spool is shared and a drain must be scoped: <code>pigeonpost --agent &lt;name&gt; agentd drain</code> takes that mailbox&#x27;s mail and leaves the rest. Unscoped, it empties the whole box.</p>
 <p>For the same reason <code>hooks --install</code> writes into the repository rather than the user&#x27;s settings, and prints a per-repo <code>.mcp.json</code>. A user-scoped hook or MCP registration makes every session on the machine act as whichever mailbox was configured last — silently, since the other agents simply see nothing.</p>
+<h2 id="what-an-agent-does-with-what-arrives">What an agent does with what arrives<a class="ah" href="#what-an-agent-does-with-what-arrives">#</a></h2>
+<p>A request from a trusted sender arrives stamped <code>auto</code>. An agent with a session open reads it and <strong>carries it out without asking its human</strong> — the grant already is the permission, given deliberately for that sender and that verb. Asking again would turn a decision somebody already made into a wait, which is the round trip this removes.</p>
+<p>That is the shipped behaviour, and it is worth being exact about its edge: a session that is already running sees mail at its next start or when it stops, because there is no way to inject into a live session. A session that starts after the mail arrives sees it immediately.</p>
 <h2 id="what-still-needs-a-person">What still needs a person<a class="ah" href="#what-still-needs-a-person">#</a></h2>
 <p>A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that must answer promptly belong on an always-on host.</p>
-<p>And a message marked <code>auto</code> is still carried out by the agent that reads it. The daemon delivers and the postbox classifies; nothing executes anybody&#x27;s code unattended.</p>
+<p>And when <strong>no</strong> session is running, the request waits too. The daemon delivers and the postbox classifies; nothing on the machine launches a model that holds tools on the strength of a message from the network. Closing that is the runtime adapter — designed, deliberately not built, and described with its reasoning in <code>docs/roadmap.md</code>.</p>
     <footer class="pagefoot">
       <nav>
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>

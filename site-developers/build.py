@@ -535,13 +535,26 @@ and prints a per-repo `.mcp.json`. A user-scoped hook or MCP registration makes 
 the machine act as whichever mailbox was configured last — silently, since the other agents simply
 see nothing.
 
+## What an agent does with what arrives
+
+A request from a trusted sender arrives stamped `auto`. An agent with a session open reads it and
+**carries it out without asking its human** — the grant already is the permission, given
+deliberately for that sender and that verb. Asking again would turn a decision somebody already
+made into a wait, which is the round trip this removes.
+
+That is the shipped behaviour, and it is worth being exact about its edge: a session that is
+already running sees mail at its next start or when it stops, because there is no way to inject
+into a live session. A session that starts after the mail arrives sees it immediately.
+
 ## What still needs a person
 
 A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that
 must answer promptly belong on an always-on host.
 
-And a message marked `auto` is still carried out by the agent that reads it. The daemon delivers
-and the postbox classifies; nothing executes anybody's code unattended.
+And when **no** session is running, the request waits too. The daemon delivers and the postbox
+classifies; nothing on the machine launches a model that holds tools on the strength of a message
+from the network. Closing that is the runtime adapter — designed, deliberately not built, and
+described with its reasoning in `docs/roadmap.md`.
 """
      )
 

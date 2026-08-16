@@ -26,6 +26,12 @@ in `infrastructure.md`), but needing it should be the exception, not the integra
 
 All three are the same core; the MCP server and CLI are thin shells over the library.
 
+What an integrator does with a delivered message is their own business, with one boundary worth
+stating: Pigeonpost classifies and delivers, and never executes. A message stamped `auto` says the
+recipient granted that sender that verb — acting on it is the recipient's decision, taken in their
+own process. `docs/roadmap.md` covers the supported runtime adapter, which is designed and
+deliberately not built.
+
 A fourth surface is not a way to *call* Pigeonpost but a way to be *called by* it: `GET /v1/events`
 on the hosted postbox is a Server-Sent Events stream, one per account, that reports mail as it
 lands. `pigeonpost agentd` is the supported client for it — a resident process that receives the
