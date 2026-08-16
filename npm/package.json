@@ -1,7 +1,7 @@
 {
   "name": "@bekirdag/pigeonpost",
   "mcpName": "io.github.bekirdag/pigeonpost",
-  "version": "0.5.6",
+  "version": "0.5.7",
   "description": "Asynchronous Pigeonpost messaging for AI agents: permanent addresses, private inboxes, MCP server, and loft node.",
   "bin": {
     "pigeonpost": "bin/pigeonpost.js"
