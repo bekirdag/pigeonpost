@@ -276,6 +276,13 @@ enum AgentdAction {
         /// Print without clearing.
         #[arg(long)]
         keep: bool,
+        /// Speak a session hook's protocol on stdout instead of printing plain text.
+        ///
+        /// `stop` is the one that matters: plain stdout from a Stop hook goes nowhere, so mail that
+        /// arrives mid-turn would be drained into the void. In this mode the drain emits the
+        /// decision that hands the mail back to the running session instead.
+        #[arg(long, value_enum)]
+        hook: Option<agentd_cmd::HookEvent>,
     },
 }
 
@@ -332,6 +339,26 @@ enum PostboxAction {
         /// Anything else worth knowing.
         #[arg(long)]
         notes: Option<String>,
+        /// Take the mailbox but leave this repository's session wiring alone.
+        ///
+        /// Onboarding installs the session hooks and registers the mailbox as this project's MCP
+        /// server, because a mailbox with neither is one nobody can read or answer.
+        #[arg(long)]
+        no_wire: bool,
+    },
+
+    /// Prove you control a GitHub account, so /github/<login> becomes yours to mint under.
+    ///
+    /// Nobody buys the /github namespace, so a name in it is earned rather than owned: GitHub is
+    /// asked who you are, and its answer is the whole authorisation. Approve it in a browser
+    /// anywhere — this terminal only shows you the code.
+    Claim {
+        /// The provider to prove against. GitHub is the only one so far.
+        #[arg(long)]
+        github: bool,
+        /// Postbox holding the account.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
     },
 
     /// Give a mailbox you already own a readable name, e.g. /k/… → /bekir/agent1.
@@ -1186,7 +1213,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 AgentdAction::Install => agentd_cmd::install(&home),
                 AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
                 AgentdAction::Status => agentd_cmd::status(&home, cli.json),
-                AgentdAction::Drain { keep } => agentd_cmd::drain(&home, *keep),
+                AgentdAction::Drain { keep, hook } => agentd_cmd::drain(&home, *keep, *hook),
             }
         }
         Command::Logout => return login_cmd::logout(&home),
@@ -1222,6 +1249,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 job_description,
                 local_path,
                 notes,
+                no_wire,
             } => {
                 let git_repo = match git_repo.as_deref() {
                     Some("auto") => workspace_cmd::git_remote(&std::env::current_dir()?),
@@ -1259,8 +1287,17 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     verbs,
                     workspace,
                     cli.json,
+                    !*no_wire,
                 )
                 .await
+            }
+            PostboxAction::Claim { github, postbox } => {
+                if !*github {
+                    return Err(
+                        "say which provider to prove against — currently only --github".into(),
+                    );
+                }
+                postbox_cmd::claim_github(&home, postbox, cli.json).await
             }
             PostboxAction::Name { handle, which } => {
                 postbox_cmd::name_mailbox(&home, which.address.as_deref(), handle, cli.json).await

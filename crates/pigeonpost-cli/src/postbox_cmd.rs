@@ -237,6 +237,30 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
         .ok_or_else(|| "no such mailbox in this home".into())
 }
 
+/// Whether the current directory is a checkout, which is what "one agent per repo" is about.
+///
+/// Onboarding writes session hooks and an MCP registration into the working directory, so it has
+/// to be sure that directory is a project and not whichever folder a terminal happened to open in.
+fn in_a_repository() -> bool {
+    let Ok(mut dir) = std::env::current_dir() else {
+        return false;
+    };
+    loop {
+        if dir.join(".git").exists() {
+            return true;
+        }
+        if !dir.pop() {
+            return false;
+        }
+    }
+}
+
+/// The single mailbox a home acts as, for wiring up config that has to name the same one the
+/// session's hooks drain. An agent home holds exactly one; anything else is ambiguous and says so.
+pub(crate) fn sole_credential(home: &Path) -> Result<Credential, Error> {
+    credential_for(home, None)
+}
+
 /// Every home on this machine that might already hold a mailbox: the machine home and each agent.
 fn sibling_homes(home: &Path) -> Vec<PathBuf> {
     let machine = crate::agentd_cmd::machine_home_of(home);
@@ -310,6 +334,7 @@ pub async fn onboard(
     verbs: &[String],
     workspace: crate::workspace_cmd::Workspace,
     json: bool,
+    wire: bool,
 ) -> Result<(), Error> {
     let existing = load(home)?;
 
@@ -461,6 +486,24 @@ Agents that each want their own mailbox should each use --agent <name>.",
         format!(" --as {name}")
     };
 
+    // Wire the repository up here, rather than leaving it as a step to remember. A mailbox is only
+    // half of being reachable: without the session hooks nothing surfaces arriving mail, and
+    // without the MCP registration the session has no way to read or answer it. Every agent set up
+    // before this had to find that out by not receiving something.
+    let wired = if wire && in_a_repository() {
+        println!();
+        match crate::agentd_cmd::hooks(home, true, false) {
+            Ok(()) => true,
+            Err(e) => {
+                println!("could not wire up this repository: {e}");
+                println!("Run `pigeonpost {scope}agentd hooks --install` here once that is sorted.");
+                false
+            }
+        }
+    } else {
+        false
+    };
+
     println!();
     println!("{name} is ready.");
     println!();
@@ -472,9 +515,19 @@ Agents that each want their own mailbox should each use --agent <name>.",
         println!("This home holds only this mailbox, so no --as is needed — every");
         println!("command run with the same --agent acts as {name}.");
     }
-    println!();
-    println!("Connect it as an MCP server too, if you want the tools in-session:");
-    println!("  pigeonpost {scope}postbox token{as_flag}");
+    if wired {
+        println!();
+        println!("This repository's sessions now act as {name}: mail surfaces at session");
+        println!("start and the moment it lands mid-turn. Restart any open session.");
+    } else if wire {
+        println!();
+        println!("Not in a git repository, so nothing was wired up here. Inside the agent's");
+        println!("checkout, run:  pigeonpost {scope}agentd hooks --install");
+    } else {
+        println!();
+        println!("Session wiring skipped (--no-wire). To do it later:");
+        println!("  pigeonpost {scope}agentd hooks --install");
+    }
     if json {
         println!();
         println!(
@@ -483,6 +536,97 @@ Agents that each want their own mailbox should each use --agent <name>.",
         );
     }
     Ok(())
+}
+
+/// Prove control of a GitHub account so `/github/<login>` can be minted under.
+///
+/// The device flow, because an agent's terminal has no browser to redirect and often no display at
+/// all: GitHub issues a short code, the person approves it wherever they happen to be, and this
+/// waits. The postbox holds the OAuth app's credentials and does the exchange, so nothing secret
+/// passes through here and there is nothing for an agent to configure.
+pub async fn claim_github(home: &Path, base_url: &str, json: bool) -> Result<(), Error> {
+    let token = crate::login_cmd::access_token(home).await?;
+    let http = reqwest::Client::builder().timeout(HTTP_TIMEOUT).build()?;
+    let base = base_url.trim_end_matches('/').to_string();
+
+    let started = http
+        .post(format!("{base}/v1/github/device"))
+        .bearer_auth(&token)
+        .send()
+        .await?;
+    if !started.status().is_success() {
+        return Err(describe_failure("could not start GitHub login", started).await);
+    }
+    let grant: serde_json::Value = started.json().await?;
+    let user_code = grant["user_code"].as_str().unwrap_or_default();
+    let uri = grant["verification_uri"]
+        .as_str()
+        .unwrap_or("https://github.com/login/device");
+    let device_code = grant["device_code"].as_str().unwrap_or_default().to_string();
+    // GitHub's own floor. Polling faster than this earns a `slow_down` and a longer wait, so the
+    // interval it hands back is the one to respect rather than a guess.
+    let mut interval = grant["interval"].as_u64().unwrap_or(5).max(1);
+    let expires_in = grant["expires_in"].as_u64().unwrap_or(900);
+
+    println!("Open {uri}");
+    println!("Enter code:  {user_code}");
+    println!();
+    println!("waiting for approval…");
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(expires_in);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("the code expired before it was approved — run this again".into());
+        }
+        tokio::time::sleep(std::time::Duration::from_secs(interval)).await;
+
+        let polled = http
+            .post(format!("{base}/v1/github/claim"))
+            .bearer_auth(&token)
+            .json(&serde_json::json!({ "device_code": device_code }))
+            .send()
+            .await?;
+        if !polled.status().is_success() {
+            return Err(describe_failure("GitHub login failed", polled).await);
+        }
+        let body: serde_json::Value = polled.json().await?;
+        match body["status"].as_str() {
+            Some("pending") => continue,
+            // Back off as instructed rather than retrying at the same rate, which GitHub answers
+            // by refusing outright.
+            Some("slow_down") => {
+                interval += 5;
+                continue;
+            }
+            Some("verified") => {
+                let login = body["login"].as_str().unwrap_or_default();
+                let handle = body["handle"].as_str().unwrap_or_default();
+                println!("verified as @{login}");
+                println!("{handle} is yours.");
+                println!();
+                println!("Give a mailbox that name:");
+                println!("  pigeonpost postbox onboard --handle {handle}");
+                if json {
+                    println!();
+                    println!("{body}");
+                }
+                return Ok(());
+            }
+            _ => return Err(format!("unexpected answer from the postbox: {body}").into()),
+        }
+    }
+}
+
+/// Turn a failed response into the clearest sentence available, preferring the server's own words.
+async fn describe_failure(context: &str, response: reqwest::Response) -> Error {
+    let status = response.status();
+    let body: serde_json::Value = response.json().await.unwrap_or(serde_json::Value::Null);
+    let detail = body["message"]
+        .as_str()
+        .or_else(|| body["error"].as_str())
+        .map(str::to_string)
+        .unwrap_or_else(|| status.to_string());
+    format!("{context}: {detail}").into()
 }
 
 /// Give a mailbox this home already owns a readable name under a namespace the account owns.
