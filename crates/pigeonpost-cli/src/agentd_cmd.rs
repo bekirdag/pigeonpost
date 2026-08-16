@@ -222,6 +222,40 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
         .open(&path)?;
     writeln!(file, "{record}")?;
 
+    // Classify what this message *would* cause, and record it, without doing it. The rails are
+    // live and observable before anything is spawned, so the audit log answers "would this have
+    // run, and why" from real traffic rather than from a test fixture.
+    match crate::executor::load_routing(home) {
+        Ok(config) => {
+            let decision = crate::executor::classify(
+                &config,
+                home,
+                &event.mailbox,
+                &serde_json::json!({ "message_id": event.message_id }),
+            );
+            let (outcome, detail) = match &decision {
+                Ok(action) => ("would_execute", Some(action.verb.clone())),
+                Err(refusal) => (refusal.as_str(), None),
+            };
+            let _ = crate::executor::audit(
+                home,
+                &event.mailbox,
+                &event.message_id,
+                outcome,
+                detail.as_deref(),
+            );
+        }
+        Err(e) => {
+            let _ = crate::executor::audit(
+                home,
+                &event.mailbox,
+                &event.message_id,
+                "routing_unreadable",
+                Some(&e.to_string()),
+            );
+        }
+    }
+
     notify(
         "Pigeonpost",
         &format!("new mail for {} from {}", event.mailbox, event.sender),
@@ -276,6 +310,22 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             println!("  {file}: {count} event(s)");
         }
     }
+    let routing = crate::executor::load_routing(home).unwrap_or_default();
+    if crate::executor::paused(home) {
+        println!("unattended action: PAUSED");
+    } else if routing.execute {
+        println!(
+            "unattended action: enabled for {} mailbox(es), at most {} at once",
+            routing.mailbox.len(),
+            routing.max_concurrent
+        );
+    } else {
+        println!(
+            "unattended action: off (rails only) — see {}",
+            crate::executor::config_path(home).display()
+        );
+    }
+    println!("audit: {}", crate::executor::audit_path(home).display());
     match installed_unit() {
         Some(unit) => println!("service: installed at {}", unit.display()),
         None => println!("service: not installed — run `pigeonpost agentd install`"),
@@ -313,6 +363,10 @@ pub fn drain(home: &Path, keep: bool) -> Result<(), Error> {
 // Explicit, never a package-install side effect. A background process that starts because someone
 // ran `npm i` is a process nobody chose to run, and this one holds a credential for the account.
 
+// launchd identifies a job by label; systemd identifies it by unit filename. So this is macOS-only
+// rather than a shared constant, and saying that with a cfg keeps the other platforms from
+// carrying a name they never use.
+#[cfg(target_os = "macos")]
 const SERVICE_LABEL: &str = "dev.pigeonpost.agentd";
 
 /// The binary a service manager should start. `current_exe` rather than a name on `PATH`, because
@@ -604,5 +658,30 @@ pub fn hooks(home: &Path, install: bool) -> Result<(), Error> {
         println!("previous settings kept at {}", backup.display());
     }
     println!("Restart any open session for them to take effect.");
+    Ok(())
+}
+
+// ---- kill switch ------------------------------------------------------------------------------
+
+/// Stop acting on anything unattended, now, without unpicking grants or stopping delivery.
+///
+/// A file rather than a flag in the config: it can be created by anything, including a shell script
+/// or another tool, and the executor checks it per message rather than per start-up. Mail keeps
+/// arriving and keeps being spooled — pausing is about *acting*, not about going deaf.
+pub fn pause(home: &Path) -> Result<(), Error> {
+    std::fs::create_dir_all(home)?;
+    std::fs::write(crate::executor::pause_path(home), "paused\n")?;
+    println!("unattended action paused.");
+    println!("Mail still arrives and is still spooled; nothing will be acted on until:");
+    println!("  pigeonpost agentd resume");
+    Ok(())
+}
+
+pub fn resume(home: &Path) -> Result<(), Error> {
+    match std::fs::remove_file(crate::executor::pause_path(home)) {
+        Ok(()) => println!("unattended action resumed"),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => println!("not paused"),
+        Err(e) => return Err(e.into()),
+    }
     Ok(())
 }

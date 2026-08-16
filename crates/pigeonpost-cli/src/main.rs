@@ -6,6 +6,7 @@
 
 mod agentd_cmd;
 mod directory_cmd;
+mod executor;
 mod handle_cmd;
 mod install_cmd;
 mod loft_cmd;
@@ -260,6 +261,10 @@ enum AgentdAction {
         #[arg(long)]
         install: bool,
     },
+    /// Stop acting on anything unattended, immediately. The kill switch.
+    Pause,
+    /// Resume unattended action after a pause.
+    Resume,
     /// What the daemon has seen, and what is waiting in the spool.
     Status,
     /// Print the spooled events and clear them. What a session start-up hook calls.
@@ -1169,6 +1174,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Agentd { action } => {
             return match action {
                 AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
+                AgentdAction::Pause => agentd_cmd::pause(&home),
+                AgentdAction::Resume => agentd_cmd::resume(&home),
                 AgentdAction::Hooks { install } => agentd_cmd::hooks(&home, *install),
                 AgentdAction::Install => agentd_cmd::install(&home),
                 AgentdAction::Uninstall => agentd_cmd::uninstall(&home),
