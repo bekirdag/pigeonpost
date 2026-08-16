@@ -6,6 +6,9 @@ edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
+# Internal to this workspace, like every crate here: the release surface is the CLI binary and the
+# npm launcher, not a set of crates.io packages. CI enforces this on every member.
+publish = false
 
 [[bin]]
 name = "pigeonpost-witness"
