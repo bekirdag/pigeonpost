@@ -89,6 +89,23 @@ CREATE TABLE IF NOT EXISTS contacts (
     PRIMARY KEY (owner, peer)
 );
 
+-- Threads the owner has put out of sight.
+--
+-- Archiving is about attention, not secrecy: the mail is untouched, still delivered, still
+-- readable, and a peer who writes again is still heard. Only the reader's own view of it changes.
+-- So this is a list of peers rather than of messages — a conversation is what someone is finished
+-- with, and a per-message flag would need re-applying every time the same peer wrote again.
+--
+-- Server-side rather than in the browser because it has to hold across the phone, the laptop, and
+-- whatever reads it next. A view that differs per device is not a filed conversation, it is a
+-- conversation someone has to file repeatedly.
+CREATE TABLE IF NOT EXISTS archived_threads (
+    owner       TEXT NOT NULL,
+    peer        TEXT NOT NULL,
+    archived_at INTEGER NOT NULL,
+    PRIMARY KEY (owner, peer)
+);
+
 -- Which account owns a purchased handle namespace, cached from the registry.
 --
 -- The registry stays the public record of who bought `/bekir`; this is the operational binding the
@@ -782,6 +799,51 @@ impl Store {
                 )
                 .optional()?;
             row.map(id_from_row).transpose()
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The peers this mailbox has archived.
+    pub async fn archived_threads(&self, owner: String) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT peer FROM archived_threads WHERE owner = ?1 ORDER BY archived_at DESC",
+            )?;
+            let rows = stmt.query_map(params![owner], |r| r.get(0))?;
+            Ok(rows.filter_map(Result::ok).collect())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// File a thread away, or bring it back. Idempotent in both directions: archiving what is
+    /// already archived is what a second tap on the same button means.
+    pub async fn set_thread_archived(
+        &self,
+        owner: String,
+        peer: String,
+        archived: bool,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            if archived {
+                c.execute(
+                    "INSERT INTO archived_threads (owner, peer, archived_at) VALUES (?1, ?2, ?3)
+                     ON CONFLICT(owner, peer) DO UPDATE SET archived_at = excluded.archived_at",
+                    params![owner, peer, now as i64],
+                )?;
+            } else {
+                c.execute(
+                    "DELETE FROM archived_threads WHERE owner = ?1 AND peer = ?2",
+                    params![owner, peer],
+                )?;
+            }
+            Ok(())
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -1925,6 +1987,50 @@ mod tests {
                 .is_none(),
             "a namespace with no mailboxes has no inbox, however similar its neighbour"
         );
+    }
+
+    /// Archiving is one reader's view, not a property of the conversation: it must not follow the
+    /// peer into anyone else's mailbox, and unarchiving must genuinely restore.
+    #[tokio::test]
+    async fn archiving_is_per_mailbox_and_reversible() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .set_thread_archived("/k/me".into(), "/bekir/noisy".into(), true, 10)
+            .await
+            .unwrap();
+
+        assert_eq!(
+            store.archived_threads("/k/me".into()).await.unwrap(),
+            vec!["/bekir/noisy".to_string()]
+        );
+        assert!(
+            store
+                .archived_threads("/k/someone-else".into())
+                .await
+                .unwrap()
+                .is_empty(),
+            "one reader filing a thread must not file it for another"
+        );
+
+        // Tapping archive twice is not an error, and it is not two rows.
+        store
+            .set_thread_archived("/k/me".into(), "/bekir/noisy".into(), true, 20)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.archived_threads("/k/me".into()).await.unwrap().len(),
+            1
+        );
+
+        store
+            .set_thread_archived("/k/me".into(), "/bekir/noisy".into(), false, 30)
+            .await
+            .unwrap();
+        assert!(store
+            .archived_threads("/k/me".into())
+            .await
+            .unwrap()
+            .is_empty());
     }
 
     /// A login that changed hands must not carry its handle to the new holder: mail already

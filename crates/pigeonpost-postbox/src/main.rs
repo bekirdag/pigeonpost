@@ -413,6 +413,7 @@ fn build_router(state: AppState) -> Router {
             "/v1/contacts",
             get(get_contacts).put(put_contact).delete(delete_contact),
         )
+        .route("/v1/archive", get(get_archive).put(put_archive))
         .route("/v1/policy", axum::routing::put(put_policy))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
@@ -2413,6 +2414,74 @@ async fn get_contacts(
     match do_list_contacts(&state, &me).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
+    }
+}
+
+/// `GET /v1/archive` — the peers this mailbox has filed away.
+async fn get_archive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.archived_threads(me.address.clone()).await {
+        Ok(peers) => Json(serde_json::json!({ "archived": peers })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "archive list failed");
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None)
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ArchiveReq {
+    peer: String,
+    /// Absent means archive; `false` restores. One endpoint, because filing and unfiling are the
+    /// same button in both states.
+    #[serde(default = "yes")]
+    archived: bool,
+    identity: Option<String>,
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// `PUT /v1/archive` — file a thread away, or bring it back.
+///
+/// Deliberately no effect on delivery, admission, or read state. Archiving is the reader saying
+/// "not now" about their own view; a peer must not be able to tell it happened, and mail from an
+/// archived peer still arrives and still counts as unread.
+async fn put_archive(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ArchiveReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let peer = req.peer.trim().to_string();
+    if peer.is_empty() || peer.len() > 256 {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_peer",
+            Some("expected the address or handle of a conversation"),
+        );
+    }
+    match state
+        .store
+        .set_thread_archived(me.address.clone(), peer, req.archived, now_unix())
+        .await
+    {
+        Ok(()) => Json(serde_json::json!({ "ok": true })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "archive update failed");
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None)
+        }
     }
 }
 

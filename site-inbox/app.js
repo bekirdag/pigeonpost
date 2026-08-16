@@ -352,7 +352,24 @@
       openPeer: null,    // peer key of the open thread
       filter: "",
       showInfo: false,
+      archived: new Set(), // peers filed out of sight, from the server so it holds across devices
+      viewingArchive: false,
+      vocabulary: null,  // which verbs may be granted, per the server
     };
+  }
+
+  // How much larger the conversation text is than its default. Persisted per device, because it is
+  // a property of the screen someone is reading on rather than of the account.
+  const SIZE_KEY = "ppi_msg_scale";
+  function messageScale() {
+    const stored = Number(LS.getItem(SIZE_KEY));
+    return stored >= 0.8 && stored <= 2 ? stored : 1;
+  }
+  function applyMessageScale(scale) {
+    LS.setItem(SIZE_KEY, String(scale));
+    document.documentElement.style.setProperty("--msg-scale", String(scale));
+    const label = $("size-value");
+    if (label) label.textContent = Math.round(scale * 100) + "%";
   }
   let state = freshState();
 
@@ -581,7 +598,16 @@
 
   function renderThreadList() {
     const list = $("threads");
-    const threads = buildThreads();
+    // The archive is a different view of the same list, not a different list: filed conversations
+    // are exactly the ones the inbox omits, so one predicate decides both and they can never
+    // disagree about where a thread lives.
+    const threads = buildThreads().filter(
+      (t) => state.archived.has(t.peer) === state.viewingArchive,
+    );
+    $("archive-banner").hidden = !state.viewingArchive;
+    $("threads-empty").textContent = state.viewingArchive
+      ? "Nothing archived."
+      : "No mail yet. When an agent writes to this mailbox, it appears here.";
     const needle = state.filter.trim().toLowerCase();
     const shown = needle
       ? threads.filter((t) => {
@@ -703,6 +729,14 @@
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
     $("peer-info").hidden = !(open && state.showInfo);
+
+    // The same control both ways: in the archive it is the way back out, which is where somebody
+    // looking at a filed conversation would go looking for it.
+    const filed = open && state.archived.has(state.openPeer);
+    const archiveBtn = $("archive-btn");
+    archiveBtn.hidden = !open;
+    archiveBtn.title = filed ? "Move back to your inbox" : "Archive this conversation";
+    archiveBtn.setAttribute("aria-label", archiveBtn.title);
 
     const list = $("messages");
     list.textContent = "";
@@ -1018,7 +1052,7 @@
   }
 
   async function loadAll() {
-    await Promise.all([loadInbox(), loadContacts()]);
+    await Promise.all([loadInbox(), loadContacts(), loadArchive()]);
     render();
   }
 
@@ -1048,8 +1082,58 @@
     try {
       const body = await api(withIdentity("/v1/contacts"));
       state.contacts = body.contacts || [];
+      state.vocabulary = body.vocabulary || null;
+      state.policy = body.policy || state.policy;
     } catch (_) {
       state.contacts = [];
+    }
+  }
+
+  async function loadArchive() {
+    try {
+      const body = await api(withIdentity("/v1/archive"));
+      state.archived = new Set(body.archived || []);
+    } catch (_) {
+      // An archive we could not read must not hide anything: failing open shows a conversation
+      // that should have been filed, failing closed hides one that should not be. Only one of
+      // those loses mail.
+      state.archived = new Set();
+    }
+  }
+
+  // ---- archive --------------------------------------------------------------------------------
+
+  // `#archive` in the URL, so the view can be linked to and survives a reload — that link is what
+  // Settings hands out. It is still the owner's own archive behind their own sign-in: a URL that
+  // showed somebody's filed mail without asking who was asking would be a way to leak it.
+  function showArchive(on) {
+    state.viewingArchive = Boolean(on);
+    state.filter = "";
+    $("search").value = "";
+    closeThread();
+    if (on && location.hash !== "#archive") history.replaceState(history.state, "", "#archive");
+    if (!on && location.hash === "#archive") history.replaceState(history.state, "", location.pathname);
+    render();
+  }
+
+  async function setArchived(peer, archived) {
+    // Move it in the UI first: filing something is a gesture that should feel instant, and the
+    // server call is a formality that either confirms it or is undone below.
+    if (archived) state.archived.add(peer);
+    else state.archived.delete(peer);
+    if (state.openPeer === peer) closeThread();
+    render();
+    try {
+      await api("/v1/archive", {
+        method: "PUT",
+        body: { peer, archived, identity: state.me.address },
+      });
+      toast(archived ? "Archived." : "Moved back to your inbox.");
+    } catch (e) {
+      if (archived) state.archived.delete(peer);
+      else state.archived.add(peer);
+      render();
+      toast("Could not update the archive.");
     }
   }
 
@@ -1100,9 +1184,263 @@
 
   // ---- wiring -------------------------------------------------------------------------------
 
+  // ---- sheets ---------------------------------------------------------------------------------
+
+  // Escape closes the topmost sheet, and a click on the backdrop does too. Both are what people
+  // try first, and a dialog that ignores them reads as stuck.
+  function openSheet(id) {
+    $(id).hidden = false;
+  }
+  function closeSheet(id) {
+    $(id).hidden = true;
+  }
+  function wireSheet(id, onBackdrop) {
+    const wrap = $(id);
+    wrap.addEventListener("mousedown", (e) => {
+      if (e.target === wrap) (onBackdrop || (() => closeSheet(id)))();
+    });
+  }
+
+  // ---- new conversation -------------------------------------------------------------------------
+
+  function openNewConversation() {
+    $("new-peer").value = "";
+    $("new-body").value = "";
+    $("new-error").hidden = true;
+    openSheet("new-sheet");
+    $("new-peer").focus();
+  }
+
+  async function sendNewConversation() {
+    const to = $("new-peer").value.trim();
+    const body = $("new-body").value.trim();
+    const fail = (message) => {
+      const el = $("new-error");
+      el.textContent = message;
+      el.hidden = false;
+    };
+    if (!to) return fail("Who is it for?");
+    if (!body) return fail("Write something to send.");
+
+    $("new-send").disabled = true;
+    try {
+      await api("/v1/send", { method: "POST", body: { to, body, from: state.me.address } });
+      closeSheet("new-sheet");
+      await loadAll();
+      // A conversation started with a namespace or a `/k/` address is filed by the server under
+      // whatever peer it resolved to, so open by what came back rather than by what was typed.
+      const started = buildThreads().find((t) => t.peer === normalisePeer(to) || t.peer === to);
+      if (started) openThread(started.peer);
+      else render();
+    } catch (e) {
+      fail(sendFailure(e));
+    } finally {
+      $("new-send").disabled = false;
+    }
+  }
+
+  // ---- settings --------------------------------------------------------------------------------
+
+  function openSettings() {
+    applyMessageScale(messageScale());
+    $("archive-count").textContent =
+      state.archived.size === 1 ? "1 conversation" : state.archived.size + " conversations";
+    $("archive-link").textContent = location.origin + "/#archive";
+    renderContactList();
+    openSheet("settings-sheet");
+  }
+
+  function renderContactList() {
+    const list = $("contact-list");
+    list.textContent = "";
+    if (!state.contacts.length) {
+      const li = document.createElement("li");
+      li.className = "cl-empty";
+      li.textContent = "Nobody is listed yet. Strangers get whatever the inbox policy allows.";
+      list.append(li);
+      return;
+    }
+    for (const c of state.contacts) {
+      const li = document.createElement("li");
+      const who = document.createElement("div");
+      who.className = "cl-who";
+      const peer = document.createElement("span");
+      peer.className = "cl-peer";
+      peer.textContent = c.peer;
+      const terms = document.createElement("span");
+      terms.className = "cl-terms";
+      const verbs = (c.allowed_verbs || []).join(", ");
+      terms.textContent = [
+        c.alias,
+        c.admission === "block" ? "blocked" : "allowed",
+        c.autonomy === "auto" ? "auto" : "review",
+        verbs || null,
+      ]
+        .filter(Boolean)
+        .join(" · ");
+      who.append(peer, terms);
+
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "btn-ghost";
+      edit.textContent = "Edit";
+      edit.onclick = () => openContact(c);
+
+      li.append(who, edit);
+      list.append(li);
+    }
+  }
+
+  // ---- one trusted sender -----------------------------------------------------------------------
+
+  let editingContact = null;
+
+  function openContact(contact) {
+    editingContact = contact || null;
+    $("contact-title").textContent = contact ? "Edit sender" : "Add a sender";
+    $("contact-peer").value = contact ? contact.peer : "";
+    // The address is the identity of the row, so changing it would be adding a different sender
+    // rather than editing this one. Add and remove is the honest way to do that.
+    $("contact-peer").disabled = Boolean(contact);
+    $("contact-alias").value = (contact && contact.alias) || "";
+    $("contact-admission").value = (contact && contact.admission) || "allow";
+    $("contact-autonomy").value = (contact && contact.autonomy) || "review";
+    $("contact-remove").hidden = !contact;
+    $("contact-error").hidden = true;
+    renderVerbs(contact);
+    openSheet("contact-sheet");
+    if (!contact) $("contact-peer").focus();
+  }
+
+  function renderVerbs(contact) {
+    const box = $("contact-verbs");
+    box.textContent = "";
+    const legend = document.createElement("legend");
+    legend.textContent = "Requests they may have acted on";
+    box.append(legend);
+
+    const vocab = state.vocabulary || { grantable: [], never_auto: [] };
+    const granted = new Set((contact && contact.allowed_verbs) || []);
+    for (const verb of vocab.grantable || []) {
+      const label = document.createElement("label");
+      const box2 = document.createElement("input");
+      box2.type = "checkbox";
+      box2.value = verb;
+      box2.checked = granted.has(verb);
+      label.append(box2, document.createTextNode(verb));
+      box.append(label);
+    }
+    // Shown, not hidden: knowing which requests are never automatic is the reassurance that makes
+    // the automatic ones safe to grant.
+    for (const verb of vocab.never_auto || []) {
+      const label = document.createElement("label");
+      label.className = "never";
+      const box2 = document.createElement("input");
+      box2.type = "checkbox";
+      box2.disabled = true;
+      label.append(box2, document.createTextNode(verb + " — never automatic"));
+      box.append(label);
+    }
+  }
+
+  async function saveContact() {
+    const peer = $("contact-peer").value.trim();
+    const fail = (message) => {
+      const el = $("contact-error");
+      el.textContent = message;
+      el.hidden = false;
+    };
+    if (!peer) return fail("Whose address is this?");
+
+    const verbs = [...$("contact-verbs").querySelectorAll("input:checked:not(:disabled)")]
+      .map((i) => i.value);
+    $("contact-save").disabled = true;
+    try {
+      await api("/v1/contacts", {
+        method: "PUT",
+        body: {
+          peer,
+          alias: $("contact-alias").value.trim() || null,
+          admission: $("contact-admission").value,
+          autonomy: $("contact-autonomy").value,
+          allowed_verbs: verbs,
+          identity: state.me.address,
+        },
+      });
+      closeSheet("contact-sheet");
+      await loadContacts();
+      renderContactList();
+      render();
+    } catch (e) {
+      fail(e && e.message ? e.message : "Could not save.");
+    } finally {
+      $("contact-save").disabled = false;
+    }
+  }
+
+  async function removeContact() {
+    if (!editingContact) return;
+    try {
+      await api("/v1/contacts", {
+        method: "DELETE",
+        body: { peer: editingContact.peer, identity: state.me.address },
+      });
+      closeSheet("contact-sheet");
+      await loadContacts();
+      renderContactList();
+      render();
+      toast("Removed. They get whatever strangers get.");
+    } catch (e) {
+      toast("Could not remove them.");
+    }
+  }
+
   function wire() {
     $("signin-btn").onclick = () => login();
     $("signout-btn").onclick = () => signOut();
+
+    $("new-btn").onclick = () => openNewConversation();
+    $("new-close").onclick = () => closeSheet("new-sheet");
+    $("new-cancel").onclick = () => closeSheet("new-sheet");
+    $("new-send").onclick = () => sendNewConversation();
+    wireSheet("new-sheet");
+
+    $("settings-btn").onclick = () => openSettings();
+    $("settings-close").onclick = () => closeSheet("settings-sheet");
+    $("settings-done").onclick = () => closeSheet("settings-sheet");
+    wireSheet("settings-sheet");
+
+    $("size-down").onclick = () =>
+      applyMessageScale(Math.max(0.8, Math.round((messageScale() - 0.1) * 10) / 10));
+    $("size-up").onclick = () =>
+      applyMessageScale(Math.min(2, Math.round((messageScale() + 0.1) * 10) / 10));
+
+    $("open-archive").onclick = () => {
+      closeSheet("settings-sheet");
+      showArchive(true);
+    };
+    $("archive-exit").onclick = () => showArchive(false);
+    $("archive-btn").onclick = () => {
+      if (!state.openPeer) return;
+      setArchived(state.openPeer, !state.archived.has(state.openPeer));
+    };
+
+    $("contact-add").onclick = () => openContact(null);
+    $("contact-close").onclick = () => closeSheet("contact-sheet");
+    $("contact-cancel").onclick = () => closeSheet("contact-sheet");
+    $("contact-save").onclick = () => saveContact();
+    $("contact-remove").onclick = () => removeContact();
+    wireSheet("contact-sheet");
+
+    document.addEventListener("keydown", (e) => {
+      if (e.key !== "Escape") return;
+      for (const id of ["contact-sheet", "new-sheet", "settings-sheet"]) {
+        if (!$(id).hidden) {
+          closeSheet(id);
+          return;
+        }
+      }
+    });
 
     $("identity-btn").onclick = () => {
       const menu = $("identity-menu");
@@ -1189,6 +1527,8 @@
     }
     // Before the first call, not after it fails.
     await resumeSession();
+    applyMessageScale(messageScale());
+    if (location.hash === "#archive") state.viewingArchive = true;
     // A tab that slept through its renewal timer wakes holding a dead token; catch that on the way
     // back rather than on the next request.
     document.addEventListener("visibilitychange", () => {

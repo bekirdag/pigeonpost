@@ -70,8 +70,13 @@ const INBOX = {
 const CONTACTS = {
   contacts: [{ peer: "/bekir/*", alias: "my fleet", admission: "allow", autonomy: "review", allowed_verbs: [] }],
   policy: { accept_all: true, auto_accept_known: false },
+  vocabulary: {
+    grantable: ["report_status", "answer_question", "read_file", "run_tests"],
+    never_auto: ["git_push", "deploy", "read_credentials", "spend", "delete_files", "run_shell"],
+  },
 };
 
+const ARCHIVED = new Set();
 const calls = [];
 function fakeFetch(url, opts = {}) {
   const path = String(url).replace("https://postbox.pigeonpost.dev", "");
@@ -104,6 +109,12 @@ function fakeFetch(url, opts = {}) {
     return json(INBOX);
   }
   if (path.startsWith("/v1/contacts")) return json(CONTACTS);
+  if (path.startsWith("/v1/archive")) {
+    if ((opts.method || "GET") === "GET") return json({ archived: [...ARCHIVED] });
+    const b = JSON.parse(opts.body);
+    if (b.archived) ARCHIVED.add(b.peer); else ARCHIVED.delete(b.peer);
+    return json({ ok: true });
+  }
   if (path.startsWith("/v1/ack")) return json({ ok: true });
   if (path.startsWith("/v1/send")) return json({ message_id: "sent1", sent_copy_id: "copy1" }, true, 201);
   return json({ error: "not_found" }, false, 404);
@@ -295,7 +306,81 @@ console.log("\n— mobile layout —");
 // jsdom does not lay out, so these assert the rules that fixed a real bug: a grid item defaults to
 // min-width:auto, so a nowrap preview pushed the pane wider than the phone and cut off the
 // timestamp and unread badge on the right.
+console.log("\n— archiving a conversation —");
+const beforeRows = [...$("threads").querySelectorAll(".thread-row")].length;
+// Open the stranger's thread and file it away.
+const strangerRow = [...$("threads").querySelectorAll(".thread-row")]
+  .find((r) => text(r.querySelector(".tr-name")).startsWith("/k/eeee"));
+strangerRow.click();
+await settle(60);
+$("archive-btn").click();
+await settle(120);
+check("the archive was told", calls.some((c) => c.path === "/v1/archive" && c.method === "PUT"), true);
+check("it leaves the inbox", [...$("threads").querySelectorAll(".thread-row")].length, beforeRows - 1);
+check("and the thread closes", $("composer").hidden, true);
+
+console.log("\n— the archive view —");
+$("settings-btn").click();
+await settle(40);
+check("settings opens", $("settings-sheet").hidden, false);
+check("it counts what is filed", text($("archive-count")).includes("1"), true);
+$("open-archive").click();
+await settle(80);
+check("settings closes behind it", $("settings-sheet").hidden, true);
+check("the banner says where you are", $("archive-banner").hidden, false);
+const archivedNames = [...$("threads").querySelectorAll(".tr-name")].map((n) => text(n));
+check("only the filed conversation is here", archivedNames.length, 1);
+check("and it is the right one", archivedNames[0].startsWith("/k/eeee"), true);
+$("archive-exit").click();
+await settle(80);
+check("back to the inbox", $("archive-banner").hidden, true);
+check("with the rest of the conversations", [...$("threads").querySelectorAll(".thread-row")].length, beforeRows - 1);
+
+console.log("\n— starting a conversation with a new address —");
+$("new-btn").click();
+await settle(40);
+check("the sheet opens", $("new-sheet").hidden, false);
+$("new-send").click();
+await settle(40);
+check("it will not send to nobody", $("new-error").hidden, false);
+$("new-peer").value = "/bekir/fresh";
+$("new-body").value = "first contact";
+$("new-send").click();
+await settle(150);
+const newSend = calls.filter((c) => c.path === "/v1/send").pop();
+check("addressed as typed", newSend.body.to, "/bekir/fresh");
+check("carrying the message", newSend.body.body, "first contact");
+check("and the sheet closes", $("new-sheet").hidden, true);
+
+console.log("\n— trusted senders —");
+$("settings-btn").click();
+await settle(40);
+check("the fleet contact is listed", text($("contact-list")).includes("/bekir/*"), true);
+$("contact-add").click();
+await settle(40);
+check("the editor opens", $("contact-sheet").hidden, false);
+check("a new sender's address is editable", $("contact-peer").disabled, false);
+$("contact-peer").value = "/bekir/newcomer";
+$("contact-autonomy").value = "auto";
+const runTests = [...$("contact-verbs").querySelectorAll("input")].find((i) => i.value === "run_tests");
+runTests.checked = true;
+$("contact-save").click();
+await settle(150);
+const put = calls.filter((c) => c.path === "/v1/contacts" && c.method === "PUT").pop();
+check("the contact was written", put.body.peer, "/bekir/newcomer");
+check("with the verb granted", put.body.allowed_verbs.includes("run_tests"), true);
+check("never-auto verbs cannot be granted", [...$("contact-verbs").querySelectorAll("input:disabled")].length > 0, true);
+
+console.log("\n— message zoom, not page zoom —");
+const html = readFileSync(`${APP}/index.html`, "utf8");
+check("pinch zoom is off", /user-scalable=no/.test(html), true);
+check("the layout cannot be scaled", /maximum-scale=1/.test(html), true);
+
 const css = readFileSync(`${APP}/app.css`, "utf8");
+check("only the messages scale", /\.messages \{ font-size: calc\(15px \* var\(--msg-scale/.test(css), true);
+// 16px inputs are what stop iOS zooming a page it would then refuse to unzoom.
+check("form fields do not trigger an iOS zoom", /\.field input\[type="text"\][\s\S]{0,400}font-size:\s*16px/.test(css), true);
+
 check("panes may shrink below their content", /\.pane-list\s*\{[^}]*min-width:\s*0/s.test(css), true);
 check("thread pane may shrink too", /\.pane-thread\s*\{[^}]*min-width:\s*0/s.test(css), true);
 check("phone column is minmax(0, 1fr)", css.includes("grid-template-columns: minmax(0, 1fr)"), true);

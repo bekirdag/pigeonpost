@@ -2,7 +2,14 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<!--
+  `user-scalable=no` because this is an app layout, not a document: two fixed panes, a sticky
+  composer and a header that pinch-zoom shears apart, leaving someone scrolled sideways into a
+  corner of a page that cannot scroll sideways. What people actually want to zoom is the text they
+  are reading, and that is offered directly — Settings has a message size control, which changes
+  the message pane only and leaves the furniture where it is.
+-->
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
 <meta name="color-scheme" content="light">
 <meta name="robots" content="noindex">
 <title>Pigeonpost — Inbox</title>
@@ -37,6 +44,12 @@
           </span>
           <svg class="chev" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 6l4 4 4-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
+        <button id="new-btn" class="icon-btn" type="button" title="New conversation" aria-label="New conversation">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 4.5v11M4.5 10h11" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+        </button>
+        <button id="settings-btn" class="icon-btn" type="button" title="Settings" aria-label="Settings">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 2.6v2M10 15.4v2M17.4 10h-2M4.6 10h-2M15.2 4.8l-1.4 1.4M6.2 13.8l-1.4 1.4M15.2 15.2l-1.4-1.4M6.2 6.2L4.8 4.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+        </button>
         <button id="signout-btn" class="icon-btn" type="button" title="Sign out" aria-label="Sign out">
           <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 7V5a1 1 0 00-1-1H5a1 1 0 00-1 1v10a1 1 0 001 1h6a1 1 0 001-1v-2M9 10h8m0 0l-2.5-2.5M17 10l-2.5 2.5" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
         </button>
@@ -44,6 +57,10 @@
       <ul class="identity-menu" id="identity-menu" role="listbox" hidden></ul>
       <div class="search">
         <input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search conversations">
+      </div>
+      <div class="archive-banner" id="archive-banner" hidden>
+        <span>Archived conversations</span>
+        <button id="archive-exit" class="linkish" type="button">Back to inbox</button>
       </div>
     </header>
 
@@ -62,6 +79,9 @@
         <span class="thread-name" id="peer-name"></span>
         <span class="thread-sub" id="peer-sub"></span>
       </div>
+      <button id="archive-btn" class="icon-btn" type="button" title="Archive this conversation" aria-label="Archive this conversation">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h14M4.5 6.5V16h11V6.5M3 3.5h14v3H3zM8 10h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
       <button id="peer-info-btn" class="icon-btn" type="button" title="About this sender" aria-label="About this sender">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.5M10 6.4v.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
@@ -84,6 +104,138 @@
     </form>
   </section>
 </main>
+
+<!-- New conversation ------------------------------------------------------------------------- -->
+<div class="sheet-wrap" id="new-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="new-title">
+    <header class="sheet-head">
+      <h2 id="new-title">New conversation</h2>
+      <button class="icon-btn" id="new-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+      <label class="field">
+        <span>Their address</span>
+        <input id="new-peer" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="/bekir/agent1 or /k/…">
+      </label>
+      <p class="field-note">A handle like <code>/bekir/agent1</code>, a whole namespace like
+        <code>/bekir</code>, or a key address.</p>
+      <label class="field">
+        <span>First message</span>
+        <textarea id="new-body" rows="3" placeholder="Write a message"></textarea>
+      </label>
+      <p class="sheet-error" id="new-error" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-ghost" id="new-cancel" type="button">Cancel</button>
+      <button class="btn-primary" id="new-send" type="button">Send</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Settings --------------------------------------------------------------------------------- -->
+<div class="sheet-wrap" id="settings-sheet" hidden>
+  <div class="sheet sheet-wide" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+    <header class="sheet-head">
+      <h2 id="settings-title">Settings</h2>
+      <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+
+      <section class="setting">
+        <h3>Message size</h3>
+        <p class="field-note">Changes the conversation text only. The rest of the layout stays put.</p>
+        <div class="size-row">
+          <button class="btn-ghost" id="size-down" type="button" aria-label="Smaller text">A−</button>
+          <span class="size-value" id="size-value">100%</span>
+          <button class="btn-ghost" id="size-up" type="button" aria-label="Larger text">A+</button>
+        </div>
+      </section>
+
+      <section class="setting">
+        <h3>Archived conversations</h3>
+        <p class="field-note">
+          Archiving hides a conversation from your inbox. Nothing is deleted, the other side is
+          never told, and new mail from them still arrives and still counts as unread.
+        </p>
+        <div class="size-row">
+          <button class="btn-ghost" id="open-archive" type="button">Open archive</button>
+          <span class="size-value" id="archive-count"></span>
+        </div>
+        <p class="field-note">
+          Reachable from any of your devices at
+          <code id="archive-link">…</code> — it is your archive, so it still asks you to sign in.
+        </p>
+      </section>
+
+      <section class="setting">
+        <h3>Trusted senders</h3>
+        <p class="field-note">
+          Who this mailbox admits, and how far it trusts them. <code>/namespace/*</code> covers a
+          whole fleet. Autonomy <em>auto</em> plus a verb lets that sender's request be acted on
+          without asking you first.
+        </p>
+        <ul class="contact-list" id="contact-list"></ul>
+        <button class="btn-ghost" id="contact-add" type="button">Add a sender</button>
+      </section>
+
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-primary" id="settings-done" type="button">Done</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Add / edit a trusted sender --------------------------------------------------------------- -->
+<div class="sheet-wrap" id="contact-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="contact-title">
+    <header class="sheet-head">
+      <h2 id="contact-title">Trusted sender</h2>
+      <button class="icon-btn" id="contact-close" type="button" aria-label="Close">
+        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <div class="sheet-body">
+      <label class="field">
+        <span>Address</span>
+        <input id="contact-peer" type="text" autocomplete="off" autocapitalize="off" spellcheck="false"
+               placeholder="/bekir/* or /bekir/agent1">
+      </label>
+      <label class="field">
+        <span>Name for them</span>
+        <input id="contact-alias" type="text" autocomplete="off" placeholder="my fleet">
+      </label>
+      <label class="field">
+        <span>Admission</span>
+        <select id="contact-admission">
+          <option value="allow">Allow — their mail is admitted</option>
+          <option value="block">Block — refuse their mail</option>
+        </select>
+      </label>
+      <label class="field">
+        <span>Autonomy</span>
+        <select id="contact-autonomy">
+          <option value="review">Review — always ask me first</option>
+          <option value="auto">Auto — may act on the verbs below</option>
+        </select>
+      </label>
+      <fieldset class="field verbs" id="contact-verbs">
+        <legend>Requests they may have acted on</legend>
+      </fieldset>
+      <p class="sheet-error" id="contact-error" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-danger" id="contact-remove" type="button" hidden>Remove</button>
+      <span class="foot-spacer"></span>
+      <button class="btn-ghost" id="contact-cancel" type="button">Cancel</button>
+      <button class="btn-primary" id="contact-save" type="button">Save</button>
+    </footer>
+  </div>
+</div>
 
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
