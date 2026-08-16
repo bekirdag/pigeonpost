@@ -55,7 +55,7 @@ pub mod record;
 pub mod token;
 pub mod untrusted;
 
-pub use address::{Address, Destination, DestinationTarget};
+pub use address::{namespace_root, Address, Destination, DestinationTarget};
 pub use envelope::Wrap;
 pub use error::{Error, Result};
 pub use fetch_auth::FetchAuth;

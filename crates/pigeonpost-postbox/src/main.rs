@@ -51,6 +51,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
+mod github;
 mod mcp;
 mod oidc;
 mod pow;
@@ -88,7 +89,18 @@ struct AppState {
     /// enough concurrent waiters that the wasted wakeups matter, that is the point to key it by
     /// recipient — not before.
     inbox_signal: Arc<tokio::sync::Notify>,
+    /// GitHub device login, when this postbox is configured for it. `None` closes the endpoints
+    /// rather than failing per request, so an unconfigured deployment says so once and plainly.
+    github: Option<Arc<github::Github>>,
 }
+
+/// Namespaces where a name is authorised by proving control of it at an identity provider, rather
+/// than by the account having bought the namespace.
+///
+/// Kept as a list because the difference is structural, not cosmetic: nobody buys `/github`, so
+/// every ownership question about a name inside it has to be answered by that provider. Adding a
+/// provider here without also adding a verified claim path would let anyone mint under it.
+const PROVIDER_NAMESPACES: &[&str] = &["github"];
 
 /// Per-IP ceilings on unauthenticated (proof-of-work) minting. The PoW makes one mint cost a
 /// moment; these make a *flood* cost more than a botnet wants to pay, without a human in the loop
@@ -302,6 +314,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             .as_deref()
             .map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
+        github: github::Github::from_env().map(Arc::new),
     })
 }
 
@@ -393,6 +406,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/whoami", get(whoami))
         .route("/v1/identities/handle", post(bind_identity_handle))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
+        .route("/v1/github/device", post(start_github_claim))
+        .route("/v1/github/claim", post(claim_github))
         .route("/v1/workspace", get(get_workspace).put(put_workspace))
         .route(
             "/v1/contacts",
@@ -502,6 +517,49 @@ async fn authorize_handle(
         .next()
         .unwrap_or_default()
         .to_string();
+
+    // A provider namespace is authorised per name, by proof, not per namespace by purchase — see
+    // `PROVIDER_NAMESPACES`. Asking `namespace_owner` about `/github` would be asking who bought
+    // the whole of GitHub, and the honest answer is nobody.
+    if PROVIDER_NAMESPACES.contains(&namespace.as_str()) {
+        let login = canonical
+            .rsplit('/')
+            .next()
+            .unwrap_or_default()
+            .to_string();
+        let proved = state
+            .store
+            .provider_identity_owner(namespace.clone(), login.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        return match proved {
+            Some(owner) if owner == account => {
+                if state
+                    .store
+                    .get_by_handle(canonical.clone())
+                    .await
+                    .map_err(|_| ApiError::server("store_error"))?
+                    .is_some()
+                {
+                    Err(ApiError::new(
+                        StatusCode::CONFLICT,
+                        "handle_taken",
+                        format!("{canonical} already exists"),
+                    ))
+                } else {
+                    Ok((canonical, namespace))
+                }
+            }
+            _ => Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "identity_not_proved",
+                format!(
+                    "prove you control {login} at {namespace} first — \
+                     run `pigeonpost handle claim --{namespace}`"
+                ),
+            )),
+        };
+    }
 
     let owner = state
         .store
@@ -1765,7 +1823,9 @@ fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identit
 ///
 /// Separates "you mistyped" from "nobody is there", which are otherwise the same refusal.
 fn is_addressable(to: &str) -> bool {
-    Address::parse(to).is_ok() || Destination::for_handle(to).is_ok()
+    Address::parse(to).is_ok()
+        || Destination::for_handle(to).is_ok()
+        || pigeonpost_core::namespace_root(to).is_some()
 }
 
 /// Resolve a destination to a hosted mailbox, by `/k/` address or by handle.
@@ -1786,17 +1846,33 @@ async fn resolve_recipient(
     }
     // Canonicalise before the lookup so `/Bekir/Agent1` reaches the same mailbox as `/bekir/agent1`
     // — the handle stored at mint time is already canonical.
-    let Ok(destination) = Destination::for_handle(to) else {
-        return Ok(None);
-    };
-    let Some(handle) = destination.handle() else {
-        return Ok(None);
-    };
-    state
-        .store
-        .get_by_handle(handle.to_string())
-        .await
-        .map_err(store_error)
+    if let Ok(destination) = Destination::for_handle(to) {
+        if let Some(handle) = destination.handle() {
+            return state
+                .store
+                .get_by_handle(handle.to_string())
+                .await
+                .map_err(store_error);
+        }
+    }
+
+    // A whole namespace as the recipient: `/bekir` means "whoever reads for bekir". Writing to a
+    // person rather than to one of their agents is the address a human hands out, and it has to
+    // work without their knowing which agent happens to be on duty.
+    //
+    // Provider namespaces are excluded: `/bekir` is one person, but `/github` is everybody, and
+    // delivering it to whichever GitHub user happened to sign up first would be the worst possible
+    // answer. Only `/github/<login>` means something there.
+    if let Some(namespace) = pigeonpost_core::namespace_root(to) {
+        if !PROVIDER_NAMESPACES.contains(&namespace.as_str()) {
+            return state
+                .store
+                .namespace_inbox(namespace)
+                .await
+                .map_err(store_error);
+        }
+    }
+    Ok(None)
 }
 
 /// Seal a message from `sender` to a hosted recipient and enqueue it.
@@ -2768,6 +2844,133 @@ struct GrantNamespaceReq {
 /// `PUT /v1/namespaces` — bind a purchased namespace to an account.
 ///
 /// Called by the billing/entitlement service, never by an end user: an account that could grant
+/// Begin proving control of a GitHub account.
+///
+/// Returns what the person types into GitHub. Nothing is recorded yet: a device code that is never
+/// approved should leave no trace, and one that is approved is proved by [`claim_github`] instead.
+async fn start_github_claim(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(github) = state.github.clone() else {
+        return err_response(
+            StatusCode::NOT_FOUND,
+            "github_login_unavailable",
+            Some("this postbox is not configured for GitHub device login"),
+        );
+    };
+    // An account, not a mailbox: the proof binds a GitHub login to the account that will mint under
+    // it, and a capability token speaks only for one mailbox.
+    if let Err(e) = require_account(&state, &headers).await {
+        return e.into_response();
+    }
+    match github.start().await {
+        Ok(grant) => Json(serde_json::json!({
+            "device_code": grant.device_code,
+            "user_code": grant.user_code,
+            "verification_uri": grant.verification_uri,
+            "expires_in": grant.expires_in,
+            "interval": grant.interval,
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::warn!(error = %e, "github device start failed");
+            err_response(
+                StatusCode::BAD_GATEWAY,
+                "github_unreachable",
+                Some("could not start a GitHub device login"),
+            )
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct ClaimGithubReq {
+    device_code: String,
+}
+
+/// Finish the proof: exchange the approved device code and record the login for this account.
+///
+/// Polled by the CLI, so "not approved yet" is an ordinary answer with its own status rather than
+/// an error — the caller waits and asks again.
+async fn claim_github(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ClaimGithubReq>,
+) -> Response {
+    let Some(github) = state.github.clone() else {
+        return err_response(
+            StatusCode::NOT_FOUND,
+            "github_login_unavailable",
+            Some("this postbox is not configured for GitHub device login"),
+        );
+    };
+    let account = match require_account(&state, &headers).await {
+        Ok(a) => a,
+        Err(e) => return e.into_response(),
+    };
+
+    let user = match github.identify(&req.device_code).await {
+        Ok(user) => user,
+        Err(github::GithubError::Pending) => {
+            return Json(serde_json::json!({ "status": "pending" })).into_response()
+        }
+        Err(github::GithubError::SlowDown) => {
+            return Json(serde_json::json!({ "status": "slow_down" })).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "github device claim failed");
+            return err_response(
+                StatusCode::BAD_GATEWAY,
+                "github_refused",
+                Some("GitHub did not confirm this device login"),
+            );
+        }
+    };
+
+    let recorded = state
+        .store
+        .record_provider_identity(
+            "github".into(),
+            user.login.clone(),
+            user.user_id.clone(),
+            account,
+            now_unix(),
+        )
+        .await;
+    match recorded {
+        Ok(Ok(())) => Json(serde_json::json!({
+            "status": "verified",
+            "login": user.login,
+            "handle": format!("/github/{}", user.login),
+        }))
+        .into_response(),
+        Ok(Err(store::ProviderClaimRefusal::DifferentPerson)) => err_response(
+            StatusCode::CONFLICT,
+            "login_changed_hands",
+            Some("this login was proved by a different GitHub account; it cannot be transferred"),
+        ),
+        Ok(Err(store::ProviderClaimRefusal::HeldByAnotherAccount)) => err_response(
+            StatusCode::CONFLICT,
+            "login_already_claimed",
+            Some("this GitHub login is already proved by another Pigeonpost account"),
+        ),
+        Err(e) => {
+            tracing::error!(error = %e, "recording github identity failed");
+            err_response(StatusCode::INTERNAL_SERVER_ERROR, "store_error", None)
+        }
+    }
+}
+
+/// The account behind this request, refusing a mailbox-scoped capability token.
+async fn require_account(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
+    match principal_for_token(state, bearer(headers)).await? {
+        Principal::Account(account) => Ok(account),
+        Principal::Identity(_) => Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "account_required",
+            "this needs an account — sign in, or use an account API key",
+        )),
+    }
+}
+
 /// itself a namespace would be helping itself to paid handles. Authenticated by a shared secret
 /// that, when unset, closes the endpoint rather than opening it.
 async fn grant_namespace(
@@ -3031,7 +3234,98 @@ mod tests {
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
+            github: None,
         }
+    }
+
+    /// Writing to a person: `/bekir` has to reach a mailbox, or the address in someone's README is
+    /// a dead letter.
+    #[tokio::test]
+    async fn a_namespace_is_deliverable_and_prefers_main() {
+        let state = state_with_limits(MintLimits {
+            per_window: 10,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        let identity = |address: &str, handle: &str, created_at: u64| store::StoredIdentity {
+            address: address.into(),
+            wrapped_seed: vault::Wrapped {
+                nonce: [0; 24],
+                ct: vec![1],
+            },
+            ed25519_pub: [0; 32],
+            x25519_pub: [0; 32],
+            cap_hash: [0; 32],
+            label: None,
+            created_at,
+            account_id: None,
+            handle: Some(handle.into()),
+        };
+        state
+            .store
+            .insert(identity("/k/agent", "/bekir/agent1", 1))
+            .await
+            .unwrap();
+
+        // Before a `main` exists, the namespace still reaches somebody.
+        let found = resolve_recipient(&state, "/bekir").await.unwrap();
+        assert_eq!(found.map(|i| i.address).as_deref(), Some("/k/agent"));
+
+        state
+            .store
+            .insert(identity("/k/main", "/bekir/main", 2))
+            .await
+            .unwrap();
+        let found = resolve_recipient(&state, "/bekir").await.unwrap();
+        assert_eq!(
+            found.map(|i| i.address).as_deref(),
+            Some("/k/main"),
+            "once main exists it is what the namespace means"
+        );
+
+        // And the two-segment form still goes exactly where it says.
+        let found = resolve_recipient(&state, "/bekir/agent1").await.unwrap();
+        assert_eq!(found.map(|i| i.address).as_deref(), Some("/k/agent"));
+    }
+
+    /// `/github` is not a person. Delivering it to whichever GitHub user signed up first would hand
+    /// one of them everybody else's mail.
+    #[tokio::test]
+    async fn a_provider_namespace_is_never_deliverable_as_a_whole() {
+        let state = state_with_limits(MintLimits {
+            per_window: 10,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        state
+            .store
+            .insert(store::StoredIdentity {
+                address: "/k/gh".into(),
+                wrapped_seed: vault::Wrapped {
+                    nonce: [0; 24],
+                    ct: vec![1],
+                },
+                ed25519_pub: [0; 32],
+                x25519_pub: [0; 32],
+                cap_hash: [0; 32],
+                label: None,
+                created_at: 1,
+                account_id: None,
+                handle: Some("/github/ada".into()),
+            })
+            .await
+            .unwrap();
+
+        assert!(
+            resolve_recipient(&state, "/github").await.unwrap().is_none(),
+            "the provider namespace as a whole belongs to nobody"
+        );
+        let found = resolve_recipient(&state, "/github/ada").await.unwrap();
+        assert_eq!(
+            found.map(|i| i.address).as_deref(),
+            Some("/k/gh"),
+            "but a proved login is an ordinary, deliverable mailbox"
+        );
     }
 
     #[tokio::test]
@@ -4567,6 +4861,7 @@ mod tests {
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
+            github: None,
         };
         let _ = build_router(state);
     }

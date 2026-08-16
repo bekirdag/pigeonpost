@@ -103,6 +103,28 @@ CREATE TABLE IF NOT EXISTS namespaces (
 );
 CREATE INDEX IF NOT EXISTS namespaces_by_account ON namespaces(account_id);
 
+-- Provider identities an account has *proved* it controls, which is how `/github/<login>` is
+-- authorised.
+--
+-- A provider namespace cannot work like a purchased one: `/bekir` has a single owner, but nobody
+-- owns all of `/github`. Ownership there is per name and has to be earned by proof, so this table
+-- is the record of that proof — one row per verified login, and the only thing that lets an account
+-- mint under it.
+--
+-- `provider_user_id` is the account's immutable id at the provider, kept because logins are
+-- renameable and reusable: if someone gives up a login and another person takes it, the id is what
+-- distinguishes them, and re-verification is refused rather than silently handing over the mailbox.
+CREATE TABLE IF NOT EXISTS provider_identities (
+    provider         TEXT NOT NULL,
+    login            TEXT NOT NULL,
+    provider_user_id TEXT NOT NULL,
+    account_id       TEXT NOT NULL,
+    verified_at      INTEGER NOT NULL,
+    PRIMARY KEY (provider, login)
+);
+CREATE INDEX IF NOT EXISTS provider_identities_by_account
+    ON provider_identities(provider, account_id);
+
 -- Upheld spam reports, keyed by message so a recipient re-reporting the same message cannot
 -- charge its sender twice. `reporter` is kept so a reporter that turns out to be the abuser can
 -- have its reports reconsidered.
@@ -186,6 +208,19 @@ pub enum StoreError {
     Sqlite(#[from] rusqlite::Error),
     #[error("store task failed")]
     Join,
+}
+
+/// Why a proved provider identity was still not recorded.
+///
+/// Both cases mean "this login is spoken for", but they are different facts and the caller answers
+/// them differently — one is a name that changed hands, the other is the same person signed in to a
+/// second Pigeonpost account.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProviderClaimRefusal {
+    /// The login now belongs to a different provider account than the one that first proved it.
+    DifferentPerson,
+    /// Already proved, by another Pigeonpost account.
+    HeldByAnotherAccount,
 }
 
 /// One hosted identity and its sealed key material.
@@ -743,6 +778,120 @@ impl Store {
                 .query_row(
                     &format!("SELECT {ID_COLS} FROM identities WHERE handle = ?1"),
                     params![handle],
+                    map_id_row,
+                )
+                .optional()?;
+            row.map(id_from_row).transpose()
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Record that `account_id` proved control of `login` at `provider`.
+    ///
+    /// Re-verifying the same login from the same provider account is idempotent — people re-run
+    /// setup, and a second proof of the same fact should not fail. A login whose provider user id
+    /// has changed is a *different* person who acquired a released name: that is refused here
+    /// rather than transferring the handle, because mail already addressed to it would follow.
+    pub async fn record_provider_identity(
+        &self,
+        provider: String,
+        login: String,
+        provider_user_id: String,
+        account_id: String,
+        now: u64,
+    ) -> Result<Result<(), ProviderClaimRefusal>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(
+            move || -> Result<Result<(), ProviderClaimRefusal>, StoreError> {
+                let c = conn.lock().expect("store lock");
+                let existing: Option<(String, String)> = c
+                    .query_row(
+                        "SELECT provider_user_id, account_id FROM provider_identities
+                          WHERE provider = ?1 AND login = ?2",
+                        params![provider, login],
+                        |r| Ok((r.get(0)?, r.get(1)?)),
+                    )
+                    .optional()?;
+                if let Some((seen_user_id, owner)) = existing {
+                    if seen_user_id != provider_user_id {
+                        return Ok(Err(ProviderClaimRefusal::DifferentPerson));
+                    }
+                    if owner != account_id {
+                        return Ok(Err(ProviderClaimRefusal::HeldByAnotherAccount));
+                    }
+                    return Ok(Ok(()));
+                }
+                c.execute(
+                    "INSERT INTO provider_identities
+                       (provider, login, provider_user_id, account_id, verified_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5)",
+                    params![provider, login, provider_user_id, account_id, now as i64],
+                )?;
+                Ok(Ok(()))
+            },
+        )
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The account that proved control of `login` at `provider`, if any.
+    pub async fn provider_identity_owner(
+        &self,
+        provider: String,
+        login: String,
+    ) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.query_row(
+                "SELECT account_id FROM provider_identities WHERE provider = ?1 AND login = ?2",
+                params![provider, login],
+                |r| r.get(0),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The mailbox that answers for a whole namespace — who receives when someone writes to
+    /// `/bekir` rather than to `/bekir/agent1`.
+    ///
+    /// `/<namespace>/main` by convention, and the namespace's first mailbox when there is no
+    /// `main`. The fallback is what makes writing to a namespace work the day it is bought instead
+    /// of after someone remembers to create a mailbox by the right name; `created_at` orders it so
+    /// the answer is stable rather than whichever row the planner returned first. Minting a `main`
+    /// later moves the destination deliberately, which is the point of the convention.
+    pub async fn namespace_inbox(
+        &self,
+        namespace: String,
+    ) -> Result<Option<StoredIdentity>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<StoredIdentity>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let main = format!("/{namespace}/main");
+            if let Some(row) = c
+                .query_row(
+                    &format!("SELECT {ID_COLS} FROM identities WHERE handle = ?1"),
+                    params![main],
+                    map_id_row,
+                )
+                .optional()?
+            {
+                return id_from_row(row).map(Some);
+            }
+            // `handle GLOB` rather than LIKE: the namespace can contain `_`, which LIKE treats as a
+            // wildcard, and `/bekir_ops/x` must not answer for `/bekir`.
+            let pattern = format!("/{namespace}/*");
+            let row = c
+                .query_row(
+                    &format!(
+                        "SELECT {ID_COLS} FROM identities WHERE handle GLOB ?1 \
+                         ORDER BY created_at ASC, address ASC LIMIT 1"
+                    ),
+                    params![pattern],
                     map_id_row,
                 )
                 .optional()?;
@@ -1703,6 +1852,125 @@ mod tests {
             account_id: None,
             handle: None,
         }
+    }
+
+    fn named(addr: &str, handle: &str, created_at: u64) -> StoredIdentity {
+        StoredIdentity {
+            handle: Some(handle.to_string()),
+            created_at,
+            ..sample(addr)
+        }
+    }
+
+    /// `/<namespace>/main` is the convention, so it wins outright once it exists.
+    #[tokio::test]
+    async fn a_namespace_prefers_its_main_mailbox() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(named("/k/first", "/bekir/agent1", 10))
+            .await
+            .unwrap();
+        store
+            .insert(named("/k/main", "/bekir/main", 99))
+            .await
+            .unwrap();
+
+        let found = store.namespace_inbox("bekir".into()).await.unwrap().unwrap();
+        assert_eq!(
+            found.address, "/k/main",
+            "main answers for the namespace even though it was created last"
+        );
+    }
+
+    /// And without a `main`, writing to a namespace still has to reach somebody — otherwise the
+    /// address only works after a setup step nobody was told about.
+    #[tokio::test]
+    async fn a_namespace_without_a_main_falls_back_to_its_first_mailbox() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(named("/k/second", "/bekir/agent2", 20))
+            .await
+            .unwrap();
+        store
+            .insert(named("/k/first", "/bekir/agent1", 10))
+            .await
+            .unwrap();
+
+        let found = store.namespace_inbox("bekir".into()).await.unwrap().unwrap();
+        assert_eq!(found.address, "/k/first", "oldest, so the answer is stable");
+    }
+
+    /// `_` is a LIKE wildcard and a legal namespace character, so the neighbouring namespace
+    /// `/bekir_ops` must never answer for `/bekir`.
+    #[tokio::test]
+    async fn a_namespace_never_answers_for_a_similarly_named_one() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .insert(named("/k/ops", "/bekir_ops/agent1", 10))
+            .await
+            .unwrap();
+        assert!(
+            store.namespace_inbox("bekir".into()).await.unwrap().is_none(),
+            "a namespace with no mailboxes has no inbox, however similar its neighbour"
+        );
+    }
+
+    /// A login that changed hands must not carry its handle to the new holder: mail already
+    /// addressed to it would follow the name to a stranger.
+    #[tokio::test]
+    async fn a_reused_provider_login_is_refused_rather_than_transferred() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .record_provider_identity("github".into(), "ada".into(), "1".into(), "acct-a".into(), 0)
+            .await
+            .unwrap()
+            .unwrap();
+
+        // Same person, same account, run twice: setup gets re-run, and that must be fine.
+        assert!(store
+            .record_provider_identity("github".into(), "ada".into(), "1".into(), "acct-a".into(), 1)
+            .await
+            .unwrap()
+            .is_ok());
+
+        // Same login, different GitHub account: somebody took a released name.
+        assert_eq!(
+            store
+                .record_provider_identity(
+                    "github".into(),
+                    "ada".into(),
+                    "2".into(),
+                    "acct-b".into(),
+                    2
+                )
+                .await
+                .unwrap(),
+            Err(ProviderClaimRefusal::DifferentPerson)
+        );
+
+        // Same GitHub person, second Pigeonpost account: also refused, but for a different reason.
+        assert_eq!(
+            store
+                .record_provider_identity(
+                    "github".into(),
+                    "ada".into(),
+                    "1".into(),
+                    "acct-b".into(),
+                    3
+                )
+                .await
+                .unwrap(),
+            Err(ProviderClaimRefusal::HeldByAnotherAccount)
+        );
+
+        assert_eq!(
+            store
+                .provider_identity_owner("github".into(), "ada".into())
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("acct-a")
+        );
     }
 
     #[tokio::test]

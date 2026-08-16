@@ -225,6 +225,43 @@ impl fmt::Debug for DestinationTarget {
     }
 }
 
+/// The namespace, when `input` names a whole namespace rather than a mailbox in one — `/bekir`
+/// rather than `/bekir/agent1`.
+///
+/// A namespace is a person or an organisation, and writing to one has an obvious meaning that the
+/// two-segment form cannot express: reach whoever reads for them. Resolving that to a mailbox is a
+/// server's decision, so this only recognises the shape and canonicalises it; it deliberately does
+/// not build a `Destination`, because a namespace is not a delivery target on its own.
+///
+/// `/bekir/` is the same thing as `/bekir`. A trailing slash is a typo, not a different address.
+pub fn namespace_root(input: &str) -> Option<String> {
+    if input.is_empty() || input.len() > MAX_HANDLE_BYTES || !input.is_ascii() {
+        return None;
+    }
+    let trimmed = input.strip_prefix('/')?;
+    let namespace = trimmed.strip_suffix('/').unwrap_or(trimmed);
+    if namespace.is_empty()
+        || namespace.len() > MAX_HANDLE_NAMESPACE_BYTES
+        || namespace.contains('/')
+        || namespace.eq_ignore_ascii_case("gh")
+        || namespace.starts_with('-')
+        || namespace.ends_with('-')
+    {
+        return None;
+    }
+    if !namespace
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'))
+    {
+        return None;
+    }
+    // A key address is not a namespace, however much `/k` looks like one.
+    if namespace.eq_ignore_ascii_case("k") {
+        return None;
+    }
+    Some(namespace.to_ascii_lowercase())
+}
+
 fn canonical_handle(input: &str) -> Result<String> {
     if input.is_empty() || input.len() > MAX_HANDLE_BYTES || !input.is_ascii() {
         return Err(Error::MalformedAddress("bad handle length"));
@@ -326,6 +363,44 @@ mod tests {
 
     fn identity(seed: u8) -> Identity {
         Identity::from_seed([seed; 32])
+    }
+
+    /// Writing to a person rather than to one of their agents. `/bekir` is the address someone
+    /// puts in a README; it has to be recognised as a namespace and not mistaken for a mailbox.
+    #[test]
+    fn a_bare_namespace_is_recognised_and_canonicalised() {
+        assert_eq!(namespace_root("/bekir").as_deref(), Some("bekir"));
+        assert_eq!(namespace_root("/Bekir").as_deref(), Some("bekir"));
+        // A trailing slash is a typo, not a second address.
+        assert_eq!(namespace_root("/bekir/").as_deref(), Some("bekir"));
+        assert_eq!(namespace_root("bekir"), None, "a handle always leads with /");
+    }
+
+    /// A namespace is not a mailbox and a mailbox is not a namespace. Confusing the two would make
+    /// `/bekir/agent1` deliverable as a namespace, or `/bekir` mintable as a handle.
+    #[test]
+    fn a_mailbox_handle_is_not_a_namespace_and_vice_versa() {
+        assert_eq!(namespace_root("/bekir/agent1"), None);
+        assert!(canonical_handle("/bekir").is_err());
+        // `/k/…` is a key address; reading it as the namespace "k" would route real mail to a
+        // namespace inbox.
+        assert_eq!(namespace_root("/k"), None);
+        assert_eq!(namespace_root("/k/abc"), None);
+    }
+
+    /// The same shape rules the two-segment form enforces, so a namespace cannot smuggle in
+    /// characters a handle would reject.
+    #[test]
+    fn a_namespace_obeys_the_handle_character_rules() {
+        assert_eq!(namespace_root("/has space"), None);
+        assert_eq!(namespace_root("/-leading"), None);
+        assert_eq!(namespace_root("/trailing-"), None);
+        assert_eq!(namespace_root("/"), None);
+        assert_eq!(namespace_root("/gh"), None, "the pre-1.0 abbreviation stays refused");
+        assert_eq!(
+            namespace_root(&format!("/{}", "x".repeat(MAX_HANDLE_NAMESPACE_BYTES + 1))),
+            None
+        );
     }
 
     #[test]
