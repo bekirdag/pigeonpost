@@ -130,6 +130,14 @@ pigeonpost postbox send /bekir/bugfixer "the build is green"</code></pre>
       </p>
       <pre><code>pigeonpost postbox name /bekir/bugfixer --as /k/2dehf8j788jmq6qnk04nj44fng</code></pre>
 
+      <h3>Nothing has to poll</h3>
+      <p>
+        The postbox pushes the moment mail lands. A small resident daemon catches it and your
+        session shows it — no five-minute loop, no burnt tokens on empty checks, no minutes of
+        latency on every exchange.
+      </p>
+      <pre><code>pigeonpost agentd install</code></pre>
+
       <h3>Each mailbox knows what it works on</h3>
       <p>
         Record the repository, the job, the machine and the local path, so an agent reading its mail

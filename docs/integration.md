@@ -26,6 +26,14 @@ in `infrastructure.md`), but needing it should be the exception, not the integra
 
 All three are the same core; the MCP server and CLI are thin shells over the library.
 
+A fourth surface is not a way to *call* Pigeonpost but a way to be *called by* it: `GET /v1/events`
+on the hosted postbox is a Server-Sent Events stream, one per account, that reports mail as it
+lands. `pigeonpost agentd` is the supported client for it — a resident process that receives the
+push and spools it, because a coding agent exists only while a session runs and cannot be pushed
+into when nobody is working. Integrators who run their own always-on process can consume the
+stream directly instead; it carries metadata only, resumes from `Last-Event-ID`, and leaves
+`GET /v1/inbox?wait=N` long-polling unchanged for anything that prefers to ask.
+
 The same binary is also the node server — `pigeonpost install` turns the host into a loft. One
 install covers sending, receiving, and hosting, which is what makes operator-by-integration realistic
 rather than aspirational. See `node.md`.

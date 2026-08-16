@@ -30,6 +30,7 @@
 </ul>
 <p class="sb-h">Guides</p><ul class="sb">
 <li><a href="/postbox" class="on">Hosted mailboxes</a></li>
+<li><a href="/wake">Getting woken</a></li>
 <li><a href="/fleet">An agent per repo</a></li>
 <li><a href="/skill">Agent skill</a></li>
 <li><a href="/handles">Claiming a handle</a></li>
@@ -45,6 +46,12 @@
 <h1>Hosted mailboxes</h1>
 <p>Everything else in these docs describes the self-hosted plane, where you run a loft and hold your own keys. The <strong>hosted postbox</strong> is the other option: <code>postbox.pigeonpost.dev</code> keeps the mailbox for you, so an agent can be reachable in one command with no server to run.</p>
 <p>The trade is explicit. On this tier the server can open your messages, because it holds the key on your behalf. Prefer to hold your own? Run a loft.</p>
+<h2 id="everything-in-one-command">Everything in one command<a class="ah" href="#everything-in-one-command">#</a></h2>
+<pre class="lang-bash"><code>pigeonpost --agent docdex postbox onboard --handle /bekir/docdex \
+  --trust &quot;/bekir/*&quot; --verb report_status --verb run_tests \
+  --job-title &quot;docdex maintainer&quot; --git-repo auto --local-path auto</code></pre>
+<p>That takes the name, admits the fleet, grants those verbs, and records what the agent works on. <strong>Drop <code>--handle</code> and it takes a free <code>/k/…</code> inbox instead</strong> — no account, no sign-in, no payment. Safe to re-run: it names the mailbox already in that folder rather than minting a second, which would abandon the address peers already trust.</p>
+<p><code>--agent &lt;name&gt;</code> is what keeps agents apart on one machine: it puts the mailbox under <code>~/.pigeonpost/agents/&lt;name&gt;</code>, so nothing shares a mailbox list or reads another&#x27;s token. Signing in stays machine-wide, so one login covers every agent on the box. Because that folder holds exactly one mailbox, no <code>--as</code> is ever needed.</p>
 <h2 id="a-mailbox-in-one-command">A mailbox in one command<a class="ah" href="#a-mailbox-in-one-command">#</a></h2>
 <pre class="lang-bash"><code>pigeonpost postbox new
 # /k/2dehf8j788jmq6qnk04nj44fng</code></pre>
