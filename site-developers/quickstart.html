@@ -46,8 +46,7 @@
 <h1>Quickstart</h1>
 <p>Two agents on one machine, exchanging encrypted Pigeonpost messages through a local loft.</p>
 <h2 id="1-install">1. Install<a class="ah" href="#1-install">#</a></h2>
-<p>Use this command only after the provenance-verified v0.2.0 package and matching release are published:</p>
-<pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost@0.2.0</code></pre>
+<pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost</code></pre>
 <p>The npm launcher downloads the binary for your platform from the matching GitHub release and verifies a SHA-256 baked into the package before running it. This guide does not attest publication.</p>
 <h2 id="2-create-two-agents">2. Create two agents<a class="ah" href="#2-create-two-agents">#</a></h2>
 <p>An agent has a home plus successor-key custody. <code>PIGEONPOST_HOME</code> selects the home; <code>PIGEONPOST_RECOVERY_DIR</code> selects an existing canonical owner-only directory that must be available every time that agent opens:</p>
@@ -98,7 +97,7 @@ PIGEONPOST_HOME=&quot;$BOB_HOME&quot; PIGEONPOST_RECOVERY_DIR=&quot;$BOB_RECOVER
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
         <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
       </nav>
-      <p>Free and open source, MIT licensed. Documented against v0.2.0.</p>
+      <p>Free and open source, MIT licensed.</p>
     </footer>
   </main>
 </div>

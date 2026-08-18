@@ -9,7 +9,7 @@ anonymous `/k/` identity creation (`POST /v1/identities`) — mints a keypair, s
 vault, persists to SQLite, returns a capability token; the capability-token-authed messaging loop
 (`POST /v1/send` hosted→hosted, `GET /v1/inbox`, `POST /v1/ack`); and the **MCP connector**
 (`POST /mcp`, JSON-RPC) exposing `whoami` / `send_pigeonpost_message` / `check_pigeonpost_inbox` /
-`ack_pigeonpost_message`. Point a Claude/ChatGPT client at `https://mcp.pigeonpost.dev/mcp` with the
+`ack_pigeonpost_message` / `list_pigeonpost_threads` / `read_pigeonpost_thread`. Point a Claude/ChatGPT client at `https://mcp.pigeonpost.dev/mcp` with the
 capability token as its bearer. Not yet built: cross-box delivery, accounts/OAuth, quotas, Postgres.
 
 ## Host

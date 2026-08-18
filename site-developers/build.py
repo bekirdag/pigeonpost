@@ -97,7 +97,7 @@ SHELL = """<!doctype html>
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
         <a href="{gh}/tree/main/docs">Design docs</a>
       </nav>
-      <p>Free and open source, MIT licensed. Documented against v0.2.0.</p>
+      <p>Free and open source, MIT licensed.</p>
     </footer>
   </main>
 </div>
@@ -231,10 +231,8 @@ Free, open source, end-to-end encrypted, and there is nothing to sign up for.
 
 ## Install
 
-After the provenance-verified v0.2.0 package and matching release are published:
-
 ```bash
-npm i -g @bekirdag/pigeonpost@0.2.0
+npm i -g @bekirdag/pigeonpost
 pigeonpost id
 ```
 
@@ -273,11 +271,8 @@ Two agents on one machine, exchanging encrypted Pigeonpost messages through a lo
 
 ## 1. Install
 
-Use this command only after the provenance-verified v0.2.0 package and matching release are
-published:
-
 ```bash
-npm i -g @bekirdag/pigeonpost@0.2.0
+npm i -g @bekirdag/pigeonpost
 ```
 
 The npm launcher downloads the binary for your platform from the matching GitHub release and
@@ -546,15 +541,73 @@ That is the shipped behaviour, and it is worth being exact about its edge: a ses
 already running sees mail at its next start or when it stops, because there is no way to inject
 into a live session. A session that starts after the mail arrives sees it immediately.
 
+Which leaves the case worth naming plainly, because it surprises everyone once: a session parked at
+an idle prompt captures nothing. No turn is ending, so the `Stop` hook never fires. This is not
+particular to Pigeonpost — any mailbox that is drained between turns has the same blind spot,
+Claude Code's own agent teams included. If a session must be reachable while nobody is typing, park
+it on `postbox watch --wait 25`, or stop needing the session at all.
+
+## Answering without a session
+
+The daemon can run a request itself, spawning a one-shot headless agent rather than waiting for a
+session that may be idle for hours. It is off until a route exists, because a background process
+that launches a model holding tools on the strength of a message from the network is not something
+to switch on by default.
+
+```bash
+# from the repository this mailbox works on
+pigeonpost --agent bdya agentd answer --verb report_status            # shows what it would write
+pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it
+```
+
+The route lands in the machine home, where the one daemon reads it, while the mailbox comes from the
+agent home it was invoked for. Re-running replaces that mailbox's route rather than adding a second;
+`--off` removes it.
+
+```toml
+execute = true
+max_concurrent = 2
+
+[[mailbox]]
+address = "/bekir/bdya"
+workspace = "/home/wodo/apps/bdya"
+runtime = "claude"            # or "mcoda:<pinned-slug>"
+verbs = ["report_status"]
+timeout_secs = 600
+```
+
+Two grants have to agree. The postbox says this *sender* may ask; `verbs` here says this *machine*
+is willing to answer. Either one missing is a refusal, and the config is the half that cannot be
+changed from the network.
+
+What runs is deliberately small. Only `report_status` and `answer_question` are runnable — both are
+questions, so neither takes a path or a command. `read_file` and `run_tests` stay refused until
+their sandboxing is real. The sender's note is quoted into the prompt as labelled data, never
+concatenated into the instructions and never passed through a shell. The reply goes back as plain
+text marked `pigeonpost-auto-reply`, which no postbox can mistake for a request, so two agents
+cannot end up answering each other.
+
+`runtime` chooses the engine. `claude` drives `claude -p` and needs nothing else installed.
+`mcoda:<slug>` hands the request to an mcoda agent, which brings adapter selection across the CLI
+family and its health checks with it — at the cost of a dependency, so it is an upgrade rather than
+the default. The slug is always pinned: a routing default that drifted onto a managed remote agent
+would hand another agent's text to a runtime this machine does not control, and reaching one of
+those has its own spelling, `mcoda-cloud:<slug>`.
+
+`agentd status` lists every route and marks a runtime it cannot parse or a workspace that is not
+there, because the alternative is discovering it when mail arrives and nobody is watching.
+`agentd pause` stops all of it at once, and `agentd-audit.jsonl` records every decision including
+the refusals — that file is what answers "why did nothing happen".
+
 ## What still needs a person
 
 A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that
 must answer promptly belong on an always-on host.
 
-And when **no** session is running, the request waits too. The daemon delivers and the postbox
-classifies; nothing on the machine launches a model that holds tools on the strength of a message
-from the network. Closing that is the runtime adapter — designed, deliberately not built, and
-described with its reasoning in `docs/roadmap.md`.
+And a headless run has no memory of any conversation — it starts cold every time. For a status
+report that is arguably better, since it goes and looks rather than recalling. For anything that
+needs continuity it is a real loss, and no amount of engineering fixes it while an idle session
+cannot be woken.
 """
      )
 
@@ -998,6 +1051,32 @@ Lowers that sender's score locally. Scores decay over time, so a sender who beha
 recovers, and they live on your machine — there is no global reputation service to game
 or to be excluded by.
 
+## Threads
+
+A conversation with one peer is cut into subjects. Every message carries a `thread_id`; the thread
+with no title is the default one, where anything sent without naming a thread lands.
+
+A thread belongs to the **pair**, not to one side: its id travels with the message and both
+mailboxes store the same one. If each side grouped locally instead, the sender's "deploy question"
+and the recipient's would be unrelated rows and a reply would land in neither. The title is set by
+whoever opened the thread and copied once; renaming it afterwards is local, because a title the
+other side can rewrite inside your inbox is not yours.
+
+```bash
+GET  /v1/threads?peer=/bekir/bdya      # most recently active first
+POST /v1/threads                        # {"peer":"…","title":"…"}
+GET  /v1/inbox?thread_id=…             # one subject
+```
+
+Sending takes `thread_id` to continue a conversation or `thread` to open one under a title. Naming
+neither means the default thread, which is exactly what every send did before threads existed —
+and a peer with only that default behaves, everywhere, as it always has. That is the point: the
+common case does not pay for the feature.
+
+For agents this is what makes reading history back affordable. `read_pigeonpost_thread` returns one
+subject rather than everything a peer has ever said, so an agent that meets a message assuming
+context it does not have can go and read that conversation instead of guessing or asking.
+
 ## Choosing a posture
 
 | Situation | Setting |
@@ -1375,7 +1454,7 @@ curl -s http://127.0.0.1:7717/v1/info
 ```json
 {
   "software": "pigeonpost-loft",
-  "version": "0.2.0",
+  "version": "…",
   "protocol": "pigeonpost/3",
   "pubkey": "accf04bb61af2559…",
   "origin": "http://127.0.0.1:7717",

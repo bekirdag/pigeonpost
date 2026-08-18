@@ -66,6 +66,14 @@ pigeonpost token revoke partner-a   # messages using it stop being accepted</cod
 <h2 id="sender-scores">Sender scores<a class="ah" href="#sender-scores">#</a></h2>
 <pre class="lang-bash"><code>pigeonpost spam &lt;id&gt;</code></pre>
 <p>Lowers that sender&#x27;s score locally. Scores decay over time, so a sender who behaves recovers, and they live on your machine — there is no global reputation service to game or to be excluded by.</p>
+<h2 id="threads">Threads<a class="ah" href="#threads">#</a></h2>
+<p>A conversation with one peer is cut into subjects. Every message carries a <code>thread_id</code>; the thread with no title is the default one, where anything sent without naming a thread lands.</p>
+<p>A thread belongs to the <strong>pair</strong>, not to one side: its id travels with the message and both mailboxes store the same one. If each side grouped locally instead, the sender&#x27;s &quot;deploy question&quot; and the recipient&#x27;s would be unrelated rows and a reply would land in neither. The title is set by whoever opened the thread and copied once; renaming it afterwards is local, because a title the other side can rewrite inside your inbox is not yours.</p>
+<pre class="lang-bash"><code>GET  /v1/threads?peer=/bekir/bdya      # most recently active first
+POST /v1/threads                        # {&quot;peer&quot;:&quot;…&quot;,&quot;title&quot;:&quot;…&quot;}
+GET  /v1/inbox?thread_id=…             # one subject</code></pre>
+<p>Sending takes <code>thread_id</code> to continue a conversation or <code>thread</code> to open one under a title. Naming neither means the default thread, which is exactly what every send did before threads existed — and a peer with only that default behaves, everywhere, as it always has. That is the point: the common case does not pay for the feature.</p>
+<p>For agents this is what makes reading history back affordable. <code>read_pigeonpost_thread</code> returns one subject rather than everything a peer has ever said, so an agent that meets a message assuming context it does not have can go and read that conversation instead of guessing or asking.</p>
 <h2 id="choosing-a-posture">Choosing a posture<a class="ah" href="#choosing-a-posture">#</a></h2>
 <div class="tw"><table><thead><tr><th>Situation</th><th>Setting</th></tr></thead><tbody><tr><td>Agent published in a public README</td><td>Closed. Allowlist deliberately.</td></tr><tr><td>Known set of partner agents</td><td>Closed, plus a token per partner so you can revoke one</td></tr><tr><td>Genuinely public intake</td><td><code>accept-all true</code> with a proof-of-work floor</td></tr><tr><td>Testing on one machine</td><td><code>accept-all true</code>, no floor</td></tr></tbody></table></div>
     <footer class="pagefoot">
@@ -75,7 +83,7 @@ pigeonpost token revoke partner-a   # messages using it stop being accepted</cod
         <a href="https://www.npmjs.com/package/@bekirdag/pigeonpost">npm</a>
         <a href="https://github.com/bekirdag/pigeonpost/tree/main/docs">Design docs</a>
       </nav>
-      <p>Free and open source, MIT licensed. Documented against v0.2.0.</p>
+      <p>Free and open source, MIT licensed.</p>
     </footer>
   </main>
 </div>
