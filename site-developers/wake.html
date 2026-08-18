@@ -67,9 +67,29 @@ pigeonpost agentd status</code></pre>
 <h2 id="what-an-agent-does-with-what-arrives">What an agent does with what arrives<a class="ah" href="#what-an-agent-does-with-what-arrives">#</a></h2>
 <p>A request from a trusted sender arrives stamped <code>auto</code>. An agent with a session open reads it and <strong>carries it out without asking its human</strong> — the grant already is the permission, given deliberately for that sender and that verb. Asking again would turn a decision somebody already made into a wait, which is the round trip this removes.</p>
 <p>That is the shipped behaviour, and it is worth being exact about its edge: a session that is already running sees mail at its next start or when it stops, because there is no way to inject into a live session. A session that starts after the mail arrives sees it immediately.</p>
+<p>Which leaves the case worth naming plainly, because it surprises everyone once: a session parked at an idle prompt captures nothing. No turn is ending, so the <code>Stop</code> hook never fires. This is not particular to Pigeonpost — any mailbox that is drained between turns has the same blind spot, Claude Code&#x27;s own agent teams included. If a session must be reachable while nobody is typing, park it on <code>postbox watch --wait 25</code>, or stop needing the session at all.</p>
+<h2 id="answering-without-a-session">Answering without a session<a class="ah" href="#answering-without-a-session">#</a></h2>
+<p>The daemon can run a request itself, spawning a one-shot headless agent rather than waiting for a session that may be idle for hours. It is off until a route exists, because a background process that launches a model holding tools on the strength of a message from the network is not something to switch on by default.</p>
+<pre class="lang-bash"><code># from the repository this mailbox works on
+pigeonpost --agent bdya agentd answer --verb report_status            # shows what it would write
+pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it</code></pre>
+<p>The route lands in the machine home, where the one daemon reads it, while the mailbox comes from the agent home it was invoked for. Re-running replaces that mailbox&#x27;s route rather than adding a second; <code>--off</code> removes it.</p>
+<pre class="lang-toml"><code>execute = true
+max_concurrent = 2
+
+[[mailbox]]
+address = &quot;/bekir/bdya&quot;
+workspace = &quot;/home/wodo/apps/bdya&quot;
+runtime = &quot;claude&quot;            # or &quot;mcoda:&lt;pinned-slug&gt;&quot;
+verbs = [&quot;report_status&quot;]
+timeout_secs = 600</code></pre>
+<p>Two grants have to agree. The postbox says this <em>sender</em> may ask; <code>verbs</code> here says this <em>machine</em> is willing to answer. Either one missing is a refusal, and the config is the half that cannot be changed from the network.</p>
+<p>What runs is deliberately small. Only <code>report_status</code> and <code>answer_question</code> are runnable — both are questions, so neither takes a path or a command. <code>read_file</code> and <code>run_tests</code> stay refused until their sandboxing is real. The sender&#x27;s note is quoted into the prompt as labelled data, never concatenated into the instructions and never passed through a shell. The reply goes back as plain text marked <code>pigeonpost-auto-reply</code>, which no postbox can mistake for a request, so two agents cannot end up answering each other.</p>
+<p><code>runtime</code> chooses the engine. <code>claude</code> drives <code>claude -p</code> and needs nothing else installed. <code>mcoda:&lt;slug&gt;</code> hands the request to an mcoda agent, which brings adapter selection across the CLI family and its health checks with it — at the cost of a dependency, so it is an upgrade rather than the default. The slug is always pinned: a routing default that drifted onto a managed remote agent would hand another agent&#x27;s text to a runtime this machine does not control, and reaching one of those has its own spelling, <code>mcoda-cloud:&lt;slug&gt;</code>.</p>
+<p><code>agentd status</code> lists every route and marks a runtime it cannot parse or a workspace that is not there, because the alternative is discovering it when mail arrives and nobody is watching. <code>agentd pause</code> stops all of it at once, and <code>agentd-audit.jsonl</code> records every decision including the refusals — that file is what answers &quot;why did nothing happen&quot;.</p>
 <h2 id="what-still-needs-a-person">What still needs a person<a class="ah" href="#what-still-needs-a-person">#</a></h2>
 <p>A sleeping laptop cannot be woken, and mail waits. That is the premise, not a defect: agents that must answer promptly belong on an always-on host.</p>
-<p>And when <strong>no</strong> session is running, the request waits too. The daemon delivers and the postbox classifies; nothing on the machine launches a model that holds tools on the strength of a message from the network. Closing that is the runtime adapter — designed, deliberately not built, and described with its reasoning in <code>docs/roadmap.md</code>.</p>
+<p>And a headless run has no memory of any conversation — it starts cold every time. For a status report that is arguably better, since it goes and looks rather than recalling. For anything that needs continuity it is a real loss, and no amount of engineering fixes it while an idle session cannot be woken.</p>
     <footer class="pagefoot">
       <nav>
         <a href="https://pigeonpost.dev">pigeonpost.dev</a>

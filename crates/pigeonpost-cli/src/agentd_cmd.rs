@@ -6,12 +6,20 @@
 //! records it where an agent will see it*. This is that resident thing. Every alternative design
 //! collapses back into polling.
 //!
-//! It holds one `GET /v1/events` stream per account and does nothing dangerous with what arrives:
-//! a desktop notification, and an append to a per-mailbox spool. Executing requests is a later
-//! phase deliberately — a daemon that both listens and acts is a much larger thing to get right,
-//! and this half alone removes the five-minute loop.
+//! It holds one `GET /v1/events` stream per account. What arrives is always recorded the same
+//! cheap way — a desktop notification and an append to a per-mailbox spool — and that half alone
+//! removes the five-minute loop.
 //!
-//! A sleeping laptop still cannot be woken. Mail waits, and the cursor means none of it is missed.
+//! It will also *answer* a request, if `agentd.toml` says so. That path is off by default and runs
+//! in its own task rather than on the stream loop: an action can take minutes, and a stream that
+//! stops reading its keep-alives looks dead, so the reconnect would lose whatever queued behind it.
+//! The decision belongs to `executor`, the run to `runner`; this module only sequences them, and
+//! records why on every exit.
+//!
+//! What still cannot be done is waking an idle session. Session hooks fire at start and at turn
+//! end, so a session parked at a prompt hears nothing — which is the reason the unattended path
+//! exists at all. And a sleeping laptop cannot be woken either: mail waits, and the cursor means
+//! none of it is missed.
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -111,7 +119,7 @@ fn applescript_quote(value: &str) -> String {
 }
 
 /// One event off the wire.
-#[derive(serde::Deserialize)]
+#[derive(Clone, serde::Deserialize)]
 struct MailEvent {
     event_id: i64,
     mailbox: String,
@@ -212,6 +220,21 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
             return Ok(());
         }
     }
+    let routing = crate::executor::load_routing(home);
+
+    // Whether the daemon means to answer this itself, decided before the spool line is written.
+    //
+    // Without this, a session draining during a run would answer a message the daemon is already
+    // working on — and a long action leaves minutes for that to happen. A claimed line is invisible
+    // to `drain`, and is released again the moment the daemon decides not to act or fails to.
+    let claimed = matches!(
+        &routing,
+        Ok(config)
+            if config.execute
+                && !crate::executor::paused(home)
+                && config.mailbox.iter().any(|m| m.address == event.mailbox)
+    );
+
     let record = serde_json::json!({
         "event_id": event.event_id,
         "mailbox": event.mailbox,
@@ -221,6 +244,7 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+        "claimed": claimed,
     });
     let mut file = std::fs::OpenOptions::new()
         .create(true)
@@ -228,10 +252,21 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
         .open(&path)?;
     writeln!(file, "{record}")?;
 
-    // Classify what this message *would* cause, and record it, without doing it. The rails are
-    // live and observable before anything is spawned, so the audit log answers "would this have
-    // run, and why" from real traffic rather than from a test fixture.
-    match crate::executor::load_routing(home) {
+    match routing {
+        // The message itself is what decides, and fetching it is network work that can be followed
+        // by minutes of model work — so it happens in its own task. The stream loop has to stay
+        // free to read keep-alives, or a long action would look like a dead connection and the
+        // reconnect would lose the events arriving behind it.
+        Ok(config) if config.execute => {
+            let home = home.to_path_buf();
+            let event = event.clone();
+            tokio::spawn(async move {
+                act(&home, &config, &event).await;
+            });
+        }
+        // Classify what this message *would* cause, and record it, without doing it. A machine with
+        // execution off does no network work here, so the rails stay observable on real traffic
+        // without becoming a reason to talk to the postbox.
         Ok(config) => {
             let decision = crate::executor::classify(
                 &config,
@@ -279,6 +314,126 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
     Ok(())
 }
 
+/// Ceiling on actions running at once, so a flood cannot fork one agent process per message.
+///
+/// Read from the first config seen and then fixed for the daemon's lifetime: a semaphore cannot be
+/// resized, and re-reading it per message would let a config edit widen a cap that a running flood
+/// is already sitting against. Restarting the daemon is what applies a new value.
+static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+
+fn slots(max: usize) -> &'static tokio::sync::Semaphore {
+    SLOTS.get_or_init(|| tokio::sync::Semaphore::new(max.max(1)))
+}
+
+/// Carry out one message, if the rails allow it. Every exit records why.
+///
+/// Ordering is the same principle as `executor::classify`: the checks that need nothing from the
+/// network come first, so an unrouted or paused machine never fetches the message at all.
+async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailEvent) {
+    let note = |outcome: &str, detail: Option<&str>| {
+        let _ = crate::executor::audit(home, &event.mailbox, &event.message_id, outcome, detail);
+    };
+    // Record why, and hand the mail back to the session at the same time. These two belong together
+    // on every failing path: an audit line nobody reads is not delivery, and the whole point of the
+    // claim is that it is temporary.
+    let give_back = |outcome: &str, detail: Option<&str>| {
+        note(outcome, detail);
+        release_claim(home, &event.mailbox, event.event_id);
+    };
+
+    if !config.mailbox.iter().any(|m| m.address == event.mailbox) {
+        give_back(crate::executor::Refusal::NoRoute.as_str(), None);
+        return;
+    }
+    if crate::executor::paused(home) {
+        give_back(crate::executor::Refusal::Paused.as_str(), None);
+        return;
+    }
+
+    let credential = match crate::postbox_cmd::credential_anywhere(home, &event.mailbox) {
+        Ok(c) => c,
+        Err(e) => return give_back("no_credential", Some(&e.to_string())),
+    };
+    let message = match crate::postbox_cmd::message_by_id(&credential, &event.message_id).await {
+        Ok(Some(m)) => m,
+        // Already acknowledged, most likely by a session that got there first. Not a failure, and
+        // nothing to hand back — but the claim still has to go, or the line outlives the message.
+        Ok(None) => return give_back("no_longer_waiting", None),
+        Err(e) => return give_back("fetch_failed", Some(&e.to_string())),
+    };
+
+    let action = match crate::executor::classify(config, home, &event.mailbox, &message) {
+        Ok(a) => a,
+        Err(refusal) => {
+            let detail = match &refusal {
+                crate::executor::Refusal::BadArguments(why) => Some(*why),
+                _ => None,
+            };
+            return give_back(refusal.as_str(), detail);
+        }
+    };
+
+    // Queue rather than refuse: a request that has to wait for a slot is still answered, and the
+    // sender is not waiting on a connection.
+    let _permit = match slots(config.max_concurrent).acquire().await {
+        Ok(p) => p,
+        Err(_) => return give_back("slots_closed", None),
+    };
+
+    let sender = message["sender_handle"]
+        .as_str()
+        .or_else(|| message["from"].as_str())
+        .unwrap_or(&event.sender)
+        .to_string();
+
+    log_line(
+        home,
+        &format!(
+            "running {} for {} on behalf of {sender}",
+            action.verb, event.mailbox
+        ),
+    );
+    let run = match crate::runner::run(home, &action, &sender, &event.message_id).await {
+        Ok(run) => run,
+        Err(failure) => {
+            log_line(home, &format!("run failed: {failure}"));
+            return give_back(failure.as_str(), Some(&failure.detail()));
+        }
+    };
+
+    let body = crate::runner::reply_body(&action.verb, &event.message_id, &run.text);
+    if let Err(e) = crate::postbox_cmd::send_as(&credential, &sender, &body).await {
+        // The work was done and is only in the audit trail now, which is worth saying loudly: the
+        // peer is still waiting and no retry will happen on its own.
+        log_line(home, &format!("reply to {sender} failed: {e}"));
+        return give_back("reply_failed", Some(&e.to_string()));
+    }
+
+    // Only after the answer is away: a message that is acknowledged but never answered is the one
+    // failure this loop cannot notice a second time.
+    if let Err(e) = crate::postbox_cmd::ack_as(&credential, &event.message_id).await {
+        // The reply is already away, so this is not handed back: a session picking it up would
+        // answer a second time, which is the failure the claim exists to prevent. The message stays
+        // unacknowledged on the postbox and the audit line says why.
+        log_line(home, &format!("ack failed: {e}"));
+        note("ack_failed", Some(&e.to_string()));
+        forget_spooled(home, &event.mailbox, event.event_id);
+        return;
+    }
+
+    // Answered, so the session must not be told about it as if it were new.
+    forget_spooled(home, &event.mailbox, event.event_id);
+
+    let detail = match (&run.adapter, run.truncated) {
+        (Some(a), true) => format!("{} via {a}, truncated", action.verb),
+        (Some(a), false) => format!("{} via {a}", action.verb),
+        (None, true) => format!("{}, truncated", action.verb),
+        (None, false) => action.verb.clone(),
+    };
+    log_line(home, &format!("replied to {sender} ({detail})"));
+    note("executed", Some(&detail));
+}
+
 /// Show what the daemon has seen, without needing the service manager's own tooling.
 pub fn status(home: &Path, json: bool) -> Result<(), Error> {
     let cursor = read_cursor(home);
@@ -294,6 +449,7 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             }
         }
     }
+    let routing = crate::executor::load_routing(home).unwrap_or_default();
     if json {
         println!(
             "{}",
@@ -301,6 +457,24 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
                 "cursor": cursor,
                 "service_unit": installed_unit().map(|p| p.display().to_string()),
                 "spool": waiting.iter().map(|(f, c)| serde_json::json!({"file": f, "events": c})).collect::<Vec<_>>(),
+                "paused": crate::executor::paused(home),
+                "execute": routing.execute,
+                "max_concurrent": routing.max_concurrent,
+                // The same problems the human-readable listing marks, in a form a monitor can
+                // alert on: a route that cannot work is invisible until mail arrives for it.
+                "routes": routing.mailbox.iter().map(|r| {
+                    let parsed = r.runtime.parse::<crate::executor::Runtime>();
+                    serde_json::json!({
+                        "address": r.address,
+                        "workspace": r.workspace.display().to_string(),
+                        "workspace_present": r.workspace.is_dir(),
+                        "runtime": r.runtime,
+                        "runtime_slug": parsed.as_ref().ok().and_then(|p| p.slug()),
+                        "runtime_usable": parsed.is_ok(),
+                        "verbs": r.verbs,
+                        "timeout_secs": r.timeout_secs,
+                    })
+                }).collect::<Vec<_>>(),
             })
         );
         return Ok(());
@@ -316,7 +490,6 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             println!("  {file}: {count} event(s)");
         }
     }
-    let routing = crate::executor::load_routing(home).unwrap_or_default();
     if crate::executor::paused(home) {
         println!("unattended action: PAUSED");
     } else if routing.execute {
@@ -330,6 +503,34 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             "unattended action: off (rails only) — see {}",
             crate::executor::config_path(home).display()
         );
+    }
+    // Show each route, and say so here when one cannot work. A runtime that does not parse or a
+    // workspace that is not there refuses at the moment mail arrives, which is the worst time to
+    // discover it: nobody is watching, and the peer just never hears back.
+    for route in &routing.mailbox {
+        let runtime = match route.runtime.parse::<crate::executor::Runtime>() {
+            Ok(parsed) => match parsed.slug() {
+                Some(slug) => format!("{} ({slug})", route.runtime),
+                None => route.runtime.clone(),
+            },
+            Err(refusal) => format!("{} — UNUSABLE: {}", route.runtime, refusal.as_str()),
+        };
+        let workspace = if route.workspace.is_dir() {
+            route.workspace.display().to_string()
+        } else {
+            format!("{} — MISSING", route.workspace.display())
+        };
+        println!(
+            "  {} → {runtime}, {}s, verbs {}",
+            route.address,
+            route.timeout_secs,
+            if route.verbs.is_empty() {
+                "none".to_string()
+            } else {
+                route.verbs.join(", ")
+            }
+        );
+        println!("      workspace: {workspace}");
     }
     println!("audit: {}", crate::executor::audit_path(home).display());
     match installed_unit() {
@@ -359,6 +560,231 @@ fn machine_home(home: &Path) -> PathBuf {
         }
     }
     home.to_path_buf()
+}
+
+/// Route this agent's mailbox for unattended answering, or stop routing it.
+///
+/// Hand-writing `agentd.toml` means getting three things right at once — the address exactly as the
+/// postbox reports it, a workspace that exists, and a runtime spelling this build accepts — and
+/// each of them fails silently, at the moment mail arrives, with nobody watching. So this writes it
+/// from what the machine already knows and refuses anything it cannot verify now.
+///
+/// The route goes in the **machine** home, because that is where the one daemon reads it, while the
+/// mailbox comes from the **agent** home this was invoked for. That split is the whole reason this
+/// is a command rather than a documented example.
+pub fn answer(
+    home: &Path,
+    verbs: &[String],
+    runtime: &str,
+    timeout_secs: Option<u64>,
+    install: bool,
+    off: bool,
+) -> Result<(), Error> {
+    // Refuse a spelling this build cannot use, before it is written anywhere. `agentd status` would
+    // report it as UNUSABLE afterwards, but only if somebody looked.
+    let parsed: crate::executor::Runtime = runtime.parse().map_err(|refusal| match refusal {
+        // Says which agent to name, and how to find one, rather than implying mcoda is unsupported.
+        crate::executor::Refusal::RuntimeNotPinned => format!(
+            "`{runtime}` needs the agent named too, e.g. `{runtime}:claude-sonnet` — the slug is \
+             always pinned so that mcoda's own routing defaults cannot decide what runs.\n\
+             List what this machine has: mcoda agent list"
+        ),
+        crate::executor::Refusal::RuntimeNotLocal => format!(
+            "`{runtime}` names a managed remote agent under the local spelling. Write it as \
+             `mcoda-cloud:…` if that is what you meant — it runs elsewhere, with tools and \
+             credentials this machine does not control."
+        ),
+        _ => format!(
+            "`{runtime}` is not a runtime this build understands — use `claude`, \
+             `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`"
+        ),
+    })?;
+    if !parsed.is_local() {
+        eprintln!(
+            "note: {runtime} delegates to a managed remote agent, which runs with tools and \
+             credentials this machine does not control."
+        );
+    }
+
+    let credential = crate::postbox_cmd::sole_credential(home)?;
+    // The handle when there is one: it is what the config, the docs and its peers all call this
+    // mailbox, and it survives the address being rotated underneath it.
+    let address = credential
+        .handle
+        .clone()
+        .unwrap_or_else(|| credential.address.clone());
+
+    let machine = machine_home(home);
+    let mut config = crate::executor::load_routing(&machine)?;
+
+    if off {
+        let before = config.mailbox.len();
+        config.mailbox.retain(|m| m.address != address);
+        if config.mailbox.len() == before {
+            println!("{address} was not routed for unattended answering — nothing to remove.");
+            return Ok(());
+        }
+        if !install {
+            println!("would stop routing {address}; re-run with --install to write it");
+            return Ok(());
+        }
+        let path = crate::executor::write_routing(&machine, &config)?;
+        println!(
+            "{address} will no longer answer unattended ({})",
+            path.display()
+        );
+        return Ok(());
+    }
+
+    let workspace = std::env::current_dir()?;
+    if !crate::postbox_cmd::in_a_repository() {
+        return Err(format!(
+            "{} is not inside a repository — run this from the checkout this mailbox works on, \
+             since every action runs with that as its working directory",
+            workspace.display()
+        )
+        .into());
+    }
+    if verbs.is_empty() {
+        return Err("say what may be answered unattended, e.g. --verb report_status".into());
+    }
+    // A verb this phase will not run would sit in the config looking granted.
+    for verb in verbs {
+        if !crate::executor::PHASE4_VERBS.contains(&verb.as_str()) {
+            return Err(format!(
+                "`{verb}` cannot be answered unattended yet — only {} can. Verbs that reach the \
+                 filesystem wait for real sandboxing.",
+                crate::executor::PHASE4_VERBS.join(" and ")
+            )
+            .into());
+        }
+    }
+
+    let route = crate::executor::MailboxRoute {
+        address: address.clone(),
+        workspace: workspace.clone(),
+        runtime: runtime.to_string(),
+        verbs: verbs.to_vec(),
+        timeout_secs: timeout_secs.unwrap_or(crate::executor::DEFAULT_TIMEOUT_SECS),
+    };
+
+    // Replace rather than append, so re-running is a correction instead of a second route that
+    // shadows the first depending on which the daemon happens to find.
+    match config.mailbox.iter().position(|m| m.address == address) {
+        Some(at) => config.mailbox[at] = route.clone(),
+        None => config.mailbox.push(route.clone()),
+    }
+    config.execute = true;
+
+    if !install {
+        println!(
+            "Would write this to {}:\n",
+            crate::executor::config_path(&machine).display()
+        );
+        println!("{}", toml::to_string_pretty(&route)?);
+        println!("Add --install to write it. Nothing answers unattended until you do.");
+        return Ok(());
+    }
+
+    let path = crate::executor::write_routing(&machine, &config)?;
+    println!("{address} will answer {} unattended", verbs.join(" and "));
+    println!("  workspace: {}", workspace.display());
+    println!("  runtime:   {runtime}");
+    println!("  config:    {}", path.display());
+    println!();
+    println!("The sender still has to have been granted the verb on the postbox — this is the");
+    println!(
+        "other half of that, and either one missing is a refusal. `agentd pause` stops it all"
+    );
+    println!("at once, and `agentd status` shows every route with its problems.");
+    if installed_unit().is_none() {
+        println!();
+        println!("No daemon on this machine yet, so nothing will catch the mail:");
+        println!("  pigeonpost agentd install");
+    }
+    Ok(())
+}
+
+/// Drop one event from a mailbox's spool, because it has already been answered.
+///
+/// Without this the daemon answers a request and the session is *still* told about it at the next
+/// turn — so the agent looks, finds the message acknowledged and gone, and reports mail that no
+/// longer exists. Worse, on a build where the ack had not landed yet, it would answer it twice.
+///
+/// Only ever called after a reply is away. A refusal deliberately leaves the line in place: mail
+/// held for a human is exactly the mail that must still reach one.
+///
+/// Read-filter-write, unlocked, matching how [`collect`] already clears a file. A drain landing in
+/// the same instant can lose this line, which costs a notification and never a message — the
+/// message itself lives on the postbox until it is acknowledged.
+fn forget_spooled(home: &Path, mailbox: &str, event_id: i64) {
+    rewrite_spool(home, mailbox, event_id, |_| None);
+}
+
+/// Hand a claimed event back to whoever reads the spool, because the daemon is not going to answer
+/// it after all.
+///
+/// Every path out of [`act`] that is not a delivered reply comes through here. A claim that is
+/// taken and never released is mail that silently stops existing — worse than the double answer the
+/// claim prevents, because nothing reports it.
+fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
+    rewrite_spool(home, mailbox, event_id, |mut line| {
+        if let Some(obj) = line.as_object_mut() {
+            obj.insert("claimed".into(), serde_json::Value::Bool(false));
+        }
+        Some(line)
+    });
+}
+
+/// Whether a spool line is one the daemon has taken for itself.
+///
+/// Anything unparseable, or written by a build from before claims existed, counts as unclaimed —
+/// the safe direction, since the cost is a message shown twice rather than one never shown.
+fn is_claimed(line: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(line)
+        .ok()
+        .and_then(|v| v["claimed"].as_bool())
+        .unwrap_or(false)
+}
+
+/// Rewrite one event's spool line, or drop it when the edit returns `None`.
+///
+/// Read-filter-write, unlocked, matching how [`collect`] already clears a file. A drain landing in
+/// the same instant can lose a line, which costs a notification and never a message — the message
+/// itself lives on the postbox until it is acknowledged.
+fn rewrite_spool(
+    home: &Path,
+    mailbox: &str,
+    event_id: i64,
+    edit: impl Fn(serde_json::Value) -> Option<serde_json::Value>,
+) {
+    let path = spool_file(&machine_home(home), mailbox);
+    let Ok(body) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let mut out = String::new();
+    for line in body.lines() {
+        let parsed: Option<serde_json::Value> = serde_json::from_str(line).ok();
+        let is_target = parsed
+            .as_ref()
+            .and_then(|v| v["event_id"].as_i64())
+            .is_some_and(|id| id == event_id);
+        match (is_target, parsed) {
+            // Anything unparseable is left exactly as it was: this rewrites the spool, and a line
+            // it does not understand is not its to discard.
+            (true, Some(value)) => {
+                if let Some(edited) = edit(value) {
+                    out.push_str(&edited.to_string());
+                    out.push('\n');
+                }
+            }
+            _ => {
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+    }
+    let _ = std::fs::write(&path, out);
 }
 
 /// The mailbox addresses this home owns, used to take only its own mail out of a shared spool.
@@ -422,9 +848,24 @@ fn collect(home: &Path, keep: bool) -> Result<Option<String>, Error> {
             if body.trim().is_empty() {
                 continue;
             }
-            collected.push_str(&body);
+            // A claimed event is one the daemon is answering right now. Showing it here would put
+            // two agents on the same request — the session would answer it while the run is still
+            // going, which on a ten-minute action is a wide window. The claim is released the
+            // moment the daemon decides not to act or fails to, so nothing is lost by waiting.
+            let (claimed, mine): (Vec<&str>, Vec<&str>) =
+                body.lines().partition(|line| is_claimed(line));
+            for line in &mine {
+                collected.push_str(line);
+                collected.push('\n');
+            }
             if !keep {
-                let _ = std::fs::write(&path, "");
+                // Put the claimed lines back rather than truncating, or a drain landing mid-run
+                // would delete the daemon's own work item.
+                let mut rest = claimed.join("\n");
+                if !rest.is_empty() {
+                    rest.push('\n');
+                }
+                let _ = std::fs::write(&path, rest);
             }
         }
     }
@@ -1080,6 +1521,188 @@ mod tests {
             !std::fs::read_to_string(&theirs).unwrap().trim().is_empty(),
             "another agent's mail must be left where it is"
         );
+    }
+
+    fn routed(address: &str, workspace: &Path) -> crate::executor::RoutingConfig {
+        crate::executor::RoutingConfig {
+            mailbox: vec![crate::executor::MailboxRoute {
+                address: address.into(),
+                workspace: workspace.to_path_buf(),
+                runtime: "claude".into(),
+                verbs: vec!["report_status".into()],
+                timeout_secs: 60,
+            }],
+            max_concurrent: 2,
+            execute: true,
+        }
+    }
+
+    fn event(mailbox: &str) -> MailEvent {
+        MailEvent {
+            event_id: 1,
+            mailbox: mailbox.into(),
+            message_id: "abc123".into(),
+            sender: "/bekir/main".into(),
+        }
+    }
+
+    fn audit_outcomes(home: &Path) -> Vec<String> {
+        std::fs::read_to_string(crate::executor::audit_path(home))
+            .unwrap_or_default()
+            .lines()
+            .filter_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+            .filter_map(|v| v["outcome"].as_str().map(str::to_string))
+            .collect()
+    }
+
+    /// Mail for a mailbox this machine does not route must cost nothing: no credential lookup, no
+    /// fetch. The postbox is never asked, so this passes with no network at all.
+    #[tokio::test]
+    async fn an_unrouted_mailbox_is_refused_before_any_network() {
+        let home = tempfile::tempdir().unwrap();
+        let config = routed("/bekir/somebody-else", home.path());
+        act(home.path(), &config, &event("/bekir/not-me")).await;
+        assert_eq!(audit_outcomes(home.path()), vec!["no_route"]);
+    }
+
+    /// The kill switch has to bite before anything is fetched, or pausing a busy machine would
+    /// still be talking to the postbox on its way to doing nothing.
+    #[tokio::test]
+    async fn a_paused_machine_refuses_before_any_network() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::write(crate::executor::pause_path(home.path()), "paused\n").unwrap();
+        let config = routed("/bekir/mine", home.path());
+        act(home.path(), &config, &event("/bekir/mine")).await;
+        assert_eq!(audit_outcomes(home.path()), vec!["paused"]);
+    }
+
+    /// A routed mailbox with no credential on this box cannot be acted for, and must say which
+    /// problem it is rather than looking like a network failure.
+    #[tokio::test]
+    async fn a_routed_mailbox_with_no_local_credential_says_so() {
+        let home = tempfile::tempdir().unwrap();
+        let config = routed("/bekir/mine", home.path());
+        act(home.path(), &config, &event("/bekir/mine")).await;
+        assert_eq!(audit_outcomes(home.path()), vec!["no_credential"]);
+    }
+
+    /// The window this closes: the daemon takes minutes to answer, and a session starting in the
+    /// middle would otherwise drain the same message and answer it a second time.
+    #[test]
+    fn a_claimed_event_is_invisible_to_a_drain() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        let mine = spool_file(machine.path(), "/k/mine");
+        std::fs::write(
+            &mine,
+            "{\"event_id\":1,\"claimed\":false}\n\
+             {\"event_id\":2,\"claimed\":true}\n\
+             {\"event_id\":3}\n",
+        )
+        .unwrap();
+
+        let drained = collect(machine.path(), false).unwrap().unwrap();
+        assert!(drained.contains("\"event_id\":1"));
+        assert!(
+            drained.contains("\"event_id\":3"),
+            "a line from before claims existed is mail"
+        );
+        assert!(
+            !drained.contains("\"event_id\":2"),
+            "the daemon is working on that one"
+        );
+
+        // The claimed line survives the drain, or the daemon loses its own work item.
+        let left = std::fs::read_to_string(&mine).unwrap();
+        assert!(left.contains("\"event_id\":2"));
+        assert_eq!(left.lines().count(), 1);
+    }
+
+    /// A claim that is never released is worse than the double answer it prevents: the mail stops
+    /// existing and nothing says so.
+    #[test]
+    fn a_released_claim_becomes_drainable_again() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        let mine = spool_file(machine.path(), "/k/mine");
+        std::fs::write(
+            &mine,
+            "{\"event_id\":4,\"message_id\":\"m\",\"claimed\":true}\n",
+        )
+        .unwrap();
+
+        assert!(collect(machine.path(), true).unwrap().is_none());
+
+        release_claim(machine.path(), "/k/mine", 4);
+
+        let drained = collect(machine.path(), true).unwrap().unwrap();
+        assert!(drained.contains("\"event_id\":4"));
+        assert!(
+            drained.contains("\"message_id\":\"m\""),
+            "the record must survive intact"
+        );
+    }
+
+    /// Every failing path out of `act` has to release, or the claim leaks. These are the ones that
+    /// need no network to reach.
+    #[tokio::test]
+    async fn a_refusal_hands_the_claim_back() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(SPOOL_DIR)).unwrap();
+        let spool = spool_file(home.path(), "/bekir/mine");
+        std::fs::write(&spool, "{\"event_id\":1,\"claimed\":true}\n").unwrap();
+
+        let config = routed("/bekir/mine", home.path());
+        // No credential on this box, so it refuses after the cheap gates and before any fetch.
+        act(home.path(), &config, &event("/bekir/mine")).await;
+
+        assert_eq!(audit_outcomes(home.path()), vec!["no_credential"]);
+        assert!(
+            collect(home.path(), true).unwrap().is_some(),
+            "a refused message must become the session's again"
+        );
+    }
+
+    /// A message the daemon answered itself must stop being news, or the session is told about mail
+    /// that has already been acknowledged and finds nothing when it looks.
+    #[test]
+    fn an_answered_event_stops_being_spooled() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        let mine = spool_file(machine.path(), "/k/mine");
+        std::fs::write(
+            &mine,
+            "{\"event_id\":7,\"message_id\":\"a\"}\n\
+             {\"event_id\":8,\"message_id\":\"b\"}\n\
+             {\"event_id\":9,\"message_id\":\"c\"}\n",
+        )
+        .unwrap();
+
+        forget_spooled(machine.path(), "/k/mine", 8);
+
+        let left = std::fs::read_to_string(&mine).unwrap();
+        assert!(
+            !left.contains("\"event_id\":8"),
+            "the answered one should go"
+        );
+        assert!(left.contains("\"event_id\":7"), "its neighbours must stay");
+        assert!(left.contains("\"event_id\":9"), "its neighbours must stay");
+        assert_eq!(left.lines().count(), 2);
+    }
+
+    /// Nothing may be invented on a spool that is already empty, or a drain would report an event
+    /// with no message behind it.
+    #[test]
+    fn forgetting_from_an_empty_or_missing_spool_is_harmless() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        forget_spooled(machine.path(), "/k/never-seen", 1);
+        assert!(!spool_file(machine.path(), "/k/never-seen").exists());
+
+        let mine = spool_file(machine.path(), "/k/mine");
+        std::fs::write(&mine, "{\"event_id\":5}\n").unwrap();
+        forget_spooled(machine.path(), "/k/mine", 5);
+        assert_eq!(std::fs::read_to_string(&mine).unwrap(), "");
     }
 
     /// The case that bites when hooks are installed before onboarding: an agent that owns no

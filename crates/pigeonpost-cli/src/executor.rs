@@ -38,7 +38,7 @@ const PAUSE_FILE: &str = "agentd-paused";
 const AUDIT_FILE: &str = "agentd-audit.jsonl";
 
 /// One mailbox this machine will act for. Absence is a refusal: there is no default routing.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct MailboxRoute {
     /// The mailbox, by handle or `/k/` address, exactly as the postbox reports it.
     pub address: String,
@@ -59,11 +59,96 @@ pub struct MailboxRoute {
 fn default_runtime() -> String {
     "claude".into()
 }
+/// Ten minutes. A `report_status` worth sending goes and looks: queries a live API, reads logs,
+/// counts what it found. Two minutes killed exactly those runs mid-work, which is worse than
+/// slow — the peer gets a failure where an accurate answer was already half-assembled.
+pub const DEFAULT_TIMEOUT_SECS: u64 = 600;
+
 fn default_timeout_secs() -> u64 {
-    120
+    DEFAULT_TIMEOUT_SECS
 }
 
-#[derive(Debug, Clone, Default, serde::Deserialize)]
+/// Which agent runtime a route hands its request to.
+///
+/// Kept as a string on disk and parsed here, so a config written for an older build still loads
+/// and an unrecognised value is a refusal rather than a spawn-time surprise.
+///
+/// `Claude` is the default deliberately: unattended execution has to work for someone who
+/// installed only the published npm package, without a private orchestrator in the picture.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Runtime {
+    /// `claude -p`, driven directly. No dependency beyond the CLI itself.
+    Claude,
+    /// An mcoda agent by pinned slug, which owns adapter selection across the CLI family.
+    Mcoda(String),
+    /// An mcoda agent that is expected to be remote. Separate from `Mcoda` so that sending
+    /// another agent's text off this machine cannot be reached by a routing default drifting.
+    McodaCloud(String),
+}
+
+/// Slug prefix mcoda gives the managed remote agents it materialises.
+const MCODA_CLOUD_PREFIX: &str = "mswarm-cloud-";
+
+impl Runtime {
+    /// Whether this runtime is expected to keep the request on this machine.
+    ///
+    /// The premise in this module's header — routing is local — is only true if the thing on the
+    /// end of it is local too, so the caller checks this before handing over untrusted text.
+    pub fn is_local(&self) -> bool {
+        !matches!(self, Runtime::McodaCloud(_))
+    }
+
+    /// The pinned agent slug, where the runtime names one.
+    pub fn slug(&self) -> Option<&str> {
+        match self {
+            Runtime::Claude => None,
+            Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => Some(slug),
+        }
+    }
+}
+
+impl std::str::FromStr for Runtime {
+    type Err = Refusal;
+
+    fn from_str(text: &str) -> Result<Self, Self::Err> {
+        let text = text.trim();
+        // A slug has to be pinned by whoever wrote the config. Resolving it through mcoda's own
+        // `override → workspace_default → global_default` chain would let a file this project does
+        // not own decide what runs, and — for a cloud default — where the text goes.
+        let pinned = |rest: &str| -> Result<String, Refusal> {
+            let slug = rest.trim();
+            if slug.is_empty() {
+                return Err(Refusal::RuntimeNotPinned);
+            }
+            if slug.contains(['/', '\\', ' ']) {
+                return Err(Refusal::UnknownRuntime);
+            }
+            Ok(slug.to_string())
+        };
+        match text {
+            "claude" => Ok(Runtime::Claude),
+            // Named the family but not the agent. Whether mcoda is installed has nothing to do with
+            // it — this is a spelling rule, and saying "unknown runtime" here sends people off to
+            // check their installation for a problem that is one word long.
+            "mcoda" | "mcoda-cloud" => Err(Refusal::RuntimeNotPinned),
+            _ => match text.split_once(':') {
+                Some(("mcoda", rest)) => {
+                    let slug = pinned(rest)?;
+                    // A cloud agent reached through the local spelling would be exactly the drift
+                    // this split exists to prevent, so it is refused rather than upgraded.
+                    if slug.starts_with(MCODA_CLOUD_PREFIX) {
+                        return Err(Refusal::RuntimeNotLocal);
+                    }
+                    Ok(Runtime::Mcoda(slug))
+                }
+                Some(("mcoda-cloud", rest)) => Ok(Runtime::McodaCloud(pinned(rest)?)),
+                _ => Err(Refusal::UnknownRuntime),
+            },
+        }
+    }
+}
+
+#[derive(Debug, Clone, serde::Deserialize)]
 pub struct RoutingConfig {
     #[serde(default)]
     pub mailbox: Vec<MailboxRoute>,
@@ -81,6 +166,20 @@ fn default_concurrency() -> usize {
     2
 }
 
+/// Written out rather than derived. `#[derive(Default)]` would give `max_concurrent = 0`, because a
+/// serde field default only applies to a *missing field* and never to `Default::default()` — and
+/// `load_routing` returns exactly that when there is no config file. The two must agree, or a
+/// machine with no `agentd.toml` reports a ceiling of zero and quietly runs one at a time.
+impl Default for RoutingConfig {
+    fn default() -> Self {
+        Self {
+            mailbox: Vec::new(),
+            max_concurrent: default_concurrency(),
+            execute: false,
+        }
+    }
+}
+
 pub fn config_path(home: &Path) -> PathBuf {
     home.join(CONFIG_FILE)
 }
@@ -91,6 +190,34 @@ pub fn load_routing(home: &Path) -> Result<RoutingConfig, Error> {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RoutingConfig::default()),
         Err(e) => Err(e.into()),
     }
+}
+
+/// Serialise routing back to TOML.
+///
+/// A separate shape from [`RoutingConfig`] for one mechanical reason: TOML requires scalars before
+/// tables, and `mailbox` is an array of tables. Ordering the fields here keeps the emitted file
+/// valid without dictating the order of the struct everything else reads.
+#[derive(serde::Serialize)]
+struct RoutingOut<'a> {
+    execute: bool,
+    max_concurrent: usize,
+    mailbox: &'a [MailboxRoute],
+}
+
+pub fn write_routing(home: &Path, config: &RoutingConfig) -> Result<PathBuf, Error> {
+    let body = toml::to_string_pretty(&RoutingOut {
+        execute: config.execute,
+        max_concurrent: config.max_concurrent,
+        mailbox: &config.mailbox,
+    })?;
+    let path = config_path(home);
+    let header = "# Written by `pigeonpost agentd answer`. Hand edits are kept, comments are not:\n\
+                  # this file is parsed and rewritten, so anything explanatory belongs elsewhere.\n\
+                  #\n\
+                  # `execute = false` leaves the rails in place and runs nothing. `agentd pause` is\n\
+                  # the same thing without editing anything, and is what to reach for in a hurry.\n\n";
+    std::fs::write(&path, format!("{header}{body}"))?;
+    Ok(path)
 }
 
 /// Why a message will not be acted on. Every variant is a refusal; there is no "unknown" that
@@ -115,6 +242,14 @@ pub enum Refusal {
     BadArguments(&'static str),
     /// The workspace named in config is not a directory that exists.
     WorkspaceMissing,
+    /// The route's `runtime` is not a spelling this build understands.
+    UnknownRuntime,
+    /// A known runtime family, named without the agent it should run. Distinct from
+    /// [`Refusal::UnknownRuntime`] because the fix is completely different, and one message for
+    /// both reads as "that runtime is unsupported" when the runtime is fine.
+    RuntimeNotPinned,
+    /// The route names a runtime that would take the request off this machine, without saying so.
+    RuntimeNotLocal,
 }
 
 impl Refusal {
@@ -129,6 +264,9 @@ impl Refusal {
             Refusal::AutoReply => "auto_reply",
             Refusal::BadArguments(_) => "bad_arguments",
             Refusal::WorkspaceMissing => "workspace_missing",
+            Refusal::UnknownRuntime => "unknown_runtime",
+            Refusal::RuntimeNotPinned => "runtime_not_pinned",
+            Refusal::RuntimeNotLocal => "runtime_not_local",
         }
     }
 }
@@ -141,6 +279,12 @@ pub struct Action {
     pub verb: String,
     /// The sender's prose, carried through as untrusted context. Never interpreted here.
     pub note: Option<String>,
+    /// `answer_question`'s question, already length-checked by [`validate_args`]. Untrusted in
+    /// exactly the way `note` is; it is the request's content rather than its instruction.
+    pub question: Option<String>,
+    /// The route's `runtime`, already parsed, so the engine cannot be handed a spelling that was
+    /// never validated.
+    pub runtime: Runtime,
 }
 
 pub fn paused(home: &Path) -> bool {
@@ -203,6 +347,9 @@ pub fn classify(
 
     validate_args(&verb, body.get("args"))?;
 
+    // Both of these are the route's own correctness rather than the message's, so they are checked
+    // last: a misconfigured route must not mask what the traffic itself would have been refused for.
+    let runtime: Runtime = route.runtime.parse()?;
     if !route.workspace.is_dir() {
         return Err(Refusal::WorkspaceMissing);
     }
@@ -214,6 +361,13 @@ pub fn classify(
             .get("note")
             .and_then(|n| n.as_str())
             .map(str::to_string),
+        // Read rather than re-validated: `validate_args` has already refused anything that is not
+        // a string of a sane length, and refused the key entirely for verbs that do not take it.
+        question: body
+            .pointer("/args/question")
+            .and_then(|q| q.as_str())
+            .map(str::to_string),
+        runtime,
     })
 }
 
@@ -518,5 +672,156 @@ mod tests {
             classify(&cfg, dir.path(), "/bekir/agent1", &msg),
             Err(Refusal::BadArguments(_))
         ));
+    }
+
+    /// The file-absent path and the field-absent path have to agree, or a machine with no config
+    /// reports a ceiling nobody chose.
+    #[test]
+    fn a_missing_config_and_a_missing_field_give_the_same_ceiling() {
+        let dir = tempfile::tempdir().unwrap();
+        let absent = load_routing(dir.path()).unwrap();
+        assert_eq!(absent.max_concurrent, default_concurrency());
+        assert!(!absent.execute, "execution must stay off without a config");
+
+        std::fs::write(config_path(dir.path()), "execute = true\n").unwrap();
+        let partial = load_routing(dir.path()).unwrap();
+        assert_eq!(partial.max_concurrent, absent.max_concurrent);
+    }
+
+    #[test]
+    fn routing_survives_a_write_and_read_round_trip() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].runtime = "mcoda:claude-sonnet".into();
+        write_routing(dir.path(), &cfg).unwrap();
+
+        let back = load_routing(dir.path()).unwrap();
+        assert!(back.execute);
+        assert_eq!(back.max_concurrent, cfg.max_concurrent);
+        assert_eq!(back.mailbox, cfg.mailbox);
+    }
+
+    #[test]
+    fn the_default_runtime_parses_and_is_local() {
+        assert_eq!(default_runtime().parse::<Runtime>(), Ok(Runtime::Claude));
+        assert!(Runtime::Claude.is_local());
+        assert_eq!(Runtime::Claude.slug(), None);
+    }
+
+    #[test]
+    fn an_mcoda_runtime_carries_a_pinned_slug() {
+        assert_eq!(
+            "mcoda:claude-sonnet".parse::<Runtime>(),
+            Ok(Runtime::Mcoda("claude-sonnet".into()))
+        );
+        assert_eq!(
+            "mcoda:claude-sonnet".parse::<Runtime>().unwrap().slug(),
+            Some("claude-sonnet")
+        );
+        assert!("mcoda:claude-sonnet".parse::<Runtime>().unwrap().is_local());
+    }
+
+    /// The whole point of the two spellings: reaching a managed remote agent has to be written
+    /// down as such, so it cannot be arrived at by a default drifting underneath us.
+    #[test]
+    fn a_cloud_slug_under_the_local_spelling_is_refused() {
+        assert_eq!(
+            "mcoda:mswarm-cloud-some-remote".parse::<Runtime>(),
+            Err(Refusal::RuntimeNotLocal)
+        );
+        let cloud = "mcoda-cloud:mswarm-cloud-some-remote"
+            .parse::<Runtime>()
+            .unwrap();
+        assert_eq!(
+            cloud,
+            Runtime::McodaCloud("mswarm-cloud-some-remote".into())
+        );
+        assert!(!cloud.is_local());
+    }
+
+    #[test]
+    fn an_unknown_runtime_is_refused_not_defaulted() {
+        for text in [
+            "",
+            "gemini",
+            "claude-cli",
+            "mcoda:has a space",
+            "mcoda:../escape",
+        ] {
+            assert_eq!(
+                text.parse::<Runtime>(),
+                Err(Refusal::UnknownRuntime),
+                "{text:?} should not parse"
+            );
+        }
+    }
+
+    /// Naming the family without the agent is a different mistake from naming a family that does
+    /// not exist, and telling someone their runtime is unknown when it is merely unpinned sends
+    /// them to check whether mcoda is installed.
+    #[test]
+    fn a_runtime_family_named_without_its_agent_says_so() {
+        for text in [
+            "mcoda",
+            "mcoda:",
+            "mcoda:   ",
+            "mcoda-cloud",
+            "mcoda-cloud:",
+        ] {
+            assert_eq!(
+                text.parse::<Runtime>(),
+                Err(Refusal::RuntimeNotPinned),
+                "{text:?} should ask for a slug, not report an unknown runtime"
+            );
+        }
+    }
+
+    #[test]
+    fn a_route_with_an_unknown_runtime_refuses_rather_than_acting() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].runtime = "gemini".into();
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                &message("auto", "report_status", envelope("report_status"))
+            ),
+            Err(Refusal::UnknownRuntime)
+        );
+    }
+
+    /// A route's own misconfiguration is checked after the message's, so the audit log keeps saying
+    /// what the traffic would have been refused for.
+    #[test]
+    fn a_held_message_still_reports_not_auto_on_a_misconfigured_route() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].runtime = "gemini".into();
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                &message("review", "report_status", envelope("report_status"))
+            ),
+            Err(Refusal::NotAuto)
+        );
+    }
+
+    #[test]
+    fn an_actionable_message_carries_its_parsed_runtime() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].runtime = "mcoda:claude-sonnet".into();
+        let action = classify(
+            &cfg,
+            dir.path(),
+            "/bekir/agent1",
+            &message("auto", "report_status", envelope("report_status")),
+        )
+        .unwrap();
+        assert_eq!(action.runtime, Runtime::Mcoda("claude-sonnet".into()));
     }
 }

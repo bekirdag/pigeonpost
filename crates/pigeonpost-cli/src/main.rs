@@ -15,6 +15,7 @@ mod login_cmd;
 mod output;
 mod postbox_cmd;
 mod registry_cmd;
+mod runner;
 mod runtime_config;
 mod submit_cmd;
 #[cfg(test)]
@@ -264,6 +265,27 @@ enum AgentdAction {
         /// agent per repo this makes every session drain one mailbox; prefer the default.
         #[arg(long)]
         global: bool,
+    },
+    /// Let the daemon answer requests for this agent's mailbox, with no session open.
+    ///
+    /// Run it from the repository the mailbox works on: that checkout becomes the working directory
+    /// for every action. Prints what it would write unless `--install` is given.
+    Answer {
+        /// A request that may be answered unattended. Repeatable.
+        #[arg(long = "verb")]
+        verbs: Vec<String>,
+        /// What runs the request: `claude`, `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`.
+        #[arg(long, default_value = "claude")]
+        runtime: String,
+        /// Wall-clock ceiling for one action. A report that goes and looks needs minutes.
+        #[arg(long)]
+        timeout: Option<u64>,
+        /// Write the config instead of printing it.
+        #[arg(long)]
+        install: bool,
+        /// Stop routing this mailbox. Leaves any other mailbox alone; `pause` is the global switch.
+        #[arg(long)]
+        off: bool,
     },
     /// Stop acting on anything unattended, immediately. The kill switch.
     Pause,
@@ -1205,6 +1227,13 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Agentd { action } => {
             return match action {
                 AgentdAction::Run { once } => agentd_cmd::run(&home, *once).await,
+                AgentdAction::Answer {
+                    verbs,
+                    runtime,
+                    timeout,
+                    install,
+                    off,
+                } => agentd_cmd::answer(&home, verbs, runtime, *timeout, *install, *off),
                 AgentdAction::Pause => agentd_cmd::pause(&home),
                 AgentdAction::Resume => agentd_cmd::resume(&home),
                 AgentdAction::Hooks { install, global } => {

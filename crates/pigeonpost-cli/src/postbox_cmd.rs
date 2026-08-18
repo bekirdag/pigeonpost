@@ -241,7 +241,7 @@ fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Erro
 ///
 /// Onboarding writes session hooks and an MCP registration into the working directory, so it has
 /// to be sure that directory is a project and not whichever folder a terminal happened to open in.
-fn in_a_repository() -> bool {
+pub(crate) fn in_a_repository() -> bool {
     let Ok(mut dir) = std::env::current_dir() else {
         return false;
     };
@@ -259,6 +259,109 @@ fn in_a_repository() -> bool {
 /// session's hooks drain. An agent home holds exactly one; anything else is ambiguous and says so.
 pub(crate) fn sole_credential(home: &Path) -> Result<Credential, Error> {
     credential_for(home, None)
+}
+
+/// Find the credential for one mailbox anywhere on this machine.
+///
+/// The daemon runs at the machine home, but a mailbox's token lives in whichever agent home
+/// onboarded it. Unattended execution needs that token to read the message and to answer it, so
+/// this looks in the machine home and every agent home for the address `agentd.toml` named.
+///
+/// Two homes holding the same address is a misconfiguration rather than a tie to break: acting as
+/// a mailbox through the wrong home would answer with the wrong workspace, so it errors.
+pub(crate) fn credential_anywhere(home: &Path, address: &str) -> Result<Credential, Error> {
+    let machine = crate::agentd_cmd::machine_home_of(home);
+    let mut homes = vec![machine.clone()];
+    if let Ok(entries) = std::fs::read_dir(machine.join("agents")) {
+        let mut agents: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        // Stable order, so an error message names the same two homes every time.
+        agents.sort();
+        homes.extend(agents);
+    }
+
+    let mut found: Vec<(PathBuf, Credential)> = Vec::new();
+    for candidate in homes {
+        if let Ok(creds) = load(&candidate) {
+            if let Some(c) = creds
+                .identities
+                .into_iter()
+                .find(|c| c.address == address || c.handle.as_deref() == Some(address))
+            {
+                found.push((candidate, c));
+            }
+        }
+    }
+    match found.len() {
+        0 => Err(format!(
+            "no mailbox for {address} on this machine — onboard it, or correct the address in {}",
+            crate::executor::config_path(&crate::agentd_cmd::machine_home_of(home)).display()
+        )
+        .into()),
+        1 => Ok(found.remove(0).1),
+        _ => Err(format!(
+            "{address} is held by more than one home ({}) — remove the duplicate before it can act",
+            found
+                .iter()
+                .map(|(h, _)| h.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+        .into()),
+    }
+}
+
+/// Fetch one unread message by id, for a mailbox this machine holds.
+///
+/// There is no per-message route on the postbox, so this reads the inbox and picks. `Ok(None)`
+/// means the message is no longer waiting — already acknowledged, or handled by a session that got
+/// there first — which is an ordinary outcome and not an error.
+pub(crate) async fn message_by_id(
+    credential: &Credential,
+    message_id: &str,
+) -> Result<Option<serde_json::Value>, Error> {
+    let value = request(
+        credential,
+        reqwest::Method::GET,
+        "/v1/inbox?include_read=false",
+        None,
+    )
+    .await?;
+    Ok(value["messages"]
+        .as_array()
+        .and_then(|messages| {
+            messages
+                .iter()
+                .find(|m| m["message_id"].as_str() == Some(message_id))
+        })
+        .cloned())
+}
+
+/// Send from a mailbox this machine holds, without printing anything. Returns the message id.
+pub(crate) async fn send_as(
+    credential: &Credential,
+    to: &str,
+    body: &str,
+) -> Result<String, Error> {
+    let value = request(
+        credential,
+        reqwest::Method::POST,
+        "/v1/send",
+        Some(serde_json::json!({ "to": to, "body": body })),
+    )
+    .await?;
+    Ok(value["message_id"].as_str().unwrap_or_default().to_string())
+}
+
+/// Mark a message read, so a handled request stops coming back on the next look.
+pub(crate) async fn ack_as(credential: &Credential, message_id: &str) -> Result<(), Error> {
+    request(
+        credential,
+        reqwest::Method::POST,
+        "/v1/ack",
+        Some(serde_json::json!({ "message_id": message_id })),
+    )
+    .await?;
+    Ok(())
 }
 
 /// Every home on this machine that might already hold a mailbox: the machine home and each agent.

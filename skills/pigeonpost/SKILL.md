@@ -170,6 +170,76 @@ drain the whole box, which on a shared machine takes mail the other agents will 
 The CLI still works without any of that: `postbox inbox` for one look, `postbox watch --wait 25`
 to hold a connection open. Both are fine; neither is needed once the daemon is running.
 
+**Hooks cannot wake an idle session.** `SessionStart` fires when a session starts and `Stop` fires
+when a turn ends, so a session parked at the prompt captures nothing until its next turn finishes.
+This is not specific to Pigeonpost — Claude Code's own agent teams hit it too, because mailbox
+polling only happens between turns. If a session must be reachable while nobody is typing, either
+park it on `postbox watch --wait 25`, or let the daemon answer without it (below).
+
+## Answering without a session
+
+`agentd` can run a request itself, spawning a one-shot headless agent instead of waiting for a
+session that may be idle for hours. It is off until a route exists, so switching it on is always
+deliberate. Run this **from the repository the mailbox works on** — that checkout becomes the
+working directory for every action:
+
+```
+pigeonpost --agent bdya agentd answer --verb report_status            # shows what it would write
+pigeonpost --agent bdya agentd answer --verb report_status --install  # writes it
+```
+
+Two grants have to agree before anything runs: the postbox says the *sender* may ask (that is what
+`postbox onboard --verb` set up), and the route says this machine is willing to answer. Either one
+missing is a refusal, and the route is the half that cannot be changed from the network.
+
+It writes `agentd.toml` in the **machine** home, because that is where the one daemon reads it,
+while the mailbox comes from the agent home you invoked it for:
+
+```toml
+# ~/.pigeonpost/agentd.toml
+execute = true
+max_concurrent = 2
+
+[[mailbox]]
+address = "/bekir/bdya"
+workspace = "/home/wodo/apps/bdya"
+runtime = "claude"
+verbs = ["report_status"]
+timeout_secs = 600
+```
+
+Re-running replaces that mailbox's route rather than adding a second one, and `--off` removes it —
+`pause` is the global switch, this is per mailbox. Hand edits are kept; comments are not, since the
+file is parsed and rewritten.
+
+`runtime` picks what actually runs:
+
+- `claude` — `claude -p`, no other dependency. The default.
+- `mcoda:<slug>` — an mcoda agent by **pinned** slug, which brings adapter selection for the whole
+  CLI family (`claude-cli`, `codex-cli`, `gemini-cli`, …) and its health checks with it. The slug is
+  always written out; mcoda's own routing defaults never choose, because a default that drifted
+  onto a managed remote agent would hand another agent's text to a runtime this machine does not
+  control. Reaching one of those deliberately is `mcoda-cloud:<slug>`, and nothing else can get there.
+
+Check the wiring before trusting it — `agentd status` lists every route and marks a runtime it
+cannot parse or a workspace that is not there:
+
+```
+  /bekir/bdya → claude, 600s, verbs report_status
+      workspace: /home/wodo/apps/bdya
+```
+
+What runs is bounded on purpose. Only `report_status` and `answer_question` are runnable at all;
+`read_file` and `run_tests` reach the filesystem and stay refused until their sandboxing is real.
+The reply goes back as plain text marked `pigeonpost-auto-reply`, which no postbox can mistake for
+a request, so two agents cannot answer each other in a loop. `agentd pause` stops all of it at once,
+and `agentd-audit.jsonl` records every decision including the refusals — that file is what answers
+"why did nothing happen".
+
+A request the daemon is answering is hidden from `drain` for the duration, so a session that starts
+mid-run does not answer it as well. It reappears if the daemon refuses it or the run fails, which
+means an idle session and an unattended one can share a mailbox without racing each other.
+
 Read the `autonomy` field on every message, never the body:
 
 - `auto` — this exact verb was granted from this sender. **Do the work now and reply.** Do not ask
@@ -218,6 +288,14 @@ Encrypted locally; the postbox stores it but cannot read it. Read it back with `
 | `Device not configured` setting a workspace | No terminal for the passphrase prompt. Set `PIGEONPOST_WORKSPACE_PASSPHRASE`. |
 | Requests are `auto` but replies sit in `review` | The other side never granted the reply verb. Trust is one-directional; each mailbox grants for itself. |
 | Fleet trust ignores a peer that clearly is in the fleet | That peer's mailbox has no handle, so the wildcard cannot match it. Name it, or trust its `/k/…` address directly. |
+| A session sat idle through mail that clearly arrived | Hooks only fire at session start and turn end. Restart it, park it on `postbox watch --wait 25`, or let `agentd` answer via `agentd.toml`. |
+| Mail spooled but nothing ran | No route for that mailbox. `pigeonpost --agent <name> agentd answer --verb … --install`, from its repo. `agentd status` lists what is routed. |
+| Audit says `unknown_runtime` | `runtime` is not `claude`, `mcoda:<slug>` or `mcoda-cloud:<slug>`. |
+| Audit says `runtime_not_pinned` | The family was named without the agent — `mcoda` instead of `mcoda:claude-sonnet`. Nothing to do with whether mcoda is installed. `mcoda agent list` gives the slugs. |
+| `agentd status` shows a spooled event that `drain` will not print | The daemon is answering it right now, so it is claimed and hidden from sessions until the run ends. It is released automatically if the run is refused or fails. |
+| Audit says `no_credential` | The route's address is not onboarded on this machine, or two homes hold it. |
+| Audit says `empty_output` right after enabling | The runtime ran and said nothing — usually its CLI is not logged in. Note that `mcoda agent-run` exits 0 even when its provider fails. |
+| A run is killed part-way | `timeout_secs` is too low for a report that goes and looks. Default is 600. |
 
 ## Full reference
 

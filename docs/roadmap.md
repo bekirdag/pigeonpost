@@ -6,39 +6,29 @@ What is *shipped* is described in the guides; this is the short list of things t
 deliberately not built yet, and the reason for the wait. It exists so that "not yet" is a recorded
 decision rather than an omission somebody discovers.
 
-## Unattended execution — the runtime adapter
+## Unattended execution — shipped, and what is still held back
 
-**What works today.** A request from a trusted sender arrives stamped `auto` by the postbox. An
-agent with a session open reads it and carries it out without asking its human — the grant is the
-permission. Delivery is push-based, so nothing polls.
+The runtime adapter this section used to describe as "designed, deliberately not built" is built.
+`agentd` will run a request itself, spawning a one-shot headless agent rather than waiting for a
+session, and it stays off until `agentd.toml` says `execute = true`. See the guides for the config;
+what belongs here is what is *still* refused and why.
 
-**What is missing.** When no session is running, the request waits. Nothing starts an agent to
-handle it, because nothing on the machine is willing to launch a model that holds tools on the
-strength of a message from the network.
+**The reason the wait was worth it.** The hard part was never spawning a process. It is that the
+verb must select the action while the body never does: a sender's prose is attacker-influenceable
+text, and under automatic execution it reaches a model with tools. So the rails were built and
+reviewed first, and the daemon spent its early life classifying and auditing every message *as if*
+it would act — which meant `agentd-audit.jsonl` showed what would have run on real traffic before
+anything could.
 
-**What would close it.** One function: *run this verb, in this workspace, with this untrusted
-context, and return stdout*. Above that boundary everything is already built and running —
-per-mailbox routing, per-verb argument schemas, tool allowlists, loop prevention, concurrency
-ceilings, an audit line per decision, and a kill switch. The daemon already classifies and audits
-every message *as if* it would act, so `agentd-audit.jsonl` shows what would have run before
-anything can. `execute` defaults to false.
+**Still refused: `read_file` and `run_tests`.** Both are grantable on the postbox and neither is
+runnable here. They reach the filesystem, and the sandboxing that would make that safe does not
+exist yet — a path argument from a peer is exactly the shape of a request that must not be trusted
+because the verb was granted. The two verbs that *are* runnable, `report_status` and
+`answer_question`, take no path and no command by design.
 
-Below the boundary there are two small implementations, chosen per mailbox rather than detected:
-
-```toml
-[[mailbox]]
-address   = "/bekir/okacam"
-workspace = "/Users/bekirdag/Documents/apps/okacam"
-runtime   = "claude"        # or "codex"
-verbs     = ["report_status", "answer_question"]
-```
-
-**Why it waits.** The hard part is not spawning a process. It is that the verb must select the
-action while the body never does: a sender's prose is attacker-influenceable text, and under
-automatic execution it reaches a model with tools. The rails were built first so they can be
-reviewed before anything runs behind them, and the first two verbs admitted are the two that cannot
-change anything — `report_status` and `answer_question`. `run_tests` and `read_file` reach the
-filesystem and wait for real sandboxing.
+**Still true: no session continuity.** A headless run starts cold every time. For a status report
+that is arguably better, since it goes and looks rather than recalling; for anything conversational
+it is a real loss, and it cannot be fixed while an idle session cannot be woken.
 
 The server-enforced never-auto list (`git_push`, `deploy`, `read_credentials`, `spend`,
 `delete_files`, `run_shell`) is the backstop underneath all of it, and no contact entry overrides it.
