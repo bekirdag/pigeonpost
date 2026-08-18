@@ -548,6 +548,21 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
         );
         println!("      workspace: {workspace}");
     }
+    // The runtimes a route names are spawned by the daemon, with the PATH recorded when it was
+    // installed — so "I can run mcoda myself" says nothing about whether the daemon can. Checking
+    // it here turns the failure this used to produce, an audit line reading `spawn_failed:
+    // No such file or directory`, into something you can see before any mail arrives.
+    if routing.execute {
+        for program in runtime_programs(&routing) {
+            match installed_service_path(&program) {
+                Some(found) => println!("  runtime {program}: {}", found.display()),
+                None => println!(
+                    "  runtime {program}: NOT ON THE DAEMON'S PATH — re-run `pigeonpost agentd install` \
+                     from a shell where `{program}` works"
+                ),
+            }
+        }
+    }
     println!("audit: {}", crate::executor::audit_path(home).display());
     match installed_unit() {
         Some(unit) => println!("service: installed at {}", unit.display()),
@@ -1107,6 +1122,90 @@ pub fn uninstall(home: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// The distinct programs the configured routes will actually spawn.
+fn runtime_programs(config: &crate::executor::RoutingConfig) -> Vec<String> {
+    let mut seen: Vec<String> = Vec::new();
+    for route in &config.mailbox {
+        if let Ok(runtime) = route.runtime.parse::<crate::executor::Runtime>() {
+            let program = match runtime {
+                crate::executor::Runtime::Claude => "claude",
+                crate::executor::Runtime::Mcoda(_) | crate::executor::Runtime::McodaCloud(_) => {
+                    "mcoda"
+                }
+            }
+            .to_string();
+            if !seen.contains(&program) {
+                seen.push(program);
+            }
+        }
+    }
+    seen
+}
+
+/// Find `program` on the PATH the *installed service* runs with, which is the one recorded at
+/// install time rather than the one this command inherited.
+fn installed_service_path(program: &str) -> Option<PathBuf> {
+    let recorded = installed_unit()
+        .and_then(|unit| std::fs::read_to_string(unit).ok())
+        .and_then(|body| recorded_path(&body))
+        .unwrap_or_else(install_path);
+    recorded.split(':').find_map(|dir| {
+        let candidate = Path::new(dir).join(program);
+        candidate.is_file().then_some(candidate)
+    })
+}
+
+/// Read the PATH back out of an installed unit, in either platform's spelling.
+fn recorded_path(body: &str) -> Option<String> {
+    if let Some(rest) = body.split("Environment=PATH=").nth(1) {
+        return rest.lines().next().map(|l| l.trim().to_string());
+    }
+    // plist: <key>PATH</key><string>…</string>
+    let after_key = body.split("<key>PATH</key>").nth(1)?;
+    let open = after_key.find("<string>")? + "<string>".len();
+    let close = after_key[open..].find("</string>")? + open;
+    Some(
+        after_key[open..close]
+            .replace("&amp;", "&")
+            .replace("&lt;", "<")
+            .replace("&gt;", ">"),
+    )
+}
+
+/// Escape a value for an XML text node. A PATH can legitimately contain `&`, and an unescaped one
+/// makes the plist unparseable — which launchd reports as a service that simply will not load.
+#[cfg(target_os = "macos")]
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
+/// The `PATH` the daemon should run with: the one whoever installed it was using.
+///
+/// A service manager gives a job a minimal `PATH` — launchd `/usr/bin:/bin:/usr/sbin:/sbin`, a
+/// systemd user unit little more — and the runtimes this daemon spawns are almost never on it.
+/// `claude` installs to `~/.local/bin`; `mcoda` lands in Homebrew's prefix or an nvm version
+/// directory. So every unattended run died with `No such file or directory` on a binary the person
+/// who set it up could run by name, which reads as "the runtime is broken" rather than "the daemon
+/// cannot see it".
+///
+/// Recorded at install time rather than resolved at spawn time, because there is no shell in
+/// between to ask: this *is* the moment the user's environment is visible. It follows that a PATH
+/// which later goes stale — an nvm upgrade moves `mcoda` to a new version directory — is fixed by
+/// re-running `agentd install`, and `agentd status` prints it so the staleness is visible rather
+/// than mysterious.
+fn install_path() -> String {
+    let inherited = std::env::var("PATH").unwrap_or_default();
+    // Never emit an empty PATH: a unit with `PATH=` is worse than one with none, because it also
+    // hides the service manager's own default.
+    if inherited.trim().is_empty() {
+        return "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into();
+    }
+    inherited
+}
+
 #[cfg(target_os = "macos")]
 fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
     // KeepAlive rather than RunAtLoad alone: the daemon's whole job is to be there when mail
@@ -1127,6 +1226,10 @@ fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
   </array>
   <key>RunAtLoad</key><true/>
   <key>KeepAlive</key><true/>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>{path}</string>
+  </dict>
   <key>StandardOutPath</key><string>{home}/agentd.out</string>
   <key>StandardErrorPath</key><string>{home}/agentd.err</string>
 </dict>
@@ -1135,6 +1238,7 @@ fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
         label = SERVICE_LABEL,
         program = program.display(),
         home = home.display(),
+        path = xml_escape(&install_path()),
     ))
 }
 
@@ -1146,6 +1250,7 @@ Description=Pigeonpost agent daemon
 After=network-online.target
 
 [Service]
+Environment=PATH={path}
 ExecStart={program} --home {home} agentd run
 Restart=always
 RestartSec=5
@@ -1155,6 +1260,7 @@ WantedBy=default.target
 "#,
         program = program.display(),
         home = home.display(),
+        path = install_path(),
     ))
 }
 
@@ -1614,6 +1720,78 @@ mod tests {
         let config = routed("/bekir/mine", home.path());
         act(home.path(), &config, &event("/bekir/mine")).await;
         assert_eq!(audit_outcomes(home.path()), vec!["no_credential"]);
+    }
+
+    /// The defect this fixes: a service manager gives a job a minimal PATH, so `mcoda` and
+    /// `claude` — which live in `~/.local/bin`, Homebrew, or an nvm version directory — were not
+    /// on it, and every unattended run died on a binary the installer could run by name.
+    #[test]
+    fn the_installed_unit_carries_the_path_it_was_installed_with() {
+        let body = unit_body(
+            Path::new("/usr/local/bin/pigeonpost"),
+            Path::new("/home/x/.pp"),
+        )
+        .expect("this platform installs a unit");
+        assert!(
+            body.contains("PATH"),
+            "the unit must pin a PATH or the daemon cannot find any runtime:\n{body}"
+        );
+        let recorded = recorded_path(&body).expect("the PATH must be readable back out");
+        assert_eq!(
+            recorded,
+            install_path(),
+            "what is written is what is read back"
+        );
+        assert!(!recorded.trim().is_empty());
+    }
+
+    /// An empty PATH would be worse than none: it also hides the service manager's own default.
+    #[test]
+    fn an_absent_path_falls_back_to_something_usable() {
+        let path = install_path();
+        assert!(path.contains("/bin"), "got {path:?}");
+    }
+
+    #[test]
+    fn a_path_is_read_back_from_either_platforms_spelling() {
+        assert_eq!(
+            recorded_path("[Service]\nEnvironment=PATH=/a:/b\nExecStart=x\n").as_deref(),
+            Some("/a:/b")
+        );
+        assert_eq!(
+            recorded_path("<key>PATH</key><string>/a:/b</string>").as_deref(),
+            Some("/a:/b")
+        );
+        // A PATH containing an ampersand survives the plist round trip rather than making the
+        // file unparseable, which launchd reports only as a service that will not load.
+        assert_eq!(
+            recorded_path("<key>PATH</key><string>/a&amp;b:/c</string>").as_deref(),
+            Some("/a&b:/c")
+        );
+        assert_eq!(recorded_path("nothing here"), None);
+    }
+
+    #[test]
+    fn status_names_the_program_each_route_will_spawn() {
+        let route = |runtime: &str| crate::executor::MailboxRoute {
+            address: "/bekir/a".into(),
+            workspace: PathBuf::from("/tmp"),
+            runtime: runtime.into(),
+            verbs: vec!["report_status".into()],
+            timeout_secs: 60,
+        };
+        let config = crate::executor::RoutingConfig {
+            mailbox: vec![
+                route("claude"),
+                route("mcoda:codex-5.4"),
+                route("mcoda:claude-sonnet"),
+                route("nonsense"),
+            ],
+            max_concurrent: 2,
+            execute: true,
+        };
+        // Deduplicated, and an unusable runtime contributes nothing rather than a bogus program.
+        assert_eq!(runtime_programs(&config), vec!["claude", "mcoda"]);
     }
 
     /// The window this closes: the daemon takes minutes to answer, and a session starting in the

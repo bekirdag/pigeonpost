@@ -1774,6 +1774,23 @@ jobs:
           PACK_FILE=$(node -p "require('./published-npm/pack.json')[0].filename")
           cmp "$NPM_TARBALL" "published-npm/$PACK_FILE"
           mkdir npm-provenance-audit
+          # `npm pack` succeeding does not mean `npm install` will: the tarball and the packument
+          # propagate through the registry separately, so the version resolves for one before the
+          # other. That gap failed this job on v0.5.18 and v0.5.19 — nine seconds after a publish
+          # that had already succeeded — and a re-run minutes later passed both times. Waiting for
+          # the packument is the difference between a release that publishes and one that needs a
+          # human to press the button again.
+          for attempt in $(seq 1 18); do
+            if npm view "$PACKAGE@$VERSION" version >/dev/null 2>&1; then
+              break
+            fi
+            if [ "$attempt" -eq 18 ]; then
+              echo "npm published $PACKAGE@$VERSION but never served it for install" >&2
+              npm view "$PACKAGE@$VERSION" version >&2 || true
+              exit 1
+            fi
+            sleep 10
+          done
           (
             cd npm-provenance-audit
             npm init --yes >/dev/null

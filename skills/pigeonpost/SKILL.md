@@ -221,12 +221,18 @@ file is parsed and rewritten.
   onto a managed remote agent would hand another agent's text to a runtime this machine does not
   control. Reaching one of those deliberately is `mcoda-cloud:<slug>`, and nothing else can get there.
 
-Check the wiring before trusting it — `agentd status` lists every route and marks a runtime it
-cannot parse or a workspace that is not there:
+`agentd install` records the `PATH` you ran it with, because a service manager gives its jobs a
+minimal one and `claude`, `mcoda` and friends are never on it. So install the daemon **from a shell
+where the runtime works** — and re-run `agentd install` if that ever stops being true, which an nvm
+upgrade does by moving the binary into a new version directory.
+
+Check the wiring before trusting it — `agentd status` lists every route, marks a runtime it cannot
+parse or a workspace that is not there, and says where it will find each runtime:
 
 ```
   /bekir/bdya → claude, 600s, verbs report_status
       workspace: /home/wodo/apps/bdya
+  runtime claude: /home/wodo/.local/bin/claude
 ```
 
 What runs is bounded on purpose. Only `report_status` and `answer_question` are runnable at all;
@@ -334,6 +340,7 @@ Encrypted locally; the postbox stores it but cannot read it. Read it back with `
 | Audit says `runtime_not_pinned` | The family was named without the agent — `mcoda` instead of `mcoda:claude-sonnet`. Nothing to do with whether mcoda is installed. `mcoda agent list` gives the slugs. |
 | `agentd status` shows a spooled event that `drain` will not print | The daemon is answering it right now, so it is claimed and hidden from sessions until the run ends. It is released automatically if the run is refused or fails. |
 | Audit says `no_credential` | The route's address is not onboarded on this machine, or two homes hold it. |
+| Audit says `spawn_failed: No such file or directory` | The daemon's PATH does not include the runtime. It is recorded at install time, so re-run `pigeonpost agentd install` from a shell where that binary works. `agentd status` says where it looks. |
 | Audit says `empty_output` right after enabling | The runtime ran and said nothing — usually its CLI is not logged in. Note that `mcoda agent-run` exits 0 even when its provider fails. |
 | A run is killed part-way | `timeout_secs` is too low for a report that goes and looks. Default is 600. |
 

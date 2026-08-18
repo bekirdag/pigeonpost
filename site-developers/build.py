@@ -594,8 +594,13 @@ the default. The slug is always pinned: a routing default that drifted onto a ma
 would hand another agent's text to a runtime this machine does not control, and reaching one of
 those has its own spelling, `mcoda-cloud:<slug>`.
 
-`agentd status` lists every route and marks a runtime it cannot parse or a workspace that is not
-there, because the alternative is discovering it when mail arrives and nobody is watching.
+`agentd install` records the `PATH` it was run with, because a service manager gives its jobs a
+minimal one and the runtimes are never on it — install the daemon from a shell where the runtime
+works, and re-run it if that stops being true.
+
+`agentd status` lists every route, marks a runtime it cannot parse or a workspace that is not there,
+and says where it will find each runtime — because the alternative is discovering it when mail
+arrives and nobody is watching.
 `agentd pause` stops all of it at once, and `agentd-audit.jsonl` records every decision including
 the refusals — that file is what answers "why did nothing happen".
 
