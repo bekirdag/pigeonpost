@@ -349,7 +349,9 @@
       inbound: [],       // messages from the server
       contacts: [],      // contact rows, including wildcards
       policy: null,
-      openPeer: null,    // peer key of the open thread
+      openPeer: null,    // peer key of the open conversation
+      openThread: null,  // thread id within that peer, or null while it has only the default one
+      serverThreads: [], // /v1/threads, so a thread opened with nothing said in it still shows
       filter: "",
       showInfo: false,
       archived: new Set(), // peers filed out of sight, from the server so it holds across devices
@@ -444,11 +446,13 @@
           at: m.sent_at || m.received_at,
           body: m.body,
           status: "sent",
+          thread_id: m.thread_id,
         });
         continue;
       }
       t.messages.push({
         kind: "in",
+        thread_id: m.thread_id,
         id: m.message_id,
         at: m.received_at,
         body: m.body,
@@ -476,6 +480,7 @@
         at: m.at,
         body: m.body,
         status: m.status,
+        thread_id: m.thread_id,
       });
     }
 
@@ -545,7 +550,61 @@
     if (!signedIn) return;
     renderMe();
     renderThreadList();
+    renderSubs();
     renderThread();
+  }
+
+  function renderSubs() {
+    const pane = $("pane-subs");
+    const visible = subsVisible();
+    // Hidden rather than empty: an unused column of whitespace between the names and the messages
+    // is a worse answer than not having the column.
+    pane.hidden = !visible;
+    $("app").setAttribute("data-subs", String(visible));
+    // On a phone this pane is a screen, and it is open when a peer is selected but no thread has
+    // been picked yet. On a wide screen both are on show at once, so "open" only tracks the phone.
+    pane.setAttribute(
+      "data-open",
+      String(visible && onPhone() && !state.openThread),
+    );
+    if (!visible) return;
+
+        const conversation = buildThreads().find((t) => t.peer === state.openPeer);
+    $("subs-peer").textContent = conversation
+      ? threadName(conversation)
+      : displayName(state.openPeer);
+
+    const list = $("subs");
+    list.textContent = "";
+    const current = currentSubthread(state.openPeer);
+    for (const t of subthreadsFor(state.openPeer)) {
+      const li = document.createElement("li");
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "sub-row";
+      if (current && t.id === current.id) row.setAttribute("aria-current", "true");
+
+      const title = document.createElement("span");
+      title.className = "sub-title" + (t.title ? "" : " is-default");
+      title.textContent = subthreadName(t);
+
+      const meta = document.createElement("div");
+      meta.className = "sub-meta";
+      const when = document.createElement("span");
+      when.textContent = t.messages.length ? listTime(t.last) : "no messages yet";
+      meta.append(when);
+      if (t.unread) {
+        const badge = document.createElement("span");
+        badge.className = "sub-unread";
+        badge.textContent = String(t.unread);
+        meta.append(badge);
+      }
+
+      row.append(title, meta);
+      row.addEventListener("click", () => openSubthread(t.id));
+      li.append(row);
+      list.append(li);
+    }
   }
 
   function renderMe() {
@@ -723,8 +782,10 @@
   }
 
   function renderThread() {
-    const open = Boolean(state.openPeer);
-    $("pane-thread").dataset.open = String(open);
+    // With several threads on a peer the phone stops at the list of them, so "a peer is selected"
+    // is no longer the same question as "there are messages to show".
+    const open = Boolean(state.openPeer) && Boolean(currentSubthread(state.openPeer) || !subsVisible());
+    $("pane-thread").dataset.open = String(open && (!onPhone() || Boolean(state.openThread) || !subsVisible()));
     $("thread-head").hidden = !open;
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
@@ -742,8 +803,14 @@
     list.textContent = "";
     if (!open) return;
 
-    const thread = buildThreads().find((t) => t.peer === state.openPeer)
+    const conversation = buildThreads().find((t) => t.peer === state.openPeer)
       || { peer: state.openPeer, messages: [], contact: contactFor(state.openPeer) };
+    // Narrowed to the chosen thread, which is the whole point of having them: an answer about the
+    // deploy should not be read next to last week's unrelated question.
+    const showing = subsVisible() ? currentSubthread(state.openPeer) : null;
+    const thread = showing
+      ? { ...conversation, messages: conversation.messages.filter((m) => (m.thread_id || "") === showing.id) }
+      : conversation;
 
     $("peer-name").textContent = threadName(thread);
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
@@ -902,20 +969,127 @@
     box.append(note);
   }
 
+  // ---- threads within one peer ----------------------------------------------------------------
+
+  // The conversations with one peer, most recently active first.
+  //
+  // Built from the messages rather than from the server's list alone, so it is right even against a
+  // postbox that has no thread routes; the server's list is merged in on top because a thread
+  // somebody opened and has not written in yet exists only there.
+  function subthreadsFor(peer) {
+    const conversation = buildThreads().find((t) => t.peer === peer);
+    const byId = new Map();
+    const touch = (id) => {
+      if (!byId.has(id)) {
+        byId.set(id, { id, title: null, is_default: false, messages: [], unread: 0, last: 0 });
+      }
+      return byId.get(id);
+    };
+
+    for (const m of (conversation ? conversation.messages : [])) {
+      // A message with no thread comes from a postbox older than threads. Grouping those under one
+      // key keeps them together as the single conversation they were.
+      const t = touch(m.thread_id || "");
+      t.messages.push(m);
+      if (m.kind === "in" && !m.read) t.unread += 1;
+      if (m.at > t.last) t.last = m.at;
+    }
+
+    for (const st of state.serverThreads) {
+      if (normalisePeer(st.peer) !== peer) continue;
+      const t = touch(st.thread_id);
+      t.title = st.title || null;
+      t.is_default = Boolean(st.is_default);
+      if (st.last_at > t.last) t.last = st.last_at;
+    }
+
+    return [...byId.values()].sort((a, b) => {
+      if (b.last !== a.last) return b.last - a.last;
+      // A pair of untouched threads would otherwise sort arbitrarily and jump between renders.
+      return subthreadName(a).localeCompare(subthreadName(b));
+    });
+  }
+
+  const subthreadName = (t) => t.title || "Default thread";
+
+  // Whether the middle pane has anything to say. One conversation is the common case and must look
+  // exactly as it did before threads existed, so the pane stays away entirely.
+  function subsVisible() {
+    if (!state.openPeer) return false;
+    return subthreadsFor(state.openPeer).length > 1;
+  }
+
+  // The thread whose messages the content pane shows.
+  //
+  // Falls back to the most recent rather than to nothing: selecting a peer has always opened a
+  // conversation, and landing on an empty pane because no thread was named would be a step
+  // backwards for every mailbox that never opens a second one.
+  function currentSubthread(peer) {
+    const subs = subthreadsFor(peer);
+    if (!subs.length) return null;
+    const chosen = subs.find((t) => t.id === state.openThread);
+    return chosen || subs[0];
+  }
+
   // ---- actions ------------------------------------------------------------------------------
 
   const onPhone = () => window.matchMedia("(max-width: 780px)").matches;
 
+  // Back, one step. On a phone that is messages → threads → names, because skipping the middle
+  // screen on the way out of a peer with several conversations loses your place in it.
   function closeThread() {
+    if (onPhone() && state.openThread && subsVisible()) {
+      state.openThread = null;
+      state.showInfo = false;
+      render();
+      return;
+    }
     state.openPeer = null;
+    state.openThread = null;
     state.showInfo = false;
     render();
+  }
+
+  function openSubthread(id) {
+    state.openThread = id;
+    state.showInfo = false;
+    if (onPhone()) history.replaceState({ thread: state.openPeer, sub: id }, "");
+    render();
+    if (!onPhone()) $("compose").focus({ preventScroll: true });
+    ackVisible();
+  }
+
+  // Open a new conversation with this peer, named.
+  async function newSubthread() {
+    const peer = state.openPeer;
+    if (!peer) return;
+    const title = (window.prompt("Name this thread") || "").trim();
+    if (!title) return;
+    try {
+      const made = await api("/v1/threads", {
+        method: "POST",
+        body: { peer, title, identity: state.me.address },
+      });
+      await loadThreads();
+      // Selected straight away, and the pane it belongs in appears with it: opening a thread and
+      // then having to find it in a list that just appeared is two steps for one intention.
+      state.openThread = made.thread_id;
+      render();
+      if (!onPhone()) $("compose").focus({ preventScroll: true });
+    } catch (e) {
+      toast(e instanceof ApiError ? e.message : "Could not open the thread.");
+    }
   }
 
   async function openThread(peer) {
     const wasClosed = !state.openPeer;
     state.openPeer = peer;
     state.showInfo = false;
+    // A peer with one conversation opens straight into it, exactly as before threads existed. With
+    // more than one, the phone stops at the list of them and waits to be told which; a wide screen
+    // shows the list and the most recent at the same time, so nothing is a dead end.
+    const subs = subthreadsFor(peer);
+    state.openThread = subs.length > 1 && onPhone() ? null : (subs[0] ? subs[0].id : null);
     // On a phone the thread covers the list, so the system back gesture has to close it rather than
     // leave the app. Push one entry the first time a thread opens; switching between threads
     // replaces it, so back is always one step out to the list.
@@ -928,13 +1102,29 @@
     // opened — you came to read it, and typing is a second decision you make by tapping the box.
     if (!onPhone()) $("compose").focus({ preventScroll: true });
 
-    // Opening a conversation is reading it. Acknowledging clears the unread mark server-side, which
-    // is also what tells an agent sharing this mailbox that the message has been dealt with — so it
-    // is a real decision, not just a UI flourish.
-    const unread = state.inbound.filter((m) => peerKeyOf(m) === peer && !m.read);
+    await ackVisible();
+  }
+
+  // Opening a conversation is reading it. Acknowledging clears the unread mark server-side, which
+  // is also what tells an agent sharing this mailbox that the message has been dealt with — so it
+  // is a real decision, not just a UI flourish.
+  //
+  // Scoped to what is actually on screen: with several threads open on a peer, marking the other
+  // threads read because one of them was looked at would clear a mark nobody has seen.
+  async function ackVisible() {
+    const peer = state.openPeer;
+    if (!peer) return;
+    const showing = subsVisible() ? currentSubthread(peer) : null;
+    const unread = state.inbound.filter(
+      (m) =>
+        peerKeyOf(m) === peer &&
+        !m.read &&
+        (!showing || (m.thread_id || "") === showing.id),
+    );
     if (!unread.length) return;
     for (const m of unread) m.read = true;
     renderThreadList();
+    renderSubs();
     for (const m of unread) {
       try {
         await api(withIdentity("/v1/ack"), { method: "POST", body: { message_id: m.message_id, identity: state.me.address } });
@@ -944,6 +1134,11 @@
 
   async function sendMessage(text) {
     const to = state.openPeer;
+    // Whichever thread is on screen. Sending into the conversation you are reading is the only
+    // behaviour that does not surprise: the alternative is a reply that leaves the thread it
+    // answers.
+    const showing = currentSubthread(to);
+    const threadId = showing && showing.id ? showing.id : null;
     const record = Pending.add({
       local_id: "local_" + randomString(8),
       mailbox: state.me.address,
@@ -951,13 +1146,16 @@
       body: text,
       at: Math.floor(Date.now() / 1000),
       status: "sending",
+      thread_id: threadId,
     });
     render();
 
     try {
       const sent = await api("/v1/send", {
         method: "POST",
-        body: { to, body: text, from: state.me.address },
+        body: threadId
+          ? { to, body: text, from: state.me.address, thread_id: threadId }
+          : { to, body: text, from: state.me.address },
       });
       // The id of the server's own copy. Holding it is what lets the optimistic row retire the
       // moment that copy comes back, instead of the message appearing twice for a poll.
@@ -1052,7 +1250,7 @@
   }
 
   async function loadAll() {
-    await Promise.all([loadInbox(), loadContacts(), loadArchive()]);
+    await Promise.all([loadInbox(), loadContacts(), loadArchive(), loadThreads()]);
     render();
   }
 
@@ -1076,6 +1274,18 @@
     state.inbound = body.messages || [];
     state.policy = body.policy || null;
     Pending.reconcile(new Set(state.inbound.map((m) => m.message_id)));
+  }
+
+  async function loadThreads() {
+    try {
+      const body = await api(withIdentity("/v1/threads"));
+      state.serverThreads = body.threads || [];
+    } catch (_) {
+      // A postbox that does not know about threads yet answers 404/501 here. Everything still
+      // works: threads are then whatever the messages themselves say, and a peer with one
+      // conversation — which is all such a postbox can produce — shows no thread list at all.
+      state.serverThreads = [];
+    }
   }
 
   async function loadContacts() {
@@ -1462,6 +1672,18 @@
       else closeThread();
     };
 
+    // Back out of the threads screen on a phone: one step further out than the message screen's.
+    $("subs-back").onclick = () => {
+      if (onPhone() && history.state && history.state.thread) history.back();
+      else {
+        state.openPeer = null;
+        state.openThread = null;
+        render();
+      }
+    };
+
+    $("subs-new").onclick = () => { newSubthread(); };
+
     $("peer-info-btn").onclick = () => {
       state.showInfo = !state.showInfo;
       renderThread();
@@ -1497,8 +1719,14 @@
       sendMessage(text);
     });
 
+    // One history entry covers a peer, and closeThread walks out of it a screen at a time. Pushing
+    // it back when there is still a level to leave is what keeps the system gesture in step with
+    // the on-screen back button.
     window.addEventListener("popstate", () => {
-      if (state.openPeer) closeThread();
+      if (!state.openPeer) return;
+      const stillInside = onPhone() && state.openThread && subsVisible();
+      closeThread();
+      if (stillInside) history.pushState({ thread: state.openPeer }, "");
     });
 
     document.addEventListener("keydown", (e) => {

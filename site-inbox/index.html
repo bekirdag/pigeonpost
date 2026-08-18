@@ -69,6 +69,25 @@
   </aside>
 
   <!-- Right: the conversation -->
+  <!-- The conversations with one peer. Between the names and the messages on a wide screen, and a
+       screen of its own on a phone. Hidden entirely while a peer has only one conversation, which
+       is the common case and must look exactly as it did before threads existed. -->
+  <section class="pane-subs" id="pane-subs" data-open="false" hidden>
+    <header class="subs-head">
+      <button id="subs-back" class="icon-btn back" type="button" aria-label="Back to conversations">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="subs-who">
+        <span class="subs-name" id="subs-peer"></span>
+        <span class="subs-sub">Threads</span>
+      </div>
+      <button id="subs-new" class="icon-btn" type="button" title="New thread" aria-label="New thread">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 5v14M5 12h14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+      </button>
+    </header>
+    <ul class="subs" id="subs" role="list"></ul>
+  </section>
+
   <section class="pane-thread" id="pane-thread" data-open="false">
     <header class="thread-head" id="thread-head" hidden>
       <button id="back-btn" class="icon-btn back" type="button" aria-label="Back to conversations">

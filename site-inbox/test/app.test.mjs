@@ -25,7 +25,7 @@ const INBOX = {
       message_id: "m1", from: "/k/aaaa1111bbbb2222cccc3333dd", body: "the build is green",
       sender_score: 3, sender_standing: "unproven", sender_tier: "handle", untrusted: true,
       sender_known: true, alias: null, matched_contact: "/bekir/*",
-      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1", thread_id: "t-agent1",
       direction: "in", autonomy: "review", verb: null,
       held_because: "not_a_request", received_at: now - 7200, read: true,
     },
@@ -34,7 +34,7 @@ const INBOX = {
       body: JSON.stringify({ v: 1, verb: "run_tests", args: { suite: "unit" }, note: "before the tag" }),
       sender_score: 3, sender_standing: "unproven", sender_tier: "handle", untrusted: true,
       sender_known: true, alias: null, matched_contact: "/bekir/*",
-      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      sender_handle: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1", thread_id: "t-agent1",
       direction: "in", autonomy: "review", verb: "run_tests",
       held_because: "verb_denied", received_at: now - 600, read: false,
     },
@@ -42,7 +42,7 @@ const INBOX = {
       message_id: "m3", from: "/k/eeee5555ffff6666gggg7777hh", body: "hello from a stranger",
       sender_score: 0, sender_standing: "unproven", sender_tier: "anonymous", untrusted: true,
       sender_known: false, alias: null, matched_contact: null,
-      sender_handle: null, peer: "/k/eeee5555ffff6666gggg7777hh", peer_handle: null,
+      sender_handle: null, peer: "/k/eeee5555ffff6666gggg7777hh", peer_handle: null, thread_id: "t-stranger",
       direction: "in", autonomy: "review", verb: null,
       held_because: "sender_not_auto", received_at: now - 60, read: false,
     },
@@ -59,7 +59,7 @@ const INBOX = {
     // The sender's own copy, which is what makes a thread a conversation.
     {
       message_id: "m_out1", direction: "out", from: "/k/cz6900v2h90vnwefj7g7ezvbh4",
-      to: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1",
+      to: "/bekir/agent1", peer: "/bekir/agent1", peer_handle: "/bekir/agent1", thread_id: "t-agent1",
       body: "on it, running now", untrusted: false, autonomy: null,
       sent_at: now - 3600, received_at: now - 3600, read: true,
     },
@@ -75,6 +75,17 @@ const CONTACTS = {
     never_auto: ["git_push", "deploy", "read_credentials", "spend", "delete_files", "run_shell"],
   },
 };
+
+// Two conversations with one peer, one of them opened and never written in — which is the case
+// only the server knows about, since it has no messages to be inferred from.
+const THREADS = [
+  { thread_id: "t-agent1", peer: "/bekir/agent1", title: null, is_default: true,
+    created_at: now - 9000, last_at: now - 600, archived: false },
+  { thread_id: "t-agent1-deploy", peer: "/bekir/agent1", title: "deploy", is_default: false,
+    created_at: now - 8000, last_at: now - 8000, archived: false },
+  { thread_id: "t-stranger", peer: "/k/eeee5555ffff6666gggg7777hh", title: null, is_default: true,
+    created_at: now - 60, last_at: now - 60, archived: false },
+];
 
 const ARCHIVED = new Set();
 const calls = [];
@@ -107,6 +118,15 @@ function fakeFetch(url, opts = {}) {
     }
     if (path.includes("wait=")) return new Promise(() => {}); // long poll: never resolves in the test
     return json(INBOX);
+  }
+  if (path.startsWith("/v1/threads")) {
+    if ((opts.method || "GET") === "POST") {
+      const b = JSON.parse(opts.body);
+      THREADS.push({ thread_id: "t-new", peer: b.peer, title: b.title, is_default: false,
+                     created_at: now, last_at: now, archived: false });
+      return json({ thread_id: "t-new" }, true, 201);
+    }
+    return json({ threads: THREADS });
   }
   if (path.startsWith("/v1/contacts")) return json(CONTACTS);
   if (path.startsWith("/v1/archive")) {
@@ -217,7 +237,7 @@ console.log("\n— body is never markup —");
 const injected = "<img src=x onerror=alert(1)>";
 INBOX.messages.push({
   message_id: "m4", from: "/k/aaaa1111bbbb2222cccc3333dd", body: injected,
-  sender_handle: "/bekir/agent1", autonomy: "review", verb: null, held_because: "not_a_request",
+  peer: "/bekir/agent1", thread_id: "t-agent1", sender_handle: "/bekir/agent1", autonomy: "review", verb: null, held_because: "not_a_request",
   received_at: now - 10, read: true, sender_known: true, matched_contact: "/bekir/*",
   sender_standing: "unproven", sender_tier: "handle", alias: null, untrusted: true,
 });
@@ -370,6 +390,73 @@ const put = calls.filter((c) => c.path === "/v1/contacts" && c.method === "PUT")
 check("the contact was written", put.body.peer, "/bekir/newcomer");
 check("with the verb granted", put.body.allowed_verbs.includes("run_tests"), true);
 check("never-auto verbs cannot be granted", [...$("contact-verbs").querySelectorAll("input:disabled")].length > 0, true);
+
+console.log("\n— threads within a peer —");
+// The stranger has one conversation, which is the common case: the middle pane must stay away
+// entirely, so a mailbox that never opens a second thread looks exactly as it did before.
+otherRows[0].click();
+await settle(80);
+check("one conversation shows no thread pane", $("pane-subs").hidden, true);
+check("and the layout stays two columns", $("app").getAttribute("data-subs"), "false");
+
+// The fleet agent has two: the default, and one opened with nothing said in it yet.
+otherRows[1].click();
+await settle(80);
+check("two conversations reveal the thread pane", $("pane-subs").hidden, false);
+check("and the layout makes room for it", $("app").getAttribute("data-subs"), "true");
+check("the pane names the peer", text($("subs-peer")), "my fleet");
+
+const subRows = [...$("subs").querySelectorAll(".sub-row")];
+check("both conversations are listed", subRows.length, 2);
+check("most recent first", text(subRows[0].querySelector(".sub-title")), "Default thread");
+check("the unnamed one is marked as such", subRows[0].querySelector(".sub-title.is-default") !== null, true);
+check("the named one keeps its name", text(subRows[1].querySelector(".sub-title")), "deploy");
+check("an empty thread says so", text(subRows[1].querySelector(".sub-meta")), "no messages yet");
+check("the open one is marked current", subRows[0].getAttribute("aria-current"), "true");
+
+// Messages belong to the thread that is open, which is the whole point of having them.
+check("the default thread shows its messages", $("messages").querySelectorAll(".bubble").length > 0, true);
+subRows[1].click();
+await settle(80);
+check("an empty thread shows nothing", $("messages").querySelectorAll(".bubble").length, 0);
+const afterPick = [...$("subs").querySelectorAll(".sub-row")];
+check("selection moved", afterPick[1].getAttribute("aria-current"), "true");
+check("and left the one before it", afterPick[0].getAttribute("aria-current"), null);
+
+// And a reply lands where it was written, not in whichever conversation the peer last used.
+const before = calls.length;
+compose.value = "starting the deploy";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+const threadedSend = calls.slice(before).find((c) => c.path === "/v1/send");
+check("the send names its thread", threadedSend && threadedSend.body.thread_id, "t-agent1-deploy");
+
+console.log("\n— opening a thread —");
+const beforeNew = calls.length;
+window.prompt = () => "release notes";
+$("subs-new").click();
+await settle(120);
+const opened = calls.slice(beforeNew).find((c) => c.path === "/v1/threads" && c.method === "POST");
+check("the thread was opened on the server", Boolean(opened), true);
+check("with the title given", opened && opened.body.title, "release notes");
+check("for the peer on screen", opened && opened.body.peer, "/bekir/agent1");
+check("and it is listed", [...$("subs").querySelectorAll(".sub-title")].some((el) => text(el) === "release notes"), true);
+// Named and selected in one step: opening a thread and then having to find it would be two.
+const selected = [...$("subs").querySelectorAll(".sub-row")].find((r) => r.getAttribute("aria-current") === "true");
+check("and selected", text(selected.querySelector(".sub-title")), "release notes");
+// A cancelled prompt must not open anything.
+const beforeCancel = calls.length;
+window.prompt = () => null;
+$("subs-new").click();
+await settle(80);
+check("cancelling opens nothing", calls.slice(beforeCancel).some((c) => c.path === "/v1/threads" && c.method === "POST"), false);
+
+console.log("\n— the phone walks out one screen at a time —");
+const subsCss = readFileSync(`${APP}/app.css`, "utf8");
+check("threads pane is a screen of its own on a phone", /@media \(max-width: 780px\)[\s\S]*\.pane-subs \{[\s\S]*position: fixed/.test(subsCss), true);
+check("and sits under the messages screen", /\.pane-subs \{[\s\S]*z-index: 25/.test(subsCss), true);
+check("parked threads pane is not focusable", /\.pane-subs \{[\s\S]*visibility: hidden/.test(subsCss), true);
 
 console.log("\n— message zoom, not page zoom —");
 const html = readFileSync(`${APP}/index.html`, "utf8");
