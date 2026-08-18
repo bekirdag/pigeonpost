@@ -12,10 +12,10 @@ publish = false
 readme = "README.md"
 
 [dependencies]
-pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.5.15" }
-pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.15" }
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.15" }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.15", default-features = false }
+pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.5.16" }
+pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.16" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.16" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.5.16", default-features = false }
 chacha20poly1305.workspace = true
 curve25519-dalek.workspace = true
 ed25519-dalek.workspace = true
