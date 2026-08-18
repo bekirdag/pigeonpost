@@ -261,7 +261,18 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                 // failed" to an agent that just named its mailbox, which is the opposite of true.
                 "whoami" => Ok(json!({ "address": me.address, "handle": me.handle })),
                 "send_pigeonpost_message" => match (arg_str("to"), arg_str("body")) {
-                    (Some(to), Some(body)) => do_send(state, &me, &to, &body).await,
+                    (Some(to), Some(body)) => {
+                        // A tool call names a thread the same two ways the HTTP route does, and an
+                        // id wins over a title for the same reason: they are different requests.
+                        let thread_id = arg_str("thread_id");
+                        let thread = arg_str("thread");
+                        let request = match (&thread_id, &thread) {
+                            (Some(id), _) => crate::ThreadRequest::Existing(id.as_str()),
+                            (None, Some(title)) => crate::ThreadRequest::New(title.as_str()),
+                            (None, None) => crate::ThreadRequest::Default,
+                        };
+                        do_send(state, &me, &to, &body, request).await
+                    }
                     _ => return Ok(tool_error("send requires string 'to' and 'body'")),
                 },
                 // Reporting only ever lowers trust in somebody else, so unlike every write in
@@ -281,7 +292,7 @@ async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Re
                     }
                     // Received mail only. An agent draining its inbox is looking for what other
                     // people asked of it, not for its own replies.
-                    do_inbox(state, &me, false, arg_bool("include_read")).await
+                    do_inbox(state, &me, false, arg_bool("include_read"), arg_str("thread_id").as_deref()).await
                 }
                 "list_pigeonpost_contacts" => do_list_contacts(state, &me).await,
                 "get_pigeonpost_workspace" => crate::do_get_workspace(state, &me).await,

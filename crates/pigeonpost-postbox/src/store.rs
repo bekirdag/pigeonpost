@@ -106,6 +106,39 @@ CREATE TABLE IF NOT EXISTS archived_threads (
     PRIMARY KEY (owner, peer)
 );
 
+-- Conversations, cut into subjects.
+--
+-- A thread belongs to the *pair*, not to one side, so its id travels with the message and both
+-- mailboxes store the same one. If each side grouped locally instead, the sender's \"deploy
+-- question\" and the recipient's would be unrelated rows and a reply would land in neither.
+--
+-- `title` is set by whoever opened the thread and copied to both sides once. It is not kept in
+-- sync afterwards: a shared mutable title is a field one peer can rewrite inside the other's
+-- inbox, and renaming your own view of a conversation is a local act everywhere else.
+--
+-- Every message is in a thread, including every message that predates this table — a per-pair
+-- default thread is created for them, so nothing downstream has to handle \"no thread\". A peer
+-- with only that default thread looks exactly as it did before threads existed, which is the
+-- point: the common case does not pay for the feature.
+CREATE TABLE IF NOT EXISTS threads (
+    -- Not a primary key on its own: the same thread exists once in each participant's mailbox, so
+    -- `id` repeats exactly twice and it is (id, owner) that identifies a row. Keying on `id` alone
+    -- silently drops the second side, which looks like the recipient never being told about the
+    -- thread at all.
+    id          TEXT NOT NULL,
+    owner       TEXT NOT NULL,
+    peer        TEXT NOT NULL,
+    title       TEXT,
+    -- The one a message joins when nobody named a thread. Exactly one per pair, enforced below.
+    is_default  INTEGER NOT NULL DEFAULT 0,
+    created_at  INTEGER NOT NULL,
+    last_at     INTEGER NOT NULL,
+    -- Per-thread filing, separate from archiving a whole peer. Both are useful: one finishes a
+    -- subject, the other finishes a correspondent.
+    archived_at INTEGER,
+    PRIMARY KEY (id, owner)
+);
+
 -- Which account owns a purchased handle namespace, cached from the registry.
 --
 -- The registry stays the public record of who bought `/bekir`; this is the operational binding the
@@ -215,6 +248,50 @@ const MIGRATIONS: &[&str] = &[
     "ALTER TABLE messages ADD COLUMN direction TEXT NOT NULL DEFAULT 'in'",
     "UPDATE messages SET owner = recipient WHERE owner IS NULL",
     "CREATE INDEX IF NOT EXISTS messages_by_owner ON messages(owner)",
+    // Threads. The column is nullable only for the instant between adding it and the backfill
+    // below; every read treats a NULL thread as a bug rather than a state to handle.
+    "ALTER TABLE messages ADD COLUMN thread_id TEXT",
+    "CREATE INDEX IF NOT EXISTS messages_by_thread ON messages(thread_id)",
+    "CREATE INDEX IF NOT EXISTS threads_by_pair ON threads(owner, peer, last_at DESC)",
+    // One default thread per pair, and no more. A partial unique index says exactly that, and
+    // lets the backfill and every later send use INSERT OR IGNORE instead of a read-then-write
+    // race between two messages arriving at once.
+    "CREATE UNIQUE INDEX IF NOT EXISTS threads_default_per_pair ON threads(owner, peer) WHERE is_default = 1",
+    // Give every conversation that predates threads its default one. The peer of a row is the
+    // other end of it, which is the recipient on a sent copy and the sender on a delivered one.
+    //
+    // Done in two steps because both directions of a pair must end up with the *same* id, and a
+    // random id per group would hand each side its own. The helper table draws one id per unordered
+    // pair first; the insert then joins on it.
+    "CREATE TABLE IF NOT EXISTS thread_backfill_ids (
+         lo TEXT NOT NULL, hi TEXT NOT NULL, id TEXT NOT NULL, PRIMARY KEY (lo, hi))",
+    "INSERT OR IGNORE INTO thread_backfill_ids (lo, hi, id)
+       SELECT DISTINCT
+              CASE WHEN owner < peer THEN owner ELSE peer END,
+              CASE WHEN owner < peer THEN peer ELSE owner END,
+              lower(hex(randomblob(16)))
+         FROM (SELECT owner,
+                      CASE WHEN direction = 'out' THEN recipient ELSE sender END AS peer
+                 FROM messages
+                WHERE owner IS NOT NULL)",
+    "INSERT OR IGNORE INTO threads (id, owner, peer, title, is_default, created_at, last_at)
+       SELECT ids.id, p.owner, p.peer, NULL, 1, p.first_at, p.last_at
+         FROM (SELECT owner,
+                      CASE WHEN direction = 'out' THEN recipient ELSE sender END AS peer,
+                      MIN(created_at) AS first_at,
+                      MAX(created_at) AS last_at
+                 FROM messages
+                WHERE owner IS NOT NULL
+                GROUP BY owner, CASE WHEN direction = 'out' THEN recipient ELSE sender END) p
+         JOIN thread_backfill_ids ids
+           ON ids.lo = CASE WHEN p.owner < p.peer THEN p.owner ELSE p.peer END
+          AND ids.hi = CASE WHEN p.owner < p.peer THEN p.peer ELSE p.owner END",
+    "UPDATE messages SET thread_id = (
+         SELECT t.id FROM threads t
+          WHERE t.owner = messages.owner
+            AND t.peer = CASE WHEN messages.direction = 'out' THEN messages.recipient ELSE messages.sender END
+            AND t.is_default = 1)
+       WHERE thread_id IS NULL",
 ];
 
 #[derive(Debug, thiserror::Error)]
@@ -280,6 +357,36 @@ pub struct Message {
     pub owner: String,
     /// `true` when this is the sender's own copy, sealed to the sender's key.
     pub outgoing: bool,
+    /// Which thread this copy belongs to, in the owner's mailbox. Both sides of a conversation
+    /// carry the same id, because a thread is a property of the pair rather than of one inbox.
+    pub thread_id: String,
+}
+
+fn read_thread(row: &rusqlite::Row<'_>) -> Result<Thread, StoreError> {
+    Ok(Thread {
+        id: row.get(0)?,
+        owner: row.get(1)?,
+        peer: row.get(2)?,
+        title: row.get(3)?,
+        is_default: row.get::<_, i64>(4)? != 0,
+        created_at: row.get::<_, i64>(5)? as u64,
+        last_at: row.get::<_, i64>(6)? as u64,
+        archived_at: row.get::<_, Option<i64>>(7)?.map(|a| a as u64),
+    })
+}
+
+/// One subject inside a conversation with a peer.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Thread {
+    pub id: String,
+    pub owner: String,
+    pub peer: String,
+    /// `None` for the default thread, which has no name because nobody chose to open it.
+    pub title: Option<String>,
+    pub is_default: bool,
+    pub created_at: u64,
+    pub last_at: u64,
+    pub archived_at: Option<u64>,
 }
 
 /// A new API key's storable fields: the secret hash, a revocable id, and a display prefix.
@@ -547,6 +654,163 @@ impl Store {
 
     /// How many copies a mailbox holds (inbox quota check). Counts sent copies too: they occupy the
     /// same disk, and the quota exists to bound disk.
+    /// Ensure this mailbox's default thread with a peer exists under `id`.
+    ///
+    /// Separate from [`Store::create_thread`] only in setting `is_default`. The id is supplied so
+    /// both halves of a pair can share one: two independently generated defaults would mean a
+    /// client replying by the id it can see would open a *second* thread in the other mailbox.
+    pub async fn ensure_default_thread(
+        &self,
+        id: String,
+        owner: String,
+        peer: String,
+        now: u64,
+    ) -> Result<String, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT OR IGNORE INTO threads (id, owner, peer, title, is_default, created_at, last_at)
+                 VALUES (?1, ?2, ?3, NULL, 1, ?4, ?4)",
+                params![id, owner, peer, now as i64],
+            )?;
+            // Re-read rather than trusting the insert: the partial unique index means a concurrent
+            // send may have won, and its id is the one that counts.
+            Ok(c.query_row(
+                "SELECT id FROM threads WHERE owner = ?1 AND peer = ?2 AND is_default = 1",
+                params![owner, peer],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// This mailbox's default thread with a peer, if they have one yet.
+    pub async fn default_thread_id(
+        &self,
+        owner: String,
+        peer: String,
+    ) -> Result<Option<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut q = c.prepare(
+                "SELECT id FROM threads WHERE owner = ?1 AND peer = ?2 AND is_default = 1",
+            )?;
+            let mut rows = q.query(params![owner, peer])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(row.get(0)?)),
+                None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Open a named thread with a peer, in one mailbox.
+    ///
+    /// The id is supplied rather than generated, because both sides of a conversation must end up
+    /// with the same one and only the sender's side knows it first.
+    pub async fn create_thread(
+        &self,
+        id: String,
+        owner: String,
+        peer: String,
+        title: Option<String>,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT OR IGNORE INTO threads (id, owner, peer, title, is_default, created_at, last_at)
+                 VALUES (?1, ?2, ?3, ?4, 0, ?5, ?5)",
+                params![id, owner, peer, title, now as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// One thread, if it is in this mailbox. Scoped to `owner` so an id from elsewhere reads as
+    /// absent rather than as somebody else's conversation.
+    pub async fn thread(&self, owner: String, id: String) -> Result<Option<Thread>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<Thread>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut q = c.prepare(
+                "SELECT id, owner, peer, title, is_default, created_at, last_at, archived_at
+                   FROM threads WHERE owner = ?1 AND id = ?2",
+            )?;
+            let mut rows = q.query(params![owner, id])?;
+            match rows.next()? {
+                Some(row) => Ok(Some(read_thread(row)?)),
+                None => Ok(None),
+            }
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// This mailbox's threads, most recently active first. `peer` narrows it to one correspondent.
+    pub async fn threads(
+        &self,
+        owner: String,
+        peer: Option<String>,
+    ) -> Result<Vec<Thread>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Thread>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut q = c.prepare(
+                "SELECT id, owner, peer, title, is_default, created_at, last_at, archived_at
+                   FROM threads
+                  WHERE owner = ?1 AND (?2 IS NULL OR peer = ?2)
+                  ORDER BY last_at DESC",
+            )?;
+            let mut rows = q.query(params![owner, peer])?;
+            let mut out = Vec::new();
+            while let Some(row) = rows.next()? {
+                out.push(read_thread(row)?);
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Rename or file one thread. Local to this mailbox in both cases: a title the peer could
+    /// rewrite is a title that is not yours, and filing is about one reader's attention.
+    pub async fn update_thread(
+        &self,
+        owner: String,
+        id: String,
+        title: Option<Option<String>>,
+        archived_at: Option<Option<u64>>,
+    ) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut changed = 0;
+            if let Some(title) = title {
+                changed += c.execute(
+                    "UPDATE threads SET title = ?3 WHERE owner = ?1 AND id = ?2",
+                    params![owner, id, title],
+                )?;
+            }
+            if let Some(archived_at) = archived_at {
+                changed += c.execute(
+                    "UPDATE threads SET archived_at = ?3 WHERE owner = ?1 AND id = ?2",
+                    params![owner, id, archived_at.map(|a| a as i64)],
+                )?;
+            }
+            Ok(changed > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     pub async fn inbox_count(&self, owner: String) -> Result<usize, StoreError> {
         self.count_where(
             "SELECT COUNT(*) FROM messages WHERE COALESCE(owner, recipient) = ?1",
@@ -1661,8 +1925,8 @@ impl Store {
             let c = conn.lock().expect("store lock");
             c.execute(
                 "INSERT INTO messages
-                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction, thread_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     m.id,
                     m.recipient,
@@ -1671,8 +1935,15 @@ impl Store {
                     m.created_at as i64,
                     m.read as i64,
                     m.owner,
-                    if m.outgoing { "out" } else { "in" }
+                    if m.outgoing { "out" } else { "in" },
+                    m.thread_id,
                 ],
+            )?;
+            // A thread's ordering is by its own last activity, not by when it was opened, or a
+            // long-running conversation sinks below one somebody named and abandoned.
+            c.execute(
+                "UPDATE threads SET last_at = ?2 WHERE id = ?1 AND last_at < ?2",
+                params![m.thread_id, m.created_at as i64],
             )?;
             Ok(())
         })
@@ -1709,7 +1980,7 @@ impl Store {
             let placeholders = owners.iter().map(|_| "?").collect::<Vec<_>>().join(",");
             let sql = format!(
                 "SELECT rowid, id, recipient, sender, wrap_blob, created_at, read,
-                        COALESCE(owner, recipient), direction
+                        COALESCE(owner, recipient), direction, thread_id
                  FROM messages
                  WHERE COALESCE(owner, recipient) IN ({placeholders})
                    AND rowid > ?
@@ -1736,6 +2007,7 @@ impl Store {
                         read: row.get::<_, i64>(6)? != 0,
                         owner: row.get(7)?,
                         outgoing: row.get::<_, String>(8)? == "out",
+                        thread_id: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
                     },
                 ))
             })?;
@@ -1771,7 +2043,7 @@ impl Store {
             let c = conn.lock().expect("store lock");
             let mut stmt = c.prepare(
                 "SELECT id, recipient, sender, wrap_blob, created_at, read,
-                        COALESCE(owner, recipient), direction
+                        COALESCE(owner, recipient), direction, COALESCE(thread_id, '')
                  FROM messages WHERE COALESCE(owner, recipient) = ?1 ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map(params![owner], |row| {
@@ -1784,6 +2056,7 @@ impl Store {
                     read: row.get::<_, i64>(5)? != 0,
                     owner: row.get(6)?,
                     outgoing: row.get::<_, String>(7)? == "out",
+                    thread_id: row.get(8)?,
                 })
             })?;
             let mut out = Vec::new();
@@ -2138,6 +2411,7 @@ mod tests {
                 read: false,
                 owner: bob_addr.clone(),
                 outgoing: false,
+                thread_id: "t-test".into(),
             })
             .await
             .unwrap();
@@ -2308,6 +2582,7 @@ mod tests {
             read: false,
             owner: recipient.into(),
             outgoing: false,
+            thread_id: "t-test".into(),
         }
     }
 
@@ -2708,6 +2983,7 @@ mod event_cursor_tests {
 
     fn msg(id: &str, owner: &str, sender: &str, outgoing: bool) -> Message {
         Message {
+            thread_id: "t-test".into(),
             id: id.into(),
             recipient: owner.into(),
             sender: sender.into(),

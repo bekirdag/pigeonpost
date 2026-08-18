@@ -414,6 +414,8 @@ fn build_router(state: AppState) -> Router {
             get(get_contacts).put(put_contact).delete(delete_contact),
         )
         .route("/v1/archive", get(get_archive).put(put_archive))
+        .route("/v1/threads", get(list_threads).post(open_thread))
+        .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
         .route("/v1/policy", axum::routing::put(put_policy))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
@@ -1873,11 +1875,153 @@ async fn resolve_recipient(
 }
 
 /// Seal a message from `sender` to a hosted recipient and enqueue it.
+/// Which thread a send belongs to, as the caller asked for it.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) enum ThreadRequest<'a> {
+    /// Nobody said. The pair's default thread, which is what every send did before threads existed.
+    #[default]
+    Default,
+    /// Continue this thread. Verified to be the caller's own and with this peer.
+    Existing(&'a str),
+    /// Open a new one under this title.
+    New(&'a str),
+}
+
+/// The same thread, as it is known in each mailbox.
+///
+/// Two rows, one id: a thread belongs to the pair, so the sender's copy and the delivered copy must
+/// agree, or a reply arrives in a thread the other side has never heard of.
+struct ResolvedThread {
+    sender_side: String,
+    recipient_side: String,
+}
+
+/// Find or open the thread a message belongs to, in both mailboxes.
+async fn resolve_thread(
+    state: &AppState,
+    sender: &store::StoredIdentity,
+    recipient: &str,
+    request: ThreadRequest<'_>,
+    now: u64,
+) -> Result<ResolvedThread, ApiError> {
+    let store_error = |e: store::StoreError| {
+        tracing::error!(error = %e, "thread lookup failed");
+        ApiError::server("store_error")
+    };
+
+    match request {
+        ThreadRequest::Default => {
+            // Whichever side already has a default decides the id, so a pair that has spoken before
+            // keeps the thread it has. Only a genuinely new conversation draws a fresh one.
+            let existing = match state
+                .store
+                .default_thread_id(sender.address.clone(), recipient.to_string())
+                .await
+                .map_err(store_error)?
+            {
+                Some(id) => Some(id),
+                None => state
+                    .store
+                    .default_thread_id(recipient.to_string(), sender.address.clone())
+                    .await
+                    .map_err(store_error)?,
+            };
+            let candidate = existing.unwrap_or_else(|| rand_hex(16));
+
+            // The sender's side settles it: a concurrent send may have inserted first, and
+            // `ensure_default_thread` returns the id that actually won.
+            let sender_side = state
+                .store
+                .ensure_default_thread(
+                    candidate,
+                    sender.address.clone(),
+                    recipient.to_string(),
+                    now,
+                )
+                .await
+                .map_err(store_error)?;
+            let recipient_side = state
+                .store
+                .ensure_default_thread(
+                    sender_side.clone(),
+                    recipient.to_string(),
+                    sender.address.clone(),
+                    now,
+                )
+                .await
+                .map_err(store_error)?;
+            Ok(ResolvedThread {
+                sender_side,
+                recipient_side,
+            })
+        }
+        ThreadRequest::Existing(id) => {
+            // Scoped to the caller's own mailbox, so an id belonging to somebody else's
+            // conversation reads as absent rather than as a thread to post into.
+            let existing = state
+                .store
+                .thread(sender.address.clone(), id.to_string())
+                .await
+                .map_err(store_error)?
+                .ok_or_else(|| ApiError::bad("unknown_thread", "no such thread in this mailbox"))?;
+            if existing.peer != recipient {
+                return Err(ApiError::bad(
+                    "wrong_thread_peer",
+                    "that thread is with a different peer",
+                ));
+            }
+            // The recipient may not have this thread yet — they do not when the sender opened it
+            // and this is the first message since. Creating it with the same id is what keeps the
+            // two sides in step; it is a no-op once they have it.
+            state
+                .store
+                .create_thread(
+                    id.to_string(),
+                    recipient.to_string(),
+                    sender.address.clone(),
+                    existing.title.clone(),
+                    now,
+                )
+                .await
+                .map_err(store_error)?;
+            Ok(ResolvedThread {
+                sender_side: id.to_string(),
+                recipient_side: id.to_string(),
+            })
+        }
+        ThreadRequest::New(title) => {
+            let title = title.trim();
+            if title.is_empty() || title.chars().count() > 200 {
+                return Err(ApiError::bad(
+                    "bad_thread_title",
+                    "a thread title is 1 to 200 characters",
+                ));
+            }
+            let id = rand_hex(16);
+            for (owner, peer) in [
+                (sender.address.clone(), recipient.to_string()),
+                (recipient.to_string(), sender.address.clone()),
+            ] {
+                state
+                    .store
+                    .create_thread(id.clone(), owner, peer, Some(title.to_string()), now)
+                    .await
+                    .map_err(store_error)?;
+            }
+            Ok(ResolvedThread {
+                sender_side: id.clone(),
+                recipient_side: id,
+            })
+        }
+    }
+}
+
 pub(crate) async fn do_send(
     state: &AppState,
     sender: &store::StoredIdentity,
     to: &str,
     body: &str,
+    thread: ThreadRequest<'_>,
 ) -> Result<serde_json::Value, ApiError> {
     // Two different mistakes deserve two different answers. Telling someone who mistyped an address
     // that "only hosted recipients are deliverable" sends them looking for a delivery feature when
@@ -1985,6 +2129,11 @@ pub(crate) async fn do_send(
         .map_err(|_| ApiError::server("bad_sender_key"))?;
 
     let now = now_unix();
+
+    // One id, stamped on both copies, so the two halves of the conversation line up. Resolved
+    // before sealing because a failure here must not leave a delivered message in no thread.
+    let thread_id = resolve_thread(state, sender, &recipient.address, thread, now).await?;
+
     let wrap = envelope::wrap(&sender_identity, &recipient_vk, body, now).map_err(|e| {
         tracing::error!(error = %e, "seal failed");
         ApiError::server("seal_error")
@@ -2003,6 +2152,7 @@ pub(crate) async fn do_send(
             read: false,
             owner: recipient.address.clone(),
             outgoing: false,
+            thread_id: thread_id.recipient_side.clone(),
         })
         .await
         .map_err(|e| {
@@ -2038,6 +2188,7 @@ pub(crate) async fn do_send(
                             read: true,
                             owner: sender.address.clone(),
                             outgoing: true,
+                            thread_id: thread_id.sender_side.clone(),
                         })
                         .await;
                     match stored {
@@ -2108,6 +2259,7 @@ pub(crate) async fn do_inbox(
     me: &store::StoredIdentity,
     include_sent: bool,
     include_read: bool,
+    thread_id: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
     let messages = state
         .store
@@ -2163,6 +2315,13 @@ pub(crate) async fn do_inbox(
         if m.outgoing && !include_sent {
             continue;
         }
+        // Narrowing to one thread is what makes reading history back affordable: an agent asking
+        // for context gets this subject, not everything this peer has ever said.
+        if let Some(want) = thread_id {
+            if m.thread_id != want {
+                continue;
+            }
+        }
         // Acknowledged mail drops out of the listing. It used to stay, which made `ack` look
         // broken: an agent acked a message, saw it again on the next poll, and concluded the
         // acknowledgement had not worked. Worse, an agent polling every few minutes had to
@@ -2216,6 +2375,7 @@ pub(crate) async fn do_inbox(
                     "sent_at": m.created_at,
                     "received_at": m.created_at,
                     "read": true,
+                    "thread_id": m.thread_id,
                 }));
                 continue;
             }
@@ -2279,6 +2439,9 @@ pub(crate) async fn do_inbox(
                 // Which entry spoke for this sender. A fleet-wide grant and a personal one are
                 // very different amounts of trust, and an agent should be able to tell them apart.
                 "matched_contact": contact.map(|c| c.peer.clone()),
+                // Which conversation this belongs to. Present on every message so a session start
+                // tells an agent what each new one is about without fetching anything.
+                "thread_id": m.thread_id,
                 "sender_handle": sender_handles.get(&from),
                 "autonomy": autonomy,
                 // The verb this message named, if it named a recognisable one at all — worth
@@ -2332,6 +2495,13 @@ struct SendReq {
     /// Which of your identities to send as (API-key accounts with more than one).
     #[serde(default)]
     from: Option<String>,
+    /// Continue an existing thread, by id.
+    #[serde(default)]
+    thread_id: Option<String>,
+    /// Open a new thread under this title. Ignored when `thread_id` is given, since continuing a
+    /// thread and naming a new one are different requests and honouring both would silently pick.
+    #[serde(default)]
+    thread: Option<String>,
 }
 
 /// `POST /v1/send` — seal a message to a hosted recipient and enqueue it.
@@ -2344,7 +2514,12 @@ async fn send(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    match do_send(&state, &me, &req.to, &req.body).await {
+    let thread = match (&req.thread_id, &req.thread) {
+        (Some(id), _) => ThreadRequest::Existing(id.as_str()),
+        (None, Some(title)) => ThreadRequest::New(title.as_str()),
+        (None, None) => ThreadRequest::Default,
+    };
+    match do_send(&state, &me, &req.to, &req.body, thread).await {
         Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
         Err(e) => e.into_response(),
     }
@@ -2366,6 +2541,9 @@ struct InboxQuery {
     /// [`MAX_INBOX_WAIT_SECS`]. Absent or 0 answers immediately, as it always did.
     #[serde(default)]
     wait: Option<u64>,
+    /// Narrow the listing to one thread. Absent behaves exactly as it did before threads existed.
+    #[serde(default)]
+    thread_id: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -2448,6 +2626,164 @@ struct ArchiveReq {
 
 fn yes() -> bool {
     true
+}
+
+#[derive(serde::Deserialize)]
+struct ThreadsQuery {
+    /// Narrow to one correspondent. This is what the web app asks for: threads of the peer whose
+    /// name is selected.
+    #[serde(default)]
+    peer: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+    /// Include threads this mailbox has filed away. Off by default, like archived peers.
+    #[serde(default)]
+    include_archived: bool,
+}
+
+fn thread_json(t: &store::Thread) -> serde_json::Value {
+    json!({
+        "thread_id": t.id,
+        "peer": t.peer,
+        // Absent rather than invented for the default thread. A client that wants to show a name
+        // decides what to call an unnamed conversation; the server does not guess one.
+        "title": t.title,
+        "is_default": t.is_default,
+        "created_at": t.created_at,
+        "last_at": t.last_at,
+        "archived": t.archived_at.is_some(),
+    })
+}
+
+/// `GET /v1/threads` — this mailbox's conversations, most recently active first.
+async fn list_threads(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<ThreadsQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match state
+        .store
+        .threads(me.address.clone(), q.peer.clone())
+        .await
+    {
+        Ok(threads) => Json(json!({
+            "threads": threads
+                .iter()
+                .filter(|t| q.include_archived || t.archived_at.is_none())
+                .map(thread_json)
+                .collect::<Vec<_>>()
+        }))
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "thread list failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+#[derive(serde::Deserialize)]
+struct OpenThreadReq {
+    peer: String,
+    title: String,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `POST /v1/threads` — open a named thread with a peer, before anything is said in it.
+///
+/// Created on both sides at once, like a thread opened by sending. A thread that existed in only
+/// one mailbox would vanish for the other the moment they replied to it.
+async fn open_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<OpenThreadReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let title = req.title.trim();
+    if title.is_empty() || title.chars().count() > 200 {
+        return ApiError::bad("bad_thread_title", "a thread title is 1 to 200 characters")
+            .into_response();
+    }
+    let peer = match resolve_recipient(&state, &req.peer).await {
+        Ok(Some(found)) => found,
+        Ok(None) => {
+            return ApiError::bad("unknown_recipient", "no such mailbox here").into_response()
+        }
+        Err(e) => return e.into_response(),
+    };
+
+    let id = rand_hex(16);
+    let now = now_unix();
+    for (owner, other) in [
+        (me.address.clone(), peer.address.clone()),
+        (peer.address.clone(), me.address.clone()),
+    ] {
+        if let Err(e) = state
+            .store
+            .create_thread(id.clone(), owner, other, Some(title.to_string()), now)
+            .await
+        {
+            tracing::error!(error = %e, "thread create failed");
+            return ApiError::server("store_error").into_response();
+        }
+    }
+    (StatusCode::CREATED, Json(json!({ "thread_id": id }))).into_response()
+}
+
+#[derive(serde::Deserialize)]
+struct PatchThreadReq {
+    /// Rename it here. Local: a title the peer could rewrite is a title that is not yours.
+    #[serde(default)]
+    title: Option<String>,
+    #[serde(default)]
+    archived: Option<bool>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `PATCH /v1/threads/{id}` — rename or file one thread, in this mailbox only.
+async fn patch_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Json(req): Json<PatchThreadReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    if let Some(title) = &req.title {
+        if title.trim().is_empty() || title.chars().count() > 200 {
+            return ApiError::bad("bad_thread_title", "a thread title is 1 to 200 characters")
+                .into_response();
+        }
+    }
+    let archived_at = req
+        .archived
+        .map(|a| if a { Some(now_unix()) } else { None });
+    let title = req.title.map(|t| Some(t.trim().to_string()));
+
+    match state
+        .store
+        .update_thread(me.address.clone(), id, title, archived_at)
+        .await
+    {
+        Ok(true) => Json(json!({ "ok": true })).into_response(),
+        Ok(false) => {
+            ApiError::bad("unknown_thread", "no such thread in this mailbox").into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "thread update failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
 }
 
 /// `PUT /v1/archive` — file a thread away, or bring it back.
@@ -2569,7 +2905,15 @@ async fn inbox(
     if let Some(wait) = q.wait.filter(|w| *w > 0) {
         await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
     }
-    match do_inbox(&state, &me, q.include_sent, q.include_read).await {
+    match do_inbox(
+        &state,
+        &me,
+        q.include_sent,
+        q.include_read,
+        q.thread_id.as_deref(),
+    )
+    .await
+    {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -3728,7 +4072,15 @@ mod tests {
         let bob = mint(&state).await;
 
         // Open by default.
-        assert!(do_send(&state, &alice, &bob.address, "hello").await.is_ok());
+        assert!(do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default
+        )
+        .await
+        .is_ok());
 
         // Blocked: refused, and nothing reaches bob's inbox.
         set_contact(
@@ -3742,9 +4094,15 @@ mod tests {
         )
         .await
         .unwrap();
-        let err = do_send(&state, &alice, &bob.address, "again")
-            .await
-            .expect_err("a blocked sender is refused");
+        let err = do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "again",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect_err("a blocked sender is refused");
         assert_eq!(err.code, "not_admitted");
         assert_eq!(err.status, StatusCode::FORBIDDEN);
         assert_eq!(
@@ -3759,7 +4117,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(
-            do_send(&state, &carol, &bob.address, "hi")
+            do_send(&state, &carol, &bob.address, "hi", ThreadRequest::Default)
                 .await
                 .unwrap_err()
                 .code,
@@ -3776,41 +4134,328 @@ mod tests {
         )
         .await
         .unwrap();
-        assert!(do_send(&state, &carol, &bob.address, "hi again")
-            .await
-            .is_ok());
+        assert!(do_send(
+            &state,
+            &carol,
+            &bob.address,
+            "hi again",
+            ThreadRequest::Default
+        )
+        .await
+        .is_ok());
     }
 
     /// An agent that polls every few minutes has to be able to tell new mail from mail it already
     /// handled. Acknowledging is how it says so, so acknowledged mail must leave the listing —
     /// otherwise `ack` looks broken and the agent ends up tracking message ids itself.
+    /// The property the whole design rests on: one conversation, one id, both mailboxes. If these
+    /// diverged, a reply would arrive in a thread the other side has never heard of.
+    #[tokio::test]
+    async fn both_sides_of_a_send_land_in_the_same_thread() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+
+        let hers = state
+            .store
+            .threads(alice.address.clone(), None)
+            .await
+            .unwrap();
+        let his = state
+            .store
+            .threads(bob.address.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(hers.len(), 1);
+        assert_eq!(his.len(), 1);
+        assert_eq!(hers[0].id, his[0].id, "one conversation, one id");
+        assert_eq!(hers[0].peer, bob.address);
+        assert_eq!(his[0].peer, alice.address);
+        assert!(hers[0].is_default && his[0].is_default);
+    }
+
+    /// A peer that has only ever had the default thread must look exactly as it did before threads
+    /// existed — that is what keeps the common case from paying for the feature.
+    #[tokio::test]
+    async fn repeated_sends_stay_in_the_one_default_thread() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        for body in ["one", "two", "three"] {
+            do_send(&state, &alice, &bob.address, body, ThreadRequest::Default)
+                .await
+                .unwrap();
+        }
+        assert_eq!(
+            state
+                .store
+                .threads(bob.address.clone(), None)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_named_thread_is_created_on_both_sides_and_kept_apart() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "background",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "about the deploy",
+            ThreadRequest::New("deploy"),
+        )
+        .await
+        .unwrap();
+
+        let his = state
+            .store
+            .threads(bob.address.clone(), None)
+            .await
+            .unwrap();
+        assert_eq!(
+            his.len(),
+            2,
+            "the named thread is separate from the default"
+        );
+        let named = his.iter().find(|t| !t.is_default).unwrap();
+        assert_eq!(named.title.as_deref(), Some("deploy"));
+
+        let hers = state
+            .store
+            .threads(alice.address.clone(), None)
+            .await
+            .unwrap();
+        let her_named = hers.iter().find(|t| !t.is_default).unwrap();
+        assert_eq!(her_named.id, named.id, "the same thread on both sides");
+    }
+
+    /// Continuing a thread has to be scoped to the caller's own mailbox, or an id learned anywhere
+    /// would post into somebody else's conversation.
+    #[tokio::test]
+    async fn a_thread_id_from_another_mailbox_is_not_a_thread_to_post_into() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let carol = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "private",
+            ThreadRequest::New("theirs"),
+        )
+        .await
+        .unwrap();
+        let theirs = state
+            .store
+            .threads(alice.address.clone(), None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| !t.is_default)
+            .unwrap();
+
+        let err = do_send(
+            &state,
+            &carol,
+            &bob.address,
+            "me too",
+            ThreadRequest::Existing(&theirs.id),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "unknown_thread");
+    }
+
+    /// A thread is with one peer. Reusing its id for a different recipient would merge two
+    /// conversations that have nothing to do with each other.
+    #[tokio::test]
+    async fn a_thread_cannot_be_redirected_to_a_different_peer() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        let carol = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hi",
+            ThreadRequest::New("with bob"),
+        )
+        .await
+        .unwrap();
+        let with_bob = state
+            .store
+            .threads(alice.address.clone(), Some(bob.address.clone()))
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|t| !t.is_default)
+            .unwrap();
+
+        let err = do_send(
+            &state,
+            &alice,
+            &carol.address,
+            "hi",
+            ThreadRequest::Existing(&with_bob.id),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(err.code, "wrong_thread_peer");
+    }
+
+    #[tokio::test]
+    async fn an_empty_or_oversized_thread_title_is_refused() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        for title in ["", "   "] {
+            let err = do_send(&state, &alice, &bob.address, "x", ThreadRequest::New(title))
+                .await
+                .unwrap_err();
+            assert_eq!(err.code, "bad_thread_title");
+        }
+        let long = "x".repeat(201);
+        let err = do_send(&state, &alice, &bob.address, "x", ThreadRequest::New(&long))
+            .await
+            .unwrap_err();
+        assert_eq!(err.code, "bad_thread_title");
+    }
+
+    /// Narrowing to a thread is what makes reading history back affordable, so it has to actually
+    /// narrow — and it has to leave the unfiltered listing exactly as it was.
+    #[tokio::test]
+    async fn the_inbox_can_be_read_one_thread_at_a_time() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "background",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "about the deploy",
+            ThreadRequest::New("deploy"),
+        )
+        .await
+        .unwrap();
+
+        let all = do_inbox(&state, &bob, false, false, None).await.unwrap();
+        assert_eq!(all["messages"].as_array().unwrap().len(), 2);
+
+        let threads = state
+            .store
+            .threads(bob.address.clone(), None)
+            .await
+            .unwrap();
+        let deploy = threads.iter().find(|t| !t.is_default).unwrap();
+        let one = do_inbox(&state, &bob, false, false, Some(&deploy.id))
+            .await
+            .unwrap();
+        let msgs = one["messages"].as_array().unwrap();
+        assert_eq!(msgs.len(), 1, "only that subject");
+        assert_eq!(msgs[0]["body"], "about the deploy");
+        assert_eq!(msgs[0]["thread_id"], deploy.id);
+    }
+
+    /// Every message says which conversation it belongs to, so a session start can tell an agent
+    /// what each new one is about without fetching anything else.
+    #[tokio::test]
+    async fn every_listed_message_carries_its_thread() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+        do_send(&state, &alice, &bob.address, "hi", ThreadRequest::Default)
+            .await
+            .unwrap();
+
+        let listing = do_inbox(&state, &bob, true, true, None).await.unwrap();
+        for m in listing["messages"].as_array().unwrap() {
+            assert!(
+                m["thread_id"].as_str().is_some_and(|t| !t.is_empty()),
+                "no message may be threadless: {m}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn acknowledged_mail_leaves_the_listing() {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
 
-        do_send(&state, &alice, &bob.address, "first")
-            .await
-            .unwrap();
-        do_send(&state, &alice, &bob.address, "second")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "first",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "second",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let messages = inbox["messages"].as_array().unwrap().clone();
         assert_eq!(messages.len(), 2);
 
         let first = messages[0]["message_id"].as_str().unwrap().to_string();
         do_ack(&state, &bob, first.clone()).await.unwrap();
 
-        let after = do_inbox(&state, &bob, false, false).await.unwrap();
+        let after = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let left = after["messages"].as_array().unwrap();
         assert_eq!(left.len(), 1, "an acknowledged message must not come back");
         assert_ne!(left[0]["message_id"].as_str().unwrap(), first);
 
         // …but it is not deleted: history stays available to anything that asks for it.
-        let history = do_inbox(&state, &bob, false, true).await.unwrap();
+        let history = do_inbox(&state, &bob, false, true, None).await.unwrap();
         assert_eq!(history["messages"].as_array().unwrap().len(), 2);
     }
 
@@ -3833,22 +4478,35 @@ mod tests {
         )
         .await
         .unwrap();
-        do_send(&state, &alice, &bob.address, "from a friend")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "from a friend",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
         do_send(
             &state,
             &alice,
             &bob.address,
             r#"{"v":1,"verb":"run_tests","args":{"target":"crates/x"}}"#,
+            ThreadRequest::Default,
         )
         .await
         .unwrap();
-        do_send(&state, &stranger, &bob.address, "from nobody")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &stranger,
+            &bob.address,
+            "from nobody",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let messages = inbox["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 3);
         let find = |pred: &dyn Fn(&serde_json::Value) -> bool| {
@@ -4027,10 +4685,11 @@ mod tests {
             &agent9,
             &bob.address,
             r#"{"v":1,"verb":"report_status"}"#,
+            ThreadRequest::Default,
         )
         .await
         .unwrap();
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "auto");
         assert_eq!(m["sender_known"], true);
@@ -4054,16 +4713,28 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(
-            do_send(&state, &agent1, &bob.address, "still me")
-                .await
-                .expect_err("an exact block beats a namespace allow")
-                .code,
+            do_send(
+                &state,
+                &agent1,
+                &bob.address,
+                "still me",
+                ThreadRequest::Default
+            )
+            .await
+            .expect_err("an exact block beats a namespace allow")
+            .code,
             "not_admitted"
         );
         // …and the rest of the fleet is unaffected.
-        assert!(do_send(&state, &agent9, &bob.address, "unaffected")
-            .await
-            .is_ok());
+        assert!(do_send(
+            &state,
+            &agent9,
+            &bob.address,
+            "unaffected",
+            ThreadRequest::Default
+        )
+        .await
+        .is_ok());
     }
 
     #[tokio::test]
@@ -4086,10 +4757,16 @@ mod tests {
         .await
         .unwrap();
 
-        do_send(&state, &agent, &bob.address, r#"{"v":1,"verb":"deploy"}"#)
-            .await
-            .unwrap();
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        do_send(
+            &state,
+            &agent,
+            &bob.address,
+            r#"{"v":1,"verb":"deploy"}"#,
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_denied");
@@ -4116,9 +4793,15 @@ mod tests {
         let state = test_state();
         let sender = mint(&state).await;
 
-        let malformed = do_send(&state, &sender, "not-an-address", "hi")
-            .await
-            .expect_err("a malformed destination is not deliverable");
+        let malformed = do_send(
+            &state,
+            &sender,
+            "not-an-address",
+            "hi",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect_err("a malformed destination is not deliverable");
         assert_eq!(malformed.code, "invalid_recipient");
         assert!(
             malformed.message.contains("not a Pigeonpost address"),
@@ -4127,9 +4810,15 @@ mod tests {
         );
 
         // Well-formed but nobody home: a different code, and it names the address back.
-        let absent = do_send(&state, &sender, "/k/2dehf8j788jmq6qnk04nj44fng", "hi")
-            .await
-            .expect_err("no such mailbox");
+        let absent = do_send(
+            &state,
+            &sender,
+            "/k/2dehf8j788jmq6qnk04nj44fng",
+            "hi",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect_err("no such mailbox");
         assert_eq!(absent.code, "recipient_unresolved");
         assert_eq!(absent.status, StatusCode::NOT_FOUND);
         assert!(absent.message.contains("/k/2dehf8j788jmq6qnk04nj44fng"));
@@ -4152,20 +4841,40 @@ mod tests {
         let k_address = minted["address"].as_str().unwrap().to_string();
         let sender = mint(&state).await;
 
-        do_send(&state, &sender, "/bekir/deployer", "by name")
-            .await
-            .expect("a handle must be deliverable");
+        do_send(
+            &state,
+            &sender,
+            "/bekir/deployer",
+            "by name",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect("a handle must be deliverable");
         // Case is folded on the way in, so a differently-cased name is the same mailbox.
-        do_send(&state, &sender, "/BEKIR/Deployer", "by name, shouted")
-            .await
-            .expect("handles are canonicalised before lookup");
+        do_send(
+            &state,
+            &sender,
+            "/BEKIR/Deployer",
+            "by name, shouted",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect("handles are canonicalised before lookup");
         // The underlying /k/ address still works — a handle is a name for a key, not a new mailbox.
-        do_send(&state, &sender, &k_address, "by key")
-            .await
-            .expect("the key-derived address is unchanged");
+        do_send(
+            &state,
+            &sender,
+            &k_address,
+            "by key",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect("the key-derived address is unchanged");
 
         let recipient = state.store.get(k_address).await.unwrap().unwrap();
-        let inbox = do_inbox(&state, &recipient, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &recipient, false, false, None)
+            .await
+            .unwrap();
         assert_eq!(
             inbox["messages"].as_array().unwrap().len(),
             3,
@@ -4173,10 +4882,16 @@ mod tests {
         );
 
         assert_eq!(
-            do_send(&state, &sender, "/bekir/nobody", "into the void")
-                .await
-                .unwrap_err()
-                .code,
+            do_send(
+                &state,
+                &sender,
+                "/bekir/nobody",
+                "into the void",
+                ThreadRequest::Default
+            )
+            .await
+            .unwrap_err()
+            .code,
             "recipient_unresolved"
         );
     }
@@ -4377,9 +5092,15 @@ mod tests {
             .await
             .unwrap();
 
-        let sent = do_send(&state, &spammer, &victim.address, "buy my thing")
-            .await
-            .unwrap();
+        let sent = do_send(
+            &state,
+            &spammer,
+            &victim.address,
+            "buy my thing",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
         let id = sent["message_id"].as_str().unwrap().to_string();
 
         let before_sender = sender_score(&state, &spammer).await;
@@ -4409,9 +5130,15 @@ mod tests {
         let alice = mint(&state).await;
         let bob = mint(&state).await;
         let bystander = mint(&state).await;
-        let sent = do_send(&state, &alice, &bob.address, "hello")
-            .await
-            .unwrap();
+        let sent = do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
         let id = sent["message_id"].as_str().unwrap().to_string();
 
         assert_eq!(
@@ -4442,9 +5169,15 @@ mod tests {
                 .record_mint(ip.into(), "identity", Some(spammer.address.clone()), 1)
                 .await
                 .unwrap();
-            let sent = do_send(&state, &spammer, &victim.address, &format!("spam {i}"))
-                .await
-                .unwrap();
+            let sent = do_send(
+                &state,
+                &spammer,
+                &victim.address,
+                &format!("spam {i}"),
+                ThreadRequest::Default,
+            )
+            .await
+            .unwrap();
             do_report_spam(
                 &state,
                 &victim,
@@ -4468,13 +5201,25 @@ mod tests {
         let victim = mint(&state).await;
 
         for i in 0..reputation::STRANGER_MESSAGES_PER_WINDOW {
-            do_send(&state, &stranger, &victim.address, &format!("hi {i}"))
-                .await
-                .expect("an introduction should get through");
-        }
-        let err = do_send(&state, &stranger, &victim.address, "and again")
+            do_send(
+                &state,
+                &stranger,
+                &victim.address,
+                &format!("hi {i}"),
+                ThreadRequest::Default,
+            )
             .await
-            .expect_err("a stranger nobody vouched for gets a trickle, not a firehose");
+            .expect("an introduction should get through");
+        }
+        let err = do_send(
+            &state,
+            &stranger,
+            &victim.address,
+            "and again",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect_err("a stranger nobody vouched for gets a trickle, not a firehose");
         assert_eq!(err.code, "stranger_rate_limited");
         assert_eq!(err.status, StatusCode::TOO_MANY_REQUESTS);
         assert!(
@@ -4496,9 +5241,15 @@ mod tests {
         .await
         .unwrap();
         assert!(
-            do_send(&state, &stranger, &victim.address, "now known")
-                .await
-                .is_ok(),
+            do_send(
+                &state,
+                &stranger,
+                &victim.address,
+                "now known",
+                ThreadRequest::Default
+            )
+            .await
+            .is_ok(),
             "a human saying 'I know them' beats anything the score inferred"
         );
     }
@@ -4508,11 +5259,17 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        let sent = do_send(&state, &alice, &bob.address, "hello")
-            .await
-            .unwrap();
+        let sent = do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
-        let first = do_inbox(&state, &bob, false, false).await.unwrap();
+        let first = do_inbox(&state, &bob, false, false, None).await.unwrap();
         assert_eq!(first["messages"][0]["sender_standing"], "unproven");
 
         do_report_spam(
@@ -4523,7 +5280,7 @@ mod tests {
         .await
         .unwrap();
 
-        let after = do_inbox(&state, &bob, false, false).await.unwrap();
+        let after = do_inbox(&state, &bob, false, false, None).await.unwrap();
         assert_eq!(after["messages"][0]["sender_standing"], "reported");
         assert!(after["messages"][0]["sender_score"].as_i64().unwrap() < 0);
     }
@@ -4534,9 +5291,15 @@ mod tests {
         let alice = mint(&state).await;
         let bob = mint(&state).await;
 
-        do_send(&state, &alice, &bob.address, "hello")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
         do_set_contact(
             &state,
             &bob,
@@ -4612,9 +5375,15 @@ mod tests {
         let bob_address = bob.address.clone();
         let sending = tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            do_send(&sender_state, &alice, &bob_address, "wake up")
-                .await
-                .unwrap();
+            do_send(
+                &sender_state,
+                &alice,
+                &bob_address,
+                "wake up",
+                ThreadRequest::Default,
+            )
+            .await
+            .unwrap();
         });
 
         // A budget far longer than the send takes: if the signal were dropped this would sit here
@@ -4628,7 +5397,7 @@ mod tests {
         );
         sending.await.unwrap();
 
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         assert_eq!(inbox["messages"].as_array().unwrap().len(), 1);
     }
 
@@ -4643,7 +5412,7 @@ mod tests {
             "an empty inbox must wait out its budget, not return at once"
         );
         assert!(
-            do_inbox(&state, &me, false, false).await.unwrap()["messages"]
+            do_inbox(&state, &me, false, false, None).await.unwrap()["messages"]
                 .as_array()
                 .unwrap()
                 .is_empty()
@@ -4655,9 +5424,15 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        do_send(&state, &alice, &bob.address, "already here")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "already here",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
         let started = std::time::Instant::now();
         await_mail(&state, &bob.address, 60).await;
@@ -4674,9 +5449,15 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        let sent = do_send(&state, &alice, &bob.address, "old news")
-            .await
-            .unwrap();
+        let sent = do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "old news",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
         do_ack(
             &state,
             &bob,
@@ -4700,11 +5481,17 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        do_send(&state, &alice, &bob.address, "the build is green")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "the build is green",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
-        let conversation = do_inbox(&state, &alice, true, false).await.unwrap();
+        let conversation = do_inbox(&state, &alice, true, false, None).await.unwrap();
         let messages = conversation["messages"].as_array().unwrap();
         assert_eq!(messages.len(), 1, "the sender should see their own message");
         assert_eq!(messages[0]["direction"], "out");
@@ -4715,7 +5502,7 @@ mod tests {
         );
 
         // Bob sees the same exchange from his end.
-        let bobs = do_inbox(&state, &bob, true, false).await.unwrap();
+        let bobs = do_inbox(&state, &bob, true, false, None).await.unwrap();
         let bobs_messages = bobs["messages"].as_array().unwrap();
         assert_eq!(bobs_messages.len(), 1);
         assert_eq!(bobs_messages[0]["direction"], "in");
@@ -4729,11 +5516,17 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        do_send(&state, &alice, &bob.address, "status?")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "status?",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
-        let inbox = do_inbox(&state, &alice, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &alice, false, false, None).await.unwrap();
         assert!(
             inbox["messages"].as_array().unwrap().is_empty(),
             "a sent message is not inbox mail"
@@ -4747,9 +5540,15 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        do_send(&state, &alice, &bob.address, "anyone there?")
-            .await
-            .unwrap();
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "anyone there?",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
 
         let started = std::time::Instant::now();
         await_mail(&state, &alice.address, 1).await;
@@ -4766,7 +5565,9 @@ mod tests {
         let state = test_state();
         let alice = mint(&state).await;
         let bob = mint(&state).await;
-        do_send(&state, &alice, &bob.address, "one").await.unwrap();
+        do_send(&state, &alice, &bob.address, "one", ThreadRequest::Default)
+            .await
+            .unwrap();
 
         let delivered = state
             .store
@@ -4897,11 +5698,12 @@ mod tests {
             &alice,
             &bob.address,
             r#"{"v":1,"verb":"run_tests"}"#,
+            ThreadRequest::Default,
         )
         .await
         .unwrap();
 
-        let inbox = do_inbox(&state, &bob, false, false).await.unwrap();
+        let inbox = do_inbox(&state, &bob, false, false, None).await.unwrap();
         let m = &inbox["messages"].as_array().unwrap()[0];
         assert_eq!(m["autonomy"], "review");
         assert_eq!(m["held_because"], "verb_not_granted");
