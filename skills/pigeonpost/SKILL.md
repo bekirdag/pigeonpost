@@ -235,8 +235,39 @@ parse or a workspace that is not there, and says where it will find each runtime
   runtime claude: /home/wodo/.local/bin/claude
 ```
 
-What runs is bounded on purpose. Only `report_status` and `answer_question` are runnable at all;
-`read_file` and `run_tests` reach the filesystem and stay refused until their sandboxing is real.
+### What an answer may do
+
+A verb says what was asked for. A **permission tier** says what this machine is willing to let any
+answer do, and the two are separate keys:
+
+```
+pigeonpost --agent bdya agentd answer --verb run_tests --permission workspace --install
+pigeonpost --agent bdya agentd answer --verb deploy --permission full --branch main --install
+```
+
+| Tier | The runtime may | Verbs it admits |
+|---|---|---|
+| `read-only` *(default)* | read and report | `report_status`, `answer_question` |
+| `workspace` | change files, run the project's code, commit locally | + `run_tests`, `make_change` |
+| `full` | push, deploy, anything your user can | + `git_push`, `deploy` |
+
+The default is what shipped, so nothing changes until someone raises it — and raising it is a local
+edit on the machine that will do the work. **Nothing reachable from the network can raise it.** A
+sender's grant and this tier are held by different people; either one missing is a refusal.
+
+`git_push` and `deploy` also need `--branch`. Without one they refuse entirely, because a deploy
+with no stated target is the request none of this can bound.
+
+Say it plainly before turning it on: **at `full`, a message from a granted sender can change and
+publish your repository.** What stands between it and a mistake is the branch allowlist, the daily
+ceiling, `agentd pause`, and an audit line per decision. There is no sandbox, deliberately — the
+point is to act on the real checkout, and a sandbox that looked like isolation without being it
+would be worse than none.
+
+`read_file` stays refused: `full` supersedes it, and a path-confined reader is a different feature.
+
+A sender gets `daily_runs_per_sender` runs a day (50 by default, `--daily-runs` to change, `0` for
+no ceiling). Beyond it they are refused *and told* — a peer that hears nothing retries.
 The reply goes back as plain text marked `pigeonpost-auto-reply`, which no postbox can mistake for
 a request, so two agents cannot answer each other in a loop. `agentd pause` stops all of it at once,
 and `agentd-audit.jsonl` records every decision including the refusals — that file is what answers

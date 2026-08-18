@@ -389,6 +389,39 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         }
     };
 
+    let sender_key = message["sender_handle"]
+        .as_str()
+        .or_else(|| message["from"].as_str())
+        .unwrap_or(&event.sender)
+        .to_string();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    if !crate::executor::within_daily_limit(
+        home,
+        &sender_key,
+        crate::executor::today(now),
+        action.route.daily_runs_per_sender,
+    ) {
+        // Told, not silently dropped: a peer that hears nothing retries, which is the behaviour a
+        // ceiling exists to stop.
+        let body = crate::runner::refusal_body(
+            &action.verb,
+            &event.message_id,
+            &format!(
+                "This mailbox accepts {} runs a day from one sender and has reached that. Try \
+                 again tomorrow, or ask its human to raise it.",
+                action.route.daily_runs_per_sender
+            ),
+        );
+        let _ = crate::postbox_cmd::send_as(&credential, &sender_key, &body).await;
+        return give_back(
+            crate::executor::Refusal::DailyLimitReached.as_str(),
+            Some(&sender_key),
+        );
+    }
+
     // Queue rather than refuse: a request that has to wait for a slot is still answered, and the
     // sender is not waiting on a connection.
     let _permit = match slots(config.max_concurrent).acquire().await {
@@ -412,7 +445,20 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
     let run = match crate::runner::run(home, &action, &sender, &event.message_id).await {
         Ok(run) => run,
         Err(failure) => {
+            // Say so rather than leaving the peer waiting on nothing. At read-only a silent
+            // failure costs an answer; at a tier that changes things it costs an answer about a
+            // half-finished change, which is the one outcome nobody can act on.
             log_line(home, &format!("run failed: {failure}"));
+            let body = crate::runner::refusal_body(
+                &action.verb,
+                &event.message_id,
+                &format!(
+                    "The run failed ({}). Nothing here knows what state it left behind, so treat \
+                     this as unfinished rather than as not started.",
+                    failure.detail()
+                ),
+            );
+            let _ = crate::postbox_cmd::send_as(&credential, &sender, &body).await;
             return give_back(failure.as_str(), Some(&failure.detail()));
         }
     };
@@ -603,11 +649,15 @@ fn machine_home(home: &Path) -> PathBuf {
 /// The route goes in the **machine** home, because that is where the one daemon reads it, while the
 /// mailbox comes from the **agent** home this was invoked for. That split is the whole reason this
 /// is a command rather than a documented example.
+#[allow(clippy::too_many_arguments)]
 pub fn answer(
     home: &Path,
     verbs: &[String],
     runtime: &str,
     timeout_secs: Option<u64>,
+    permission: crate::executor::Permission,
+    branches: &[String],
+    daily_runs: Option<u32>,
     install: bool,
     off: bool,
 ) -> Result<(), Error> {
@@ -681,14 +731,34 @@ pub fn answer(
     }
     // A verb this phase will not run would sit in the config looking granted.
     for verb in verbs {
-        if !crate::executor::PHASE4_VERBS.contains(&verb.as_str()) {
+        if !crate::executor::RUNNABLE_VERBS.contains(&verb.as_str()) {
             return Err(format!(
-                "`{verb}` cannot be answered unattended yet — only {} can. Verbs that reach the \
-                 filesystem wait for real sandboxing.",
-                crate::executor::PHASE4_VERBS.join(" and ")
+                "`{verb}` is not a verb this build can carry out — it runs {}.",
+                crate::executor::RUNNABLE_VERBS.join(", ")
             )
             .into());
         }
+        if !permission.admits(verb) {
+            return Err(format!(
+                "`{verb}` needs a higher permission tier than `{}`. Add --permission {} — and read \
+                 what that means before you do.",
+                permission.as_str(),
+                if matches!(verb.as_str(), "git_push" | "deploy") {
+                    "full"
+                } else {
+                    "workspace"
+                }
+            )
+            .into());
+        }
+    }
+    // A push or a deploy with nothing to constrain it is the request this design cannot bound, so
+    // it is refused at the point where somebody can still think about it.
+    if verbs.iter().any(|v| v == "git_push" || v == "deploy") && branches.is_empty() {
+        return Err(
+            "git_push and deploy need --branch to say what they may touch, e.g. --branch main"
+                .into(),
+        );
     }
 
     let route = crate::executor::MailboxRoute {
@@ -697,6 +767,9 @@ pub fn answer(
         runtime: runtime.to_string(),
         verbs: verbs.to_vec(),
         timeout_secs: timeout_secs.unwrap_or(crate::executor::DEFAULT_TIMEOUT_SECS),
+        permission,
+        branches: branches.to_vec(),
+        daily_runs_per_sender: daily_runs.unwrap_or(50),
     };
 
     // Replace rather than append, so re-running is a correction instead of a second route that
@@ -719,8 +792,17 @@ pub fn answer(
 
     let path = crate::executor::write_routing(&machine, &config)?;
     println!("{address} will answer {} unattended", verbs.join(" and "));
-    println!("  workspace: {}", workspace.display());
-    println!("  runtime:   {runtime}");
+    println!("  workspace:  {}", workspace.display());
+    println!("  runtime:    {runtime}");
+    println!("  permission: {}", permission.as_str());
+    if !branches.is_empty() {
+        println!("  branches:   {}", branches.join(", "));
+    }
+    if matches!(permission, crate::executor::Permission::Full) {
+        println!();
+        println!("`full` means a message from a granted sender can change and publish this");
+        println!("repository. `agentd pause` stops it; the audit log records every decision.");
+    }
     println!("  config:    {}", path.display());
     println!();
     println!("The sender still has to have been granted the verb on the postbox — this is the");
@@ -1675,6 +1757,9 @@ mod tests {
                 runtime: "claude".into(),
                 verbs: vec!["report_status".into()],
                 timeout_secs: 60,
+                permission: crate::executor::Permission::ReadOnly,
+                branches: Vec::new(),
+                daily_runs_per_sender: 50,
             }],
             max_concurrent: 2,
             execute: true,
@@ -1791,6 +1876,9 @@ mod tests {
             runtime: runtime.into(),
             verbs: vec!["report_status".into()],
             timeout_secs: 60,
+            permission: crate::executor::Permission::ReadOnly,
+            branches: Vec::new(),
+            daily_runs_per_sender: 50,
         };
         let config = crate::executor::RoutingConfig {
             mailbox: vec![

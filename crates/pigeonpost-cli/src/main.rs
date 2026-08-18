@@ -280,6 +280,16 @@ enum AgentdAction {
         /// Wall-clock ceiling for one action. A report that goes and looks needs minutes.
         #[arg(long)]
         timeout: Option<u64>,
+        /// How much an answer may do: `read-only` reports, `workspace` changes files and runs the
+        /// project's code, `full` may also push and deploy.
+        #[arg(long, value_enum, default_value = "read-only")]
+        permission: executor::Permission,
+        /// A branch `git_push` and `deploy` may touch. Repeatable. Without it, neither may run.
+        #[arg(long = "branch")]
+        branches: Vec<String>,
+        /// Ceiling on runs accepted from one sender per day. 0 removes it.
+        #[arg(long)]
+        daily_runs: Option<u32>,
         /// Write the config instead of printing it.
         #[arg(long)]
         install: bool,
@@ -1263,9 +1273,22 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     verbs,
                     runtime,
                     timeout,
+                    permission,
+                    branches,
+                    daily_runs,
                     install,
                     off,
-                } => agentd_cmd::answer(&home, verbs, runtime, *timeout, *install, *off),
+                } => agentd_cmd::answer(
+                    &home,
+                    verbs,
+                    runtime,
+                    *timeout,
+                    *permission,
+                    branches,
+                    *daily_runs,
+                    *install,
+                    *off,
+                ),
                 AgentdAction::Pause => agentd_cmd::pause(&home),
                 AgentdAction::Resume => agentd_cmd::resume(&home),
                 AgentdAction::Hooks { install, global } => {

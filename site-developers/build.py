@@ -580,9 +580,25 @@ Two grants have to agree. The postbox says this *sender* may ask; `verbs` here s
 is willing to answer. Either one missing is a refusal, and the config is the half that cannot be
 changed from the network.
 
-What runs is deliberately small. Only `report_status` and `answer_question` are runnable — both are
-questions, so neither takes a path or a command. `read_file` and `run_tests` stay refused until
-their sandboxing is real. The sender's note is quoted into the prompt as labelled data, never
+What an answer may do is a second question, asked separately from what was requested. A verb is
+granted by the sender's postbox; a **permission tier** is set on the machine that would do the work.
+Either one missing is a refusal, and only one of them is reachable from the network.
+
+| Tier | The runtime may | Verbs it admits |
+|---|---|---|
+| `read-only` *(default)* | read and report | `report_status`, `answer_question` |
+| `workspace` | change files, run the project's code, commit locally | + `run_tests`, `make_change` |
+| `full` | push, deploy, anything that user can | + `git_push`, `deploy` |
+
+`git_push` and `deploy` additionally need a branch allowlist; without one they refuse, because a
+deploy with no stated target is the request this cannot bound. `read_credentials`, `spend`,
+`delete_files` and `run_shell` remain permanently ungrantable — `full` already implies shell access,
+so a verb for it would add nothing and would cost the ability to refuse it by name.
+
+At `full`, a message from a granted sender can change and publish that repository. The controls are
+the two keys, the branch allowlist, a per-sender daily ceiling, `agentd pause`, and an audit line
+per decision. There is no sandbox, on purpose: the point is to act on the real checkout, and one
+that looked like isolation without being it would be worse than none. The sender's note is quoted into the prompt as labelled data, never
 concatenated into the instructions and never passed through a shell. The reply goes back as plain
 text marked `pigeonpost-auto-reply`, which no postbox can mistake for a request, so two agents
 cannot end up answering each other.

@@ -1531,6 +1531,8 @@ pub(crate) async fn do_list_contacts(
         "vocabulary": {
             "grantable": verbs::grantable(),
             "never_auto": verbs::denied(),
+            // Published so a human granting one can see it is only half the decision.
+            "needs_machine_opt_in": verbs::privileged(),
         },
     }))
 }
@@ -4891,7 +4893,7 @@ mod tests {
             &state,
             &agent,
             &bob.address,
-            r#"{"v":1,"verb":"deploy"}"#,
+            r#"{"v":1,"verb":"run_shell"}"#,
             ThreadRequest::Default,
         )
         .await
@@ -5784,7 +5786,7 @@ mod tests {
         let peer = "/k/2dehf8j788jmq6qnk04nj44fng".to_string();
 
         for (bad, why) in [
-            ("deploy", "no policy may grant a deploy"),
+            ("run_shell", "no policy may grant a run_shell"),
             ("execute_command", "an unknown verb could never match"),
         ] {
             let err = do_set_contact(
@@ -5850,6 +5852,16 @@ mod tests {
             .unwrap()
             .contains(&json!("run_tests")));
         assert!(v["vocabulary"]["never_auto"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("run_shell")));
+        // Deploying is grantable now, and the listing says plainly that a grant is only half of
+        // it — otherwise a human reads "grantable" as "this will happen when asked".
+        assert!(v["vocabulary"]["grantable"]
+            .as_array()
+            .unwrap()
+            .contains(&json!("deploy")));
+        assert!(v["vocabulary"]["needs_machine_opt_in"]
             .as_array()
             .unwrap()
             .contains(&json!("deploy")));

@@ -21,9 +21,20 @@ use std::path::{Path, PathBuf};
 
 type Error = Box<dyn std::error::Error>;
 
-/// Phase 4 admits only the two verbs that cannot change anything. `read_file` and `run_tests` reach
-/// the filesystem and wait for Phase 5, where the sandboxing has to be real.
-pub const PHASE4_VERBS: &[&str] = &["report_status", "answer_question"];
+/// Every verb this daemon knows how to carry out.
+///
+/// Whether a given route may answer one is a second question, asked of [`Permission::admits`]:
+/// being runnable is about this build, being admitted is about this machine. `read_file` is
+/// deliberately absent — `full` supersedes it, and a path-confined reader is a different feature
+/// with a different threat model.
+pub const RUNNABLE_VERBS: &[&str] = &[
+    "report_status",
+    "answer_question",
+    "run_tests",
+    "make_change",
+    "git_push",
+    "deploy",
+];
 
 /// Marks a reply this executor generated. An auto-reply must never itself be auto-acted on, or two
 /// agents answering each other run until something breaks — the failure most likely to happen by
@@ -36,6 +47,7 @@ pub const AUTO_REPLY_MARKER: &str = "auto_reply";
 const CONFIG_FILE: &str = "agentd.toml";
 const PAUSE_FILE: &str = "agentd-paused";
 const AUDIT_FILE: &str = "agentd-audit.jsonl";
+const SPEND_FILE: &str = "agentd-spend.json";
 
 /// One mailbox this machine will act for. Absence is a refusal: there is no default routing.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
@@ -54,6 +66,25 @@ pub struct MailboxRoute {
     /// Wall-clock ceiling for one action.
     #[serde(default = "default_timeout_secs")]
     pub timeout_secs: u64,
+    /// How much an answer may do. Defaults to the tier that shipped.
+    #[serde(default)]
+    pub permission: Permission,
+    /// Branches `git_push` and `deploy` may touch. Absent means neither may touch anything, which
+    /// is why it is not defaulted to something convenient: a deploy with no stated target is the
+    /// request this cannot bound.
+    #[serde(default)]
+    pub branches: Vec<String>,
+    /// Ceiling on runs accepted from one sender in a day. Zero means no ceiling.
+    ///
+    /// A granted peer can otherwise trigger unbounded work: at `read-only` that costs a status
+    /// report, at `full` it costs an implementation. `max_concurrent` bounds how many run at once,
+    /// which is not the same question.
+    #[serde(default = "default_daily_runs")]
+    pub daily_runs_per_sender: u32,
+}
+
+fn default_daily_runs() -> u32 {
+    50
 }
 
 fn default_runtime() -> String {
@@ -66,6 +97,64 @@ pub const DEFAULT_TIMEOUT_SECS: u64 = 600;
 
 fn default_timeout_secs() -> u64 {
     DEFAULT_TIMEOUT_SECS
+}
+
+/// How much the runtime is allowed to do once it is running.
+///
+/// The verb says what was asked for; this says what the machine is willing to let any answer do.
+/// They are separate on purpose: granting `run_tests` should not imply a runtime that may also
+/// push, and raising the tier should not silently widen which verbs are answerable.
+///
+/// `ReadOnly` is the default and is what shipped, so an upgrade changes nothing for anyone. Every
+/// step above it is a local edit on the machine that will do the work — nothing reachable from the
+/// network can raise it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Deserialize,
+    serde::Serialize,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+#[clap(rename_all = "kebab-case")]
+pub enum Permission {
+    /// Read and report. Tool calls that would need approval are refused by the runtime itself,
+    /// because nobody is present to approve them.
+    #[default]
+    ReadOnly,
+    /// Change files, run the project's own code, commit locally. Nothing leaves the machine.
+    Workspace,
+    /// Anything the machine's user can do, including pushing and deploying.
+    Full,
+}
+
+impl Permission {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Permission::ReadOnly => "read-only",
+            Permission::Workspace => "workspace",
+            Permission::Full => "full",
+        }
+    }
+
+    /// Whether this tier may answer `verb` at all.
+    ///
+    /// Read-mostly verbs run at every tier. Everything that executes the repository's own code
+    /// needs `workspace`; everything that leaves the machine needs `full`.
+    pub fn admits(&self, verb: &str) -> bool {
+        match verb {
+            "report_status" | "answer_question" => true,
+            "run_tests" | "make_change" => {
+                matches!(self, Permission::Workspace | Permission::Full)
+            }
+            "git_push" | "deploy" => matches!(self, Permission::Full),
+            _ => false,
+        }
+    }
 }
 
 /// Which agent runtime a route hands its request to.
@@ -250,6 +339,12 @@ pub enum Refusal {
     RuntimeNotPinned,
     /// The route names a runtime that would take the request off this machine, without saying so.
     RuntimeNotLocal,
+    /// The verb was granted by the sender's postbox, but this machine's tier will not carry it out.
+    PermissionTooLow,
+    /// A push or deploy named a branch the route does not allow, or named none at all.
+    BranchNotAllowed,
+    /// This sender has had its day's runs from this mailbox.
+    DailyLimitReached,
 }
 
 impl Refusal {
@@ -267,6 +362,9 @@ impl Refusal {
             Refusal::UnknownRuntime => "unknown_runtime",
             Refusal::RuntimeNotPinned => "runtime_not_pinned",
             Refusal::RuntimeNotLocal => "runtime_not_local",
+            Refusal::PermissionTooLow => "permission_too_low",
+            Refusal::BranchNotAllowed => "branch_not_allowed",
+            Refusal::DailyLimitReached => "daily_limit_reached",
         }
     }
 }
@@ -282,6 +380,12 @@ pub struct Action {
     /// `answer_question`'s question, already length-checked by [`validate_args`]. Untrusted in
     /// exactly the way `note` is; it is the request's content rather than its instruction.
     pub question: Option<String>,
+    /// `make_change`'s task. Instruction text written by somebody else, and no schema bounds it —
+    /// which is the whole reason the verb needs a permission tier and a route that names it.
+    pub task: Option<String>,
+    /// The branch or ref a `make_change`, `git_push` or `deploy` names, already checked against
+    /// the route's allowlist.
+    pub target: Option<String>,
     /// The route's `runtime`, already parsed, so the engine cannot be handed a spelling that was
     /// never validated.
     pub runtime: Runtime,
@@ -340,7 +444,7 @@ pub fn classify(
         .ok_or(Refusal::NotAuto)?
         .to_string();
 
-    if !PHASE4_VERBS.contains(&verb.as_str()) {
+    if !RUNNABLE_VERBS.contains(&verb.as_str()) {
         return Err(Refusal::VerbNotInPhase);
     }
     if !route.verbs.iter().any(|v| v == &verb) {
@@ -360,6 +464,27 @@ pub fn classify(
     }
 
     validate_args(&verb, body.get("args"))?;
+
+    // What this machine is willing to let an answer do, which is a different question from what
+    // the sender was granted. The server holds one key and this holds the other.
+    if !route.permission.admits(&verb) {
+        return Err(Refusal::PermissionTooLow);
+    }
+
+    // A push or deploy has to name something the route allows. An absent allowlist means nothing
+    // is allowed — never "anything", because a deploy with no stated target is exactly the request
+    // that cannot be bounded.
+    let target = body
+        .pointer("/args/branch")
+        .or_else(|| body.pointer("/args/ref"))
+        .and_then(|b| b.as_str())
+        .map(str::to_string);
+    if matches!(verb.as_str(), "git_push" | "deploy") {
+        match &target {
+            Some(t) if route.branches.iter().any(|b| b == t) => {}
+            _ => return Err(Refusal::BranchNotAllowed),
+        }
+    }
 
     // Both of these are the route's own correctness rather than the message's, so they are checked
     // last: a misconfigured route must not mask what the traffic itself would have been refused for.
@@ -381,6 +506,11 @@ pub fn classify(
             .pointer("/args/question")
             .and_then(|q| q.as_str())
             .map(str::to_string),
+        task: body
+            .pointer("/args/task")
+            .and_then(|t| t.as_str())
+            .map(str::to_string),
+        target,
         runtime,
     })
 }
@@ -392,10 +522,39 @@ pub fn classify(
 /// selects work. Anything unexpected is refused rather than ignored.
 fn validate_args(verb: &str, args: Option<&serde_json::Value>) -> Result<(), Refusal> {
     let args = match args {
-        None | Some(serde_json::Value::Null) => return Ok(()),
+        None | Some(serde_json::Value::Null) => {
+            // Only the verbs that carry no instruction can proceed with nothing at all.
+            return match verb {
+                "report_status" | "answer_question" | "run_tests" | "git_push" | "deploy" => Ok(()),
+                "make_change" => Err(Refusal::BadArguments("make_change needs a 'task'")),
+                _ => Err(Refusal::VerbNotInPhase),
+            };
+        }
         Some(serde_json::Value::Object(map)) => map,
         Some(_) => return Err(Refusal::BadArguments("args must be an object")),
     };
+
+    // One place to say "this key must be a string of a sane length", so a new verb cannot quietly
+    // accept an unbounded one.
+    let text = |key: &str, max: usize| -> Result<Option<&str>, Refusal> {
+        match args.get(key) {
+            None | Some(serde_json::Value::Null) => Ok(None),
+            Some(v) => match v.as_str() {
+                Some(t) if t.chars().count() <= max => Ok(Some(t)),
+                Some(_) => Err(Refusal::BadArguments("an argument is too long")),
+                None => Err(Refusal::BadArguments("an argument must be a string")),
+            },
+        }
+    };
+    let only = |allowed: &[&str]| -> Result<(), Refusal> {
+        for key in args.keys() {
+            if !allowed.contains(&key.as_str()) {
+                return Err(Refusal::BadArguments("unexpected argument"));
+            }
+        }
+        Ok(())
+    };
+
     match verb {
         "report_status" => {
             if !args.is_empty() {
@@ -403,22 +562,53 @@ fn validate_args(verb: &str, args: Option<&serde_json::Value>) -> Result<(), Ref
             }
         }
         "answer_question" => {
-            for key in args.keys() {
-                if key != "question" {
-                    return Err(Refusal::BadArguments(
-                        "answer_question takes only 'question'",
-                    ));
-                }
+            only(&["question"])?;
+            text("question", 4096)?;
+        }
+        "run_tests" => {
+            only(&["target"])?;
+            let target = text("target", 512)?;
+            if let Some(t) = target {
+                reject_traversal(t)?;
             }
-            if let Some(q) = args.get("question") {
-                match q.as_str() {
-                    Some(text) if text.len() <= 4096 => {}
-                    Some(_) => return Err(Refusal::BadArguments("question is too long")),
-                    None => return Err(Refusal::BadArguments("question must be a string")),
+        }
+        // The task is instruction text. Length is the only property worth checking, and checking
+        // more would be theatre: there is no shape that separates a safe instruction from an
+        // unsafe one.
+        "make_change" => {
+            only(&["task", "branch"])?;
+            match text("task", 8192)? {
+                Some(t) if !t.trim().is_empty() => {}
+                _ => return Err(Refusal::BadArguments("make_change needs a 'task'")),
+            }
+            if let Some(b) = text("branch", 256)? {
+                reject_traversal(b)?;
+            }
+        }
+        "git_push" | "deploy" => {
+            only(&["branch", "ref"])?;
+            for key in ["branch", "ref"] {
+                if let Some(v) = text(key, 256)? {
+                    reject_traversal(v)?;
                 }
             }
         }
         _ => return Err(Refusal::VerbNotInPhase),
+    }
+    Ok(())
+}
+
+/// Refuse anything that reads like an attempt to leave the workspace or smuggle a second command.
+///
+/// Not a security boundary — the tiers are — but a name arriving from the network should look like
+/// a name, and one that does not is worth refusing where it is cheap to say why.
+fn reject_traversal(value: &str) -> Result<(), Refusal> {
+    let bad = value.contains("..")
+        || value.starts_with('/')
+        || value.starts_with('-')
+        || value.contains(['\0', '\n', ';', '&', '|', '`', '$']);
+    if bad {
+        return Err(Refusal::BadArguments("that argument is not a plain name"));
     }
     Ok(())
 }
@@ -451,6 +641,54 @@ pub fn audit(
     Ok(())
 }
 
+/// Count a run against this sender's day, and say whether it is within the route's ceiling.
+///
+/// A granted peer can otherwise trigger unbounded work, and the cost of a run is no longer a
+/// status report — at `workspace` and `full` it is an implementation. `max_concurrent` bounds how
+/// many happen at once, which is a different question from how many happen at all.
+///
+/// Counted before the work rather than after, so a flood is refused rather than merely recorded,
+/// and keyed by day so it recovers on its own without anyone clearing state.
+pub fn within_daily_limit(home: &Path, sender: &str, day: u64, limit: u32) -> bool {
+    if limit == 0 {
+        return true;
+    }
+    let path = home.join(SPEND_FILE);
+    let mut ledger: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|b| serde_json::from_str(&b).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+
+    // One day's counts at a time: yesterday's are dropped rather than accumulated, so the file
+    // cannot grow without bound on a busy mailbox.
+    let today = day.to_string();
+    if ledger.get("day").and_then(|d| d.as_str()) != Some(today.as_str()) {
+        ledger = serde_json::json!({ "day": today, "senders": {} });
+    }
+    // Indexed, not pointed at: a JSON Pointer treats `/` as a separator and every sender key is
+    // `/bekir/…`, so `/senders//bekir/noisy` resolves to nothing and the ceiling never fires.
+    let used = ledger
+        .get("senders")
+        .and_then(|s| s.get(sender))
+        .and_then(|v| v.as_u64())
+        .unwrap_or(0);
+    if used >= limit as u64 {
+        return false;
+    }
+    if let Some(senders) = ledger.get_mut("senders").and_then(|s| s.as_object_mut()) {
+        senders.insert(sender.to_string(), serde_json::json!(used + 1));
+    }
+    // Best effort: a ledger that cannot be written must not stop the work, or an unwritable home
+    // would silently become a total refusal.
+    let _ = std::fs::write(&path, ledger.to_string());
+    true
+}
+
+/// Days since the epoch, which is all the resolution a daily ceiling needs.
+pub fn today(now: u64) -> u64 {
+    now / 86_400
+}
+
 pub fn audit_path(home: &Path) -> PathBuf {
     home.join(AUDIT_FILE)
 }
@@ -470,6 +708,9 @@ mod tests {
             runtime: "claude".into(),
             verbs: verbs.iter().map(|v| v.to_string()).collect(),
             timeout_secs: 60,
+            permission: Permission::ReadOnly,
+            branches: Vec::new(),
+            daily_runs_per_sender: 50,
         }
     }
 
@@ -487,6 +728,10 @@ mod tests {
             "verb": verb,
             "untrusted_body": body.to_string(),
         })
+    }
+
+    fn envelope_with(verb: &str, args: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "v": 1, "verb": verb, "args": args, "note": "because" })
     }
 
     fn envelope(verb: &str) -> serde_json::Value {
@@ -625,12 +870,13 @@ mod tests {
         );
     }
 
-    /// Even a server mistake cannot get a filesystem verb run in this phase.
+    /// The second key, and the reason a grant alone is not enough: the sender was granted this and
+    /// the route names it, and it is still refused because this machine will not do that much.
     #[test]
-    fn a_verb_outside_this_phase_is_refused_even_if_stamped_auto() {
+    fn a_granted_verb_is_refused_by_a_tier_that_will_not_carry_it() {
         let dir = tempfile::tempdir().unwrap();
         let mut cfg = config(&["run_tests"], dir.path());
-        cfg.mailbox[0].verbs.push("run_tests".into());
+        cfg.mailbox[0].verbs = vec!["run_tests".into()];
         assert_eq!(
             classify(
                 &cfg,
@@ -639,8 +885,189 @@ mod tests {
                 None,
                 &message("auto", "run_tests", envelope("run_tests"))
             ),
-            Err(Refusal::VerbNotInPhase)
+            Err(Refusal::PermissionTooLow)
         );
+
+        // Raised, it runs — the verb was never the problem.
+        cfg.mailbox[0].permission = Permission::Workspace;
+        assert!(classify(
+            &cfg,
+            dir.path(),
+            "/bekir/agent1",
+            None,
+            &message("auto", "run_tests", envelope("run_tests"))
+        )
+        .is_ok());
+    }
+
+    /// Raising the tier must not widen which verbs are answerable: the two are separate keys and a
+    /// machine willing to deploy has still only agreed to deploy when asked for a deploy.
+    #[test]
+    fn a_high_tier_does_not_admit_a_verb_the_route_never_named() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].permission = Permission::Full;
+        cfg.mailbox[0].branches = vec!["main".into()];
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                None,
+                &message(
+                    "auto",
+                    "deploy",
+                    envelope_with("deploy", serde_json::json!({"branch":"main"}))
+                )
+            ),
+            Err(Refusal::VerbNotEnabledHere)
+        );
+    }
+
+    /// A deploy with no stated target is the request this design cannot bound, so an absent
+    /// allowlist means nothing is allowed rather than anything.
+    #[test]
+    fn a_push_or_deploy_must_name_a_branch_the_route_allows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["deploy"], dir.path());
+        cfg.mailbox[0].verbs = vec!["deploy".into()];
+        cfg.mailbox[0].permission = Permission::Full;
+
+        let asking =
+            |args: serde_json::Value| message("auto", "deploy", envelope_with("deploy", args));
+
+        // No allowlist at all.
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                None,
+                &asking(serde_json::json!({"branch":"main"}))
+            ),
+            Err(Refusal::BranchNotAllowed)
+        );
+
+        cfg.mailbox[0].branches = vec!["main".into()];
+        // A branch that is not on it.
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                None,
+                &asking(serde_json::json!({"branch":"prod"}))
+            ),
+            Err(Refusal::BranchNotAllowed)
+        );
+        // None named at all.
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                None,
+                &asking(serde_json::json!({}))
+            ),
+            Err(Refusal::BranchNotAllowed)
+        );
+        // And the one that is allowed.
+        let action = classify(
+            &cfg,
+            dir.path(),
+            "/bekir/agent1",
+            None,
+            &asking(serde_json::json!({"branch":"main"})),
+        )
+        .unwrap();
+        assert_eq!(action.target.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn make_change_needs_a_task_and_carries_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["make_change"], dir.path());
+        cfg.mailbox[0].verbs = vec!["make_change".into()];
+        cfg.mailbox[0].permission = Permission::Workspace;
+
+        assert!(matches!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/bekir/agent1",
+                None,
+                &message(
+                    "auto",
+                    "make_change",
+                    envelope_with("make_change", serde_json::json!({}))
+                )
+            ),
+            Err(Refusal::BadArguments(_))
+        ));
+
+        let action = classify(
+            &cfg,
+            dir.path(),
+            "/bekir/agent1",
+            None,
+            &message(
+                "auto",
+                "make_change",
+                envelope_with(
+                    "make_change",
+                    serde_json::json!({"task":"fix the pipeline"}),
+                ),
+            ),
+        )
+        .unwrap();
+        assert_eq!(action.task.as_deref(), Some("fix the pipeline"));
+    }
+
+    /// A name arriving from the network should look like a name.
+    #[test]
+    fn an_argument_that_is_not_a_plain_name_is_refused() {
+        for bad in [
+            "../etc",
+            "/etc/passwd",
+            "main; rm -rf /",
+            "main && curl x",
+            "-force",
+            "a`b`",
+            "a$b",
+        ] {
+            assert!(
+                reject_traversal(bad).is_err(),
+                "{bad:?} should not pass as a branch"
+            );
+        }
+        for good in ["main", "release/1.2", "feature_x"] {
+            assert!(reject_traversal(good).is_ok(), "{good:?} is a name");
+        }
+    }
+
+    /// The ceiling has to refuse *before* the work, or it merely records a flood.
+    #[test]
+    fn a_senders_day_is_counted_and_then_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        for i in 1..=3 {
+            assert!(
+                within_daily_limit(dir.path(), "/bekir/noisy", 20_000, 3),
+                "run {i} is within a ceiling of 3"
+            );
+        }
+        assert!(!within_daily_limit(dir.path(), "/bekir/noisy", 20_000, 3));
+        // Another sender is unaffected, and tomorrow recovers on its own.
+        assert!(within_daily_limit(dir.path(), "/bekir/quiet", 20_000, 3));
+        assert!(within_daily_limit(dir.path(), "/bekir/noisy", 20_001, 3));
+        // Zero means no ceiling.
+        for _ in 0..10 {
+            assert!(within_daily_limit(
+                dir.path(),
+                "/bekir/unbounded",
+                20_000,
+                0
+            ));
+        }
     }
 
     /// The failure most likely to happen by accident: two agents answering each other forever.

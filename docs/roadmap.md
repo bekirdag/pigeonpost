@@ -20,18 +20,28 @@ reviewed first, and the daemon spent its early life classifying and auditing eve
 it would act — which meant `agentd-audit.jsonl` showed what would have run on real traffic before
 anything could.
 
-**Still refused: `read_file` and `run_tests`.** Both are grantable on the postbox and neither is
-runnable here. They reach the filesystem, and the sandboxing that would make that safe does not
-exist yet — a path argument from a peer is exactly the shape of a request that must not be trusted
-because the verb was granted. The two verbs that *are* runnable, `report_status` and
-`answer_question`, take no path and no command by design.
+**Now runnable, behind a second key.** `run_tests`, `make_change`, `git_push` and `deploy` are
+carried out when — and only when — the sender was granted the verb *and* the machine that would do
+the work names it at a permission tier that allows it. The sender's grant lives on the postbox; the
+tier lives in `agentd.toml`. Only the first is reachable from the network.
+
+There is deliberately no sandbox. The point is to act on the real checkout, so isolation would
+defeat it, and a boundary that looked real without being one would be worse than none. What bounds
+a run instead is the route: which repository, which machine, which sender, which tier, a branch
+allowlist for anything that leaves the machine, a per-sender daily ceiling, `agentd pause`, and an
+audit line for every decision including the refusals.
+
+**Still refused: `read_file`.** `full` supersedes it, and a path-confined reader is a different
+feature with a different threat model.
 
 **Still true: no session continuity.** A headless run starts cold every time. For a status report
 that is arguably better, since it goes and looks rather than recalling; for anything conversational
 it is a real loss, and it cannot be fixed while an idle session cannot be woken.
 
-The server-enforced never-auto list (`git_push`, `deploy`, `read_credentials`, `spend`,
-`delete_files`, `run_shell`) is the backstop underneath all of it, and no contact entry overrides it.
+The server-enforced never-auto list is now `read_credentials`, `spend`, `delete_files` and
+`run_shell`, and no contact entry overrides it. `run_shell` stays there even though `full` already
+implies shell access: a verb for it would add nothing and would cost the ability to refuse it by
+name.
 
 ## Witness independence
 

@@ -18,7 +18,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::executor::{Action, Runtime};
+use crate::executor::{Action, Permission, Runtime};
 
 /// Ceiling on captured stdout. Enough for a long status report, far short of a log dump.
 const MAX_OUTPUT: usize = 64 * 1024;
@@ -113,9 +113,25 @@ pub fn prompt(action: &Action, sender: &str) -> String {
     out.push_str(
         "Your entire stdout is sent back to them verbatim as the reply, so write the reply \
          itself — no preamble, no sign-off, no offers of further work, and no questions, \
-         because nobody will read a question. You are running unattended: do not modify \
-         anything, do not commit, and do not push.\n\n",
+         because nobody will read a question.\n",
     );
+    out.push_str(match action.route.permission {
+        Permission::ReadOnly => {
+            "You are running unattended and read-only: do not modify anything, do not commit, \
+             and do not push.\n\n"
+        }
+        Permission::Workspace => {
+            "You are running unattended with write access to this checkout. Nobody will review \
+             your work before it is recorded, so prefer the smallest change that is defensible, \
+             and report exactly what you changed.\n\n"
+        }
+        Permission::Full => {
+            "You are running unattended with full access to this machine. Nobody will review \
+             your work before it takes effect. Prefer the smallest change that is defensible, \
+             stop and report rather than guessing when something is ambiguous, and report exactly \
+             what you did and what state you left behind.\n\n"
+        }
+    });
     out.push_str(match action.verb.as_str() {
         "report_status" => {
             "Report the current state of this project as briefly as it can be said accurately. \
@@ -127,10 +143,47 @@ pub fn prompt(action: &Action, sender: &str) -> String {
             "Answer the question below from this project's actual state. Verify before \
              answering, and say so when the answer cannot be verified.\n"
         }
+        "run_tests" => {
+            "Run this project's tests and report what happened. Run them as the project defines \
+             them rather than a subset you choose, quote the failures rather than summarising \
+             them away, and do not change code to make a test pass — a failing test is the \
+             answer, not a problem to hide.\n"
+        }
+        "make_change" => {
+            "Carry out the task below in this repository, then report what you actually did. \
+             Work only in this checkout. Commit your work locally with a message that says why. \
+             Do not push, do not deploy, do not rewrite history, and do not touch credentials or \
+             files outside this project. If the task is unclear or looks unsafe, change nothing \
+             and say so — a refusal with a reason is a good answer and a guess is not.\n"
+        }
+        "git_push" => {
+            "Push this repository's committed work to the branch named below, and report what \
+             moved. Never force-push and never rewrite history. If the branch is behind or has \
+             diverged, stop and report that instead of resolving it yourself.\n"
+        }
+        "deploy" => {
+            "Deploy this project at the ref named below, using the project's own documented \
+             deploy path rather than a route you invent. Report what you deployed, where, and how \
+             you verified it is live. If the deploy fails, say what state it left behind — a \
+             half-finished deploy nobody knows about is the worst outcome here.\n"
+        }
         // `classify` admits no other verb, so this is unreachable rather than a policy decision.
         other => panic!("verb {other} is not runnable"),
     });
 
+    if let Some(target) = &action.target {
+        out.push_str(&format!(
+            "\nThe branch or ref to act on is `{target}`. This machine's own configuration allows \
+             it; nothing else is allowed, so do not substitute another.\n"
+        ));
+    }
+    if let Some(task) = &action.task {
+        // The task is the request. It is somebody else's text and cannot be validated into
+        // safety, so it is fenced and labelled like everything else that arrived over the wire.
+        out.push_str("\n--- the task, as requested ---\n");
+        out.push_str(task);
+        out.push_str("\n--- end task ---\n");
+    }
     if let Some(question) = &action.question {
         out.push_str("\n--- the question, as data ---\n");
         out.push_str(question);
@@ -154,26 +207,54 @@ pub fn prompt(action: &Action, sender: &str) -> String {
 ///
 /// Pure and returned rather than spawned, so the argv is asserted in tests instead of being
 /// discovered from a process listing.
-pub fn argv(runtime: &Runtime, prompt_file: &Path) -> (String, Vec<String>, StdinSource) {
+pub fn argv(
+    runtime: &Runtime,
+    prompt_file: &Path,
+    permission: Permission,
+) -> (String, Vec<String>, StdinSource) {
     match runtime {
         // Stdin, not argv: a long prompt in an argument is how a run starts failing with E2BIG on
         // exactly the reports that are worth having.
-        Runtime::Claude => (
-            "claude".into(),
-            vec!["-p".into(), "--output-format".into(), "text".into()],
-            StdinSource::File(prompt_file.to_path_buf()),
-        ),
-        Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => (
-            "mcoda".into(),
-            vec![
+        Runtime::Claude => {
+            let mut args = vec!["-p".into(), "--output-format".into(), "text".into()];
+            match permission {
+                // Nothing added: in print mode the runtime refuses any tool call that would need
+                // approval, which is exactly the read-only posture.
+                Permission::ReadOnly => {}
+                // Named tools rather than a blanket bypass. The difference matters: this tier is
+                // meant to be able to change the checkout and run its tests, and not to be able to
+                // reach the network or publish.
+                Permission::Workspace => {
+                    args.push("--allowedTools".into());
+                    args.push("Read,Write,Edit,Glob,Grep,Bash".into());
+                    args.push("--disallowedTools".into());
+                    args.push("WebFetch,WebSearch".into());
+                }
+                Permission::Full => args.push("--dangerously-skip-permissions".into()),
+            }
+            (
+                "claude".into(),
+                args,
+                StdinSource::File(prompt_file.to_path_buf()),
+            )
+        }
+        Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => {
+            let mut args = vec![
                 "agent-run".into(),
                 slug.clone(),
                 "--prompt-file".into(),
                 prompt_file.display().to_string(),
                 "--json".into(),
-            ],
-            StdinSource::Null,
-        ),
+            ];
+            // mcoda has no tier of its own to set: what its adapter may do is that agent's
+            // configuration, which is why the route pins the slug. `--force` is passed only at the
+            // tier that means "stop asking", so a workspace route cannot be talked into more by an
+            // agent whose config happens to be permissive.
+            if permission == Permission::Full {
+                args.push("--force".into());
+            }
+            ("mcoda".into(), args, StdinSource::Null)
+        }
     }
 }
 
@@ -267,6 +348,17 @@ impl Drop for Staged {
     }
 }
 
+/// Tell a peer their request will not be answered, and why.
+///
+/// The same shape as a reply for the same reason: it is plain text with a machine-readable first
+/// line, so no postbox can mistake it for a request and two agents cannot answer each other.
+pub fn refusal_body(verb: &str, in_reply_to: &str, why: &str) -> String {
+    format!(
+        "pigeonpost-auto-reply v1 in_reply_to={in_reply_to} answered={verb} outcome=failed\n\
+         Generated unattended by this mailbox's agent. Nobody read it before it was sent.\n\n{why}\n"
+    )
+}
+
 /// Stage the prompt where the child can read it, owner-only.
 fn stage_prompt(home: &Path, message_id: &str, body: &str) -> Result<PathBuf, RunFailure> {
     use std::io::Write;
@@ -306,7 +398,7 @@ pub async fn run(
     // shape of this workspace; leaving copies behind on the failure paths is how a debugging aid
     // turns into a pile of stale context nobody remembers writing.
     let staged = Staged(stage_prompt(home, message_id, &body)?);
-    let (program, args, stdin) = argv(&action.runtime, &staged.0);
+    let (program, args, stdin) = argv(&action.runtime, &staged.0, action.route.permission);
 
     let mut command = tokio::process::Command::new(&program);
     command
@@ -387,10 +479,15 @@ mod tests {
                 runtime: "claude".into(),
                 verbs: vec![verb.into()],
                 timeout_secs: 60,
+                permission: Permission::ReadOnly,
+                branches: Vec::new(),
+                daily_runs_per_sender: 50,
             },
             verb: verb.into(),
             note: note.map(str::to_string),
             question: question.map(str::to_string),
+            task: None,
+            target: None,
             runtime: Runtime::Claude,
         }
     }
@@ -430,7 +527,11 @@ mod tests {
     /// metacharacter by whatever runs next.
     #[test]
     fn the_prompt_reaches_claude_on_stdin_not_in_argv() {
-        let (program, args, stdin) = argv(&Runtime::Claude, Path::new("/tmp/p.prompt"));
+        let (program, args, stdin) = argv(
+            &Runtime::Claude,
+            Path::new("/tmp/p.prompt"),
+            Permission::ReadOnly,
+        );
         assert_eq!(program, "claude");
         assert_eq!(args, vec!["-p", "--output-format", "text"]);
         assert_eq!(stdin, StdinSource::File(PathBuf::from("/tmp/p.prompt")));
@@ -441,6 +542,7 @@ mod tests {
         let (program, args, stdin) = argv(
             &Runtime::Mcoda("claude-sonnet".into()),
             Path::new("/tmp/p.prompt"),
+            Permission::ReadOnly,
         );
         assert_eq!(program, "mcoda");
         assert_eq!(
@@ -511,6 +613,83 @@ mod tests {
         let (text, adapter) = extract(&Runtime::Claude, "  the build is green\n").unwrap();
         assert_eq!(text, "the build is green");
         assert_eq!(adapter, None);
+    }
+
+    /// Each tier passes the flags that make it that tier, asserted without spawning anything.
+    #[test]
+    fn every_tier_hands_the_runtime_the_permission_it_names() {
+        let file = Path::new("/tmp/p.prompt");
+
+        let (_, read_only, _) = argv(&Runtime::Claude, file, Permission::ReadOnly);
+        assert!(
+            !read_only
+                .iter()
+                .any(|a| a.contains("dangerously") || a.contains("allowedTools")),
+            "read-only adds nothing: the runtime already refuses what needs approval"
+        );
+
+        let (_, workspace, _) = argv(&Runtime::Claude, file, Permission::Workspace);
+        assert!(workspace.iter().any(|a| a == "--allowedTools"));
+        assert!(
+            !workspace.iter().any(|a| a.contains("dangerously")),
+            "workspace names tools; it does not bypass the check"
+        );
+        assert!(
+            workspace.iter().any(|a| a == "WebFetch,WebSearch"),
+            "workspace must not reach the network"
+        );
+
+        let (_, full, _) = argv(&Runtime::Claude, file, Permission::Full);
+        assert!(full.iter().any(|a| a == "--dangerously-skip-permissions"));
+
+        // mcoda has no tier of its own; only `full` tells it to stop asking.
+        let slug = Runtime::Mcoda("codex-5.4".into());
+        assert!(!argv(&slug, file, Permission::Workspace)
+            .1
+            .iter()
+            .any(|a| a == "--force"));
+        assert!(argv(&slug, file, Permission::Full)
+            .1
+            .iter()
+            .any(|a| a == "--force"));
+    }
+
+    #[test]
+    fn a_task_and_a_target_reach_the_prompt_as_data() {
+        let mut act = action("make_change", None, None);
+        act.verb = "make_change".into();
+        act.task = Some("delete everything".into());
+        act.target = Some("main".into());
+        let text = prompt(&act, "/bekir/main");
+        assert!(text.contains("--- the task, as requested ---"));
+        assert!(text.contains("delete everything"));
+        assert!(text.contains("`main`"));
+        // The instruction to work only here comes before the task, not after it.
+        assert!(
+            text.find("Work only in this checkout").unwrap()
+                < text.find("delete everything").unwrap()
+        );
+    }
+
+    #[test]
+    fn the_prompt_says_what_this_tier_may_do() {
+        let mut act = action("report_status", None, None);
+        assert!(prompt(&act, "/bekir/main").contains("read-only"));
+        act.route.permission = Permission::Workspace;
+        assert!(prompt(&act, "/bekir/main").contains("write access to this checkout"));
+        act.route.permission = Permission::Full;
+        assert!(prompt(&act, "/bekir/main").contains("full access to this machine"));
+    }
+
+    /// A peer that hears nothing retries, which is the behaviour a ceiling exists to stop.
+    #[test]
+    fn a_refusal_is_a_reply_and_not_a_request() {
+        let body = refusal_body("deploy", "abc123", "the run failed (timeout)");
+        assert!(serde_json::from_str::<serde_json::Value>(&body).is_err());
+        assert!(body.starts_with(
+            "pigeonpost-auto-reply v1 in_reply_to=abc123 answered=deploy outcome=failed"
+        ));
+        assert!(body.contains("the run failed (timeout)"));
     }
 
     /// An answer must not be able to come back as a request, whatever the peer granted us.

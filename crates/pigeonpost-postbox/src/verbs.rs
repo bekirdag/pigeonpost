@@ -29,6 +29,16 @@ pub enum Class {
     /// Bounded and read-mostly. May be auto-accepted — but only for a contact whose allowlist
     /// names it.
     Grantable,
+    /// Grantable, and heavy enough that a grant alone must not be sufficient.
+    ///
+    /// The server treats these exactly as `Grantable` — a sender who was granted one gets `auto`,
+    /// because the server cannot know what the recipient's machine is willing to do. The second key
+    /// is held there: the daemon refuses a privileged verb unless its own route names the verb *and*
+    /// runs at a permission tier that allows it.
+    ///
+    /// Two keys held by different people, and only one of them is reachable from the network. That
+    /// is what makes it safe to let `deploy` be asked for at all, where a plain grant would not be.
+    Privileged,
     /// Never auto, at any policy, for any contact: the categories where being wrong once is
     /// unrecoverable. Named rather than merely unknown so that a human is refused at grant time
     /// with a reason, and so an `auto` peer reaching for one shows up in the log as an attempt
@@ -46,13 +56,21 @@ const VOCABULARY: &[(&str, Class)] = &[
     ("answer_question", Class::Grantable),
     // Read one file and return it. Bounded by the agent's own filesystem permissions.
     ("read_file", Class::Grantable),
-    // Run the project's test suite and report the result. Costs CPU, changes nothing durable.
-    ("run_tests", Class::Grantable),
+    // -- privileged -----------------------------------------------------------------------
+    // Askable, but never on a grant alone: the recipient's own machine has to have opted in too.
+    // Run the project's test suite and report the result. Costs CPU, changes nothing durable —
+    // but it executes the repository's own code, which is why it is not merely grantable.
+    ("run_tests", Class::Privileged),
+    // Do a piece of work in the repository. The task is instruction text and is treated as such:
+    // no schema bounds it, which is precisely why it needs the second key.
+    ("make_change", Class::Privileged),
+    ("git_push", Class::Privileged),
+    ("deploy", Class::Privileged),
     // -- denied ---------------------------------------------------------------------------
-    // The categories the plan puts permanently out of reach: publishing, deploying, secrets,
-    // money, destruction, and arbitrary execution (which is every other row at once).
-    ("git_push", Class::Denied),
-    ("deploy", Class::Denied),
+    // The categories that stay permanently out of reach: secrets, money, destruction, and
+    // arbitrary execution. `run_shell` is denied even though the `full` tier already implies shell
+    // access — a verb for it would add nothing and would remove the ability to say no to it
+    // specifically.
     ("read_credentials", Class::Denied),
     ("spend", Class::Denied),
     ("delete_files", Class::Denied),
@@ -82,7 +100,17 @@ pub fn class_of(verb: &str) -> Option<Class> {
 pub fn grantable() -> Vec<&'static str> {
     VOCABULARY
         .iter()
-        .filter(|(_, c)| *c == Class::Grantable)
+        .filter(|(_, c)| matches!(c, Class::Grantable | Class::Privileged))
+        .map(|(name, _)| *name)
+        .collect()
+}
+
+/// The verbs a grant alone does not suffice for, published so a human granting one can see which
+/// of them will also need the recipient machine's own opt-in.
+pub fn privileged() -> Vec<&'static str> {
+    VOCABULARY
+        .iter()
+        .filter(|(_, c)| *c == Class::Privileged)
         .map(|(name, _)| *name)
         .collect()
 }
@@ -205,7 +233,10 @@ pub fn decide(body: &str, sender_is_auto: bool, granted: &[String]) -> Decision 
     let held = match class_of(&request.verb) {
         None => Held::UnknownVerb,
         Some(Class::Denied) => Held::VerbDenied,
-        Some(Class::Grantable) => {
+        // A privileged verb is stamped exactly like a grantable one. The server cannot know what
+        // the recipient's machine is willing to do, and guessing conservatively here would only
+        // move the refusal somewhere with less information about it.
+        Some(Class::Grantable) | Some(Class::Privileged) => {
             if granted.contains(&request.verb) {
                 return Decision::Auto { verb: request.verb };
             }
@@ -226,12 +257,13 @@ pub fn decide(body: &str, sender_is_auto: bool, granted: &[String]) -> Decision 
 pub fn validate_grant(verbs: &[String]) -> Result<(), String> {
     for v in verbs {
         match class_of(v) {
-            Some(Class::Grantable) => {}
+            Some(Class::Grantable) | Some(Class::Privileged) => {}
             Some(Class::Denied) => {
                 return Err(format!(
-                    "'{v}' can never be auto-accepted — pushes, deploys, credential access, \
-                     spending, destructive file operations and shell execution are held for a \
-                     person at every policy level"
+                    "'{v}' can never be auto-accepted — credential access, spending, destructive \
+                     file operations and shell execution are held for a person at every policy \
+                     level. Pushing and deploying are grantable, but also need the recipient \
+                     machine's own opt-in."
                 ))
             }
             None => {
@@ -293,12 +325,12 @@ mod tests {
     fn a_denied_verb_is_held_even_when_the_contact_somehow_lists_it() {
         // Defence in depth: validate_grant should have refused the grant, but if a row ever
         // acquired one by another route it still must not execute.
-        let body = r#"{"v":1,"verb":"deploy"}"#;
+        let body = r#"{"v":1,"verb":"run_shell"}"#;
         assert_eq!(
-            decide(body, true, &granted(&["deploy", "run_tests"])),
+            decide(body, true, &granted(&["run_shell", "run_tests"])),
             Decision::Review {
                 held: Held::VerbDenied,
-                verb: Some("deploy".into())
+                verb: Some("run_shell".into())
             }
         );
     }
@@ -375,10 +407,53 @@ mod tests {
         assert_eq!(r.note.as_deref(), Some("weekly"));
     }
 
+    /// A privileged verb is stamped like any other grant. The second key is not the server's to
+    /// hold: it lives on the machine that would do the work.
+    #[test]
+    fn a_privileged_verb_is_auto_when_granted() {
+        for verb in ["deploy", "git_push", "make_change", "run_tests"] {
+            let body = format!(r#"{{"v":1,"verb":"{verb}"}}"#);
+            assert_eq!(
+                decide(&body, true, &granted(&[verb])),
+                Decision::Auto { verb: verb.into() },
+                "{verb} should be auto for a contact granted it"
+            );
+        }
+    }
+
+    #[test]
+    fn a_privileged_verb_is_still_held_without_a_grant() {
+        assert_eq!(
+            decide(r#"{"v":1,"verb":"deploy"}"#, true, &granted(&["run_tests"])),
+            Decision::Review {
+                held: Held::VerbNotGranted,
+                verb: Some("deploy".into())
+            }
+        );
+    }
+
+    /// The line that must not move: `full` already implies shell access, so a verb for it would
+    /// add nothing and would cost the ability to refuse it by name.
+    #[test]
+    fn the_permanently_denied_set_is_exactly_what_it_claims() {
+        assert_eq!(
+            denied(),
+            vec!["read_credentials", "spend", "delete_files", "run_shell"]
+        );
+        assert_eq!(
+            privileged(),
+            vec!["run_tests", "make_change", "git_push", "deploy"]
+        );
+        // Everything grantable is one or the other, and nothing is both.
+        for v in grantable() {
+            assert!(!denied().contains(&v), "{v} is both grantable and denied");
+        }
+    }
+
     #[test]
     fn grants_accept_only_grantable_verbs() {
         assert!(validate_grant(&granted(&["run_tests", "read_file"])).is_ok());
-        assert!(validate_grant(&granted(&["deploy"]))
+        assert!(validate_grant(&granted(&["run_shell"]))
             .unwrap_err()
             .contains("never be auto-accepted"));
         assert!(validate_grant(&granted(&["nonsense"]))
