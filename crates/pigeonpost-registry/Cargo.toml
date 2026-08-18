@@ -35,9 +35,9 @@ server = [
 ]
 
 [dependencies]
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.17" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.5.18" }
 pigeonpost-compliance-format.workspace = true
-pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.17", optional = true }
+pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.5.18", optional = true }
 axum = { version = "0.8", optional = true }
 http-body = { version = "1", optional = true }
 hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
