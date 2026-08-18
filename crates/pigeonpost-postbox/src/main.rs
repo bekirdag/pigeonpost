@@ -2739,23 +2739,13 @@ async fn list_threads(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    match state
-        .store
-        .threads(me.address.clone(), q.peer.clone())
-        .await
-    {
-        Ok(threads) => Json(json!({
-            "threads": threads
-                .iter()
-                .filter(|t| q.include_archived || t.archived_at.is_none())
-                .map(thread_json)
-                .collect::<Vec<_>>()
-        }))
-        .into_response(),
-        Err(e) => {
-            tracing::error!(error = %e, "thread list failed");
-            ApiError::server("store_error").into_response()
-        }
+    // Delegated rather than repeated, so this route and `list_pigeonpost_threads` cannot disagree
+    // about what a peer is. They did: this handler passed `peer` to the store verbatim, and threads
+    // record the `/k/` address, so filtering by a handle quietly returned nothing at all — a
+    // filter that finds no rows looks exactly like a peer you have never spoken to.
+    match do_list_threads(&state, &me, q.peer.clone(), q.include_archived).await {
+        Ok(v) => Json(v).into_response(),
+        Err(e) => e.into_response(),
     }
 }
 
@@ -3925,6 +3915,32 @@ mod tests {
         state.store.get(address).await.unwrap().unwrap()
     }
 
+    /// A mailbox that answers to a readable name, which is how peers refer to each other
+    /// everywhere except in the store.
+    async fn mint_with_handle(state: &AppState, handle: &str) -> store::StoredIdentity {
+        let minted = mint(state).await;
+        // An anonymous mailbox belongs to no account, so naming it needs proof of control — the
+        // same rule the real endpoint enforces. Asserting the outcome keeps a silently unbound
+        // handle from turning into a test that passes for the wrong reason.
+        let outcome = state
+            .store
+            .bind_handle(
+                minted.address.clone(),
+                handle.to_string(),
+                "test-account".into(),
+                handle.split('/').nth(1).unwrap_or("bekir").to_string(),
+                100,
+                Some(minted.cap_hash),
+            )
+            .await
+            .unwrap();
+        assert!(
+            matches!(outcome, store::BindOutcome::Bound),
+            "test setup failed to name the mailbox: {outcome:?}"
+        );
+        state.store.get(minted.address).await.unwrap().unwrap()
+    }
+
     fn test_state() -> AppState {
         state_with_limits(MintLimits {
             per_window: 100,
@@ -4489,6 +4505,46 @@ mod tests {
                 "no message may be threadless: {m}"
             );
         }
+    }
+
+    /// A peer is named by handle everywhere else, so the thread filter has to accept one. It did
+    /// not: the route passed the string straight to the store, which records the `/k/` address, and
+    /// a filter that matches nothing is indistinguishable from a peer you have never written to.
+    #[tokio::test]
+    async fn threads_can_be_filtered_by_handle_as_well_as_address() {
+        let state = test_state();
+        let alice = mint(&state).await;
+        let bob = mint_with_handle(&state, "/bekir/bob").await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "hello",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+
+        let by_address = do_list_threads(&state, &alice, Some(bob.address.clone()), false)
+            .await
+            .unwrap();
+        assert_eq!(by_address["threads"].as_array().unwrap().len(), 1);
+
+        let by_handle = do_list_threads(&state, &alice, Some("/bekir/bob".into()), false)
+            .await
+            .unwrap();
+        assert_eq!(
+            by_handle["threads"].as_array().unwrap().len(),
+            1,
+            "a handle names the same peer as its address"
+        );
+
+        // And a peer with no conversation still answers, rather than erroring.
+        let none = do_list_threads(&state, &alice, Some("/bekir/nobody".into()), false)
+            .await
+            .unwrap();
+        assert_eq!(none["threads"].as_array().unwrap().len(), 0);
     }
 
     #[tokio::test]
