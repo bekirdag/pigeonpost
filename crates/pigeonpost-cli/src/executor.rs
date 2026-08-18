@@ -287,6 +287,19 @@ pub struct Action {
     pub runtime: Runtime,
 }
 
+impl MailboxRoute {
+    /// Whether this route is the one for `mailbox`.
+    ///
+    /// A mailbox has two names and the two halves of this system use different ones: the event
+    /// stream always carries the `/k/` address, while a config is written by a person and names the
+    /// handle, because that is what the docs and its peers call it. Matching on one spelling means
+    /// the other silently never routes — mail arrives, nothing runs, and the audit line says
+    /// `no_route` as though the config were absent.
+    pub fn is_for(&self, mailbox: &str, also_known_as: Option<&str>) -> bool {
+        self.address == mailbox || Some(self.address.as_str()) == also_known_as
+    }
+}
+
 pub fn paused(home: &Path) -> bool {
     home.join(PAUSE_FILE).exists()
 }
@@ -300,6 +313,7 @@ pub fn classify(
     config: &RoutingConfig,
     home: &Path,
     mailbox: &str,
+    also_known_as: Option<&str>,
     message: &serde_json::Value,
 ) -> Result<Action, Refusal> {
     if !config.execute {
@@ -312,7 +326,7 @@ pub fn classify(
     let route = config
         .mailbox
         .iter()
-        .find(|m| m.address == mailbox)
+        .find(|m| m.is_for(mailbox, also_known_as))
         .cloned()
         .ok_or(Refusal::NoRoute)?;
 
@@ -487,6 +501,7 @@ mod tests {
             &cfg,
             dir.path(),
             "/bekir/agent1",
+            None,
             &message("auto", "report_status", envelope("report_status")),
         )
         .expect("actionable");
@@ -505,6 +520,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", envelope("report_status"))
             ),
             Err(Refusal::ExecutionDisabled)
@@ -521,6 +537,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("review", "report_status", envelope("report_status"))
             ),
             Err(Refusal::NotAuto)
@@ -537,6 +554,54 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/somebody-else",
+                None,
+                &message("auto", "report_status", envelope("report_status"))
+            ),
+            Err(Refusal::NoRoute)
+        );
+    }
+
+    /// The failure a live run found and no unit test had: the event stream carries the `/k/`
+    /// address while the config names the handle, so exact matching refused real mail as `no_route`
+    /// while looking correctly configured.
+    #[test]
+    fn a_route_written_by_handle_matches_the_address_on_the_wire() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["report_status"], dir.path());
+        cfg.mailbox[0].address = "/bekir/agent1".into();
+
+        let action = classify(
+            &cfg,
+            dir.path(),
+            "/k/fd7qzt3zbkkgcmdgneph6kmr7w",
+            Some("/bekir/agent1"),
+            &message("auto", "report_status", envelope("report_status")),
+        );
+        assert!(action.is_ok(), "the handle in config names this mailbox");
+
+        // And the other way round, for a config written with the address.
+        cfg.mailbox[0].address = "/k/fd7qzt3zbkkgcmdgneph6kmr7w".into();
+        assert!(classify(
+            &cfg,
+            dir.path(),
+            "/k/fd7qzt3zbkkgcmdgneph6kmr7w",
+            Some("/bekir/agent1"),
+            &message("auto", "report_status", envelope("report_status")),
+        )
+        .is_ok());
+    }
+
+    /// Knowing a second name must not make every mailbox match.
+    #[test]
+    fn an_alias_does_not_widen_routing_to_other_mailboxes() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(&["report_status"], dir.path());
+        assert_eq!(
+            classify(
+                &cfg,
+                dir.path(),
+                "/k/someone-else",
+                Some("/bekir/someone-else"),
                 &message("auto", "report_status", envelope("report_status"))
             ),
             Err(Refusal::NoRoute)
@@ -553,6 +618,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "answer_question", envelope("answer_question"))
             ),
             Err(Refusal::VerbNotEnabledHere)
@@ -570,6 +636,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "run_tests", envelope("run_tests"))
             ),
             Err(Refusal::VerbNotInPhase)
@@ -588,6 +655,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", body)
             ),
             Err(Refusal::AutoReply)
@@ -607,6 +675,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", body)
             ),
             Err(Refusal::BadArguments(_))
@@ -620,6 +689,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "answer_question", body)
             ),
             Err(Refusal::BadArguments(_))
@@ -636,6 +706,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", envelope("report_status"))
             ),
             Err(Refusal::Paused)
@@ -654,6 +725,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", envelope("report_status"))
             ),
             Err(Refusal::WorkspaceMissing)
@@ -669,7 +741,7 @@ mod tests {
             "untrusted_body": "just some prose",
         });
         assert!(matches!(
-            classify(&cfg, dir.path(), "/bekir/agent1", &msg),
+            classify(&cfg, dir.path(), "/bekir/agent1", None, &msg),
             Err(Refusal::BadArguments(_))
         ));
     }
@@ -786,6 +858,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("auto", "report_status", envelope("report_status"))
             ),
             Err(Refusal::UnknownRuntime)
@@ -804,6 +877,7 @@ mod tests {
                 &cfg,
                 dir.path(),
                 "/bekir/agent1",
+                None,
                 &message("review", "report_status", envelope("report_status"))
             ),
             Err(Refusal::NotAuto)
@@ -819,6 +893,7 @@ mod tests {
             &cfg,
             dir.path(),
             "/bekir/agent1",
+            None,
             &message("auto", "report_status", envelope("report_status")),
         )
         .unwrap();

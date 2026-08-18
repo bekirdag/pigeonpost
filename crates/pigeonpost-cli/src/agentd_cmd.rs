@@ -227,12 +227,16 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
     // Without this, a session draining during a run would answer a message the daemon is already
     // working on — and a long action leaves minutes for that to happen. A claimed line is invisible
     // to `drain`, and is released again the moment the daemon decides not to act or fails to.
+    let also_known_as = other_name_for(home, &event.mailbox);
     let claimed = matches!(
         &routing,
         Ok(config)
             if config.execute
                 && !crate::executor::paused(home)
-                && config.mailbox.iter().any(|m| m.address == event.mailbox)
+                && config
+                    .mailbox
+                    .iter()
+                    .any(|m| m.is_for(&event.mailbox, also_known_as.as_deref()))
     );
 
     let record = serde_json::json!({
@@ -272,6 +276,7 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
                 &config,
                 home,
                 &event.mailbox,
+                also_known_as.as_deref(),
                 &serde_json::json!({ "message_id": event.message_id }),
             );
             let (outcome, detail) = match &decision {
@@ -341,7 +346,12 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         release_claim(home, &event.mailbox, event.event_id);
     };
 
-    if !config.mailbox.iter().any(|m| m.address == event.mailbox) {
+    let also_known_as = other_name_for(home, &event.mailbox);
+    if !config
+        .mailbox
+        .iter()
+        .any(|m| m.is_for(&event.mailbox, also_known_as.as_deref()))
+    {
         give_back(crate::executor::Refusal::NoRoute.as_str(), None);
         return;
     }
@@ -362,7 +372,13 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         Err(e) => return give_back("fetch_failed", Some(&e.to_string())),
     };
 
-    let action = match crate::executor::classify(config, home, &event.mailbox, &message) {
+    let action = match crate::executor::classify(
+        config,
+        home,
+        &event.mailbox,
+        also_known_as.as_deref(),
+        &message,
+    ) {
         Ok(a) => a,
         Err(refusal) => {
             let detail = match &refusal {
@@ -734,6 +750,20 @@ fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
         }
         Some(line)
     });
+}
+
+/// The other name this mailbox answers to, if this machine holds it.
+///
+/// The wire carries the `/k/` address; a config almost always names the handle. Reading the local
+/// credential is the only way to know they are the same mailbox, and it is a file read — cheap
+/// enough to do before deciding whether to claim an event.
+fn other_name_for(home: &Path, mailbox: &str) -> Option<String> {
+    let credential = crate::postbox_cmd::credential_anywhere(home, mailbox).ok()?;
+    if credential.address == mailbox {
+        credential.handle
+    } else {
+        Some(credential.address)
+    }
 }
 
 /// Whether a spool line is one the daemon has taken for itself.
