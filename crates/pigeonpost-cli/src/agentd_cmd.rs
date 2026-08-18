@@ -1197,14 +1197,22 @@ fn xml_escape(value: &str) -> String {
 /// re-running `agentd install`, and `agentd status` prints it so the staleness is visible rather
 /// than mysterious.
 fn install_path() -> String {
-    let inherited = std::env::var("PATH").unwrap_or_default();
+    path_or_default(&std::env::var("PATH").unwrap_or_default())
+}
+
+/// The decision, split from reading the environment so it can be tested without one.
+fn path_or_default(inherited: &str) -> String {
     // Never emit an empty PATH: a unit with `PATH=` is worse than one with none, because it also
     // hides the service manager's own default.
     if inherited.trim().is_empty() {
-        return "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin".into();
+        return DEFAULT_SERVICE_PATH.into();
     }
-    inherited
+    inherited.to_string()
 }
+
+/// Used only when the installing shell had no PATH at all, which should not happen and is not worth
+/// failing an install over.
+const DEFAULT_SERVICE_PATH: &str = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin";
 
 #[cfg(target_os = "macos")]
 fn unit_body(program: &Path, home: &Path) -> Result<String, Error> {
@@ -1725,6 +1733,7 @@ mod tests {
     /// The defect this fixes: a service manager gives a job a minimal PATH, so `mcoda` and
     /// `claude` — which live in `~/.local/bin`, Homebrew, or an nvm version directory — were not
     /// on it, and every unattended run died on a binary the installer could run by name.
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     #[test]
     fn the_installed_unit_carries_the_path_it_was_installed_with() {
         let body = unit_body(
@@ -1748,8 +1757,11 @@ mod tests {
     /// An empty PATH would be worse than none: it also hides the service manager's own default.
     #[test]
     fn an_absent_path_falls_back_to_something_usable() {
-        let path = install_path();
-        assert!(path.contains("/bin"), "got {path:?}");
+        assert_eq!(path_or_default(""), DEFAULT_SERVICE_PATH);
+        assert_eq!(path_or_default("   "), DEFAULT_SERVICE_PATH);
+        // Anything real is passed through untouched, whatever separator this platform uses.
+        assert_eq!(path_or_default("/a:/b"), "/a:/b");
+        assert_eq!(path_or_default(r"C:\tools;C:\bin"), r"C:\tools;C:\bin");
     }
 
     #[test]
