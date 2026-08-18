@@ -409,6 +409,35 @@ enum PostboxAction {
         to: String,
         /// Message text, or a JSON request envelope for a peer that granted you a verb.
         body: String,
+        /// Continue a conversation, by the thread id shown against a message.
+        #[arg(long)]
+        thread: Option<String>,
+        /// Open a new conversation under this title, instead of continuing an existing one.
+        #[arg(long, conflicts_with = "thread")]
+        new_thread: Option<String>,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Read one conversation back, both halves, oldest first.
+    ///
+    /// Unlike `inbox`, this shows what you said as well as what was said to you, and includes mail
+    /// you have already acknowledged — the point is the conversation, not what is new.
+    Thread {
+        /// The thread id, from `postbox threads` or from a message.
+        id: String,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// The conversations this mailbox is part of, most recently active first.
+    Threads {
+        /// Only conversations with this peer, by handle or address.
+        #[arg(long)]
+        peer: Option<String>,
+        /// Also show threads filed away.
+        #[arg(long)]
+        all: bool,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -422,6 +451,9 @@ enum PostboxAction {
         /// Include mail you already acknowledged, i.e. the whole history rather than what is new.
         #[arg(long)]
         all: bool,
+        /// Only mail from one conversation.
+        #[arg(long)]
+        thread: Option<String>,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -1333,12 +1365,52 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             }
             PostboxAction::List => postbox_cmd::list(&home, cli.json).await,
             PostboxAction::Token { address } => postbox_cmd::print_token(&home, address.as_deref()),
-            PostboxAction::Send { to, body, which } => {
-                postbox_cmd::send_message(&home, which.address.as_deref(), to, body, cli.json).await
+            PostboxAction::Send {
+                to,
+                body,
+                thread,
+                new_thread,
+                which,
+            } => {
+                postbox_cmd::send_message(
+                    &home,
+                    which.address.as_deref(),
+                    to,
+                    body,
+                    thread.as_deref(),
+                    new_thread.as_deref(),
+                    cli.json,
+                )
+                .await
             }
-            PostboxAction::Inbox { wait, all, which } => {
-                postbox_cmd::show_inbox(&home, which.address.as_deref(), *wait, *all, cli.json)
-                    .await
+            PostboxAction::Thread { id, which } => {
+                postbox_cmd::read_thread(&home, which.address.as_deref(), id, cli.json).await
+            }
+            PostboxAction::Threads { peer, all, which } => {
+                postbox_cmd::show_threads(
+                    &home,
+                    which.address.as_deref(),
+                    peer.as_deref(),
+                    *all,
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Inbox {
+                wait,
+                all,
+                thread,
+                which,
+            } => {
+                postbox_cmd::show_inbox(
+                    &home,
+                    which.address.as_deref(),
+                    *wait,
+                    *all,
+                    thread.as_deref(),
+                    cli.json,
+                )
+                .await
             }
             PostboxAction::Watch { wait, which } => {
                 postbox_cmd::watch_inbox(&home, which.address.as_deref(), *wait, cli.json).await

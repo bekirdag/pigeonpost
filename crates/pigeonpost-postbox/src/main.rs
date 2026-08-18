@@ -2628,6 +2628,80 @@ fn yes() -> bool {
     true
 }
 
+/// The listing behind both `GET /v1/threads` and `list_pigeonpost_threads`.
+pub(crate) async fn do_list_threads(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    peer: Option<String>,
+    include_archived: bool,
+) -> Result<serde_json::Value, ApiError> {
+    // A peer may be named by handle, the way everything else here accepts one. Resolving it to an
+    // address first means `--peer /bekir/bdya` and `--peer /k/…` are the same request.
+    let peer = match peer {
+        Some(p) => match resolve_recipient(state, &p).await? {
+            Some(found) => Some(found.address),
+            // An unknown peer has no threads. Saying so as an empty list rather than an error keeps
+            // "who do I have conversations with" answerable without a second lookup first.
+            None => return Ok(json!({ "threads": [] })),
+        },
+        None => None,
+    };
+    let threads = state
+        .store
+        .threads(me.address.clone(), peer)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "thread list failed");
+            ApiError::server("store_error")
+        })?;
+    Ok(json!({
+        "threads": threads
+            .iter()
+            .filter(|t| include_archived || t.archived_at.is_none())
+            .map(thread_json)
+            .collect::<Vec<_>>()
+    }))
+}
+
+/// One conversation, oldest last, behind `read_pigeonpost_thread`.
+///
+/// Both halves and already-read mail included, unlike the inbox: this exists to answer "what has
+/// been said here", and a conversation missing its own replies is not one.
+pub(crate) async fn do_read_thread(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    thread_id: &str,
+    limit: usize,
+) -> Result<serde_json::Value, ApiError> {
+    let thread = state
+        .store
+        .thread(me.address.clone(), thread_id.to_string())
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "thread lookup failed");
+            ApiError::server("store_error")
+        })?
+        .ok_or_else(|| ApiError::bad("unknown_thread", "no such thread in this mailbox"))?;
+
+    let listing = do_inbox(state, me, true, true, Some(thread_id)).await?;
+    let mut messages = listing["messages"].as_array().cloned().unwrap_or_default();
+    // Newest `limit`, still in order. Trimming the front rather than the back keeps a long thread
+    // useful: the recent exchange is what a follow-up refers to.
+    let total = messages.len();
+    if total > limit {
+        messages.drain(..total - limit);
+    }
+    Ok(json!({
+        "thread_id": thread.id,
+        "peer": thread.peer,
+        "title": thread.title,
+        "is_default": thread.is_default,
+        "message_count": total,
+        "returned": messages.len(),
+        "messages": messages,
+    }))
+}
+
 #[derive(serde::Deserialize)]
 struct ThreadsQuery {
     /// Narrow to one correspondent. This is what the web app asks for: threads of the peer whose
