@@ -424,12 +424,27 @@ pub async fn run(
         .spawn()
         .map_err(|e| RunFailure::Spawn(format!("{program}: {e}")))?;
 
-    let timeout = std::time::Duration::from_secs(action.route.timeout_secs);
-    let output = match tokio::time::timeout(timeout, child.wait_with_output()).await {
-        Ok(Ok(output)) => output,
-        Ok(Err(e)) => return Err(RunFailure::Io(e.to_string())),
-        // Dropping the future drops the child, and `kill_on_drop` above is what makes that a kill.
-        Err(_) => return Err(RunFailure::Timeout(action.route.timeout_secs)),
+    // Zero means no ceiling, the same as it does for the daily run limit on the same command.
+    // Taken literally it would mean the opposite: `tokio::time::timeout` with a zero duration
+    // fires at once, so every run would be killed the instant it started and audited as a timeout
+    // — a flag that reads as "no limit" and behaves as "no work" is worse than not having it.
+    //
+    // Real work at the higher tiers can run for hours, and nothing retries a killed run, so too
+    // short is a worse failure than too long: the peer is told the state is unknown, while any
+    // commits already made are still there. `agentd pause` is the stop button, not this.
+    let output = if action.route.timeout_secs == 0 {
+        child.wait_with_output().await
+    } else {
+        let ceiling = std::time::Duration::from_secs(action.route.timeout_secs);
+        match tokio::time::timeout(ceiling, child.wait_with_output()).await {
+            Ok(finished) => finished,
+            // Dropping the future drops the child, and `kill_on_drop` above makes that a kill.
+            Err(_) => return Err(RunFailure::Timeout(action.route.timeout_secs)),
+        }
+    };
+    let output = match output {
+        Ok(output) => output,
+        Err(e) => return Err(RunFailure::Io(e.to_string())),
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -715,6 +730,24 @@ mod tests {
             let mode = std::fs::metadata(&path).unwrap().permissions().mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    /// `--timeout 0` used to mean "killed immediately", which is the opposite of what it reads as
+    /// and of what `--daily-runs 0` means on the same command.
+    #[tokio::test]
+    async fn a_zero_timeout_means_no_ceiling_rather_than_no_time() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut act = action("report_status", None, None);
+        act.route.workspace = dir.path().join("does-not-exist");
+        act.route.timeout_secs = 0;
+
+        // The run still fails — there is no runtime here — but it must fail for the reason it
+        // actually failed, not because a zero-length ceiling fired before anything happened.
+        let failure = run(dir.path(), &act, "/bekir/main", "deadbeefdeadbeef").await;
+        assert!(
+            matches!(failure, Err(RunFailure::Spawn(_))),
+            "expected the spawn failure, not a timeout: {failure:?}"
+        );
     }
 
     /// Deterministic whether or not a runtime is installed on the box running the tests: a missing

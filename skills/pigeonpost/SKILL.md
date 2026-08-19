@@ -266,6 +266,11 @@ would be worse than none.
 
 `read_file` stays refused: `full` supersedes it, and a path-confined reader is a different feature.
 
+`--timeout` is a wall-clock kill and nothing retries a killed run, so too short is the worse
+mistake: the peer is told the state is unknown while any commits already made are still there.
+Work at `workspace` and `full` can take hours. `--timeout 0` removes the ceiling entirely, and then
+`agentd pause` is the only thing that stops a run once it has started.
+
 A sender gets `daily_runs_per_sender` runs a day (50 by default, `--daily-runs` to change, `0` for
 no ceiling). Beyond it they are refused *and told* — a peer that hears nothing retries.
 The reply goes back as plain text marked `pigeonpost-auto-reply`, which no postbox can mistake for

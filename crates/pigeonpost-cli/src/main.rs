@@ -277,7 +277,9 @@ enum AgentdAction {
         /// What runs the request: `claude`, `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`.
         #[arg(long, default_value = "claude")]
         runtime: String,
-        /// Wall-clock ceiling for one action. A report that goes and looks needs minutes.
+        /// Wall-clock ceiling for one action, in seconds. A report that goes and looks needs
+        /// minutes; work at a higher tier can need hours. `0` removes the ceiling entirely —
+        /// `agentd pause` is then the only way to stop a run.
         #[arg(long)]
         timeout: Option<u64>,
         /// How much an answer may do: `read-only` reports, `workspace` changes files and runs the

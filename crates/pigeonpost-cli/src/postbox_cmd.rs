@@ -269,6 +269,34 @@ pub(crate) fn sole_credential(home: &Path) -> Result<Credential, Error> {
 ///
 /// Two homes holding the same address is a misconfiguration rather than a tie to break: acting as
 /// a mailbox through the wrong home would answer with the wrong workspace, so it errors.
+/// Every home on this machine that holds a credential for `address`.
+///
+/// Separate from [`credential_anywhere`] because the caller that resolves a mailbox's second name
+/// has to tell "nobody holds this" from "two homes do". They are different problems with different
+/// fixes, and collapsing them reports one as the other.
+pub(crate) fn homes_holding(home: &Path, address: &str) -> Vec<(PathBuf, Credential)> {
+    let machine = crate::agentd_cmd::machine_home_of(home);
+    let mut homes = vec![machine.clone()];
+    if let Ok(entries) = std::fs::read_dir(machine.join("agents")) {
+        let mut agents: Vec<PathBuf> = entries.flatten().map(|e| e.path()).collect();
+        agents.sort();
+        homes.extend(agents);
+    }
+    let mut found = Vec::new();
+    for candidate in homes {
+        if let Ok(creds) = load(&candidate) {
+            if let Some(c) = creds
+                .identities
+                .into_iter()
+                .find(|c| c.address == address || c.handle.as_deref() == Some(address))
+            {
+                found.push((candidate, c));
+            }
+        }
+    }
+    found
+}
+
 pub(crate) fn credential_anywhere(home: &Path, address: &str) -> Result<Credential, Error> {
     let machine = crate::agentd_cmd::machine_home_of(home);
     let mut homes = vec![machine.clone()];
@@ -593,12 +621,20 @@ Agents that each want their own mailbox should each use --agent <name>.",
     // half of being reachable: without the session hooks nothing surfaces arriving mail, and
     // without the MCP registration the session has no way to read or answer it. Every agent set up
     // before this had to find that out by not receiving something.
-    let wired = if wire && in_a_repository() {
+    let wired = if wire {
         println!();
+        // Wired wherever it is run, not only inside a checkout. An agent does not have to have a
+        // repository — one that watches a queue, one spun up for a single job, one that is a
+        // directory of scripts — and gating on `.git` denied those the very thing that makes a
+        // mailbox useful. Saying which directory was wired is the honest version of the check the
+        // gate was trying to be.
+        if !in_a_repository() {
+            println!("This is not a git checkout, which is fine — wiring it up here anyway.");
+        }
         match crate::agentd_cmd::hooks(home, true, false) {
             Ok(()) => true,
             Err(e) => {
-                println!("could not wire up this repository: {e}");
+                println!("could not wire up this directory: {e}");
                 println!(
                     "Run `pigeonpost {scope}agentd hooks --install` here once that is sorted."
                 );
@@ -622,12 +658,12 @@ Agents that each want their own mailbox should each use --agent <name>.",
     }
     if wired {
         println!();
-        println!("This repository's sessions now act as {name}: mail surfaces at session");
+        println!("This directory's sessions now act as {name}: mail surfaces at session");
         println!("start and the moment it lands mid-turn. Restart any open session.");
     } else if wire {
         println!();
-        println!("Not in a git repository, so nothing was wired up here. Inside the agent's");
-        println!("checkout, run:  pigeonpost {scope}agentd hooks --install");
+        println!("Session wiring did not complete here. To do it once that is sorted:");
+        println!("  pigeonpost {scope}agentd hooks --install");
     } else {
         println!();
         println!("Session wiring skipped (--no-wire). To do it later:");

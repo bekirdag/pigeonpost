@@ -131,6 +131,19 @@ struct MailEvent {
 pub async fn run(home: &Path, once: bool) -> Result<(), Error> {
     std::fs::create_dir_all(home.join(SPOOL_DIR))?;
     log_line(home, "agentd starting");
+    // A claim means "a run is in flight", and none can be in flight in a process that has just
+    // started. Anything still claimed was interrupted — a restart, a crash, a reboot — and its run
+    // was killed with it. Left alone it is stranded: this daemon will not retry it, because the
+    // event is already spooled and deduped, and no session will ever see it, because a claimed
+    // line is hidden from `drain`. Releasing them here is what makes an interrupted run recoverable
+    // rather than a message that silently stops existing.
+    match release_all_claims(home) {
+        0 => {}
+        n => log_line(
+            home,
+            &format!("released {n} claim(s) left by an interrupted run"),
+        ),
+    }
 
     let mut backoff = BACKOFF_MIN;
     loop {
@@ -227,7 +240,7 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
     // Without this, a session draining during a run would answer a message the daemon is already
     // working on — and a long action leaves minutes for that to happen. A claimed line is invisible
     // to `drain`, and is released again the moment the daemon decides not to act or fails to.
-    let also_known_as = other_name_for(home, &event.mailbox);
+    let also_known_as = other_name_for(home, &event.mailbox).unwrap_or(None);
     let claimed = matches!(
         &routing,
         Ok(config)
@@ -346,7 +359,17 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         release_claim(home, &event.mailbox, event.event_id);
     };
 
-    let also_known_as = other_name_for(home, &event.mailbox);
+    let also_known_as = match other_name_for(home, &event.mailbox) {
+        Ok(name) => name,
+        // Reported as itself. A route naming this mailbox's handle cannot match while its address
+        // is ambiguous, and calling that `no_route` describes the consequence rather than the
+        // cause — the config it points at is fine.
+        Err(why) => {
+            log_line(home, &format!("cannot resolve {}: {why}", event.mailbox));
+            give_back("ambiguous_mailbox", Some(&why));
+            return;
+        }
+    };
     if !config
         .mailbox
         .iter()
@@ -582,10 +605,14 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
         } else {
             format!("{} — MISSING", route.workspace.display())
         };
+        let ceiling = if route.timeout_secs == 0 {
+            "no time limit".to_string()
+        } else {
+            format!("{}s", route.timeout_secs)
+        };
         println!(
-            "  {} → {runtime}, {}s, verbs {}",
+            "  {} → {runtime}, {ceiling}, verbs {}",
             route.address,
-            route.timeout_secs,
             if route.verbs.is_empty() {
                 "none".to_string()
             } else {
@@ -593,6 +620,12 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             }
         );
         println!("      workspace: {workspace}");
+        // A route names a mailbox by handle or by address; the daemon has to turn one into the
+        // other, and cannot when two homes hold the same address. Better to say so here than to
+        // let it surface as mail that never gets answered.
+        if let Err(why) = other_name_for(home, &route.address) {
+            println!("      UNRESOLVABLE: {why}");
+        }
     }
     // The runtimes a route names are spawned by the daemon, with the PATH recorded when it was
     // installed — so "I can run mcoda myself" says nothing about whether the daemon can. Checking
@@ -718,13 +751,17 @@ pub fn answer(
     }
 
     let workspace = std::env::current_dir()?;
+    // A working directory is all a route needs. Plenty of agents have no checkout at all — one
+    // that watches a queue, one spun up for a single job, one whose whole job is a directory of
+    // scripts — and refusing those was a rule about repositories masquerading as a rule about
+    // workspaces. What matters is that the directory exists and is the one the work should happen
+    // in, and being told which directory that will be is more useful than being refused.
     if !crate::postbox_cmd::in_a_repository() {
-        return Err(format!(
-            "{} is not inside a repository — run this from the checkout this mailbox works on, \
-             since every action runs with that as its working directory",
+        eprintln!(
+            "note: {} is not a git checkout. That is fine — it is simply where every action will \
+             run. Make sure it is the directory this agent should work in.",
             workspace.display()
-        )
-        .into());
+        );
     }
     if verbs.is_empty() {
         return Err("say what may be answered unattended, e.g. --verb report_status".into());
@@ -795,6 +832,11 @@ pub fn answer(
     println!("  workspace:  {}", workspace.display());
     println!("  runtime:    {runtime}");
     println!("  permission: {}", permission.as_str());
+    if route.timeout_secs == 0 {
+        println!("  timeout:    none — only `agentd pause` stops a run once it starts");
+    } else {
+        println!("  timeout:    {}s", route.timeout_secs);
+    }
     if !branches.is_empty() {
         println!("  branches:   {}", branches.join(", "));
     }
@@ -854,13 +896,72 @@ fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
 /// The wire carries the `/k/` address; a config almost always names the handle. Reading the local
 /// credential is the only way to know they are the same mailbox, and it is a file read — cheap
 /// enough to do before deciding whether to claim an event.
-fn other_name_for(home: &Path, mailbox: &str) -> Option<String> {
-    let credential = crate::postbox_cmd::credential_anywhere(home, mailbox).ok()?;
-    if credential.address == mailbox {
-        credential.handle
-    } else {
-        Some(credential.address)
+fn other_name_for(home: &Path, mailbox: &str) -> Result<Option<String>, String> {
+    // The error is returned rather than swallowed. Losing it costs the diagnosis, not the lookup:
+    // a mailbox held by two homes cannot be resolved, so a route naming its handle stops matching,
+    // and the daemon reports `no_route` — which sends whoever is debugging to the routing config,
+    // where everything is correct. The failure and its symptom are in different files.
+    let mut found = crate::postbox_cmd::homes_holding(home, mailbox);
+    match found.len() {
+        // Nobody holds it. Not an error here: a mailbox this machine has no credential for is
+        // simply one it cannot name twice, and whichever check comes next says what that means.
+        0 => Ok(None),
+        1 => {
+            let credential = found.remove(0).1;
+            Ok(if credential.address == mailbox {
+                credential.handle
+            } else {
+                Some(credential.address)
+            })
+        }
+        _ => Err(format!(
+            "{mailbox} is held by more than one home ({}) — remove the duplicate, since a mailbox \
+             with two credentials cannot be matched to a route by name",
+            found
+                .iter()
+                .map(|(h, _)| h.display().to_string())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )),
     }
+}
+
+/// Hand back every claim in the spool, and say how many there were.
+fn release_all_claims(home: &Path) -> usize {
+    let spool = machine_home(home).join(SPOOL_DIR);
+    let Ok(entries) = std::fs::read_dir(&spool) else {
+        return 0;
+    };
+    let mut released = 0;
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let Ok(body) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        if !body.lines().any(is_claimed) {
+            continue;
+        }
+        let mut out = String::new();
+        for line in body.lines() {
+            match serde_json::from_str::<serde_json::Value>(line) {
+                Ok(mut value) if is_claimed(line) => {
+                    if let Some(obj) = value.as_object_mut() {
+                        obj.insert("claimed".into(), serde_json::Value::Bool(false));
+                    }
+                    released += 1;
+                    out.push_str(&value.to_string());
+                    out.push('\n');
+                }
+                // Anything this does not understand is left exactly as it was.
+                _ => {
+                    out.push_str(line);
+                    out.push('\n');
+                }
+            }
+        }
+        let _ = std::fs::write(&path, out);
+    }
+    released
 }
 
 /// Whether a spool line is one the daemon has taken for itself.
@@ -1924,6 +2025,83 @@ mod tests {
         let left = std::fs::read_to_string(&mine).unwrap();
         assert!(left.contains("\"event_id\":2"));
         assert_eq!(left.lines().count(), 1);
+    }
+
+    /// The failure that cost the most to diagnose: two homes holding one address made a route
+    /// named by handle stop matching, and the daemon called it `no_route` — pointing at a config
+    /// that was correct.
+    #[tokio::test]
+    async fn a_mailbox_two_homes_claim_is_reported_as_itself() {
+        let home = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(home.path().join(SPOOL_DIR)).unwrap();
+        let creds = |address: &str, handle: serde_json::Value| {
+            serde_json::json!({"identities":[{
+                "base_url":"https://postbox.pigeonpost.dev","address":address,
+                "capability_token":"cap_x","handle":handle,"created_at":1}]})
+            .to_string()
+        };
+        // The same address in the machine home and in an agent home — exactly the shape a mailbox
+        // minted before per-agent homes existed leaves behind.
+        std::fs::write(
+            home.path().join("postbox.json"),
+            creds("/k/dup", serde_json::Value::Null),
+        )
+        .unwrap();
+        let agent = home.path().join("agents").join("dup");
+        std::fs::create_dir_all(&agent).unwrap();
+        std::fs::write(
+            agent.join("postbox.json"),
+            creds("/k/dup", "/bekir/dup".into()),
+        )
+        .unwrap();
+
+        assert!(
+            other_name_for(home.path(), "/k/dup").is_err(),
+            "an ambiguous address must not resolve silently"
+        );
+
+        let mut config = routed("/bekir/dup", home.path());
+        config.mailbox[0].address = "/bekir/dup".into();
+        act(home.path(), &config, &event("/k/dup")).await;
+        assert_eq!(
+            audit_outcomes(home.path()),
+            vec!["ambiguous_mailbox"],
+            "the cause, not the consequence"
+        );
+    }
+
+    /// A process that has just started has no run in flight, so anything still claimed was
+    /// interrupted — and left alone it is invisible to the daemon *and* to every session.
+    #[test]
+    fn a_restart_hands_back_claims_left_by_an_interrupted_run() {
+        let machine = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(machine.path().join(SPOOL_DIR)).unwrap();
+        let mine = spool_file(machine.path(), "/k/mine");
+        let theirs = spool_file(machine.path(), "/k/theirs");
+        std::fs::write(
+            &mine,
+            "{\"event_id\":1,\"claimed\":true}\n{\"event_id\":2,\"claimed\":false}\n",
+        )
+        .unwrap();
+        std::fs::write(
+            &theirs,
+            "{\"event_id\":3,\"claimed\":true}\nnot json at all\n",
+        )
+        .unwrap();
+
+        assert_eq!(release_all_claims(machine.path()), 2);
+
+        // Everything is drainable again, and the line that was never JSON is untouched.
+        let drained = collect(machine.path(), true).unwrap().unwrap();
+        for id in ["\"event_id\":1", "\"event_id\":2", "\"event_id\":3"] {
+            assert!(drained.contains(id), "{id} should be visible again");
+        }
+        assert!(std::fs::read_to_string(&theirs)
+            .unwrap()
+            .contains("not json at all"));
+
+        // And it is idempotent: a second start finds nothing to release.
+        assert_eq!(release_all_claims(machine.path()), 0);
     }
 
     /// A claim that is never released is worse than the double answer it prevents: the mail stops
