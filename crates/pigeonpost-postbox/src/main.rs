@@ -2251,6 +2251,24 @@ pub(crate) async fn do_send(
             recipient.address.clone(),
             note,
         ));
+    } else if state
+        .store
+        .devices_for(recipient.address.clone())
+        .await
+        .map(|devices| !devices.is_empty())
+        .unwrap_or(false)
+    {
+        // A phone is registered for this mailbox and there is no key to ring it with. That is the
+        // one combination worth complaining about, and it is said once rather than per message:
+        // repeated every delivery it would be noise, and never said at all it costs somebody an
+        // afternoon in a database.
+        static UNCONFIGURED: std::sync::Once = std::sync::Once::new();
+        UNCONFIGURED.call_once(|| {
+            tracing::warn!(
+                "a device is registered for a mailbox that is receiving mail, but APNs is not \
+                 configured — see deploy/postbox/README.md"
+            );
+        });
     }
 
     Ok(json!({ "message_id": message_id, "sent_copy_id": sent_copy_id }))

@@ -56,8 +56,22 @@ impl Apns {
     /// Read the configuration, or decide push is off. Absence is not an error: most deployments of
     /// this code have no Apple developer account and should not be nagged about it.
     pub fn from_env() -> Option<Arc<Self>> {
-        let key_id = non_empty("PIGEONPOST_APNS_KEY_ID")?;
-        let team_id = non_empty("PIGEONPOST_APNS_TEAM_ID")?;
+        let (key_id, team_id) = match (
+            non_empty("PIGEONPOST_APNS_KEY_ID"),
+            non_empty("PIGEONPOST_APNS_TEAM_ID"),
+        ) {
+            (Some(key_id), Some(team_id)) => (key_id, team_id),
+            _ => {
+                // Said out loud, because the alternative is what happened the first time somebody
+                // asked why their phone stayed quiet: a registered device, a delivered message, and
+                // nothing anywhere saying the last mile was never connected.
+                tracing::info!(
+                    "APNs not configured — push disabled. Set PIGEONPOST_APNS_KEY_ID, \
+                     PIGEONPOST_APNS_TEAM_ID and PIGEONPOST_APNS_KEY_PATH to switch it on."
+                );
+                return None;
+            }
+        };
         let topic = non_empty("PIGEONPOST_APNS_TOPIC")
             .unwrap_or_else(|| "dev.pigeonpost.inbox".to_string());
 
