@@ -1,0 +1,197 @@
+//  The postbox API. One place that knows about `identity=`, and the only place that retries a 401.
+
+import Foundation
+
+struct APIError: LocalizedError, Equatable {
+    let status: Int
+    /// The postbox's own machine-readable code — `not_admitted`, `recipient_unresolved`, and so on.
+    let code: String?
+    let detail: String?
+
+    var errorDescription: String? { detail ?? code ?? "The postbox answered \(status)." }
+
+    /// What to say to a person when a send does not go through. The codes are the postbox's; the
+    /// sentences are the web app's, so both clients fail with the same words.
+    var sendFailureMessage: String {
+        switch code {
+        case "not_admitted": return "They are not accepting mail from this mailbox."
+        case "recipient_unresolved": return "No mailbox at that address."
+        case "recipient_inbox_full": return "Their inbox is full."
+        case "unauthorized": return "Your session expired. Sign in again."
+        default: return errorDescription ?? "Could not send."
+        }
+    }
+}
+
+/// Anything that can hand out a live bearer token and spend a refresh token on demand.
+@MainActor
+protocol TokenProviding: AnyObject {
+    func token() async throws -> String
+    @discardableResult func renew() async throws -> String
+}
+
+extension Session: TokenProviding {}
+
+struct PostboxClient {
+    let base: URL
+    private(set) weak var tokens: TokenProviding?
+
+    @MainActor
+    init(base: URL = Config.postbox, tokens: TokenProviding) {
+        self.base = base
+        self.tokens = tokens
+    }
+
+    private static let decoder: JSONDecoder = {
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        return decoder
+    }()
+
+    // ---- reads ---------------------------------------------------------------------------------
+
+    func identities() async throws -> [IdentityRow] {
+        try await send("/v1/identities", as: IdentitiesResponse.self).identities ?? []
+    }
+
+    func whoami(identity: String) async throws -> WhoAmI {
+        try await send("/v1/whoami", query: [.init(name: "identity", value: identity)], as: WhoAmI.self)
+    }
+
+    /// The conversation, both halves of it.
+    ///
+    /// `includeSent` is what turns a listing into a conversation, and is opt-in on the wire because
+    /// every other caller of this endpoint reads it as mail addressed to them.
+    ///
+    /// `includeRead` is not optional here, on the first load or on the poll. The server drops
+    /// acknowledged mail from a listing that did not ask for it — right for an agent draining what
+    /// is new, wrong for a person reading a thread. Both calls must ask the same question, or the
+    /// poll replaces a full conversation with its unread part.
+    func inbox(identity: String, wait: Int? = nil) async throws -> InboxResponse {
+        var query = [
+            URLQueryItem(name: "identity", value: identity),
+            URLQueryItem(name: "include_sent", value: "true"),
+            URLQueryItem(name: "include_read", value: "true"),
+        ]
+        // `include_sent=1` is a 400 before the request is even authenticated: axum deserialises a
+        // bool from `true`/`false` only.
+        if let wait { query.append(URLQueryItem(name: "wait", value: String(wait))) }
+        return try await send("/v1/inbox", query: query, as: InboxResponse.self)
+    }
+
+    func threads(identity: String) async throws -> [ServerThread] {
+        try await send("/v1/threads", query: [.init(name: "identity", value: identity)], as: ThreadsResponse.self).threads ?? []
+    }
+
+    func contacts(identity: String) async throws -> ContactsResponse {
+        try await send("/v1/contacts", query: [.init(name: "identity", value: identity)], as: ContactsResponse.self)
+    }
+
+    func archive(identity: String) async throws -> Set<String> {
+        let body = try await send("/v1/archive", query: [.init(name: "identity", value: identity)], as: ArchiveResponse.self)
+        return Set(body.archived ?? [])
+    }
+
+    // ---- writes --------------------------------------------------------------------------------
+
+    func sendMessage(from identity: String, to peer: String, body text: String, threadId: String?) async throws -> SendResponse {
+        var payload: [String: Any] = ["to": peer, "body": text, "from": identity]
+        if let threadId { payload["thread_id"] = threadId }
+        return try await send("/v1/send", method: "POST", json: payload, as: SendResponse.self)
+    }
+
+    /// Opening a conversation is reading it, and `ack` is not only a read receipt: it is also how an
+    /// agent sharing this mailbox learns a message has been dealt with.
+    func ack(identity: String, messageId: String) async throws {
+        _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity])
+    }
+
+    func openThread(identity: String, peer: String, title: String) async throws -> String {
+        try await send("/v1/threads", method: "POST", json: ["peer": peer, "title": title, "identity": identity], as: OpenedThread.self).threadId
+    }
+
+    func setArchived(identity: String, peer: String, archived: Bool) async throws {
+        _ = try await sendRaw("/v1/archive", method: "PUT", json: ["peer": peer, "archived": archived, "identity": identity])
+    }
+
+    func putContact(identity: String, peer: String, alias: String?, admission: String, autonomy: String, allowedVerbs: [String]) async throws {
+        var payload: [String: Any] = [
+            "peer": peer,
+            "admission": admission,
+            "autonomy": autonomy,
+            "allowed_verbs": allowedVerbs,
+            "identity": identity,
+        ]
+        if let alias, !alias.isEmpty { payload["alias"] = alias }
+        _ = try await sendRaw("/v1/contacts", method: "PUT", json: payload)
+    }
+
+    func removeContact(identity: String, peer: String) async throws {
+        _ = try await sendRaw("/v1/contacts", method: "PUT", json: ["peer": peer, "remove": true, "identity": identity])
+    }
+
+    // ---- the wire ------------------------------------------------------------------------------
+
+    private func send<T: Decodable>(
+        _ path: String,
+        method: String = "GET",
+        query: [URLQueryItem] = [],
+        json: [String: Any]? = nil,
+        as type: T.Type
+    ) async throws -> T {
+        let data = try await sendRaw(path, method: method, query: query, json: json)
+        do {
+            return try Self.decoder.decode(T.self, from: data)
+        } catch {
+            throw APIError(status: 200, code: "bad_response", detail: "The postbox answered in a shape this app does not understand.")
+        }
+    }
+
+    @discardableResult
+    private func sendRaw(
+        _ path: String,
+        method: String = "GET",
+        query: [URLQueryItem] = [],
+        json: [String: Any]? = nil
+    ) async throws -> Data {
+        guard let tokens else { throw AuthError.sessionExpired }
+
+        var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        if !query.isEmpty { components.queryItems = query }
+        let url = components.url!
+
+        func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            var request = URLRequest(url: url)
+            request.httpMethod = method
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
+            request.setValue("application/json", forHTTPHeaderField: "accept")
+            if let json {
+                request.setValue("application/json", forHTTPHeaderField: "content-type")
+                request.httpBody = try JSONSerialization.data(withJSONObject: json)
+            }
+            // A long poll is held open for as long as the postbox will hold it; the default 60s
+            // timeout would cut a `wait=25` call short only sometimes, which is the worst kind of
+            // bug to look for.
+            request.timeoutInterval = 90
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return (data, response as? HTTPURLResponse ?? HTTPURLResponse())
+        }
+
+        var (data, response) = try await attempt(await tokens.token())
+        if response.statusCode == 401 {
+            // The token was live by its own `exp` and the realm disagreed. Spend the refresh token
+            // once and try again; a second 401 is a real one.
+            let renewed = try await tokens.renew()
+            (data, response) = try await attempt(renewed)
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
+            throw APIError(
+                status: response.statusCode,
+                code: body?["error"] as? String,
+                detail: body?["detail"] as? String
+            )
+        }
+        return data
+    }
+}

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The OIDC round-trip comes back to this scheme. ASWebAuthenticationSession intercepts the
+	     callback itself, but the scheme is registered so the redirect is also valid when the realm
+	     hands it to the system — a Keycloak that ends the flow in Safari must still land here. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.pigeonpost.inbox.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>dev.pigeonpost.inbox</string>
+			</array>
+		</dict>
+	</array>
+	<!-- HTTPS and the platform's own TLS only. Declared so every upload is not held for an export
+	     compliance question we already know the answer to. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>

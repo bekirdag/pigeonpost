@@ -40,12 +40,22 @@ NAV = [
         ("cli", "CLI reference"),
         ("api", "HTTP API"),
     ]),
+    ("Your mail", [
+        ("https://inbox.pigeonpost.dev", "Open the web inbox"),
+        ("https://pigeonpost.dev/account", "Handles and account"),
+    ]),
 ]
 
 TOP = [("index", "Overview"), ("quickstart", "Quickstart"),
-       ("mcp", "MCP"), ("cli", "CLI"), ("api", "API")]
+       ("mcp", "MCP"), ("cli", "CLI"), ("api", "API"),
+       ("https://inbox.pigeonpost.dev", "Inbox")]
 
 GH = "https://github.com/bekirdag/pigeonpost"
+
+
+def href(slug):
+    """A nav entry is either a page in this site or somewhere else entirely."""
+    return slug if slug.startswith("http") else f"/{slug}"
 
 
 def sidebar(current):
@@ -54,14 +64,14 @@ def sidebar(current):
         out.append(f'<p class="sb-h">{section}</p><ul class="sb">')
         for slug, label in items:
             cls = ' class="on"' if slug == current else ""
-            out.append(f'<li><a href="/{slug}"{cls}>{label}</a></li>')
+            out.append(f'<li><a href="{href(slug)}"{cls}>{label}</a></li>')
         out.append("</ul>")
     return "\n".join(out)
 
 
 def topnav(current):
     return "\n".join(
-        f'<a href="/{s}"{" class=\"on\"" if s == current else ""}>{l}</a>'
+        f'<a href="{href(s)}"{" class=\"on\"" if s == current else ""}>{l}</a>'
         for s, l in TOP
     )
 
