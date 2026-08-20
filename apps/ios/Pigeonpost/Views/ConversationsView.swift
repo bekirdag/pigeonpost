@@ -9,6 +9,7 @@ import SwiftUI
 struct ConversationsView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PushService.self) private var push
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var selection: String?
@@ -49,8 +50,20 @@ struct ConversationsView: View {
             }
             guard !Fixtures.enabled else { return }
             guard scenePhase == .active, account.me != nil else { return }
+            // The badge counts what has not been looked at, so looking at the app clears it. And
+            // re-register: the token is registered against the mailbox being read, which the
+            // identity picker can change.
+            push.clearBadge()
+            await push.register()
             await inbox.loadAll()
             await inbox.live()
+        }
+        // A tapped notification names the conversation it was about. Opening anything else would be
+        // answering a different question from the one that was asked.
+        .onChange(of: push.pendingPeer) { _, peer in
+            guard let peer else { return }
+            selection = peer
+            push.pendingPeer = nil
         }
         .sheet(isPresented: $showingIdentities) {
             IdentityPickerSheet { mailbox in

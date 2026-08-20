@@ -207,6 +207,22 @@ CREATE TABLE IF NOT EXISTS workspace_context (
     updated_at INTEGER NOT NULL
 );
 
+-- Devices that want waking when a mailbox receives mail. One row per (mailbox, token): a phone
+-- registers for the mailbox it is reading as, and a mailbox reaches every device watching it.
+--
+-- `environment` is not decoration. A token minted by a TestFlight or App Store build belongs to
+-- production APNs and one from a build run out of Xcode belongs to sandbox; each is meaningless to
+-- the other, and a token sent to the wrong one fails in a way that looks like a dead device.
+CREATE TABLE IF NOT EXISTS devices (
+    token       TEXT PRIMARY KEY,
+    mailbox     TEXT NOT NULL,
+    account     TEXT,
+    platform    TEXT NOT NULL DEFAULT 'apns',
+    environment TEXT NOT NULL DEFAULT 'production',
+    updated_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS devices_by_mailbox ON devices(mailbox);
+
 -- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
 CREATE TABLE IF NOT EXISTS inbox_policy (
     address           TEXT PRIMARY KEY,
@@ -442,6 +458,15 @@ fn id_from_row(r: IdRow) -> Result<StoredIdentity, StoreError> {
         account_id: r.account_id,
         handle: r.handle,
     })
+}
+
+/// A device waiting to be told that mail arrived.
+#[derive(Debug, Clone)]
+pub struct Device {
+    pub token: String,
+    pub mailbox: String,
+    pub platform: String,
+    pub environment: String,
 }
 
 /// A peer an inbox knows, and the terms it knows them on.
@@ -1566,6 +1591,72 @@ impl Store {
             ))?;
             let rows = stmt.query_map(params![owner], map_contact_row)?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Register a device for a mailbox, or move an existing token to this mailbox.
+    ///
+    /// Keyed on the token rather than on (mailbox, token): iOS hands the same token to the app
+    /// whichever mailbox it is reading, so two rows would mean two notifications for one message.
+    pub async fn upsert_device(
+        &self,
+        token: String,
+        mailbox: String,
+        account: Option<String>,
+        platform: String,
+        environment: String,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let conn = conn.lock().expect("store lock");
+            conn.execute(
+                "INSERT INTO devices (token, mailbox, account, platform, environment, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                 ON CONFLICT(token) DO UPDATE SET
+                     mailbox = excluded.mailbox,
+                     account = excluded.account,
+                     platform = excluded.platform,
+                     environment = excluded.environment,
+                     updated_at = excluded.updated_at",
+                params![token, mailbox, account, platform, environment, now],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Every device watching one mailbox.
+    pub async fn devices_for(&self, mailbox: String) -> Result<Vec<Device>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Device>, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            let mut stmt = conn.prepare(
+                "SELECT token, mailbox, platform, environment FROM devices WHERE mailbox = ?1",
+            )?;
+            let rows = stmt.query_map(params![mailbox], |row| {
+                Ok(Device {
+                    token: row.get(0)?,
+                    mailbox: row.get(1)?,
+                    platform: row.get(2)?,
+                    environment: row.get(3)?,
+                })
+            })?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Forget a device — on sign-out, or when Apple says the token is dead.
+    pub async fn delete_device(&self, token: String) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            Ok(conn.execute("DELETE FROM devices WHERE token = ?1", params![token])? > 0)
         })
         .await
         .map_err(|_| StoreError::Join)?

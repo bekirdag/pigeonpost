@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- `development` here; the archive that goes to TestFlight or the App Store is signed against a
+	     distribution profile and carries `production` instead. The two APNs environments issue
+	     different device tokens and neither accepts the other's, which is why the app tells the
+	     postbox which one minted the token it is registering. -->
+	<key>aps-environment</key>
+	<string>development</string>
+</dict>
+</plist>

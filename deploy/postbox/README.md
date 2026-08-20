@@ -37,6 +37,30 @@ Live setup (SSH `-p 34251 root@159.69.201.24`):
 - **Redeploy:** rsync the tree, rebuild the image, `docker rm -f` + re-`docker run` both containers.
   Data and TLS persist.
 
+## Push notifications (APNs)
+
+Off unless configured, and configured only from the environment — no key is ever committed, and
+none is compiled in. Add to `/opt/pigeonpost-postbox/postbox.env` and restart the container:
+
+```
+PIGEONPOST_APNS_KEY_PATH=/data/apns.p8      # mounted into the container, chmod 600, uid 65532
+PIGEONPOST_APNS_KEY_ID=XXXXXXXXXX
+PIGEONPOST_APNS_TEAM_ID=<the 10-character team id>
+PIGEONPOST_APNS_TOPIC=dev.pigeonpost.inbox
+# PIGEONPOST_APNS_PREVIEW=0                 # metadata only: says who wrote, not what they said
+```
+
+`PIGEONPOST_APNS_KEY` takes the PEM inline instead, for hosts where mounting a file is awkward.
+
+**The key is an APNs auth key, not the App Store Connect API key** — a different key from a
+different page. Apple Developer → Certificates, Identifiers & Profiles → **Keys** → **+**, enable
+**Apple Push Notifications service (APNs)**, download the `.p8` once. Its 10-character id is
+`PIGEONPOST_APNS_KEY_ID`.
+
+With none of it set the postbox logs nothing, sends nothing, and behaves exactly as it did before
+push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
+being woken the moment a key is added — no app update needed.
+
 ## Bring it up (dedicated box, Compose)
 
 ```sh

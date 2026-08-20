@@ -2,9 +2,11 @@ import SwiftUI
 
 @main
 struct PigeonpostApp: App {
+    @UIApplicationDelegateAdaptor(PushDelegate.self) private var pushDelegate
     @State private var session: Session
     @State private var account: Account
     @State private var inbox: Inbox
+    @State private var push = PushDelegate.service
 
     init() {
         let session = Session()
@@ -24,6 +26,11 @@ struct PigeonpostApp: App {
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
+                .environment(push)
+                .task {
+                    push.attach(to: account)
+                    account.push = push
+                }
         }
     }
 }

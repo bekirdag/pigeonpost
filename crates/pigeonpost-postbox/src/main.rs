@@ -37,7 +37,7 @@
 //! - `pigeonpost-postbox --healthcheck` — TCP-probe the bind port; exit 0/1 (Docker HEALTHCHECK).
 
 use axum::{
-    extract::{Extension, Query, Request, State},
+    extract::{Extension, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
     response::sse::{Event, KeepAlive, Sse},
@@ -54,6 +54,7 @@ use zeroize::Zeroize;
 mod github;
 mod mcp;
 mod oidc;
+mod push;
 mod pow;
 mod reputation;
 mod store;
@@ -80,6 +81,9 @@ struct AppState {
     trusted_proxy_hops: usize,
     /// SHA-256 of the namespace-grant shared secret, or `None` when the endpoint is closed.
     namespace_grant_hash: Option<[u8; 32]>,
+    /// APNs, when the deployment has a key. `None` everywhere else, and everything else behaves
+    /// exactly as it did before push existed.
+    apns: Option<Arc<push::Apns>>,
     /// Raised whenever any message is enqueued, to release long-polling `GET /v1/inbox?wait=N`
     /// callers the moment their mail lands instead of on their next timer.
     ///
@@ -314,6 +318,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             .as_deref()
             .map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
+        apns: push::Apns::from_env(),
         github: github::Github::from_env().map(Arc::new),
     })
 }
@@ -416,6 +421,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/archive", get(get_archive).put(put_archive))
         .route("/v1/threads", get(list_threads).post(open_thread))
         .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
+        .route("/v1/devices", post(register_device))
+        .route("/v1/devices/{token}", delete(unregister_device))
         .route("/v1/policy", axum::routing::put(put_policy))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
@@ -2213,6 +2220,39 @@ pub(crate) async fn do_send(
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.
     state.inbox_signal.notify_waiters();
+
+    // And wake the phones. Spawned, never awaited: a message is delivered once it is in the
+    // recipient's inbox, and whether Apple was reachable afterwards must not decide whether this
+    // call succeeded.
+    if let Some(apns) = state.apns.clone() {
+        let unread = state
+            .store
+            .unread_count(recipient.address.clone())
+            .await
+            .unwrap_or(0);
+        let who = sender
+            .handle
+            .clone()
+            .unwrap_or_else(|| sender.address.clone());
+        let note = push::Notification {
+            title: who.clone(),
+            subtitle: recipient
+                .handle
+                .clone()
+                .unwrap_or_else(|| recipient.address.clone()),
+            body: push::preview_of(body),
+            message_id: message_id.clone(),
+            peer: who,
+            unread: unread as i64,
+        };
+        tokio::spawn(push::fan_out(
+            apns,
+            state.store.clone(),
+            recipient.address.clone(),
+            note,
+        ));
+    }
+
     Ok(json!({ "message_id": message_id, "sent_copy_id": sent_copy_id }))
 }
 
@@ -2857,6 +2897,99 @@ async fn patch_thread(
 /// Deliberately no effect on delivery, admission, or read state. Archiving is the reader saying
 /// "not now" about their own view; a peer must not be able to tell it happened, and mail from an
 /// archived peer still arrives and still counts as unread.
+#[derive(serde::Deserialize)]
+struct DeviceReq {
+    /// The APNs device token, hex, as the system handed it to the app.
+    token: String,
+    #[serde(default)]
+    platform: Option<String>,
+    /// `production` or `sandbox`. A token belongs to exactly one and is meaningless to the other,
+    /// so the app says which build minted it rather than the server guessing.
+    #[serde(default)]
+    environment: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `POST /v1/devices` — wake this device when the acting mailbox receives mail.
+///
+/// Registered against the mailbox the app is reading as, not the account: somebody running a fleet
+/// wants the phone to ring for the mailbox they are watching, and switching mailboxes re-registers.
+async fn register_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<DeviceReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let token = req.token.trim().to_string();
+    // A device token is hex and short. Anything else is a client bug or somebody filling the table.
+    if token.is_empty()
+        || token.len() > 200
+        || !token.chars().all(|c| c.is_ascii_hexdigit())
+    {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_device_token",
+            Some("expected the hex device token APNs issued"),
+        );
+    }
+    let platform = match req.platform.as_deref().unwrap_or("apns") {
+        "apns" => "apns".to_string(),
+        "fcm" => "fcm".to_string(),
+        _ => {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                "unknown_platform",
+                Some("expected apns or fcm"),
+            )
+        }
+    };
+    let environment = match req.environment.as_deref().unwrap_or("production") {
+        "sandbox" => "sandbox".to_string(),
+        _ => "production".to_string(),
+    };
+    match state
+        .store
+        .upsert_device(
+            token,
+            me.address.clone(),
+            me.account_id.clone(),
+            platform,
+            environment,
+            now_unix(),
+        )
+        .await
+    {
+        Ok(()) => Json(json!({ "ok": true })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "device registration failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `DELETE /v1/devices/{token}` — stop waking this device. Called on sign-out, so a phone that has
+/// been handed on does not keep ringing for somebody else's mail.
+async fn unregister_device(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(token): Path<String>,
+) -> Response {
+    if let Err(e) = acting_identity(&state, &headers, None).await {
+        return e.into_response();
+    }
+    match state.store.delete_device(token).await {
+        Ok(removed) => Json(json!({ "ok": true, "removed": removed })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "device removal failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
 async fn put_archive(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -3722,6 +3855,7 @@ mod tests {
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
+            apns: None,
             github: None,
         }
     }
@@ -5886,6 +6020,7 @@ mod tests {
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
+            apns: None,
             github: None,
         };
         let _ = build_router(state);

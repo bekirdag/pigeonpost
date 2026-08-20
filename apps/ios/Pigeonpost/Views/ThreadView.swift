@@ -12,6 +12,7 @@ struct ThreadView: View {
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PushService.self) private var push
 
     @State private var draft = ""
     @State private var subthread: String?
@@ -93,6 +94,11 @@ struct ThreadView: View {
         }
         .task(id: taskKey) {
             await inbox.acknowledge(peer: peer, subthread: subthread)
+            // Ask here, not at launch. By the time somebody has opened a conversation they know
+            // what the app is for, which is the only moment the question has an honest answer —
+            // and a permission declined in front of a sign-in screen is expensive to win back.
+            guard !Fixtures.enabled else { return }
+            await push.askIfNeeded()
         }
         .onAppear {
             if subthread == nil { subthread = subthreads.first?.id }

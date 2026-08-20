@@ -113,6 +113,22 @@ struct PostboxClient {
         _ = try await sendRaw("/v1/report-spam", method: "POST", json: ["message_id": messageId, "identity": identity])
     }
 
+    /// Register this device against the acting mailbox, so the postbox can wake it.
+    func registerDevice(identity: String, token: String, environment: String) async throws {
+        _ = try await sendRaw("/v1/devices", method: "POST", json: [
+            "token": token,
+            "platform": "apns",
+            "environment": environment,
+            "identity": identity,
+        ])
+    }
+
+    /// Stop waking this device — on sign-out, so a phone handed on does not ring for somebody
+    /// else's mail.
+    func unregisterDevice(token: String) async throws {
+        _ = try await sendRaw("/v1/devices/\(token)", method: "DELETE")
+    }
+
     func openThread(identity: String, peer: String, title: String) async throws -> String {
         try await send("/v1/threads", method: "POST", json: ["peer": peer, "title": title, "identity": identity], as: OpenedThread.self).threadId
     }

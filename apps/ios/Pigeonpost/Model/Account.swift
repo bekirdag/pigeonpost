@@ -106,7 +106,15 @@ final class Account {
             ?? all.first
     }
 
+    /// Set by the app so signing out also stops this device being woken. A back-reference rather
+    /// than a dependency in the initializer: push needs the account to register, and the account
+    /// needs push only for this one moment.
+    weak var push: PushService?
+
     func signOut() {
+        if let push {
+            Task { await push.unregister() }
+        }
         mailboxes = []
         me = nil
         load = .idle
