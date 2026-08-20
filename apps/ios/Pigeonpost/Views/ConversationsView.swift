@@ -54,6 +54,7 @@ struct ConversationsView: View {
             // re-register: the token is registered against the mailbox being read, which the
             // identity picker can change.
             push.clearBadge()
+            await push.refreshRegistrationIfAuthorized()
             await push.register()
             await inbox.loadAll()
             await inbox.live()

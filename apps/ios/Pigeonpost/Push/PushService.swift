@@ -69,6 +69,23 @@ final class PushService: NSObject {
         UNUserNotificationCenter.current().delegate = self
     }
 
+    /// Ask for a token when permission already exists, without ever asking for permission.
+    ///
+    /// Called at launch. Permission can arrive from somewhere this app never sees — Settings, a
+    /// restore, a reinstall that kept the grant — and until `registerForRemoteNotifications` is
+    /// called there is no token to give the postbox. Waiting for a conversation to be opened before
+    /// asking the system for one means somebody can allow notifications, sit on the list, and never
+    /// be woken.
+    func refreshRegistrationIfAuthorized() async {
+        let settings = await UNUserNotificationCenter.current().notificationSettings()
+        switch settings.authorizationStatus {
+        case .authorized, .provisional, .ephemeral:
+            UIApplication.shared.registerForRemoteNotifications()
+        default:
+            break
+        }
+    }
+
     /// Ask, if this device has never been asked, and register either way when already granted.
     ///
     /// Called when a conversation is opened: by then the person has seen what the app is for, which
