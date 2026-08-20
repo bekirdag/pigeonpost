@@ -192,7 +192,28 @@ The project uses an Xcode 16 file-system-synchronized group: a new `.swift` file
 `PBXFileSystemSynchronizedBuildFileExceptionSet` — if you remove that exception the build fails with
 "Multiple commands produce Info.plist".
 
-## Push notifications — not yet, but two things to set up now
+## Push notifications — built and shipped in 1.0 (4), inert until a key exists
+
+The capability is on the App ID, the entitlement is in the target, the app registers its token and
+opens the right conversation when a notification is tapped, and the postbox (0.6.2, live) has the
+device registry and the APNs sender.
+
+**One thing is missing and only a human can make it:** the APNs auth key. Apple Developer →
+Certificates, Identifiers & Profiles → **Keys** → **+** → enable **Apple Push Notifications service
+(APNs)** → download the `.p8` once. Then on the postbox host, put the file at
+`/opt/pigeonpost-postbox/apns.p8` (chmod 600, owned by uid 65532) and add to `postbox.env`:
+
+```
+PIGEONPOST_APNS_KEY_PATH=/data/apns.p8
+PIGEONPOST_APNS_KEY_ID=<the key's 10-character id>
+PIGEONPOST_APNS_TEAM_ID=<the team id>
+PIGEONPOST_APNS_TOPIC=dev.pigeonpost.inbox
+```
+
+then recreate the container. Phones already registered start being woken immediately — no app
+update. Until then the postbox sends nothing and logs nothing about it.
+
+## The old note, kept because the second half still applies
 
 The server side does not exist: the postbox has no device-token registry and no APNs sender. Adding
 the Push Notifications capability before it does gets you an app that asks for permission and then
