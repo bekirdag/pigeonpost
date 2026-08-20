@@ -52,20 +52,26 @@ jobs:
       # Pick the newest Xcode on the image and refuse to continue on one that cannot produce an
       # uploadable build. Failing here, with Apple's own words, is far cheaper than failing after a
       # full archive and an upload attempt — which is exactly how this was discovered.
+      #
+      # Compare full versions, not majors. Comparing majors made every 26.x tie, so the loop kept
+      # whichever the glob listed first — 26.0.1, whose SDK is older than every simulator runtime
+      # installed beside it, which is a combination `actool` refuses outright.
       - name: Select an Xcode that can build for the store
         shell: bash
         run: |
           set -euo pipefail
           best=""
-          best_version=0
+          best_version=""
           for app in /Applications/Xcode*.app; do
             [ -d "$app" ] || continue
             version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
-              "$app/Contents/Info.plist" 2>/dev/null || echo 0)
-            major=${version%%.*}
-            if [ "${major:-0}" -gt "$best_version" ]; then
+              "$app/Contents/Info.plist" 2>/dev/null || echo "")
+            [ -n "$version" ] || continue
+            echo "found $app — $version"
+            if [ -z "$best_version" ] ||
+               [ "$(printf '%s\n%s\n' "$version" "$best_version" | sort -V | tail -1)" = "$version" ]; then
               best="$app"
-              best_version=$major
+              best_version="$version"
             fi
           done
           if [ -z "$best" ]; then
@@ -81,6 +87,24 @@ jobs:
             exit 1
           fi
           xcodebuild -version
+
+      # `actool` resolves a simulator runtime even when compiling for a device, and refuses when the
+      # runtimes installed are all newer than the SDK it was given — "No simulator runtime version
+      # from [...] available to use with iphonesimulator SDK version [...]". Pinning the newest
+      # installed runtime to this SDK is the supported answer, and it is a no-op when they already
+      # agree.
+      - name: Reconcile the simulator runtime with the SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_build=$(xcodebuild -version -sdk iphonesimulator ProductBuildVersion 2>/dev/null || true)
+          runtime_build=$(xcrun simctl list runtimes --json | python3 -c "import json,sys; rs=[r for r in json.load(sys.stdin)['runtimes'] if r.get('platform')=='iOS' and r.get('isAvailable')]; rs.sort(key=lambda r: [int(n) for n in r['version'].split('.') if n.isdigit()]); print(rs[-1]['buildversion'] if rs else '')")
+          echo "simulator SDK build: ${sdk_build:-none}, newest iOS runtime: ${runtime_build:-none}"
+          if [ -n "$sdk_build" ] && [ -n "$runtime_build" ]; then
+            xcrun simctl runtime match set "$sdk_build" "$runtime_build" || \
+              echo "::warning::Could not pin runtime $runtime_build to SDK $sdk_build; continuing."
+            xcrun simctl runtime match list || true
+          fi
 
       # The thread model, which is what a phone and the browser have to agree on. It needs nothing
       # but swiftc, so there is no reason for an upload to be the first thing that runs it.
