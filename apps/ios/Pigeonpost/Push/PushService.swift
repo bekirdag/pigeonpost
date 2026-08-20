@@ -30,15 +30,39 @@ final class PushService: NSObject {
     private var deviceToken: String?
     private weak var account: Account?
 
-    /// Which Apple minted the token. A build from Xcode talks to the sandbox; TestFlight and the
-    /// App Store talk to production, and a token from one is meaningless to the other.
-    static var environment: String {
-        #if DEBUG
-        return "sandbox"
-        #else
-        return "production"
-        #endif
-    }
+    /// Which Apple minted the token, read from the build's own provisioning profile.
+    ///
+    /// A token belongs to exactly one APNs environment and is meaningless to the other, so getting
+    /// this wrong is a push that never arrives and never explains itself. `#if DEBUG` looks like the
+    /// answer and is a guess about what Xcode did at export time: the archive is signed
+    /// `aps-environment: development` and the App Store export is supposed to rewrite it to
+    /// `production`. The entitlement embedded in the profile is not a guess.
+    ///
+    /// No profile means the simulator, which cannot register for remote notifications anyway.
+    static let environment: String = {
+        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+              let data = try? Data(contentsOf: url),
+              // The profile is CMS-signed with a plain plist inside it. Nothing here needs the
+              // signature — the entitlement is the app's own, and it is being read for a hint about
+              // which host to name, not for a security decision.
+              let text = String(data: data, encoding: .isoLatin1),
+              let start = text.range(of: "<?xml"),
+              let end = text.range(of: "</plist>")
+        else {
+            #if DEBUG
+            return "sandbox"
+            #else
+            return "production"
+            #endif
+        }
+        let plist = String(text[start.lowerBound..<end.upperBound])
+        guard let parsed = try? PropertyListSerialization.propertyList(
+                  from: Data(plist.utf8), format: nil) as? [String: Any],
+              let entitlements = parsed["Entitlements"] as? [String: Any],
+              let aps = entitlements["aps-environment"] as? String
+        else { return "production" }
+        return aps == "development" ? "sandbox" : "production"
+    }()
 
     func attach(to account: Account) {
         self.account = account
