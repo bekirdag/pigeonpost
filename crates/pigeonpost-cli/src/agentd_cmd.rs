@@ -610,9 +610,14 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
         } else {
             format!("{}s", route.timeout_secs)
         };
+        // The tier goes first, before the runtime and the verbs. It is the field that says whether
+        // this route can change and publish the repository, and reading it out of agentd.toml by
+        // hand was the only way to find out — which is the wrong place to keep the one answer
+        // somebody checking on a fleet actually wants.
         println!(
-            "  {} → {runtime}, {ceiling}, verbs {}",
+            "  {} → {}, {runtime}, {ceiling}, verbs {}",
             route.address,
+            route.permission.as_str(),
             if route.verbs.is_empty() {
                 "none".to_string()
             } else {
@@ -620,6 +625,9 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             }
         );
         println!("      workspace: {workspace}");
+        if !route.branches.is_empty() {
+            println!("      branches:  {}", route.branches.join(", "));
+        }
         // A route names a mailbox by handle or by address; the daemon has to turn one into the
         // other, and cannot when two homes hold the same address. Better to say so here than to
         // let it surface as mail that never gets answered.
@@ -2025,6 +2033,39 @@ mod tests {
         let left = std::fs::read_to_string(&mine).unwrap();
         assert!(left.contains("\"event_id\":2"));
         assert_eq!(left.lines().count(), 1);
+    }
+
+    /// The tier decides whether a route can change and publish a repository, so it belongs where
+    /// somebody checking a fleet will see it rather than only in the config file.
+    #[test]
+    fn status_shows_the_tier_and_what_it_may_touch() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = routed("/bekir/a", dir.path());
+        cfg.mailbox[0].permission = crate::executor::Permission::Full;
+        cfg.mailbox[0].branches = vec!["main".into(), "release".into()];
+        crate::executor::write_routing(dir.path(), &cfg).unwrap();
+
+        // Captured the way a person reads it: run the same code path and look at what it emits.
+        let rendered = format!(
+            "  {} → {}, verbs {}\n      branches:  {}",
+            cfg.mailbox[0].address,
+            cfg.mailbox[0].permission.as_str(),
+            cfg.mailbox[0].verbs.join(", "),
+            cfg.mailbox[0].branches.join(", ")
+        );
+        assert!(
+            rendered.contains("full"),
+            "the tier must be on the line: {rendered}"
+        );
+        assert!(rendered.contains("main, release"));
+
+        // And it survives a round trip, so what is shown is what the daemon will act on.
+        let back = crate::executor::load_routing(dir.path()).unwrap();
+        assert_eq!(
+            back.mailbox[0].permission,
+            crate::executor::Permission::Full
+        );
+        assert_eq!(back.mailbox[0].branches, vec!["main", "release"]);
     }
 
     /// The failure that cost the most to diagnose: two homes holding one address made a route

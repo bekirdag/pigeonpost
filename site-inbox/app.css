@@ -16,6 +16,10 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
+  /* The layer over the chat doodle. Alpha is its strength: 0.94 hid it entirely, 0.80 reads as a
+     faint pattern you notice only if you look for it. */
+  --doodle-veil: rgba(240, 244, 249, 0.80);
+
   --list-w: 360px;
   --subs-w: 260px;
   --head-h: 60px;
@@ -137,6 +141,16 @@ button { font: inherit; color: inherit; }
 .subs-who { min-width: 0; flex: 1; display: flex; flex-direction: column; }
 .subs-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .subs-sub { font-size: 12px; color: var(--muted); }
+
+/* The one control in this pane, so it carries a surface of its own rather than only appearing on
+   hover — a `+` that is invisible until you happen to touch it is the button people cannot find. */
+#subs-new {
+  background: #f7f7f7;
+  border-color: var(--rule);
+  color: var(--ink);
+}
+#subs-new:hover { background: #eceff3; border-color: #c9cfd8; }
+#subs-new:active { background: #e2e6ec; }
 
 .subs { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; min-height: 0; }
 
@@ -419,15 +433,16 @@ button { font: inherit; color: inherit; }
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   padding: 18px 0 8px;
-  /* A tiled doodle behind the conversation, washed almost out by a flat layer of the page's own
-     background colour laid over it. The wash is how the opacity is set: a background image has no
-     opacity of its own, and putting the pattern on a pseudo-element instead would only cover the
-     visible box of a scroller rather than the whole conversation.
-     Kept this faint deliberately — the bubbles and their text are what has to be readable, and a
-     pattern you notice while reading is a pattern that is too strong. */
+  /* A tiled doodle behind the conversation. The artwork is near-black strokes on transparency, so
+     what sets its strength is the flat layer of colour laid over it: a background image has no
+     opacity of its own, and a pseudo-element would only cover a scroller's visible box rather than
+     the whole conversation.
+     `--doodle-veil` is that layer, and its alpha is the one number worth touching. Lower shows
+     more of the pattern; higher fades it towards the plain background. Slightly blue-grey rather
+     than the flat page colour, so the strokes read as ink on paper instead of dirt on white. */
   background-color: var(--wash);
   background-image:
-    linear-gradient(rgba(247, 249, 251, 0.94), rgba(247, 249, 251, 0.94)),
+    linear-gradient(var(--doodle-veil), var(--doodle-veil)),
     url("doodle_bg.png");
   background-repeat: repeat;
   background-size: auto, 300px 300px;

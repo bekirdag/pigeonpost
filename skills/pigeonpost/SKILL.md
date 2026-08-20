@@ -230,10 +230,14 @@ Check the wiring before trusting it — `agentd status` lists every route, marks
 parse or a workspace that is not there, and says where it will find each runtime:
 
 ```
-  /bekir/bdya → claude, 600s, verbs report_status
+  /bekir/bdya → full, claude, 600s, verbs report_status, deploy
       workspace: /home/wodo/apps/bdya
+      branches:  main
   runtime claude: /home/wodo/.local/bin/claude
 ```
+
+The tier reads first, because it is the field that says whether this route can change and publish
+the repository — checking a fleet, that is the answer you want before any of the others.
 
 ### What an answer may do
 
