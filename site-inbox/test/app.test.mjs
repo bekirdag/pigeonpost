@@ -392,12 +392,14 @@ check("with the verb granted", put.body.allowed_verbs.includes("run_tests"), tru
 check("never-auto verbs cannot be granted", [...$("contact-verbs").querySelectorAll("input:disabled")].length > 0, true);
 
 console.log("\n— threads within a peer —");
-// The stranger has one conversation, which is the common case: the middle pane must stay away
-// entirely, so a mailbox that never opens a second thread looks exactly as it did before.
+// One conversation still shows the pane, because the button that opens a second thread lives in
+// it — hiding it until a second thread exists made that button unreachable.
 otherRows[0].click();
 await settle(80);
-check("one conversation shows no thread pane", $("pane-subs").hidden, true);
-check("and the layout stays two columns", $("app").getAttribute("data-subs"), "false");
+check("one conversation still shows the thread pane", $("pane-subs").hidden, false);
+check("so the button to open another is reachable", $("subs-new").offsetParent !== undefined, true);
+check("and the layout makes room", $("app").getAttribute("data-subs"), "true");
+check("with the default thread listed", [...$("subs").querySelectorAll(".sub-row")].length, 1);
 
 // The fleet agent has two: the default, and one opened with nothing said in it yet.
 otherRows[1].click();
@@ -434,9 +436,23 @@ check("the send names its thread", threadedSend && threadedSend.body.thread_id, 
 
 console.log("\n— opening a thread —");
 const beforeNew = calls.length;
-window.prompt = () => "release notes";
 $("subs-new").click();
+await settle(60);
+check("the dialog opens", $("thread-sheet").hidden, false);
+
+// An empty name is refused in the dialog, not as a toast somewhere else, and opens nothing.
+const beforeEmpty = calls.length;
+$("thread-title-input").value = "   ";
+$("thread-create").click();
+await settle(60);
+check("an unnamed thread is refused", $("thread-error").hidden, false);
+check("and nothing was created", calls.slice(beforeEmpty).some((c) => c.path === "/v1/threads" && c.method === "POST"), false);
+check("the dialog stays open to fix it", $("thread-sheet").hidden, false);
+
+$("thread-title-input").value = "release notes";
+$("thread-create").click();
 await settle(120);
+check("the dialog closes on success", $("thread-sheet").hidden, true);
 const opened = calls.slice(beforeNew).find((c) => c.path === "/v1/threads" && c.method === "POST");
 check("the thread was opened on the server", Boolean(opened), true);
 check("with the title given", opened && opened.body.title, "release notes");
@@ -445,12 +461,21 @@ check("and it is listed", [...$("subs").querySelectorAll(".sub-title")].some((el
 // Named and selected in one step: opening a thread and then having to find it would be two.
 const selected = [...$("subs").querySelectorAll(".sub-row")].find((r) => r.getAttribute("aria-current") === "true");
 check("and selected", text(selected.querySelector(".sub-title")), "release notes");
-// A cancelled prompt must not open anything.
+// Cancelling must not open anything.
 const beforeCancel = calls.length;
-window.prompt = () => null;
 $("subs-new").click();
+await settle(60);
+$("thread-cancel").click();
 await settle(80);
+check("cancelling closes the dialog", $("thread-sheet").hidden, true);
 check("cancelling opens nothing", calls.slice(beforeCancel).some((c) => c.path === "/v1/threads" && c.method === "POST"), false);
+// And it is a real dialog: Escape closes it, which a window.prompt could never offer.
+$("subs-new").click();
+await settle(60);
+check("reopened for the escape check", $("thread-sheet").hidden, false);
+window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+await settle(60);
+check("escape closes it", $("thread-sheet").hidden, true);
 
 console.log("\n— the phone walks out one screen at a time —");
 const subsCss = readFileSync(`${APP}/app.css`, "utf8");

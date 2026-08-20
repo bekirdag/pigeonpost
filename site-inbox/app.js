@@ -1012,11 +1012,14 @@
 
   const subthreadName = (t) => t.title || "Default thread";
 
-  // Whether the middle pane has anything to say. One conversation is the common case and must look
-  // exactly as it did before threads existed, so the pane stays away entirely.
+  // Shown whenever a peer is open, including when they have only the default thread.
+  //
+  // It used to appear only at two threads or more, on the reasoning that one conversation should
+  // look exactly as it did before threads existed. That was a dead end: the button that opens a
+  // second thread lives in this pane, so a peer with one thread could never get a second one. An
+  // action you can only reach once you have already done it is not an action.
   function subsVisible() {
-    if (!state.openPeer) return false;
-    return subthreadsFor(state.openPeer).length > 1;
+    return Boolean(state.openPeer);
   }
 
   // The thread whose messages the content pane shows.
@@ -1060,11 +1063,32 @@
   }
 
   // Open a new conversation with this peer, named.
-  async function newSubthread() {
+  //
+  // A dialog rather than `window.prompt`: the prompt cannot be styled, cannot be dismissed by
+  // clicking away, and reads as the browser interrupting rather than the app asking.
+  function newSubthread() {
+    if (!state.openPeer) return;
+    const input = $("thread-title-input");
+    input.value = "";
+    $("thread-error").hidden = true;
+    openSheet("thread-sheet");
+    input.focus();
+  }
+
+  async function createSubthread() {
     const peer = state.openPeer;
+    const title = $("thread-title-input").value.trim();
     if (!peer) return;
-    const title = (window.prompt("Name this thread") || "").trim();
-    if (!title) return;
+    if (!title) {
+      // Said in the dialog rather than as a toast that appears somewhere else: the thing to fix
+      // is right here.
+      $("thread-error").textContent = "Give the thread a name.";
+      $("thread-error").hidden = false;
+      $("thread-title-input").focus();
+      return;
+    }
+    const button = $("thread-create");
+    button.disabled = true;
     try {
       const made = await api("/v1/threads", {
         method: "POST",
@@ -1074,10 +1098,15 @@
       // Selected straight away, and the pane it belongs in appears with it: opening a thread and
       // then having to find it in a list that just appeared is two steps for one intention.
       state.openThread = made.thread_id;
+      closeSheet("thread-sheet");
       render();
       if (!onPhone()) $("compose").focus({ preventScroll: true });
     } catch (e) {
-      toast(e instanceof ApiError ? e.message : "Could not open the thread.");
+      $("thread-error").textContent =
+        e instanceof ApiError ? e.message : "Could not open the thread.";
+      $("thread-error").hidden = false;
+    } finally {
+      button.disabled = false;
     }
   }
 
@@ -1089,7 +1118,10 @@
     // more than one, the phone stops at the list of them and waits to be told which; a wide screen
     // shows the list and the most recent at the same time, so nothing is a dead end.
     const subs = subthreadsFor(peer);
-    state.openThread = subs.length > 1 && onPhone() ? null : (subs[0] ? subs[0].id : null);
+    // A phone stops at the list only when there is a choice to make. With one thread there is
+    // nothing to choose, so it opens straight into it — the list is one step back if you want it,
+    // which is where the button for a second thread is.
+    state.openThread = subs.length > 1 && onPhone() ? null : subs[0] ? subs[0].id : null;
     // On a phone the thread covers the list, so the system back gesture has to close it rather than
     // leave the app. Push one entry the first time a thread opens; switching between threads
     // replaces it, so back is always one step out to the list.
@@ -1398,11 +1430,19 @@
 
   // Escape closes the topmost sheet, and a click on the backdrop does too. Both are what people
   // try first, and a dialog that ignores them reads as stuck.
+  // Most recently opened last, so Escape closes what is actually on top. A fixed list closes
+  // whichever happens to be first in it, which is only the topmost by luck.
+  const sheetStack = [];
   function openSheet(id) {
     $(id).hidden = false;
+    const at = sheetStack.indexOf(id);
+    if (at !== -1) sheetStack.splice(at, 1);
+    sheetStack.push(id);
   }
   function closeSheet(id) {
     $(id).hidden = true;
+    const at = sheetStack.indexOf(id);
+    if (at !== -1) sheetStack.splice(at, 1);
   }
   function wireSheet(id, onBackdrop) {
     const wrap = $(id);
@@ -1644,11 +1684,15 @@
 
     document.addEventListener("keydown", (e) => {
       if (e.key !== "Escape") return;
-      for (const id of ["contact-sheet", "new-sheet", "settings-sheet"]) {
+      for (let i = sheetStack.length - 1; i >= 0; i -= 1) {
+        const id = sheetStack[i];
         if (!$(id).hidden) {
           closeSheet(id);
           return;
         }
+        // A sheet hidden without going through closeSheet leaves a stale entry; drop it rather
+        // than letting it swallow the keystroke.
+        sheetStack.splice(i, 1);
       }
     });
 
@@ -1683,6 +1727,14 @@
     };
 
     $("subs-new").onclick = () => { newSubthread(); };
+    wireSheet("thread-sheet");
+    $("thread-close").onclick = () => closeSheet("thread-sheet");
+    $("thread-cancel").onclick = () => closeSheet("thread-sheet");
+    $("thread-create").onclick = () => { createSubthread(); };
+    // Enter is what people press in a one-field dialog.
+    $("thread-title-input").addEventListener("keydown", (e) => {
+      if (e.key === "Enter") { e.preventDefault(); createSubthread(); }
+    });
 
     $("peer-info-btn").onclick = () => {
       state.showInfo = !state.showInfo;

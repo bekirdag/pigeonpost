@@ -419,6 +419,19 @@ button { font: inherit; color: inherit; }
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
   padding: 18px 0 8px;
+  /* A tiled doodle behind the conversation, washed almost out by a flat layer of the page's own
+     background colour laid over it. The wash is how the opacity is set: a background image has no
+     opacity of its own, and putting the pattern on a pseudo-element instead would only cover the
+     visible box of a scroller rather than the whole conversation.
+     Kept this faint deliberately — the bubbles and their text are what has to be readable, and a
+     pattern you notice while reading is a pattern that is too strong. */
+  background-color: var(--wash);
+  background-image:
+    linear-gradient(rgba(247, 249, 251, 0.94), rgba(247, 249, 251, 0.94)),
+    url("doodle_bg.png");
+  background-repeat: repeat;
+  background-size: auto, 300px 300px;
+  background-attachment: local;
 }
 .thread-empty {
   height: 100%;
@@ -693,9 +706,9 @@ button { font: inherit; color: inherit; }
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   padding: 14px 12px 14px 18px; border-bottom: 1px solid var(--rule);
 }
-.sheet-head h2 { margin: 0; font-size: 15px; color: var(--ink); }
+.sheet-head h2 { margin: 0; font-size: 16px; font-weight: 650; color: var(--ink); }
 /* The one scroller in the dialog, so a long contact list never scrolls the page behind it. */
-.sheet-body { padding: 16px 18px; overflow-y: auto; min-height: 0; }
+.sheet-body { padding: 16px 18px; overflow-y: auto; min-height: 0; background: #fff; }
 .sheet-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   padding: 12px 14px; border-top: 1px solid var(--rule); background: var(--wash);
@@ -717,24 +730,82 @@ button { font: inherit; color: inherit; }
 .field-note code { font-family: var(--mono); font-size: 11.5px; }
 .sheet-error { margin: 6px 0 0; font-size: 12.5px; color: #b42318; }
 
-.verbs { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; margin: 0 0 14px; }
-.verbs label { display: flex; align-items: center; gap: 8px; font-size: 13px; margin: 4px 0; }
-.verbs input { margin: 0; }
-.verbs .never { color: var(--muted); }
+.verbs { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 13px; margin: 0 0 14px; }
+.verbs legend { padding: 0 4px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.verbs label {
+  display: flex; align-items: center; gap: 9px;
+  font-size: 13px; color: var(--ink);
+  padding: 6px 8px; margin: 2px -4px; border-radius: 7px;
+  font-family: var(--mono); font-size: 12.5px;
+}
+.verbs label:hover { background: var(--wash); }
+.verbs input { margin: 0; width: 15px; height: 15px; accent-color: var(--blue); }
+/* A verb nobody can grant should not look like one you have simply not ticked yet. */
+.verbs .never {
+  color: var(--muted);
+  font-style: normal;
+  background: repeating-linear-gradient(
+    135deg, transparent, transparent 6px, rgba(20, 24, 31, .025) 6px, rgba(20, 24, 31, .025) 12px);
+}
+.verbs .never:hover { background: repeating-linear-gradient(
+    135deg, transparent, transparent 6px, rgba(20, 24, 31, .025) 6px, rgba(20, 24, 31, .025) 12px); }
 
-.setting { margin: 0 0 26px; }
-.setting h3 { margin: 0 0 6px; font-size: 13.5px; color: var(--ink); }
-.size-row { display: flex; align-items: center; gap: 10px; margin: 10px 0; }
-.size-value { font-size: 12.5px; color: var(--muted); font-variant-numeric: tabular-nums; }
+/* Each setting is a card rather than a run of text. Grey-on-white headings with nothing between
+   them made the dialog read as one paragraph, so it was never obvious where one control ended and
+   the next began — or that some of the words were buttons. */
+.setting {
+  margin: 0 0 14px;
+  padding: 14px 15px;
+  border: 1px solid var(--rule);
+  border-radius: 10px;
+  background: var(--wash);
+}
+.setting:last-child { margin-bottom: 4px; }
+.setting h3 {
+  margin: 0 0 4px;
+  font-size: 14px;
+  font-weight: 650;
+  color: var(--ink);
+}
+/* Darker than `--muted`: explanatory text still has to be readable, and this sits on a tinted
+   card where the old grey lost most of its contrast. */
+.setting .field-note { margin: 0 0 10px; color: var(--body); }
+.setting .field-note:last-child { margin-bottom: 0; }
+
+.size-row {
+  display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
+}
+.size-value {
+  font-size: 13px; font-weight: 600; color: var(--ink);
+  font-variant-numeric: tabular-nums;
+  min-width: 52px; text-align: center;
+  padding: 6px 8px; border-radius: 8px;
+  background: #fff; border: 1px solid var(--rule);
+}
 
 .btn-primary, .btn-ghost, .btn-danger {
-  border-radius: 8px; padding: 8px 14px; font: inherit; font-size: 13px; cursor: pointer;
-  border: 1px solid transparent;
+  border-radius: 8px; padding: 9px 15px; font: inherit; font-size: 13px; font-weight: 550;
+  cursor: pointer; border: 1px solid transparent;
+  transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.btn-primary { background: var(--blue); color: #fff; }
-.btn-ghost { background: #fff; color: var(--body); border-color: var(--rule); }
-.btn-danger { background: #fff; color: #b42318; border-color: #f0c6c2; }
+.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.btn-primary:hover:not(:disabled) { background: #1d4fd8; border-color: #1d4fd8; }
+/* A visible surface and a real border. White on white with a hairline read as text, not a
+   control, which is why the dialog looked like it had fewer buttons than it has. */
+.btn-ghost {
+  background: #fff; color: var(--ink); border-color: #c9cfd8;
+  box-shadow: 0 1px 0 rgba(20, 24, 31, .04);
+}
+.btn-ghost:hover { background: #f2f5f9; border-color: #aab3bf; }
+.btn-ghost:active { background: #e8edf3; }
+.btn-danger { background: #fff; color: #b42318; border-color: #e6a9a3; }
+.btn-danger:hover { background: #fdf3f2; border-color: #d98b83; }
 .btn-primary:disabled { opacity: 0.55; cursor: default; }
+/* Keyboard users get the same visible edge everyone else gets on hover. */
+.btn-primary:focus-visible, .btn-ghost:focus-visible, .btn-danger:focus-visible,
+.icon-btn:focus-visible {
+  outline: 2px solid var(--blue); outline-offset: 2px;
+}
 
 .contact-list { list-style: none; margin: 0 0 12px; padding: 0; }
 .contact-list li {
