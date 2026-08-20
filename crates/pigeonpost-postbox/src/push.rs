@@ -214,6 +214,23 @@ impl Apns {
                 let dead = status.as_u16() == 410 || detail.contains("BadDeviceToken");
                 if dead {
                     tracing::info!(%status, "APNs token retired");
+                } else if detail.contains("BadEnvironmentKeyInToken") {
+                    // Reads like a generic refusal and is not: the key was created restricted to
+                    // one APNs environment and this device belongs to the other. It cost two
+                    // requests to Apple to learn that, so it is written down here.
+                    tracing::warn!(
+                        %status, environment = %device.environment,
+                        "APNs key is not valid for this environment — it was created Sandbox-only, \
+                         and a TestFlight or App Store build registers a production token. A key \
+                         scoped Sandbox & Production reaches both."
+                    );
+                } else if detail.contains("InvalidProviderToken") {
+                    tracing::warn!(
+                        %status,
+                        "APNs rejected the provider token — check PIGEONPOST_APNS_KEY_ID and \
+                         PIGEONPOST_APNS_TEAM_ID, and that the key is an APNs key rather than an \
+                         App Store Connect API key. Both download as AuthKey_*.p8."
+                    );
                 } else {
                     tracing::warn!(%status, detail = %detail, "APNs refused a notification");
                 }
