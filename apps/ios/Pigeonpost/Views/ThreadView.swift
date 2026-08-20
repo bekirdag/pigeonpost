@@ -44,15 +44,16 @@ struct ThreadView: View {
                 .padding(.vertical, 10)
             }
             .background { DoodleBackground() }
+            // Open on the newest message, which is what a thread is for. Doing this in `onAppear`
+            // was a guess at the timing — it runs before the scroll view has laid its content out,
+            // so a long conversation opened at the top often enough to be a complaint. This is the
+            // same intent stated as a property of the scroll view rather than as an event.
+            .defaultScrollAnchor(.bottom)
             .onChange(of: shown.last?.id) { _, id in
                 guard let id else { return }
                 withAnimation(.easeOut(duration: 0.2)) { scroller.scrollTo(id, anchor: .bottom) }
             }
-            .onAppear {
-                // Jump to the newest, the way a messenger does. Without animation: this is where the
-                // conversation starts, not somewhere it travelled to.
-                if let id = shown.last?.id { scroller.scrollTo(id, anchor: .bottom) }
-            }
+
         }
         // Always, even for a peer with one conversation. The strip is where a second subject is
         // started, so hiding it until a second subject exists means there is no way to make one —
@@ -95,6 +96,7 @@ struct ThreadView: View {
         }
         .onAppear {
             if subthread == nil { subthread = subthreads.first?.id }
+            if Fixtures.sheet == "peer" { showingInfo = true }
         }
     }
 

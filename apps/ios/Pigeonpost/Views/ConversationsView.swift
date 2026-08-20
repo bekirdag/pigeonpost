@@ -41,6 +41,12 @@ struct ConversationsView: View {
         // believe in.
         .task(id: TaskKey(mailbox: account.me?.address, phase: scenePhase)) {
             if let peer = Fixtures.openPeer, selection == nil { selection = peer }
+            switch Fixtures.sheet {
+            case "settings": showingSettings = true
+            case "new": showingNew = true
+            case "identities": showingIdentities = true
+            default: break
+            }
             guard !Fixtures.enabled else { return }
             guard scenePhase == .active, account.me != nil else { return }
             await inbox.loadAll()

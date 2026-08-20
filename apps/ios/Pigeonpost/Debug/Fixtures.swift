@@ -32,6 +32,16 @@ enum Fixtures {
             .map { String($0.dropFirst("-open=".count)) }
     }
 
+    /// `-sheet=settings` opens a sheet straight away, so the screens that need two taps to reach can
+    /// be looked at — and screenshotted — without any. `settings`, `new`, `identities`, or `peer`
+    /// (which needs `-open=` as well, since a sender panel is about somebody).
+    static var sheet: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-sheet=") }
+            .map { String($0.dropFirst("-sheet=".count)) }
+    }
+
     #if DEBUG
     @MainActor
     static func apply(session: Session, account: Account, inbox: Inbox) {

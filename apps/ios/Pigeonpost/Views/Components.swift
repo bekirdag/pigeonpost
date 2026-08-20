@@ -57,7 +57,7 @@ private struct Toast: ViewModifier {
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
-                    .background(Theme.ink.opacity(0.94), in: RoundedRectangle(cornerRadius: 10))
+                    .background(Theme.toastFill, in: RoundedRectangle(cornerRadius: 10))
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -89,14 +89,30 @@ extension View {
 /// slides away as a conversation is read; pinned to the element, it stays put underneath. The web
 /// app makes the same choice with `background-attachment: scroll` and says why.
 struct DoodleBackground: View {
+    @Environment(\.colorScheme) private var scheme
+
     var body: some View {
         Theme.wash
             .overlay {
                 Image(.doodle)
                     .resizable(resizingMode: .tile)
+                    // The artwork is near-black strokes on transparency, which is a pattern only on
+                    // paper. Inverted, the same strokes are the light-on-dark version of themselves
+                    // rather than a smudge nobody can see.
+                    .colorInvert(when: scheme == .dark)
             }
             .overlay(Theme.doodleVeil)
             .ignoresSafeArea()
             .accessibilityHidden(true)
+    }
+}
+
+
+extension View {
+    /// `colorInvert()` has no conditional form, and branching the whole view in a `ViewBuilder`
+    /// makes SwiftUI rebuild the tiled image on every appearance change.
+    @ViewBuilder
+    func colorInvert(when condition: Bool) -> some View {
+        if condition { colorInvert() } else { self }
     }
 }

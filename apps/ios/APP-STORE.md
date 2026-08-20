@@ -252,6 +252,23 @@ xcodebuild -exportArchive -archivePath build/Pigeonpost.xcarchive \
   -exportOptionsPlist ExportOptions.plist -exportPath build/export -allowProvisioningUpdates …
 ```
 
+## Shipped to TestFlight, 2026-08-20 18:08
+
+**1.0 (1) is on TestFlight**, in the `Pigeonpost Internal` group, `VALID`. Built on a GitHub macOS
+runner with Xcode 26.6 against `iphoneos26.5`, minimum iOS 17.0, uploaded by
+`.github/workflows/ios-testflight.yml` (run 32401268297).
+
+It cleared export compliance without anyone being asked, because `ITSAppUsesNonExemptEncryption` is
+declared in `Info.plist` — that is what that key buys.
+
+The first run of the workflow failed, and the reason is worth keeping: the Xcode picker compared
+major versions only, so every 26.x tied and it kept whichever the glob listed first — 26.0.1, whose
+SDK is older than every simulator runtime installed beside it. `actool` refuses that combination
+outright, and it is the same error this app hit on the first day, for the same reason. Fixed by
+comparing full versions with `sort -V`.
+
+Still ahead of a public release: the listing metadata, and the demo account for App Review.
+
 ## Uploading from CI — `.github/workflows/ios-testflight.yml`
 
 The upload runs on a GitHub macOS runner with Xcode 26, so the machine the agent daemon and the
