@@ -259,10 +259,17 @@ await settle(120);
 const sendCall = calls.find((c) => c.path === "/v1/send");
 check("send called", Boolean(sendCall), true);
 check("send addressed to the peer", sendCall && sendCall.body.to, "/bekir/agent1");
-check("send carries the body", sendCall && sendCall.body.body, "on it");
+// The composer asks for work by default now, so the body on the wire is a request envelope and
+// the typed words survive inside it.
+const sentEnvelope = JSON.parse(sendCall.body.body);
+check("send carries the words", sentEnvelope.note, "on it");
+check("send asks for something", sentEnvelope.verb, "make_change");
 check("send names the sending mailbox", sendCall && sendCall.body.from, "/k/cz6900v2h90vnwefj7g7ezvbh4");
-const mine = [...$("messages").querySelectorAll("li.mine .text")];
-check("outbound appears immediately", mine.some((el) => text(el) === "on it"), true);
+// It appears straight away, rendered as the request it is rather than as raw JSON — a sent
+// request is still a request.
+const mineReq = [...$("messages").querySelectorAll("li.mine .request .why")];
+check("outbound appears immediately", mineReq.some((el) => text(el) === "on it"), true);
+check("and reads as a request, not as JSON", [...$("messages").querySelectorAll("li.mine .verb")].some((el) => text(el) === "make_change"), true);
 // Nothing is written to the browser any more — the postbox keeps the sent copy.
 check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
 
@@ -390,6 +397,65 @@ const put = calls.filter((c) => c.path === "/v1/contacts" && c.method === "PUT")
 check("the contact was written", put.body.peer, "/bekir/newcomer");
 check("with the verb granted", put.body.allowed_verbs.includes("run_tests"), true);
 check("never-auto verbs cannot be granted", [...$("contact-verbs").querySelectorAll("input:disabled")].length > 0, true);
+
+console.log("\n— what a message asks for —");
+// The sender asks for the most; the recipient decides. A plain message that no agent will ever act
+// on is the wrong default for an app whose whole point is reaching agents.
+check("defaults to asking for work", $("compose-verb").value, "make_change");
+
+otherRows[1].click();
+await settle(80);
+const beforeAsk = calls.length;
+compose.value = "fix the failing pipeline";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+const asked = calls.slice(beforeAsk).find((c) => c.path === "/v1/send");
+const envelope = JSON.parse(asked.body.body);
+check("sends a request envelope", envelope.v, 1);
+check("with the default verb", envelope.verb, "make_change");
+check("the typed text becomes the task", envelope.args.task, "fix the failing pipeline");
+check("and survives as the note", envelope.note, "fix the failing pipeline");
+
+// A verb that carries its request in a different argument.
+$("compose-verb").value = "answer_question";
+const beforeQ = calls.length;
+compose.value = "is the build green?";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+const q = JSON.parse(calls.slice(beforeQ).find((c) => c.path === "/v1/send").body.body);
+check("a question goes in args.question", q.args.question, "is the build green?");
+
+// Prose is still possible, and is what talking to a person needs.
+$("compose-verb").value = "";
+const beforePlain = calls.length;
+compose.value = "morning";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+check("plain stays plain", calls.slice(beforePlain).find((c) => c.path === "/v1/send").body.body, "morning");
+
+// A push with nothing to push is refused here rather than held on arrival for a reason that
+// reads like a permissions problem.
+$("compose-verb").value = "deploy";
+$("compose-branch").value = "";
+const beforeNoBranch = calls.length;
+compose.value = "ship it";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+check("a deploy with no branch is not sent", calls.slice(beforeNoBranch).some((c) => c.path === "/v1/send"), false);
+
+$("compose-branch").value = "main";
+const beforeBranch = calls.length;
+compose.value = "ship it";
+compose.dispatchEvent(new window.Event("input"));
+$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
+await settle(120);
+const dep = JSON.parse(calls.slice(beforeBranch).find((c) => c.path === "/v1/send").body.body);
+check("a named branch is carried", dep.args.branch, "main");
+$("compose-verb").value = "make_change";
 
 console.log("\n— threads within a peer —");
 // One conversation still shows the pane, because the button that opens a second thread lives in

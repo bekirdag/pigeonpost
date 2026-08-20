@@ -21,13 +21,10 @@ struct ThreadView: View {
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
-    /// Hidden entirely while a peer has only one conversation, which is the common case and must
-    /// look exactly as it did before threads existed.
-    private var showsSubjects: Bool { subthreads.count > 1 }
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
-        guard showsSubjects, let subthread else { return conversation.messages }
+        guard let subthread else { return conversation.messages }
         return conversation.messages.filter { ($0.threadId ?? "") == subthread }
     }
 
@@ -57,9 +54,10 @@ struct ThreadView: View {
                 if let id = shown.last?.id { scroller.scrollTo(id, anchor: .bottom) }
             }
         }
-        .safeAreaInset(edge: .top, spacing: 0) {
-            if showsSubjects { subjects }
-        }
+        // Always, even for a peer with one conversation. The strip is where a second subject is
+        // started, so hiding it until a second subject exists means there is no way to make one —
+        // and the layout no longer changes shape underneath somebody the moment they do.
+        .safeAreaInset(edge: .top, spacing: 0) { subjects }
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .navigationTitle(conversation?.name ?? PeerFace.displayName(peer))
         .navigationBarTitleDisplayMode(.inline)
@@ -93,7 +91,7 @@ struct ThreadView: View {
             NewThreadSheet(peer: peer) { id in subthread = id }
         }
         .task(id: taskKey) {
-            await inbox.acknowledge(peer: peer, subthread: showsSubjects ? subthread : nil)
+            await inbox.acknowledge(peer: peer, subthread: subthread)
         }
         .onAppear {
             if subthread == nil { subthread = subthreads.first?.id }
@@ -108,7 +106,7 @@ struct ThreadView: View {
     private var subjects: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                ForEach(subthreads) { thread in
+                ForEach(subthreads.count > 1 ? subthreads : []) { thread in
                     Button {
                         subthread = thread.id
                     } label: {
@@ -131,13 +129,20 @@ struct ThreadView: View {
                     .buttonStyle(.plain)
                 }
                 Button { showingNewThread = true } label: {
-                    Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 7)
-                        .background(Theme.ground, in: Capsule())
-                        .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
-                        .foregroundStyle(Theme.body)
+                    HStack(spacing: 5) {
+                        Image(systemName: "plus")
+                            .font(.system(size: 12, weight: .semibold))
+                        // Named while it stands alone: a bare + above a conversation could mean
+                        // anything. Once there are subjects beside it, the chips say what it adds.
+                        if subthreads.count <= 1 {
+                            Text("New thread").font(.system(size: 13, weight: .medium))
+                        }
+                    }
+                    .padding(.horizontal, 11)
+                    .padding(.vertical, 7)
+                    .background(Theme.ground, in: Capsule())
+                    .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
+                    .foregroundStyle(Theme.body)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("New thread")

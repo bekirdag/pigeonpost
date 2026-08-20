@@ -81,7 +81,9 @@ struct PeerInfoSheet: View {
     let onOpenMailbox: (Mailbox) -> Void
 
     @Environment(Account.self) private var account
+    @Environment(Inbox.self) private var inbox
     @Environment(\.dismiss) private var dismiss
+    @State private var confirmingBlock = false
 
     private var lastIncoming: ThreadMessage? {
         conversation.messages.last { $0.kind == .incoming }
@@ -115,10 +117,33 @@ struct PeerInfoSheet: View {
                         .font(.system(size: 12.5))
                         .foregroundStyle(Theme.muted)
                 }
+
+                // Not offered for your own mailboxes: blocking your own agent is a way to lose mail
+                // by accident, and the way to stop one talking to you is to stop running it.
+                if !conversation.mine, !conversation.isBlocked {
+                    Section {
+                        Button("Block this sender", role: .destructive) { confirmingBlock = true }
+                    } footer: {
+                        Text("Their mail is refused from here on. Nothing already in this conversation is deleted, and they are not told.")
+                    }
+                }
             }
             .navigationTitle(conversation.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .confirmationDialog(
+                "Block \(conversation.name)?",
+                isPresented: $confirmingBlock,
+                titleVisibility: .visible
+            ) {
+                Button("Block", role: .destructive) {
+                    Task {
+                        await inbox.block(peer: conversation.peer)
+                        dismiss()
+                    }
+                }
+                Button("Cancel", role: .cancel) {}
+            }
         }
         .presentationDetents([.medium, .large])
     }

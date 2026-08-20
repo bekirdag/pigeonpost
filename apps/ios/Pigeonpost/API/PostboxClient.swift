@@ -106,6 +106,13 @@ struct PostboxClient {
         _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity])
     }
 
+    /// Report the sender of one message. Same shape as `ack`, and a real act: it is what tells the
+    /// postbox that an address is sending mail nobody asked for, and it counts against that
+    /// sender's standing.
+    func reportSpam(identity: String, messageId: String) async throws {
+        _ = try await sendRaw("/v1/report-spam", method: "POST", json: ["message_id": messageId, "identity": identity])
+    }
+
     func openThread(identity: String, peer: String, title: String) async throws -> String {
         try await send("/v1/threads", method: "POST", json: ["peer": peer, "title": title, "identity": identity], as: OpenedThread.self).threadId
     }

@@ -76,7 +76,7 @@ struct ConversationsView: View {
                     .listRowBackground(Theme.wash)
             }
             ForEach(inbox.visible) { conversation in
-                ConversationRow(conversation: conversation)
+                ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
                     .tag(conversation.peer)
                     .swipeActions(edge: .trailing) {
                         Button {
@@ -143,6 +143,10 @@ struct ConversationsView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
+    /// A selected row is filled with the tint, which is the navy this app is drawn in. Text that
+    /// stays dark on it is unreadable, and SwiftUI cannot invert it for us — it does that only for
+    /// text whose colour it chose, and every colour here is chosen deliberately.
+    var isSelected: Bool = false
 
     var body: some View {
         HStack(alignment: .top, spacing: 11) {
@@ -151,30 +155,31 @@ struct ConversationRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)
                         .font(.system(size: 15.5, weight: .semibold))
-                        .foregroundStyle(Theme.ink)
+                        .foregroundStyle(isSelected ? Color.white : Theme.ink)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
                             .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.muted)
+                            .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Theme.muted)
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(preview)
                         .font(.system(size: 13.5))
-                        .foregroundStyle(Theme.body)
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Theme.body)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }
                     if conversation.isBlocked { PillView(text: "blocked", kind: .blocked) }
                     if conversation.unread > 0 {
+                        // Navy on navy is a badge nobody can count. On a selected row the two swap.
                         Text("\(conversation.unread)")
                             .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(.white)
+                            .foregroundStyle(isSelected ? Theme.navy : Color.white)
                             .padding(.horizontal, 6)
                             .padding(.vertical, 2)
-                            .background(Theme.navy, in: Capsule())
+                            .background(isSelected ? Color.white : Theme.navy, in: Capsule())
                     }
                 }
             }

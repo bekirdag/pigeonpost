@@ -452,6 +452,27 @@ button { font: inherit; color: inherit; }
      and which would make one pattern drift across all three panes. */
   background-attachment: scroll;
 }
+/* The ask sits above the message, on its own row, so it is visible before you type rather than
+   discovered afterwards — a message that quietly became an instruction would be worse than one
+   that never reached an agent. */
+.ask {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; gap: 8px;
+  margin: 0 0 6px;
+}
+.ask-label { font-size: 12px; color: var(--muted); }
+.ask-verb { display: flex; align-items: center; gap: 6px; }
+.ask select {
+  font: inherit; font-size: 12.5px;
+  padding: 3px 6px; border-radius: 7px;
+  border: 1px solid var(--rule); background: #fff; color: var(--ink);
+}
+.ask-branch {
+  font: inherit; font-size: 12.5px; width: 130px;
+  padding: 3px 8px; border-radius: 7px;
+  border: 1px solid var(--rule); background: #fff; color: var(--ink);
+}
+
 .thread-empty {
   height: 100%;
   display: grid;

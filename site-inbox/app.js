@@ -845,7 +845,9 @@
     const bubble = document.createElement("div");
     bubble.className = "bubble";
 
-    const envelope = m.kind === "in" ? requestEnvelope(m.body) : null;
+    // Both directions. A request you sent is still a request, and showing it as raw JSON in your
+    // own thread would make the composer look like it had done something strange.
+    const envelope = requestEnvelope(m.body);
 
     if (envelope) {
       const req = document.createElement("div");
@@ -1164,6 +1166,31 @@
     }
   }
 
+  // Where the typed text goes for each verb. A verb that carries the request in an argument gets
+  // it there; the rest carry it as the note, so the person's own words survive either way and the
+  // agent always sees why it was asked.
+  const ASK_ARG = { make_change: "task", answer_question: "question" };
+  const ASK_NEEDS_BRANCH = ["git_push", "deploy"];
+
+  function composeBody(text) {
+    const verb = $("compose-verb").value;
+    // "just send a message" — prose, which no agent will act on. Still the right choice for
+    // talking to a person, or to an agent you do not want to set working.
+    if (!verb) return text;
+
+    const args = {};
+    const key = ASK_ARG[verb];
+    if (key) args[key] = text;
+    if (ASK_NEEDS_BRANCH.includes(verb)) {
+      const branch = $("compose-branch").value.trim();
+      // Sent without one it is refused on arrival; better to say so here than to have it held
+      // for a reason that reads like a permissions problem.
+      if (!branch) return { error: "Name the branch to " + verb.replace("_", " ") + "." };
+      args.branch = branch;
+    }
+    return JSON.stringify({ v: 1, verb, args, note: text });
+  }
+
   async function sendMessage(text) {
     const to = state.openPeer;
     // Whichever thread is on screen. Sending into the conversation you are reading is the only
@@ -1171,6 +1198,12 @@
     // answers.
     const showing = currentSubthread(to);
     const threadId = showing && showing.id ? showing.id : null;
+    const composed = composeBody(text);
+    if (composed && composed.error) {
+      toast(composed.error);
+      return;
+    }
+    text = composed;
     const record = Pending.add({
       local_id: "local_" + randomString(8),
       mailbox: state.me.address,
@@ -1727,6 +1760,11 @@
     };
 
     $("subs-new").onclick = () => { newSubthread(); };
+    const syncAsk = () => {
+      $("compose-branch").hidden = !ASK_NEEDS_BRANCH.includes($("compose-verb").value);
+    };
+    $("compose-verb").onchange = syncAsk;
+    syncAsk();
     wireSheet("thread-sheet");
     $("thread-close").onclick = () => closeSheet("thread-sheet");
     $("thread-cancel").onclick = () => closeSheet("thread-sheet");

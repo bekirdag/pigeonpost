@@ -255,6 +255,46 @@ final class Inbox {
         rebuild()
     }
 
+    /// Report one message to the postbox.
+    ///
+    /// Message-level on purpose: what is objectionable is a message, and the person reporting it is
+    /// looking at that message. Refusing the sender altogether is a separate, heavier decision and
+    /// lives on the sender panel as `block`.
+    func reportSpam(messageId: String) async {
+        guard let me else { return }
+        guard !Fixtures.enabled else {
+            toast = "Reported. Nothing left this device — this is the fixture mailbox."
+            return
+        }
+        do {
+            try await client.reportSpam(identity: me.address, messageId: messageId)
+            toast = "Reported. The postbox has been told."
+        } catch let error as APIError {
+            toast = error.errorDescription ?? "Could not report that message."
+        } catch {
+            toast = "Could not report that message."
+        }
+    }
+
+    /// Refuse a sender's mail from here on. Their existing messages stay — nothing is deleted — but
+    /// the postbox stops admitting new ones.
+    func block(peer: String) async {
+        let existing = ConversationBuilder.contact(for: peer, in: contacts)
+        do {
+            try await saveContact(
+                peer: peer,
+                alias: existing?.alias,
+                admission: "block",
+                // Blocked and auto are a contradiction the server would have to resolve on its own.
+                autonomy: "review",
+                allowedVerbs: []
+            )
+            toast = "Blocked. Their mail is refused from now on."
+        } catch {
+            toast = "Could not block that sender."
+        }
+    }
+
     func send(_ text: String, to peer: String, threadId: String?) async {
         guard let me else { return }
         let row = PendingMessage(
@@ -338,6 +378,7 @@ final class Inbox {
 
     func saveContact(peer: String, alias: String?, admission: String, autonomy: String, allowedVerbs: [String]) async throws {
         guard let me else { throw AuthError.sessionExpired }
+        guard !Fixtures.enabled else { return }
         try await client.putContact(
             identity: me.address,
             peer: peer,

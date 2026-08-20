@@ -118,8 +118,13 @@ Not yet: push (Phase 5, which is postbox work first), dark mode, VoiceOver passe
 **A peer's several subjects are a strip along the top of the thread, not a pane of their own.** The
 web app gives them a middle column, and on a phone it stops there and waits to be told which. A
 phone screen that is only ever a list of two or three names is a dead end; the strip is the same
-choice made without leaving the conversation. A peer with one subject shows no strip at all, exactly
-as before threads existed.
+choice made without leaving the conversation.
+
+The strip is there even when a peer has only one subject, showing just **+ New thread**. Hiding it
+until a second subject exists means there is no way to make one — the web app has the same gap, for
+the same reason: its "new thread" button lives in the pane that only appears once there are two.
+With one subject the chip carries no information and a row of one is not a choice, so only the
+button is drawn, and it is named while it stands alone.
 
 **Renewal has no timer.** The browser schedules one from the token's own `exp`. A phone sleeps
 through timers, so every call asks for a token and that is the only clock: one with less than a

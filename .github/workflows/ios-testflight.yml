@@ -1,0 +1,179 @@
+name: iOS TestFlight
+
+# Manual on purpose, unlike `release.yml`.
+#
+# A Rust release is an immutable tag event, so publishing one from a ref chosen in the UI would let
+# the tag, the binaries and the package diverge. A TestFlight build is the opposite shape: the same
+# commit is uploaded repeatedly with a new build number each time, and App Store Connect refuses a
+# build number it has already seen. So the build number is the input, and nothing here fires on its
+# own.
+#
+# This exists because Apple now refuses any upload built with an SDK older than iOS 26, which needs
+# Xcode 26, which needs macOS 15.6 or later. Rather than upgrade the machine the agent daemon and
+# the fleet run on, the upload happens here.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "CFBundleVersion. Must be higher than any build already uploaded."
+        required: true
+        type: string
+      upload:
+        description: "Upload to App Store Connect. Off means archive and export only."
+        required: true
+        default: true
+        type: boolean
+      runner:
+        description: "Runner image. Needs Xcode 26 or later."
+        required: false
+        default: macos-26
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # One upload at a time. Two runs racing would either collide on the build number or upload two
+  # packages that differ only by which finished last.
+  group: ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: archive and upload
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Pick the newest Xcode on the image and refuse to continue on one that cannot produce an
+      # uploadable build. Failing here, with Apple's own words, is far cheaper than failing after a
+      # full archive and an upload attempt — which is exactly how this was discovered.
+      - name: Select an Xcode that can build for the store
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""
+          best_version=0
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+              "$app/Contents/Info.plist" 2>/dev/null || echo 0)
+            major=${version%%.*}
+            if [ "${major:-0}" -gt "$best_version" ]; then
+              best="$app"
+              best_version=$major
+            fi
+          done
+          if [ -z "$best" ]; then
+            echo "::error::No Xcode found on this runner image."
+            exit 1
+          fi
+          echo "Using $best (Xcode $best_version)"
+          sudo xcode-select -s "$best/Contents/Developer"
+          sdk=$(xcodebuild -showsdks | sed -n 's/.*-sdk iphoneos\([0-9][0-9]*\).*/\1/p' | sort -n | tail -1)
+          echo "iOS SDK: $sdk"
+          if [ "${sdk:-0}" -lt 26 ]; then
+            echo "::error::This runner's newest iOS SDK is $sdk. App Store Connect refuses anything built with an SDK older than iOS 26, which ships with Xcode 26. Choose a runner image that has it."
+            exit 1
+          fi
+          xcodebuild -version
+
+      # The thread model, which is what a phone and the browser have to agree on. It needs nothing
+      # but swiftc, so there is no reason for an upload to be the first thing that runs it.
+      - name: Test the thread model
+        working-directory: apps/ios
+        run: ./Tests/run.sh
+
+      - name: Write the App Store Connect key
+        shell: bash
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::APPLE_API_PRIVATE_KEY is not set. See apps/ios/APP-STORE.md."
+            exit 1
+          fi
+          install -m 700 -d "$RUNNER_TEMP/keys"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/keys/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/keys/AuthKey.p8"
+          # Say whether it looks like a key without printing any of it.
+          head -1 "$RUNNER_TEMP/keys/AuthKey.p8" | grep -q "BEGIN PRIVATE KEY" \
+            || { echo "::error::The stored key does not start with a PEM header. Store the .p8 file's exact contents."; exit 1; }
+
+      - name: Archive
+        working-directory: apps/ios
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*) echo "::error::build_number must be a whole number; got '$BUILD_NUMBER'." ; exit 1 ;;
+          esac
+          xcodebuild \
+            -project Pigeonpost.xcodeproj \
+            -scheme Pigeonpost \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Pigeonpost.xcarchive" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID" \
+            archive
+
+      # What went in the box, read out of the box rather than out of the project file.
+      - name: Say what was built
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist="$RUNNER_TEMP/Pigeonpost.xcarchive/Products/Applications/Pigeonpost.app/Info.plist"
+          for key in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion MinimumOSVersion DTSDKName; do
+            printf '%s = %s\n' "$key" "$(plutil -extract "$key" raw -o - "$plist")"
+          done
+
+      - name: Export and upload
+        working-directory: apps/ios
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          set -euo pipefail
+          options="$RUNNER_TEMP/ExportOptions.plist"
+          cp ExportOptions.plist "$options"
+          if [ "$UPLOAD" != 'true' ]; then
+            # Same signing, same package, stopping short of App Store Connect.
+            plutil -replace destination -string export "$options"
+          fi
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Pigeonpost.xcarchive" \
+            -exportOptionsPlist "$options" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -allowProvisioningUpdates \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+
+      # The symbols are the only way to read a crash report from a build nobody has locally.
+      - name: Keep the symbols
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-ios-${{ inputs.build_number }}
+          path: |
+            ${{ runner.temp }}/export/*.ipa
+            ${{ runner.temp }}/Pigeonpost.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Shred the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

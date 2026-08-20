@@ -5,9 +5,13 @@
 //  in `autonomy`; this only ever shows that decision.
 
 import SwiftUI
+import UIKit
 
 struct MessageBubble: View {
     let message: ThreadMessage
+
+    @Environment(Inbox.self) private var inbox
+    @State private var confirmingReport = false
 
     private var isMine: Bool { message.kind == .outgoing }
 
@@ -38,6 +42,34 @@ struct MessageBubble: View {
             if !isMine { Spacer(minLength: 40) }
         }
         .padding(.vertical, 2)
+        .contextMenu {
+            Button {
+                UIPasteboard.general.string = message.body
+            } label: {
+                Label("Copy", systemImage: "doc.on.doc")
+            }
+            // Only inbound. Reporting your own message would report yourself, and the postbox would
+            // be right to wonder what it was being told.
+            if !isMine {
+                Button(role: .destructive) {
+                    confirmingReport = true
+                } label: {
+                    Label("Report spam", systemImage: "exclamationmark.bubble")
+                }
+            }
+        }
+        .confirmationDialog(
+            "Report this message as spam?",
+            isPresented: $confirmingReport,
+            titleVisibility: .visible
+        ) {
+            Button("Report spam", role: .destructive) {
+                Task { await inbox.reportSpam(messageId: message.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("The postbox is told which message and who sent it. It counts against that sender's standing. Nothing is deleted, and they are not told.")
+        }
     }
 
     private var meta: some View {
