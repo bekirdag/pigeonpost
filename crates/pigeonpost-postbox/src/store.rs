@@ -223,6 +223,27 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS devices_by_mailbox ON devices(mailbox);
 
+-- App Store subscriptions that bought a namespace.
+--
+-- Keyed on Apple's *original* transaction id, which is the identity of the subscription rather than
+-- of one billing period. That choice is the whole security property of this table: it is a primary
+-- key, so one purchase binds to exactly one account and one name for as long as it exists. Presented
+-- again by a second account it collides instead of granting, which is what stops one $8 purchase
+-- from naming a hundred fleets.
+--
+-- `environment` is recorded because a sandbox purchase and a paid one are indistinguishable once
+-- reduced to an expiry date, and only one of them is revenue.
+CREATE TABLE IF NOT EXISTS apple_subscriptions (
+    original_transaction_id TEXT PRIMARY KEY,
+    account_id              TEXT NOT NULL,
+    namespace               TEXT NOT NULL,
+    environment             TEXT NOT NULL,
+    expires_at              INTEGER NOT NULL,
+    created_at              INTEGER NOT NULL,
+    updated_at              INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS apple_subscriptions_by_account ON apple_subscriptions(account_id);
+
 -- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
 CREATE TABLE IF NOT EXISTS inbox_policy (
     address           TEXT PRIMARY KEY,
@@ -331,6 +352,22 @@ pub enum ProviderClaimRefusal {
     DifferentPerson,
     /// Already proved, by another Pigeonpost account.
     HeldByAnotherAccount,
+}
+
+/// How an App Store claim landed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AppleClaim {
+    /// New binding: this subscription now owns this namespace.
+    Granted,
+    /// The same account, subscription and name as before, with the expiry moved forward.
+    Renewed,
+    /// The subscription is real but already belongs to a different Pigeonpost account. Restoring a
+    /// purchase onto a second account is how one payment would otherwise become many namespaces.
+    SubscriptionBoundElsewhere,
+    /// This subscription already bought a different name, which it keeps.
+    AlreadyNamed(String),
+    /// Somebody else holds that namespace. A valid purchase does not take it from them.
+    NamespaceTaken,
 }
 
 /// One hosted identity and its sealed key material.
@@ -922,6 +959,120 @@ impl Store {
                 ],
             )?;
             Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Bind an App Store subscription to a namespace, or say why not.
+    ///
+    /// Every check runs inside one transaction because every one of them is a race worth winning:
+    /// two devices restoring the same purchase at once, or two accounts claiming one free name,
+    /// would each read a clear field if the read and the write were separate statements.
+    ///
+    /// Renewing is the ordinary case and is not a conflict — the same account presenting the same
+    /// subscription for the same name just moves `expires_at` forward.
+    pub async fn bind_apple_subscription(
+        &self,
+        original_transaction_id: String,
+        account_id: String,
+        namespace: String,
+        environment: String,
+        expires_at: i64,
+        now: u64,
+    ) -> Result<AppleClaim, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<AppleClaim, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+
+            let held: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT account_id, namespace FROM apple_subscriptions
+                      WHERE original_transaction_id = ?1",
+                    params![original_transaction_id],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+
+            if let Some((owner, held_namespace)) = &held {
+                if owner != &account_id {
+                    return Ok(AppleClaim::SubscriptionBoundElsewhere);
+                }
+                // One subscription, one name. Without this the same $8 could walk a fleet through
+                // every good name in turn, releasing each as it went.
+                if held_namespace != &namespace {
+                    return Ok(AppleClaim::AlreadyNamed(held_namespace.clone()));
+                }
+            }
+
+            // Somebody else's live namespace is never taken, even by a valid purchase. `namespaces`
+            // upserts on conflict, so without this check a paid claim would silently hijack it.
+            let occupant: Option<String> = tx
+                .query_row(
+                    "SELECT account_id FROM namespaces
+                      WHERE namespace = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
+                    params![namespace, now as i64],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if let Some(occupant) = occupant {
+                if occupant != account_id {
+                    return Ok(AppleClaim::NamespaceTaken);
+                }
+            }
+
+            tx.execute(
+                "INSERT INTO apple_subscriptions
+                     (original_transaction_id, account_id, namespace, environment,
+                      expires_at, created_at, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                 ON CONFLICT(original_transaction_id) DO UPDATE SET
+                     expires_at = ?5, environment = ?4, updated_at = ?6",
+                params![
+                    original_transaction_id,
+                    account_id,
+                    namespace,
+                    environment,
+                    expires_at,
+                    now as i64
+                ],
+            )?;
+            tx.execute(
+                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
+                 VALUES (?1, ?2, 'apple', ?3, ?4)
+                 ON CONFLICT(namespace) DO UPDATE SET
+                     account_id = ?2, source = 'apple', verified_at = ?3, expires_at = ?4",
+                params![namespace, account_id, now as i64, expires_at],
+            )?;
+            tx.commit()?;
+            Ok(if held.is_some() {
+                AppleClaim::Renewed
+            } else {
+                AppleClaim::Granted
+            })
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// What this account has already bought, so the app can show it instead of offering to sell it
+    /// again.
+    pub async fn apple_subscription_for(
+        &self,
+        account_id: String,
+    ) -> Result<Option<(String, i64)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<(String, i64)>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.query_row(
+                "SELECT namespace, expires_at FROM apple_subscriptions
+                  WHERE account_id = ?1 ORDER BY expires_at DESC LIMIT 1",
+                params![account_id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .optional()
+            .map_err(Into::into)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -2287,6 +2438,234 @@ mod wildcard_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// One purchase, one account, one name — and the ways round that, refused.
+    mod apple {
+        use super::*;
+
+        const TX: &str = "2000000900000001";
+        const FOREVER: i64 = 4_102_444_800; // 2100-01-01
+
+        fn store() -> Store {
+            Store::open(":memory:").unwrap()
+        }
+
+        #[tokio::test]
+        async fn a_purchase_grants_the_namespace() {
+            let s = store();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_a".into(),
+                    "alex".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    100,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::Granted);
+            assert_eq!(
+                s.namespace_owner("alex".into(), 200)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_a")
+            );
+        }
+
+        /// The renewal path. A subscription that renews every five minutes in sandbox would
+        /// otherwise look like a conflict four times an hour.
+        #[tokio::test]
+        async fn renewing_moves_the_expiry_and_is_not_a_conflict() {
+            let s = store();
+            s.bind_apple_subscription(
+                TX.into(),
+                "acct_a".into(),
+                "alex".into(),
+                "Sandbox".into(),
+                1_000,
+                100,
+            )
+            .await
+            .unwrap();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_a".into(),
+                    "alex".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    200,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::Renewed);
+            // The old expiry would have had the namespace lapse; the new one holds it.
+            assert_eq!(
+                s.namespace_owner("alex".into(), 5_000)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_a")
+            );
+        }
+
+        /// Restore the same purchase on a second account and it buys nothing. This is the one that
+        /// turns $8 into $8 rather than into unlimited namespaces.
+        #[tokio::test]
+        async fn one_purchase_cannot_be_restored_onto_a_second_account() {
+            let s = store();
+            s.bind_apple_subscription(
+                TX.into(),
+                "acct_a".into(),
+                "alex".into(),
+                "Sandbox".into(),
+                FOREVER,
+                100,
+            )
+            .await
+            .unwrap();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_b".into(),
+                    "blake".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    200,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::SubscriptionBoundElsewhere);
+            assert!(s
+                .namespace_owner("blake".into(), 300)
+                .await
+                .unwrap()
+                .is_none());
+        }
+
+        /// Otherwise one subscription could walk through every good name in turn, holding each only
+        /// long enough to release the last.
+        #[tokio::test]
+        async fn one_subscription_cannot_move_to_a_second_name() {
+            let s = store();
+            s.bind_apple_subscription(
+                TX.into(),
+                "acct_a".into(),
+                "alex".into(),
+                "Sandbox".into(),
+                FOREVER,
+                100,
+            )
+            .await
+            .unwrap();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_a".into(),
+                    "better".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    200,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::AlreadyNamed("alex".into()));
+            assert!(s
+                .namespace_owner("better".into(), 300)
+                .await
+                .unwrap()
+                .is_none());
+        }
+
+        /// `namespaces` upserts on conflict, so without an explicit occupancy check a valid
+        /// purchase would silently take a name somebody else already holds.
+        #[tokio::test]
+        async fn a_valid_purchase_does_not_take_an_occupied_namespace() {
+            let s = store();
+            s.set_namespace_owner("alex".into(), "acct_first".into(), "entitlement", 50, None)
+                .await
+                .unwrap();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_b".into(),
+                    "alex".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    100,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::NamespaceTaken);
+            assert_eq!(
+                s.namespace_owner("alex".into(), 200)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_first")
+            );
+        }
+
+        /// A name whose previous owner let it lapse is free again, and a new purchase may have it.
+        #[tokio::test]
+        async fn a_lapsed_namespace_can_be_bought_by_someone_else() {
+            let s = store();
+            s.set_namespace_owner(
+                "alex".into(),
+                "acct_first".into(),
+                "entitlement",
+                50,
+                Some(100),
+            )
+            .await
+            .unwrap();
+            let out = s
+                .bind_apple_subscription(
+                    TX.into(),
+                    "acct_b".into(),
+                    "alex".into(),
+                    "Sandbox".into(),
+                    FOREVER,
+                    500,
+                )
+                .await
+                .unwrap();
+            assert_eq!(out, AppleClaim::Granted);
+            assert_eq!(
+                s.namespace_owner("alex".into(), 600)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_b")
+            );
+        }
+
+        #[tokio::test]
+        async fn the_account_can_read_back_what_it_bought() {
+            let s = store();
+            assert!(s
+                .apple_subscription_for("acct_a".into())
+                .await
+                .unwrap()
+                .is_none());
+            s.bind_apple_subscription(
+                TX.into(),
+                "acct_a".into(),
+                "alex".into(),
+                "Sandbox".into(),
+                FOREVER,
+                100,
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                s.apple_subscription_for("acct_a".into()).await.unwrap(),
+                Some(("alex".to_string(), FOREVER))
+            );
+        }
+    }
 
     #[tokio::test]
     async fn mail_written_before_the_sent_copy_existed_still_reads() {

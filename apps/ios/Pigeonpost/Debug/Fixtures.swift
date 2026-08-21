@@ -42,6 +42,19 @@ enum Fixtures {
             .map { String($0.dropFirst("-sheet=".count)) }
     }
 
+    /// `-handle=sale` or `-handle=owned` puts the buy-a-handle section into a fixed state.
+    ///
+    /// Apple requires a screenshot of the purchase screen before the subscription can be reviewed,
+    /// and the purchase screen cannot be reached without a live product — which cannot exist until
+    /// the subscription is reviewed. This is the way out of that circle, and it is honest: the
+    /// section is the real one, with the real copy, showing what a real storefront would show.
+    static var handleState: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-handle=") }
+            .map { String($0.dropFirst("-handle=".count)) }
+    }
+
     #if DEBUG
     @MainActor
     static func apply(session: Session, account: Account, inbox: Inbox) {

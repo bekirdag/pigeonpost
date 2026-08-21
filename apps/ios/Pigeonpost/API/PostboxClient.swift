@@ -153,6 +153,27 @@ struct PostboxClient {
         _ = try await sendRaw("/v1/contacts", method: "PUT", json: ["peer": peer, "remove": true, "identity": identity])
     }
 
+    // ---- buying a handle -----------------------------------------------------------------------
+
+    /// What this account already owns, and which product sells one. The product id comes from the
+    /// postbox rather than from `Config`, so the identifier a receipt is checked against and the
+    /// identifier StoreKit is asked for cannot drift apart.
+    func handleOffer() async throws -> HandleOffer {
+        try await send("/v1/claims/apple", as: HandleOffer.self)
+    }
+
+    /// Hand Apple's transaction id to the postbox, which asks Apple what it means. Deliberately not
+    /// a receipt or an entitlement flag: this app is in no position to assert what was bought.
+    @discardableResult
+    func claimHandle(transactionId: String, namespace: String) async throws -> HandleOffer {
+        try await send(
+            "/v1/claims/apple",
+            method: "POST",
+            json: ["transaction_id": transactionId, "namespace": namespace],
+            as: HandleOffer.self
+        )
+    }
+
     // ---- the wire ------------------------------------------------------------------------------
 
     private func send<T: Decodable>(

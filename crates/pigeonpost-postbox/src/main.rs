@@ -51,6 +51,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
+mod appstore;
 mod github;
 mod mcp;
 mod oidc;
@@ -96,6 +97,9 @@ struct AppState {
     /// enough concurrent waiters that the wasted wakeups matter, that is the point to key it by
     /// recipient — not before.
     inbox_signal: Arc<tokio::sync::Notify>,
+    /// The App Store, when this deployment can verify purchases. `None` closes the claim endpoint
+    /// the same way an unconfigured namespace grant closes itself.
+    appstore: Option<Arc<appstore::AppStore>>,
     /// GitHub device login, when this postbox is configured for it. `None` closes the endpoints
     /// rather than failing per request, so an unconfigured deployment says so once and plainly.
     github: Option<Arc<github::Github>>,
@@ -344,6 +348,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         apns: push::Apns::from_env(),
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
+        appstore: appstore::AppStore::from_env(),
     })
 }
 
@@ -446,6 +451,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/threads", get(list_threads).post(open_thread))
         .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
         .route("/v1/claims/address", post(claim_address))
+        .route("/v1/claims/apple", post(claim_apple).get(apple_claim_state))
         .route("/v1/devices", post(register_device))
         .route("/v1/devices/{token}", delete(unregister_device))
         .route("/v1/policy", axum::routing::put(put_policy))
@@ -3756,6 +3762,14 @@ struct GrantNamespaceReq {
     expires_at: Option<u64>,
 }
 
+#[derive(serde::Deserialize)]
+struct ClaimAppleReq {
+    /// Apple's id for the purchase. A pointer, not evidence — see `claim_apple`.
+    transaction_id: String,
+    /// The name being bought, in any spelling; canonicalised before it is used.
+    namespace: String,
+}
+
 /// `PUT /v1/namespaces` — bind a purchased namespace to an account.
 ///
 /// Called by the billing/entitlement service, never by an end user: an account that could grant
@@ -3945,6 +3959,210 @@ async fn grant_namespace(
         }
         Err(e) => {
             tracing::error!(error = %e, "namespace grant failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `GET /v1/claims/apple` — what this account has already bought, and what selling looks like here.
+///
+/// The product id comes from the server rather than being compiled into the app. Two copies of a
+/// store identifier drift, and the copy that matters is the one the receipt is checked against.
+async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(appstore) = state.appstore.clone() else {
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let Some(token) = bearer(&headers) else {
+        return ApiError::unauthorized("this endpoint needs a member token").into_response();
+    };
+    let claims = match state.oidc.validate(token).await {
+        Ok(claims) => claims,
+        Err(_) => return ApiError::unauthorized("invalid member token").into_response(),
+    };
+    let account = match state
+        .store
+        .account_for_sub(
+            claims.sub.clone(),
+            format!("acct_{}", rand_hex(12)),
+            now_unix(),
+        )
+        .await
+    {
+        Ok(account) => account,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    let held = match state.store.apple_subscription_for(account).await {
+        Ok(held) => held,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    Json(json!({
+        "product_id": appstore.product_id(),
+        "namespace": held.as_ref().map(|(namespace, _)| format!("/{namespace}")),
+        "expires_at": held.as_ref().map(|(_, expires_at)| *expires_at),
+    }))
+    .into_response()
+}
+
+/// `POST /v1/claims/apple` — turn an App Store subscription into a namespace.
+///
+/// The body carries a transaction id and the name being bought. Neither is trusted: the id is a
+/// pointer that Apple resolves for us over an authenticated connection, and the name goes through
+/// the same canonicalisation, reserved-list and occupancy checks as every other route to a
+/// namespace. What the purchase buys is the *right* to mint under a name, not the name itself —
+/// that is why an occupied namespace refuses a perfectly valid purchase instead of taking it.
+async fn claim_apple(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<ClaimAppleReq>,
+) -> Response {
+    let Some(appstore) = state.appstore.clone() else {
+        // Indistinguishable from "no such route", like the namespace grant: a deployment that
+        // cannot verify a purchase should not look like one that will.
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+
+    let Some(token) = bearer(&headers) else {
+        return ApiError::unauthorized("this endpoint needs a member token").into_response();
+    };
+    if !token.starts_with("eyJ") {
+        return ApiError::bad(
+            "member_token_required",
+            "buying a namespace needs the account's own sign-in, not a capability token",
+        )
+        .into_response();
+    }
+    let claims = match state.oidc.validate(token).await {
+        Ok(claims) => claims,
+        Err(e) => {
+            tracing::debug!(error = %e, "apple claim: token validation failed");
+            return ApiError::unauthorized("invalid member token").into_response();
+        }
+    };
+
+    // Canonicalise before anything else looks at it, so "Alex", "/alex" and "alex" are one name and
+    // the reserved list cannot be walked past with different spelling.
+    let probe = format!("/{}/probe", req.namespace.trim_start_matches('/'));
+    let Ok(destination) = Destination::for_handle(&probe) else {
+        return ApiError::bad("invalid_namespace", "that name cannot be a handle").into_response();
+    };
+    let namespace = destination
+        .handle()
+        .and_then(|h| h.trim_start_matches('/').split('/').next())
+        .unwrap_or_default()
+        .to_string();
+    if namespace.is_empty() {
+        return ApiError::bad("invalid_namespace", "that name cannot be a handle").into_response();
+    }
+    // The reserved list guards paid names for the same reason it guards free ones: `support` and
+    // `admin` read as the operator whoever paid for them.
+    match state.reserved_names.as_ref() {
+        Some(reserved) if reserved.contains(&namespace) => {
+            return ApiError::new(
+                StatusCode::CONFLICT,
+                "name_reserved",
+                format!("{namespace} is reserved and cannot be bought"),
+            )
+            .into_response();
+        }
+        Some(_) => {}
+        None => {
+            return ApiError::server("reserved_names_unavailable").into_response();
+        }
+    }
+
+    let entitlement = match appstore.entitlement(&req.transaction_id).await {
+        Ok(entitlement) => entitlement,
+        Err(appstore::AppStoreError::NotFound) => {
+            return ApiError::bad("purchase_unknown", "Apple has no record of that purchase")
+                .into_response()
+        }
+        Err(appstore::AppStoreError::Expired) => {
+            return ApiError::new(
+                StatusCode::PAYMENT_REQUIRED,
+                "purchase_expired",
+                "that subscription has lapsed",
+            )
+            .into_response()
+        }
+        Err(appstore::AppStoreError::Revoked) => {
+            return ApiError::new(
+                StatusCode::PAYMENT_REQUIRED,
+                "purchase_refunded",
+                "that purchase was refunded",
+            )
+            .into_response()
+        }
+        Err(appstore::AppStoreError::NotOurs(why)) => {
+            return ApiError::bad("purchase_not_ours", &why).into_response()
+        }
+        Err(e) => {
+            // Ours to fix, so it is logged here and reported as a server fault rather than blamed
+            // on the person who just paid.
+            tracing::error!(error = %e, "apple claim: could not verify with the App Store");
+            return ApiError::server("appstore_unavailable").into_response();
+        }
+    };
+
+    let account = match state
+        .store
+        .account_for_sub(
+            claims.sub.clone(),
+            format!("acct_{}", rand_hex(12)),
+            now_unix(),
+        )
+        .await
+    {
+        Ok(account) => account,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+
+    match state
+        .store
+        .bind_apple_subscription(
+            entitlement.original_transaction_id.clone(),
+            account.clone(),
+            namespace.clone(),
+            entitlement.environment.clone(),
+            entitlement.expires_at,
+            now_unix(),
+        )
+        .await
+    {
+        Ok(store::AppleClaim::Granted) | Ok(store::AppleClaim::Renewed) => {
+            tracing::info!(
+                %namespace,
+                %account,
+                environment = %entitlement.environment,
+                expires_at = entitlement.expires_at,
+                "namespace bought through the App Store"
+            );
+            Json(json!({
+                "namespace": format!("/{namespace}"),
+                "expires_at": entitlement.expires_at,
+                "environment": entitlement.environment,
+            }))
+            .into_response()
+        }
+        Ok(store::AppleClaim::SubscriptionBoundElsewhere) => ApiError::new(
+            StatusCode::CONFLICT,
+            "purchase_already_used",
+            "that subscription already belongs to another Pigeonpost account",
+        )
+        .into_response(),
+        Ok(store::AppleClaim::AlreadyNamed(held)) => ApiError::new(
+            StatusCode::CONFLICT,
+            "purchase_already_named",
+            format!("that subscription already bought /{held}"),
+        )
+        .into_response(),
+        Ok(store::AppleClaim::NamespaceTaken) => ApiError::new(
+            StatusCode::CONFLICT,
+            "namespace_taken",
+            format!("/{namespace} is already someone else's"),
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "apple claim: store write failed");
             ApiError::server("store_error").into_response()
         }
     }
@@ -4164,6 +4382,7 @@ mod tests {
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             reserved_names: None,
+            appstore: None,
             github: None,
         }
     }
@@ -6395,6 +6614,7 @@ mod tests {
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             reserved_names: None,
+            appstore: None,
             github: None,
         };
         let _ = build_router(state);

@@ -140,6 +140,20 @@ struct OpenedThread: Decodable {
     let threadId: String
 }
 
+/// What the postbox will sell, and what this account already holds.
+///
+/// `namespace` is `nil` until something has been bought. Both the POST and the GET answer in this
+/// shape, so a fresh purchase and a restored one are read by the same code.
+struct HandleOffer: Decodable {
+    let productId: String?
+    let namespace: String?
+    let expiresAt: Int?
+
+    var owned: Bool { namespace != nil }
+
+    var renewsOn: Date? { expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+}
+
 /// An answer a mailbox's agent sent without anyone reading it first.
 ///
 /// These arrive as plain text with two machine-readable lines on the front. Shown verbatim they

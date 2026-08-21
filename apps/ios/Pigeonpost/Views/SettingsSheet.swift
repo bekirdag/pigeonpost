@@ -18,6 +18,8 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
+                BuyHandleSection()
+
                 Section {
                     Button {
                         inbox.viewingArchive = true
