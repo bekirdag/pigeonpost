@@ -35,8 +35,6 @@ jobs:
         with:
           persist-credentials: false
 
-      - run: pip install --quiet pyjwt cryptography requests
-
       - name: Report
         env:
           KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}

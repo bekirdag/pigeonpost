@@ -230,6 +230,23 @@ jobs:
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID"
 
+      # An upload is not a delivery. The build still has to finish processing and then be added to
+      # a beta group, and a group that does not take every build automatically — which is every
+      # group App Store Connect has already created, since the flag cannot be changed afterwards —
+      # means that last step is a human clicking through the web UI. Builds 6 and 17 were the two
+      # that got forgotten, and a build in no group looks, from the phone, exactly like an upload
+      # that never happened.
+      - name: Put it in front of the testers
+        if: inputs.upload
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          BUNDLE_ID: dev.pigeonpost.inbox
+          WAIT_FOR: ${{ inputs.build_number }}
+          FIX: "true"
+        run: python3 .github/scripts/testflight_status.py
+
       # The symbols are the only way to read a crash report from a build nobody has locally.
       - name: Keep the symbols
         if: always()
