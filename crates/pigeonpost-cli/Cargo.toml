@@ -24,14 +24,14 @@ path = "src/main.rs"
 # into a browser on another machine. Nayuki's encoder: no dependencies of its own, one algorithm,
 # and the alternative was writing Reed-Solomon by hand.
 qrcodegen = "1.8"
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.6.3" }
-pigeonpost-client = { path = "../pigeonpost-client", version = "0.6.3" }
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.6.3" }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.6.3" }
-pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.6.3" }
-pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.6.3" }
-pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.6.3" }
-pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.6.3" }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.0" }
+pigeonpost-client = { path = "../pigeonpost-client", version = "0.7.0" }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.0" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.0" }
+pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.7.0" }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.0" }
+pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.7.0" }
+pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.7.0" }
 axum = "0.8"
 ed25519-dalek.workspace = true
 fs2 = "0.4"
