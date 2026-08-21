@@ -139,10 +139,15 @@ struct PeerInfoSheet: View {
                     if conversation.mine { row("Mailbox", "yours — on this account") }
                 }
                 // The decisions, first — this panel is opened to change them, not to read an
-                // address. Your own mailboxes are not senders to be decided about: trust between
-                // them is whatever the account already says, and blocking your own agent is a way
-                // to lose mail by accident.
-                if !conversation.mine {
+                // address.
+                //
+                // Shown for your own mailboxes too. They were hidden there on the grounds that a
+                // mailbox on your own account is not a sender to be decided about, which is exactly
+                // backwards: your fleet is who writes to you, the postbox already grants them verbs
+                // through the namespace rule, and the agent you most need to set terms for is the
+                // one that can push and deploy. Hiding the controls did not make the decision
+                // simpler, it made it invisible.
+                Group {
                     Section {
                         Toggle("Known sender", isOn: knownBinding)
                         Toggle("Full permissions", isOn: fullBinding)
@@ -169,7 +174,9 @@ struct PeerInfoSheet: View {
                             Button("Block this sender", role: .destructive) { confirmingBlock = true }
                         }
                     } footer: {
-                        Text("Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking refuses it from here on. Neither is announced to them.")
+                        Text(conversation.mine
+                             ? "Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking one of your own agents refuses its mail from here on — the way to stop one talking to you is usually to stop running it."
+                             : "Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking refuses it from here on. Neither is announced to them.")
                     }
                 }
 
@@ -182,6 +189,7 @@ struct PeerInfoSheet: View {
                             .foregroundStyle(Theme.muted)
                     }
                 }
+
 
                 // What cannot be changed from here. Admission and autonomy were listed here once
                 // and are not any more: they are the toggles above, and printing a value twice
