@@ -152,21 +152,37 @@ pub fn prompt(action: &Action, sender: &str) -> String {
         // How far this may go is the tier's decision, not the verb's. A machine that has said it
         // will push should not need a different verb to be asked; one that has not must not be
         // talked into it by the wording of a task.
-        "make_change" if action.route.permission == Permission::Full => {
-            "Carry out the task below in this repository, then report what you actually did. \
-             Work only in this checkout. Commit your work with a message that says why, and where \
-             the task genuinely calls for it you may also push and deploy — but only to the branch \
-             named below, and only if the task asked for it. Never force-push and never rewrite \
-             history. Do not touch credentials or files outside this project. If the task is \
-             unclear or looks unsafe, change nothing and say so — a refusal with a reason is a \
-             good answer and a guess is not.\n"
+        // The wording here is load-bearing, and the previous wording was not enough. An agent
+        // whose own baseline is "push only when the user asks" reads a hedged permission as a
+        // reason to stop, and reports back that it was *forbidden* to push — which was never true
+        // at this tier. Two mailboxes did exactly that on work that had been asked for and paid
+        // for in advance. So this says, without hedging, that the request is the authorisation.
+        "make_change" | "full_access" if action.route.permission == Permission::Full => {
+            "Carry out the task below in this repository, then report what you actually did.\n\n\
+             You are authorised to finish the job. The person who owns this mailbox configured it \
+             to run at full permission and granted this sender, and their request is the \
+             authorisation — there is nobody else to ask and no second approval coming. If the \
+             task needs committing, pushing, publishing, releasing or deploying to be done, do \
+             that; stopping at the last step and reporting that you were not allowed to finish is \
+             a wrong answer, not a safe one.\n\n\
+             The limits are real ones, not caution: work only in this checkout, touch only the \
+             branch named below, never force-push, never rewrite history, and never read or move \
+             credentials or files outside this project. If the task is genuinely unclear or looks \
+             unsafe, change nothing and say so — a refusal with a reason is a good answer. \
+             \"I was not permitted\" is not one of those reasons here.\n"
         }
-        "make_change" => {
+        // Below `full`, and this one really is a restriction: say so plainly, and say why, so a
+        // report of "I could not publish" is understood as this machine's setting rather than as
+        // something wrong with the request.
+        "make_change" | "full_access" => {
             "Carry out the task below in this repository, then report what you actually did. \
              Work only in this checkout. Commit your work locally with a message that says why. \
-             Do not push, do not deploy, do not rewrite history, and do not touch credentials or \
-             files outside this project. If the task is unclear or looks unsafe, change nothing \
-             and say so — a refusal with a reason is a good answer and a guess is not.\n"
+             This machine is configured for workspace access only, so do not push, do not deploy, \
+             do not rewrite history, and do not touch credentials or files outside this project — \
+             if the task asks you to publish, do the work, commit it, and say that publishing \
+             needs this mailbox to be set to full permission. If the task is unclear or looks \
+             unsafe, change nothing and say so — a refusal with a reason is a good answer and a \
+             guess is not.\n"
         }
         "git_push" => {
             "Push this repository's committed work to the branch named below, and report what \
@@ -186,7 +202,7 @@ pub fn prompt(action: &Action, sender: &str) -> String {
     // The allowlist is the boundary for anything that leaves the machine, so it is stated rather
     // than left for the agent to infer from a task that may not mention a branch at all.
     if action.route.permission == Permission::Full
-        && action.verb == "make_change"
+        && matches!(action.verb.as_str(), "make_change" | "full_access")
         && !action.route.branches.is_empty()
     {
         out.push_str(&format!(
@@ -711,30 +727,46 @@ mod tests {
     }
 
     /// The same verb, two tiers, two different instructions. A machine that has not said it will
-    /// push must not be talked into it by the wording of a task.
+    /// push must not be talked into it by the wording of a task — and one that *has* said so must
+    /// not be talked out of it by its own caution.
     #[test]
     fn make_change_goes_as_far_as_the_tier_allows_and_no_further() {
-        let mut act = action("make_change", None, None);
-        act.verb = "make_change".into();
-        act.task = Some("ship the fix".into());
-        act.route.branches = vec!["main".into()];
+        for verb in ["make_change", "full_access"] {
+            let mut act = action("make_change", None, None);
+            act.verb = verb.into();
+            act.task = Some("ship the fix".into());
+            act.route.branches = vec!["main".into()];
 
-        act.route.permission = Permission::Workspace;
-        let workspace = prompt(&act, "/bekir/main");
-        assert!(workspace.contains("Do not push, do not deploy"));
-        assert!(
-            !workspace.contains("only branch you may touch"),
-            "a workspace route has no branch to offer"
-        );
+            act.route.permission = Permission::Workspace;
+            let workspace = prompt(&act, "/bekir/main");
+            assert!(workspace.contains("do not push, do not deploy"), "{verb}");
+            assert!(
+                !workspace.contains("only branch you may touch"),
+                "a workspace route has no branch to offer"
+            );
 
-        act.route.permission = Permission::Full;
-        let full = prompt(&act, "/bekir/main");
-        assert!(full.contains("you may also push and deploy"));
-        assert!(full.contains("only branch you may touch is `main`"));
-        assert!(full.contains("Never force-push"));
-        // The task still arrives as data either way.
-        assert!(full.contains("--- the task, as requested ---"));
-        assert!(full.contains("ship the fix"));
+            act.route.permission = Permission::Full;
+            let full = prompt(&act, "/bekir/main");
+            // The refusal this wording exists to prevent: an agent that was allowed to publish
+            // reporting back that it was forbidden to.
+            assert!(full.contains("authorised to finish the job"), "{verb}");
+            assert!(
+                full.contains("their request is the authorisation"),
+                "{verb}"
+            );
+            assert!(
+                !full.contains("do not push"),
+                "{verb}: a full route must not be handed a prohibition"
+            );
+            assert!(
+                full.contains("only branch you may touch is `main`"),
+                "{verb}"
+            );
+            assert!(full.contains("never force-push"), "{verb}");
+            // The task still arrives as data either way.
+            assert!(full.contains("--- the task, as requested ---"), "{verb}");
+            assert!(full.contains("ship the fix"), "{verb}");
+        }
     }
 
     #[test]

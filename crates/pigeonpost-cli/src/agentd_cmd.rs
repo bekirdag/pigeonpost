@@ -438,7 +438,13 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
                 action.route.daily_runs_per_sender
             ),
         );
-        let _ = crate::postbox_cmd::send_as(&credential, &sender_key, &body).await;
+        let _ = crate::postbox_cmd::send_as(
+            &credential,
+            &sender_key,
+            &body,
+            message["thread_id"].as_str(),
+        )
+        .await;
         return give_back(
             crate::executor::Refusal::DailyLimitReached.as_str(),
             Some(&sender_key),
@@ -457,6 +463,10 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         .or_else(|| message["from"].as_str())
         .unwrap_or(&event.sender)
         .to_string();
+
+    // Every reply below goes back into the thread the request arrived in. A refusal is an answer
+    // too, and one filed somewhere else is a refusal nobody sees.
+    let thread_id = message["thread_id"].as_str().map(str::to_string);
 
     log_line(
         home,
@@ -481,13 +491,16 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
                     failure.detail()
                 ),
             );
-            let _ = crate::postbox_cmd::send_as(&credential, &sender, &body).await;
+            let _ = crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref())
+                .await;
             return give_back(failure.as_str(), Some(&failure.detail()));
         }
     };
 
     let body = crate::runner::reply_body(&action.verb, &event.message_id, &run.text);
-    if let Err(e) = crate::postbox_cmd::send_as(&credential, &sender, &body).await {
+    if let Err(e) =
+        crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref()).await
+    {
         // The work was done and is only in the audit trail now, which is worth saying loudly: the
         // peer is still waiting and no retry will happen on its own.
         log_line(home, &format!("reply to {sender} failed: {e}"));

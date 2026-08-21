@@ -66,6 +66,14 @@ const VOCABULARY: &[(&str, Class)] = &[
     ("make_change", Class::Privileged),
     ("git_push", Class::Privileged),
     ("deploy", Class::Privileged),
+    // Everything the machine's own user could do for this task, publishing included. The verb a
+    // person's own client sends, because a person asking their own fleet to do something is not
+    // asking for a scoped subset of it — they are asking for the job to be finished.
+    //
+    // It is still not a bypass. The recipient's machine must name this verb on the route *and* run
+    // at `full`; the second key is unchanged. What it removes is the gap where a granted peer could
+    // make a change and then be unable to publish it, and had to be asked twice.
+    ("full_access", Class::Privileged),
     // -- denied ---------------------------------------------------------------------------
     // The categories that stay permanently out of reach: secrets, money, destruction, and
     // arbitrary execution. `run_shell` is denied even though the `full` tier already implies shell
@@ -442,7 +450,13 @@ mod tests {
         );
         assert_eq!(
             privileged(),
-            vec!["run_tests", "make_change", "git_push", "deploy"]
+            vec![
+                "run_tests",
+                "make_change",
+                "git_push",
+                "deploy",
+                "full_access"
+            ]
         );
         // Everything grantable is one or the other, and nothing is both.
         for v in grantable() {

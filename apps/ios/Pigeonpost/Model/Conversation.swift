@@ -44,6 +44,20 @@ struct ThreadMessage: Identifiable, Equatable {
     /// own thread would make the composer look like it had done something strange.
     var envelope: RequestEnvelope? { RequestEnvelope(body: body) }
     var autoReply: AutoReply? { kind == .incoming ? AutoReply(body: body) : nil }
+
+    /// What Copy puts on the pasteboard: the words, not the wrapper.
+    ///
+    /// A request envelope copied verbatim is JSON somebody has to unpick, and an auto-reply carries
+    /// two header lines nobody wants to paste anywhere. Both are shown to the reader as prose, so
+    /// prose is what copying should produce — the raw body is still one long-press away in the
+    /// context menu.
+    var copyText: String {
+        if let envelope, let task = envelope.args["task"] ?? envelope.args["question"] {
+            return task
+        }
+        if let autoReply { return autoReply.body }
+        return body
+    }
 }
 
 /// A message sent since the last poll, or one that failed outright.

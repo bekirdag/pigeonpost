@@ -13,6 +13,7 @@ struct MessageBubble: View {
     @Environment(Inbox.self) private var inbox
     @State private var confirmingReport = false
     @State private var confirmingDelete = false
+    @State private var copied = false
 
     private var isMine: Bool { message.kind == .outgoing }
 
@@ -34,11 +35,7 @@ struct MessageBubble: View {
                 } else if let reply = message.autoReply {
                     AutoReplyBody(reply: reply)
                 } else {
-                    Text(message.body)
-                        .font(.system(size: 14.5))
-                        .foregroundStyle(isMine ? Color.white : Theme.ink)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
+                    MarkdownText(raw: message.body, onDark: isMine)
                 }
                 meta
             }
@@ -105,6 +102,28 @@ struct MessageBubble: View {
 
     private var meta: some View {
         HStack(spacing: 6) {
+            // Copy sits at the start of the meta row, before the spacer, so it lands under the
+            // message it belongs to rather than drifting to the far edge of a wide bubble.
+            //
+            // Visible rather than only in the long-press menu: agent replies are the thing people
+            // most often want out of this app and into somewhere else, and an affordance nobody
+            // can see is one most people never find.
+            Button {
+                UIPasteboard.general.string = message.copyText
+                copied = true
+                Task {
+                    try? await Task.sleep(nanoseconds: 1_400_000_000)
+                    copied = false
+                }
+            } label: {
+                Image(systemName: copied ? "checkmark" : "doc.on.doc")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isMine ? Color.white.opacity(0.72) : Theme.muted)
+                    .frame(width: 22, height: 18)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(copied ? "Copied" : "Copy message")
             Spacer(minLength: 0)
             if message.status == .failed {
                 Text("not sent")
@@ -139,20 +158,28 @@ struct RequestCard: View {
     private var faint: Color { isMine ? .white.opacity(0.62) : Theme.muted }
     private var panel: Color { isMine ? .white.opacity(0.14) : Theme.wash }
 
+    /// Arguments worth showing beside the note. When the note repeats an argument verbatim — which
+    /// is what this app's own sends look like — the argument is the duplicate, and showing it turns
+    /// a typed sentence into a sentence plus a JSON field saying the same thing.
+    private var visibleArgs: [String: String] {
+        guard let note = envelope.note, !note.isEmpty else { return envelope.args }
+        return envelope.args.filter { $0.value != note }
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(envelope.verb)
-                .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
+            Text(envelope.title)
+                .font(.system(size: 14.5, weight: .semibold))
                 .foregroundStyle(primary)
 
-            if !envelope.args.isEmpty {
+            if !visibleArgs.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
-                    ForEach(envelope.args.keys.sorted(), id: \.self) { key in
+                    ForEach(visibleArgs.keys.sorted(), id: \.self) { key in
                         HStack(alignment: .top, spacing: 6) {
                             Text(key)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(faint)
-                            Text(envelope.args[key] ?? "")
+                            Text(visibleArgs[key] ?? "")
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(secondary)
                         }
@@ -203,11 +230,9 @@ struct AutoReplyBody: View {
             }
             .foregroundStyle(reply.failed ? Theme.Pill.blockedText : Theme.muted)
 
-            Text(reply.body)
-                .font(.system(size: 14.5))
-                .foregroundStyle(Theme.ink)
-                .textSelection(.enabled)
-                .fixedSize(horizontal: false, vertical: true)
+            // The one place markdown matters most: an agent's report is nearly always headings,
+            // bullets and fenced code, and as flat text it reads as a wall.
+            MarkdownText(raw: reply.body)
         }
     }
 

@@ -217,6 +217,42 @@ equal(PeerFace.toneIndex("/bekir/agent1"), 6, "/bekir/agent1 keeps the tone the 
 equal(PeerFace.toneIndex("/bekir/docdex"), 1, "/bekir/docdex too")
 equal(PeerFace.toneIndex("/k/eeee5555ffff6666gggg7777hh"), 6, "and a key address")
 
+print("\nmarkdown")
+// What agents actually send, and the shapes that must not be swallowed.
+equal(Markdown.blocks(of: "## Heading").first, .heading(level: 2, text: "Heading"),
+      "a hash and a space is a heading")
+equal(Markdown.blocks(of: "#nothashtag").first, .paragraph("#nothashtag"),
+      "a hash without a space is not a heading")
+equal(Markdown.blocks(of: "- one\n- two").first, .bullets(["one", "two"]),
+      "consecutive dashes are one list")
+equal(Markdown.blocks(of: "1. one\n2. two").first, .numbered(["one", "two"]),
+      "numbered items are one list")
+equal(Markdown.blocks(of: "```rust\nlet x = 1;\n```").first, .code("let x = 1;", language: "rust"),
+      "a fence keeps its language")
+// The case that matters most: markup inside a fence is literal, not markup.
+equal(Markdown.blocks(of: "```\n# not a heading\n- not a bullet\n```").first,
+      .code("# not a heading\n- not a bullet", language: nil),
+      "a fence protects what is inside it")
+equal(Markdown.blocks(of: "```\nunterminated").first, .code("unterminated", language: nil),
+      "an unterminated fence keeps the rest of the message rather than losing it")
+equal(Markdown.blocks(of: "> quoted").first, .quote("quoted"), "a quote is a quote")
+equal(Markdown.blocks(of: "---").first, .rule, "a rule on its own line")
+equal(Markdown.blocks(of: "a\n\nb").count, 2, "a blank line ends a paragraph")
+equal(Markdown.blocks(of: "plain words").first, .paragraph("plain words"),
+      "prose survives unchanged")
+equal(Markdown.blocks(of: "").count, 0, "an empty body is no blocks, not an empty paragraph")
+// Nothing may vanish: every non-blank line has to end up somewhere.
+let messy = "# Title\n\nSome text\n- a\n- b\n\n```\ncode\n```\n\nmore"
+equal(Markdown.blocks(of: messy).count, 5, "a mixed document keeps all five of its blocks")
+
+print("\ncopy")
+equal(ThreadMessage(id: "1", kind: .incoming, at: 0,
+                    body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{\"task\":\"ship it\"},\"note\":\"ship it\"}",
+                    threadId: nil).copyText,
+      "ship it", "copying a request gives the words, not the envelope")
+equal(RequestEnvelope(body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{},\"note\":\"x\"}")?.title,
+      "Full permissions", "the verb reads as what it asks for")
+
 print("")
 if failures == 0 {
     print("all good")

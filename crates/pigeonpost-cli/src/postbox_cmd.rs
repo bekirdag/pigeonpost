@@ -369,14 +369,16 @@ pub(crate) async fn send_as(
     credential: &Credential,
     to: &str,
     body: &str,
+    thread_id: Option<&str>,
 ) -> Result<String, Error> {
-    let value = request(
-        credential,
-        reqwest::Method::POST,
-        "/v1/send",
-        Some(serde_json::json!({ "to": to, "body": body })),
-    )
-    .await?;
+    // An answer belongs where the question was asked. Without the thread the postbox files every
+    // reply under the default thread, so a peer who opened a thread to ask about one thing got the
+    // answer somewhere else entirely — and the conversation they were reading stayed silent.
+    let mut payload = serde_json::json!({ "to": to, "body": body });
+    if let Some(thread_id) = thread_id {
+        payload["thread_id"] = serde_json::Value::String(thread_id.to_string());
+    }
+    let value = request(credential, reqwest::Method::POST, "/v1/send", Some(payload)).await?;
     Ok(value["message_id"].as_str().unwrap_or_default().to_string())
 }
 

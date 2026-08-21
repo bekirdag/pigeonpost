@@ -228,6 +228,25 @@ struct RequestEnvelope: Equatable {
     let args: [String: String]
     let note: String?
 
+    /// What to call this verb to a person.
+    ///
+    /// The wire name is a protocol token; showing it raw made a message somebody typed look like an
+    /// envelope they had not asked for. Unknown verbs keep their wire name rather than being hidden
+    /// — a verb this build does not know is still worth seeing exactly as it arrived.
+    var title: String {
+        switch verb {
+        case "full_access": return "Full permissions"
+        case "make_change": return "Do this work"
+        case "report_status": return "Report status"
+        case "answer_question": return "Answer a question"
+        case "run_tests": return "Run the tests"
+        case "read_file": return "Read a file"
+        case "git_push": return "Push"
+        case "deploy": return "Deploy"
+        default: return verb
+        }
+    }
+
     /// What this app sends: the most it can ask for.
     ///
     /// There is no picker, deliberately, and the web inbox made the same call. Choosing a verb is a
@@ -239,10 +258,15 @@ struct RequestEnvelope: Equatable {
     /// and its daily ceiling all still apply, and anything it will not do is held for a human
     /// exactly as prose used to be. Agent-to-agent traffic still uses the narrower verbs; they are
     /// a protocol, not a interface.
+    ///
+    /// `full_access` rather than `make_change`, because a person messaging their own fleet is not
+    /// asking for a scoped subset of the job — they are asking for it to be finished. Under
+    /// `make_change` an agent would do the work, commit it, and stop short of publishing, which
+    /// read as "I am not allowed" when the truth was that nobody had said it was allowed.
     static func work(_ text: String) -> String {
         let envelope: [String: Any] = [
             "v": 1,
-            "verb": "make_change",
+            "verb": "full_access",
             "args": ["task": text],
             // The typed words survive whatever happens to the verb, and tell the agent why it was
             // asked rather than only what.

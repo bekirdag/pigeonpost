@@ -32,6 +32,7 @@ pub const RUNNABLE_VERBS: &[&str] = &[
     "answer_question",
     "run_tests",
     "make_change",
+    "full_access",
     "git_push",
     "deploy",
 ];
@@ -151,7 +152,10 @@ impl Permission {
             "run_tests" | "make_change" => {
                 matches!(self, Permission::Workspace | Permission::Full)
             }
-            "git_push" | "deploy" => matches!(self, Permission::Full),
+            // `full_access` is `full` only. It is the one verb whose whole meaning is "and publish
+            // it", so admitting it at `workspace` would be admitting it and then refusing the half
+            // that was asked for.
+            "git_push" | "deploy" | "full_access" => matches!(self, Permission::Full),
             _ => false,
         }
     }
@@ -527,6 +531,7 @@ fn validate_args(verb: &str, args: Option<&serde_json::Value>) -> Result<(), Ref
             return match verb {
                 "report_status" | "answer_question" | "run_tests" | "git_push" | "deploy" => Ok(()),
                 "make_change" => Err(Refusal::BadArguments("make_change needs a 'task'")),
+                "full_access" => Err(Refusal::BadArguments("full_access needs a 'task'")),
                 _ => Err(Refusal::VerbNotInPhase),
             };
         }
@@ -575,11 +580,17 @@ fn validate_args(verb: &str, args: Option<&serde_json::Value>) -> Result<(), Ref
         // The task is instruction text. Length is the only property worth checking, and checking
         // more would be theatre: there is no shape that separates a safe instruction from an
         // unsafe one.
-        "make_change" => {
+        "make_change" | "full_access" => {
             only(&["task", "branch"])?;
             match text("task", 8192)? {
                 Some(t) if !t.trim().is_empty() => {}
-                _ => return Err(Refusal::BadArguments("make_change needs a 'task'")),
+                _ => {
+                    return Err(Refusal::BadArguments(if verb == "make_change" {
+                        "make_change needs a 'task'"
+                    } else {
+                        "full_access needs a 'task'"
+                    }))
+                }
             }
             if let Some(b) = text("branch", 256)? {
                 reject_traversal(b)?;
