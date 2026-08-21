@@ -40,6 +40,12 @@ struct ThreadView: View {
                         MessageBubble(message: message)
                             .id(message.id)
                     }
+                    // The floor of the conversation, and a target that exists before the messages
+                    // do. Scrolling to the last message means naming the thing that is moving;
+                    // this stays put.
+                    Color.clear
+                        .frame(height: 1)
+                        .id(Self.floor)
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -50,9 +56,24 @@ struct ThreadView: View {
             // so a long conversation opened at the top often enough to be a complaint. This is the
             // same intent stated as a property of the scroll view rather than as an event.
             .defaultScrollAnchor(.bottom)
-            .onChange(of: shown.last?.id) { _, id in
-                guard let id else { return }
-                withAnimation(.easeOut(duration: 0.2)) { scroller.scrollTo(id, anchor: .bottom) }
+            // Everything that can change what "the bottom" means, in one place.
+            //
+            // `defaultScrollAnchor(.bottom)` handles the first paint and nothing after it, and the
+            // first paint is not the only moment this gets decided: the subject filter is applied
+            // in `onAppear`, so the content changes once more immediately afterwards; mail lands
+            // while the thread is open; and the keyboard takes half the screen without the scroll
+            // view moving to compensate. Each of those left the conversation somewhere other than
+            // its newest message, which is the complaint.
+            .onChange(of: shown.count) { _, _ in scrollToFloor(scroller, animated: true) }
+            .onChange(of: subthread) { _, _ in scrollToFloor(scroller, animated: false) }
+            .onChange(of: composing) { _, focused in
+                if focused { scrollToFloor(scroller, animated: true) }
+            }
+            .task(id: peer) {
+                // After the first layout, not during it. `onAppear` runs before the scroll view has
+                // measured its content, which is what made this unreliable rather than wrong.
+                await Task.yield()
+                scrollToFloor(scroller, animated: false)
             }
 
         }
@@ -195,6 +216,18 @@ struct ThreadView: View {
 
     private var sendable: Bool {
         !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The bottom, named once.
+    private static let floor = "thread-floor"
+
+    private func scrollToFloor(_ scroller: ScrollViewProxy, animated: Bool) {
+        guard !shown.isEmpty else { return }
+        if animated {
+            withAnimation(.easeOut(duration: 0.2)) { scroller.scrollTo(Self.floor, anchor: .bottom) }
+        } else {
+            scroller.scrollTo(Self.floor, anchor: .bottom)
+        }
     }
 
     private func send() {

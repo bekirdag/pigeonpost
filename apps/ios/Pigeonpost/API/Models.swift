@@ -140,12 +140,66 @@ struct OpenedThread: Decodable {
     let threadId: String
 }
 
+/// An answer a mailbox's agent sent without anyone reading it first.
+///
+/// These arrive as plain text with two machine-readable lines on the front. Shown verbatim they
+/// bury the answer under its own envelope, which is what a whole fleet's replies looked like before
+/// this existed.
+struct AutoReply: Equatable {
+    let answered: String?
+    let failed: Bool
+    /// The answer itself, with the header lines removed.
+    let body: String
+
+    init?(body: String) {
+        guard body.hasPrefix("pigeonpost-auto-reply v1") else { return nil }
+        var lines = body.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+        let header = lines.removeFirst()
+        // The second line is the standing disclaimer, and it says the same thing every time.
+        if lines.first?.hasPrefix("Generated unattended") == true { lines.removeFirst() }
+        while lines.first?.trimmingCharacters(in: .whitespaces).isEmpty == true { lines.removeFirst() }
+
+        answered = header
+            .split(separator: " ")
+            .first { $0.hasPrefix("answered=") }
+            .map { String($0.dropFirst("answered=".count)) }
+        failed = header.contains("outcome=failed")
+        self.body = lines.joined(separator: "\n")
+    }
+}
+
 /// A scoped request, as it travels: JSON in the body of an ordinary message. Rendered as what it
 /// asks for rather than as the envelope it is.
 struct RequestEnvelope: Equatable {
     let verb: String
     let args: [String: String]
     let note: String?
+
+    /// What this app sends: the most it can ask for.
+    ///
+    /// There is no picker, deliberately, and the web inbox made the same call. Choosing a verb is a
+    /// decision about somebody else's machine taken by the person with the least information — the
+    /// sender cannot see what the recipient granted, what permission tier its route runs at, or
+    /// which branches it allows. Guessing low only guarantees the message sits in review.
+    ///
+    /// So ask for the most and let the recipient decide. Its grant, its tier, its branch allowlist
+    /// and its daily ceiling all still apply, and anything it will not do is held for a human
+    /// exactly as prose used to be. Agent-to-agent traffic still uses the narrower verbs; they are
+    /// a protocol, not a interface.
+    static func work(_ text: String) -> String {
+        let envelope: [String: Any] = [
+            "v": 1,
+            "verb": "make_change",
+            "args": ["task": text],
+            // The typed words survive whatever happens to the verb, and tell the agent why it was
+            // asked rather than only what.
+            "note": text,
+        ]
+        guard let data = try? JSONSerialization.data(withJSONObject: envelope),
+              let json = String(data: data, encoding: .utf8)
+        else { return text }
+        return json
+    }
 
     /// Parsed only when it really is one. Prose that happens to start with a brace is prose.
     init?(body: String) {

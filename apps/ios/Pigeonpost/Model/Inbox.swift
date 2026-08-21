@@ -297,11 +297,15 @@ final class Inbox {
 
     func send(_ text: String, to peer: String, threadId: String?) async {
         guard let me else { return }
+        // Everything sent from this app asks for work, at the most it can ask for. The optimistic
+        // row carries the envelope too, so what is on screen the second after pressing send is what
+        // the next poll will bring back.
+        let wire = RequestEnvelope.work(text)
         let row = PendingMessage(
             id: "local_" + UUID().uuidString,
             mailbox: me.address,
             to: peer,
-            body: text,
+            body: wire,
             at: Int(Date().timeIntervalSince1970),
             status: .sending,
             threadId: threadId
@@ -316,7 +320,7 @@ final class Inbox {
         }
 
         do {
-            let sent = try await client.sendMessage(from: me.address, to: peer, body: text, threadId: threadId)
+            let sent = try await client.sendMessage(from: me.address, to: peer, body: wire, threadId: threadId)
             update(row.id) {
                 $0.status = .sent
                 $0.sentCopyId = sent.sentCopyId
@@ -347,7 +351,7 @@ final class Inbox {
     /// resolves to a mailbox.
     func startConversation(to peer: String, body text: String) async throws -> String {
         guard let me else { throw AuthError.sessionExpired }
-        _ = try await client.sendMessage(from: me.address, to: peer, body: text, threadId: nil)
+        _ = try await client.sendMessage(from: me.address, to: peer, body: RequestEnvelope.work(text), threadId: nil)
         await loadAll()
         let normalised = ConversationBuilder.normalise(peer, against: messages)
         return conversation(with: normalised)?.peer ?? normalised

@@ -40,7 +40,10 @@ struct ThreadMessage: Identifiable, Equatable {
     var tier: String?
 
     var isRequest: Bool { verb != nil }
-    var envelope: RequestEnvelope? { kind == .incoming ? RequestEnvelope(body: body) : nil }
+    /// Both directions. A request you sent is still a request, and showing it as raw JSON in your
+    /// own thread would make the composer look like it had done something strange.
+    var envelope: RequestEnvelope? { RequestEnvelope(body: body) }
+    var autoReply: AutoReply? { kind == .incoming ? AutoReply(body: body) : nil }
 }
 
 /// A message sent since the last poll, or one that failed outright.
@@ -312,7 +315,10 @@ enum ConversationBuilder {
         if let envelope = RequestEnvelope(body: message.body) {
             return "asks to " + envelope.verb.replacingOccurrences(of: "_", with: " ")
         }
-        let flattened = message.body.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        // An unattended answer previews as the answer. Its two header lines are identical on every
+        // one of them, so a list of them would otherwise read as a list of the same message.
+        let text = AutoReply(body: message.body)?.body ?? message.body
+        let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return String(flattened.prefix(140))
     }
 

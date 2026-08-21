@@ -567,6 +567,26 @@ button { font: inherit; color: inherit; }
 .decision { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
 .decision .reason { font-size: 11.5px; color: var(--muted); }
 
+/* The same block on your own bubble, which is navy.
+   These colours were written when only received requests were rendered, so every one of them
+   assumed a white background: ink on navy is unreadable, and the args block was near-invisible.
+   A request you sent has to be as legible as one you were sent. */
+.mine .request { border-top-color: rgba(255, 255, 255, .22); }
+.mine .request .verb { color: #fff; }
+.mine .request .args {
+  color: rgba(255, 255, 255, .92);
+  background: rgba(0, 0, 0, .22);
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.mine .request .why { color: rgba(255, 255, 255, .82); }
+.mine .decision .reason { color: rgba(255, 255, 255, .72); }
+/* The pills carry their own light backgrounds, which read fine on navy — but the held one is the
+   most important word in the bubble, so it gets a border that survives the darker ground. */
+.mine .pill-held { border-color: #f0b45f; }
+.mine .pill-auto { border-color: #86efac; }
+.mine .pill-blocked { border-color: #fda4af; }
+
 /* ---- sender info -------------------------------------------------------------------------- */
 
 .peer-info {

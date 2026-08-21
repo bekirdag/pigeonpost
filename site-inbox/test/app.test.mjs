@@ -399,9 +399,10 @@ check("with the verb granted", put.body.allowed_verbs.includes("run_tests"), tru
 check("never-auto verbs cannot be granted", [...$("contact-verbs").querySelectorAll("input:disabled")].length > 0, true);
 
 console.log("\n— what a message asks for —");
-// The sender asks for the most; the recipient decides. A plain message that no agent will ever act
-// on is the wrong default for an app whose whole point is reaching agents.
-check("defaults to asking for work", $("compose-verb").value, "make_change");
+// Everything this app sends asks for work, at the most it can ask for. There is no picker: the
+// sender cannot see what the recipient granted or what tier it runs at, so choosing a smaller
+// request is a guess that only makes silence more likely.
+check("no verb picker in the composer", $("compose-verb"), null);
 
 otherRows[1].click();
 await settle(80);
@@ -410,52 +411,15 @@ compose.value = "fix the failing pipeline";
 compose.dispatchEvent(new window.Event("input"));
 $("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
 await settle(120);
-const asked = calls.slice(beforeAsk).find((c) => c.path === "/v1/send");
-const envelope = JSON.parse(asked.body.body);
+const envelope = JSON.parse(calls.slice(beforeAsk).find((c) => c.path === "/v1/send").body.body);
 check("sends a request envelope", envelope.v, 1);
-check("with the default verb", envelope.verb, "make_change");
+check("asking for work", envelope.verb, "make_change");
 check("the typed text becomes the task", envelope.args.task, "fix the failing pipeline");
 check("and survives as the note", envelope.note, "fix the failing pipeline");
 
-// A verb that carries its request in a different argument.
-$("compose-verb").value = "answer_question";
-const beforeQ = calls.length;
-compose.value = "is the build green?";
-compose.dispatchEvent(new window.Event("input"));
-$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
-await settle(120);
-const q = JSON.parse(calls.slice(beforeQ).find((c) => c.path === "/v1/send").body.body);
-check("a question goes in args.question", q.args.question, "is the build green?");
-
-// Prose is still possible, and is what talking to a person needs.
-$("compose-verb").value = "";
-const beforePlain = calls.length;
-compose.value = "morning";
-compose.dispatchEvent(new window.Event("input"));
-$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
-await settle(120);
-check("plain stays plain", calls.slice(beforePlain).find((c) => c.path === "/v1/send").body.body, "morning");
-
-// A push with nothing to push is refused here rather than held on arrival for a reason that
-// reads like a permissions problem.
-$("compose-verb").value = "deploy";
-$("compose-branch").value = "";
-const beforeNoBranch = calls.length;
-compose.value = "ship it";
-compose.dispatchEvent(new window.Event("input"));
-$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
-await settle(120);
-check("a deploy with no branch is not sent", calls.slice(beforeNoBranch).some((c) => c.path === "/v1/send"), false);
-
-$("compose-branch").value = "main";
-const beforeBranch = calls.length;
-compose.value = "ship it";
-compose.dispatchEvent(new window.Event("input"));
-$("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbles: true }));
-await settle(120);
-const dep = JSON.parse(calls.slice(beforeBranch).find((c) => c.path === "/v1/send").body.body);
-check("a named branch is carried", dep.args.branch, "main");
-$("compose-verb").value = "make_change";
+// It reads as a request in the thread, not as the JSON it is on the wire.
+const sentReq = [...$("messages").querySelectorAll("li.mine .request .why")];
+check("shown as a request", sentReq.some((el) => text(el) === "fix the failing pipeline"), true);
 
 console.log("\n— threads within a peer —");
 // One conversation still shows the pane, because the button that opens a second thread lives in

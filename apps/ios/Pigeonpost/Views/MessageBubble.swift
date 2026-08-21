@@ -20,7 +20,18 @@ struct MessageBubble: View {
             if isMine { Spacer(minLength: 40) }
             VStack(alignment: .leading, spacing: 3) {
                 if let envelope = message.envelope {
-                    RequestCard(envelope: envelope, autonomy: message.autonomy, heldBecause: message.heldBecause)
+                    RequestCard(
+                        envelope: envelope,
+                        autonomy: message.autonomy,
+                        heldBecause: message.heldBecause,
+                        // Only inbound. A sent copy carries no admission verdict — your own words
+                        // were never subject to one — and a "held" pill on your own request would
+                        // be a lie about somebody else's decision.
+                        showsDecision: message.kind == .incoming,
+                        isMine: isMine
+                    )
+                } else if let reply = message.autoReply {
+                    AutoReplyBody(reply: reply)
                 } else {
                     Text(message.body)
                         .font(.system(size: 14.5))
@@ -99,12 +110,20 @@ struct RequestCard: View {
     let envelope: RequestEnvelope
     let autonomy: String?
     let heldBecause: String?
+    var showsDecision: Bool = true
+    /// On the navy bubble the card is white-on-dark; everywhere else it is ink on paper.
+    var isMine: Bool = false
+
+    private var primary: Color { isMine ? .white : Theme.ink }
+    private var secondary: Color { isMine ? .white.opacity(0.82) : Theme.body }
+    private var faint: Color { isMine ? .white.opacity(0.62) : Theme.muted }
+    private var panel: Color { isMine ? .white.opacity(0.14) : Theme.wash }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
             Text(envelope.verb)
                 .font(.system(size: 14.5, weight: .semibold, design: .monospaced))
-                .foregroundStyle(Theme.ink)
+                .foregroundStyle(primary)
 
             if !envelope.args.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {
@@ -112,24 +131,25 @@ struct RequestCard: View {
                         HStack(alignment: .top, spacing: 6) {
                             Text(key)
                                 .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(Theme.muted)
+                                .foregroundStyle(faint)
                             Text(envelope.args[key] ?? "")
                                 .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(Theme.body)
+                                .foregroundStyle(secondary)
                         }
                     }
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(Theme.wash, in: RoundedRectangle(cornerRadius: 7))
+                .background(panel, in: RoundedRectangle(cornerRadius: 7))
             }
 
             if let note = envelope.note, !note.isEmpty {
                 Text(note)
                     .font(.system(size: 13))
-                    .foregroundStyle(Theme.body)
+                    .foregroundStyle(secondary)
             }
 
+            if showsDecision {
             HStack(spacing: 7) {
                 if autonomy == "auto" {
                     PillView(text: "auto", kind: .auto)
@@ -138,11 +158,42 @@ struct RequestCard: View {
                     if let heldBecause {
                         Text(ConversationBuilder.heldReason(heldBecause))
                             .font(.system(size: 11.5))
-                            .foregroundStyle(Theme.muted)
+                            .foregroundStyle(faint)
                             .fixedSize(horizontal: false, vertical: true)
                     }
                 }
             }
+            }
         }
+    }
+}
+
+/// An answer generated without a human reading it. The two header lines every one of them carries
+/// become one small caption, so the answer is what you see.
+struct AutoReplyBody: View {
+    let reply: AutoReply
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Image(systemName: reply.failed ? "exclamationmark.triangle" : "bolt.horizontal.circle")
+                    .font(.system(size: 11))
+                Text(caption)
+                    .font(.system(size: 11.5))
+            }
+            .foregroundStyle(reply.failed ? Theme.Pill.blockedText : Theme.muted)
+
+            Text(reply.body)
+                .font(.system(size: 14.5))
+                .foregroundStyle(Theme.ink)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    private var caption: String {
+        let what = reply.answered.map { "answered " + $0.replacingOccurrences(of: "_", with: " ") }
+            ?? "answered"
+        return reply.failed ? what + " — failed, unattended" : what + ", unattended"
     }
 }

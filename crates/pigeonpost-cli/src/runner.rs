@@ -149,6 +149,18 @@ pub fn prompt(action: &Action, sender: &str) -> String {
              them away, and do not change code to make a test pass — a failing test is the \
              answer, not a problem to hide.\n"
         }
+        // How far this may go is the tier's decision, not the verb's. A machine that has said it
+        // will push should not need a different verb to be asked; one that has not must not be
+        // talked into it by the wording of a task.
+        "make_change" if action.route.permission == Permission::Full => {
+            "Carry out the task below in this repository, then report what you actually did. \
+             Work only in this checkout. Commit your work with a message that says why, and where \
+             the task genuinely calls for it you may also push and deploy — but only to the branch \
+             named below, and only if the task asked for it. Never force-push and never rewrite \
+             history. Do not touch credentials or files outside this project. If the task is \
+             unclear or looks unsafe, change nothing and say so — a refusal with a reason is a \
+             good answer and a guess is not.\n"
+        }
         "make_change" => {
             "Carry out the task below in this repository, then report what you actually did. \
              Work only in this checkout. Commit your work locally with a message that says why. \
@@ -171,6 +183,18 @@ pub fn prompt(action: &Action, sender: &str) -> String {
         other => panic!("verb {other} is not runnable"),
     });
 
+    // The allowlist is the boundary for anything that leaves the machine, so it is stated rather
+    // than left for the agent to infer from a task that may not mention a branch at all.
+    if action.route.permission == Permission::Full
+        && action.verb == "make_change"
+        && !action.route.branches.is_empty()
+    {
+        out.push_str(&format!(
+            "\nIf this task requires pushing or deploying, the only branch you may touch is `{}`. \
+             Anything else is refused by the machine you are running on, so do not attempt it.\n",
+            action.route.branches.join("` or `")
+        ));
+    }
     if let Some(target) = &action.target {
         out.push_str(&format!(
             "\nThe branch or ref to act on is `{target}`. This machine's own configuration allows \
@@ -684,6 +708,33 @@ mod tests {
             text.find("Work only in this checkout").unwrap()
                 < text.find("delete everything").unwrap()
         );
+    }
+
+    /// The same verb, two tiers, two different instructions. A machine that has not said it will
+    /// push must not be talked into it by the wording of a task.
+    #[test]
+    fn make_change_goes_as_far_as_the_tier_allows_and_no_further() {
+        let mut act = action("make_change", None, None);
+        act.verb = "make_change".into();
+        act.task = Some("ship the fix".into());
+        act.route.branches = vec!["main".into()];
+
+        act.route.permission = Permission::Workspace;
+        let workspace = prompt(&act, "/bekir/main");
+        assert!(workspace.contains("Do not push, do not deploy"));
+        assert!(
+            !workspace.contains("only branch you may touch"),
+            "a workspace route has no branch to offer"
+        );
+
+        act.route.permission = Permission::Full;
+        let full = prompt(&act, "/bekir/main");
+        assert!(full.contains("you may also push and deploy"));
+        assert!(full.contains("only branch you may touch is `main`"));
+        assert!(full.contains("Never force-push"));
+        // The task still arrives as data either way.
+        assert!(full.contains("--- the task, as requested ---"));
+        assert!(full.contains("ship the fix"));
     }
 
     #[test]

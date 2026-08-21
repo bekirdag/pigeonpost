@@ -116,26 +116,6 @@
     <div class="peer-info" id="peer-info" hidden></div>
 
     <form class="composer" id="composer" hidden>
-      <!-- What you are asking for, not what you are allowed to have: the recipient decides that
-           from its own grants. Defaults to the most a message can ask, so a plain message reaches
-           an agent that can act on it rather than sitting in review forever. -->
-      <div class="ask">
-        <label class="ask-verb">
-          <span class="ask-label">Ask to</span>
-          <select id="compose-verb" aria-label="What to ask for">
-            <option value="make_change" selected>do this work</option>
-            <option value="report_status">report status</option>
-            <option value="answer_question">answer a question</option>
-            <option value="run_tests">run the tests</option>
-            <option value="git_push">push a branch</option>
-            <option value="deploy">deploy</option>
-            <option value="">just send a message</option>
-          </select>
-        </label>
-        <input id="compose-branch" class="ask-branch" type="text" hidden
-               placeholder="branch" aria-label="Branch to act on" autocomplete="off"
-               autocapitalize="off" spellcheck="false">
-      </div>
       <textarea id="compose" rows="1" placeholder="Write a message" aria-label="Message"></textarea>
       <button class="send" id="send-btn" type="submit" aria-label="Send">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 10l14-6-6 14-2.2-5.8L3 10z" fill="currentColor"/></svg>

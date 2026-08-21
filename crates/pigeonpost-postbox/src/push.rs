@@ -294,7 +294,10 @@ pub fn preview_of(body: &str) -> String {
 }
 
 fn non_empty(key: &str) -> Option<String> {
-    std::env::var(key).ok().map(|v| v.trim().to_string()).filter(|v| !v.is_empty())
+    std::env::var(key)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 #[cfg(test)]

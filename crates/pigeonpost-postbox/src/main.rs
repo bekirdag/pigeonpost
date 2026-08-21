@@ -54,8 +54,8 @@ use zeroize::Zeroize;
 mod github;
 mod mcp;
 mod oidc;
-mod push;
 mod pow;
+mod push;
 mod reputation;
 mod store;
 mod vault;
@@ -2944,10 +2944,7 @@ async fn register_device(
     };
     let token = req.token.trim().to_string();
     // A device token is hex and short. Anything else is a client bug or somebody filling the table.
-    if token.is_empty()
-        || token.len() > 200
-        || !token.chars().all(|c| c.is_ascii_hexdigit())
-    {
+    if token.is_empty() || token.len() > 200 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
         return err_response(
             StatusCode::BAD_REQUEST,
             "invalid_device_token",

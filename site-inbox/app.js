@@ -1166,29 +1166,23 @@
     }
   }
 
-  // Where the typed text goes for each verb. A verb that carries the request in an argument gets
-  // it there; the rest carry it as the note, so the person's own words survive either way and the
-  // agent always sees why it was asked.
-  const ASK_ARG = { make_change: "task", answer_question: "question" };
-  const ASK_NEEDS_BRANCH = ["git_push", "deploy"];
-
+  // Everything sent from this app asks for work, at the most it can ask for.
+  //
+  // There is no picker, deliberately. Choosing a verb is a decision about someone else's machine
+  // made by the person with the least information: the sender cannot see what the recipient
+  // granted or what tier it runs at, and guessing low only guarantees the message sits in review.
+  // So ask for the most and let the recipient decide — its grant, its permission tier, its branch
+  // allowlist and its daily ceiling all still apply, and anything it will not do is held for a
+  // human exactly as prose used to be.
+  //
+  // Agent-to-agent traffic still uses the narrower verbs; they are a protocol, not a UI.
   function composeBody(text) {
-    const verb = $("compose-verb").value;
-    // "just send a message" — prose, which no agent will act on. Still the right choice for
-    // talking to a person, or to an agent you do not want to set working.
-    if (!verb) return text;
-
-    const args = {};
-    const key = ASK_ARG[verb];
-    if (key) args[key] = text;
-    if (ASK_NEEDS_BRANCH.includes(verb)) {
-      const branch = $("compose-branch").value.trim();
-      // Sent without one it is refused on arrival; better to say so here than to have it held
-      // for a reason that reads like a permissions problem.
-      if (!branch) return { error: "Name the branch to " + verb.replace("_", " ") + "." };
-      args.branch = branch;
-    }
-    return JSON.stringify({ v: 1, verb, args, note: text });
+    return JSON.stringify({
+      v: 1,
+      verb: "make_change",
+      args: { task: text },
+      note: text,
+    });
   }
 
   async function sendMessage(text) {
@@ -1198,12 +1192,7 @@
     // answers.
     const showing = currentSubthread(to);
     const threadId = showing && showing.id ? showing.id : null;
-    const composed = composeBody(text);
-    if (composed && composed.error) {
-      toast(composed.error);
-      return;
-    }
-    text = composed;
+    text = composeBody(text);
     const record = Pending.add({
       local_id: "local_" + randomString(8),
       mailbox: state.me.address,
@@ -1760,11 +1749,6 @@
     };
 
     $("subs-new").onclick = () => { newSubthread(); };
-    const syncAsk = () => {
-      $("compose-branch").hidden = !ASK_NEEDS_BRANCH.includes($("compose-verb").value);
-    };
-    $("compose-verb").onchange = syncAsk;
-    syncAsk();
     wireSheet("thread-sheet");
     $("thread-close").onclick = () => closeSheet("thread-sheet");
     $("thread-cancel").onclick = () => closeSheet("thread-sheet");
