@@ -193,7 +193,9 @@ async fn account_namespace(base_url: &str, token: &str) -> Result<Option<String>
 fn namespace_of(handle: &str) -> Option<String> {
     let parts: Vec<&str> = handle.trim_start_matches('/').split('/').collect();
     match parts.as_slice() {
-        [ns, _rest, ..] if PROVIDER_NAMESPACES.contains(ns) => {
+        // An address is a person on its own, so agents hang directly beneath it.
+        [address, ..] if address.contains('@') => Some(format!("/{address}")),
+        [ns, _name, ..] if PROVIDER_NAMESPACES.contains(ns) => {
             Some(format!("/{}/{}", parts[0], parts[1]))
         }
         [ns, ..] if !ns.is_empty() => Some(format!("/{ns}")),
@@ -227,6 +229,18 @@ mod tests {
     fn an_account_namespace_holds_its_agents_as_siblings() {
         assert_eq!(namespace_of("/bekir/main").as_deref(), Some("/bekir"));
         assert_eq!(namespace_of("/bekir/docdex").as_deref(), Some("/bekir"));
+    }
+
+    #[test]
+    fn an_address_is_the_person_and_holds_its_agents_directly() {
+        assert_eq!(
+            namespace_of("/alex@gmail.com").as_deref(),
+            Some("/alex@gmail.com")
+        );
+        assert_eq!(
+            namespace_of("/alex@gmail.com/agent2").as_deref(),
+            Some("/alex@gmail.com")
+        );
     }
 
     #[test]

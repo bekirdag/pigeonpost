@@ -4411,17 +4411,23 @@ mod tests {
         let me = mint(&state).await;
         let human = TrustActor::Human;
 
-        let err = set_contact(
+        // An address is a handle now, so it is a peer somebody can hold terms about. What is still
+        // not a peer is a string that is not a name at all.
+        set_contact(
             &state,
             &me,
-            "bekir@example.com".into(),
+            "/alex@example.com".into(),
             None,
             None,
             None,
             human,
         )
         .await
-        .unwrap_err();
+        .expect("an address-shaped peer");
+
+        let err = set_contact(&state, &me, "not a peer".into(), None, None, None, human)
+            .await
+            .unwrap_err();
         assert_eq!(err.code, "invalid_peer");
 
         let err = set_contact(&state, &me, me.address.clone(), None, None, None, human)

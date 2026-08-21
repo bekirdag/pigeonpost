@@ -2266,6 +2266,16 @@ mod wildcard_tests {
         );
     }
 
+    /// An address is a person, so its agents are covered by it — and it has nothing above it.
+    #[test]
+    fn an_address_covers_its_own_agents_and_nothing_covers_it() {
+        assert_eq!(
+            namespace_wildcard("/alex@gmail.com/agent2").as_deref(),
+            Some("/alex@gmail.com/*")
+        );
+        assert_eq!(namespace_wildcard("/alex@gmail.com"), None);
+    }
+
     #[test]
     fn key_addresses_and_bare_names_have_no_namespace_rule() {
         assert_eq!(namespace_wildcard("/k/abc"), None);

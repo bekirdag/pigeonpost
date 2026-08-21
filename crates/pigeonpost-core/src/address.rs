@@ -26,8 +26,10 @@ pub const KEY_PREFIX: &str = "/k/";
 /// the HTTP client applies DNS/IP and redirect policy at connection time.
 pub const MAX_LOFT_HINT_BYTES: usize = 2_048;
 /// Keep human-readable handles small enough to use safely in URLs, state rows, and diagnostics.
-pub const MAX_HANDLE_BYTES: usize = 128;
+pub const MAX_HANDLE_BYTES: usize = 320;
 const MAX_HANDLE_NAMESPACE_BYTES: usize = 32;
+/// An address may be this long. RFC 5321 §4.5.3.1.3 caps the whole thing at 254 octets.
+const MAX_ADDRESS_BYTES: usize = 254;
 const MAX_HANDLE_NAME_BYTES: usize = 39;
 
 /// A key address. Always canonical: constructing one validates it.
@@ -262,77 +264,164 @@ pub fn namespace_root(input: &str) -> Option<String> {
     Some(namespace.to_ascii_lowercase())
 }
 
-/// Canonicalise a handle: `/<namespace>/<name>` or `/<namespace>/<name>/<agent>`.
+/// Canonicalise a handle.
 ///
-/// Two shapes, one grammar. `/bekir/main` is a name under a namespace somebody owns; `/github/alex`
-/// is a name under a namespace nobody owns, earned by proving an identity. Both identify one
-/// person, and either may hold a third segment for that person's agents — `/github/alex/agent1` is
-/// Alex's, exactly as `/bekir/docdex` is Bekir's.
+/// Four shapes, one grammar:
 ///
-/// `@` is allowed inside a segment so an account that signed in with an address can carry a handle
-/// that reads like one: `/pp/alex@example.com`. It is not permitted at the edges of a segment,
-/// because a name that begins or ends with it is a name somebody typed wrong.
+/// ```text
+/// /bekir/main                 a name under a namespace somebody owns
+/// /github/alex                a name under a namespace nobody owns, earned by proof
+/// /alex@gmail.com             a person, named by the address they signed in with
+/// …/agent1                    any of the above may carry one agent segment
+/// ```
 ///
-/// Widened 2026-08-21 from a strict two-segment, `@`-free grammar. Older clients treat the new
-/// shapes as malformed rather than as unknown, which is the cost of the change and the reason it is
-/// written down here.
+/// An address may be a whole handle on its own, and may therefore be a namespace with agents under
+/// it. That is the only reason a single-segment handle exists: `/bekir` is still a namespace rather
+/// than a person, and the `@` is what tells the two apart with no ambiguity.
+///
+/// **Three characters legal in an address are refused, because they are syntax here.** `/` separates
+/// segments, `?` begins a loft hint, and `#` begins a capability token, so `/alex?x@gmail.com` would
+/// parse as a handle with a decoration rather than as a name. `%` is refused as well: handles travel
+/// in URLs, and a percent sequence that survives one decoding too many turns one name silently into
+/// another. Everything else RFC 5322 permits in a dot-atom is allowed.
+///
+/// Widened 2026-08-21: from two plain segments, to three, to this. Older clients read the new
+/// shapes as malformed rather than as unknown, which is the cost each time.
 fn canonical_handle(input: &str) -> Result<String> {
     if input.is_empty() || input.len() > MAX_HANDLE_BYTES || !input.is_ascii() {
         return Err(Error::MalformedAddress("bad handle length"));
     }
     let trimmed = input.strip_prefix('/').unwrap_or(input);
     let segments: Vec<&str> = trimmed.split('/').collect();
-    let (namespace, rest) = match segments.as_slice() {
-        [namespace, name] => (*namespace, vec![*name]),
-        [namespace, name, agent] => (*namespace, vec![*name, *agent]),
-        [_] => return Err(Error::MalformedAddress("expected /<namespace>/<name>")),
-        _ => return Err(Error::MalformedAddress("too many segments in handle")),
-    };
-    if namespace.eq_ignore_ascii_case("gh") {
+    if segments.len() > 3 {
+        return Err(Error::MalformedAddress("too many segments in handle"));
+    }
+
+    // A single segment is a handle only when it is an address. `/bekir` on its own is a namespace,
+    // and resolving it is somebody else's decision.
+    if segments.len() == 1 {
+        let only = segments[0];
+        if !looks_like_address(only) {
+            return Err(Error::MalformedAddress("expected /<namespace>/<name>"));
+        }
+        validate_address_segment(only)?;
+        return Ok(format!("/{}", only.to_ascii_lowercase()));
+    }
+
+    let head = segments[0];
+    if head.eq_ignore_ascii_case("gh") {
         return Err(Error::MalformedAddress(
             "legacy /gh namespace is not supported; use /github",
         ));
     }
-    if namespace.is_empty() || namespace.len() > MAX_HANDLE_NAMESPACE_BYTES {
-        return Err(Error::MalformedAddress("bad handle shape"));
+    if looks_like_address(head) {
+        validate_address_segment(head)?;
+    } else {
+        if head.is_empty() || head.len() > MAX_HANDLE_NAMESPACE_BYTES {
+            return Err(Error::MalformedAddress("bad handle shape"));
+        }
+        if !head.bytes().all(plain_byte) || edge_marked(head) {
+            return Err(Error::MalformedAddress("bad handle characters"));
+        }
     }
-    // A namespace never carries an address: it is the part somebody owns or a provider's name, and
-    // both are plain words.
-    if !namespace.bytes().all(plain_byte) || edge_marked(namespace) {
-        return Err(Error::MalformedAddress("bad handle characters"));
-    }
-    for segment in &rest {
+
+    for segment in &segments[1..] {
+        if looks_like_address(segment) {
+            validate_address_segment(segment)?;
+            continue;
+        }
         if segment.is_empty() || segment.len() > MAX_HANDLE_NAME_BYTES {
             return Err(Error::MalformedAddress("bad handle shape"));
         }
-        if !segment.bytes().all(name_byte) || edge_marked(segment) {
-            return Err(Error::MalformedAddress("bad handle characters"));
-        }
-        // One `@` at most, and not as the whole name: `alex@example.com` is an address, `a@b@c` is
-        // a typo, and `@` alone is nothing at all.
-        if segment.bytes().filter(|b| *b == b'@').count() > 1 {
+        if !segment.bytes().all(plain_byte) || edge_marked(segment) {
             return Err(Error::MalformedAddress("bad handle characters"));
         }
     }
 
     let mut canonical = String::with_capacity(input.len() + 1);
-    canonical.push('/');
-    canonical.push_str(&namespace.to_ascii_lowercase());
-    for segment in rest {
+    for segment in segments {
         canonical.push('/');
         canonical.push_str(&segment.to_ascii_lowercase());
     }
     Ok(canonical)
 }
 
-/// What a namespace may contain.
+/// Whether this segment is claiming to be an address rather than a word.
+///
+/// One `@`, something before it and something with a dot after it. Deliberately cheap: it decides
+/// which set of rules applies, and [`validate_address_segment`] does the judging.
+fn looks_like_address(segment: &str) -> bool {
+    match segment.split_once('@') {
+        Some((local, domain)) => !local.is_empty() && domain.contains('.'),
+        None => false,
+    }
+}
+
+/// An address, by the parts of RFC 5322 that can survive being a handle.
+fn validate_address_segment(segment: &str) -> Result<()> {
+    if segment.len() > MAX_ADDRESS_BYTES {
+        return Err(Error::MalformedAddress("bad handle length"));
+    }
+    let (local, domain) = segment
+        .split_once('@')
+        .ok_or(Error::MalformedAddress("bad handle shape"))?;
+    if segment.bytes().filter(|b| *b == b'@').count() > 1 {
+        return Err(Error::MalformedAddress("bad handle characters"));
+    }
+    if local.is_empty() || domain.is_empty() {
+        return Err(Error::MalformedAddress("bad handle shape"));
+    }
+    if !local.bytes().all(address_local_byte) || edge_marked(local) {
+        return Err(Error::MalformedAddress("bad handle characters"));
+    }
+    // A domain is labels of letters, digits and hyphens, separated by dots, and at least two of
+    // them: `alex@localhost` names nothing anybody else can reach.
+    let labels: Vec<&str> = domain.split('.').collect();
+    if labels.len() < 2 {
+        return Err(Error::MalformedAddress("bad handle shape"));
+    }
+    for label in labels {
+        if label.is_empty()
+            || label.len() > 63
+            || !label
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b == b'-')
+            || label.starts_with('-')
+            || label.ends_with('-')
+        {
+            return Err(Error::MalformedAddress("bad handle characters"));
+        }
+    }
+    Ok(())
+}
+
+/// What a namespace or a plain name may contain.
 fn plain_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.')
 }
 
-/// What a name or an agent segment may contain: the same, plus `@` for address-shaped handles.
-fn name_byte(byte: u8) -> bool {
-    plain_byte(byte) || byte == b'@'
+/// What the local part of an address may contain: RFC 5322's dot-atom set, less the four this
+/// format cannot represent — `/`, `?`, `#` and `%`.
+fn address_local_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric()
+        || matches!(
+            byte,
+            b'!' | b'$'
+                | b'&'
+                | b'\''
+                | b'*'
+                | b'+'
+                | b'-'
+                | b'='
+                | b'^'
+                | b'_'
+                | b'`'
+                | b'{'
+                | b'|'
+                | b'}'
+                | b'~'
+                | b'.'
+        )
 }
 
 /// Whether a segment starts or ends with punctuation. A name is a thing people read out; one that
@@ -569,12 +658,59 @@ mod tests {
     }
 
     #[test]
-    fn refuses_addresses_that_are_not_names() {
-        // `@` earns its place in the middle of a name and nowhere else.
+    fn refuses_addresses_that_are_not_addresses() {
         assert!(Destination::parse("/pp/@alex").is_err());
         assert!(Destination::parse("/pp/alex@").is_err());
         assert!(Destination::parse("/pp/a@b@c").is_err());
-        // A namespace is a word somebody owns or a provider's name; neither is an address.
-        assert!(Destination::parse("/alex@example.com/agent").is_err());
+        // A domain nobody else can reach is not an address.
+        assert!(Destination::parse("/alex@localhost").is_err());
+        assert!(Destination::parse("/alex@.com").is_err());
+        assert!(Destination::parse("/alex@example..com").is_err());
+        assert!(Destination::parse("/alex@-example.com").is_err());
+        // A bare word is a namespace, not a person: only the `@` makes a single segment a handle.
+        assert!(Destination::parse("/bekir").is_err());
+    }
+
+    /// The address *is* the handle, and may hold agents beneath it — settled 2026-08-21.
+    #[test]
+    fn an_address_is_a_handle_and_a_namespace() {
+        let person = Destination::parse("/alex@gmail.com").expect("an address as a whole handle");
+        assert_eq!(person.handle(), Some("/alex@gmail.com"));
+
+        let agent =
+            Destination::parse("/alex@gmail.com/agent2").expect("an agent under an address");
+        assert_eq!(agent.handle(), Some("/alex@gmail.com/agent2"));
+
+        // Case folds, as every other handle does, so lookalikes are one name.
+        let shouted = Destination::parse("/Alex@GMail.com").expect("mixed case");
+        assert_eq!(shouted.handle(), Some("/alex@gmail.com"));
+    }
+
+    /// Everything RFC 5322 allows in a dot-atom, less the four this format cannot represent.
+    #[test]
+    fn keeps_the_punctuation_addresses_really_use() {
+        for address in [
+            "/alex+pigeonpost@gmail.com",
+            "/alex.j.smith@example.co.uk",
+            "/a_b-c@example.com",
+            "/o'brien@example.ie",
+            "/weird!$&*=^`{|}~@example.com",
+        ] {
+            assert!(
+                Destination::parse(address).is_ok(),
+                "{address} should be a handle"
+            );
+        }
+    }
+
+    /// `/` separates segments, `?` opens a loft hint, `#` opens a capability token, and `%` is one
+    /// decoding away from being a different name. Legal in an address; unrepresentable here.
+    #[test]
+    fn refuses_the_characters_that_are_syntax_here() {
+        assert!(Destination::parse("/alex?x@gmail.com").is_err());
+        assert!(Destination::parse("/alex#x@gmail.com").is_err());
+        assert!(Destination::parse("/alex%41@gmail.com").is_err());
+        // A `/` in the local part cannot survive at all: it reads as another segment.
+        assert!(Destination::parse("/alex/x@gmail.com/a/b").is_err());
     }
 }
