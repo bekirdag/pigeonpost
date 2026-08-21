@@ -854,7 +854,7 @@
       req.className = "request";
       const verb = document.createElement("div");
       verb.className = "verb";
-      verb.textContent = envelope.verb;
+      verb.textContent = verbTitle(envelope.verb);
       req.append(verb);
       // Web and mobile compose `args: {task: text}` alongside `note: text` — the same sentence
       // twice, because the agent reads the arg and a human reads the note. Printing both would
@@ -895,10 +895,24 @@
       req.append(decision);
       bubble.append(req);
     } else {
-      // Bodies are other agents' text. textContent, always.
+      // Bodies are other agents' text — rendered as markdown, and still never as markup: see
+      // `renderMarkdown`, which builds nodes and sets textContent on every one of them.
       const text = document.createElement("div");
       text.className = "text";
-      text.textContent = m.body;
+      const reply = autoReply(m.body);
+      if (reply) {
+        // The two header lines are machinery. They say the same thing on every unattended reply
+        // and nobody wants them in the message, or on the clipboard.
+        const caption = document.createElement("div");
+        caption.className = "auto-caption";
+        caption.textContent = reply.answered
+          ? "answered " + verbTitle(reply.answered).toLowerCase() + ", unattended"
+          : "answered unattended";
+        text.append(caption);
+        renderMarkdown(text, reply.body);
+      } else {
+        renderMarkdown(text, m.body);
+      }
       bubble.append(text);
     }
 
@@ -910,6 +924,30 @@
       failed.textContent = "not sent";
       meta.append(failed);
     }
+    // Visible rather than hidden behind a selection: an agent's reply is the thing people most
+    // often want out of this app and into somewhere else.
+    const copy = document.createElement("button");
+    copy.type = "button";
+    copy.className = "copy";
+    copy.title = "Copy message";
+    copy.setAttribute("aria-label", "Copy message");
+    copy.textContent = "⧉";
+    copy.addEventListener("click", async () => {
+      try {
+        await navigator.clipboard.writeText(copyTextOf(m));
+        copy.textContent = "✓";
+        copy.classList.add("copied");
+        setTimeout(() => {
+          copy.textContent = "⧉";
+          copy.classList.remove("copied");
+        }, 1400);
+      } catch (e) {
+        // Clipboard access can be refused outright; say nothing rather than throwing a dialog at
+        // somebody for pressing a small button.
+      }
+    });
+    meta.append(copy);
+
     const time = document.createElement("span");
     time.textContent = clockTime(m.at);
     meta.append(time);
@@ -917,6 +955,185 @@
 
     li.append(bubble);
     return li;
+  }
+
+  // The wire name is a protocol token. Showing it raw made a sentence somebody typed look like an
+  // envelope they had not asked for. An unknown verb keeps its wire name: a verb this build does
+  // not know is still worth seeing exactly as it arrived.
+  // What Copy puts on the clipboard: the words, not the wrapper. A request copied verbatim is
+  // JSON to unpick and an auto-reply carries two header lines nobody wants to paste anywhere.
+  function copyTextOf(m) {
+    const envelope = requestEnvelope(m.body);
+    if (envelope && envelope.args) {
+      const task = envelope.args.task || envelope.args.question;
+      if (typeof task === "string" && task.trim()) return task;
+    }
+    const reply = autoReply(m.body);
+    if (reply) return reply.body;
+    return m.body;
+  }
+
+  // An unattended reply, split from its header. Returns null for anything else, so a message that
+  // merely mentions the marker is not mistaken for one.
+  function autoReply(body) {
+    const text = String(body == null ? "" : body);
+    if (!text.startsWith("pigeonpost-auto-reply v1")) return null;
+    const lines = text.split("\n");
+    const header = lines.shift();
+    if (lines.length && lines[0].startsWith("Generated unattended")) lines.shift();
+    while (lines.length && !lines[0].trim()) lines.shift();
+    const answered = /answered=([a-z_]+)/.exec(header);
+    return { answered: answered ? answered[1] : null, body: lines.join("\n") };
+  }
+
+  function verbTitle(verb) {
+    const titles = {
+      full_access: "Full permissions",
+      make_change: "Do this work",
+      report_status: "Report status",
+      answer_question: "Answer a question",
+      run_tests: "Run the tests",
+      read_file: "Read a file",
+      git_push: "Push",
+      deploy: "Deploy",
+    };
+    return titles[verb] || verb;
+  }
+
+  // Markdown, built as DOM nodes.
+  //
+  // Never `innerHTML`, at any point, for any part of this: a message body is another agent's text
+  // and the one rule this file has always kept is that it is inserted as text, never as markup.
+  // Rendering it must not become a way around that. Every node below is created and has its
+  // `textContent` set; nothing is ever parsed as HTML, and no link is made clickable.
+  //
+  // The grammar is what agents actually send — headings, bullets, numbered lists, fenced code,
+  // quotes, rules, and inline emphasis. Anything unrecognised is shown as the literal line it was.
+  // A renderer that silently drops what it cannot parse loses somebody's message, which is far
+  // worse than an unstyled one.
+  function renderMarkdown(container, raw) {
+    const lines = String(raw == null ? "" : raw).split(/\r?\n/);
+    let paragraph = [];
+    let list = null; // {el, ordered}
+
+    const flushParagraph = () => {
+      if (!paragraph.length) return;
+      const p = document.createElement("p");
+      p.className = "md-p";
+      inline(p, paragraph.join("\n"));
+      container.append(p);
+      paragraph = [];
+    };
+    const flushList = () => {
+      if (list) container.append(list.el);
+      list = null;
+    };
+    const flush = () => {
+      flushParagraph();
+      flushList();
+    };
+
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      const trimmed = line.trim();
+
+      // Fenced code first: what is inside is literal, including anything that would otherwise
+      // read as a heading or a bullet.
+      if (trimmed.startsWith("```")) {
+        flush();
+        const body = [];
+        i += 1;
+        for (; i < lines.length; i += 1) {
+          if (lines[i].trim().startsWith("```")) break;
+          body.push(lines[i]);
+        }
+        const pre = document.createElement("pre");
+        pre.className = "md-code";
+        pre.textContent = body.join("\n");
+        container.append(pre);
+        continue;
+      }
+
+      if (!trimmed) {
+        flush();
+        continue;
+      }
+
+      if ((trimmed === "---" || trimmed === "***" || trimmed === "___") && !paragraph.length) {
+        flush();
+        container.append(document.createElement("hr"));
+        continue;
+      }
+
+      // `#text` is a hashtag or an issue number, not a heading. The space is required.
+      const heading = /^(#{1,6})\s+(.*)$/.exec(trimmed);
+      if (heading) {
+        flush();
+        const level = Math.min(heading[1].length, 6);
+        const h = document.createElement("div");
+        h.className = "md-h md-h" + (level <= 2 ? level : 3);
+        inline(h, heading[2].trim());
+        container.append(h);
+        continue;
+      }
+
+      if (trimmed === ">" || trimmed.startsWith("> ")) {
+        flush();
+        const q = document.createElement("blockquote");
+        q.className = "md-quote";
+        inline(q, trimmed.slice(1).trim());
+        container.append(q);
+        continue;
+      }
+
+      const bullet = /^[-*+]\s+(.*)$/.exec(trimmed);
+      const numbered = /^(\d{1,3})[.)]\s+(.*)$/.exec(trimmed);
+      if (bullet || numbered) {
+        flushParagraph();
+        const ordered = Boolean(numbered);
+        if (list && list.ordered !== ordered) flushList();
+        if (!list) {
+          list = { el: document.createElement(ordered ? "ol" : "ul"), ordered };
+          list.el.className = "md-list";
+        }
+        const li = document.createElement("li");
+        inline(li, (bullet ? bullet[1] : numbered[2]).trim());
+        list.el.append(li);
+        continue;
+      }
+
+      flushList();
+      paragraph.push(line);
+    }
+    flush();
+  }
+
+  // Inline emphasis, one pass, text nodes only. Anything that does not close is left as the
+  // characters it was rather than swallowing the rest of the line.
+  function inline(target, text) {
+    const pattern = /(\*\*[^*]+\*\*|`[^`]+`|\*[^*]+\*|_[^_]+_)/g;
+    let last = 0;
+    let match;
+    while ((match = pattern.exec(text)) !== null) {
+      if (match.index > last) {
+        target.append(document.createTextNode(text.slice(last, match.index)));
+      }
+      const token = match[0];
+      let el;
+      if (token.startsWith("**")) {
+        el = document.createElement("strong");
+        el.textContent = token.slice(2, -2);
+      } else if (token.startsWith("`")) {
+        el = document.createElement("code");
+        el.textContent = token.slice(1, -1);
+      } else {
+        el = document.createElement("em");
+        el.textContent = token.slice(1, -1);
+      }
+      target.append(el);
+      last = match.index + token.length;
+    }
+    if (last < text.length) target.append(document.createTextNode(text.slice(last)));
   }
 
   function heldReason(code) {
@@ -1187,10 +1404,14 @@
   // human exactly as prose used to be.
   //
   // Agent-to-agent traffic still uses the narrower verbs; they are a protocol, not a UI.
+  //
+  // `full_access` rather than `make_change`: somebody messaging their own fleet is asking for the
+  // job to be finished, not for a scoped subset of it. Under `make_change` an agent would do the
+  // work, commit it, and stop short of publishing — which read back as "I was not allowed".
   function composeBody(text) {
     return JSON.stringify({
       v: 1,
-      verb: "make_change",
+      verb: "full_access",
       args: { task: text },
       note: text,
     });

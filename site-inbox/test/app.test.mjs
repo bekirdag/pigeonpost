@@ -227,7 +227,8 @@ check("plain body is text", text(bubbles[0].querySelector(".text")), "the build 
 const mineRows = [...$("messages").querySelectorAll("li.mine")];
 check("the sent message is on my side", mineRows.length, 1);
 check("the sent message reads back", text(mineRows[0].querySelector(".text")), "on it, running now");
-check("request renders its verb", text(bubbles[2].querySelector(".verb")), "run_tests");
+// Verbs read as words. The wire name is a protocol token, not something to show somebody.
+check("request renders its verb", text(bubbles[2].querySelector(".verb")), "Run the tests");
 check("request renders args", bubbles[2].querySelector(".args").textContent.includes('"suite": "unit"'), true);
 check("request renders the note", text(bubbles[2].querySelector(".why")), "before the tag");
 check("held reason is spelled out", text(bubbles[2].querySelector(".reason")), "that verb was not granted to this sender");
@@ -263,15 +264,48 @@ check("send addressed to the peer", sendCall && sendCall.body.to, "/bekir/agent1
 // the typed words survive inside it.
 const sentEnvelope = JSON.parse(sendCall.body.body);
 check("send carries the words", sentEnvelope.note, "on it");
-check("send asks for something", sentEnvelope.verb, "make_change");
+// The most this client can ask for: a person messaging their own fleet wants the job finished,
+// not a scoped subset of it that stops before publishing.
+check("send asks for something", sentEnvelope.verb, "full_access");
 check("send names the sending mailbox", sendCall && sendCall.body.from, "/k/cz6900v2h90vnwefj7g7ezvbh4");
 // It appears straight away, rendered as the request it is rather than as raw JSON — a sent
 // request is still a request.
 const mineReq = [...$("messages").querySelectorAll("li.mine .request .why")];
 check("outbound appears immediately", mineReq.some((el) => text(el) === "on it"), true);
-check("and reads as a request, not as JSON", [...$("messages").querySelectorAll("li.mine .verb")].some((el) => text(el) === "make_change"), true);
+check("and reads as a request, not as JSON", [...$("messages").querySelectorAll("li.mine .verb")].some((el) => text(el) === "Full permissions"), true);
 // Nothing is written to the browser any more — the postbox keeps the sent copy.
 check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
+
+console.log("\n— markdown, and still never markup —");
+// The rule this file has always kept: a body is inserted as text. Rendering it as markdown must
+// not become a way around that.
+INBOX.messages.push({
+  message_id: "m_md", from: "/k/aaaa1111bbbb2222cccc3333dd",
+  body: "## Heading\n\nSome **bold** and `code`.\n\n- one\n- two\n\n```\n<img src=x onerror=alert(1)>\n```",
+  peer: "/bekir/agent1", thread_id: "t-agent1", sender_handle: "/bekir/agent1",
+  autonomy: "review", verb: null, held_because: "not_a_request", received_at: now - 5, read: true,
+  sender_known: true, matched_contact: "/bekir/*", sender_standing: "unproven",
+  sender_tier: "handle", alias: null, untrusted: true,
+});
+window.document.dispatchEvent(new window.Event("visibilitychange"));
+await settle(120);
+const md = [...$("messages").querySelectorAll(".bubble .text")].find((el) => el.querySelector(".md-h"));
+check("the markdown message reached the view", Boolean(md), true);
+check("heading is an element, not a hash", Boolean(md.querySelector(".md-h")), true);
+check("heading keeps its words", text(md.querySelector(".md-h")), "Heading");
+check("bold becomes strong", Boolean(md.querySelector("strong")), true);
+check("inline code becomes code", Boolean(md.querySelector("code")), true);
+check("bullets become a list", md.querySelectorAll(".md-list li").length, 2);
+check("a fence becomes a pre", Boolean(md.querySelector(".md-code")), true);
+// The one that matters: markup inside a fence is characters, not nodes.
+check("markup inside a fence stays text", md.querySelector(".md-code").textContent.includes("<img"), true);
+check("and no image was ever created", md.querySelectorAll("img").length, 0);
+
+console.log("\n— copy —");
+const copyButton = [...$("messages").querySelectorAll(".bubble .meta .copy")].pop();
+check("every message offers copy", Boolean(copyButton), true);
+check("copy is a real button", copyButton.tagName, "BUTTON");
+check("and is labelled for a screen reader", copyButton.getAttribute("aria-label"), "Copy message");
 
 console.log("\n— peer normalisation —");
 // The two conversations, and still two: replying to `/bekir/agent1` by handle must land in the
@@ -413,7 +447,7 @@ $("composer").dispatchEvent(new window.Event("submit", { cancelable: true, bubbl
 await settle(120);
 const envelope = JSON.parse(calls.slice(beforeAsk).find((c) => c.path === "/v1/send").body.body);
 check("sends a request envelope", envelope.v, 1);
-check("asking for work", envelope.verb, "make_change");
+check("asking for work", envelope.verb, "full_access");
 check("the typed text becomes the task", envelope.args.task, "fix the failing pipeline");
 check("and survives as the note", envelope.note, "fix the failing pipeline");
 
