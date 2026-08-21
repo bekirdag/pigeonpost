@@ -53,6 +53,11 @@
 .ac-search { display: flex; gap: 10px; }
 .ac-field { flex: 1; display: flex; align-items: center; border: 1.5px solid var(--rule); border-radius: 9px; padding: 0 12px; background: #fff; }
 .ac-field:focus-within { border-color: var(--blue); }
+/* The name box on the "claim a handle" card. Same affordance as .ac-field, but it holds a whole
+   handle rather than a bare name, so the slash is typed rather than printed beside it. */
+.ac-input { width: 100%; box-sizing: border-box; border: 1.5px solid var(--rule); border-radius: 9px;
+  padding: 10px 12px; background: #fff; font: 16px var(--mono); color: inherit; }
+.ac-input:focus { outline: none; border-color: var(--blue); }
 .ac-field .slash { font: 19px var(--mono); color: var(--muted); }
 #ac-handle { flex: 1; border: 0; outline: 0; font: 19px var(--mono); padding: 12px 4px; color: var(--ink); background: transparent; min-width: 0; }
 .hs { min-height: 20px; font: 14px var(--mono); margin: 12px 0 0; }

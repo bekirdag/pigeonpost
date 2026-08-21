@@ -3,7 +3,7 @@
   "private": true,
   "description": "Browser inbox for the hosted postbox. Static files; this manifest exists only so the tests can be run.",
   "scripts": {
-    "test": "node --test test/app.test.mjs"
+    "test": "node --test test/app.test.mjs test/handle.test.mjs"
   },
   "devDependencies": {
     "jsdom": "^27.0.0"

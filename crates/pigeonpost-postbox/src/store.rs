@@ -439,6 +439,16 @@ fn read_thread(row: &rusqlite::Row<'_>) -> Result<Thread, StoreError> {
     })
 }
 
+/// One of an account's mailboxes, as the account page lists them. The handle travels with it
+/// because a page that cannot see which mailbox is already named can only offer to name it and
+/// then explain `already_named` after the fact.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AccountIdentity {
+    pub address: String,
+    pub label: Option<String>,
+    pub handle: Option<String>,
+}
+
 /// One subject inside a conversation with a peer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Thread {
@@ -2228,14 +2238,20 @@ impl Store {
     pub async fn list_by_account(
         &self,
         account_id: String,
-    ) -> Result<Vec<(String, Option<String>)>, StoreError> {
+    ) -> Result<Vec<AccountIdentity>, StoreError> {
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<Vec<(String, Option<String>)>, StoreError> {
+        tokio::task::spawn_blocking(move || -> Result<Vec<AccountIdentity>, StoreError> {
             let c = conn.lock().expect("store lock");
             let mut stmt = c.prepare(
-                "SELECT address, label FROM identities WHERE account_id = ?1 ORDER BY created_at ASC",
+                "SELECT address, label, handle FROM identities WHERE account_id = ?1 ORDER BY created_at ASC",
             )?;
-            let rows = stmt.query_map(params![account_id], |r| Ok((r.get(0)?, r.get(1)?)))?;
+            let rows = stmt.query_map(params![account_id], |r| {
+                Ok(AccountIdentity {
+                    address: r.get(0)?,
+                    label: r.get(1)?,
+                    handle: r.get(2)?,
+                })
+            })?;
             let mut out = Vec::new();
             for r in rows {
                 out.push(r?);
@@ -3278,8 +3294,28 @@ mod tests {
         let owned = store.list_by_account("acct_1".into()).await.unwrap();
         assert_eq!(
             owned,
-            vec![("/k/mine".to_string(), Some("repo:test".to_string()))]
+            vec![AccountIdentity {
+                address: "/k/mine".to_string(),
+                label: Some("repo:test".to_string()),
+                handle: None,
+            }]
         );
+
+        // And once it is named, the listing says so — the account page needs to show which mailbox
+        // already carries a handle, not offer to name it and explain `already_named` afterwards.
+        store
+            .bind_handle(
+                "/k/mine".into(),
+                "/pp/mine".into(),
+                "acct_1".into(),
+                "/pp".into(),
+                8,
+                None,
+            )
+            .await
+            .unwrap();
+        let named = store.list_by_account("acct_1".into()).await.unwrap();
+        assert_eq!(named[0].handle.as_deref(), Some("/pp/mine"));
         assert!(store
             .get_in_account("acct_1".into(), "/k/mine".into())
             .await

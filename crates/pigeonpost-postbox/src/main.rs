@@ -1149,7 +1149,10 @@ pub(crate) async fn do_list_identities(
         ApiError::server("store_error")
     })?;
     Ok(json!({
-        "identities": rows.into_iter().map(|(address, label)| json!({ "address": address, "label": label })).collect::<Vec<_>>()
+        "identities": rows
+            .into_iter()
+            .map(|i| json!({ "address": i.address, "label": i.label, "handle": i.handle }))
+            .collect::<Vec<_>>()
     }))
 }
 
@@ -2104,7 +2107,7 @@ async fn resolve_acting_identity(
             match owned.len() {
                 1 => state
                     .store
-                    .get_in_account(account, owned.remove(0).0)
+                    .get_in_account(account, owned.remove(0).address)
                     .await
                     .map_err(|_| ApiError::server("store_error"))?
                     .ok_or_else(|| ApiError::server("store_error")),
@@ -3619,7 +3622,7 @@ async fn events(
             // Re-read the account's mailboxes each pass, so a mailbox minted while the stream is
             // open starts producing events without the daemon reconnecting.
             let owners: Vec<String> = match state.store.list_by_account(account.clone()).await {
-                Ok(rows) => rows.into_iter().map(|(address, _)| address).collect(),
+                Ok(rows) => rows.into_iter().map(|i| i.address).collect(),
                 Err(e) => {
                     tracing::error!(error = %e, "events identity read failed");
                     break;

@@ -319,6 +319,9 @@
     if (!res.ok) {
       const e = new Error(body.detail || body.error || `postbox ${res.status}`);
       e.status = res.status;
+      // The machine-readable half. Callers translate these into sentences; the detail string is a
+      // fallback for codes nobody has written a sentence for yet.
+      e.code = body.error || null;
       throw e;
     }
     return body;
@@ -328,22 +331,112 @@
     const box = $("#ac-pb-list"); if (!box) return;
     try {
       const { identities } = await pbFetch("/v1/identities");
+      // The handle an account already holds decides what to suggest for the next mailbox: agents
+      // hang under the person, and which segment is the person depends on the shape of the name.
+      pbNamed = identities.filter((i) => i.handle).map((i) => i.handle);
       box.innerHTML = (identities.length
         ? identities.map((i) => `<div class="ac-row">
-            <span class="mono">${esc(i.address)}</span>
+            <span class="mono">${esc(i.handle || i.address)}</span>
             <span class="muted">${esc(i.label || "")}</span>
             <span class="ac-row-actions">
+              ${i.handle ? "" : `<button class="btn btn-small" data-pbname="${esc(i.address)}">Name it</button>`}
               <button class="btn btn-small" data-pbview="${esc(i.address)}">View inbox</button>
               <button class="btn btn-small" data-pbdel="${esc(i.address)}">Delete</button>
             </span>
           </div>`).join("")
         : `<p class="muted">No inboxes yet — create one for your agent.</p>`)
-        + `<div id="ac-pb-msgs"></div>`;
+        + `<div id="ac-pb-name"></div><div id="ac-pb-msgs"></div>`;
       box.querySelectorAll("[data-pbview]").forEach((b) => b.onclick = () => pbViewInbox(b.getAttribute("data-pbview")));
       box.querySelectorAll("[data-pbdel]").forEach((b) => b.onclick = () => pbDeleteInbox(b.getAttribute("data-pbdel")));
+      box.querySelectorAll("[data-pbname]").forEach((b) => b.onclick = () => pbNameForm(b.getAttribute("data-pbname")));
     } catch (e) {
       box.innerHTML = `<p class="muted">${e.status === 401 ? "Sign in again to manage inboxes." : "Could not reach the postbox."}</p>`;
     }
+  }
+
+  // ---- naming a mailbox: a free handle, or an agent under one you hold ------------------------
+  //
+  // Free names are minted here, not sold: `/pp` is claimed by being first, and `/github/<login>`
+  // and an address-shaped handle come from having proved them at sign-in. A paid flat name is the
+  // separate purchase flow above. All three end at the same call.
+
+  let pbNamed = [];
+  const H = () => window.PIGEONPOST_HANDLE;
+
+  // Why a name was refused, in words. The postbox is authoritative about every one of these; the
+  // page only translates.
+  function pbNameError(e) {
+    switch (e.code) {
+      case "handle_taken":     return "somebody already has that name";
+      case "already_named":    return "this inbox already has a handle — a mailbox keeps the first one it is given";
+      case "namespace_quota":  return "you already hold a free name, and a handle identifies one person. Agents under it are free and unlimited";
+      case "namespace_not_yours": return "that name sits under somebody else's handle";
+      case "open_namespace_closed":
+      case "reserved_names_unavailable":
+        return "free names are not being handed out right now";
+      default: return e.message || "the postbox refused that name";
+    }
+  }
+
+  // What to offer. Somebody who already holds a name is almost certainly adding an agent to it;
+  // somebody who holds none is claiming their first, which is free and under /pp.
+  function pbSuggest(addr) {
+    const held = pbNamed[0];
+    if (held && H()) {
+      const ns = H().namespaceOf(held);
+      if (ns) return `${ns}/agent1`;
+    }
+    return "/pp/";
+  }
+
+  function pbNameForm(addr) {
+    const out = $("#ac-pb-name"); if (!out) return;
+    out.innerHTML = `
+      <div class="ac-card">
+        <h4>Name <span class="mono">${esc(addr)}</span></h4>
+        <p class="muted">A free name under <span class="mono">/pp</span>, or an agent beneath a
+          handle you already hold — <span class="mono">/you/agent1</span>. One free name per
+          person; agents under it cost nothing.</p>
+        <input id="ac-pb-handle" class="ac-input mono" value="${esc(pbSuggest(addr))}" spellcheck="false">
+        <p class="ac-note" id="ac-pb-handle-why"></p>
+        <div class="ac-actions ac-left">
+          <button class="btn btn-primary" id="ac-pb-handle-go">Claim it</button>
+          <button class="btn btn-secondary" id="ac-pb-handle-x">Cancel</button>
+        </div>
+      </div>`;
+    const input = $("#ac-pb-handle");
+    const why = $("#ac-pb-handle-why");
+    const go = $("#ac-pb-handle-go");
+
+    // Same grammar the postbox enforces, so a refusal arrives before the request rather than after.
+    const check = () => {
+      if (!H()) return true;
+      const r = H().canonical(input.value);
+      why.textContent = r.ok ? "" : (r.silent ? "" : r.reason);
+      go.disabled = !r.ok;
+      return r.ok;
+    };
+    input.oninput = check;
+    check();
+
+    $("#ac-pb-handle-x").onclick = () => { out.innerHTML = ""; };
+    go.onclick = async () => {
+      if (!check()) return;
+      const handle = H() ? H().canonical(input.value).handle : input.value.trim();
+      go.disabled = true;
+      why.textContent = "Claiming…";
+      try {
+        await pbFetch("/v1/identities/handle", {
+          method: "POST",
+          body: JSON.stringify({ address: addr, handle }),
+        });
+        out.innerHTML = "";
+        loadPostbox();
+      } catch (e) {
+        why.textContent = pbNameError(e);
+        go.disabled = false;
+      }
+    };
   }
 
   async function pbViewInbox(addr) {
@@ -434,7 +527,7 @@
   }
 
   function searchBlock() {
-    const price = cfg.price ? `${money(cfg.price.amount, cfg.price.currency)}/${cfg.price.interval}` : "$5/year";
+    const price = cfg.price ? `${money(cfg.price.amount, cfg.price.currency)}/${cfg.price.interval}` : "$6.80/year";
     return `
       <div class="ac-card ac-search-card">
         <h3>Get a handle</h3>
