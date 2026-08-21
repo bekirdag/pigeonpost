@@ -135,12 +135,35 @@ if FIX and newest:
         if not internal:
             print("  No internal group exists. Create one in App Store Connect and add yourself.")
         for g in internal:
+            name = g["attributes"]["name"]
+            # Put this build in front of the testers now.
             try:
                 call(
                     "POST",
                     f"/betaGroups/{g['id']}/relationships/builds",
                     json={"data": [{"type": "builds", "id": newest["id"]}]},
                 )
-                print(f"  Added build {a['version']} to internal group {g['attributes']['name']}.")
+                print(f"  Added build {a['version']} to internal group {name}.")
             except Exception as exc:
-                print(f"  Could not add to {g['attributes']['name']}: {exc}")
+                print(f"  Could not add build {a['version']} to {name}: {exc}")
+            # And stop this being a manual step. An internal group that does not take every build
+            # means each upload has to be walked into the group by hand in the web UI, and the one
+            # that gets forgotten looks exactly like a failed upload from the phone.
+            if not g["attributes"].get("hasAccessToAllBuilds"):
+                try:
+                    call(
+                        "PATCH",
+                        f"/betaGroups/{g['id']}",
+                        json={
+                            "data": {
+                                "type": "betaGroups",
+                                "id": g["id"],
+                                "attributes": {"hasAccessToAllBuilds": True},
+                            }
+                        },
+                    )
+                    print(f"  {name} now takes every new build automatically.")
+                except Exception as exc:
+                    print(f"  Could not set hasAccessToAllBuilds on {name}: {exc}")
+            else:
+                print(f"  {name} already takes every new build automatically.")
