@@ -83,6 +83,11 @@ final class HandleStore {
             let offer = try await withTimeout(seconds: 12) { try await client.handleOffer() }
             if let namespace = offer.namespace {
                 phase = .owned(namespace: namespace, renews: offer.renewsOn)
+                // A name with no mailbox under it is not an address. The postbox mints one when the
+                // purchase lands; this is for the namespaces bought before it did — including the
+                // one whose owner reported that the handle they had just paid for appeared in no
+                // list anywhere.
+                await account?.ensureMailbox(inNamespace: namespace)
                 return
             }
             guard let productId = offer.productId else {
@@ -181,6 +186,10 @@ final class HandleStore {
             if let namespace = offer.namespace {
                 phase = .owned(namespace: namespace, renews: offer.renewsOn)
                 wantedName = ""
+                // The postbox mints `<namespace>/main` as part of the claim, so this is mostly a
+                // reload — but it is what puts the new mailbox in the Mailboxes list without
+                // waiting for the next launch, and it still covers a mint the postbox could not do.
+                await account?.ensureMailbox(inNamespace: namespace)
             } else {
                 await refresh()
             }

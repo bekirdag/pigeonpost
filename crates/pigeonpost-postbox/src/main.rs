@@ -3985,11 +3985,66 @@ async fn grant_namespace(
     {
         Ok(()) => {
             tracing::info!(%namespace, account = %req.account_id, expires_at = ?req.expires_at, "namespace granted");
-            Json(json!({ "namespace": namespace, "account_id": req.account_id })).into_response()
+            let mailbox = ensure_namespace_mailbox(&state, &req.account_id, &namespace).await;
+            Json(json!({
+                "namespace": namespace,
+                "account_id": req.account_id,
+                "mailbox": mailbox,
+            }))
+            .into_response()
         }
         Err(e) => {
             tracing::error!(error = %e, "namespace grant failed");
             ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// Give a newly owned namespace somewhere to receive mail.
+///
+/// Buying a name granted the *right* to mint under it and nothing else, so `/alex` resolved to
+/// nothing, appeared in no mailbox list, and the only way to make the purchase real was to mint a
+/// `/k/` inbox and then name it — two steps nobody was told about, from a screen that had just said
+/// the name was theirs. A bought namespace with no mailbox in it is not an address.
+///
+/// `<namespace>/main` because that is what a bare `/<namespace>` already resolves to; anything else
+/// would sell a name that does not answer to itself.
+///
+/// Best-effort by design. The purchase is recorded and the namespace is granted before this runs,
+/// and failing to mint must not turn a completed payment into an error the app reports as one — so
+/// the failure is logged, the reply carries `mailbox: null`, and the next claim or the app's own
+/// repair makes it right. Returns the handle it found or created.
+async fn ensure_namespace_mailbox(
+    state: &AppState,
+    account: &str,
+    namespace: &str,
+) -> Option<String> {
+    match state
+        .store
+        .handles_in_namespace(account.to_string(), namespace.to_string())
+        .await
+    {
+        // Already inhabited — a renewal, or a fleet that named itself before the purchase. Minting
+        // a second `main` on every renewal is how a namespace fills with mailboxes nobody asked for.
+        Ok(held) if !held.is_empty() => return held.into_iter().next(),
+        Ok(_) => {}
+        Err(e) => {
+            tracing::error!(error = %e, %namespace, "could not read the namespace's mailboxes");
+            return None;
+        }
+    }
+
+    // No label. A label is the operator's own note about a mailbox, and the handle already says
+    // everything this one is; inventing "main" here would only repeat itself in every list.
+    let handle = format!("/{namespace}/main");
+    match do_create_identity(state, Some(account.to_string()), None, Some(handle.clone())).await {
+        Ok(_) => {
+            tracing::info!(%handle, %account, "minted the namespace's first mailbox");
+            Some(handle)
+        }
+        Err(e) => {
+            tracing::error!(code = %e.code, error = %e.message, %handle, "could not mint the namespace's mailbox");
+            None
         }
     }
 }
@@ -4166,8 +4221,10 @@ async fn claim_apple(
                 expires_at = entitlement.expires_at,
                 "namespace bought through the App Store"
             );
+            let mailbox = ensure_namespace_mailbox(&state, &account, &namespace).await;
             Json(json!({
                 "namespace": format!("/{namespace}"),
+                "mailbox": mailbox,
                 "expires_at": entitlement.expires_at,
                 "environment": entitlement.environment,
             }))
@@ -6015,6 +6072,51 @@ mod tests {
         )
         .await
         .is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_bought_namespace_gets_a_mailbox_to_receive_mail_in() {
+        // What the purchase is *for*. Granting the right to mint and stopping there left the buyer
+        // with a name that resolved to nothing and showed up in no mailbox list — the bug this
+        // exists to keep fixed.
+        let state = test_state();
+        own_namespace(&state, "alp", "acct_bekir").await;
+
+        let minted = ensure_namespace_mailbox(&state, "acct_bekir", "alp").await;
+        assert_eq!(minted.as_deref(), Some("/alp/main"));
+
+        // …and it is a real mailbox on the account, which is what puts it in the list.
+        let listed = do_list_identities(&state, "acct_bekir".into())
+            .await
+            .unwrap();
+        assert_eq!(listed["identities"][0]["handle"], "/alp/main");
+
+        // A renewal must not mint a second one. Called again it finds what is there.
+        assert_eq!(
+            ensure_namespace_mailbox(&state, "acct_bekir", "alp")
+                .await
+                .as_deref(),
+            Some("/alp/main")
+        );
+        assert_eq!(
+            do_list_identities(&state, "acct_bekir".into())
+                .await
+                .unwrap()["identities"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[tokio::test]
+    async fn a_namespace_nobody_owns_mints_nothing_rather_than_failing_the_purchase() {
+        // Best-effort, and it has to stay that way: the money has been taken and the entitlement
+        // recorded before this runs, so a refusal here is a `None`, never an error.
+        let state = test_state();
+        assert!(ensure_namespace_mailbox(&state, "acct_bekir", "alp")
+            .await
+            .is_none());
     }
 
     #[tokio::test]

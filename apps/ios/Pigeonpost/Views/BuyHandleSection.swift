@@ -15,6 +15,10 @@ import SwiftUI
 //  "Checking your handle…" pinned at the top for ever because the work never got to finish.
 struct BuyHandleSection: View {
     let store: HandleStore
+    /// Only to name the mailbox the handle bought. The account is the authority on which mailboxes
+    /// exist; `HandleStore` is the authority on what was paid for, and neither should answer for
+    /// the other.
+    @Environment(Account.self) private var account
 
     var body: some View {
         content(store)
@@ -59,6 +63,16 @@ struct BuyHandleSection: View {
                     Text(namespace)
                         .font(.system(size: 15, weight: .semibold, design: .monospaced))
                         .foregroundStyle(Theme.ink)
+                }
+                // The mailbox the name bought. Shown because a handle on its own is a right to mint,
+                // and the thing that actually receives mail is this — the row that was missing when
+                // a paid name led to an empty Mailboxes list.
+                if let mailbox = account.mailbox(inNamespace: namespace)?.handle {
+                    LabeledContent("Mailbox") {
+                        Text(mailbox)
+                            .font(.system(size: 14, design: .monospaced))
+                            .foregroundStyle(Theme.body)
+                    }
                 }
                 if let renews {
                     LabeledContent("Renews", value: renews.formatted(date: .abbreviated, time: .omitted))

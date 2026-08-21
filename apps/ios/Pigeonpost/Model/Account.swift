@@ -83,6 +83,34 @@ final class Account {
         await loadIdentities()
     }
 
+    /// A mailbox on this account whose handle sits inside `namespace`, if there is one.
+    func mailbox(inNamespace namespace: String) -> Mailbox? {
+        mailboxes.first { $0.handle?.hasPrefix(namespace + "/") ?? false }
+    }
+
+    /// Make sure a namespace this account owns has somewhere to receive mail.
+    ///
+    /// Buying a name grants the right to mint under it, which is not the same as having an address:
+    /// until a mailbox carries the name, `/alp` resolves to nothing and appears in no list — so the
+    /// screen that has just said the name is yours would go on showing no sign of it. The postbox
+    /// mints one at the moment of purchase now, and this covers the two cases that cannot reach:
+    /// a namespace bought before that existed, and one granted by some route other than the store.
+    ///
+    /// Quiet on failure. The name is bought either way, and a refusal here is not something to put
+    /// in front of somebody who has just paid — `mailbox(inNamespace:)` simply keeps saying no, and
+    /// the next visit to Settings tries again.
+    @discardableResult
+    func ensureMailbox(inNamespace namespace: String) async -> Mailbox? {
+        if let existing = mailbox(inNamespace: namespace) { return existing }
+        do {
+            _ = try await client.createIdentity(handle: "\(namespace)/main")
+        } catch {
+            return nil
+        }
+        await loadIdentities()
+        return mailbox(inNamespace: namespace)
+    }
+
     #if DEBUG
     func installFixtures(mailboxes: [Mailbox], me: Mailbox) {
         self.mailboxes = mailboxes

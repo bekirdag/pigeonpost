@@ -134,6 +134,14 @@ The reserved-name list applies to bought names exactly as it does to free ones: 
 must be set, or the endpoint refuses everything. `support` and `admin` read as the operator whoever
 paid for them.
 
+**A successful claim also mints `<namespace>/main`**, and the reply names it as `mailbox`. Until
+0.7.8 the purchase granted only the *right* to mint, so a bought name resolved to nothing and showed
+up in no mailbox list — the buyer had to mint a `/k/` inbox and then name it, two steps nobody was
+told about. `PUT /v1/namespaces` does the same on a grant. Both are best-effort: the entitlement is
+recorded first, and a mint that fails logs and answers `mailbox: null` rather than turning a
+completed payment into an error. A namespace that already holds a mailbox is left alone, so renewals
+do not accumulate them.
+
 ## Bring it up (dedicated box, Compose)
 
 ```sh

@@ -54,15 +54,23 @@ struct PostboxClient {
         try await send("/v1/identities", as: IdentitiesResponse.self).identities ?? []
     }
 
-    /// Mint the account's first `/k/` mailbox.
+    /// Mint a mailbox on the account: anonymous, or named when a handle is given.
     ///
     /// No proof-of-work and no label: an account holder has already authenticated, and the postbox
     /// creates under the account on the strength of this very token. The one-time capability token
     /// in the reply is deliberately not read — this app authenticates as the account, never as a
     /// single mailbox, so keeping it would be a second credential with nothing to do.
+    ///
+    /// A handle is accepted only for a namespace the account owns; the postbox decides that, and
+    /// refuses with `namespace_not_yours` if it does not agree.
     @discardableResult
-    func createIdentity() async throws -> String {
-        try await send("/v1/identities", method: "POST", json: [:], as: CreatedIdentity.self).address
+    func createIdentity(handle: String? = nil) async throws -> String {
+        try await send(
+            "/v1/identities",
+            method: "POST",
+            json: handle.map { ["handle": $0] } ?? [:],
+            as: CreatedIdentity.self
+        ).address
     }
 
     func whoami(identity: String) async throws -> WhoAmI {
