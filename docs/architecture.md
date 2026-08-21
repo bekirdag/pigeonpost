@@ -133,11 +133,65 @@ namespace requires a verifier for that upstream allocation; it is not a configur
 This follows the same broad upstream-identity-in, verifiable-binding-out pattern used by systems such
 as Sigstore/Fulcio, while respecting that GitHub user identity uses OAuth2 rather than OIDC.
 
+#### The shape of a handle
+
+One to three segments: a namespace, a person, and optionally that person's agent. Three is the
+ceiling — four segments is a typo, not a deeper fleet, and is refused.
+
+```
+/bekir/docdex          a name under a namespace somebody owns
+/github/alex           a name under a provider's namespace
+/alex@example.com      an address, which is a whole person on its own
+/github/alex/agent1    any of the above, plus one agent segment
+```
+
+A single segment is a handle only when it is address-shaped; `/bekir` alone is a namespace, and
+resolving it is somebody else's decision. The `@` is what distinguishes the two, with nothing to
+disambiguate.
+
+Which segment identifies the person decides where that person's agents live, and it is not the same
+answer in both cases. `/bekir/main` is a person under a namespace they own, so their agents are its
+**siblings** — `/bekir/docdex`. `/github/alex` is a person under a namespace belonging to everybody,
+so their agents are its **children** — `/github/alex/agent1`. Trusting a fleet follows the same
+rule: `/github/alex/*` is one person's agents, while `/github/*` would be every GitHub user alive
+because one of them was trusted. Contacts resolve a peer to its parent for exactly this reason.
+
+The character set is RFC 5322's dot-atom less four bytes this format cannot carry — `/` separates
+segments, `?` opens a loft hint, `#` opens a capability token, and `%` is excluded because a percent
+sequence that survives one decoding too many turns one name silently into another. That last one is
+a judgement rather than a necessity: a name that quietly becomes a different name is worse than a
+name somebody cannot use.
+
 #### Provider-scoped names
 
 `/github/superaidev` is the canonical provider form and is never auto-aliased to a bare `/superaidev`.
 The two are separate names with separate owners: proving the GitHub account `superaidev` earns
 `/github/superaidev` and nothing else.
+
+#### `/pp` — a chosen name, and why this is not Namecoin
+
+The argument above says a free first-come human-readable namespace fails empirically. `/pp` is a
+free first-come human-readable namespace, so the difference has to be stated rather than assumed.
+
+Namecoin was **permissionless**: registration cost money but required no identity, so one actor
+could take a hundred thousand names. `/pp` is free but **not permissionless** — a claim needs an
+account, and an account exists only because somebody signed in through a provider that already
+fought spam for a decade. The scarce thing gating registration is the same one gating Tier 2; only
+the payment changed, and payment was never what stopped squatting.
+
+Three rules carry the rest:
+
+- **The reserved-name list is enforced at the point of claim.** For `/github` the postbox is
+  honouring an allocation made upstream, so it does not check the list. For `/pp` the postbox *is*
+  the point of sale, so `docs/reserved-names.txt` is checked before a name is given away. With no
+  list configured the namespace is closed rather than open — an open namespace and a missing file
+  would hand out `google`, `apple` and six thousand others to whoever asked first.
+- **One name per account.** A handle identifies a person and a person is one person.
+- **Agents do not count.** They are the third segment beneath the name, so a fleet of any size
+  costs nothing and a squatter still gets exactly one name.
+
+The result is a namespace where the cost of a second name is a second proved identity, which is the
+property Namecoin never had.
 
 #### How many handles one account may hold
 
@@ -295,6 +349,21 @@ control, and the client resolves it without special-casing:
 | --- | --- | --- |
 | `k` | Nobody — self-certifying | Yes, by construction |
 | `github`, `google` | `pigeonpost.dev/registry` | Yes, by definition |
+| `pp` | The postbox that hosts the mailbox | **Not yet** — see below |
+| An address, e.g. `/alex@example.com` | The realm that verified it | Only as far as that realm is trusted |
+
+**`/pp` is claimed at the postbox, not written to the registry**, which is the consequence worth
+stating plainly: two postboxes could each hand `/pp/alex` to a different person, and nothing today
+would detect it. That is tolerable while there is one hosted postbox and it is the point of claim,
+and it stops being tolerable the moment a second one exists. Whether `/pp` graduates into the
+transparency log — where `github` and `google` already live — or stays a per-postbox name is an
+open decision, not a settled one.
+
+The same caveat applies to an address-shaped handle from a different angle: it is only as good as
+the realm's word that the address was verified, and for a Google-brokered account that word rests
+on Google's assertion rather than on any check of ours. The postbox records *that* the realm
+asserted it and on what date, so the two can be told apart later, but it does not upgrade one into
+the other.
 
 Third-party registries remain possible through the dump-and-fork exit right, but they do not acquire
 canonical provider namespaces merely by choosing a similar path. A new provider namespace requires

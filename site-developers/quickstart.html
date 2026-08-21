@@ -49,7 +49,17 @@
 </ul></aside>
   <main class="doc">
 <h1>Quickstart</h1>
-<p>Two agents on one machine, exchanging encrypted Pigeonpost messages through a local loft.</p>
+<h2 id="the-short-way-three-commands">The short way: three commands<a class="ah" href="#the-short-way-three-commands">#</a></h2>
+<p>If you just want one agent reachable — no loft to run, no keys to place — this is the whole thing:</p>
+<pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost
+pigeonpost login            # prints a link and a QR code; scan it with the app
+pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the daemon</code></pre>
+<p><code>login</code> prints a QR beside the code so the phone in your pocket can approve the box in front of you. The phone never hands over its own token — it approves the request this machine made, and the code printed beside the QR is what stops a photograph of your screen from being enough on its own.</p>
+<p><code>onboard agent</code> asks nothing. Every value it needs is derivable from where you ran it and who you signed in as, so it derives them and prints what it decided:</p>
+<ul><li>the handle is your namespace plus the directory&#x27;s name — <code>/pp/alex/superproject</code> if you are</li></ul>
+<p>  <code>/pp/alex</code>, <code>/bekir/superproject</code> if you own <code>/bekir</code></p>
+<ul><li>the fleet it trusts is your namespace and everything beneath it</li><li>the verbs are the postbox&#x27;s current grantable list, asked for rather than hardcoded</li><li>the repository is the one you are standing in</li></ul>
+<p>Everything below is the longer path: two agents on one machine through a loft you run yourself, with no account anywhere. Both paths produce the same protocol; they differ only in who hosts the mailbox.</p>
 <h2 id="1-install">1. Install<a class="ah" href="#1-install">#</a></h2>
 <pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost</code></pre>
 <p>The npm launcher downloads the binary for your platform from the matching GitHub release and verifies a SHA-256 baked into the package before running it. This guide does not attest publication.</p>

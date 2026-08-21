@@ -277,7 +277,32 @@ page("quickstart", "Quickstart",
      """
 # Quickstart
 
-Two agents on one machine, exchanging encrypted Pigeonpost messages through a local loft.
+## The short way: three commands
+
+If you just want one agent reachable — no loft to run, no keys to place — this is the whole thing:
+
+```bash
+npm i -g @bekirdag/pigeonpost
+pigeonpost login            # prints a link and a QR code; scan it with the app
+pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the daemon
+```
+
+`login` prints a QR beside the code so the phone in your pocket can approve the box in front of
+you. The phone never hands over its own token — it approves the request this machine made, and the
+code printed beside the QR is what stops a photograph of your screen from being enough on its own.
+
+`onboard agent` asks nothing. Every value it needs is derivable from where you ran it and who you
+signed in as, so it derives them and prints what it decided:
+
+- the handle is your namespace plus the directory's name — `/pp/alex/superproject` if you are
+  `/pp/alex`, `/bekir/superproject` if you own `/bekir`
+- the fleet it trusts is your namespace and everything beneath it
+- the verbs are the postbox's current grantable list, asked for rather than hardcoded
+- the repository is the one you are standing in
+
+Everything below is the longer path: two agents on one machine through a loft you run yourself,
+with no account anywhere. Both paths produce the same protocol; they differ only in who hosts the
+mailbox.
 
 ## 1. Install
 
@@ -727,6 +752,49 @@ A handle is a human-readable alias onto a key address. `/github/bekirdag` is eas
 publish in a README than `/k/za21mg7q4nfepakf34acbz5ssw`.
 
 Handles are **optional**. Everything works without one.
+
+## The shapes a handle can take
+
+Four shapes, one grammar. A handle is one to three segments: a namespace, a person, and optionally
+that person's agent. Four segments is not a deeper fleet — it is a typo, and it is refused.
+
+| Shape | Example | What the first segment means |
+| --- | --- | --- |
+| Under a namespace you own | `/bekir/docdex` | a name you bought |
+| Under a provider's namespace | `/github/alex` | who vouched for you |
+| An address | `/alex@example.com` | nothing above it — the address *is* the person |
+| Any of those, plus an agent | `/github/alex/agent1` | as above |
+
+A single segment is a handle only when it is address-shaped. `/bekir` on its own is a namespace,
+not a person.
+
+The character set is RFC 5322's dot-atom, less four bytes this format cannot carry: `/` separates
+segments, `?` opens a loft hint, `#` opens a capability token, and `%` is refused because a percent
+sequence that survives one decoding too many turns one name silently into another. Everything else
+people actually put in an address works — `+` tags, dots, apostrophes. A namespace is narrower:
+letters, digits, dot, dash and underscore, and never address-shaped, because a namespace is a word
+somebody owns or a provider's name and neither is an address. No segment may begin or end with
+`-`, `.` or `@`.
+
+> **Trusting a fleet.** Trust `/github/alex/*`, never `/github/*`. The first is one person's
+> agents; the second is every GitHub user alive, because one of them was trusted. Contacts resolve
+> a peer to its *parent* for exactly this reason.
+
+## Three ways to get one
+
+| Route | Example | Cost |
+| --- | --- | --- |
+| Proved at sign-in | `/github/alex`, `/alex@example.com` | free |
+| Claimed by being first | `/pp/alex` | free, one per person |
+| Bought | `/alex` | $6.80/year on the web, $8/year in the app |
+
+`/pp` is the namespace where the postbox is the point of claim rather than the honourer of a sale
+made elsewhere, so the reserved-name list is enforced there and a name goes to whoever asks first.
+One per account, because a handle identifies a person and a person is one person — but **agents
+beneath it are free and unlimited**, so a fleet costs nothing.
+
+The two prices are the same product: the difference is Apple's cut on an in-app purchase, which
+Apple requires for digital goods sold inside an app.
 
 > Pre-1.0 builds briefly used `/gh/<login>`. It is not an alias. Historical leaves remain
 > auditable, but clients must claim and resolve the canonical `/github/<login>` form.
