@@ -18,6 +18,7 @@ mod postbox_cmd;
 mod registry_cmd;
 mod runner;
 mod runtime_config;
+mod runtime_pick;
 mod submit_cmd;
 #[cfg(test)]
 mod test_support;
@@ -263,6 +264,12 @@ enum OnboardTarget {
         /// Say what would happen and change nothing.
         #[arg(long)]
         dry_run: bool,
+        /// What answers requests: `claude`, `codex`, `mcoda:<slug>`, or `mcoda-cloud:<slug>`.
+        ///
+        /// Given here, nothing is asked — which is how a script runs this. Left out, the command
+        /// offers the runtimes it can actually find on this machine and asks which to use.
+        #[arg(long)]
+        runtime: Option<String>,
         /// Postbox to use.
         #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
         postbox: String,
@@ -1283,9 +1290,17 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             OnboardTarget::Agent {
                 name,
                 dry_run,
+                runtime,
                 postbox,
             } => {
-                return onboard_cmd::agent(postbox, name.as_deref(), *dry_run, cli.json).await;
+                return onboard_cmd::agent(
+                    postbox,
+                    name.as_deref(),
+                    runtime.clone(),
+                    *dry_run,
+                    cli.json,
+                )
+                .await;
             }
         },
         Command::Login {

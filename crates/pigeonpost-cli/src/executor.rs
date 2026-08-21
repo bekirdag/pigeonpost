@@ -172,6 +172,9 @@ impl Permission {
 pub enum Runtime {
     /// `claude -p`, driven directly. No dependency beyond the CLI itself.
     Claude,
+    /// `codex exec`, driven directly. Non-interactive by design: it never prompts, and what it may
+    /// do is decided by the sandbox mode this maps the permission tier onto.
+    Codex,
     /// An mcoda agent by pinned slug, which owns adapter selection across the CLI family.
     Mcoda(String),
     /// An mcoda agent that is expected to be remote. Separate from `Mcoda` so that sending
@@ -194,7 +197,7 @@ impl Runtime {
     /// The pinned agent slug, where the runtime names one.
     pub fn slug(&self) -> Option<&str> {
         match self {
-            Runtime::Claude => None,
+            Runtime::Claude | Runtime::Codex => None,
             Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => Some(slug),
         }
     }
@@ -220,6 +223,7 @@ impl std::str::FromStr for Runtime {
         };
         match text {
             "claude" => Ok(Runtime::Claude),
+            "codex" => Ok(Runtime::Codex),
             // Named the family but not the agent. Whether mcoda is installed has nothing to do with
             // it — this is a spelling rule, and saying "unknown runtime" here sends people off to
             // check their installation for a problem that is one word long.
@@ -711,6 +715,15 @@ pub fn pause_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn codex_is_a_runtime_this_build_understands() {
+        assert_eq!("codex".parse::<Runtime>().unwrap(), Runtime::Codex);
+        // Local, so untrusted text never leaves the machine on this route.
+        assert!(Runtime::Codex.is_local());
+        // No slug to pin: unlike mcoda, the family names the thing that runs.
+        assert!(Runtime::Codex.slug().is_none());
+    }
 
     fn route(verbs: &[&str], workspace: &Path) -> MailboxRoute {
         MailboxRoute {

@@ -278,6 +278,38 @@ pub fn argv(
                 StdinSource::File(prompt_file.to_path_buf()),
             )
         }
+        // `codex exec` is already non-interactive — it never stops to ask — so the tier is
+        // expressed entirely as a sandbox mode, which is the same shape as the Claude arm above.
+        Runtime::Codex => {
+            let mut args = vec![
+                "exec".into(),
+                "--skip-git-repo-check".into(),
+                "--color".into(),
+                "never".into(),
+            ];
+            match permission {
+                Permission::ReadOnly => {
+                    args.push("--sandbox".into());
+                    args.push("read-only".into());
+                }
+                Permission::Workspace => {
+                    args.push("--sandbox".into());
+                    args.push("workspace-write".into());
+                }
+                // The bypass rather than `--sandbox danger-full-access`: this tier means the answer
+                // may publish, and a sandbox that still gates the network would stop it halfway
+                // with no way to say so.
+                Permission::Full => args.push("--dangerously-bypass-approvals-and-sandbox".into()),
+            }
+            // `-` is the documented way to say "the prompt is on stdin". Same reason as Claude:
+            // a long prompt in argv is how a run starts failing with E2BIG.
+            args.push("-".into());
+            (
+                "codex".into(),
+                args,
+                StdinSource::File(prompt_file.to_path_buf()),
+            )
+        }
         Runtime::Mcoda(slug) | Runtime::McodaCloud(slug) => {
             let mut args = vec![
                 "agent-run".into(),
@@ -313,7 +345,9 @@ pub enum StdinSource {
 /// formatting degraded rather than broken.
 pub fn extract(runtime: &Runtime, stdout: &str) -> Result<(String, Option<String>), RunFailure> {
     let (text, adapter) = match runtime {
-        Runtime::Claude => (stdout.trim().to_string(), None),
+        // Both print the answer and nothing else. `codex exec` without `--json` writes the
+        // final message to stdout, which is the same contract.
+        Runtime::Claude | Runtime::Codex => (stdout.trim().to_string(), None),
         Runtime::Mcoda(_) | Runtime::McodaCloud(_) => {
             match serde_json::from_str::<serde_json::Value>(stdout) {
                 Ok(value) => {
@@ -724,6 +758,44 @@ mod tests {
             text.find("Work only in this checkout").unwrap()
                 < text.find("delete everything").unwrap()
         );
+    }
+
+    /// Codex is non-interactive already; the tier is entirely a sandbox mode, and getting that
+    /// mapping wrong is how an unattended run either does nothing or does anything.
+    #[test]
+    fn codex_maps_each_tier_onto_a_sandbox() {
+        let file = std::path::Path::new("/tmp/p.txt");
+        let (program, args, stdin) = argv(&Runtime::Codex, file, Permission::ReadOnly);
+        assert_eq!(program, "codex");
+        assert!(args.starts_with(&["exec".to_string()]));
+        assert!(args.windows(2).any(|w| w == ["--sandbox", "read-only"]));
+        // The prompt goes on stdin, never in argv: a long one is how a run starts failing E2BIG.
+        assert_eq!(stdin, StdinSource::File(file.to_path_buf()));
+        assert!(args.contains(&"-".to_string()));
+
+        let (_, args, _) = argv(&Runtime::Codex, file, Permission::Workspace);
+        assert!(args
+            .windows(2)
+            .any(|w| w == ["--sandbox", "workspace-write"]));
+        assert!(
+            !args.iter().any(|a| a.starts_with("--dangerously")),
+            "a workspace route must not be handed the bypass"
+        );
+
+        let (_, args, _) = argv(&Runtime::Codex, file, Permission::Full);
+        assert!(args.contains(&"--dangerously-bypass-approvals-and-sandbox".to_string()));
+    }
+
+    /// A workspace is often not a checkout — plenty of agents watch a directory of scripts — and
+    /// codex refuses to run outside a repository unless told not to mind.
+    #[test]
+    fn codex_does_not_require_a_git_checkout() {
+        let (_, args, _) = argv(
+            &Runtime::Codex,
+            std::path::Path::new("/tmp/p"),
+            Permission::ReadOnly,
+        );
+        assert!(args.contains(&"--skip-git-repo-check".to_string()));
     }
 
     /// The same verb, two tiers, two different instructions. A machine that has not said it will

@@ -12,11 +12,21 @@
 //! pigeonpost --agent <dir> postbox onboard --handle /<you>/<dir> --trust "/<you>/*" \
 //!   --verb report_status --verb answer_question --verb run_tests --verb make_change \
 //!   --verb git_push --verb deploy --git-repo auto
+//! pigeonpost agentd answer --runtime <something> --verb … --permission <tier>
 //! pigeonpost agentd install
 //! ```
 //!
 //! Nobody types that. Every value in it is derivable from where the command was run and who is
 //! signed in, so this derives them and says what it decided.
+//!
+//! Every value except two. Which model reads a repository unattended, and how much it may do, are
+//! not derivable from anything — so they are the only things this asks about, and it asks only
+//! about runtimes it can see on the PATH the daemon will run with. `--runtime` skips the question
+//! entirely, which is how a script runs this.
+//!
+//! The middle line above is the one that used to be missing. Without it the mailbox is created,
+//! the daemon is installed, and nothing answers — which reads as the daemon being broken rather
+//! than as a step that was never taken.
 
 use std::path::Path;
 
@@ -32,6 +42,7 @@ const PROVIDER_NAMESPACES: &[&str] = &["github", "google", "pp"];
 pub async fn agent(
     base_url: &str,
     name: Option<&str>,
+    runtime: Option<String>,
     dry_run: bool,
     json: bool,
 ) -> Result<(), Error> {
@@ -125,8 +136,138 @@ pub async fn agent(
     }
 
     println!();
+    // The step this command used to leave out. Without a route the mailbox receives mail and
+    // answers none of it, which looks exactly like the daemon being broken.
+    route_this_mailbox(&home, runtime.as_deref())?;
     ensure_daemon(&home)?;
     Ok(())
+}
+
+/// Pick a runtime and write the route, or say why it could not.
+///
+/// Never fatal. The mailbox is already made by the time this runs, and it is a working mailbox
+/// whether or not anything answers automatically — failing here would undo nothing and would
+/// report a finished setup as broken.
+fn route_this_mailbox(home: &Path, requested: Option<&str>) -> Result<(), Error> {
+    use crate::runtime_pick;
+
+    let machine = crate::agentd_cmd::machine_home_of(home);
+
+    // Given explicitly, so nothing is asked. This is the path a script takes.
+    if let Some(runtime) = requested {
+        return write_route(&machine, runtime, crate::executor::Permission::ReadOnly);
+    }
+
+    let found = runtime_pick::detect(|program| {
+        crate::agentd_cmd::installed_service_path(program).is_some()
+    });
+    if found.is_empty() {
+        println!("{}", runtime_pick::error_none_installed());
+        return Ok(());
+    }
+
+    let labels: Vec<String> = found
+        .iter()
+        .map(|d| format!("{:<12} {}", d.label, d.note))
+        .collect();
+    let Some(picked) =
+        runtime_pick::choose("What should answer requests to this mailbox?", &labels, 0)
+    else {
+        // No terminal. Say what would have been asked rather than choosing on somebody's behalf:
+        // which model reads a repository unattended is not a decision to make by default.
+        println!(
+            "not routed for unattended answering — this is not an interactive terminal.\n\
+             When you are ready: pigeonpost agentd answer --runtime {} --verb report_status",
+            found[0].family
+        );
+        return Ok(());
+    };
+    if let Some(missing) = runtime_pick::report_missing(&found) {
+        println!("({missing})");
+    }
+
+    let runtime = match found[picked].family {
+        "mcoda" => match pick_mcoda_agent()? {
+            Some(spelling) => spelling,
+            None => return Ok(()),
+        },
+        family => family.to_string(),
+    };
+    let permission = runtime_pick::choose_permission();
+    write_route(&machine, &runtime, permission)
+}
+
+/// Local or managed-remote first, then which agent — because the two lists have nothing in common
+/// and one of them is four hundred rows long.
+fn pick_mcoda_agent() -> Result<Option<String>, Error> {
+    use crate::runtime_pick;
+
+    let Some(program) = crate::agentd_cmd::installed_service_path("mcoda") else {
+        println!("mcoda went missing from the PATH between being offered and being chosen.");
+        return Ok(None);
+    };
+    let agents = runtime_pick::mcoda_agents(&program);
+    if agents.is_empty() {
+        println!(
+            "mcoda is installed but listed no agents. Check `mcoda agent list`, then: \n  \
+             pigeonpost agentd answer --runtime mcoda:<slug> --verb report_status"
+        );
+        return Ok(None);
+    }
+
+    let where_it_runs = vec![
+        "On this machine — the text never leaves it.".to_string(),
+        "A managed remote agent — the request is sent to somebody else's machine to run."
+            .to_string(),
+    ];
+    let Some(choice) = runtime_pick::choose("Where should it run?", &where_it_runs, 0) else {
+        return Ok(None);
+    };
+    let cloud = choice == 1;
+
+    // A shortlist, not an inventory: hundreds exist and nobody reads past the first screen.
+    let rows = runtime_pick::shortlist(&agents, cloud, 15);
+    if rows.is_empty() {
+        println!(
+            "mcoda has no healthy {} agents configured.",
+            if cloud { "remote" } else { "local" }
+        );
+        return Ok(None);
+    }
+    let labels: Vec<String> = rows.iter().map(runtime_pick::describe).collect();
+    let Some(picked) = runtime_pick::choose("Which agent?", &labels, 0) else {
+        return Ok(None);
+    };
+    // The two spellings are deliberately different so a remote agent can never be reached by a
+    // local-looking config line drifting.
+    let prefix = if cloud { "mcoda-cloud" } else { "mcoda" };
+    Ok(Some(format!("{prefix}:{}", rows[picked].slug)))
+}
+
+fn write_route(
+    machine: &Path,
+    runtime: &str,
+    permission: crate::executor::Permission,
+) -> Result<(), Error> {
+    // Every verb the postbox will grant, so the route matches the trust that was just set up.
+    // The permission tier is the second key and is chosen separately — a verb being answerable
+    // here still does not mean this machine will do it.
+    let verbs: Vec<String> = crate::executor::RUNNABLE_VERBS
+        .iter()
+        .filter(|v| permission.admits(v))
+        .map(|v| v.to_string())
+        .collect();
+    crate::agentd_cmd::answer(
+        machine,
+        &verbs,
+        runtime,
+        None,
+        permission,
+        &[],
+        None,
+        true,
+        false,
+    )
 }
 
 /// Install the daemon if this machine has none, then say what it is doing.

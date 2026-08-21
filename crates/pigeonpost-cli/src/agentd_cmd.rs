@@ -648,6 +648,13 @@ pub fn status(home: &Path, json: bool) -> Result<(), Error> {
             println!("      UNRESOLVABLE: {why}");
         }
     }
+    // A mailbox on this machine with no route receives mail and answers none of it — silently,
+    // because "no route" is a refusal nobody sees. That is the single most confusing state this
+    // daemon has, and it was the one thing status did not mention.
+    for mailbox in unrouted_mailboxes(home, &routing) {
+        println!("  {mailbox}: receives mail, answers nothing — no route on this machine");
+        println!("      to fix: pigeonpost --agent <name> agentd answer --verb report_status");
+    }
     // The runtimes a route names are spawned by the daemon, with the PATH recorded when it was
     // installed — so "I can run mcoda myself" says nothing about whether the daemon can. Checking
     // it here turns the failure this used to produce, an audit line reading `spawn_failed:
@@ -1333,6 +1340,7 @@ fn runtime_programs(config: &crate::executor::RoutingConfig) -> Vec<String> {
         if let Ok(runtime) = route.runtime.parse::<crate::executor::Runtime>() {
             let program = match runtime {
                 crate::executor::Runtime::Claude => "claude",
+                crate::executor::Runtime::Codex => "codex",
                 crate::executor::Runtime::Mcoda(_) | crate::executor::Runtime::McodaCloud(_) => {
                     "mcoda"
                 }
@@ -1348,7 +1356,44 @@ fn runtime_programs(config: &crate::executor::RoutingConfig) -> Vec<String> {
 
 /// Find `program` on the PATH the *installed service* runs with, which is the one recorded at
 /// install time rather than the one this command inherited.
-fn installed_service_path(program: &str) -> Option<PathBuf> {
+/// Mailboxes this machine holds that no route names.
+///
+/// Compares what is on disk against `agentd.toml`, matching on either spelling a route may use —
+/// the `/k/` address or the handle — because a route written by hand often names one and the
+/// event stream always carries the other.
+fn unrouted_mailboxes(home: &Path, routing: &crate::executor::RoutingConfig) -> Vec<String> {
+    let machine = machine_home_of(home);
+    let mut unrouted = Vec::new();
+    let Ok(entries) = std::fs::read_dir(machine.join("agents")) else {
+        return unrouted;
+    };
+    for entry in entries.flatten() {
+        let agent_home = entry.path();
+        if !agent_home.is_dir() {
+            continue;
+        }
+        // Every address this home holds. A home usually has one, but nothing enforces that, and a
+        // second unrouted mailbox is exactly as invisible as the first.
+        for address in own_mailboxes(&agent_home).unwrap_or_default() {
+            let also = other_name_for(&agent_home, &address).ok().flatten();
+            if routing
+                .mailbox
+                .iter()
+                .any(|r| r.is_for(&address, also.as_deref()))
+            {
+                continue;
+            }
+            unrouted.push(match also {
+                Some(handle) => handle,
+                None => address,
+            });
+        }
+    }
+    unrouted.sort();
+    unrouted
+}
+
+pub(crate) fn installed_service_path(program: &str) -> Option<PathBuf> {
     let recorded = installed_unit()
         .and_then(|unit| std::fs::read_to_string(unit).ok())
         .and_then(|body| recorded_path(&body))
