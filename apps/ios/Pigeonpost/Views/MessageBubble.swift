@@ -168,9 +168,14 @@ struct RequestCard: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            Text(envelope.title)
-                .font(.system(size: 14.5, weight: .semibold))
-                .foregroundStyle(primary)
+            // The verb is a header worth showing only when it says something. Everything these
+            // clients send is `full_access`, so labelling every message with it is a banner
+            // repeated on every line — it tells the reader nothing they did not already know.
+            if envelope.verb != "full_access" {
+                Text(envelope.title)
+                    .font(.system(size: 14.5, weight: .semibold))
+                    .foregroundStyle(primary)
+            }
 
             if !visibleArgs.isEmpty {
                 VStack(alignment: .leading, spacing: 2) {

@@ -272,7 +272,10 @@ check("send names the sending mailbox", sendCall && sendCall.body.from, "/k/cz69
 // request is still a request.
 const mineReq = [...$("messages").querySelectorAll("li.mine .request .why")];
 check("outbound appears immediately", mineReq.some((el) => text(el) === "on it"), true);
-check("and reads as a request, not as JSON", [...$("messages").querySelectorAll("li.mine .verb")].some((el) => text(el) === "Full permissions"), true);
+// No verb header on a full-permissions message: every message these clients send is that verb, so
+// the label would be a banner repeated on every line. What must survive is the words.
+check("no verb banner on a full-permissions message", [...$("messages").querySelectorAll("li.mine .verb")].length, 0);
+check("and reads as a request, not as JSON", mineReq.some((el) => text(el) === "on it"), true);
 // Nothing is written to the browser any more — the postbox keeps the sent copy.
 check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
 

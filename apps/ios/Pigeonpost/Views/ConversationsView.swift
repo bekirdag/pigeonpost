@@ -13,10 +13,19 @@ struct ConversationsView: View {
     @Environment(\.scenePhase) private var scenePhase
 
     @State private var selection: String?
-    @State private var showingIdentities = false
-    @State private var showingSettings = false
-    @State private var showingNew = false
-    @State private var showingScanner = false
+    /// One sheet at a time, named.
+    ///
+    /// This was four separate `.sheet(isPresented:)` modifiers stacked on the same view, and SwiftUI
+    /// does not reliably honour that — it can end up presenting whichever it registered last and
+    /// silently ignoring the rest, which is what happened to Settings: the button ran, the flag
+    /// flipped, and nothing appeared. One `.sheet(item:)` has one presentation to resolve, so there
+    /// is nothing left to race.
+    @State private var sheet: Sheet?
+
+    private enum Sheet: String, Identifiable {
+        case identities, settings, new, scanner
+        var id: String { rawValue }
+    }
 
     var body: some View {
         @Bindable var inbox = inbox
@@ -43,12 +52,7 @@ struct ConversationsView: View {
         // believe in.
         .task(id: TaskKey(mailbox: account.me?.address, phase: scenePhase)) {
             if let peer = Fixtures.openPeer, selection == nil { selection = peer }
-            switch Fixtures.sheet {
-            case "settings": showingSettings = true
-            case "new": showingNew = true
-            case "identities": showingIdentities = true
-            default: break
-            }
+            if let staged = Fixtures.sheet { sheet = Sheet(rawValue: staged) }
             guard !Fixtures.enabled else { return }
             guard scenePhase == .active, account.me != nil else { return }
             // The badge counts what has not been looked at, so looking at the app clears it. And
@@ -67,18 +71,19 @@ struct ConversationsView: View {
             selection = peer
             push.pendingPeer = nil
         }
-        .sheet(isPresented: $showingIdentities) {
-            IdentityPickerSheet { mailbox in
-                guard mailbox.address != account.me?.address else { return }
-                selection = nil
-                inbox.reset()
-                account.act(as: mailbox)
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .identities:
+                IdentityPickerSheet { mailbox in
+                    guard mailbox.address != account.me?.address else { return }
+                    selection = nil
+                    inbox.reset()
+                    account.act(as: mailbox)
+                }
+            case .settings: SettingsSheet()
+            case .scanner: ScanView()
+            case .new: NewConversationSheet { peer in selection = peer }
             }
-        }
-        .sheet(isPresented: $showingSettings) { SettingsSheet() }
-        .sheet(isPresented: $showingScanner) { ScanView() }
-        .sheet(isPresented: $showingNew) {
-            NewConversationSheet { peer in selection = peer }
         }
         .toast($inbox.toast)
     }
@@ -135,7 +140,7 @@ struct ConversationsView: View {
     @ToolbarContentBuilder
     private var toolbar: some ToolbarContent {
         ToolbarItem(placement: .topBarLeading) {
-            Button { showingIdentities = true } label: {
+            Button { sheet = .identities } label: {
                 HStack(spacing: 7) {
                     Avatar(peer: account.me?.key, size: 26)
                     Text(actingName)
@@ -149,13 +154,13 @@ struct ConversationsView: View {
             .accessibilityLabel("Acting as \(actingName). Change mailbox")
         }
         ToolbarItemGroup(placement: .topBarTrailing) {
-            Button { showingNew = true } label: { Image(systemName: "square.and.pencil") }
+            Button { sheet = .new } label: { Image(systemName: "square.and.pencil") }
                 .accessibilityLabel("New conversation")
             // Signing a machine in by looking at it. Next to the gear because it is a thing you do
             // once per machine and then forget exists.
-            Button { showingScanner = true } label: { Image(systemName: "qrcode.viewfinder") }
+            Button { sheet = .scanner } label: { Image(systemName: "qrcode.viewfinder") }
                 .accessibilityLabel("Scan a sign-in code")
-            Button { showingSettings = true } label: { Image(systemName: "gearshape") }
+            Button { sheet = .settings } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("Settings")
         }
     }

@@ -327,13 +327,46 @@ enum ConversationBuilder {
     /// What a row in the list says under the name.
     static func preview(_ message: ThreadMessage) -> String {
         if let envelope = RequestEnvelope(body: message.body) {
+            // A narrow verb is the information: "asks to run tests" says what a peer wants. But
+            // everything these clients send is `full_access`, so previewing that would make every
+            // line of the list identical — there the words somebody typed are the information.
+            if envelope.verb == "full_access", let note = envelope.note, !note.isEmpty {
+                return String(note.split(whereSeparator: \.isWhitespace).joined(separator: " ").prefix(140))
+            }
             return "asks to " + envelope.verb.replacingOccurrences(of: "_", with: " ")
         }
         // An unattended answer previews as the answer. Its two header lines are identical on every
         // one of them, so a list of them would otherwise read as a list of the same message.
         let text = AutoReply(body: message.body)?.body ?? message.body
-        let flattened = text.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+        let flattened = plain(text).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return String(flattened.prefix(140))
+    }
+
+    /// Markdown with its punctuation taken off, for one line in a list.
+    ///
+    /// A preview is a glance, and `## Pinned it` glanced at is two stray hashes. The thread renders
+    /// the markup properly; here it is noise that costs characters the sentence needed.
+    static func plain(_ text: String) -> String {
+        var out: [String] = []
+        var inFence = false
+        for line in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            var s = line.trimmingCharacters(in: .whitespaces)
+            if s.hasPrefix("```") {
+                inFence.toggle()
+                continue
+            }
+            // Code is not a summary of anything. Skipping it lets the prose above surface instead.
+            if inFence { continue }
+            while s.hasPrefix("#") { s = String(s.dropFirst()) }
+            for marker in ["- ", "* ", "+ ", "> "] where s.hasPrefix(marker) {
+                s = String(s.dropFirst(marker.count))
+            }
+            s = s.replacingOccurrences(of: "**", with: "")
+                .replacingOccurrences(of: "`", with: "")
+            let trimmed = s.trimmingCharacters(in: .whitespaces)
+            if !trimmed.isEmpty { out.append(trimmed) }
+        }
+        return out.joined(separator: " ")
     }
 
     /// Why the server is holding a request, in words.

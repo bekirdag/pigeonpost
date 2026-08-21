@@ -245,6 +245,26 @@ equal(Markdown.blocks(of: "").count, 0, "an empty body is no blocks, not an empt
 let messy = "# Title\n\nSome text\n- a\n- b\n\n```\ncode\n```\n\nmore"
 equal(Markdown.blocks(of: messy).count, 5, "a mixed document keeps all five of its blocks")
 
+print("\npreviews")
+// Everything these clients send is full_access, so a list of them previewing the verb would be a
+// list of one repeated line. The words are the information there.
+equal(ConversationBuilder.preview(ThreadMessage(
+        id: "p1", kind: .incoming, at: 0,
+        body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{\"task\":\"ship the fix\"},\"note\":\"ship the fix\"}",
+        threadId: nil)),
+      "ship the fix", "a full-permissions request previews its words")
+// A narrow verb is still the information: "asks to run tests" says what a peer wants.
+equal(ConversationBuilder.preview(ThreadMessage(
+        id: "p2", kind: .incoming, at: 0,
+        body: "{\"v\":1,\"verb\":\"run_tests\",\"args\":{},\"note\":\"before the tag\"}",
+        threadId: nil)),
+      "asks to run tests", "a narrow verb still previews as the verb")
+// Markdown punctuation is noise at a glance, and costs characters the sentence needed.
+equal(ConversationBuilder.plain("## Pinned it\n\nThe **listener** was `non-blocking`."),
+      "Pinned it The listener was non-blocking.", "a preview drops the markup")
+equal(ConversationBuilder.plain("prose\n```\ncode()\n```\nmore"), "prose more",
+      "and skips code, which summarises nothing")
+
 print("\ncopy")
 equal(ThreadMessage(id: "1", kind: .incoming, at: 0,
                     body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{\"task\":\"ship it\"},\"note\":\"ship it\"}",

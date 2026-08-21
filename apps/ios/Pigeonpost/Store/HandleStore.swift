@@ -55,6 +55,15 @@ final class HandleStore {
 
     /// What this account owns, and what it would cost if it owns nothing.
     func refresh() async {
+        // Never in fixture mode. There is no token there, and asking for one walks
+        // `Session.token()` → `renew()` → `forget()`, which signs the app out — so simply opening
+        // Settings threw you back to the sign-in screen. The same path is reachable for real: a
+        // session that has just expired would then be ended by a screen somebody opened to read a
+        // setting, rather than by the request they were actually making.
+        guard !Fixtures.enabled else {
+            phase = .unavailable
+            return
+        }
         guard let client = account?.client else { return }
         phase = .loading
         do {
@@ -88,7 +97,7 @@ final class HandleStore {
     /// has no field for it — which means the two can disagree, and the postbox is what reconciles
     /// them.
     func buy() async {
-        guard let product else { return }
+        guard !Fixtures.enabled, let product else { return }
         let name = Self.tidy(wantedName)
         guard !name.isEmpty else {
             phase = .failed("Choose a name first.")
@@ -115,6 +124,7 @@ final class HandleStore {
 
     /// Purchases made on another device, or on this one before a reinstall.
     func restore() async {
+        guard !Fixtures.enabled else { return }
         phase = .buying
         do {
             try await AppStore.sync()

@@ -777,8 +777,17 @@
 
   function previewOf(m) {
     const envelope = requestEnvelope(m.body);
-    if (envelope) return "asks to " + envelope.verb.replace(/_/g, " ");
-    return m.body.replace(/\s+/g, " ").slice(0, 140);
+    if (envelope) {
+      // A narrow verb is the information: "asks to run tests" says what a peer wants. But every
+      // message these clients send is `full_access`, so previewing that would make every line of
+      // the list identical — there the words somebody typed are the information.
+      if (envelope.verb === "full_access" && envelope.note) {
+        return String(envelope.note).replace(/\s+/g, " ").slice(0, 140);
+      }
+      return "asks to " + envelope.verb.replace(/_/g, " ");
+    }
+    const reply = autoReply(m.body);
+    return plainText(reply ? reply.body : m.body).slice(0, 140);
   }
 
   function renderThread() {
@@ -852,10 +861,15 @@
     if (envelope) {
       const req = document.createElement("div");
       req.className = "request";
-      const verb = document.createElement("div");
-      verb.className = "verb";
-      verb.textContent = verbTitle(envelope.verb);
-      req.append(verb);
+      // The verb is a header worth showing only when it says something. Everything these clients
+      // send is `full_access`, so labelling every message with it is a banner repeated on every
+      // line — it tells the reader nothing they did not already know.
+      if (envelope.verb !== "full_access") {
+        const verb = document.createElement("div");
+        verb.className = "verb";
+        verb.textContent = verbTitle(envelope.verb);
+        req.append(verb);
+      }
       // Web and mobile compose `args: {task: text}` alongside `note: text` — the same sentence
       // twice, because the agent reads the arg and a human reads the note. Printing both would
       // show the reader their own words echoed under a slab of JSON, so the slab is dropped
@@ -984,6 +998,28 @@
     while (lines.length && !lines[0].trim()) lines.shift();
     const answered = /answered=([a-z_]+)/.exec(header);
     return { answered: answered ? answered[1] : null, body: lines.join("\n") };
+  }
+
+  // Markdown with its punctuation taken off, for one line in a list. A preview is a glance, and
+  // `## Pinned it` glanced at is two stray hashes. The thread renders the markup properly; here it
+  // is noise costing characters the sentence needed.
+  function plainText(raw) {
+    const out = [];
+    let inFence = false;
+    for (const line of String(raw == null ? "" : raw).split(/\r?\n/)) {
+      let s = line.trim();
+      if (s.startsWith("```")) {
+        inFence = !inFence;
+        continue;
+      }
+      // Code summarises nothing. Skipping it lets the prose above surface instead.
+      if (inFence) continue;
+      s = s.replace(/^#{1,6}\s*/, "").replace(/^[-*+>]\s+/, "");
+      s = s.replace(/\*\*/g, "").replace(/`/g, "");
+      s = s.trim();
+      if (s) out.push(s);
+    }
+    return out.join(" ").replace(/\s+/g, " ");
   }
 
   function verbTitle(verb) {
