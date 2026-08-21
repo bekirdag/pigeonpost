@@ -81,6 +81,9 @@ struct AppState {
     trusted_proxy_hops: usize,
     /// SHA-256 of the namespace-grant shared secret, or `None` when the endpoint is closed.
     namespace_grant_hash: Option<[u8; 32]>,
+    /// Names nobody may claim in an open namespace, or `None` when no list is configured — in which
+    /// case open namespaces refuse everything, which is the safe direction to fail.
+    reserved_names: Option<Arc<std::collections::HashSet<String>>>,
     /// APNs, when the deployment has a key. `None` everywhere else, and everything else behaves
     /// exactly as it did before push existed.
     apns: Option<Arc<push::Apns>>,
@@ -105,6 +108,19 @@ struct AppState {
 /// every ownership question about a name inside it has to be answered by that provider. Adding a
 /// provider here without also adding a verified claim path would let anyone mint under it.
 const PROVIDER_NAMESPACES: &[&str] = &["github"];
+
+/// Namespaces nobody owns and anybody may take a name in, free, first come.
+///
+/// `/pp` is the one namespace where this postbox is the point of claim rather than the honourer of
+/// a sale made elsewhere — so the reserved-name list has to be enforced *here*, and the ceiling on
+/// how many names one account may hold is here too. Everywhere else those are somebody else's job.
+const OPEN_NAMESPACES: &[&str] = &["pp"];
+
+/// Names one account may hold in an open namespace.
+///
+/// A handle identifies a person, and a person is one person. Agents live beneath the name as a
+/// third segment and are not counted here, so a fleet costs nothing and a squatter gets one.
+const MAX_OPEN_NAMES_PER_ACCOUNT: usize = 1;
 
 /// Per-IP ceilings on unauthenticated (proof-of-work) minting. The PoW makes one mint cost a
 /// moment; these make a *flood* cost more than a botnet wants to pay, without a human in the loop
@@ -319,6 +335,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             .map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
         apns: push::Apns::from_env(),
+        reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
     })
 }
@@ -435,6 +452,34 @@ fn build_router(state: AppState) -> Router {
         .with_state(state)
 }
 
+/// The reserved-name list, from `PIGEONPOST_RESERVED_NAMES`.
+///
+/// Unset means open namespaces stay closed. That is deliberate: the alternative is a postbox that
+/// hands out `google`, `apple` and six thousand other names to whoever asks first because a file
+/// was missing.
+fn load_reserved_names() -> Option<Arc<std::collections::HashSet<String>>> {
+    let path = std::env::var("PIGEONPOST_RESERVED_NAMES").ok()?;
+    let path = path.trim();
+    if path.is_empty() {
+        return None;
+    }
+    match std::fs::read_to_string(path) {
+        Ok(text) => {
+            let names: std::collections::HashSet<String> = text
+                .lines()
+                .map(|line| line.trim().to_ascii_lowercase())
+                .filter(|line| !line.is_empty() && !line.starts_with('#'))
+                .collect();
+            tracing::info!(count = names.len(), "reserved names loaded");
+            Some(Arc::new(names))
+        }
+        Err(e) => {
+            tracing::error!(error = %e, %path, "reserved names unreadable — open namespaces stay closed");
+            None
+        }
+    }
+}
+
 fn now_unix() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -500,6 +545,88 @@ const MAX_HANDLE_MAILBOXES: usize = 100;
 /// **Reserved-name policy is deliberately not enforced here**: the postbox cannot sell a handle,
 /// only honour one that was sold, so `docs/reserved-names.md` belongs at the point of sale. Doing
 /// it in both places would let the two lists drift and quietly strand a name someone paid for.
+/// A name in a namespace nobody owns: free, first come, and the only place this postbox decides who
+/// gets a name rather than recording who bought one.
+///
+/// Four questions, in the order that makes the refusals honest:
+/// reserved, taken, already-have-one, and — for an agent — is the name above it yours.
+async fn authorize_open_handle(
+    state: &AppState,
+    account: &str,
+    canonical: &str,
+    namespace: &str,
+) -> Result<(String, String), ApiError> {
+    let segments: Vec<&str> = canonical.trim_start_matches('/').split('/').collect();
+    let name = segments.get(1).copied().unwrap_or_default();
+    let is_agent = segments.len() > 2;
+
+    if !is_agent {
+        // Reserved names are refused here and nowhere else, because here is where a name is given
+        // away. The list is the one in `docs/reserved-names.txt`, and with none configured this
+        // namespace is closed rather than open — an open namespace with no reserved list is a
+        // land grab with a countdown.
+        let reserved = state.reserved_names.as_ref().ok_or_else(|| {
+            ApiError::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "open_namespace_closed",
+                format!("/{namespace} is not accepting names on this postbox"),
+            )
+        })?;
+        if reserved.contains(name) {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "name_reserved",
+                format!("{name} is reserved and cannot be claimed"),
+            ));
+        }
+    }
+
+    if state
+        .store
+        .get_by_handle(canonical.to_string())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?
+        .is_some()
+    {
+        return Err(ApiError::new(
+            StatusCode::CONFLICT,
+            "handle_taken",
+            format!("{canonical} already exists"),
+        ));
+    }
+
+    let held = state
+        .store
+        .handles_in_namespace(account.to_string(), namespace.to_string())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+
+    if is_agent {
+        // An agent belongs to the person above it. Anything else would let one account hang its
+        // agents off somebody else's name, which is the whole thing a handle is supposed to settle.
+        let parent = format!("/{namespace}/{name}");
+        if !held.iter().any(|h| h == &parent) {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "parent_not_yours",
+                format!("{parent} is not a name this account holds"),
+            ));
+        }
+    } else if held.len() >= MAX_OPEN_NAMES_PER_ACCOUNT {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "already_named",
+            format!(
+                "this account already holds {} — a free name identifies a person, and agents go under it as {}/<agent>",
+                held.join(", "),
+                held.first().map(String::as_str).unwrap_or("")
+            ),
+        ));
+    }
+
+    Ok((canonical.to_string(), namespace.to_string()))
+}
+
 async fn authorize_handle(
     state: &AppState,
     account_id: Option<&str>,
@@ -573,6 +700,10 @@ async fn authorize_handle(
                 ),
             )),
         };
+    }
+
+    if OPEN_NAMESPACES.contains(&namespace.as_str()) {
+        return authorize_open_handle(state, account, &canonical, &namespace).await;
     }
 
     let owner = state
@@ -3879,6 +4010,7 @@ mod tests {
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
+            reserved_names: None,
             github: None,
         }
     }
@@ -6044,6 +6176,7 @@ mod tests {
             namespace_grant_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
+            reserved_names: None,
             github: None,
         };
         let _ = build_router(state);

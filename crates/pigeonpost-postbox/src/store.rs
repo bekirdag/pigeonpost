@@ -1941,6 +1941,36 @@ impl Store {
     }
 
     /// Addresses (and labels) of every identity owned by an account, oldest first.
+    /// The handles this account already holds directly under one namespace — two segments only, so
+    /// an account's own agents (`/pp/alex/agent1`) do not count against a limit meant for names.
+    pub async fn handles_in_namespace(
+        &self,
+        account_id: String,
+        namespace: String,
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT handle FROM identities WHERE account_id = ?1 AND handle IS NOT NULL",
+            )?;
+            let rows = stmt.query_map(params![account_id], |r| r.get::<_, String>(0))?;
+            let prefix = format!("/{namespace}/");
+            let mut out = Vec::new();
+            for row in rows {
+                let handle = row?;
+                if let Some(rest) = handle.strip_prefix(&prefix) {
+                    if !rest.contains('/') {
+                        out.push(handle);
+                    }
+                }
+            }
+            Ok(out)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     pub async fn list_by_account(
         &self,
         account_id: String,
