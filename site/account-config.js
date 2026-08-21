@@ -22,7 +22,7 @@ window.PIGEONPOST_ACCOUNT = {
     packageSlug: "handle-yearly",
     planSlug: "handle-yearly-annual-usd",
   },
-  price: { amount: 5, currency: "USD", interval: "year" },
+  price: { amount: 6.8, currency: "USD", interval: "year" },
 
   handle: { min: 3, max: 32 },
 };
