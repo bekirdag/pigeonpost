@@ -164,7 +164,6 @@ mod tests {
         ));
     }
 
-    #[test]
     /// The protocol widened its grammar on 2026-08-21; the registry deliberately did not. An agent
     /// is minted by whoever proved the name above it, so it has nothing to prove and nothing to log.
     #[test]
@@ -181,6 +180,7 @@ mod tests {
         assert!(Handle::parse("/google/a@b@c").is_err());
     }
 
+    #[test]
     fn rejects_malformed_names() {
         assert!(Handle::parse("/github/").is_err());
         assert!(Handle::parse("/github/-leading").is_err());
