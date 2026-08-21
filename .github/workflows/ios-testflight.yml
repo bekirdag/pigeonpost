@@ -106,6 +106,48 @@ jobs:
             xcrun simctl runtime match list || true
           fi
 
+      # Import the one signing identity this project owns, into a keychain that dies with the job.
+      #
+      # This used to be `-allowProvisioningUpdates` doing it: an ephemeral runner holds no keychain,
+      # so Apple minted a fresh Apple Development certificate on every single build. Ten builds in,
+      # the account hit its ceiling and the eleventh failed with "Choose a certificate to revoke."
+      # A certificate per build is not a signing strategy.
+      - name: Import the signing identity
+        shell: bash
+        env:
+          P12: ${{ secrets.APPLE_DIST_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_PROFILE }}
+        run: |
+          set -euo pipefail
+          for name in P12 P12_PASSWORD PROFILE; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::APPLE_DIST_$name is not set. See apps/ios/APP-STORE.md."
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          # The keychain password protects nothing that outlives the job; it exists because the API
+          # requires one.
+          pass="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/dist.p12"
+          security import "$RUNNER_TEMP/dist.p12" -k "$keychain" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          # Without this, codesign stops to ask for permission from a user who is not there.
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/dist.p12"
+
+          profiles=~/Library/MobileDevice/Provisioning\ Profiles
+          mkdir -p "$profiles"
+          printf '%s' "$PROFILE" | base64 --decode > "$profiles/pigeonpost.mobileprovision"
+
+          echo "identities available to codesign:"
+          security find-identity -v -p codesigning "$keychain" | sed 's/[0-9A-F]\{40\}/<hash>/'
+
       # The thread model, which is what a phone and the browser have to agree on. It needs nothing
       # but swiftc, so there is no reason for an upload to be the first thing that runs it.
       - name: Test the thread model
@@ -147,10 +189,10 @@ jobs:
             -destination 'generic/platform=iOS' \
             -archivePath "$RUNNER_TEMP/Pigeonpost.xcarchive" \
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
-            -allowProvisioningUpdates \
-            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
-            -authenticationKeyID "$KEY_ID" \
-            -authenticationKeyIssuerID "$ISSUER_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="Pigeonpost Inbox App Store" \
+            DEVELOPMENT_TEAM=AH277897AV \
             archive
 
       # What went in the box, read out of the box rather than out of the project file.
@@ -173,6 +215,9 @@ jobs:
           set -euo pipefail
           options="$RUNNER_TEMP/ExportOptions.plist"
           cp ExportOptions.plist "$options"
+          plutil -replace signingStyle -string manual "$options"
+          plutil -replace signingCertificate -string "Apple Distribution" "$options"
+          plutil -insert provisioningProfiles -json '{"dev.pigeonpost.inbox":"Pigeonpost Inbox App Store"}' "$options" 2>/dev/null || true
           if [ "$UPLOAD" != 'true' ]; then
             # Same signing, same package, stopping short of App Store Connect.
             plutil -replace destination -string export "$options"
@@ -181,7 +226,6 @@ jobs:
             -archivePath "$RUNNER_TEMP/Pigeonpost.xcarchive" \
             -exportOptionsPlist "$options" \
             -exportPath "$RUNNER_TEMP/export" \
-            -allowProvisioningUpdates \
             -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
             -authenticationKeyID "$KEY_ID" \
             -authenticationKeyIssuerID "$ISSUER_ID"
