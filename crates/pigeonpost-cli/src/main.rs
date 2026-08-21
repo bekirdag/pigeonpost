@@ -12,6 +12,7 @@ mod install_cmd;
 mod loft_cmd;
 mod loft_key;
 mod login_cmd;
+mod onboard_cmd;
 mod output;
 mod postbox_cmd;
 mod registry_cmd;
@@ -212,6 +213,14 @@ enum Command {
     },
 
     /// Sign this terminal in to a Pigeonpost account.
+    /// Set this directory up as an agent: mint its mailbox, trust your fleet, start the daemon.
+    ///
+    /// The third of three commands. Everything it needs is derivable from where it was run and who
+    /// is signed in, so it derives them and says what it decided rather than asking.
+    Onboard {
+        #[command(subcommand)]
+        what: OnboardTarget,
+    },
     Login {
         /// Authenticate by typing a short code into a browser on another device. Use this on a
         /// machine with no browser of its own.
@@ -241,6 +250,22 @@ enum Command {
     Postbox {
         #[command(subcommand)]
         action: PostboxAction,
+    },
+}
+
+#[derive(Subcommand)]
+enum OnboardTarget {
+    /// This directory, as an agent named after it.
+    Agent {
+        /// Override the name taken from the directory.
+        #[arg(long)]
+        name: Option<String>,
+        /// Say what would happen and change nothing.
+        #[arg(long)]
+        dry_run: bool,
+        /// Postbox to use.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
     },
 }
 
@@ -1254,6 +1279,15 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     // Signing in touches no agent identity, so like the read-only commands it must not create one
     // as a side effect of being run.
     match &cli.command {
+        Command::Onboard { what } => match what {
+            OnboardTarget::Agent {
+                name,
+                dry_run,
+                postbox,
+            } => {
+                return onboard_cmd::agent(postbox, name.as_deref(), *dry_run, cli.json).await;
+            }
+        },
         Command::Login {
             device,
             issuer,
@@ -1568,8 +1602,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
     }
 
     match cli.command {
-        // Handled before the agent identity is opened, above, and that arm returns.
+        // Handled before the agent identity is opened, above, and those arms return. Onboarding is
+        // there for the same reason the daemon is: it decides which agent home it is about, so it
+        // must not have one opened for it first.
         Command::Agentd { .. } => unreachable!("agentd is dispatched before this point"),
+        Command::Onboard { .. } => unreachable!("onboard is dispatched before this point"),
         Command::Id => {
             if cli.json {
                 println!(
@@ -2366,7 +2403,7 @@ fn validate_body_bytes(bytes: &[u8]) -> std::io::Result<String> {
 ///
 /// Deliberately not inside the repository: a credentials file under a checkout is one `git add -A`
 /// away from being published, which has happened in this project before.
-fn agent_home(agent: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
+pub(crate) fn agent_home(agent: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     let trimmed = agent.trim();
     if trimmed.is_empty()
         || trimmed.len() > 64
@@ -2383,7 +2420,7 @@ fn agent_home(agent: &str) -> Result<PathBuf, Box<dyn std::error::Error>> {
     Ok(default_home().join("agents").join(trimmed))
 }
 
-fn default_home() -> PathBuf {
+pub(crate) fn default_home() -> PathBuf {
     std::env::var_os("HOME")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("."))

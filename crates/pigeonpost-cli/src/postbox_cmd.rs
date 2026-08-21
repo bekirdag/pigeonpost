@@ -1338,6 +1338,17 @@ fn print_message(m: &serde_json::Value) {
 /// This is the *human* path. The postbox refuses to raise trust for a request that arrives over
 /// MCP, so `--auto` only works from here — from a terminal, by someone holding the token.
 #[allow(clippy::too_many_arguments)]
+/// Which verbs this postbox will let a mailbox grant.
+///
+/// Asked rather than hardcoded: the list is the server's, it has grown twice already, and a client
+/// that carries its own copy grants yesterday's set forever.
+pub(crate) async fn grantable_verbs(home: &Path, as_address: Option<&str>) -> Result<Vec<String>, Error> {
+    let credential = credential_for(home, as_address)?;
+    let path = format!("/v1/contacts?identity={}", urlencode(&credential.address));
+    let value = request(&credential, reqwest::Method::GET, &path, None).await?;
+    Ok(verb_list(&value["vocabulary"]["grantable"]))
+}
+
 pub async fn set_contact(
     home: &Path,
     as_address: Option<&str>,
