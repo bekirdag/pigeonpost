@@ -891,6 +891,9 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Test-only since delivery started counting bytes: a message count no longer decides
+    /// anything, but it is still the clearest way for a test to say "and nothing reached them".
+    #[cfg(test)]
     pub async fn inbox_count(&self, owner: String) -> Result<usize, StoreError> {
         self.count_where(
             "SELECT COUNT(*) FROM messages WHERE COALESCE(owner, recipient) = ?1",
