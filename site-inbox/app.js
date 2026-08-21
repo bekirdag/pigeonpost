@@ -856,7 +856,18 @@
       verb.className = "verb";
       verb.textContent = envelope.verb;
       req.append(verb);
-      if (envelope.args && Object.keys(envelope.args).length) {
+      // Web and mobile compose `args: {task: text}` alongside `note: text` — the same sentence
+      // twice, because the agent reads the arg and a human reads the note. Printing both would
+      // show the reader their own words echoed under a slab of JSON, so the slab is dropped
+      // whenever it carries nothing the note does not already say.
+      const argKeys = envelope.args ? Object.keys(envelope.args) : [];
+      const note = String(envelope.note == null ? "" : envelope.note).trim();
+      const echoesNote =
+        argKeys.length === 1 &&
+        typeof envelope.args[argKeys[0]] === "string" &&
+        envelope.args[argKeys[0]].trim() === note &&
+        note !== "";
+      if (argKeys.length && !echoesNote) {
         const args = document.createElement("pre");
         args.className = "args";
         args.textContent = JSON.stringify(envelope.args, null, 2);
