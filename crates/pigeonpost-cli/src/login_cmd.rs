@@ -262,6 +262,13 @@ pub async fn login_device(home: &Path, issuer: &str) -> Result<(), Error> {
     if let Some(complete) = &auth.verification_uri_complete {
         println!();
         println!("Or go straight to:    {complete}");
+        println!();
+        // The whole point of the code being on this screen as well: a QR photographed over
+        // somebody's shoulder is a URL, and the person holding it still has to be signed in to the
+        // account for the realm to accept the grant.
+        println!("Or scan this with the Pigeonpost app, or any camera:");
+        println!();
+        print_qr(complete);
     }
     println!();
 
@@ -825,5 +832,43 @@ mod tests {
                 .as_deref(),
             Some("bekir")
         );
+    }
+}
+
+/// Draw a QR code, two module rows to a terminal row.
+///
+/// Half-block characters rather than two spaces per module: at two columns each, a version-5 symbol
+/// is 98 characters wide and wraps on an 80-column terminal, and a wrapped QR is one no camera will
+/// read. One column per module with `▀` splitting the cell top from bottom keeps it at 49 and keeps
+/// the modules roughly square, because a character cell is about twice as tall as it is wide.
+///
+/// Black on white explicitly: on a dark terminal theme an uncoloured render comes out inverted, and
+/// scanners will not read that either. The four-module quiet zone is the part people leave out and
+/// then wonder why nothing works.
+fn print_qr(text: &str) {
+    use qrcodegen::{QrCode, QrCodeEcc};
+
+    let code = match QrCode::encode_text(text, QrCodeEcc::Low) {
+        Ok(code) => code,
+        Err(_) => return, // A URL too long to encode is not a reason to fail a sign-in.
+    };
+    let border: i32 = 4;
+    let size = code.size();
+    let dark = |x: i32, y: i32| code.get_module(x, y);
+
+    let mut y = -border;
+    while y < size + border {
+        let mut line = String::from("\u{1b}[30;107m");
+        for x in -border..size + border {
+            line.push(match (dark(x, y), dark(x, y + 1)) {
+                (true, true) => '\u{2588}',   // full block
+                (true, false) => '\u{2580}',  // upper half
+                (false, true) => '\u{2584}',  // lower half
+                (false, false) => ' ',
+            });
+        }
+        line.push_str("\u{1b}[0m");
+        println!("{line}");
+        y += 2;
     }
 }

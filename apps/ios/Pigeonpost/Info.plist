@@ -18,6 +18,10 @@
 	</array>
 	<!-- HTTPS and the platform's own TLS only. Declared so every upload is not held for an export
 	     compliance question we already know the answer to. -->
+	<!-- The camera is used for exactly one thing: reading the sign-in QR that `pigeonpost login`
+	     prints on another machine. Nothing is recorded, kept, or sent anywhere. -->
+	<key>NSCameraUsageDescription</key>
+	<string>To scan the sign-in code shown by the pigeonpost command line, so you can sign that machine in from here.</string>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

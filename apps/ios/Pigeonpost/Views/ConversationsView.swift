@@ -16,6 +16,7 @@ struct ConversationsView: View {
     @State private var showingIdentities = false
     @State private var showingSettings = false
     @State private var showingNew = false
+    @State private var showingScanner = false
 
     var body: some View {
         @Bindable var inbox = inbox
@@ -75,6 +76,7 @@ struct ConversationsView: View {
             }
         }
         .sheet(isPresented: $showingSettings) { SettingsSheet() }
+        .sheet(isPresented: $showingScanner) { ScanView() }
         .sheet(isPresented: $showingNew) {
             NewConversationSheet { peer in selection = peer }
         }
@@ -149,6 +151,10 @@ struct ConversationsView: View {
         ToolbarItemGroup(placement: .topBarTrailing) {
             Button { showingNew = true } label: { Image(systemName: "square.and.pencil") }
                 .accessibilityLabel("New conversation")
+            // Signing a machine in by looking at it. Next to the gear because it is a thing you do
+            // once per machine and then forget exists.
+            Button { showingScanner = true } label: { Image(systemName: "qrcode.viewfinder") }
+                .accessibilityLabel("Scan a sign-in code")
             Button { showingSettings = true } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("Settings")
         }

@@ -20,6 +20,10 @@ name = "pigeonpost"
 path = "src/main.rs"
 
 [dependencies]
+# A QR of the sign-in URL, so a phone can take it off a screen instead of somebody typing a code
+# into a browser on another machine. Nayuki's encoder: no dependencies of its own, one algorithm,
+# and the alternative was writing Reed-Solomon by hand.
+qrcodegen = "1.8"
 pigeonpost-core = { path = "../pigeonpost-core", version = "0.6.3" }
 pigeonpost-client = { path = "../pigeonpost-client", version = "0.6.3" }
 pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.6.3" }
