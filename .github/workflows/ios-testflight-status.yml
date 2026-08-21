@@ -1,0 +1,47 @@
+name: iOS TestFlight status
+
+# Why this exists: an upload that "succeeded" tells you only that Apple accepted the package.
+# Whether a tester's phone can see it is a different set of facts, all of them server-side —
+# processing state, the export-compliance answer, whether the build was ever added to a beta
+# group, and whether that group has any testers. When a build is "pushed but not visible", the
+# answer is always one of those, and guessing which is how an afternoon disappears.
+#
+# Runs on Linux: this only talks to the App Store Connect API, so there is no reason to pay for a
+# macOS runner or wait for one.
+
+on:
+  workflow_dispatch:
+    inputs:
+      fix:
+        description: "Also act: answer export compliance and add the newest build to every internal group."
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-testflight-status
+  cancel-in-progress: false
+
+jobs:
+  status:
+    name: ask App Store Connect
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - run: pip install --quiet pyjwt cryptography requests
+
+      - name: Report
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          FIX: ${{ inputs.fix }}
+          BUNDLE_ID: dev.pigeonpost.inbox
+        run: python3 .github/scripts/testflight_status.py
