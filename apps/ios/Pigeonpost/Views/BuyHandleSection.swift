@@ -6,28 +6,18 @@
 
 import SwiftUI
 
+//  The store is owned by `SettingsSheet` and handed in, rather than created here in a `.task`.
+//
+//  Creating it here meant the task belonged to a view whose *type* changes with the phase — a
+//  placeholder, then a Section — and inside a List that re-identifies the rows. So the task
+//  restarted, `phase` went back to `.loading`, the rows changed again, and the scroll position
+//  snapped to the top. On a phone that read as the list flickering while being scrolled, with
+//  "Checking your handle…" pinned at the top for ever because the work never got to finish.
 struct BuyHandleSection: View {
-    @Environment(Account.self) private var account
-    @State private var store: HandleStore?
+    let store: HandleStore
 
     var body: some View {
-        Group {
-            if let store {
-                content(store)
-            } else {
-                Color.clear.frame(height: 0)
-            }
-        }
-        .task {
-            if store == nil { store = HandleStore(account: account) }
-            #if DEBUG
-            if let staged = Fixtures.handleState {
-                store?.stage(staged)
-                return
-            }
-            #endif
-            await store?.refresh()
-        }
+        content(store)
     }
 
     @ViewBuilder

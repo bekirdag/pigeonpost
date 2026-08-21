@@ -16,6 +16,8 @@ struct SettingsSheet: View {
     /// `.sheet` modifiers on a single view are not reliably all honoured, and the one that loses
     /// simply never appears.
     @State private var sheet: Sheet?
+    /// Owned here so it outlives every re-render of the rows below it. See `BuyHandleSection`.
+    @State private var handle: HandleStore?
 
     private enum Sheet: Identifiable {
         case addSender
@@ -34,8 +36,13 @@ struct SettingsSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                BuyHandleSection()
-
+                if let handle {
+                    BuyHandleSection(store: handle)
+                        // A stable identity across every phase. Without it a branch change is a
+                        // different row to SwiftUI, and a List that re-identifies its rows mid-drag
+                        // throws away where you were.
+                        .id("handle-section")
+                }
                 if let quota = inbox.quota {
                     MailboxUsageSection(quota: quota)
                 }
@@ -93,6 +100,18 @@ struct SettingsSheet: View {
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
+            // On the NavigationStack, whose identity does not change while this sheet is open, so
+            // this runs once per visit rather than once per re-render.
+            .task {
+                if handle == nil { handle = HandleStore(account: account) }
+                #if DEBUG
+                if let staged = Fixtures.handleState {
+                    handle?.stage(staged)
+                    return
+                }
+                #endif
+                await handle?.refresh()
+            }
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
             .sheet(item: $sheet) { which in
                 switch which {

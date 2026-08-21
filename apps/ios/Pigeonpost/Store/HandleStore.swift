@@ -14,6 +14,8 @@
 import Foundation
 import StoreKit
 
+private struct TimedOut: Error {}
+
 @MainActor
 @Observable
 final class HandleStore {
@@ -74,7 +76,11 @@ final class HandleStore {
         guard let client = account?.client else { return }
         phase = .loading
         do {
-            let offer = try await client.handleOffer()
+            // A ceiling on the whole lookup. `.loading` renders as "Checking your handle…", and a
+            // request that never returns leaves that on screen for ever — which is exactly what a
+            // phone showed. The postbox call carries the long-poll timeout of 90 seconds, and
+            // StoreKit's has no stated bound at all, so neither can be relied on to end this.
+            let offer = try await withTimeout(seconds: 12) { try await client.handleOffer() }
             if let namespace = offer.namespace {
                 phase = .owned(namespace: namespace, renews: offer.renewsOn)
                 return
@@ -83,7 +89,9 @@ final class HandleStore {
                 phase = .unavailable
                 return
             }
-            let products = try await Product.products(for: [productId])
+            let products = try await withTimeout(seconds: 12) {
+                try await Product.products(for: [productId])
+            }
             guard let product = products.first else {
                 // An empty list, not an error: a product still awaiting review, or not sold in this
                 // storefront, comes back this way.
@@ -99,6 +107,8 @@ final class HandleStore {
             phase = .unavailable
         } catch let failure as APIError {
             phase = .notOnSaleYet(failure.errorDescription ?? "The postbox could not be asked about handles.")
+        } catch is TimedOut {
+            phase = .notOnSaleYet("Checking your handle took too long. Tap to try again.")
         } catch {
             phase = .notOnSaleYet("Could not reach the App Store.")
         }
@@ -214,6 +224,27 @@ final class HandleStore {
         }
     }
     #endif
+
+    /// Run `work`, or give up.
+    ///
+    /// There is no shared deadline between a URLSession call and a StoreKit one, and a view state
+    /// that only ever ends when a network call chooses to is not a state — it is a hang with a
+    /// label on it.
+    private func withTimeout<T: Sendable>(
+        seconds: UInt64,
+        _ work: @escaping @Sendable () async throws -> T
+    ) async throws -> T {
+        try await withThrowingTaskGroup(of: T.self) { group in
+            group.addTask { try await work() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
+                throw TimedOut()
+            }
+            guard let first = try await group.next() else { throw TimedOut() }
+            group.cancelAll()
+            return first
+        }
+    }
 
     /// What the postbox will canonicalise anyway, done here so the field shows it. Trimming a
     /// leading slash matters: people type the address they have seen, not the name.
