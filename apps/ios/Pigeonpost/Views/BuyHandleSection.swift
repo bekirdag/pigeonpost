@@ -45,8 +45,23 @@ struct BuyHandleSection: View {
             }
 
         case .unavailable:
-            // Deliberately nothing. A store that cannot sell should not advertise.
+            // Deliberately nothing. A deployment that cannot sell handles should not advertise them.
             EmptyView()
+
+        case let .notOnSaleYet(why):
+            // Visible, because this postbox does sell handles — it is this build that cannot buy
+            // one yet. Hiding it here is what made the feature look unimplemented.
+            Section {
+                Text(why)
+                    .font(.system(size: 14))
+                    .foregroundStyle(Theme.body)
+                Button("Check again") { Task { await store.refresh() } }
+                    .font(.system(size: 14))
+            } header: {
+                Text("Handle")
+            } footer: {
+                Text("A handle is a readable name for this account's mailboxes — /yourname/agent1 instead of /k/fd7qzt3z…. It costs $8 a year once it is on sale.")
+            }
 
         case let .owned(namespace, renews):
             Section {

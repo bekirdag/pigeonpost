@@ -20,9 +20,16 @@ final class HandleStore {
     enum Phase: Equatable {
         case idle
         case loading
-        /// Nothing to sell here: the postbox has no App Store key, or the product is not on sale in
-        /// this storefront. Shown as absence rather than as an error.
+        /// This deployment does not sell handles at all — the postbox has no App Store key and
+        /// answers 404. The only case that should render nothing, because there is nothing to say.
         case unavailable
+        /// The postbox sells handles, but the App Store will not hand this build a product to buy:
+        /// awaiting review, not sold in this storefront, or the store was unreachable.
+        ///
+        /// Its own case, because folding it into `unavailable` meant the section vanished and left
+        /// nobody — including me — able to tell "not for sale here" from "something went wrong".
+        /// Silence is the one answer that cannot be acted on.
+        case notOnSaleYet(String)
         case forSale(displayPrice: String)
         case buying
         case owned(namespace: String, renews: Date?)
@@ -78,9 +85,11 @@ final class HandleStore {
             }
             let products = try await Product.products(for: [productId])
             guard let product = products.first else {
-                // A real state, not a bug: a product still in review, or not sold in this
-                // storefront, returns an empty list rather than an error.
-                phase = .unavailable
+                // An empty list, not an error: a product still awaiting review, or not sold in this
+                // storefront, comes back this way.
+                phase = .notOnSaleYet(
+                    "Handles are not on sale from this build yet. The subscription is still going through App Store review."
+                )
                 return
             }
             self.product = product
@@ -88,8 +97,10 @@ final class HandleStore {
         } catch let failure as APIError where failure.status == 404 {
             // The postbox has no App Store key. Selling is simply not a thing this deployment does.
             phase = .unavailable
+        } catch let failure as APIError {
+            phase = .notOnSaleYet(failure.errorDescription ?? "The postbox could not be asked about handles.")
         } catch {
-            phase = .unavailable
+            phase = .notOnSaleYet("Could not reach the App Store.")
         }
     }
 
@@ -195,6 +206,8 @@ final class HandleStore {
         switch state {
         case "owned":
             phase = .owned(namespace: "/alex", renews: Date(timeIntervalSince1970: 1_818_800_000))
+        case "soon":
+            phase = .notOnSaleYet("Handles are not on sale from this build yet. The subscription is still going through App Store review.")
         default:
             wantedName = "alex"
             phase = .forSale(displayPrice: "$8.00")
