@@ -63,10 +63,11 @@ struct ThreadView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) { composer }
         .navigationTitle(conversation?.name ?? PeerFace.displayName(peer))
         .navigationBarTitleDisplayMode(.inline)
-        // Solid, not the default translucency. The doodle behind the conversation would otherwise
-        // show through the bar and run under the title, which is the web app's white header turned
-        // into patterned paper the name has to be read off.
-        .toolbarBackground(Theme.ground, for: .navigationBar)
+        // Glass rather than paint. This was opaque for a while, because the doodle showed through
+        // the bar and ran under the title — but the answer to a pattern competing with a title is
+        // to blur the pattern, not to hide it. A material does that and keeps the depth; painting
+        // it flat threw the depth away to solve the legibility.
+        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             ToolbarItemGroup(placement: .topBarTrailing) {
@@ -127,10 +128,13 @@ struct ThreadView: View {
                         }
                         .padding(.horizontal, 11)
                         .padding(.vertical, 6)
-                        .background(
-                            thread.id == subthread ? Theme.navy : Theme.ground,
-                            in: Capsule()
-                        )
+                        .background {
+                            if thread.id == subthread {
+                                Capsule().fill(Theme.navy)
+                            } else {
+                                Capsule().fill(.thinMaterial)
+                            }
+                        }
                         .foregroundStyle(thread.id == subthread ? Color.white : Theme.body)
                         .overlay(Capsule().stroke(Theme.rule, lineWidth: thread.id == subthread ? 0 : 1))
                     }
@@ -148,7 +152,7 @@ struct ThreadView: View {
                     }
                     .padding(.horizontal, 11)
                     .padding(.vertical, 7)
-                    .background(Theme.ground, in: Capsule())
+                    .background(.thinMaterial, in: Capsule())
                     .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
                     .foregroundStyle(Theme.body)
                 }
@@ -158,7 +162,7 @@ struct ThreadView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
-        .background(Theme.ground)
+        .background(.ultraThinMaterial)
         .overlay(alignment: .bottom) { Divider().background(Theme.rule) }
     }
 
@@ -185,7 +189,7 @@ struct ThreadView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Theme.ground)
+        .background(.bar)
         .overlay(alignment: .top) { Divider().background(Theme.rule) }
     }
 
@@ -215,7 +219,7 @@ private struct DayBreak: View {
             .foregroundStyle(Theme.muted)
             .padding(.horizontal, 10)
             .padding(.vertical, 4)
-            .background(Theme.ground, in: Capsule())
+            .background(.thinMaterial, in: Capsule())
             .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
             .frame(maxWidth: .infinity)
             .padding(.vertical, 8)
