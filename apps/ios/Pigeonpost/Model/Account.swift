@@ -15,6 +15,9 @@ final class Account {
     private(set) var mailboxes: [Mailbox] = []
     private(set) var me: Mailbox?
     private(set) var load: Load = .idle
+    /// A first mailbox is being minted. Its own flag rather than `load`, because `loadIdentities`
+    /// declines to run while `load` is `.loading` and creating ends by calling it.
+    private(set) var creating = false
 
     let session: Session
     let client: PostboxClient
@@ -56,10 +59,41 @@ final class Account {
         }
     }
 
+    /// Mint the account's first mailbox, then load it like any other.
+    ///
+    /// An account holder needs no proof-of-work: the postbox creates under the account on the
+    /// strength of the token this app already holds, so what used to be "go and install a command
+    /// line tool" is one call.
+    func createFirstMailbox() async {
+        guard !creating else { return }
+        creating = true
+        defer { creating = false }
+        do {
+            _ = try await client.createIdentity()
+        } catch let error as APIError {
+            load = .failed(error.errorDescription ?? "Could not create an inbox.")
+            return
+        } catch is AuthError {
+            load = .failed("Your session expired. Sign in again.")
+            return
+        } catch {
+            load = .failed("Could not create an inbox.")
+            return
+        }
+        await loadIdentities()
+    }
+
     #if DEBUG
     func installFixtures(mailboxes: [Mailbox], me: Mailbox) {
         self.mailboxes = mailboxes
         self.me = me
+        load = .ready
+    }
+
+    /// A load that finished and found nothing — the state of every account on its first sign-in.
+    func installEmptyFixture() {
+        mailboxes = []
+        me = nil
         load = .ready
     }
     #endif

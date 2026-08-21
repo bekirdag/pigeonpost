@@ -68,6 +68,12 @@ struct IdentitiesResponse: Decodable {
     let identities: [IdentityRow]?
 }
 
+/// The reply to `POST /v1/identities`. It also carries a one-time capability token, which this app
+/// has no use for — see `PostboxClient.createIdentity`.
+struct CreatedIdentity: Decodable {
+    let address: String
+}
+
 struct WhoAmI: Decodable {
     let address: String?
     let handle: String?

@@ -54,6 +54,17 @@ struct PostboxClient {
         try await send("/v1/identities", as: IdentitiesResponse.self).identities ?? []
     }
 
+    /// Mint the account's first `/k/` mailbox.
+    ///
+    /// No proof-of-work and no label: an account holder has already authenticated, and the postbox
+    /// creates under the account on the strength of this very token. The one-time capability token
+    /// in the reply is deliberately not read — this app authenticates as the account, never as a
+    /// single mailbox, so keeping it would be a second credential with nothing to do.
+    @discardableResult
+    func createIdentity() async throws -> String {
+        try await send("/v1/identities", method: "POST", json: [:], as: CreatedIdentity.self).address
+    }
+
     func whoami(identity: String) async throws -> WhoAmI {
         try await send("/v1/whoami", query: [.init(name: "identity", value: identity)], as: WhoAmI.self)
     }

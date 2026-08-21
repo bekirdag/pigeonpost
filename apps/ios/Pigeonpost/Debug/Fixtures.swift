@@ -55,6 +55,12 @@ enum Fixtures {
             .map { String($0.dropFirst("-handle=".count)) }
     }
 
+    /// `-empty` is a brand-new account: signed in, owning nothing. The one state a real account can
+    /// only be in once, and the one that used to leave the app on a spinner for ever.
+    static var emptyAccount: Bool {
+        enabled && CommandLine.arguments.contains("-empty")
+    }
+
     /// `-quota=near` or `-quota=full` stages the mailbox-usage section.
     static var quotaState: String? {
         guard enabled else { return nil }
@@ -69,6 +75,12 @@ enum Fixtures {
         let now = Int(Date().timeIntervalSince1970)
         let decoder = JSONDecoder()
         decoder.keyDecodingStrategy = .convertFromSnakeCase
+
+        if emptyAccount {
+            session.installFixtureSession()
+            account.installEmptyFixture()
+            return
+        }
 
         let me = Mailbox(address: "/k/cz6900v2h90vnwefj7g7ezvbh4", handle: "/bekir/main", label: "main")
         let fleet = [
