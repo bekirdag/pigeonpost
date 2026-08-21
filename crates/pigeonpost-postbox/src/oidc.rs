@@ -28,6 +28,38 @@ pub enum OidcError {
 #[derive(serde::Deserialize)]
 pub struct Claims {
     pub sub: String,
+    /// The address this account signs in with, when the realm sends one. Its key is the spec's
+    /// spelling, which is why this file is excluded from the vocabulary guard in CI.
+    #[serde(default)]
+    pub email: Option<String>,
+    /// Whether the realm considers that address verified.
+    ///
+    /// Worth knowing exactly what this means before trusting it: for a Google-brokered account the
+    /// realm sets it from Google's assertion alone, because the provider is configured with
+    /// `trustEmail`. It is "Google says so, and we trust Google", not an independent check — which
+    /// is a strong statement for a mailbox Google controls and a weaker one than it looks in
+    /// general. Providers without `trustEmail` are verified by the realm itself.
+    #[serde(default)]
+    pub email_verified: Option<bool>,
+}
+
+impl Claims {
+    /// The address this account signs in with, whatever the realm's spelling of the claim.
+    ///
+    /// The rest of the postbox reads addresses through here rather than through the field, so the
+    /// spec's word for it stays in the one file that exists to speak the spec.
+    pub fn address(&self) -> Option<&str> {
+        self.email
+            .as_deref()
+            .map(str::trim)
+            .filter(|a| !a.is_empty())
+    }
+
+    /// Whether the realm considers that address verified. See the field's own note for exactly how
+    /// much that is worth for a brokered account.
+    pub fn address_is_verified(&self) -> bool {
+        self.email_verified == Some(true)
+    }
 }
 
 #[derive(serde::Deserialize)]

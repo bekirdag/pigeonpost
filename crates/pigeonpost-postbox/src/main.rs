@@ -116,6 +116,13 @@ const PROVIDER_NAMESPACES: &[&str] = &["github"];
 /// how many names one account may hold is here too. Everywhere else those are somebody else's job.
 const OPEN_NAMESPACES: &[&str] = &["pp"];
 
+/// The provider name recorded for an address proved through the realm.
+///
+/// Not "google" or "github": at claim time the token does not say which provider was used, and
+/// pretending otherwise would put a fact in the record that nothing checked. What is recorded is
+/// what is actually known — the realm asserted this address for this subject on this date.
+const REALM_PROVIDER: &str = "realm";
+
 /// Names one account may hold in an open namespace.
 ///
 /// A handle identifies a person, and a person is one person. Agents live beneath the name as a
@@ -438,6 +445,7 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/archive", get(get_archive).put(put_archive))
         .route("/v1/threads", get(list_threads).post(open_thread))
         .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
+        .route("/v1/claims/address", post(claim_address))
         .route("/v1/devices", post(register_device))
         .route("/v1/devices/{token}", delete(unregister_device))
         .route("/v1/policy", axum::routing::put(put_policy))
@@ -698,6 +706,40 @@ async fn authorize_handle(
                     "prove you control {login} at {namespace} first — \
                      run `pigeonpost handle claim --{namespace}`"
                 ),
+            )),
+        };
+    }
+
+    // An address is a person, so the whole head segment is the proved name — there is no namespace
+    // above it to own or to buy.
+    if namespace.contains('@') {
+        let proved = state
+            .store
+            .provider_identity_owner(REALM_PROVIDER.to_string(), namespace.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        return match proved {
+            Some(owner) if owner == account => {
+                if state
+                    .store
+                    .get_by_handle(canonical.clone())
+                    .await
+                    .map_err(|_| ApiError::server("store_error"))?
+                    .is_some()
+                {
+                    Err(ApiError::new(
+                        StatusCode::CONFLICT,
+                        "handle_taken",
+                        format!("{canonical} already exists"),
+                    ))
+                } else {
+                    Ok((canonical, namespace))
+                }
+            }
+            _ => Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "address_not_proved",
+                format!("prove you sign in as {namespace} first — POST /v1/claims/address"),
             )),
         };
     }
@@ -1877,6 +1919,117 @@ pub(crate) async fn principal_for_token(
         identity_for_token(state, Some(token))
             .await
             .map(Principal::Identity)
+    }
+}
+
+#[derive(serde::Serialize)]
+struct AddressClaim {
+    handle: String,
+    proved_at: u64,
+}
+
+/// `POST /v1/claims/address` — prove the address this account signs in with, so it can be a handle.
+///
+/// Read once, written down, and never read again: authorisation afterwards consults the record, not
+/// the token. That matters because uniqueness in the realm is not permanence — an account can
+/// change its address, freeing the old one for somebody else to register and verify honestly. If
+/// minting consulted the token each time, that second person would be able to mint a handle the
+/// first person already holds. The record is keyed on the account, whose row is bound one-to-one to
+/// the immutable subject, so the answer stays the same however the address moves afterwards.
+async fn claim_address(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(token) = bearer(&headers) else {
+        return ApiError::unauthorized("this endpoint needs a member token").into_response();
+    };
+    if !token.starts_with("eyJ") {
+        return ApiError::bad(
+            "member_token_required",
+            "proving an address needs the account's own sign-in, not a capability token",
+        )
+        .into_response();
+    }
+    let claims = match state.oidc.validate(token).await {
+        Ok(claims) => claims,
+        Err(e) => {
+            tracing::debug!(error = %e, "address claim: token validation failed");
+            return ApiError::unauthorized("invalid member token").into_response();
+        }
+    };
+
+    let Some(address) = claims.address() else {
+        return ApiError::bad("no_address", "this account has no address on it to prove")
+            .into_response();
+    };
+    if !claims.address_is_verified() {
+        return ApiError::new(
+            StatusCode::FORBIDDEN,
+            "address_not_verified",
+            "this address has not been verified, so it cannot become a handle",
+        )
+        .into_response();
+    }
+
+    // Through the same door every other name goes through: if it is not a handle, it cannot be one.
+    let canonical = match Destination::for_handle(&format!("/{address}")) {
+        Ok(destination) => match destination.handle() {
+            Some(handle) => handle.to_string(),
+            None => return ApiError::bad("invalid_address", "not a usable handle").into_response(),
+        },
+        Err(_) => {
+            return ApiError::bad(
+                "invalid_address",
+                "this address cannot be spelled as a handle",
+            )
+            .into_response()
+        }
+    };
+    let name = canonical.trim_start_matches('/').to_string();
+
+    let account = match state
+        .store
+        .account_for_sub(
+            claims.sub.clone(),
+            format!("acct_{}", rand_hex(12)),
+            now_unix(),
+        )
+        .await
+    {
+        Ok(account) => account,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+
+    let now = now_unix();
+    match state
+        .store
+        .record_provider_identity(
+            REALM_PROVIDER.to_string(),
+            name,
+            claims.sub.clone(),
+            account,
+            now,
+        )
+        .await
+    {
+        Ok(Ok(())) => Json(AddressClaim {
+            handle: canonical,
+            proved_at: now,
+        })
+        .into_response(),
+        Ok(Err(store::ProviderClaimRefusal::HeldByAnotherAccount)) => ApiError::new(
+            StatusCode::CONFLICT,
+            "address_held",
+            "another account proved this address first, and a name stays with whoever proved it",
+        )
+        .into_response(),
+        Ok(Err(store::ProviderClaimRefusal::DifferentPerson)) => ApiError::new(
+            StatusCode::CONFLICT,
+            "address_moved",
+            "this address was proved by a different sign-in; it stays with the account that proved it",
+        )
+        .into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "address claim failed");
+            ApiError::server("store_error").into_response()
+        }
     }
 }
 
@@ -4238,6 +4391,65 @@ mod tests {
             window_secs: 3600,
             lifetime: 1000,
         })
+    }
+
+    /// An address is a handle once it has been proved, and its agents come with it.
+    #[tokio::test]
+    async fn a_proved_address_may_be_minted_and_may_hold_agents() {
+        let state = test_state();
+        let now = now_unix();
+        state
+            .store
+            .record_provider_identity(
+                REALM_PROVIDER.to_string(),
+                "alex@example.com".into(),
+                "sub-alex".into(),
+                "acct_alex".into(),
+                now,
+            )
+            .await
+            .expect("store")
+            .expect("first claim");
+
+        let (handle, namespace) = authorize_handle(&state, Some("acct_alex"), "/alex@example.com")
+            .await
+            .expect("the account that proved it may mint it");
+        assert_eq!(handle, "/alex@example.com");
+        assert_eq!(namespace, "alex@example.com");
+
+        let (agent, _) = authorize_handle(&state, Some("acct_alex"), "/alex@example.com/agent1")
+            .await
+            .expect("and may mint agents beneath it");
+        assert_eq!(agent, "/alex@example.com/agent1");
+    }
+
+    /// The property su_iam's caveat is about: uniqueness at claim time is not permanence, so
+    /// authorisation asks the record rather than whoever currently signs in with the address.
+    #[tokio::test]
+    async fn an_address_stays_with_the_account_that_proved_it() {
+        let state = test_state();
+        state
+            .store
+            .record_provider_identity(
+                REALM_PROVIDER.to_string(),
+                "alex@example.com".into(),
+                "sub-alex".into(),
+                "acct_alex".into(),
+                now_unix(),
+            )
+            .await
+            .expect("store")
+            .expect("first claim");
+
+        let refused = authorize_handle(&state, Some("acct_someone_else"), "/alex@example.com")
+            .await
+            .expect_err("a second account must not mint a name it did not prove");
+        assert_eq!(refused.code, "address_not_proved");
+
+        let unproved = authorize_handle(&state, Some("acct_alex"), "/nobody@example.com")
+            .await
+            .expect_err("nor may the first account mint an address it never proved");
+        assert_eq!(unproved.code, "address_not_proved");
     }
 
     #[tokio::test]

@@ -88,12 +88,18 @@ jobs:
           # OIDC claim of that name off the ID token so `whoami` can say who is signed in; the
           # claim's key is fixed by the spec, not chosen by us. Nothing there addresses a mailbox
           # — Pigeonpost messaging in that file is only ever a /k/ address or a handle.
+          #
+          # oidc.rs is the postbox's half of it, and joined the list for the same reason: it reads
+          # the standard verified-address claim so an account can prove the address it signs in
+          # with and be given a handle named after it. The claim's key is the spec's spelling, and
+          # a serde field cannot be renamed around a word.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \
               ':(exclude)site/reserved.js' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
               ':(exclude)CLA.md'; then
             echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
             exit 1
