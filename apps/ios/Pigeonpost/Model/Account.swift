@@ -111,14 +111,29 @@ final class Account {
     /// needs push only for this one moment.
     weak var push: PushService?
 
-    func signOut() {
+    /// Somebody chose to sign out. Ends the session at the realm too — see `Session.signOut`.
+    func signOut() async {
+        // Before the token goes: unregistering needs a live session, and a phone that keeps ringing
+        // for mail it can no longer open is worse than one that goes quiet.
         if let push {
-            Task { await push.unregister() }
+            await push.unregister()
         }
+        forgetLocal()
+        await session.signOut()
+    }
+
+    /// The realm stopped accepting this session on its own. Nothing to end and nobody to tell:
+    /// unregistering push would need the very token that was just refused, and a logout call would
+    /// be a round trip to be told what we already know.
+    func sessionExpired() {
+        forgetLocal()
+        session.forget()
+    }
+
+    private func forgetLocal() {
         mailboxes = []
         me = nil
         load = .idle
         UserDefaults.standard.removeObject(forKey: rememberedKey)
-        session.signOut()
     }
 }

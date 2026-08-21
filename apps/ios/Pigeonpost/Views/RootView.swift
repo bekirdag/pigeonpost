@@ -39,7 +39,7 @@ struct RootView: View {
                     .multilineTextAlignment(.center)
                 Button("Try again") { Task { await account.loadIdentities() } }
                     .font(.system(size: 15, weight: .semibold))
-                Button("Sign out") { account.signOut() }
+                Button("Sign out") { Task { await account.signOut() } }
                     .font(.system(size: 14))
                     .foregroundStyle(Theme.muted)
             }

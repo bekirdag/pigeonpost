@@ -20,11 +20,7 @@ struct SignInView: View {
                     .padding(.bottom, 10)
 
                 Button {
-                    Task {
-                        working = true
-                        await session.signIn()
-                        working = false
-                    }
+                    go(otherAccount: false)
                 } label: {
                     Text(working ? "Signing in…" : "Sign in")
                         .font(.system(size: 16, weight: .semibold))
@@ -35,6 +31,18 @@ struct SignInView: View {
                 .background(Theme.navy, in: RoundedRectangle(cornerRadius: 10))
                 .foregroundStyle(.white)
                 .disabled(working)
+
+                // Quiet, and below the main button, because it is the rarer intent — but present,
+                // because without it somebody signed in through a provider has no way back to the
+                // chooser. The provider's cookie answers for them, and the screen they need never
+                // appears.
+                Button("Use a different account") {
+                    go(otherAccount: true)
+                }
+                .font(.system(size: 14))
+                .foregroundStyle(Theme.muted)
+                .disabled(working)
+                .padding(.top, 2)
 
                 if let error = session.lastError {
                     Text(error)
@@ -50,5 +58,13 @@ struct SignInView: View {
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.ground)
+    }
+
+    private func go(otherAccount: Bool) {
+        Task {
+            working = true
+            await session.signIn(otherAccount: otherAccount)
+            working = false
+        }
     }
 }

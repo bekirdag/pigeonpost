@@ -90,12 +90,19 @@ final class Session {
 
     // ---- the flow ---------------------------------------------------------------------------
 
-    func signIn() async {
+    /// `otherAccount` is the deliberate "not this one" path.
+    ///
+    /// Ending the realm session is not enough on its own: sign-in through an identity provider
+    /// leaves that provider's own cookie in the browser, and it will happily answer for the account
+    /// already signed in there — so the person is returned to the identity they were trying to
+    /// leave, having been shown no choice. `prompt=login` asks the realm not to reuse a session, and
+    /// an ephemeral browser guarantees it by carrying no cookie any provider could recognise.
+    func signIn(otherAccount: Bool = false) async {
         lastError = nil
         do {
             let verifier = Self.randomToken(64)
             let expectedState = Self.randomToken(16)
-            let callback = try await authorize(verifier: verifier, state: expectedState)
+            let callback = try await authorize(verifier: verifier, state: expectedState, otherAccount: otherAccount)
             let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let value = { (name: String) in items.first { $0.name == name }?.value }
 
@@ -119,7 +126,38 @@ final class Session {
         }
     }
 
-    func signOut() {
+    /// Sign out for real: end the session at the realm, then forget it here.
+    ///
+    /// Deleting the tokens alone is not signing out. The realm's own SSO session outlives them, and
+    /// the browser still holds its cookie — so the next sign-in was answered silently, without ever
+    /// showing a login screen, and there was no way to choose a different account. Ending the realm
+    /// session is what makes that cookie worthless.
+    ///
+    /// Back-channel on purpose. The browser-based logout would do this too, but it opens a web sheet
+    /// (and, the first time, an "…wants to sign you in" alert) in the middle of signing *out*, which
+    /// reads as a bug. A POST carrying the refresh token identifies the session just as well.
+    func signOut() async {
+        if let refreshToken {
+            var request = URLRequest(url: Config.OIDC.endpoint("logout"))
+            request.httpMethod = "POST"
+            request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
+            request.httpBody = Data(Self.formEncode([
+                "client_id": Config.OIDC.clientId,
+                "refresh_token": refreshToken,
+            ]).utf8)
+            // Best effort, and deliberately not surfaced. A failure here means the realm session
+            // outlives this device — worth fixing, never worth trapping somebody inside the app.
+            _ = try? await URLSession.shared.data(for: request)
+        }
+        forget()
+    }
+
+    /// Drop what this device holds, without talking to anybody.
+    ///
+    /// This is the expiry path, not the sign-out path: when the realm has already refused a refresh
+    /// token, the session is over and there is nothing left to end. Opening a network call — or
+    /// worse, a browser — at that moment would interrupt whatever the person was doing.
+    func forget() {
         refreshTask?.cancel()
         refreshTask = nil
         accessToken = nil
@@ -143,7 +181,7 @@ final class Session {
     func renew() async throws -> String {
         if let refreshTask { return try await refreshTask.value }
         guard let refreshToken else {
-            signOut()
+            forget()
             throw AuthError.sessionExpired
         }
         let task = Task<String, Error> { [weak self] in
@@ -164,7 +202,7 @@ final class Session {
         } catch let error as AuthError {
             // The realm said no. A dead refresh token is a dead session, and retrying it only
             // spends the rest of them.
-            if case .sessionExpired = error { signOut() }
+            if case .sessionExpired = error { forget() }
             throw error
         } catch {
             // A network blip is not a dead session: keep what we hold and let the caller retry.
@@ -221,7 +259,7 @@ final class Session {
         return body
     }
 
-    private func authorize(verifier: String, state: String) async throws -> URL {
+    private func authorize(verifier: String, state: String, otherAccount: Bool) async throws -> URL {
         var components = URLComponents(url: Config.OIDC.endpoint("auth"), resolvingAgainstBaseURL: false)!
         components.queryItems = [
             URLQueryItem(name: "client_id", value: Config.OIDC.clientId),
@@ -232,6 +270,9 @@ final class Session {
             URLQueryItem(name: "code_challenge_method", value: "S256"),
             URLQueryItem(name: "state", value: state),
         ]
+        if otherAccount {
+            components.queryItems?.append(URLQueryItem(name: "prompt", value: "login"))
+        }
         let url = components.url!
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -249,9 +290,11 @@ final class Session {
                 }
             }
             session.presentationContextProvider = anchor
-            // Not ephemeral: the realm's own session is the point of single sign-on, and an app that
-            // demands the password again when the browser did not is an app people sign out of.
-            session.prefersEphemeralWebBrowserSession = false
+            // Ordinarily not ephemeral: the realm's own session is the point of single sign-on, and
+            // an app that demands the password again when the browser did not is an app people sign
+            // out of. Choosing a different account is the one case where that is exactly backwards —
+            // there, a cookie answering on the person's behalf is the whole problem.
+            session.prefersEphemeralWebBrowserSession = otherAccount
             webSession = session
             if !session.start() {
                 continuation.resume(throwing: AuthError.cannotPresent)

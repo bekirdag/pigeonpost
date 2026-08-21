@@ -56,7 +56,7 @@ struct SettingsSheet: View {
                     Button("Sign out", role: .destructive) {
                         dismiss()
                         inbox.reset()
-                        account.signOut()
+                        Task { await account.signOut() }
                     }
                 }
                 .font(.system(size: 14))

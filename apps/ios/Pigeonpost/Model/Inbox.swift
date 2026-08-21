@@ -204,7 +204,7 @@ final class Inbox {
                 return
             } catch let error as APIError where error.status == 401 {
                 // The client already spent a refresh token on this and the realm still says no.
-                account.signOut()
+                account.sessionExpired()
                 return
             } catch {
                 if Task.isCancelled { return }
