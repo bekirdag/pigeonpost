@@ -91,6 +91,17 @@ enum Fixtures {
           "thread_id":"t-agent1","direction":"in","autonomy":"review","verb":"run_tests",
           "held_because":"verb_denied","received_at":\(now - 900),"read":false},
 
+         {"message_id":"m_out2","direction":"out","from":"/k/cz6900v2h90vnwefj7g7ezvbh4","to":"/bekir/agent1",
+          "peer":"/bekir/agent1","peer_handle":"/bekir/agent1","thread_id":"t-agent1",
+          "body":"{\\"v\\":1,\\"verb\\":\\"make_change\\",\\"args\\":{\\"task\\":\\"pin the flaky macOS test and push a fix\\"},\\"note\\":\\"pin the flaky macOS test and push a fix\\"}",
+          "sent_at":\(now - 600),"received_at":\(now - 600),"read":true},
+
+         {"message_id":"m_reply","from":"/k/aaaa1111bbbb2222cccc3333dd",
+          "body":"pigeonpost-auto-reply v1 in_reply_to=m_out2 answered=make_change\\nGenerated unattended by this mailbox's agent. Nobody read it before it was sent.\\n\\nPinned it — the fixture listener was non-blocking, which macOS inherits onto the accepted socket and Linux does not. set_nonblocking(false) in serve_http_request, pushed as 4f21c0e.",
+          "sender_standing":"unproven","sender_tier":"handle","sender_known":true,"matched_contact":"/bekir/*",
+          "sender_handle":"/bekir/agent1","peer":"/bekir/agent1","peer_handle":"/bekir/agent1",
+          "thread_id":"t-agent1","direction":"in","autonomy":"auto","received_at":\(now - 420),"read":true},
+
          {"message_id":"m_docdex","from":"/k/zz1111v2h90vnwefj7g7ezvbh9","body":"index rebuilt — 41k symbols, 1.2s",
           "sender_standing":"unproven","sender_tier":"handle","sender_known":true,"matched_contact":"/bekir/*",
           "sender_handle":"/bekir/docdex","peer":"/bekir/docdex","peer_handle":"/bekir/docdex",

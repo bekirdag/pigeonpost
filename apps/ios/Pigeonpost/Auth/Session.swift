@@ -72,9 +72,12 @@ final class Session {
 
     /// Who the realm says is signed in. Read from the access token's own claims rather than from a
     /// userinfo call — it is display text, and one round-trip for a name is one too many.
+    ///
+    /// `preferred_username` only. The realm always sends it, and the other claim that would do is
+    /// one this repository does not use the name of.
     var username: String? {
         guard let accessToken, let claims = Self.claims(of: accessToken) else { return nil }
-        return claims["preferred_username"] as? String ?? claims["email"] as? String
+        return claims["preferred_username"] as? String
     }
 
     #if DEBUG

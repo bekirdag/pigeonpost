@@ -136,7 +136,7 @@ needs a real account that still works on the day they look.
 | --- | --- |
 | Username | *the demo account — see below, it does not exist yet* |
 | Password | *the demo account* |
-| Contact | first name, last name, phone, email of whoever answers |
+| Contact | first name, last name, phone number, and a contact address for whoever answers |
 
 ### Notes — paste this, with the account added
 
@@ -165,7 +165,7 @@ need it; everything else on this page can be filled in while you wait.
 | Field | Value |
 | --- | --- |
 | Beta App Description | the first two paragraphs of the Description above |
-| Feedback Email | whoever answers |
+| Feedback address | whoever answers |
 | Marketing URL | `https://pigeonpost.dev` |
 | Privacy Policy URL | `https://pigeonpost.dev/privacy` |
 | Sign-in required | Yes — the same demo account |
