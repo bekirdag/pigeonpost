@@ -861,9 +861,9 @@ fn print_qr(text: &str) {
         let mut line = String::from("\u{1b}[30;107m");
         for x in -border..size + border {
             line.push(match (dark(x, y), dark(x, y + 1)) {
-                (true, true) => '\u{2588}',   // full block
-                (true, false) => '\u{2580}',  // upper half
-                (false, true) => '\u{2584}',  // lower half
+                (true, true) => '\u{2588}',  // full block
+                (true, false) => '\u{2580}', // upper half
+                (false, true) => '\u{2584}', // lower half
                 (false, false) => ' ',
             });
         }

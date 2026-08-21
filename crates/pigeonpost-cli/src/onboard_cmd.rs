@@ -45,9 +45,8 @@ pub async fn agent(
                 .unwrap_or_default(),
         ),
     };
-    let derived = derived.ok_or(
-        "could not turn this directory's name into an agent name — pass one with --name",
-    )?;
+    let derived = derived
+        .ok_or("could not turn this directory's name into an agent name — pass one with --name")?;
 
     let home = crate::agent_home(&derived)?;
     // The session is machine-wide, so an agent home that has never been used still finds it.
@@ -106,7 +105,9 @@ pub async fn agent(
     if let Some(trust) = &trust {
         // Ask the postbox what it will let anyone grant, and grant all of it. The alternative is
         // this command carrying its own copy of a list that has already grown twice.
-        let verbs = postbox_cmd::grantable_verbs(&home, None).await.unwrap_or_default();
+        let verbs = postbox_cmd::grantable_verbs(&home, None)
+            .await
+            .unwrap_or_default();
         if verbs.is_empty() {
             println!("could not read this postbox's verb vocabulary; the fleet is trusted but no request will run unattended until you grant one");
         }
@@ -234,7 +235,10 @@ mod tests {
             namespace_of("/github/alex").as_deref(),
             Some("/github/alex")
         );
-        assert_eq!(namespace_of("/google/alex").as_deref(), Some("/google/alex"));
+        assert_eq!(
+            namespace_of("/google/alex").as_deref(),
+            Some("/google/alex")
+        );
     }
 
     #[test]

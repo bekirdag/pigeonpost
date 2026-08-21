@@ -1342,7 +1342,10 @@ fn print_message(m: &serde_json::Value) {
 ///
 /// Asked rather than hardcoded: the list is the server's, it has grown twice already, and a client
 /// that carries its own copy grants yesterday's set forever.
-pub(crate) async fn grantable_verbs(home: &Path, as_address: Option<&str>) -> Result<Vec<String>, Error> {
+pub(crate) async fn grantable_verbs(
+    home: &Path,
+    as_address: Option<&str>,
+) -> Result<Vec<String>, Error> {
     let credential = credential_for(home, as_address)?;
     let path = format!("/v1/contacts?identity={}", urlencode(&credential.address));
     let value = request(&credential, reqwest::Method::GET, &path, None).await?;
