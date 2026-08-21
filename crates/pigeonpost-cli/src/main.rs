@@ -318,7 +318,9 @@ enum AgentdAction {
         /// project's code, `full` may also push and deploy.
         #[arg(long, value_enum, default_value = "read-only")]
         permission: executor::Permission,
-        /// A branch `git_push` and `deploy` may touch. Repeatable. Without it, neither may run.
+        /// A branch `git_push` and `deploy` may touch, and that an answer may create or move.
+        /// Repeatable. `--branch '*'` means any, which is what ordinary git work needs: a fix on a
+        /// feature branch, a release tag, a push of both. Without it, neither verb may run.
         #[arg(long = "branch")]
         branches: Vec<String>,
         /// Ceiling on runs accepted from one sender per day. 0 removes it.

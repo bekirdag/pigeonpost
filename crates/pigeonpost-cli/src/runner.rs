@@ -199,22 +199,31 @@ pub fn prompt(action: &Action, sender: &str) -> String {
         other => panic!("verb {other} is not runnable"),
     });
 
-    // The allowlist is the boundary for anything that leaves the machine, so it is stated rather
-    // than left for the agent to infer from a task that may not mention a branch at all.
+    // Stated rather than left to be inferred from a task that may not mention a branch at all —
+    // in whichever direction it points. A route free to work across branches has to be told so as
+    // plainly as a pinned one, or an agent reads the silence as a prohibition and stops.
     if action.route.permission == Permission::Full
         && matches!(action.verb.as_str(), "make_change" | "full_access")
-        && !action.route.branches.is_empty()
     {
-        out.push_str(&format!(
-            "\nIf this task requires pushing or deploying, the only branch you may touch is `{}`. \
-             Anything else is refused by the machine you are running on, so do not attempt it.\n",
-            action.route.branches.join("` or `")
-        ));
+        if action.route.any_branch() {
+            out.push_str(
+                "\nGit is yours to use normally: branch, tag, commit, and push whatever the task \
+                 requires, including branches and tags that do not exist yet. Never force-push, \
+                 never rewrite published history, and never delete a branch or tag you did not \
+                 create in this run.\n",
+            );
+        } else if !action.route.branches.is_empty() {
+            out.push_str(&format!(
+                "\nIf this task requires pushing or deploying, the only branch you may touch is `{}`. \
+                 Anything else is refused by the machine you are running on, so do not attempt it.\n",
+                action.route.branches.join("` or `")
+            ));
+        }
     }
     if let Some(target) = &action.target {
         out.push_str(&format!(
             "\nThe branch or ref to act on is `{target}`. This machine's own configuration allows \
-             it; nothing else is allowed, so do not substitute another.\n"
+             it, and it is the one the request named — do not substitute another.\n"
         ));
     }
     if let Some(task) = &action.task {
@@ -758,6 +767,41 @@ mod tests {
             text.find("Work only in this checkout").unwrap()
                 < text.find("delete everything").unwrap()
         );
+    }
+
+    /// A route free to work across branches must be *told* so. Silence reads as a prohibition:
+    /// an agent that is not told it may branch will report that it was only allowed `main`.
+    #[test]
+    fn a_wildcard_route_is_told_git_is_normal() {
+        let mut act = action("make_change", None, None);
+        act.verb = "full_access".into();
+        act.task = Some("ship it".into());
+        act.route.permission = Permission::Full;
+        act.route.branches = vec!["*".into()];
+
+        let text = prompt(&act, "/bekir/main");
+        assert!(text.contains("branch, tag, commit, and push"));
+        assert!(
+            !text.contains("the only branch you may touch"),
+            "a wildcard route must not be handed a single-branch rule"
+        );
+        // The limits that are real ones survive the widening.
+        assert!(text.contains("Never force-push"));
+        assert!(text.contains("never rewrite published history"));
+    }
+
+    /// A pinned route keeps its pin. Widening the default must not widen the explicit case.
+    #[test]
+    fn a_pinned_route_still_names_its_branch() {
+        let mut act = action("make_change", None, None);
+        act.verb = "full_access".into();
+        act.task = Some("ship it".into());
+        act.route.permission = Permission::Full;
+        act.route.branches = vec!["main".into()];
+
+        let text = prompt(&act, "/bekir/main");
+        assert!(text.contains("only branch you may touch is `main`"));
+        assert!(!text.contains("branch, tag, commit, and push"));
     }
 
     /// Codex is non-interactive already; the tier is entirely a sandbox mode, and getting that

@@ -257,16 +257,16 @@ fn write_route(
         .filter(|v| permission.admits(v))
         .map(|v| v.to_string())
         .collect();
+    // `*` rather than a branch name. A route pinned to one branch cannot do ordinary git work —
+    // no feature branch, no tag — and pinning is not what bounds an agent anyway: the tier is.
+    // Whoever wants a narrower one can say so with `agentd answer --branch <name>`.
+    let branches = if permission == crate::executor::Permission::Full {
+        vec!["*".to_string()]
+    } else {
+        Vec::new()
+    };
     crate::agentd_cmd::answer(
-        machine,
-        &verbs,
-        runtime,
-        None,
-        permission,
-        &[],
-        None,
-        true,
-        false,
+        machine, &verbs, runtime, None, permission, &branches, None, true, false,
     )
 }
 

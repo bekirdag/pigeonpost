@@ -70,9 +70,19 @@ pub struct MailboxRoute {
     /// How much an answer may do. Defaults to the tier that shipped.
     #[serde(default)]
     pub permission: Permission,
-    /// Branches `git_push` and `deploy` may touch. Absent means neither may touch anything, which
-    /// is why it is not defaulted to something convenient: a deploy with no stated target is the
-    /// request this cannot bound.
+    /// Branches `git_push` and `deploy` may name, and the branches and tags an answer may create
+    /// or move.
+    ///
+    /// Absent still means neither may touch anything: a deploy with no stated target is the one
+    /// request this cannot bound, and defaulting that to "anything" would be a convenience nobody
+    /// asked for.
+    ///
+    /// `"*"` means any of them, and is the setting most agents actually want. Ordinary work is
+    /// branches and tags — a fix on a feature branch, a release tag, a push of both — and a route
+    /// pinned to one branch name refuses all of it. That is not a safety boundary so much as a
+    /// spelling of one: an agent that may rewrite `main` is not made safer by being unable to
+    /// create `fix/thing`. What actually bounds it is the permission tier, the checkout it works
+    /// in, and the refusal to force-push or rewrite history — none of which `*` touches.
     #[serde(default)]
     pub branches: Vec<String>,
     /// Ceiling on runs accepted from one sender in a day. Zero means no ceiling.
@@ -400,6 +410,19 @@ pub struct Action {
 }
 
 impl MailboxRoute {
+    /// Whether `name` is a branch or ref this route may touch.
+    ///
+    /// `"*"` is any. Exact names otherwise — never a prefix or a pattern, because a route saying
+    /// `release` should not quietly also mean `release-candidate-do-not-push`.
+    pub fn allows_branch(&self, name: &str) -> bool {
+        self.branches.iter().any(|b| b == "*" || b == name)
+    }
+
+    /// Whether this route is free to work across branches and tags as the task requires.
+    pub fn any_branch(&self) -> bool {
+        self.branches.iter().any(|b| b == "*")
+    }
+
     /// Whether this route is the one for `mailbox`.
     ///
     /// A mailbox has two names and the two halves of this system use different ones: the event
@@ -489,7 +512,7 @@ pub fn classify(
         .map(str::to_string);
     if matches!(verb.as_str(), "git_push" | "deploy") {
         match &target {
-            Some(t) if route.branches.iter().any(|b| b == t) => {}
+            Some(t) if route.allows_branch(t) => {}
             _ => return Err(Refusal::BranchNotAllowed),
         }
     }
@@ -715,6 +738,36 @@ pub fn pause_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_wildcard_branch_allows_any_target_and_an_empty_one_allows_none() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["git_push"], dir.path());
+        cfg.mailbox[0].permission = Permission::Full;
+
+        cfg.mailbox[0].branches = vec!["*".into()];
+        assert!(cfg.mailbox[0].allows_branch("main"));
+        assert!(cfg.mailbox[0].allows_branch("fix/anything"));
+        assert!(cfg.mailbox[0].allows_branch("v1.2.3"));
+        assert!(cfg.mailbox[0].any_branch());
+
+        // Absent still means nothing: a deploy with no stated target is the request that cannot
+        // be bounded, and it must not become "anything" by default.
+        cfg.mailbox[0].branches = Vec::new();
+        assert!(!cfg.mailbox[0].allows_branch("main"));
+        assert!(!cfg.mailbox[0].any_branch());
+    }
+
+    /// An exact name is exact. `release` must not quietly also mean `release-candidate`.
+    #[test]
+    fn a_named_branch_is_not_a_prefix() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["git_push"], dir.path());
+        cfg.mailbox[0].branches = vec!["release".into()];
+        assert!(cfg.mailbox[0].allows_branch("release"));
+        assert!(!cfg.mailbox[0].allows_branch("release-candidate"));
+        assert!(!cfg.mailbox[0].allows_branch("rel"));
+    }
 
     #[test]
     fn codex_is_a_runtime_this_build_understands() {
