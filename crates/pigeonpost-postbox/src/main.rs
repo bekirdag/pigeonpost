@@ -532,7 +532,15 @@ async fn authorize_handle(
     // `PROVIDER_NAMESPACES`. Asking `namespace_owner` about `/github` would be asking who bought
     // the whole of GitHub, and the honest answer is nobody.
     if PROVIDER_NAMESPACES.contains(&namespace.as_str()) {
-        let login = canonical.rsplit('/').next().unwrap_or_default().to_string();
+        // The proved name is the *second* segment, not the last. `/github/alex` is the identity
+        // somebody proved; `/github/alex/agent1` is one of that person's agents, and authorising it
+        // by its last segment would ask whether anybody proved they were called "agent1".
+        let login = canonical
+            .trim_start_matches('/')
+            .split('/')
+            .nth(1)
+            .unwrap_or_default()
+            .to_string();
         let proved = state
             .store
             .provider_identity_owner(namespace.clone(), login.clone())

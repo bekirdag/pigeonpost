@@ -38,6 +38,13 @@ impl Handle {
         })
     }
 
+    /// Parse `/<namespace>/<name>`.
+    ///
+    /// Two segments, deliberately, while the protocol's own grammar takes three. The third segment
+    /// is an agent — `/github/alex/agent1` — and an agent is not a registry name: it is minted by
+    /// somebody who already proved the name above it, so there is nothing further to prove and
+    /// nothing to log. Publishing them would put the shape of everybody's fleet in a public record
+    /// to no one's benefit.
     pub fn parse(input: &str) -> Result<Self> {
         let trimmed = input.strip_prefix('/').unwrap_or(input);
         let (namespace, name) = trimmed
@@ -86,12 +93,20 @@ fn validate_name(name: &str) -> Result<String> {
             "name must be 1..={MAX_NAME} characters"
         )));
     }
+    // `@` so an account that signed in with an address can register a name that reads like one —
+    // `/pp/alex@example.com`. Once, and never at either edge: `a@b@c` is a typo and `@alex` is a
+    // mention of somebody rather than a name.
     if !name
         .chars()
-        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.')
+        .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_' || c == '.' || c == '@')
     {
         return Err(RegistryError::MalformedHandle(
-            "name may contain only letters, digits, '-', '_', and '.'".into(),
+            "name may contain only letters, digits, '-', '_', '.', and '@'".into(),
+        ));
+    }
+    if name.matches('@').count() > 1 || name.starts_with('@') || name.ends_with('@') {
+        return Err(RegistryError::MalformedHandle(
+            "'@' belongs inside a name, once".into(),
         ));
     }
     if name.starts_with('-') || name.ends_with('-') {
@@ -150,6 +165,22 @@ mod tests {
     }
 
     #[test]
+    /// The protocol widened its grammar on 2026-08-21; the registry deliberately did not. An agent
+    /// is minted by whoever proved the name above it, so it has nothing to prove and nothing to log.
+    #[test]
+    fn an_agent_is_not_a_registry_name() {
+        assert!(Handle::parse("/github/alex/agent1").is_err());
+    }
+
+    #[test]
+    fn accepts_an_address_shaped_name() {
+        let handle = Handle::parse("/google/alex@example.com").expect("an address-shaped name");
+        assert_eq!(handle.name(), "alex@example.com");
+        assert!(Handle::parse("/google/@alex").is_err());
+        assert!(Handle::parse("/google/alex@").is_err());
+        assert!(Handle::parse("/google/a@b@c").is_err());
+    }
+
     fn rejects_malformed_names() {
         assert!(Handle::parse("/github/").is_err());
         assert!(Handle::parse("/github/-leading").is_err());

@@ -548,13 +548,20 @@ pub enum BindOutcome {
     Full,
 }
 
+/// The rule that would cover this peer if no exact row existed: everything but the last segment,
+/// plus `/*`.
+///
+/// `/bekir/docdex` → `/bekir/*`, the fleet under a namespace somebody owns. `/github/alex/agent1` →
+/// `/github/alex/*`, the fleet under one person. It is deliberately *not* `/github/*`: `/github`
+/// belongs to everybody, and a contact matching it would trust every GitHub user alive because one
+/// of them was trusted.
 pub fn namespace_wildcard(peer: &str) -> Option<String> {
     let rest = peer.strip_prefix('/')?;
-    let (namespace, name) = rest.split_once('/')?;
-    if namespace.is_empty() || name.is_empty() || namespace == "k" {
+    let (parent, name) = rest.rsplit_once('/')?;
+    if parent.is_empty() || name.is_empty() || parent == "k" {
         return None;
     }
-    Some(format!("/{namespace}/*"))
+    Some(format!("/{parent}/*"))
 }
 
 /// The contact columns, in the order `map_contact_row` reads them.
@@ -2204,6 +2211,36 @@ impl Store {
         })
         .await
         .map_err(|_| StoreError::Join)?
+    }
+}
+
+#[cfg(test)]
+mod wildcard_tests {
+    use super::namespace_wildcard;
+
+    #[test]
+    fn a_name_under_an_owned_namespace_is_covered_by_that_namespace() {
+        assert_eq!(
+            namespace_wildcard("/bekir/docdex").as_deref(),
+            Some("/bekir/*")
+        );
+    }
+
+    /// The one that matters: an agent under a person is covered by *that person*, never by the
+    /// provider. `/github/*` would be every GitHub user alive.
+    #[test]
+    fn an_agent_under_a_person_is_covered_by_the_person() {
+        assert_eq!(
+            namespace_wildcard("/github/alex/agent1").as_deref(),
+            Some("/github/alex/*")
+        );
+    }
+
+    #[test]
+    fn key_addresses_and_bare_names_have_no_namespace_rule() {
+        assert_eq!(namespace_wildcard("/k/abc"), None);
+        assert_eq!(namespace_wildcard("/bekir"), None);
+        assert_eq!(namespace_wildcard("nonsense"), None);
     }
 }
 
