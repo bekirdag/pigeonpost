@@ -185,7 +185,12 @@ for g in groups["data"]:
     )
     for t in testers[:20]:
         ta = t["attributes"]
-        print(f"      - {ta.get('email')}  state={ta.get('state')}  invite={ta.get('inviteType')}")
+        # Name and state, never the address. This runs in CI, whose logs are readable by anyone who
+        # can see the repository, and a tester's address is theirs rather than ours to publish. The
+        # name is enough to answer the question this output exists for: is the right person in the
+        # group, and has their invitation been accepted.
+        who = " ".join(x for x in (ta.get("firstName"), ta.get("lastName")) if x) or t["id"][:8]
+        print(f"      - {who}  state={ta.get('state')}  invite={ta.get('inviteType')}")
 print()
 
 if FIX and target:
