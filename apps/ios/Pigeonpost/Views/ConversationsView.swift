@@ -153,13 +153,22 @@ struct ConversationsView: View {
             }
             .accessibilityLabel("Acting as \(actingName). Change mailbox")
         }
-        ToolbarItemGroup(placement: .topBarTrailing) {
+        // Two trailing items, never three.
+        //
+        // With three, iOS decides for itself that they do not fit and folds the last of them into
+        // an overflow of its own making — which on a real phone rendered Settings as "•••" that did
+        // not open when tapped. The simulator, being wider, fitted all three and showed nothing
+        // wrong, which is why this shipped.
+        //
+        // The scanner moved into Settings rather than into a menu here. It is a thing you do once
+        // per machine and then forget exists, so it was never worth a permanent slot; and a plain
+        // button that presents a sheet is one fewer presentation to go wrong than a menu that
+        // presents a sheet.
+        ToolbarItem(placement: .topBarTrailing) {
             Button { sheet = .new } label: { Image(systemName: "square.and.pencil") }
                 .accessibilityLabel("New conversation")
-            // Signing a machine in by looking at it. Next to the gear because it is a thing you do
-            // once per machine and then forget exists.
-            Button { sheet = .scanner } label: { Image(systemName: "qrcode.viewfinder") }
-                .accessibilityLabel("Scan a sign-in code")
+        }
+        ToolbarItem(placement: .topBarTrailing) {
             Button { sheet = .settings } label: { Image(systemName: "gearshape") }
                 .accessibilityLabel("Settings")
         }

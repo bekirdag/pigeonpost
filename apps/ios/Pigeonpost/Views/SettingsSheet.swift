@@ -12,8 +12,24 @@ struct SettingsSheet: View {
     @Environment(Session.self) private var session
     @Environment(\.dismiss) private var dismiss
 
-    @State private var editing: Contact?
-    @State private var addingSender = false
+    /// One sheet at a time, for the same reason `ConversationsView` has one: stacked
+    /// `.sheet` modifiers on a single view are not reliably all honoured, and the one that loses
+    /// simply never appears.
+    @State private var sheet: Sheet?
+
+    private enum Sheet: Identifiable {
+        case addSender
+        case edit(Contact)
+        case scan
+
+        var id: String {
+            switch self {
+            case .addSender: return "add"
+            case let .edit(contact): return "edit:" + contact.peer
+            case .scan: return "scan"
+            }
+        }
+    }
 
     var body: some View {
         NavigationStack {
@@ -42,15 +58,25 @@ struct SettingsSheet: View {
 
                 Section {
                     ForEach(inbox.contacts, id: \.peer) { contact in
-                        Button { editing = contact } label: { ContactRow(contact: contact) }
+                        Button { sheet = .edit(contact) } label: { ContactRow(contact: contact) }
                             .buttonStyle(.plain)
                     }
-                    Button("Add a sender") { addingSender = true }
+                    Button("Add a sender") { sheet = .addSender }
                         .font(.system(size: 15, weight: .medium))
                 } header: {
                     Text("Trusted senders")
                 } footer: {
                     Text("Who this mailbox admits, and how far it trusts them. /namespace/* covers a whole fleet. Autonomy *auto* plus a verb lets that sender's request be acted on without asking you first.")
+                }
+
+                Section {
+                    Button {
+                        sheet = .scan
+                    } label: {
+                        Label("Scan a sign-in code", systemImage: "qrcode.viewfinder")
+                    }
+                } footer: {
+                    Text("Signs a machine in by looking at it: run `pigeonpost login` there, and point this at the code it prints.")
                 }
 
                 Section("Account") {
@@ -68,11 +94,12 @@ struct SettingsSheet: View {
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
-            .sheet(item: $editing) { contact in
-                ContactSheet(existing: contact)
-            }
-            .sheet(isPresented: $addingSender) {
-                ContactSheet(existing: nil)
+            .sheet(item: $sheet) { which in
+                switch which {
+                case .addSender: ContactSheet(existing: nil)
+                case let .edit(contact): ContactSheet(existing: contact)
+                case .scan: ScanView()
+                }
             }
         }
     }

@@ -16,8 +16,14 @@ struct ThreadView: View {
 
     @State private var draft = ""
     @State private var subthread: String?
-    @State private var showingInfo = false
-    @State private var showingNewThread = false
+    /// One sheet at a time. Two stacked `.sheet` modifiers on one view are not reliably both
+    /// honoured — see `ConversationsView`, where the same shape lost Settings entirely.
+    @State private var sheet: Sheet?
+
+    private enum Sheet: String, Identifiable {
+        case info, newThread
+        var id: String { rawValue }
+    }
     @FocusState private var composing: Bool
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
@@ -100,20 +106,22 @@ struct ThreadView: View {
             // beside the other decisions about it — known, trusted, blocked — rather than sitting
             // in the bar as a thing to hit by accident on the way to reading.
             ToolbarItem(placement: .topBarTrailing) {
-                Button { showingInfo = true } label: { Image(systemName: "info.circle") }
+                Button { sheet = .info } label: { Image(systemName: "info.circle") }
                     .accessibilityLabel("About this sender")
             }
         }
-        .sheet(isPresented: $showingInfo) {
-            if let conversation {
-                PeerInfoSheet(conversation: conversation) { mailbox in
-                    showingInfo = false
-                    account.act(as: mailbox)
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .info:
+                if let conversation {
+                    PeerInfoSheet(conversation: conversation) { mailbox in
+                        sheet = nil
+                        account.act(as: mailbox)
+                    }
                 }
+            case .newThread:
+                NewThreadSheet(peer: peer) { id in subthread = id }
             }
-        }
-        .sheet(isPresented: $showingNewThread) {
-            NewThreadSheet(peer: peer) { id in subthread = id }
         }
         .task(id: taskKey) {
             await inbox.acknowledge(peer: peer, subthread: subthread)
@@ -125,7 +133,7 @@ struct ThreadView: View {
         }
         .onAppear {
             if subthread == nil { subthread = subthreads.first?.id }
-            if Fixtures.sheet == "peer" { showingInfo = true }
+            if Fixtures.sheet == "peer" { sheet = .info }
         }
     }
 
@@ -162,7 +170,7 @@ struct ThreadView: View {
                     }
                     .buttonStyle(.plain)
                 }
-                Button { showingNewThread = true } label: {
+                Button { sheet = .newThread } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "plus")
                             .font(.system(size: 12, weight: .semibold))
