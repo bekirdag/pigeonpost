@@ -140,6 +140,39 @@ struct OpenedThread: Decodable {
     let threadId: String
 }
 
+/// How full a mailbox is.
+///
+/// The warning threshold is the server's, deliberately: it can move without shipping an app, and
+/// both clients agree on when to start saying something.
+struct Quota: Decodable {
+    let usedBytes: Int
+    let limitBytes: Int
+    let warnAtBytes: Int
+    let tier: String
+
+    var fraction: Double {
+        guard limitBytes > 0 else { return 0 }
+        return min(1, Double(usedBytes) / Double(limitBytes))
+    }
+
+    var shouldWarn: Bool { usedBytes >= warnAtBytes }
+    var isFull: Bool { usedBytes >= limitBytes }
+    var canBuyMoreRoom: Bool { tier != "paid" }
+
+    private static let formatter: ByteCountFormatter = {
+        let f = ByteCountFormatter()
+        // Binary, to match how the quota is computed. `.file` counts a megabyte as 1,000,000
+        // bytes, so a 20 MB limit set as 20 × 1024 × 1024 renders as "21 MB" — a number nobody
+        // configured, in the one place somebody would quote it back to you.
+        f.countStyle = .binary
+        f.allowedUnits = [.useKB, .useMB, .useGB]
+        return f
+    }()
+
+    var used: String { Self.formatter.string(fromByteCount: Int64(usedBytes)) }
+    var limit: String { Self.formatter.string(fromByteCount: Int64(limitBytes)) }
+}
+
 /// What the postbox will sell, and what this account already holds.
 ///
 /// `namespace` is `nil` until something has been bought. Both the POST and the GET answer in this

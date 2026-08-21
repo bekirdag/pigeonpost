@@ -18,6 +18,7 @@ final class Inbox {
     private(set) var policy: InboxPolicy?
     private(set) var serverThreads: [ServerThread] = []
     private(set) var archived: Set<String> = []
+    private(set) var quota: Quota?
     private(set) var pending: [PendingMessage] = []
 
     /// The assembled list, rebuilt when something it is made of changes rather than on every read —
@@ -52,7 +53,8 @@ final class Inbox {
         async let contacts: Void = loadContacts()
         async let archive: Void = loadArchive()
         async let threads: Void = loadThreads()
-        _ = await (inbox, contacts, archive, threads)
+        async let usage: Void = refreshQuota()
+        _ = await (inbox, contacts, archive, threads, usage)
         _ = me
         loading = false
         hasLoaded = true
@@ -150,6 +152,7 @@ final class Inbox {
         self.vocabulary = vocabulary
         self.serverThreads = threads
         hasLoaded = true
+        stageQuota()
         rebuild()
     }
     #endif
@@ -260,6 +263,64 @@ final class Inbox {
     /// Message-level on purpose: what is objectionable is a message, and the person reporting it is
     /// looking at that message. Refusing the sender altogether is a separate, heavier decision and
     /// lives on the sender panel as `block`.
+    /// Remove one message from this mailbox for good.
+    ///
+    /// Locally first, like `acknowledge`: the message is gone from the screen the moment it was
+    /// asked for, and the next listing either confirms that or puts it back. Waiting on a round
+    /// trip to remove something somebody just deleted makes the app feel like it disagreed.
+    func deleteMessage(id: String) async {
+        guard let me else { return }
+        guard !Fixtures.enabled else {
+            toast = "Deleted — from the fixture mailbox, which is only in memory."
+            return
+        }
+        let removed = messages.first { $0.id == id }
+        messages.removeAll { $0.id == id }
+        rebuild()
+        do {
+            try await client.deleteMessage(identity: me.address, messageId: id)
+            await refreshQuota()
+        } catch {
+            // Put it back rather than leaving a hole the next poll would fill unpredictably.
+            if let removed {
+                messages.append(removed)
+                messages.sort { $0.at < $1.at }
+                rebuild()
+            }
+            toast = "Could not delete that message."
+        }
+    }
+
+    /// How full this mailbox is. Refreshed after anything that changes it, and on load — the quota
+    /// refuses *senders*, so without asking, the holder is the last to know.
+    func refreshQuota() async {
+        #if DEBUG
+        if stageQuota() { return }
+        #endif
+        guard let me, !Fixtures.enabled else { return }
+        quota = try? await client.quota(identity: me.address)
+    }
+
+    #if DEBUG
+    /// Stage the usage section for a screenshot. Synchronous and called from the fixture path too:
+    /// with `-fixtures` the app installs a mailbox rather than loading one, so anything that only
+    /// happens in `load()` never happens at all.
+    @discardableResult
+    func stageQuota() -> Bool {
+        guard let staged = Fixtures.quotaState else { return false }
+        let limit = 20 * 1024 * 1024
+        let used = staged == "full" ? limit : limit / 100 * 87
+        // Same key strategy the real client uses; a bare decoder would fail on `used_bytes` and
+        // `try?` would swallow it, leaving the section invisible with nothing to explain it.
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        quota = try? decoder.decode(Quota.self, from: Data("""
+        {"used_bytes": \(used), "limit_bytes": \(limit), "warn_at_bytes": \(limit / 5 * 4), "tier": "free"}
+        """.utf8))
+        return true
+    }
+    #endif
+
     func reportSpam(messageId: String) async {
         guard let me else { return }
         guard !Fixtures.enabled else {

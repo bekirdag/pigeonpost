@@ -20,6 +20,10 @@ struct SettingsSheet: View {
             List {
                 BuyHandleSection()
 
+                if let quota = inbox.quota {
+                    MailboxUsageSection(quota: quota)
+                }
+
                 Section {
                     Button {
                         inbox.viewingArchive = true
@@ -220,4 +224,46 @@ struct ContactSheet: View {
 
 extension Contact: Identifiable {
     public var id: String { peer }
+}
+
+/// How full this mailbox is.
+///
+/// Shown always rather than only when it matters, because the quota refuses the *sender*: when a
+/// mailbox fills, the bounce goes to whoever wrote and the holder sees nothing at all. Somebody who
+/// has watched the bar creep up is not surprised by it.
+private struct MailboxUsageSection: View {
+    let quota: Quota
+
+    var body: some View {
+        Section {
+            VStack(alignment: .leading, spacing: 7) {
+                HStack {
+                    Text("\(quota.used) of \(quota.limit)")
+                        .font(.system(size: 14, weight: .medium))
+                        .foregroundStyle(Theme.ink)
+                    Spacer()
+                    if quota.isFull {
+                        PillView(text: "full", kind: .blocked)
+                    }
+                }
+                ProgressView(value: quota.fraction)
+                    .tint(quota.isFull ? Theme.Pill.blockedText : (quota.shouldWarn ? .orange : Theme.navy))
+            }
+            .padding(.vertical, 2)
+        } header: {
+            Text("Mailbox")
+        } footer: {
+            if quota.isFull {
+                Text(quota.canBuyMoreRoom
+                     ? "This mailbox is full, so new mail is being refused and senders are told. Delete a few messages to make room — hold one and choose Delete — or buy a handle above for more space."
+                     : "This mailbox is full, so new mail is being refused and senders are told. Delete a few messages to make room: hold one and choose Delete.")
+            } else if quota.shouldWarn {
+                Text(quota.canBuyMoreRoom
+                     ? "Nearly full. When it fills, new mail is refused and senders are told. Delete messages to make room, or buy a handle above for more space."
+                     : "Nearly full. When it fills, new mail is refused and senders are told. Hold a message and choose Delete to make room.")
+            } else {
+                Text("Nothing here is deleted on a schedule — mail stays until you delete it or the mailbox fills. Hold a message to delete it.")
+            }
+        }
+    }
 }

@@ -55,6 +55,14 @@ enum Fixtures {
             .map { String($0.dropFirst("-handle=".count)) }
     }
 
+    /// `-quota=near` or `-quota=full` stages the mailbox-usage section.
+    static var quotaState: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-quota=") }
+            .map { String($0.dropFirst("-quota=".count)) }
+    }
+
     #if DEBUG
     @MainActor
     static func apply(session: Session, account: Account, inbox: Inbox) {

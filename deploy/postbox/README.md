@@ -61,6 +61,43 @@ With none of it set the postbox logs nothing, sends nothing, and behaves exactly
 push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
 being woken the moment a key is added — no app update needed.
 
+## Retention and quotas
+
+Three tiers, and only one of them expires:
+
+| tier | who | retention | when full |
+| --- | --- | --- | --- |
+| anonymous | a `/k/` mailbox minted by proof-of-work, no account | deleted `EPHEMERAL_RETENTION_DAYS` after it was created | senders refused |
+| free | signed in, no live namespace | never deleted | senders refused; the app offers a handle |
+| paid | holds an unexpired namespace | never deleted | senders refused |
+
+```
+FREE_QUOTA_MB=20            # ~3,000 messages at the ~6.5 KB agent traffic averages
+PAID_QUOTA_MB=1024
+ANONYMOUS_QUOTA_MB=5
+EPHEMERAL_RETENTION_DAYS=30 # anonymous mailboxes only
+```
+
+`MAX_INBOX_MESSAGES` is gone. A message count is not a disk limit: a thousand pings and a thousand
+status reports differ by two orders of magnitude, and the count cannot tell them apart. Quotas are
+summed `wrap_blob` bytes over everything a mailbox holds, sent copies included.
+
+**A full mailbox refuses the sender** — `409 recipient_inbox_full` — rather than deleting the
+holder's oldest mail to make room. Evicting would lose something somebody was keeping, silently, to
+make space for something they might not want. The consequence is that the bounce goes to whoever
+wrote, and the holder sees nothing; `GET /v1/quota` and the app's Mailbox section exist so they are
+not the last to know.
+
+**Deleting is the escape hatch.** `POST /v1/messages/delete` removes one message from the acting
+mailbox and frees its bytes. Without it a bounded, never-expiring mailbox fills once and stays full,
+and subscribing would be the only way out of a mailbox full of junk — a trap rather than a trial.
+Archiving is not this: it hides a conversation and keeps every byte.
+
+**Before 0.7.1 the sweep deleted by age alone**, every identity and message older than the cutoff,
+whoever owned them. Signed-in accounts were included, so a paid handle's mailboxes were scheduled
+for deletion thirty days after purchase. The line is `account_id IS NULL`, which was already in the
+data and simply never consulted.
+
 ## Selling handles (App Store)
 
 Off unless configured. With no key set, `/v1/claims/apple` answers 404 — indistinguishable from

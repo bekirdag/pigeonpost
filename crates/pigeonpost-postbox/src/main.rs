@@ -74,8 +74,8 @@ struct AppState {
     oidc: Arc<oidc::Oidc>,
     /// Max identities one account may hold (identity quota).
     max_identities: usize,
-    /// Max messages one inbox may hold before senders are refused (inbox quota).
-    max_inbox: usize,
+    /// How much one inbox may hold before senders are refused, per tier.
+    quota: Quota,
     /// Per-IP ceilings on unauthenticated mints.
     mint_limits: MintLimits,
     /// How many trusted reverse proxies sit in front of us (see [`resolve_client_ip`]).
@@ -165,7 +165,9 @@ struct Config {
     ephemeral_retention_days: u64,
     reaper_interval_secs: u64,
     max_identities_per_account: usize,
-    max_inbox_messages: usize,
+    free_quota_mb: u64,
+    paid_quota_mb: u64,
+    anonymous_quota_mb: u64,
     mint_per_ip_window: usize,
     mint_window_secs: u64,
     mint_per_ip_lifetime: usize,
@@ -191,7 +193,12 @@ impl Config {
             // An account is a bookkeeping unit for one operator's fleet, not the abuse boundary —
             // per-IP mint limits are. A single box may legitimately run dozens of agents.
             max_identities_per_account: env_num("EPHEMERAL_MAX_IDENTITIES", 50),
-            max_inbox_messages: env_num("MAX_INBOX_MESSAGES", 1000),
+            // Sized against what real traffic looks like: agent status reports average ~6.5 KB,
+            // so 20 MB is a few thousand messages — enough that the free tier is a fair trial of
+            // the product rather than a teaser.
+            free_quota_mb: env_num("FREE_QUOTA_MB", 20),
+            paid_quota_mb: env_num("PAID_QUOTA_MB", 1024),
+            anonymous_quota_mb: env_num("ANONYMOUS_QUOTA_MB", 5),
             mint_per_ip_window: env_num("MINT_PER_IP_WINDOW", 5),
             mint_window_secs: env_num("MINT_WINDOW_SECS", 3600),
             mint_per_ip_lifetime: env_num("MINT_PER_IP_LIFETIME", 1000),
@@ -333,7 +340,11 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             "https://auth.pigeonpost.dev/realms/pigeonpost-prod",
         ))),
         max_identities: cfg.max_identities_per_account,
-        max_inbox: cfg.max_inbox_messages,
+        quota: Quota {
+            anonymous: cfg.anonymous_quota_mb * 1024 * 1024,
+            free: cfg.free_quota_mb * 1024 * 1024,
+            paid: cfg.paid_quota_mb * 1024 * 1024,
+        },
         mint_limits: MintLimits {
             per_window: cfg.mint_per_ip_window,
             window_secs: cfg.mint_window_secs,
@@ -435,6 +446,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/send", post(send))
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
+        .route("/v1/messages/delete", post(delete_message))
+        .route("/v1/quota", get(quota))
         .route("/v1/report-spam", post(report_spam))
         .route("/v1/events", get(events))
         .route("/v1/whoami", get(whoami))
@@ -2414,17 +2427,31 @@ pub(crate) async fn do_send(
         }
     }
 
-    // Inbox quota: don't let one recipient's inbox grow without bound (disk protection).
-    let held = state
+    // Inbox quota, in bytes and by tier.
+    //
+    // Bytes because a message count is not a disk limit — a thousand pings and a thousand status
+    // reports differ by two orders of magnitude. By tier because these mailboxes no longer expire:
+    // the clock used to bound them, and now this does.
+    //
+    // Full refuses the *sender*, and says so. The alternative — deleting the recipient's oldest
+    // mail to make room — loses something somebody was keeping, silently, to make room for
+    // something they may not want. A bounce is visible to the one party who can do something.
+    let tier = state
         .store
-        .inbox_count(recipient.address.clone())
+        .tier_of(recipient.address.clone(), now_unix())
         .await
         .map_err(|_| ApiError::server("store_error"))?;
-    if held >= state.max_inbox {
+    let allowance = state.quota.bytes_for(tier);
+    let held = state
+        .store
+        .inbox_bytes(recipient.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    if held >= allowance {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
             "recipient_inbox_full",
-            format!("recipient inbox is full ({} messages)", state.max_inbox),
+            format!("recipient inbox is full ({} MB)", allowance / (1024 * 1024)),
         ));
     }
 
@@ -4168,6 +4195,36 @@ async fn claim_apple(
     }
 }
 
+/// What each tier may hold, in bytes.
+#[derive(Clone, Copy)]
+struct Quota {
+    anonymous: u64,
+    free: u64,
+    paid: u64,
+}
+
+impl Quota {
+    fn bytes_for(&self, tier: store::Tier) -> u64 {
+        match tier {
+            store::Tier::Anonymous => self.anonymous,
+            store::Tier::Free => self.free,
+            store::Tier::Paid => self.paid,
+        }
+    }
+
+    #[cfg(test)]
+    fn for_tests() -> Self {
+        // Large enough that no existing test trips the quota by accident: those tests are about
+        // delivery, admission and threading, and a quota failure in one would read as a bug in
+        // whatever it was actually checking.
+        Self {
+            anonymous: 64 * 1024 * 1024,
+            free: 64 * 1024 * 1024,
+            paid: 64 * 1024 * 1024,
+        }
+    }
+}
+
 /// Compare two digests without leaking where they first differ.
 fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
@@ -4203,6 +4260,73 @@ async fn ack(
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
+}
+
+/// `POST /v1/messages/delete` — remove one message from the acting mailbox, for good.
+///
+/// This exists because the quota does. Once a mailbox is bounded by size and never expires, a
+/// mailbox with no way to free space is a mailbox that fills once and stays full — and if the only
+/// escape were to subscribe, the free tier would be a trap rather than a trial. Archiving is not
+/// this: it hides a conversation and keeps every byte.
+///
+/// Deletion is local to the mailbox that holds the copy. The other side keeps theirs; nothing here
+/// reaches across to somebody else's inbox, and nobody is told.
+async fn delete_message(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<AckReq>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match state
+        .store
+        .delete_message(me.address.clone(), req.message_id.clone())
+        .await
+    {
+        // Not found is not an error worth distinguishing to the caller: deleting something twice
+        // and deleting something that was never yours should look the same from outside, or the
+        // endpoint answers questions about other people's mailboxes.
+        Ok(deleted) => Json(json!({ "deleted": deleted })).into_response(),
+        Err(e) => {
+            tracing::error!(error = %e, "delete failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
+}
+
+/// `GET /v1/quota` — how full this mailbox is, and what it would take to hold more.
+///
+/// Needed because the quota refuses the *sender*: when a mailbox fills, the bounce goes to whoever
+/// wrote, and the person who owns it sees nothing at all unless something like this tells them.
+async fn quota(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let me = match acting_identity(&state, &headers, None).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let tier = match state.store.tier_of(me.address.clone(), now_unix()).await {
+        Ok(tier) => tier,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    let used = match state.store.inbox_bytes(me.address.clone()).await {
+        Ok(used) => used,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    let limit = state.quota.bytes_for(tier);
+    Json(json!({
+        "used_bytes": used,
+        "limit_bytes": limit,
+        "tier": match tier {
+            store::Tier::Anonymous => "anonymous",
+            store::Tier::Free => "free",
+            store::Tier::Paid => "paid",
+        },
+        // Said by the server so both clients agree on when to start warning, and so the threshold
+        // can move without shipping an app.
+        "warn_at_bytes": limit / 5 * 4,
+    }))
+    .into_response()
 }
 
 /// `POST /mcp` — MCP over Streamable HTTP JSON-RPC (see the `mcp` module). A JSON-RPC notification
@@ -4375,7 +4499,7 @@ mod tests {
             store: Arc::new(store::Store::open(":memory:").unwrap()),
             oidc: Arc::new(oidc::Oidc::new("https://auth.example/realms/x".into())),
             max_identities: 5,
-            max_inbox: 1000,
+            quota: Quota::for_tests(),
             mint_limits: limits,
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
@@ -4881,6 +5005,91 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code, "invalid_policy");
+    }
+
+    /// A full mailbox refuses the sender rather than making room by deleting the holder's mail.
+    #[tokio::test]
+    async fn a_full_inbox_bounces_the_sender_instead_of_evicting_the_holder() {
+        let mut state = test_state();
+        // One message is over the line, so the second send is the one that meets a full mailbox.
+        state.quota = Quota {
+            anonymous: 1,
+            free: 1,
+            paid: 1,
+        };
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        assert!(do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "first",
+            ThreadRequest::Default
+        )
+        .await
+        .is_ok());
+        let err = do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "second",
+            ThreadRequest::Default,
+        )
+        .await
+        .expect_err("a full inbox must refuse");
+        assert_eq!(err.code, "recipient_inbox_full");
+
+        // The refusal cost bob nothing: what he already had is still there.
+        assert_eq!(
+            state.store.inbox_count(bob.address.clone()).await.unwrap(),
+            1
+        );
+    }
+
+    /// Deleting frees the quota — which is the only reason a bounded, never-expiring mailbox is
+    /// usable at all.
+    #[tokio::test]
+    async fn deleting_a_message_makes_room_for_the_next_one() {
+        let mut state = test_state();
+        state.quota = Quota {
+            anonymous: 1,
+            free: 1,
+            paid: 1,
+        };
+        let alice = mint(&state).await;
+        let bob = mint(&state).await;
+
+        do_send(
+            &state,
+            &alice,
+            &bob.address,
+            "first",
+            ThreadRequest::Default,
+        )
+        .await
+        .unwrap();
+        let held = state.store.list_for(bob.address.clone()).await.unwrap();
+        assert_eq!(held.len(), 1);
+
+        assert!(state
+            .store
+            .delete_message(bob.address.clone(), held[0].id.clone())
+            .await
+            .unwrap());
+
+        assert!(
+            do_send(
+                &state,
+                &alice,
+                &bob.address,
+                "second",
+                ThreadRequest::Default
+            )
+            .await
+            .is_ok(),
+            "freeing space must let the next message through"
+        );
     }
 
     #[tokio::test]
@@ -6603,7 +6812,7 @@ mod tests {
             store: Arc::new(store::Store::open(":memory:").unwrap()),
             oidc: Arc::new(oidc::Oidc::new("https://auth.example/realms/x".into())),
             max_identities: 5,
-            max_inbox: 1000,
+            quota: Quota::for_tests(),
             mint_limits: MintLimits {
                 per_window: 5,
                 window_secs: 3600,

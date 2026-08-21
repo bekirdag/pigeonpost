@@ -12,6 +12,7 @@ struct MessageBubble: View {
 
     @Environment(Inbox.self) private var inbox
     @State private var confirmingReport = false
+    @State private var confirmingDelete = false
 
     private var isMine: Bool { message.kind == .outgoing }
 
@@ -68,6 +69,13 @@ struct MessageBubble: View {
                     Label("Report spam", systemImage: "exclamationmark.bubble")
                 }
             }
+            // Both directions: a sent copy takes up the same room in the mailbox as a received one,
+            // and this is the only way to get that room back.
+            Button(role: .destructive) {
+                confirmingDelete = true
+            } label: {
+                Label("Delete", systemImage: "trash")
+            }
         }
         .confirmationDialog(
             "Report this message as spam?",
@@ -80,6 +88,18 @@ struct MessageBubble: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("The postbox is told which message and who sent it. It counts against that sender's standing. Nothing is deleted, and they are not told.")
+        }
+        .confirmationDialog(
+            "Delete this message?",
+            isPresented: $confirmingDelete,
+            titleVisibility: .visible
+        ) {
+            Button("Delete", role: .destructive) {
+                Task { await inbox.deleteMessage(id: message.id) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Deleted from this mailbox and gone for good — this is not archiving, and there is no undo. The other side keeps their copy and is not told. The room it took is freed.")
         }
     }
 

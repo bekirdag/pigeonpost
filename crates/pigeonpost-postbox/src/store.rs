@@ -354,6 +354,17 @@ pub enum ProviderClaimRefusal {
     HeldByAnotherAccount,
 }
 
+/// What a mailbox is allowed, and whether it expires.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Tier {
+    /// Minted by proof-of-work with no account behind it. Expires on a clock.
+    Anonymous,
+    /// Signed in, not subscribed. Never expires; small allowance.
+    Free,
+    /// Holds a live namespace. Never expires; large allowance.
+    Paid,
+}
+
 /// How an App Store claim landed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AppleClaim {
@@ -886,6 +897,95 @@ impl Store {
             owner,
         )
         .await
+    }
+
+    /// Which tier a mailbox is on, from the mailbox address alone.
+    ///
+    /// Three answers, because there are three different relationships. An accountless `/k/` mailbox
+    /// has nobody behind it — nobody to warn, nobody to bill, no way to ask whether it is still
+    /// wanted — so it expires. A signed-in account is somebody, and gets a small allowance. A live
+    /// entitlement gets a large one.
+    ///
+    /// Read at delivery time rather than stored on the row: a subscription lapses on a date nobody
+    /// pushes to us, and a tier written down when the mailbox was created would be wrong the moment
+    /// it changed.
+    pub async fn tier_of(&self, address: String, now: u64) -> Result<Tier, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Tier, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let account: Option<String> = c
+                .query_row(
+                    "SELECT account_id FROM identities WHERE address = ?1",
+                    params![address],
+                    |r| r.get(0),
+                )
+                .optional()?
+                .flatten();
+            let Some(account) = account else {
+                return Ok(Tier::Anonymous);
+            };
+            // Any unexpired namespace this account holds counts as paid, whatever bought it —
+            // an App Store subscription, or a grant made out of band. The postbox does not care
+            // which; it cares that somebody is entitled.
+            let paid: Option<i64> = c
+                .query_row(
+                    "SELECT 1 FROM namespaces
+                      WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)
+                      LIMIT 1",
+                    params![account, now as i64],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            Ok(if paid.is_some() {
+                Tier::Paid
+            } else {
+                Tier::Free
+            })
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// What this mailbox occupies, in bytes.
+    ///
+    /// Bytes rather than a message count, because a count is not a disk limit: a thousand
+    /// one-line pings and a thousand status reports differ by two orders of magnitude and the
+    /// count cannot tell them apart. Sent copies are included — they are stored here too, and a
+    /// quota that ignored half of what it stores would be a quota in name only.
+    pub async fn inbox_bytes(&self, owner: String) -> Result<u64, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<u64, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let total: i64 = c.query_row(
+                "SELECT COALESCE(SUM(LENGTH(wrap_blob)), 0) FROM messages
+                  WHERE COALESCE(owner, recipient) = ?1",
+                params![owner],
+                |r| r.get(0),
+            )?;
+            Ok(total.max(0) as u64)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Delete one message from one mailbox.
+    ///
+    /// Scoped to the owner on purpose: a message id is not a secret, and without this clause
+    /// knowing one would be enough to delete somebody else's mail. Returns whether a row went, so
+    /// a caller can tell "deleted" from "was never yours".
+    pub async fn delete_message(&self, owner: String, id: String) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let n = c.execute(
+                "DELETE FROM messages
+                  WHERE id = ?2 AND COALESCE(owner, recipient) = ?1",
+                params![owner, id],
+            )?;
+            Ok(n > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
     }
 
     /// Messages this inbox has not acked. This — not the total — is what a long poll waits on:
@@ -2364,24 +2464,43 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// Retention sweep: drop everything older than `cutoff` (unix seconds) — messages past their
-    /// window, identities past theirs, and any message addressed to or from an expired identity.
-    /// Runs in one transaction so a crash can't leave a half-swept state.
+    /// Retention sweep for *accountless* mailboxes only.
+    ///
+    /// This used to delete by age and nothing else: every message older than the cutoff, and every
+    /// identity older than the cutoff, whoever owned them. Which meant a signed-in account's
+    /// mailboxes — and, once handles went on sale, a paying customer's — were scheduled for
+    /// deletion thirty days after they were created, while in daily use. The comment above it said
+    /// durable identities "will be excluded by a plan flag"; that flag was never written, and
+    /// nothing enforced the distinction.
+    ///
+    /// It is `account_id IS NULL` that draws the line, and it already exists in the data. An
+    /// anonymous `/k/` mailbox is minted by proof-of-work with nobody behind it: there is no one to
+    /// warn, no one to bill, and no way to ask whether it is still wanted. Those expire. Anything
+    /// with an account behind it is somebody's, and is bounded by a quota instead of by a clock —
+    /// see `inbox_bytes`.
+    ///
+    /// Messages are deleted only along with the mailbox that holds them, never on their own age.
+    /// Mail does not become less yours for being old.
+    ///
+    /// One transaction, so a crash cannot leave identities gone and their messages orphaned.
     pub async fn reap(&self, cutoff: u64) -> Result<ReapStats, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<ReapStats, StoreError> {
             let mut c = conn.lock().expect("store lock");
             let tx = c.transaction()?;
+            const EXPIRED: &str =
+                "SELECT address FROM identities WHERE account_id IS NULL AND created_at < ?1";
             let messages = tx.execute(
-                "DELETE FROM messages
-                 WHERE created_at < ?1
-                    OR recipient IN (SELECT address FROM identities WHERE created_at < ?1)
-                    OR sender    IN (SELECT address FROM identities WHERE created_at < ?1)
-                    OR owner     IN (SELECT address FROM identities WHERE created_at < ?1)",
+                &format!(
+                    "DELETE FROM messages
+                      WHERE recipient IN ({EXPIRED})
+                         OR sender    IN ({EXPIRED})
+                         OR owner     IN ({EXPIRED})"
+                ),
                 params![cutoff as i64],
             )?;
             let identities = tx.execute(
-                "DELETE FROM identities WHERE created_at < ?1",
+                "DELETE FROM identities WHERE account_id IS NULL AND created_at < ?1",
                 params![cutoff as i64],
             )?;
             tx.commit()?;
@@ -3285,7 +3404,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reap_removes_expired_identities_and_messages() {
+    async fn reap_removes_expired_anonymous_identities_and_their_messages() {
         let store = Store::open(":memory:").unwrap();
         let mut fresh = sample("/k/fresh");
         fresh.created_at = 10_000;
@@ -3294,21 +3413,87 @@ mod tests {
         store.insert(fresh).await.unwrap();
         store.insert(old).await.unwrap();
 
-        store.enqueue(msg("new", "/k/fresh", 10_000)).await.unwrap(); // survives
-        store.enqueue(msg("stale", "/k/fresh", 0)).await.unwrap(); // past its window
+        store.enqueue(msg("new", "/k/fresh", 10_000)).await.unwrap();
+        // Old mail in a live mailbox. This used to be deleted for its age alone; it is not any
+        // less the holder's for being old, and a quota — not a clock — is what bounds it now.
+        store.enqueue(msg("stale", "/k/fresh", 0)).await.unwrap();
         store
             .enqueue(msg("orphan", "/k/old", 10_000))
             .await
-            .unwrap(); // recipient expired
+            .unwrap(); // goes with the mailbox that held it
 
         let stats = store.reap(5_000).await.unwrap();
         assert_eq!(stats.identities, 1); // /k/old
-        assert_eq!(stats.messages, 2); // "stale" + "orphan"
+        assert_eq!(stats.messages, 1); // "orphan" only
 
-        assert_eq!(store.count().await.unwrap(), 1); // /k/fresh remains
-        let remaining = store.list_for("/k/fresh".into()).await.unwrap();
-        assert_eq!(remaining.len(), 1);
-        assert_eq!(remaining[0].id, "new");
+        assert_eq!(store.count().await.unwrap(), 1);
+        let mut remaining = store
+            .list_for("/k/fresh".into())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|m| m.id)
+            .collect::<Vec<_>>();
+        remaining.sort();
+        assert_eq!(remaining, vec!["new".to_string(), "stale".to_string()]);
+    }
+
+    /// The one this table exists for. A signed-in account's mailbox is old — older than any
+    /// cutoff — and in use. Before this, it and every message in it were deleted on schedule,
+    /// which for a paid handle would have been thirty days after purchase.
+    #[tokio::test]
+    async fn an_account_owned_mailbox_is_never_reaped_however_old() {
+        let store = Store::open(":memory:").unwrap();
+        let mut theirs = sample("/k/paid");
+        theirs.created_at = 0;
+        theirs.account_id = Some("acct_a".into());
+        store.insert(theirs).await.unwrap();
+        store.enqueue(msg("ancient", "/k/paid", 0)).await.unwrap();
+
+        let stats = store.reap(u64::MAX).await.unwrap();
+        assert_eq!(stats.identities, 0);
+        assert_eq!(stats.messages, 0);
+        assert_eq!(store.list_for("/k/paid".into()).await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn bytes_are_counted_over_everything_the_mailbox_holds() {
+        let store = Store::open(":memory:").unwrap();
+        let mut me = sample("/k/me");
+        me.created_at = 0;
+        store.insert(me).await.unwrap();
+        assert_eq!(store.inbox_bytes("/k/me".into()).await.unwrap(), 0);
+        store.enqueue(msg("a", "/k/me", 10)).await.unwrap();
+        store.enqueue(msg("b", "/k/me", 20)).await.unwrap();
+        let two = store.inbox_bytes("/k/me".into()).await.unwrap();
+        assert!(two > 0, "stored blobs must count for something");
+
+        // Deleting frees the quota, which is the whole reason delete exists.
+        assert!(store
+            .delete_message("/k/me".into(), "a".into())
+            .await
+            .unwrap());
+        assert!(store.inbox_bytes("/k/me".into()).await.unwrap() < two);
+    }
+
+    /// A message id is not a secret, so the owner clause is the only thing standing between
+    /// knowing one and deleting somebody else's mail.
+    #[tokio::test]
+    async fn a_message_cannot_be_deleted_from_a_mailbox_that_is_not_yours() {
+        let store = Store::open(":memory:").unwrap();
+        let mut mine = sample("/k/mine");
+        mine.created_at = 0;
+        let mut theirs = sample("/k/theirs");
+        theirs.created_at = 0;
+        store.insert(mine).await.unwrap();
+        store.insert(theirs).await.unwrap();
+        store.enqueue(msg("secret", "/k/theirs", 10)).await.unwrap();
+
+        assert!(!store
+            .delete_message("/k/mine".into(), "secret".into())
+            .await
+            .unwrap());
+        assert_eq!(store.list_for("/k/theirs".into()).await.unwrap().len(), 1);
     }
 }
 

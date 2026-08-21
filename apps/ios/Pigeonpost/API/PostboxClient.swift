@@ -106,6 +106,20 @@ struct PostboxClient {
         _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity])
     }
 
+    /// Remove one message from this mailbox, for good.
+    ///
+    /// Not archiving. Archiving hides a conversation and keeps every byte of it; this is what a
+    /// bounded mailbox needs in order to stay usable, and it is local — the other side keeps their
+    /// copy and is never told.
+    func deleteMessage(identity: String, messageId: String) async throws {
+        _ = try await sendRaw("/v1/messages/delete", method: "POST", json: ["message_id": messageId, "identity": identity])
+    }
+
+    /// How full this mailbox is. See `Quota` — the thresholds are the server's, not ours.
+    func quota(identity: String) async throws -> Quota {
+        try await send("/v1/quota", query: [.init(name: "identity", value: identity)], as: Quota.self)
+    }
+
     /// Report the sender of one message. Same shape as `ack`, and a real act: it is what tells the
     /// postbox that an address is sending mail nobody asked for, and it counts against that
     /// sender's standing.
