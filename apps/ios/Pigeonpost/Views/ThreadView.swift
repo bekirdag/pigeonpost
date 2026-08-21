@@ -51,6 +51,11 @@ struct ThreadView: View {
                 .padding(.vertical, 10)
             }
             .background { DoodleBackground() }
+            // Tap the conversation to put the keyboard away. Scrolling does it too: a drag towards
+            // what you are trying to read should not be fighting the thing covering it.
+            .scrollDismissesKeyboard(.interactively)
+            .contentShape(Rectangle())
+            .onTapGesture { composing = false }
             // Open on the newest message, which is what a thread is for. Doing this in `onAppear`
             // was a guess at the timing — it runs before the scroll view has laid its content out,
             // so a long conversation opened at the top often enough to be a complaint. This is the
@@ -91,14 +96,10 @@ struct ThreadView: View {
         .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItemGroup(placement: .topBarTrailing) {
-                Button {
-                    Task { await inbox.setArchived(peer, archived: !inbox.archived.contains(peer)) }
-                } label: {
-                    Image(systemName: inbox.archived.contains(peer) ? "tray.and.arrow.up" : "archivebox")
-                }
-                .accessibilityLabel(inbox.archived.contains(peer) ? "Move back to the inbox" : "Archive this conversation")
-
+            // One button, not two. Archiving is a decision about this conversation and belongs
+            // beside the other decisions about it — known, trusted, blocked — rather than sitting
+            // in the bar as a thing to hit by accident on the way to reading.
+            ToolbarItem(placement: .topBarTrailing) {
                 Button { showingInfo = true } label: { Image(systemName: "info.circle") }
                     .accessibilityLabel("About this sender")
             }

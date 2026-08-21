@@ -84,9 +84,48 @@ struct PeerInfoSheet: View {
     @Environment(Inbox.self) private var inbox
     @Environment(\.dismiss) private var dismiss
     @State private var confirmingBlock = false
+    @State private var editingContact = false
 
     private var lastIncoming: ThreadMessage? {
         conversation.messages.last { $0.kind == .incoming }
+    }
+
+    private var archived: Bool { inbox.archived.contains(conversation.peer) }
+
+    /// Being "known" is having a row of your own. Turning it off forgets this sender by name; it
+    /// cannot reach into a namespace rule, which is what the footnote says when one covers them.
+    private var knownBinding: Binding<Bool> {
+        Binding(
+            get: { inbox.exactContact(conversation.peer) != nil },
+            set: { on in
+                Task {
+                    if on { await inbox.markKnown(peer: conversation.peer) }
+                    else { await inbox.forget(peer: conversation.peer) }
+                }
+            }
+        )
+    }
+
+    private var fullBinding: Binding<Bool> {
+        Binding(
+            get: { inbox.hasFullPermissions(conversation.peer) },
+            set: { on in
+                Task { await inbox.grantFullPermissions(peer: conversation.peer, granted: on) }
+            }
+        )
+    }
+
+    private var trustFootnote: String {
+        if conversation.isBlocked {
+            return "Blocked. Their mail is refused, so trust does not apply until you unblock them."
+        }
+        if let wildcard = inbox.wildcardContact(conversation.peer) {
+            return "Covered by \(wildcard.peer). Marking this sender known gives them a row of their own, which outranks that rule."
+        }
+        if inbox.hasFullPermissions(conversation.peer) {
+            return "Their requests are acted on without asking you. The postbox still refuses what it never auto-accepts for anyone, and the receiving machine's own permission tier and limits still apply on top."
+        }
+        return "A known sender is admitted by name. Full permissions lets their requests be acted on without waiting for you; everything else is held."
     }
 
     var body: some View {
@@ -99,38 +138,70 @@ struct PeerInfoSheet: View {
                     }
                     if conversation.mine { row("Mailbox", "yours — on this account") }
                 }
-                Section("What this mailbox has decided") {
+                // The decisions, first — this panel is opened to change them, not to read an
+                // address. Your own mailboxes are not senders to be decided about: trust between
+                // them is whatever the account already says, and blocking your own agent is a way
+                // to lose mail by accident.
+                if !conversation.mine {
+                    Section {
+                        Toggle("Known sender", isOn: knownBinding)
+                        Toggle("Full permissions", isOn: fullBinding)
+                            .disabled(!inbox.isKnown(conversation.peer) || conversation.isBlocked)
+                        Button("Choose which requests run…") { editingContact = true }
+                            .disabled(inbox.exactContact(conversation.peer) == nil)
+                    } header: {
+                        Text("Trust")
+                    } footer: {
+                        Text(trustFootnote)
+                    }
+
+                    Section {
+                        Button(archived ? "Move back to the inbox" : "Archive this conversation") {
+                            let wanted = !archived
+                            Task { await inbox.setArchived(conversation.peer, archived: wanted) }
+                            dismiss()
+                        }
+                        if conversation.isBlocked {
+                            Button("Unblock this sender") {
+                                Task { await inbox.markKnown(peer: conversation.peer) }
+                            }
+                        } else {
+                            Button("Block this sender", role: .destructive) { confirmingBlock = true }
+                        }
+                    } footer: {
+                        Text("Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking refuses it from here on. Neither is announced to them.")
+                    }
+                }
+
+                if conversation.mine, let identity = conversation.identity {
+                    Section {
+                        Button("Open this mailbox") { onOpenMailbox(identity) }
+                            .font(.system(size: 15, weight: .semibold))
+                        Text(note)
+                            .font(.system(size: 12.5))
+                            .foregroundStyle(Theme.muted)
+                    }
+                }
+
+                // What cannot be changed from here. Admission and autonomy were listed here once
+                // and are not any more: they are the toggles above, and printing a value twice
+                // invites the two copies to disagree.
+                Section("What the postbox knows") {
                     row("Contact", contactState)
-                    row("Admission", conversation.contact?.admission ?? "default policy")
-                    row("Autonomy", conversation.contact?.autonomy ?? "review")
                     row("Granted verbs", grantedVerbs)
                     if let standing = lastIncoming?.standing {
                         row("Standing", standing + (lastIncoming?.tier.map { " · \($0)" } ?? ""))
-                    }
-                }
-                Section {
-                    if conversation.mine, let identity = conversation.identity {
-                        Button("Open this mailbox") { onOpenMailbox(identity) }
-                            .font(.system(size: 15, weight: .semibold))
-                    }
-                    Text(note)
-                        .font(.system(size: 12.5))
-                        .foregroundStyle(Theme.muted)
-                }
-
-                // Not offered for your own mailboxes: blocking your own agent is a way to lose mail
-                // by accident, and the way to stop one talking to you is to stop running it.
-                if !conversation.mine, !conversation.isBlocked {
-                    Section {
-                        Button("Block this sender", role: .destructive) { confirmingBlock = true }
-                    } footer: {
-                        Text("Their mail is refused from here on. Nothing already in this conversation is deleted, and they are not told.")
                     }
                 }
             }
             .navigationTitle(conversation.name)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .sheet(isPresented: $editingContact) {
+                if let contact = inbox.exactContact(conversation.peer) {
+                    ContactSheet(existing: contact)
+                }
+            }
             .confirmationDialog(
                 "Block \(conversation.name)?",
                 isPresented: $confirmingBlock,
@@ -145,7 +216,7 @@ struct PeerInfoSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
-        .presentationDetents([.medium, .large])
+        .presentationDetents([.large, .medium])
     }
 
     private func row(_ term: String, _ value: String, mono: Bool = false) -> some View {

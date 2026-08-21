@@ -276,6 +276,95 @@ final class Inbox {
         }
     }
 
+    /// Admit this sender by name.
+    ///
+    /// "Known" is not a flag on the postbox — it is having a contact row at all. A sender with one
+    /// is somebody this mailbox has decided about; a sender without one is a stranger, subject to
+    /// whatever the inbox policy does with strangers.
+    func markKnown(peer: String) async {
+        let existing = ConversationBuilder.contact(for: peer, in: contacts)
+        do {
+            try await saveContact(
+                peer: peer,
+                alias: existing?.alias,
+                admission: "allow",
+                // Left where it was. Knowing somebody is not the same as letting their requests run.
+                autonomy: existing?.autonomy ?? "review",
+                allowedVerbs: existing?.allowedVerbs ?? []
+            )
+            toast = "Marked as known."
+        } catch {
+            toast = "Could not save that."
+        }
+    }
+
+    /// Trust this sender with everything this postbox will let anyone grant.
+    ///
+    /// Autonomy `auto` plus every grantable verb: their requests are acted on without waiting for a
+    /// human. The server still refuses what it never auto-accepts for anyone — `read_credentials`,
+    /// `spend`, `delete_files`, `run_shell` are not on the grantable list and cannot be put there —
+    /// and the receiving machine's own permission tier, branch allowlist and daily ceiling all
+    /// still apply on top. This is the most one mailbox can say about another, not a master key.
+    func grantFullPermissions(peer: String, granted: Bool) async {
+        let existing = ConversationBuilder.contact(for: peer, in: contacts)
+        let verbs = granted ? (vocabulary?.grantable ?? []) : []
+        do {
+            try await saveContact(
+                peer: peer,
+                alias: existing?.alias,
+                admission: "allow",
+                autonomy: granted ? "auto" : "review",
+                allowedVerbs: verbs
+            )
+            toast = granted
+                ? "Full permissions. Their requests are acted on without asking."
+                : "Back to review. Their requests wait for you."
+        } catch {
+            toast = "Could not save that."
+        }
+    }
+
+    /// Whether this peer already has everything this postbox allows.
+    func hasFullPermissions(_ peer: String) -> Bool {
+        guard let contact = ConversationBuilder.contact(for: peer, in: contacts),
+              contact.autonomy == "auto",
+              contact.admission == "allow"
+        else { return false }
+        let granted = Set(contact.allowedVerbs ?? [])
+        let grantable = Set(vocabulary?.grantable ?? [])
+        return !grantable.isEmpty && grantable.isSubset(of: granted)
+    }
+
+    /// Whether this peer is somebody this mailbox has decided about at all.
+    func isKnown(_ peer: String) -> Bool {
+        ConversationBuilder.contact(for: peer, in: contacts) != nil
+    }
+
+    /// The row for this peer by name, as opposed to one their whole namespace is covered by. The
+    /// difference matters when editing: a toggle that looks like it governs one sender must not
+    /// silently rewrite the terms of their entire fleet.
+    func exactContact(_ peer: String) -> Contact? {
+        contacts.first { $0.peer == peer }
+    }
+
+    /// The namespace rule covering this peer, if one does.
+    func wildcardContact(_ peer: String) -> Contact? {
+        guard let exact = ConversationBuilder.contact(for: peer, in: contacts), exact.peer != peer
+        else { return nil }
+        return exact
+    }
+
+    /// Forget this sender by name. They revert to whatever strangers get, or to their namespace's
+    /// rule if one covers them.
+    func forget(peer: String) async {
+        do {
+            try await removeContact(peer: peer)
+            toast = "Forgotten. They are a stranger again."
+        } catch {
+            toast = "Could not remove that sender."
+        }
+    }
+
     /// Refuse a sender's mail from here on. Their existing messages stay — nothing is deleted — but
     /// the postbox stops admitting new ones.
     func block(peer: String) async {
