@@ -61,6 +61,42 @@ With none of it set the postbox logs nothing, sends nothing, and behaves exactly
 push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
 being woken the moment a key is added — no app update needed.
 
+## Selling handles (App Store)
+
+Off unless configured. With no key set, `/v1/claims/apple` answers 404 — indistinguishable from
+"no such route", because a deployment that cannot verify a purchase should not look like one that
+will. The iOS app reads that 404 as "this postbox does not sell handles" and hides the section
+rather than showing a price it cannot honour.
+
+```
+PIGEONPOST_APPSTORE_KEY_PATH=/data/appstore.p8   # mounted, chmod 600, uid 65532
+PIGEONPOST_APPSTORE_KEY_ID=XXXXXXXXXX
+PIGEONPOST_APPSTORE_ISSUER_ID=<the App Store Connect issuer id>
+# PIGEONPOST_APPSTORE_BUNDLE_ID=dev.pigeonpost.inbox
+# PIGEONPOST_APPSTORE_PRODUCT_ID=dev.pigeonpost.inbox.handle.yearly
+```
+
+`PIGEONPOST_APPSTORE_KEY` takes the PEM inline instead.
+
+**This is a third key type again.** Apple issues three and they are not interchangeable: the APNs
+key above, the App Store Connect API key used by CI to upload builds, and this one — an **In-App
+Purchase key**, from App Store Connect → Users and Access → Integrations → **In-App Purchase**.
+Each `.p8` can be downloaded exactly once.
+
+The issuer id, however, *is* the ordinary App Store Connect issuer id; an In-App Purchase key does
+not come with one of its own. That is not obvious from the console and was established by trying
+it: a token signed with this key and that issuer is accepted by the sandbox host.
+
+Both Apple environments are tried on every claim, production first, because a transaction id does
+not record which one produced it. Expect sandbox to answer for TestFlight builds and production for
+App Store ones, with no configuration distinguishing them. If both refuse the token the postbox logs
+that the *credentials* were rejected rather than blaming the purchase — the two failures need
+different people to fix them.
+
+The reserved-name list applies to bought names exactly as it does to free ones: `PIGEONPOST_RESERVED_NAMES`
+must be set, or the endpoint refuses everything. `support` and `admin` read as the operator whoever
+paid for them.
+
 ## Bring it up (dedicated box, Compose)
 
 ```sh
