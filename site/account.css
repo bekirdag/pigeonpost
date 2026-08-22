@@ -23,13 +23,13 @@
   100% { box-shadow: 0 0 0 0 rgba(59,130,246,0); }
 }
 .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; }
-.ac-pre { background: #f7f9fb; border: 1px solid #e6e9ee; border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; margin-top: 10px; }
-.ac-warn { color: #92400e; background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
-.ac-msg { border: 1px solid #e6e9ee; border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: #fff; }
+.ac-pre { background: var(--wash); border: 1px solid var(--rule); border-radius: 8px; padding: 12px 14px; overflow-x: auto; font: 12.5px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre; margin-top: 10px; }
+.ac-warn { color: var(--warn-text); background: var(--warn-fill); border: 1px solid var(--warn-edge); border-radius: 8px; padding: 10px 12px; font-size: 14px; margin-top: 10px; }
+.ac-msg { border: 1px solid var(--rule); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--ground); }
 .ac-msg.read { opacity: .68; }
 .ac-msg-h { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 12.5px; }
-.ac-msg-b { margin: 6px 0 4px; font-size: 14.5px; color: #14181f; white-space: pre-wrap; word-break: break-word; }
-.ac-msg-f { font-size: 11.5px; color: #6b7480; }
+.ac-msg-b { margin: 6px 0 4px; font-size: 14.5px; color: var(--ink); white-space: pre-wrap; word-break: break-word; }
+.ac-msg-f { font-size: 11.5px; color: var(--muted); }
 .ac-left { justify-content: flex-start; margin-top: 12px; }
 .ac-mt { margin-top: 12px; }
 .ac-remember { display: inline-flex; align-items: center; gap: 8px; margin-top: 14px; font-size: 13.5px; color: var(--muted); cursor: pointer; }
@@ -41,27 +41,27 @@
   font-size: 15px; font-weight: 550; border: 1px solid transparent; cursor: pointer; text-decoration: none;
   transition: background .15s, border-color .15s, opacity .15s; }
 .btn-primary { background: var(--navy); color: #fff; }
-.btn-primary:hover { background: #1d4185; }
-.btn-secondary { border-color: var(--rule); color: var(--ink); background: #fff; }
-.btn-secondary:hover { border-color: #cfd5de; background: var(--wash); }
-.btn-small { padding: 7px 13px; font-size: 13.5px; background: #fff; border: 1px solid var(--rule); color: var(--ink); border-radius: 8px; }
-.btn-small:hover { border-color: #cfd5de; background: var(--wash); }
+.btn-primary:hover { background: var(--navy-hover); }
+.btn-secondary { border-color: var(--rule); color: var(--ink); background: var(--ground); }
+.btn-secondary:hover { border-color: var(--edge); background: var(--wash); }
+.btn-small { padding: 7px 13px; font-size: 13.5px; background: var(--ground); border: 1px solid var(--rule); color: var(--ink); border-radius: 8px; }
+.btn-small:hover { border-color: var(--edge); background: var(--wash); }
 .btn:disabled { opacity: .45; cursor: not-allowed; }
 
 /* handle search */
 .ac-search-card { background: var(--wash); }
 .ac-search { display: flex; gap: 10px; }
-.ac-field { flex: 1; display: flex; align-items: center; border: 1.5px solid var(--rule); border-radius: 9px; padding: 0 12px; background: #fff; }
+.ac-field { flex: 1; display: flex; align-items: center; border: 1.5px solid var(--rule); border-radius: 9px; padding: 0 12px; background: var(--ground); }
 .ac-field:focus-within { border-color: var(--blue); }
 /* The name box on the "claim a handle" card. Same affordance as .ac-field, but it holds a whole
    handle rather than a bare name, so the slash is typed rather than printed beside it. */
 .ac-input { width: 100%; box-sizing: border-box; border: 1.5px solid var(--rule); border-radius: 9px;
-  padding: 10px 12px; background: #fff; font: 16px var(--mono); color: inherit; }
+  padding: 10px 12px; background: var(--ground); font: 16px var(--mono); color: inherit; }
 .ac-input:focus { outline: none; border-color: var(--blue); }
 .ac-field .slash { font: 19px var(--mono); color: var(--muted); }
 #ac-handle { flex: 1; border: 0; outline: 0; font: 19px var(--mono); padding: 12px 4px; color: var(--ink); background: transparent; min-width: 0; }
 .hs { min-height: 20px; font: 14px var(--mono); margin: 12px 0 0; }
-.hs.ok { color: var(--green); } .hs.bad { color: #c0362c; }
+.hs.ok { color: var(--green); } .hs.bad { color: var(--bad); }
 
 /* rows */
 .ac-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 0; border-top: 1px solid var(--rule); }
@@ -73,12 +73,12 @@
 .ac-form { margin-top: 4px; }
 .ac-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 16px; }
 .ac-form label { display: flex; flex-direction: column; font-size: 13.5px; color: var(--muted); gap: 5px; }
-.ac-form input, .ac-form select { border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; font-size: 15px; color: var(--ink); font-family: var(--sans); background: #fff; }
+.ac-form input, .ac-form select { border: 1px solid var(--rule); border-radius: 8px; padding: 9px 11px; font-size: 15px; color: var(--ink); font-family: var(--sans); background: var(--ground); }
 .ac-form input:focus, .ac-form select:focus { outline: 0; border-color: var(--blue); }
 .ac-msg { margin-left: 12px; font-size: 13.5px; color: var(--muted); }
 
 #ac-toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%) translateY(20px);
-  background: var(--ink); color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14.5px;
+  background: var(--toast-fill); color: #fff; padding: 12px 20px; border-radius: 10px; font-size: 14.5px;
   opacity: 0; pointer-events: none; transition: opacity .2s, transform .2s; max-width: 90vw; text-align: center; }
 #ac-toast.on { opacity: 1; transform: translateX(-50%) translateY(0); }
 

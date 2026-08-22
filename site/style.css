@@ -3,6 +3,7 @@
 
 :root {
   --navy: #16326b;
+  --navy-hover: #1d4185;
   --blue: #2563eb;
   --green: #22c55e;
   --ink: #14181f;
@@ -10,8 +11,70 @@
   --muted: #6b7480;
   --rule: #e6e9ee;
   --wash: #f7f9fb;
+
+  /* The raised surface, as against `--wash`, the recessed ground. It was `#fff` written out, which
+     is the same thing right up until the page has to be dark. */
+  --ground: #fff;
+  --edge: #cfd5de;
+  --card-edge-hover: #d3dae4;
+  --shadow-card: rgba(20, 24, 31, .06);
+
+  /* The syntax tones in the shell examples, and the two price tags. */
+  --t-flag: #7c3aed;
+  --t-str: #15803d;
+  --t-path: #b45309;
+  --t-pkg: #0f766e;
+  --free-fill: #eaf6ee;
+  --free-text: #15803d;
+  --paid-fill: #eef2ff;
+  --paid-text: #4338ca;
+
+  /* The account page (account.css) has no tokens of its own and reads these. */
+  --warn-text: #92400e;
+  --warn-fill: #fffbeb;
+  --warn-edge: #fde68a;
+  --bad: #c0362c;
+  /* The toast carries white text in both appearances, so its fill cannot be `--ink`: in the dark
+     that token is nearly white, and white on white is a message nobody reads. */
+  --toast-fill: #14181f;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+/* Dark. Re-derived from the light palette rather than inverted, so the greys keep their order and
+   their spacing and the navy lifts to a blue that survives on a dark ground. The values are the
+   phone's, from `apps/ios/Pigeonpost/Design/Theme.swift`. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --navy: #4a73d6;
+    --navy-hover: #5f85e0;
+    --blue: #6c9bff;
+    --green: #34d06a;
+    --ink: #f4f6f9;
+    --body: #c6ccd6;
+    --muted: #949ba6;
+    --rule: #2c313a;
+    --wash: #16191f;
+    --ground: #0f1216;
+    --edge: #454c58;
+    --card-edge-hover: #3a404b;
+    --shadow-card: rgba(0, 0, 0, .5);
+
+    --t-flag: #b490f5;
+    --t-str: #4ade80;
+    --t-path: #e9a23b;
+    --t-pkg: #2dd4bf;
+    --free-fill: #16281c;
+    --free-text: #4ade80;
+    --paid-fill: #1d2140;
+    --paid-text: #a5b4fc;
+
+    --warn-text: #e9a23b;
+    --warn-fill: #2a2318;
+    --warn-edge: #4a3a1e;
+    --bad: #fda4af;
+    --toast-fill: #2e333b;
+  }
 }
 
 * { box-sizing: border-box; }
@@ -20,7 +83,7 @@ html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: #fff;
+  background: var(--ground);
   color: var(--body);
   font: 17px/1.65 var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -68,9 +131,9 @@ header img { width: 232px; max-width: 62vw; height: auto; display: block; }
   transition: background .15s ease, border-color .15s ease;
 }
 .btn-primary { background: var(--navy); color: #fff; }
-.btn-primary:hover { background: #1d4185; }
+.btn-primary:hover { background: var(--navy-hover); }
 .btn-secondary { border-color: var(--rule); color: var(--ink); }
-.btn-secondary:hover { border-color: #cfd5de; background: var(--wash); }
+.btn-secondary:hover { border-color: var(--edge); background: var(--wash); }
 
 /* Brand marks inline in links. They inherit link colour so they sit in the text
    rather than announcing themselves — except npm, which is only recognisable red. */
@@ -94,10 +157,10 @@ pre .c { color: var(--muted); }
 /* lightweight shell highlighting — hand-tokenised, no runtime dependency */
 .hl .t-cmd  { color: var(--navy); font-weight: 650; }
 .hl .t-sub  { color: var(--blue); }
-.hl .t-flag { color: #7c3aed; }
-.hl .t-str  { color: #15803d; }
-.hl .t-path { color: #b45309; }
-.hl .t-pkg  { color: #0f766e; }
+.hl .t-flag { color: var(--t-flag); }
+.hl .t-str  { color: var(--t-str); }
+.hl .t-path { color: var(--t-path); }
+.hl .t-pkg  { color: var(--t-pkg); }
 .hl .t-arg  { color: var(--ink); }
 .hl .t-out  { color: var(--muted); }
 
@@ -159,12 +222,12 @@ a:hover { text-decoration: underline; }
   border: 1px solid var(--rule);
   border-radius: 12px;
   padding: 20px 20px 22px;
-  background: #fff;
+  background: var(--ground);
   transition: box-shadow .15s ease, transform .15s ease, border-color .15s ease;
 }
 .feature-grid > div:hover {
-  border-color: #d3dae4;
-  box-shadow: 0 8px 26px rgba(20, 24, 31, .06);
+  border-color: var(--card-edge-hover);
+  box-shadow: 0 8px 26px var(--shadow-card);
   transform: translateY(-2px);
 }
 .feature-grid h3 { display: flex; align-items: baseline; gap: 9px; margin-bottom: 9px; }
@@ -183,8 +246,8 @@ a:hover { text-decoration: underline; }
   font-size: 10.5px; font-weight: 650; letter-spacing: .04em; text-transform: uppercase;
   padding: 2px 7px; border-radius: 20px; vertical-align: middle; margin-left: 7px; position: relative; top: -1px;
 }
-.tag-free { background: #eaf6ee; color: #15803d; }
-.tag-paid { background: #eef2ff; color: #4338ca; }
+.tag-free { background: var(--free-fill); color: var(--free-text); }
+.tag-paid { background: var(--paid-fill); color: var(--paid-text); }
 
 .addr {
   display: grid;

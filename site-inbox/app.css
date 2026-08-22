@@ -5,7 +5,9 @@
 
 :root {
   --navy: #16326b;
+  --navy-hover: #1d4185;
   --blue: #2563eb;
+  --blue-hover: #1d4fd8;
   --green: #22c55e;
   --amber: #b45309;
   --ink: #14181f;
@@ -13,6 +15,49 @@
   --muted: #6b7480;
   --rule: #e6e9ee;
   --wash: #f7f9fb;
+
+  /* The raised surfaces — a pane, a bubble, the composer, a sheet — as against `--wash`, the
+     recessed ground they sit on. It was `#fff` written out thirty times, which is the same thing
+     until the page has to be dark, and then it is thirty separate bugs. */
+  --ground: #fff;
+  --sel: #eef2f9;
+  --hover: #f2f5f9;
+  --hover-strong: #e8edf3;
+  --tray: #f7f7f7;
+  --tray-hover: #eceff3;
+  --tray-active: #e2e6ec;
+  --edge: #c9cfd8;
+  --edge-hover: #aab3bf;
+  --edge-focus: #cfd5de;
+  --accent-row: #2f6feb;
+  --send-off: #c3cbd8;
+
+  /* The toast carries white text in both appearances, so its fill cannot be `--ink`: in the dark
+     that token is nearly white, and white on white is a message nobody reads. */
+  --toast-fill: #14181f;
+
+  --held-text: #b45309;
+  --held-fill: #fff8ee;
+  --held-edge: #fcd9a4;
+  --auto-text: #15803d;
+  --auto-fill: #f0fdf4;
+  --auto-edge: #bbf7d0;
+  --blocked-text: #9f1239;
+  --blocked-fill: #fff1f2;
+  --blocked-edge: #fecdd3;
+
+  --danger: #b42318;
+  --danger-fill: #fdf3f2;
+  --danger-edge: #e6a9a3;
+  --danger-edge-hover: #d98b83;
+
+  --scrim: rgba(20, 24, 31, 0.45);
+  --stripe: rgba(20, 24, 31, .025);
+  --shadow-menu: rgba(20, 24, 31, .12);
+  --shadow-sheet: rgba(20, 24, 31, 0.25);
+  --shadow-toast: rgba(20, 24, 31, .22);
+  --shadow-bubble: rgba(20, 24, 31, .03);
+  --shadow-btn: rgba(20, 24, 31, .04);
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
@@ -24,6 +69,73 @@
   --subs-w: 260px;
   --head-h: 60px;
 }
+
+/* Dark. The values are the light ones re-derived rather than inverted — the greys keep their
+   order and their spacing, and the navy lifts to a blue that survives on a dark ground instead
+   of disappearing into it. They are the phone's, from `apps/ios/Pigeonpost/Design/Theme.swift`,
+   so the two clients are the same product in either appearance.
+
+   Every token is overridden here and nothing else is: a rule that names a colour outside `:root`
+   is a rule that will be wrong in one of the two appearances. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --navy: #4a73d6;
+    --navy-hover: #5f85e0;
+    --blue: #6c9bff;
+    --blue-hover: #85aeff;
+    --green: #34d06a;
+    --amber: #e9a23b;
+    --ink: #f4f6f9;
+    --body: #c6ccd6;
+    --muted: #949ba6;
+    --rule: #2c313a;
+    --wash: #0b0d11;
+    --ground: #16191f;
+    --sel: #23304a;
+    --hover: #1d2129;
+    --hover-strong: #242932;
+    --tray: #1d2129;
+    --tray-hover: #242932;
+    --tray-active: #2c313a;
+    --edge: #3a404b;
+    --edge-hover: #4a515e;
+    --edge-focus: #454c58;
+    --accent-row: #4a73d6;
+    --send-off: #3a404b;
+    --toast-fill: #2e333b;
+
+    --held-text: #e9a23b;
+    --held-fill: #2a2318;
+    --held-edge: #4a3a1e;
+    --auto-text: #4ade80;
+    --auto-fill: #16281c;
+    --auto-edge: #26492f;
+    --blocked-text: #fda4af;
+    --blocked-fill: #2a171b;
+    --blocked-edge: #4c2028;
+
+    --danger: #fda4af;
+    --danger-fill: #2a171b;
+    --danger-edge: #4c2028;
+    --danger-edge-hover: #6b2c36;
+
+    --scrim: rgba(0, 0, 0, 0.62);
+    --stripe: rgba(255, 255, 255, .045);
+    /* A shadow on a dark ground is not a lighter grey, it is more black. */
+    --shadow-menu: rgba(0, 0, 0, .55);
+    --shadow-sheet: rgba(0, 0, 0, .6);
+    --shadow-toast: rgba(0, 0, 0, .5);
+    --shadow-bubble: rgba(0, 0, 0, .25);
+    --shadow-btn: rgba(0, 0, 0, .3);
+
+    /* Stronger than the light veil, as on the phone. The artwork is near-black strokes and CSS
+       cannot recolour a background image the way `colorInvert` does on the phone, so here the
+       pattern reads as a faint texture rather than as light strokes. That is the one place the
+       two clients differ, and it is a decoration. */
+    --doodle-veil: rgba(11, 13, 17, 0.82);
+  }
+}
+
 
 * { box-sizing: border-box; }
 html {
@@ -37,7 +149,7 @@ html {
 body {
   margin: 0;
   height: 100%;
-  background: #fff;
+  background: var(--ground);
   color: var(--body);
   font: 15px/1.55 var(--sans);
   -webkit-font-smoothing: antialiased;
@@ -88,7 +200,7 @@ button { font: inherit; color: inherit; }
   transition: background .15s ease, border-color .15s ease;
 }
 .btn-primary { background: var(--navy); color: #fff; }
-.btn-primary:hover { background: #1d4185; }
+.btn-primary:hover { background: var(--navy-hover); }
 
 /* ---- app frame ---------------------------------------------------------------------------- */
 
@@ -113,7 +225,7 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: #fff;
+  background: var(--ground);
 }
 
 .app[data-subs="true"] {
@@ -126,7 +238,7 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: #fff;
+  background: var(--ground);
 }
 
 .subs-head {
@@ -145,12 +257,12 @@ button { font: inherit; color: inherit; }
 /* The one control in this pane, so it carries a surface of its own rather than only appearing on
    hover — a `+` that is invisible until you happen to touch it is the button people cannot find. */
 #subs-new {
-  background: #f7f7f7;
+  background: var(--tray);
   border-color: var(--rule);
   color: var(--ink);
 }
-#subs-new:hover { background: #eceff3; border-color: #c9cfd8; }
-#subs-new:active { background: #e2e6ec; }
+#subs-new:hover { background: var(--tray-hover); border-color: var(--edge); }
+#subs-new:active { background: var(--tray-active); }
 
 .subs { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; min-height: 0; }
 
@@ -168,7 +280,7 @@ button { font: inherit; color: inherit; }
   color: inherit;
 }
 .sub-row:hover { background: var(--wash); }
-.sub-row[aria-current="true"] { background: var(--sel, #eef2f7); }
+.sub-row[aria-current="true"] { background: var(--sel); }
 .sub-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* The default thread has no name because nobody opened it. Saying so in the row rather than
    inventing a title keeps it honest, and italic marks it as a description not a name. */
@@ -176,7 +288,7 @@ button { font: inherit; color: inherit; }
 .sub-meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
 .sub-unread {
   margin-left: auto;
-  background: var(--accent, #2f6feb);
+  background: var(--accent, var(--accent-row));
   color: #fff;
   border-radius: 999px;
   font-size: 11px;
@@ -252,10 +364,10 @@ button { font: inherit; color: inherit; }
   top: 52px; left: 12px; right: 12px;
   margin: 0; padding: 5px;
   list-style: none;
-  background: #fff;
+  background: var(--ground);
   border: 1px solid var(--rule);
   border-radius: 10px;
-  box-shadow: 0 8px 28px rgba(20, 24, 31, .12);
+  box-shadow: 0 8px 28px var(--shadow-menu);
   max-height: 60vh; overflow-y: auto;
 }
 .identity-menu li { margin: 0; }
@@ -285,7 +397,7 @@ button { font: inherit; color: inherit; }
   border-radius: 8px;
   outline: none;
 }
-.search input:focus { border-color: #cfd5de; background: #fff; }
+.search input:focus { border-color: var(--edge-focus); background: var(--ground); }
 
 /* ---- avatars ------------------------------------------------------------------------------ */
 
@@ -330,7 +442,7 @@ button { font: inherit; color: inherit; }
   letter-spacing: .06em;
   text-transform: uppercase;
   color: var(--muted);
-  background: #fff;
+  background: var(--ground);
   position: sticky;
   top: 0;
   z-index: 1;
@@ -350,7 +462,7 @@ button { font: inherit; color: inherit; }
   border-bottom: 1px solid var(--rule);
 }
 .thread-row:hover { background: var(--wash); }
-.thread-row[aria-current="true"] { background: #eef2f9; }
+.thread-row[aria-current="true"] { background: var(--sel); }
 
 .tr-text { flex: 1; min-width: 0; }
 .tr-top { display: flex; align-items: baseline; gap: 8px; }
@@ -390,9 +502,9 @@ button { font: inherit; color: inherit; }
   border-radius: 5px;
   border: 1px solid;
 }
-.pill-held { color: var(--amber); border-color: #fcd9a4; background: #fff8ee; }
-.pill-auto { color: #15803d; border-color: #bbf7d0; background: #f0fdf4; }
-.pill-blocked { color: #9f1239; border-color: #fecdd3; background: #fff1f2; }
+.pill-held { color: var(--amber); border-color: var(--held-edge); background: var(--held-fill); }
+.pill-auto { color: var(--auto-text); border-color: var(--auto-edge); background: var(--auto-fill); }
+.pill-blocked { color: var(--blocked-text); border-color: var(--blocked-edge); background: var(--blocked-fill); }
 
 .empty {
   color: var(--muted);
@@ -410,7 +522,7 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: 11px;
   padding: 0 12px;
-  background: #fff;
+  background: var(--ground);
   border-bottom: 1px solid var(--rule);
 }
 .thread-head .back { display: none; }
@@ -465,12 +577,12 @@ button { font: inherit; color: inherit; }
 .ask select {
   font: inherit; font-size: 12.5px;
   padding: 3px 6px; border-radius: 7px;
-  border: 1px solid var(--rule); background: #fff; color: var(--ink);
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
 }
 .ask-branch {
   font: inherit; font-size: 12.5px; width: 130px;
   padding: 3px 8px; border-radius: 7px;
-  border: 1px solid var(--rule); background: #fff; color: var(--ink);
+  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
 }
 
 .thread-empty {
@@ -499,9 +611,9 @@ button { font: inherit; color: inherit; }
   max-width: min(78%, 560px);
   padding: 8px 12px 6px;
   border-radius: 12px;
-  background: #fff;
+  background: var(--ground);
   border: 1px solid var(--rule);
-  box-shadow: 0 1px 1px rgba(20, 24, 31, .03);
+  box-shadow: 0 1px 1px var(--shadow-bubble);
 }
 .mine .bubble {
   background: var(--navy);
@@ -527,7 +639,7 @@ button { font: inherit; color: inherit; }
   color: var(--muted);
 }
 .mine .bubble .meta { color: rgba(255, 255, 255, .72); }
-.bubble .meta .failed { color: #be123c; font-weight: 600; }
+.bubble .meta .failed { color: var(--blocked-text); font-weight: 600; }
 
 /* Copy sits in the meta row, quiet until the pointer is near it. It is a real button so it is
    reachable by keyboard; the glyph carries no meaning that the aria-label does not. */
@@ -547,7 +659,7 @@ button { font: inherit; color: inherit; }
 }
 .bubble .meta .copy:hover,
 .bubble .meta .copy:focus-visible { opacity: 1; }
-.bubble .meta .copy.copied { color: #15803d; opacity: 1; }
+.bubble .meta .copy.copied { color: var(--auto-text); opacity: 1; }
 .mine .bubble .meta .copy { color: rgba(255, 255, 255, 0.8); }
 
 /* Rendered markdown. Sized to sit inside a bubble rather than to look like a document: the first
@@ -606,7 +718,7 @@ button { font: inherit; color: inherit; }
   margin: 10px 0 2px;
   font-size: 11.5px;
   color: var(--muted);
-  background: #fff;
+  background: var(--ground);
   border: 1px solid var(--rule);
   border-radius: 20px;
   padding: 3px 12px;
@@ -661,7 +773,7 @@ button { font: inherit; color: inherit; }
 
 .peer-info {
   flex: none;
-  background: #fff;
+  background: var(--ground);
   border-top: 1px solid var(--rule);
   padding: 12px 16px 14px;
   font-size: 13px;
@@ -687,7 +799,7 @@ button { font: inherit; color: inherit; }
   align-items: flex-end;
   gap: 8px;
   padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  background: #fff;
+  background: var(--ground);
   border-top: 1px solid var(--rule);
 }
 .composer textarea {
@@ -704,7 +816,7 @@ button { font: inherit; color: inherit; }
   border-radius: 18px;
   outline: none;
 }
-.composer textarea:focus { border-color: #cfd5de; background: #fff; }
+.composer textarea:focus { border-color: var(--edge-focus); background: var(--ground); }
 .send {
   flex: none;
   width: 38px; height: 38px;
@@ -715,7 +827,7 @@ button { font: inherit; color: inherit; }
   display: grid; place-items: center;
   cursor: pointer;
 }
-.send:disabled { background: #c3cbd8; cursor: default; }
+.send:disabled { background: var(--send-off); cursor: default; }
 .send svg { width: 18px; height: 18px; margin-left: -1px; }
 
 /* ---- toast -------------------------------------------------------------------------------- */
@@ -727,12 +839,12 @@ button { font: inherit; color: inherit; }
   transform: translateX(-50%);
   z-index: 60;
   max-width: min(92vw, 460px);
-  background: var(--ink);
+  background: var(--toast-fill);
   color: #fff;
   font-size: 13.5px;
   padding: 10px 15px;
   border-radius: 9px;
-  box-shadow: 0 8px 28px rgba(20, 24, 31, .22);
+  box-shadow: 0 8px 28px var(--shadow-toast);
 }
 
 /* ---- phone: one pane at a time ------------------------------------------------------------ */
@@ -821,14 +933,14 @@ button { font: inherit; color: inherit; }
   position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;
   padding: 16px;
-  background: rgba(20, 24, 31, 0.45);
+  background: var(--scrim);
 }
 .sheet {
   width: 100%; max-width: 440px;
   max-height: min(88vh, 720px);
   display: flex; flex-direction: column;
-  background: #fff; border-radius: 14px;
-  box-shadow: 0 18px 48px rgba(20, 24, 31, 0.25);
+  background: var(--ground); border-radius: 14px;
+  box-shadow: 0 18px 48px var(--shadow-sheet);
   overflow: hidden;
 }
 .sheet-wide { max-width: 560px; }
@@ -838,7 +950,7 @@ button { font: inherit; color: inherit; }
 }
 .sheet-head h2 { margin: 0; font-size: 16px; font-weight: 650; color: var(--ink); }
 /* The one scroller in the dialog, so a long contact list never scrolls the page behind it. */
-.sheet-body { padding: 16px 18px; overflow-y: auto; min-height: 0; background: #fff; }
+.sheet-body { padding: 16px 18px; overflow-y: auto; min-height: 0; background: var(--ground); }
 .sheet-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px;
   padding: 12px 14px; border-top: 1px solid var(--rule); background: var(--wash);
@@ -850,7 +962,7 @@ button { font: inherit; color: inherit; }
 .field input[type="text"], .field textarea, .field select {
   width: 100%; padding: 9px 10px;
   border: 1px solid var(--rule); border-radius: 8px;
-  font: inherit; color: var(--ink); background: #fff;
+  font: inherit; color: var(--ink); background: var(--ground);
   /* 16px stops iOS Safari zooming the whole page when a field takes focus — which with
      user-scalable=no would otherwise leave it zoomed with no way back. */
   font-size: 16px;
@@ -858,7 +970,7 @@ button { font: inherit; color: inherit; }
 .field textarea { resize: vertical; min-height: 72px; }
 .field-note { margin: -8px 0 14px; font-size: 12px; color: var(--muted); line-height: 1.5; }
 .field-note code { font-family: var(--mono); font-size: 11.5px; }
-.sheet-error { margin: 6px 0 0; font-size: 12.5px; color: #b42318; }
+.sheet-error { margin: 6px 0 0; font-size: 12.5px; color: var(--danger); }
 
 .verbs { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 13px; margin: 0 0 14px; }
 .verbs legend { padding: 0 4px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
@@ -875,10 +987,10 @@ button { font: inherit; color: inherit; }
   color: var(--muted);
   font-style: normal;
   background: repeating-linear-gradient(
-    135deg, transparent, transparent 6px, rgba(20, 24, 31, .025) 6px, rgba(20, 24, 31, .025) 12px);
+    135deg, transparent, transparent 6px, var(--stripe) 6px, var(--stripe) 12px);
 }
 .verbs .never:hover { background: repeating-linear-gradient(
-    135deg, transparent, transparent 6px, rgba(20, 24, 31, .025) 6px, rgba(20, 24, 31, .025) 12px); }
+    135deg, transparent, transparent 6px, var(--stripe) 6px, var(--stripe) 12px); }
 
 /* Each setting is a card rather than a run of text. Grey-on-white headings with nothing between
    them made the dialog read as one paragraph, so it was never obvious where one control ended and
@@ -910,7 +1022,7 @@ button { font: inherit; color: inherit; }
   font-variant-numeric: tabular-nums;
   min-width: 52px; text-align: center;
   padding: 6px 8px; border-radius: 8px;
-  background: #fff; border: 1px solid var(--rule);
+  background: var(--ground); border: 1px solid var(--rule);
 }
 
 .btn-primary, .btn-ghost, .btn-danger {
@@ -919,17 +1031,17 @@ button { font: inherit; color: inherit; }
   transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
 .btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
-.btn-primary:hover:not(:disabled) { background: #1d4fd8; border-color: #1d4fd8; }
+.btn-primary:hover:not(:disabled) { background: var(--blue-hover); border-color: var(--blue-hover); }
 /* A visible surface and a real border. White on white with a hairline read as text, not a
    control, which is why the dialog looked like it had fewer buttons than it has. */
 .btn-ghost {
-  background: #fff; color: var(--ink); border-color: #c9cfd8;
-  box-shadow: 0 1px 0 rgba(20, 24, 31, .04);
+  background: var(--ground); color: var(--ink); border-color: var(--edge);
+  box-shadow: 0 1px 0 var(--shadow-btn);
 }
-.btn-ghost:hover { background: #f2f5f9; border-color: #aab3bf; }
-.btn-ghost:active { background: #e8edf3; }
-.btn-danger { background: #fff; color: #b42318; border-color: #e6a9a3; }
-.btn-danger:hover { background: #fdf3f2; border-color: #d98b83; }
+.btn-ghost:hover { background: var(--hover); border-color: var(--edge-hover); }
+.btn-ghost:active { background: var(--hover-strong); }
+.btn-danger { background: var(--ground); color: var(--danger); border-color: var(--danger-edge); }
+.btn-danger:hover { background: var(--danger-fill); border-color: var(--danger-edge-hover); }
 .btn-primary:disabled { opacity: 0.55; cursor: default; }
 /* Keyboard users get the same visible edge everyone else gets on hover. */
 .btn-primary:focus-visible, .btn-ghost:focus-visible, .btn-danger:focus-visible,
