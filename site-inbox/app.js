@@ -280,6 +280,92 @@
     }
   }
 
+  // Files chosen but not yet sent. Uploaded on send rather than on pick: an upload counts against
+  // the mailbox quota the moment it lands, and a file chosen and then thought better of should
+  // cost nothing.
+  const staged = [];
+
+  function wireAttach() {
+    const button = $("attach-btn");
+    const input = $("file-input");
+    if (!button || !input) return;
+    button.addEventListener("click", () => input.click());
+    input.addEventListener("change", () => {
+      for (const file of input.files || []) staged.push(file);
+      // Cleared so choosing the same file twice in a row still fires a change.
+      input.value = "";
+      renderStaged();
+    });
+  }
+
+  function renderStaged() {
+    const list = $("pending-files");
+    if (!list) return;
+    list.textContent = "";
+    list.hidden = staged.length === 0;
+    staged.forEach((file, index) => {
+      const li = document.createElement("li");
+      const name = document.createElement("span");
+      name.className = "pf-name";
+      name.textContent = file.name;
+      const size = document.createElement("span");
+      size.className = "pf-size";
+      size.textContent = readableBytes(file.size);
+      const drop = document.createElement("button");
+      drop.type = "button";
+      drop.className = "pf-drop";
+      drop.setAttribute("aria-label", "Remove " + file.name);
+      drop.textContent = "\u00d7";
+      drop.addEventListener("click", () => {
+        staged.splice(index, 1);
+        renderStaged();
+      });
+      li.append(name, size, drop);
+      list.append(li);
+    });
+  }
+
+  function readableBytes(n) {
+    if (!Number.isFinite(n)) return "";
+    const units = ["B", "KB", "MB", "GB"];
+    let value = n;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit += 1;
+    }
+    return (value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)) + " " + units[unit];
+  }
+
+  // The bytes are the whole body; the metadata rides in headers. Not `api()` — that one sends and
+  // expects JSON, and a file is neither.
+  async function uploadFile(file) {
+    const res = await fetch(cfg.postbox + "/v1/attachments", {
+      method: "POST",
+      headers: {
+        authorization: "Bearer " + getToken(),
+        accept: "application/json",
+        "content-type": "application/octet-stream",
+        "x-pigeonpost-identity": state.me.address,
+        "x-pigeonpost-filename": headerSafe(file.name),
+        "x-pigeonpost-media-type": headerSafe(file.type || "application/octet-stream"),
+      },
+      body: file,
+    });
+    const body = await res.json().catch(() => ({}));
+    if (!res.ok) throw new ApiError(res.status, body.error, body.detail);
+    return body.id;
+  }
+
+  // A filename is somebody's text and headers are a line-based protocol. Anything that could end
+  // the line, or that cannot survive one, is dropped rather than escaped.
+  function headerSafe(text) {
+    return String(text == null ? "" : text)
+      .replace(/[^\u0020-\u007e]/g, "")
+      .replace(/["\\]/g, "")
+      .slice(0, 120);
+  }
+
   async function api(path, opts) {
     const o = opts || {};
     const call = async () => {
@@ -939,6 +1025,51 @@
       bubble.append(text);
     }
 
+    // Files that came with the message. Names and sizes, and a link that downloads — never an
+    // inline preview: the bytes are another agent's and the postbox serves them as attachments
+    // precisely so a browser does not open them in this origin.
+    if (Array.isArray(m.attachments) && m.attachments.length) {
+      const files = document.createElement("ul");
+      files.className = "files";
+      for (const file of m.attachments) {
+        const li = document.createElement("li");
+        const link = document.createElement("a");
+        link.className = "file";
+        link.href = cfg.postbox + "/v1/attachments/" + encodeURIComponent(file.id);
+        link.textContent = file.filename || "attachment";
+        // The token cannot ride in a plain link, so this fetches with it and hands the browser a
+        // blob. Same reason the download endpoint is authenticated at all: a file is not public
+        // because its id is known.
+        link.addEventListener("click", async (event) => {
+          event.preventDefault();
+          try {
+            const res = await fetch(link.href, {
+              headers: {
+                authorization: "Bearer " + getToken(),
+                "x-pigeonpost-identity": state.me.address,
+              },
+            });
+            if (!res.ok) throw new Error(String(res.status));
+            const blob = await res.blob();
+            const url = URL.createObjectURL(blob);
+            const save = document.createElement("a");
+            save.href = url;
+            save.download = file.filename || "attachment";
+            save.click();
+            URL.revokeObjectURL(url);
+          } catch (_) {
+            toast("Could not download that file.");
+          }
+        });
+        const size = document.createElement("span");
+        size.className = "file-size";
+        size.textContent = readableBytes(file.bytes);
+        li.append(link, size);
+        files.append(li);
+      }
+      bubble.append(files);
+    }
+
     const meta = document.createElement("div");
     meta.className = "meta";
     if (m.kind === "out" && m.status === "failed") {
@@ -1488,6 +1619,20 @@
     // answers.
     const showing = currentSubthread(to);
     const threadId = showing && showing.id ? showing.id : null;
+    // Uploaded before the send names them. A failure here stops the message rather than sending
+    // it without the files it was about: half a message is worse than none, because the sender has
+    // no way to know which half arrived.
+    let attachments = [];
+    if (staged.length) {
+      try {
+        attachments = await Promise.all(staged.map(uploadFile));
+      } catch (e) {
+        toast(e instanceof ApiError ? e.detail || e.error || "Could not upload that file." : "Could not upload that file.");
+        return;
+      }
+      staged.length = 0;
+      renderStaged();
+    }
     text = composeBody(text);
     const record = Pending.add({
       local_id: "local_" + randomString(8),
@@ -1504,8 +1649,8 @@
       const sent = await api("/v1/send", {
         method: "POST",
         body: threadId
-          ? { to, body: text, from: state.me.address, thread_id: threadId }
-          : { to, body: text, from: state.me.address },
+          ? { to, body: text, from: state.me.address, thread_id: threadId, attachments }
+          : { to, body: text, from: state.me.address, attachments },
       });
       // The id of the server's own copy. Holding it is what lets the optimistic row retire the
       // moment that copy comes back, instead of the message appearing twice for a poll.
@@ -2299,6 +2444,7 @@
       }
     });
 
+    wireAttach();
     $("composer").addEventListener("submit", (e) => {
       e.preventDefault();
       const text = compose.value.trim();

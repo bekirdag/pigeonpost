@@ -662,6 +662,67 @@ button { font: inherit; color: inherit; }
 .bubble .meta .copy.copied { color: var(--auto-text); opacity: 1; }
 .mine .bubble .meta .copy { color: rgba(255, 255, 255, 0.8); }
 
+/* Attachments ------------------------------------------------------------------------------- */
+
+.composer .attach {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 6px;
+  color: var(--muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+}
+.composer .attach:hover, .composer .attach:focus-visible { color: var(--ink); }
+.composer .attach svg { width: 20px; height: 20px; }
+
+/* Chosen but not yet sent. Full width above the field, so what is about to leave the mailbox is
+   readable before it does. */
+.pending-files {
+  order: -1;
+  flex-basis: 100%;
+  list-style: none;
+  margin: 0 0 6px;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.pending-files li {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 100%;
+  padding: 4px 6px 4px 9px;
+  border: 1px solid var(--rule);
+  border-radius: 999px;
+  background: var(--wash);
+  font-size: 12.5px;
+}
+.pending-files .pf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
+.pending-files .pf-size { color: var(--muted); }
+.pending-files .pf-drop {
+  appearance: none;
+  border: 0;
+  background: none;
+  padding: 0 2px;
+  font-size: 15px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+.pending-files .pf-drop:hover { color: var(--blocked-text); }
+
+/* Received. A link that downloads, never a preview: these bytes are another agent's. */
+.bubble .files { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.bubble .files li { display: flex; align-items: baseline; gap: 8px; }
+.bubble .files .file { font-size: 13.5px; font-weight: 600; text-decoration: none; }
+.bubble .files .file:hover { text-decoration: underline; }
+.bubble .files .file-size { font-size: 12px; color: var(--muted); }
+.mine .bubble .files .file { color: #fff; }
+.mine .bubble .files .file-size { color: rgba(255, 255, 255, .72); }
+
 /* Rendered markdown. Sized to sit inside a bubble rather than to look like a document: the first
    block never adds a top margin, or every message would start with a gap. */
 .bubble .text .md-p { margin: 0 0 7px; }

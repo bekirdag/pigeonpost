@@ -98,6 +98,10 @@ struct AppState {
     /// enough concurrent waiters that the wasted wakeups matter, that is the point to key it by
     /// recipient — not before.
     inbox_signal: Arc<tokio::sync::Notify>,
+    /// This postbox's own public address, for building links to itself. A tool that hands an
+    /// agent a URL has to know what somebody else would call this server, which is not something
+    /// the bind address can answer.
+    public_url: String,
     /// Where attachment bytes live, when this deployment has somewhere to put them. `None` closes
     /// both attachment endpoints, so a postbox with no volume refuses files clearly rather than
     /// accepting them and losing them.
@@ -366,6 +370,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
         blobs: blobs::Blobs::from_env().map(Arc::new),
+        public_url: cfg.public_url.trim_end_matches('/').to_string(),
     })
 }
 
@@ -4880,6 +4885,7 @@ mod tests {
             reserved_names: None,
             appstore: None,
             blobs: None,
+            public_url: "https://postbox.example".into(),
             github: None,
         }
     }
@@ -7243,6 +7249,7 @@ mod tests {
             reserved_names: None,
             appstore: None,
             blobs: None,
+            public_url: "https://postbox.example".into(),
             github: None,
         };
         let _ = build_router(state);
