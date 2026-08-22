@@ -113,9 +113,16 @@ struct PostboxClient {
 
     // ---- writes --------------------------------------------------------------------------------
 
-    func sendMessage(from identity: String, to peer: String, body text: String, threadId: String?) async throws -> SendResponse {
+    func sendMessage(
+        from identity: String,
+        to peer: String,
+        body text: String,
+        threadId: String?,
+        attachments: [String] = []
+    ) async throws -> SendResponse {
         var payload: [String: Any] = ["to": peer, "body": text, "from": identity]
         if let threadId { payload["thread_id"] = threadId }
+        if !attachments.isEmpty { payload["attachments"] = attachments }
         return try await send("/v1/send", method: "POST", json: payload, as: SendResponse.self)
     }
 
@@ -123,6 +130,92 @@ struct PostboxClient {
     /// agent sharing this mailbox learns a message has been dealt with.
     func ack(identity: String, messageId: String) async throws {
         _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity])
+    }
+
+    /// Store a file, and get back the id a send names it by.
+    ///
+    /// The bytes are the whole body and the metadata rides in headers, which is why this does not
+    /// go through `send` — that one encodes JSON, and a file is neither JSON nor small.
+    func uploadAttachment(
+        identity: String,
+        data: Data,
+        filename: String,
+        mediaType: String
+    ) async throws -> UploadedAttachment {
+        guard let tokens else { throw AuthError.sessionExpired }
+        let url = base.appendingPathComponent("/v1/attachments")
+
+        func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
+            request.setValue("application/json", forHTTPHeaderField: "accept")
+            request.setValue("application/octet-stream", forHTTPHeaderField: "content-type")
+            request.setValue(identity, forHTTPHeaderField: "x-pigeonpost-identity")
+            // A filename is somebody's text and a header is a line-based protocol.
+            request.setValue(Self.headerSafe(filename), forHTTPHeaderField: "x-pigeonpost-filename")
+            request.setValue(Self.headerSafe(mediaType), forHTTPHeaderField: "x-pigeonpost-media-type")
+            // Long enough for a large file on a phone's uplink, which is the slow case this has.
+            request.timeoutInterval = 300
+            let (body, response) = try await URLSession.shared.upload(for: request, from: data)
+            return (body, response as? HTTPURLResponse ?? HTTPURLResponse())
+        }
+
+        var (body, response) = try await attempt(try await tokens.token())
+        if response.statusCode == 401 {
+            (body, response) = try await attempt(try await tokens.renew())
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            let problem = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+            throw APIError(
+                status: response.statusCode,
+                code: problem?["error"] as? String,
+                detail: problem?["detail"] as? String
+            )
+        }
+        do {
+            return try Self.decoder.decode(UploadedAttachment.self, from: body)
+        } catch {
+            throw APIError(status: 200, code: "bad_response", detail: "The postbox answered in a shape this app does not understand.")
+        }
+    }
+
+    /// The bytes of a file on a message this mailbox holds.
+    func downloadAttachment(identity: String, id: String) async throws -> Data {
+        guard let tokens else { throw AuthError.sessionExpired }
+        let url = base.appendingPathComponent("/v1/attachments/\(id)")
+
+        func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            var request = URLRequest(url: url)
+            request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
+            request.setValue(identity, forHTTPHeaderField: "x-pigeonpost-identity")
+            request.timeoutInterval = 300
+            let (body, response) = try await URLSession.shared.data(for: request)
+            return (body, response as? HTTPURLResponse ?? HTTPURLResponse())
+        }
+        var (body, response) = try await attempt(try await tokens.token())
+        if response.statusCode == 401 {
+            (body, response) = try await attempt(try await tokens.renew())
+        }
+        guard (200..<300).contains(response.statusCode) else {
+            let problem = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+            throw APIError(
+                status: response.statusCode,
+                code: problem?["error"] as? String,
+                detail: problem?["detail"] as? String
+            )
+        }
+        return body
+    }
+
+    /// Everything a header cannot carry, removed rather than escaped.
+    private static func headerSafe(_ text: String) -> String {
+        String(
+            text.unicodeScalars
+                .filter { $0.value >= 0x20 && $0.value < 0x7f && $0 != "\"" && $0 != "\\" }
+                .prefix(120)
+                .map(Character.init)
+        )
     }
 
     /// Remove one message from this mailbox, for good.

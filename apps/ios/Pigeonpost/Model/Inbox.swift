@@ -445,7 +445,7 @@ final class Inbox {
         }
     }
 
-    func send(_ text: String, to peer: String, threadId: String?) async {
+    func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = []) async {
         guard let me else { return }
         // Everything sent from this app asks for work, at the most it can ask for. The optimistic
         // row carries the envelope too, so what is on screen the second after pressing send is what
@@ -470,7 +470,21 @@ final class Inbox {
         }
 
         do {
-            let sent = try await client.sendMessage(from: me.address, to: peer, body: wire, threadId: threadId)
+            // Uploaded before the send names them. A failure here stops the message rather than
+            // sending it without the files it was about: half a message is worse than none,
+            // because the sender cannot tell which half arrived.
+            var ids: [String] = []
+            for file in files {
+                let uploaded = try await client.uploadAttachment(
+                    identity: me.address,
+                    data: file.data,
+                    filename: file.name,
+                    mediaType: file.mediaType
+                )
+                ids.append(uploaded.id)
+            }
+            let sent = try await client.sendMessage(
+                from: me.address, to: peer, body: wire, threadId: threadId, attachments: ids)
             update(row.id) {
                 $0.status = .sent
                 $0.sentCopyId = sent.sentCopyId
@@ -578,7 +592,8 @@ private extension Message {
             senderStanding: senderStanding,
             senderTier: senderTier,
             senderKnown: senderKnown,
-            untrusted: untrusted
+            untrusted: untrusted,
+            attachments: attachments
         )
     }
 }

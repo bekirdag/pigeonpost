@@ -30,6 +30,8 @@ struct ThreadMessage: Identifiable, Equatable {
 
     // Received mail only.
     var read: Bool = true
+    /// Files on this message.
+    var attachments: [MessageAttachment] = []
     /// `auto` or `review`, as the server decided. Never present on a sent copy: your own words were
     /// never subject to an admission decision.
     var autonomy: String?
@@ -151,7 +153,10 @@ enum ConversationBuilder {
                     kind: .outgoing,
                     at: message.at,
                     body: message.body,
-                    threadId: message.threadId
+                    threadId: message.threadId,
+                    // The sender's own copy carries its own rows, so a sent file is visible in the
+                    // thread that sent it rather than only in the one that received it.
+                    attachments: message.attachments ?? []
                 ))
                 continue
             }
@@ -162,6 +167,7 @@ enum ConversationBuilder {
                 body: message.body,
                 threadId: message.threadId,
                 read: message.isRead,
+                attachments: message.attachments ?? [],
                 autonomy: message.autonomy,
                 verb: message.verb,
                 heldBecause: message.heldBecause,

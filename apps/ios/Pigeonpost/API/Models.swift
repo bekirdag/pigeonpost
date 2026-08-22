@@ -37,6 +37,8 @@ struct Message: Decodable, Identifiable, Equatable {
     let senderTier: String?
     let senderKnown: Bool?
     let untrusted: Bool?
+    /// Files that came with it. Absent on messages that carry none, which is most of them.
+    let attachments: [MessageAttachment]?
 
     var id: String { messageId }
     var isOutgoing: Bool { direction == "out" }
@@ -177,6 +179,41 @@ struct Quota: Decodable {
 
     var used: String { Self.formatter.string(fromByteCount: Int64(usedBytes)) }
     var limit: String { Self.formatter.string(fromByteCount: Int64(limitBytes)) }
+}
+
+/// A file on a message.
+struct MessageAttachment: Decodable, Equatable, Identifiable {
+    let id: String
+    let filename: String
+    let mediaType: String
+    let bytes: Int
+
+    /// What to show beside the name. Decimal units, matching how a phone reports file sizes
+    /// everywhere else it shows one.
+    var readableSize: String {
+        let formatter = ByteCountFormatter()
+        formatter.countStyle = .file
+        formatter.allowedUnits = [.useKB, .useMB, .useGB]
+        return formatter.string(fromByteCount: Int64(bytes))
+    }
+
+    /// Which SF Symbol reads as this kind of file. Deliberately coarse — the point is to tell a
+    /// picture from a document at a glance, not to name every format.
+    var symbol: String {
+        if mediaType.hasPrefix("image/") { return "photo" }
+        if mediaType.hasPrefix("video/") { return "film" }
+        if mediaType.hasPrefix("audio/") { return "waveform" }
+        if mediaType == "application/pdf" { return "doc.richtext" }
+        return "doc"
+    }
+}
+
+/// What `POST /v1/attachments` answers with.
+struct UploadedAttachment: Decodable {
+    let id: String
+    let filename: String
+    let mediaType: String
+    let bytes: Int
 }
 
 /// What the postbox will sell, and what this account already holds.

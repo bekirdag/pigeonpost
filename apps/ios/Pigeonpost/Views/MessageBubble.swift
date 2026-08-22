@@ -37,6 +37,9 @@ struct MessageBubble: View {
                 } else {
                     MarkdownText(raw: message.body, onDark: isMine)
                 }
+                if !message.attachments.isEmpty {
+                    AttachmentList(attachments: message.attachments, isMine: isMine)
+                }
                 meta
             }
             .padding(.horizontal, 12)

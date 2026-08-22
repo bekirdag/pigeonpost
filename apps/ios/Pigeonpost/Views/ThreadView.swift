@@ -6,6 +6,7 @@
 //  top of the thread instead — the same choice, made without leaving the conversation.
 
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct ThreadView: View {
     let peer: String
@@ -19,6 +20,8 @@ struct ThreadView: View {
     /// One sheet at a time. Two stacked `.sheet` modifiers on one view are not reliably both
     /// honoured — see `ConversationsView`, where the same shape lost Settings entirely.
     @State private var sheet: Sheet?
+    @State private var picking = false
+    @State private var staged: [StagedFile] = []
 
     private enum Sheet: String, Identifiable {
         case info, newThread
@@ -197,7 +200,40 @@ struct ThreadView: View {
     }
 
     private var composer: some View {
+        VStack(spacing: 6) {
+            // Chosen but not yet sent, listed above the field. What is about to leave a mailbox
+            // should be readable before it does, not hidden behind a count.
+            if !staged.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        ForEach(staged) { file in
+                            StagedFileChip(file: file) {
+                                staged.removeAll { $0.id == file.id }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            composerRow
+        }
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider().background(Theme.rule) }
+    }
+
+    private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
+            Button { picking = true } label: {
+                Image(systemName: "paperclip")
+                    .font(.system(size: 17))
+                    .foregroundStyle(Theme.muted)
+                    .frame(width: 32, height: 36)
+                    .contentShape(Rectangle())
+            }
+            .accessibilityLabel("Attach a file")
+
             TextField("Write a message", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
                 .font(.system(size: 15))
@@ -218,13 +254,39 @@ struct ThreadView: View {
             .accessibilityLabel("Send")
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider().background(Theme.rule) }
+        // Any file the system can hand over. A file is anything really — a photo, a zip, a PDF —
+        // and narrowing the list here would only mean somebody cannot send the thing they have.
+        .fileImporter(
+            isPresented: $picking,
+            allowedContentTypes: [.item],
+            allowsMultipleSelection: true
+        ) { result in
+            guard case let .success(urls) = result else { return }
+            for url in urls { stage(url) }
+        }
     }
 
+    /// Read now, not at send time. The picker hands back a URL into another process's sandbox and
+    /// permission to read it is scoped to this moment — holding the URL and opening it later is how
+    /// a file becomes unreadable exactly when somebody presses send.
+    private func stage(_ url: URL) {
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        guard let data = try? Data(contentsOf: url) else {
+            inbox.toast = "Could not read that file."
+            return
+        }
+        staged.append(StagedFile(
+            name: url.lastPathComponent,
+            mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
+                ?? "application/octet-stream",
+            data: data
+        ))
+    }
+
+    /// A message needs words or a file. Sending a file with nothing typed is an ordinary thing.
     private var sendable: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty
     }
 
     /// The bottom, named once.
@@ -241,14 +303,16 @@ struct ThreadView: View {
 
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty else { return }
+        guard sendable else { return }
+        let files = staged
+        staged = []
         draft = ""
         // Whichever subject is on screen — including the one a peer with a single conversation has,
         // where no strip is drawn. Sending into the conversation you are reading is the only
         // behaviour that does not surprise: the alternative is a reply that leaves the thread it
         // answers.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
-        Task { await inbox.send(text, to: peer, threadId: threadId) }
+        Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
     }
 }
 
