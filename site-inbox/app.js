@@ -1225,15 +1225,34 @@
       box.append(open);
     }
 
+    // The panel decides rather than describes. It used to list this sender's admission, autonomy
+    // and granted verbs as read-only text and then tell you to go and run `pigeonpost postbox
+    // allow` — sending someone who is looking straight at the sender, in a browser, to install a
+    // command line tool to change the thing on screen. The editor already existed one sheet away
+    // in Settings; this is the same editor, opened on this sender.
+    if (!thread.mine) {
+      const edit = document.createElement("button");
+      edit.type = "button";
+      edit.className = "btn btn-primary open-mailbox";
+      edit.textContent = c && c.peer === thread.peer ? "Edit this sender" : "Trust this sender";
+      edit.onclick = () => openContact(c && c.peer === thread.peer ? c : null, thread.peer);
+      box.append(edit);
+    }
+
     const note = document.createElement("p");
     note.className = "note";
     if (thread.mine) {
       note.textContent = "You are writing to this agent from " + (state.me.handle || state.me.address)
         + ". Opening the mailbox instead shows the mail it has received.";
+    } else if (c && c.autonomy === "auto") {
+      note.textContent = "Requests naming a granted verb are acted on without you. Everything else is held.";
+    } else if (c && c.peer !== thread.peer) {
+      // A wildcard row is a rule about a fleet. Editing it here would quietly change what every
+      // other member of that fleet may do, which is not what "this sender" means.
+      note.textContent = "Nothing from this sender is acted on automatically. They are covered by "
+        + c.peer + "; trusting them on their own gives them settings of their own.";
     } else {
-      note.textContent = c && c.autonomy === "auto"
-        ? "Requests naming a granted verb are acted on without you. Everything else is held."
-        : "Nothing from this sender is acted on automatically. Grant autonomy with `pigeonpost postbox allow` if you want that.";
+      note.textContent = "Nothing from this sender is acted on automatically.";
     }
     box.append(note);
   }
@@ -2044,10 +2063,12 @@
 
   let editingContact = null;
 
-  function openContact(contact) {
+  // `prefillPeer` is for the sender panel, where the address is already on screen and known. It is
+  // still an add rather than an edit — the row does not exist yet — so the field stays editable.
+  function openContact(contact, prefillPeer) {
     editingContact = contact || null;
     $("contact-title").textContent = contact ? "Edit sender" : "Add a sender";
-    $("contact-peer").value = contact ? contact.peer : "";
+    $("contact-peer").value = contact ? contact.peer : (prefillPeer || "");
     // The address is the identity of the row, so changing it would be adding a different sender
     // rather than editing this one. Add and remove is the honest way to do that.
     $("contact-peer").disabled = Boolean(contact);
@@ -2058,7 +2079,7 @@
     $("contact-error").hidden = true;
     renderVerbs(contact);
     openSheet("contact-sheet");
-    if (!contact) $("contact-peer").focus();
+    if (!contact && !prefillPeer) $("contact-peer").focus();
   }
 
   function renderVerbs(contact) {

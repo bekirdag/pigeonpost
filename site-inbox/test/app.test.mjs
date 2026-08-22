@@ -412,6 +412,48 @@ const toAgent = calls.filter((c) => c.path === "/v1/send").pop();
 check("addressed to the agent's handle", toAgent.body.to, "/bekir/docdex");
 check("sent from the acting mailbox", toAgent.body.from, "/k/cz6900v2h90vnwefj7g7ezvbh4");
 
+console.log("\n— the sender panel decides, it does not describe —");
+// It used to list this sender's admission, autonomy and granted verbs as text and then tell you to
+// run `pigeonpost postbox allow` — a browser sending someone to install a command line tool to
+// change the thing they are looking at.
+{
+  const strangerRow = [...$("threads").querySelectorAll(".thread-row")]
+    .find((r) => /eeee5555/.test(text(r.querySelector(".tr-name"))));
+  strangerRow.click();
+  await settle(60);
+  $("peer-info-btn").click();
+  await settle(30);
+  const act = $("peer-info").querySelector(".open-mailbox");
+  check("a stranger can be trusted from here", text(act), "Trust this sender");
+  check("and is not told to go and find a terminal",
+    /postbox allow|command line/.test($("peer-info").textContent), false);
+  act.click();
+  await settle(60);
+  check("the editor opens", $("contact-sheet").hidden, false);
+  check("on this sender", $("contact-peer").value, "/k/eeee5555ffff6666gggg7777hh");
+  check("as an addition, so the address is still editable", $("contact-peer").disabled, false);
+  $("contact-close").click();
+  await settle(40);
+
+  // A peer already covered by a wildcard is a rule about a fleet, not about them. Editing that row
+  // here would quietly change what every other member of the fleet may do.
+  const fleetRow = [...$("threads").querySelectorAll(".thread-row")]
+    .find((r) => text(r.querySelector(".tr-name")) === "my fleet");
+  fleetRow.click();
+  await settle(60);
+  $("peer-info-btn").click();
+  await settle(30);
+  check("a peer covered by a wildcard is trusted on their own",
+    text($("peer-info").querySelector(".open-mailbox")), "Trust this sender");
+  check("and the panel says which rule covers them now",
+    $("peer-info").querySelector(".note").textContent.includes("/bekir/*"), true);
+
+  docdexRow.click();
+  await settle(60);
+  $("peer-info-btn").click();
+  await settle(30);
+}
+
 console.log("\n— switching to that mailbox —");
 $("peer-info").querySelector(".open-mailbox").click();
 await settle(150);
