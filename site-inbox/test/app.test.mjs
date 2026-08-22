@@ -690,6 +690,44 @@ check("viewport height has a fallback chain", /height:\s*100vh;[\s\S]{0,200}heig
 check("flex items may shrink below their longest word", /\.messages li \{[^}]*min-width:\s*0/s.test(css), true);
 check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
 
+console.log("\n— dark mode is complete, or it is a bug nobody sees in daylight —");
+// A colour added to :root without a dark value does not fail anything. It is simply wrong on half
+// the machines, and only for the people who do not report it. So the check is that the two lists
+// are the same list.
+for (const name of ["site-inbox/app.css", "site/style.css", "site-developers/docs.css"]) {
+  const sheet = readFileSync(`${APP}/../${name}`, "utf8");
+  const rootBlock = sheet.slice(sheet.indexOf(":root {"));
+  const root = rootBlock.slice(0, rootBlock.indexOf("\n}"));
+  const darkAt = sheet.indexOf("prefers-color-scheme: dark");
+  const darkBlock = darkAt === -1 ? "" : sheet.slice(darkAt);
+  const dark = darkBlock.slice(0, darkBlock.indexOf("\n  }"));
+  const decls = (block) => {
+    const out = new Map();
+    for (const m of block.matchAll(/(--[a-z0-9-]+):\s*([^;]+);/g)) out.set(m[1], m[2].trim());
+    return out;
+  };
+  const rootTokens = decls(root);
+  const darkTokens = decls(dark);
+  const colours = [...rootTokens].filter(([, v]) => /^(#|rgb)/.test(v)).map(([k]) => k);
+  const missing = colours.filter((k) => !darkTokens.has(k));
+  const stray = [...darkTokens.keys()].filter((k) => !rootTokens.has(k));
+  check(`${name}: every colour has a dark value`, missing.join(",") || "none", "none");
+  check(`${name}: nothing is only defined in the dark`, stray.join(",") || "none", "none");
+}
+// And the rules themselves must go through the tokens: a hex written into a rule is a colour that
+// cannot follow the appearance. The exceptions are deliberate and named in the stylesheet — the
+// six avatar tones, which keep a peer's face the same everywhere, and white on a saturated fill.
+{
+  const sheet = readFileSync(`${APP}/app.css`, "utf8");
+  const body = sheet.slice(sheet.indexOf("* { box-sizing"));
+  const stray = [...body.matchAll(/^.*?(#[0-9a-f]{6}|#[0-9a-f]{3})\b.*$/gim)]
+    .map((m) => m[0].trim())
+    .filter((line) => !/color:\s*#fff\b/.test(line))
+    .filter((line) => !/\.avatar\[data-tone/.test(line))
+    .filter((line) => !/\.mine\b/.test(line));
+  check("no rule outside :root paints its own colour", stray.join(" | ") || "none", "none");
+}
+
 console.log("\n— a postbox without the stream, and a network that comes and goes —");
 // A second app, because falling back is a decision made once at start-up and the first one already
 // made the other one. `use_api_key` is the answer a capability token gets from `/v1/events`; a
