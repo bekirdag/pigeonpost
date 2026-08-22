@@ -2011,6 +2011,11 @@
 
   function openSettings() {
     applyMessageScale(messageScale());
+    // An unnamed mailbox has no handle, and saying "—" is more honest than repeating its address
+    // on the line above the one that already shows it.
+    $("acct-mailbox").textContent = state.me ? (state.me.handle || "not named") : "—";
+    $("acct-address").textContent = state.me ? state.me.address : "—";
+    $("acct-postbox").textContent = cfg.postbox;
     $("archive-count").textContent =
       state.archived.size === 1 ? "1 conversation" : state.archived.size + " conversations";
     $("archive-link").textContent = location.origin + "/#archive";

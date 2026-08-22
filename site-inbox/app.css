@@ -915,6 +915,15 @@ button { font: inherit; color: inherit; }
 .bubble .text { font-size: inherit; }
 
 /* ---- archive banner -------------------------------------------------------------------------- */
+.account-facts {
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px;
+  font-size: 13px; align-items: baseline;
+}
+.account-facts dt { color: var(--muted); }
+/* A /k/ address is 28 characters of base32 with no word breaks in it, and it must not be the
+   reason the dialog grows a sideways scrollbar. */
+.account-facts dd { margin: 0; color: var(--ink); word-break: break-all; }
+
 /* Quiet on purpose. Losing the network is common and temporary, and a banner that shouts about
    it is read once and resented after that. */
 .offline-banner {

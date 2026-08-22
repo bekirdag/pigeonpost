@@ -203,6 +203,22 @@
     </header>
     <div class="sheet-body">
 
+      <!-- The phone has had this since it shipped, and needs it more — it has no header showing
+           the mailbox. The browser does, but not the two facts underneath it: the /k/ address the
+           handle resolves to, and which postbox this app is talking to at all. -->
+      <section class="setting">
+        <h3>Account</h3>
+        <dl class="account-facts">
+          <dt>Mailbox</dt><dd id="acct-mailbox" class="mono">…</dd>
+          <dt>Address</dt><dd id="acct-address" class="mono">…</dd>
+          <dt>Postbox</dt><dd id="acct-postbox" class="mono">…</dd>
+        </dl>
+        <p class="field-note">
+          The address is what a handle resolves to, and it is what to give somebody whose client
+          cannot look a handle up.
+        </p>
+      </section>
+
       <section class="setting">
         <h3>Message size</h3>
         <p class="field-note">Changes the conversation text only. The rest of the layout stays put.</p>

@@ -732,6 +732,11 @@ console.log("\n— a postbox without the stream, and a network that comes and go
   await settle(60);
   const contactsBefore = $2("contact-list").children.length;
   check("the contact list was loaded", contactsBefore > 0, true);
+  // Which postbox this app talks to is not visible anywhere else, and it is the first question
+  // somebody self-hosting one asks.
+  check("settings names the postbox", $2("acct-postbox").textContent, "https://postbox.pigeonpost.dev");
+  check("and the address the handle resolves to",
+    $2("acct-address").textContent, "/k/cz6900v2h90vnwefj7g7ezvbh4");
 
   // One route failing is not being offline. `/v1/contacts` used to empty the contact list on any
   // failure at all, so a blip left the browser deciding that everything the account had configured
