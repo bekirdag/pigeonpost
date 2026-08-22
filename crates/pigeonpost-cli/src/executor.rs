@@ -85,17 +85,26 @@ pub struct MailboxRoute {
     /// in, and the refusal to force-push or rewrite history — none of which `*` touches.
     #[serde(default)]
     pub branches: Vec<String>,
-    /// Ceiling on runs accepted from one sender in a day. Zero means no ceiling.
+    /// Ceiling on runs accepted from one sender in a day. Zero means no ceiling, and zero is now
+    /// the default.
     ///
-    /// A granted peer can otherwise trigger unbounded work: at `read-only` that costs a status
-    /// report, at `full` it costs an implementation. `max_concurrent` bounds how many run at once,
-    /// which is not the same question.
-    #[serde(default = "default_daily_runs")]
+    /// It used to default to 50, on the reasoning that a granted peer could otherwise trigger
+    /// unbounded work. What it actually did was refuse the fiftieth request of a working day from
+    /// somebody who had been explicitly trusted — a fleet's own operator, in practice — and tell
+    /// them to try again tomorrow. A ceiling that stops the person who configured the mailbox is
+    /// not protecting them from anything.
+    ///
+    /// The field stays so existing configs keep loading, and a number still works for anyone who
+    /// wants one. `max_concurrent` remains the bound that matters: it limits how much runs at
+    /// once, which is the question about this machine's capacity rather than about somebody's
+    /// intentions.
+    #[serde(default)]
     pub daily_runs_per_sender: u32,
 }
 
+#[allow(dead_code)]
 fn default_daily_runs() -> u32 {
-    50
+    0
 }
 
 fn default_runtime() -> String {
@@ -738,6 +747,34 @@ pub fn pause_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ceiling that fired on somebody's own fleet. A route written today has none, and a
+    /// config that never mentioned one loads with none.
+    #[test]
+    fn there_is_no_daily_ceiling_unless_somebody_asks_for_one() {
+        let dir = tempfile::tempdir().unwrap();
+        // Zero is "no ceiling", and a thousand runs from one sender do not trip it.
+        for _ in 0..1_000 {
+            assert!(within_daily_limit(dir.path(), "/bekir/busy", 20_000, 0));
+        }
+        // A number still works for anyone who wants one.
+        assert!(within_daily_limit(dir.path(), "/bekir/capped", 20_000, 1));
+        assert!(!within_daily_limit(dir.path(), "/bekir/capped", 20_000, 1));
+    }
+
+    /// A config that predates the field, and one that omits it, both mean "no ceiling" now.
+    #[test]
+    fn a_route_without_a_stated_ceiling_has_none() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("agentd.toml"),
+            "execute = true\n\n[[mailbox]]\naddress = \"/bekir/x\"\nworkspace = \"/tmp\"\n\
+             runtime = \"claude\"\nverbs = [\"report_status\"]\n",
+        )
+        .unwrap();
+        let cfg = load_routing(dir.path()).unwrap();
+        assert_eq!(cfg.mailbox[0].daily_runs_per_sender, 0);
+    }
 
     #[test]
     fn a_wildcard_branch_allows_any_target_and_an_empty_one_allows_none() {

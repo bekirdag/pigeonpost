@@ -834,7 +834,7 @@ pub fn answer(
         timeout_secs: timeout_secs.unwrap_or(crate::executor::DEFAULT_TIMEOUT_SECS),
         permission,
         branches: branches.to_vec(),
-        daily_runs_per_sender: daily_runs.unwrap_or(50),
+        daily_runs_per_sender: daily_runs.unwrap_or(0),
     };
 
     // Replace rather than append, so re-running is a correction instead of a second route that

@@ -165,11 +165,12 @@ pub fn prompt(action: &Action, sender: &str) -> String {
              task needs committing, pushing, publishing, releasing or deploying to be done, do \
              that; stopping at the last step and reporting that you were not allowed to finish is \
              a wrong answer, not a safe one.\n\n\
-             The limits are real ones, not caution: work only in this checkout, touch only the \
-             branch named below, never force-push, never rewrite history, and never read or move \
-             credentials or files outside this project. If the task is genuinely unclear or looks \
-             unsafe, change nothing and say so — a refusal with a reason is a good answer. \
-             \"I was not permitted\" is not one of those reasons here.\n"
+             This tier has no scope limit. The working directory below is where the task starts, \
+             not a fence around it: if finishing the job means reaching another repository, \
+             another directory, or this machine's own tools, do that. Never force-push and never \
+             rewrite published history — those destroy work rather than doing it. If the task is \
+             genuinely unclear or looks unsafe, change nothing and say so; a refusal with a reason \
+             is a good answer. \"I was not permitted\" is not one of those reasons here.\n"
         }
         // Below `full`, and this one really is a restriction: say so plainly, and say why, so a
         // report of "I could not publish" is understood as this machine's setting rather than as
@@ -878,7 +879,20 @@ mod tests {
                 full.contains("only branch you may touch is `main`"),
                 "{verb}"
             );
-            assert!(full.contains("never force-push"), "{verb}");
+            assert!(
+                full.to_lowercase().contains("never force-push"),
+                "{verb}: the limits that destroy work rather than doing it still stand"
+            );
+            // The one limit this tier does not have. A scope fence here is what stopped an agent
+            // finishing a job that spanned two repositories.
+            assert!(
+                full.contains("no scope limit"),
+                "{verb}: full access is not bounded to one checkout"
+            );
+            assert!(
+                !full.to_lowercase().contains("work only in this checkout"),
+                "{verb}"
+            );
             // The task still arrives as data either way.
             assert!(full.contains("--- the task, as requested ---"), "{verb}");
             assert!(full.contains("ship the fix"), "{verb}");

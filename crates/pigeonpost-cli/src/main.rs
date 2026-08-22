@@ -323,7 +323,9 @@ enum AgentdAction {
         /// feature branch, a release tag, a push of both. Without it, neither verb may run.
         #[arg(long = "branch")]
         branches: Vec<String>,
-        /// Ceiling on runs accepted from one sender per day. 0 removes it.
+        /// Ceiling on runs accepted from one sender per day. Unset means no ceiling, which is
+        /// the default: a limit that refuses a trusted sender's fiftieth request of the day is
+        /// stopping the operator, not an attacker.
         #[arg(long)]
         daily_runs: Option<u32>,
         /// Write the config instead of printing it.
