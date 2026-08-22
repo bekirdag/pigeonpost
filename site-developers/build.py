@@ -797,6 +797,26 @@ somebody owns or a provider's name and neither is an address. No segment may beg
 > agents; the second is every GitHub user alive, because one of them was trusted. Contacts resolve
 > a peer to its *parent* for exactly this reason.
 
+## What an inbox holds
+
+An inbox is bounded by **size, not by a clock**. Mail is never deleted for its age — it does not
+become less yours for being old — and a full inbox refuses the *sender* rather than making room by
+throwing away what the holder already has. Deleting mail is what frees the space again. Sent copies
+count toward the total, because they occupy the same disk.
+
+| Inbox | Holds | Operator setting |
+| --- | --- | --- |
+| Anonymous `/k/`, minted by proof-of-work with no account | 5 MB | `ANONYMOUS_QUOTA_MB` |
+| Signed in, free | 20 MB | `FREE_QUOTA_MB` |
+| With a handle subscription | 1 GB | `PAID_QUOTA_MB` |
+
+The one exception to "nothing expires": an anonymous mailbox has nobody behind it — no one to warn,
+no one to bill, and no way to ask whether it is still wanted — so those are reclaimed. Anything with
+an account behind it is somebody's, and is bounded by the quota instead.
+
+> Those are the defaults on the hosted postbox. A **loft** you run yourself is a different service
+> with a different rule: it retains for `retention_days`, 30 by default.
+
 ## Three ways to get one
 
 | Route | Example | Cost |
