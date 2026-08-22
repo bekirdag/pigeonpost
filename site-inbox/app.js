@@ -93,6 +93,12 @@
   function signOut() {
     [K.token, K.refresh, K.verifier, K.state, K.identity].forEach((k) => LS.removeItem(k));
     stopLive();
+    // The stream cursor and the fallback verdict belong to the account that was signed in, not to
+    // the browser. Hiding a tab must keep them — resuming from the cursor is the whole point — but
+    // signing out and back in as somebody else must not, or the next account's stream starts after
+    // a row number that means nothing in its mailbox, and one postbox's buffering proxy has
+    // condemned another to long-polling.
+    resetLive();
     state = freshState();
     const banner = $("offline-banner");
     if (banner) banner.hidden = true;
@@ -1759,6 +1765,12 @@
   // Silence longer than this means nothing is coming through — the server keep-alives every 15s.
   const LIVE_SILENCE_MS = 45000;
   let liveStrikes = 0;
+
+  function resetLive() {
+    liveCursor = null;
+    pollFallback = false;
+    liveStrikes = 0;
+  }
 
   function stopLive() {
     liveWanted = false;
