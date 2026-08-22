@@ -530,7 +530,23 @@ per-client state and a daemon that slept for an hour resumes with no gap and not
 stream opened without an id starts at *now*: a daemon connecting for the first time wants what
 happens next, not a replay of everything the account ever received.
 
-`GET /v1/inbox?wait=N` still long-polls, unchanged.
+The stream authenticates like every other route: an **account API key** in `Authorization`. A
+capability token is refused with `use_api_key`, because the stream covers every mailbox on the
+account and a token bound to one mailbox is not a credential for the rest of them.
+
+`GET /v1/inbox?wait=N` still long-polls, unchanged. Keep it as the fallback rather than as a
+migration you finish: a postbox older than this route answers 404, and a proxy that buffers the
+response body will accept the connection, return 200, and then deliver nothing — a client that
+looks connected and never updates, which is worse than one that admits it is polling. The server
+sends a keep-alive every 15 seconds, so silence much past that is not quiet, it is broken.
+
+### In a browser
+
+`EventSource` cannot set a request header, and this stream needs one. Putting the token in the
+query string instead would leave it in proxy logs and browser history, so read the stream with
+`fetch` and parse the frames — it is about thirty lines, and it also gives you an `AbortController`
+that actually stops the stream when a tab is hidden. `site-inbox/app.js` does exactly this, and the
+`last_event_id` query parameter exists for clients that genuinely cannot set the header.
 
 ## The daemon
 
