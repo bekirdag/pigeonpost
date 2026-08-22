@@ -34,6 +34,12 @@ Live setup (SSH `-p 34251 root@159.69.201.24`):
   `pigeonpost-postbox-reaper` (`--reaper`), sharing `/opt/pigeonpost-postbox/data`.
 - Apache vhost `pigeonpost-postbox.conf` proxies `postbox.` + `mcp.pigeonpost.dev` → `127.0.0.1:8990`
   (always `apache2ctl configtest` before reload); `certbot --apache` issued the cert + HTTP→HTTPS.
+  The `ProxyPass` line carries **`flushpackets=on`** and the reason is `GET /v1/events`: without it
+  `mod_proxy_http` may hold the response body in its own buffer, so a Server-Sent Events stream is
+  accepted, answered 200, and then delivers nothing until enough has accumulated to flush. A client
+  cannot tell that apart from a quiet mailbox, which is why the web app treats silence past the
+  15-second keep-alive as a broken stream and goes back to long-polling. `timeout=120` stays: the
+  keep-alive is well inside it, so an idle stream is never mistaken for a dead backend.
 - **Redeploy:** rsync the tree, rebuild the image, `docker rm -f` + re-`docker run` both containers.
   Data and TLS persist.
 

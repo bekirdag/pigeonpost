@@ -11,11 +11,11 @@ rust-version.workspace = true
 publish = false
 
 [dependencies]
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.8" }
-pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.7.8" }
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.8", default-features = false, features = ["client"] }
-pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.8", default-features = false, features = ["client"] }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.8", default-features = false, features = ["client"] }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.9" }
+pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.7.9" }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.9", default-features = false, features = ["client"] }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.9", default-features = false, features = ["client"] }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.9", default-features = false, features = ["client"] }
 rusqlite = { version = "0.32", features = ["bundled", "hooks"] }
 ed25519-dalek.workspace = true
 fs2 = "0.4"
@@ -39,8 +39,8 @@ winapi-util = "0.1.11"
 windows-permissions = "0.2.4"
 
 [dev-dependencies]
-pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.8", features = ["server", "test-utilities"] }
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.8", features = ["server"] }
+pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.9", features = ["server", "test-utilities"] }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.9", features = ["server"] }
 tokio = { version = "1", features = ["full"] }
 axum = "0.8"
 tempfile = "3"

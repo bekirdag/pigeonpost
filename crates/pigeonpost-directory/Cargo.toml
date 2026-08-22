@@ -38,9 +38,9 @@ server = [
 ]
 
 [dependencies]
-pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.8" }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.8", default-features = false }
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.8", default-features = false, optional = true }
+pigeonpost-core = { path = "../pigeonpost-core", version = "0.7.9" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.9", default-features = false }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.9", default-features = false, optional = true }
 axum = { version = "0.8", optional = true }
 http-body = { version = "1", optional = true }
 hyper = { version = "1", features = ["server", "http1", "http2"], optional = true }
@@ -69,8 +69,8 @@ winapi-util = { version = "0.1.11", optional = true }
 windows-permissions = { version = "0.2.4", optional = true }
 
 [dev-dependencies]
-pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.8" }
-pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.8", default-features = false, features = ["client", "server"] }
+pigeonpost-loft = { path = "../pigeonpost-loft", version = "0.7.9" }
+pigeonpost-registry = { path = "../pigeonpost-registry", version = "0.7.9", default-features = false, features = ["client", "server"] }
 tokio = { version = "1", features = ["full"] }
 tempfile = "3"
 
