@@ -89,6 +89,33 @@ const THREADS = [
 
 const ARCHIVED = new Set();
 const calls = [];
+// The live stream. `push` feeds it frames the way the server writes them; the reader stays open
+// until the app aborts it, which is what a real stream does.
+const EVENTS = {
+  mode: "absent",
+  opened: [],
+  queue: [],
+  wake: null,
+  push(frame) {
+    this.queue.push(frame);
+    if (this.wake) { const w = this.wake; this.wake = null; w(); }
+  },
+  body() {
+    const self = this;
+    const encoder = new TextEncoder();
+    return {
+      getReader() {
+        return {
+          async read() {
+            if (!self.queue.length) await new Promise((r) => { self.wake = r; });
+            return { value: encoder.encode(self.queue.shift()), done: false };
+          },
+        };
+      },
+    };
+  },
+};
+
 function fakeFetch(url, opts = {}) {
   const path = String(url).replace("https://postbox.pigeonpost.dev", "");
   calls.push({ path, method: opts.method || "GET", body: opts.body ? JSON.parse(opts.body) : null });
@@ -135,6 +162,17 @@ function fakeFetch(url, opts = {}) {
     if (b.archived) ARCHIVED.add(b.peer); else ARCHIVED.delete(b.peer);
     return json({ ok: true });
   }
+  // `GET /v1/events` is the live stream. `EVENTS.mode` picks which of the three real answers this
+  // run gets: a postbox that has the route, one that does not, and a capability token the route
+  // refuses. The last two are what the long poll exists for.
+  if (path.startsWith("/v1/events")) {
+    EVENTS.opened.push(path);
+    if (EVENTS.mode === "absent") return json({ error: "not_found" }, false, 404);
+    if (EVENTS.mode === "cap_token") {
+      return json({ error: "use_api_key", detail: "this endpoint needs an account API key" }, false, 400);
+    }
+    return Promise.resolve({ ok: true, status: 200, body: EVENTS.body() });
+  }
   if (path.startsWith("/v1/ack")) return json({ ok: true });
   if (path.startsWith("/v1/send")) return json({ message_id: "sent1", sent_copy_id: "copy1" }, true, 201);
   return json({ error: "not_found" }, false, 404);
@@ -161,6 +199,10 @@ window.matchMedia = (q) => ({
 });
 window.localStorage.setItem("ppi_token", "eyJfake.token.here");
 
+// Prod has the route, so that is what the main run exercises. The two answers that send the app
+// back to the long poll get a run of their own at the bottom of this file.
+EVENTS.mode = "live";
+
 window.eval(readFileSync(`${APP}/config.js`, "utf8"));
 window.eval(readFileSync(`${APP}/app.js`, "utf8"));
 
@@ -176,6 +218,41 @@ function check(label, actual, expected) {
 }
 
 await settle(150);
+
+console.log("\n— live mail —");
+// The stream is the inbox now. A build that quietly went back to holding a request open would
+// still pass every other check in this file, which is exactly why this one is here.
+check("the stream was opened", EVENTS.opened.length > 0, true);
+check("and the long poll was not", calls.some((c) => c.path.includes("wait=")), false);
+// The token goes in a header. `EventSource` cannot do that, which is the whole reason this app
+// reads the stream with fetch — and putting it in the query string instead would leak it into
+// every proxy log between here and the postbox.
+check("no token in the stream's URL", EVENTS.opened.some((p) => /token|Bearer|eyJ/.test(p)), false);
+
+const beforeMail = calls.filter((c) => c.path.startsWith("/v1/inbox")).length;
+EVENTS.push("event: mail\nid: 41\ndata: " + JSON.stringify({
+  event_id: 41, mailbox: "/k/cz6900v2h90vnwefj7g7ezvbh4",
+  message_id: "m9", sender: "/bekir/agent1", created_at: now,
+}) + "\n\n");
+await settle(120);
+check("mail on the stream refetches the mailbox",
+  calls.filter((c) => c.path.startsWith("/v1/inbox")).length > beforeMail, true);
+
+// The stream is per account; the screen is one mailbox. A sibling's mail changes nothing on it.
+const beforeSibling = calls.filter((c) => c.path.startsWith("/v1/inbox")).length;
+EVENTS.push("event: mail\nid: 42\ndata: " + JSON.stringify({
+  event_id: 42, mailbox: "/k/zz1111v2h90vnwefj7g7ezvbh9",
+  message_id: "m10", sender: "/bekir/agent1", created_at: now,
+}) + "\n\n");
+await settle(120);
+check("a sibling mailbox's mail is not refetched",
+  calls.filter((c) => c.path.startsWith("/v1/inbox")).length, beforeSibling);
+
+// The keep-alive is a comment line. It must not be mistaken for an event.
+const beforeKeepAlive = calls.filter((c) => c.path.startsWith("/v1/inbox")).length;
+EVENTS.push(":\n\n");
+await settle(80);
+check("a keep-alive is not mail", calls.filter((c) => c.path.startsWith("/v1/inbox")).length, beforeKeepAlive);
 
 console.log("\n— signed in —");
 check("signin hidden", $("signin").hidden, true);
@@ -570,6 +647,77 @@ check("both scrollers refuse sideways scroll", (css.match(/overflow-x:\s*hidden/
 check("viewport height has a fallback chain", /height:\s*100vh;[\s\S]{0,200}height:\s*100svh;[\s\S]{0,200}height:\s*100dvh;/.test(css), true);
 check("flex items may shrink below their longest word", /\.messages li \{[^}]*min-width:\s*0/s.test(css), true);
 check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
+
+console.log("\n— a postbox without the stream, and a network that comes and goes —");
+// A second app, because falling back is a decision made once at start-up and the first one already
+// made the other one. `use_api_key` is the answer a capability token gets from `/v1/events`; a
+// postbox older than the route answers 404. Neither may leave someone with a dead inbox.
+{
+  EVENTS.mode = "cap_token";
+  EVENTS.opened = [];
+  const calls2 = [];
+  let refuseContacts = false;
+  let refuseAll = false;
+  const dom2 = new JSDOM(readFileSync(`${APP}/index.html`, "utf8"), {
+    url: "https://inbox.pigeonpost.dev/", runScripts: "outside-only",
+    pretendToBeVisual: true, virtualConsole,
+  });
+  const w2 = dom2.window;
+  Object.defineProperty(w2, "crypto", { value: webcrypto, configurable: true });
+  w2.fetch = (url, opts) => {
+    const path = String(url).replace("https://postbox.pigeonpost.dev", "");
+    calls2.push(path);
+    // A request that never arrives is a TypeError from fetch, not an answer with a status. That
+    // difference is the whole of how the app tells weather from a decision.
+    if (refuseAll || (refuseContacts && path.startsWith("/v1/contacts"))) {
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }
+    return fakeFetch(url, opts);
+  };
+  w2.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  w2.localStorage.setItem("ppi_token", "eyJfake.token.here");
+  w2.eval(readFileSync(`${APP}/config.js`, "utf8"));
+  w2.eval(readFileSync(`${APP}/app.js`, "utf8"));
+  await settle(220);
+
+  const $2 = (id) => w2.document.getElementById(id);
+  check("it tries the stream first", EVENTS.opened.length > 0, true);
+  check("a refused stream falls back to the long poll", calls2.some((p) => p.includes("wait=")), true);
+  check("and the mailbox is still on screen", $2("threads").children.length > 0, true);
+  check("nothing is announced when it is working", $2("offline-banner").hidden, true);
+
+  $2("settings-btn").click();
+  await settle(60);
+  const contactsBefore = $2("contact-list").children.length;
+  check("the contact list was loaded", contactsBefore > 0, true);
+
+  // One route failing is not being offline. `/v1/contacts` used to empty the contact list on any
+  // failure at all, so a blip left the browser deciding that everything the account had configured
+  // was gone — no aliases, no admission rules — while the postbox was answering perfectly well.
+  refuseContacts = true;
+  $2("settings-close").click();
+  $2("identity-btn").click();
+  await settle(60);
+  const other = [...$2("identity-menu").querySelectorAll("li button, li")].find(
+    (el) => /docdex/.test(el.textContent || ""));
+  if (other) other.click();
+  await settle(220);
+  $2("settings-btn").click();
+  await settle(60);
+  check("contacts it could not refetch are still there", $2("contact-list").children.length, contactsBefore);
+  check("and one failed route is not called offline", $2("offline-banner").hidden, true);
+  $2("settings-close").click();
+
+  // Losing the network is. Nothing arrives, so nothing is refuted, so what is on screen stays on
+  // screen — behind a banner that stops the page claiming to be current.
+  const onScreen = $2("threads").children.length;
+  check("there is a mailbox on screen to keep", onScreen > 0, true);
+  refuseAll = true;
+  w2.document.dispatchEvent(new w2.Event("visibilitychange"));
+  await settle(200);
+  check("offline says so, quietly", $2("offline-banner").hidden, false);
+  check("and holds what was loaded", $2("threads").children.length, onScreen);
+}
 
 console.log(`\n${errors.length} script error(s)`);
 errors.forEach((e) => console.log("  " + e.split("\n")[0]));

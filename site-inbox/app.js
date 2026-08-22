@@ -92,8 +92,10 @@
 
   function signOut() {
     [K.token, K.refresh, K.verifier, K.state, K.identity].forEach((k) => LS.removeItem(k));
-    stopPolling();
+    stopLive();
     state = freshState();
+    const banner = $("offline-banner");
+    if (banner) banner.hidden = true;
     render();
   }
 
@@ -357,6 +359,7 @@
       archived: new Set(), // peers filed out of sight, from the server so it holds across devices
       viewingArchive: false,
       vocabulary: null,  // which verbs may be granted, per the server
+      offline: false,    // the last attempt to reach the postbox did not arrive
     };
   }
 
@@ -1507,7 +1510,7 @@
   }
 
   async function switchIdentity(identity) {
-    stopPolling();
+    stopLive();
     LS.setItem(K.identity, identity.address);
     state.me = { address: identity.address, handle: identity.handle };
     state.openPeer = null;
@@ -1517,10 +1520,10 @@
     renderIdentityMenu();
     render();
     await loadAll();
-    startPolling();
+    startLive();
   }
 
-  // ---- loading and polling ------------------------------------------------------------------
+  // ---- loading -------------------------------------------------------------------------------
 
   async function loadIdentities() {
     const { identities } = await api("/v1/identities");
@@ -1584,10 +1587,19 @@
     // polling agent wants only what is new, so acknowledged mail leaves its listing. A person
     // reading a thread wants the thread — hiding a message the moment it was acknowledged would
     // make conversations lose their own history as they are read.
-    const body = await api(
-      withIdentity("/v1/inbox") + "&include_sent=true&include_read=true",
-      { signal },
-    );
+    let body;
+    try {
+      body = await api(
+        withIdentity("/v1/inbox") + "&include_sent=true&include_read=true",
+        { signal },
+      );
+    } catch (e) {
+      // Still thrown — a caller that wants to sign out on a 401 needs to see it. This only records
+      // that the postbox was not reached, which every caller of this would otherwise swallow.
+      if (!(e instanceof ApiError)) setOffline(true);
+      throw e;
+    }
+    setOffline(false);
     adopt(body);
   }
 
@@ -1598,15 +1610,27 @@
     Pending.reconcile(new Set(state.inbound.map((m) => m.message_id)));
   }
 
+  // A server that answered is a fact; a request that never arrived is weather.
+  //
+  // These three used to empty their slice of the state on any failure, which is right for the
+  // first case — a postbox without the route genuinely has no threads — and wrong for the second,
+  // where it threw away a perfectly good copy of something that had not changed. On a train that
+  // is a browser that blanks its own contact list and its own archive, so filed conversations
+  // reappear in the inbox, while the phone beside it holds still. `api` throws `ApiError` only
+  // when the server answered; anything else is the network.
+  const answered = (e) => e instanceof ApiError;
+
   async function loadThreads() {
     try {
       const body = await api(withIdentity("/v1/threads"));
       state.serverThreads = body.threads || [];
-    } catch (_) {
+      setOffline(false);
+    } catch (e) {
       // A postbox that does not know about threads yet answers 404/501 here. Everything still
       // works: threads are then whatever the messages themselves say, and a peer with one
       // conversation — which is all such a postbox can produce — shows no thread list at all.
-      state.serverThreads = [];
+      if (answered(e)) state.serverThreads = [];
+      else setOffline(true);
     }
   }
 
@@ -1616,8 +1640,10 @@
       state.contacts = body.contacts || [];
       state.vocabulary = body.vocabulary || null;
       state.policy = body.policy || state.policy;
-    } catch (_) {
-      state.contacts = [];
+      setOffline(false);
+    } catch (e) {
+      if (answered(e)) state.contacts = [];
+      else setOffline(true);
     }
   }
 
@@ -1625,12 +1651,26 @@
     try {
       const body = await api(withIdentity("/v1/archive"));
       state.archived = new Set(body.archived || []);
-    } catch (_) {
+      setOffline(false);
+    } catch (e) {
       // An archive we could not read must not hide anything: failing open shows a conversation
       // that should have been filed, failing closed hides one that should not be. Only one of
       // those loses mail.
-      state.archived = new Set();
+      if (answered(e)) state.archived = new Set();
+      else setOffline(true);
     }
+  }
+
+  // The banner, not a dialog and not an empty screen: what is loaded stays readable and stays
+  // scrollable, and the one thing that changes is that the page stops claiming to be current.
+  // Sending is still allowed — the composer's own failure path is what says a message did not go,
+  // and it says it about that message rather than about the whole app.
+  function setOffline(off) {
+    const next = Boolean(off);
+    if (state.offline === next) return;
+    state.offline = next;
+    const el = $("offline-banner");
+    if (el) el.hidden = !next;
   }
 
   // ---- archive --------------------------------------------------------------------------------
@@ -1669,8 +1709,175 @@
     }
   }
 
-  // Long-poll: the postbox holds the request open until mail lands or the budget runs out, so this
-  // is a live inbox without a socket and without hammering the server.
+  // ---- live mail -------------------------------------------------------------------------------
+  //
+  // `GET /v1/events` is a Server-Sent Events stream carrying metadata only — which mailbox got
+  // mail, from whom, when — and no bodies. One stream per account rather than a held request per
+  // mailbox, which is what `pigeonpost agentd` already holds.
+  //
+  // Read with `fetch`, not `EventSource`. Not a preference: `EventSource` cannot set a header, and
+  // this stream authenticates with the same bearer token as every other call. The alternative is
+  // the access token in the query string, where it lands in proxy logs and browser history, and
+  // that is not a trade worth a shorter function. What `EventSource` gives — frame parsing and
+  // `Last-Event-ID` resume — is about thirty lines, and doing it here means an `AbortController`
+  // that actually stops the stream.
+  //
+  // The long poll below stays as the fallback, and reaching it is not an edge case. A postbox
+  // older than this route answers 404 and a capability token is refused with `use_api_key`; both
+  // say so and are easy. The third is the one worth the code: a proxy that buffers the response
+  // body accepts the connection, returns 200, and then delivers nothing — an inbox that looks
+  // connected and never updates, which is worse than one that admits it is polling. The server
+  // sends a keep-alive every 15 seconds, so silence longer than that is not quiet, it is broken.
+
+  let live = null;             // AbortController for the open stream, if any
+  let liveCursor = null;       // last event id seen, so a reconnect resumes rather than replays
+  let liveWanted = false;      // whether we should be streaming at all
+  let pollFallback = false;    // the stream is unusable here; the long poll is the inbox
+  // Hiding a tab and showing it again is two events with real time between them, but not always
+  // enough for the aborted loop to have unwound. The generation is what makes the old one stop
+  // instead of racing the new one over the same cursor.
+  let liveGen = 0;
+  // Silence longer than this means nothing is coming through — the server keep-alives every 15s.
+  const LIVE_SILENCE_MS = 45000;
+  let liveStrikes = 0;
+
+  function stopLive() {
+    liveWanted = false;
+    liveGen += 1;
+    if (live) live.abort();
+    live = null;
+    stopPolling();
+  }
+
+  function startLive() {
+    if (liveWanted || !state.me) return;
+    liveWanted = true;
+    if (pollFallback) { startPolling(); return; }
+    runLive(++liveGen);
+  }
+
+  async function runLive(gen) {
+    let backoff = 1000;
+    let renewals = 0;
+    while (liveWanted && gen === liveGen && !pollFallback) {
+      live = new AbortController();
+      try {
+        // The cursor goes in the query as well as the header. The server offers it precisely
+        // because not every client can set headers, and sending both costs nothing.
+        const path = "/v1/events" + (liveCursor === null ? "" : "?last_event_id=" + encodeURIComponent(liveCursor));
+        const res = await fetch(cfg.postbox + path, {
+          headers: Object.assign(
+            { authorization: `Bearer ${getToken()}`, accept: "text/event-stream" },
+            liveCursor === null ? {} : { "last-event-id": String(liveCursor) },
+          ),
+          signal: live.signal,
+        });
+        // One renewal per expiry, not one per answer. A token the server keeps refusing after a
+        // successful refresh is a disagreement no amount of refreshing settles, and retrying it in
+        // a tight loop is how a client turns its own bug into the server's outage.
+        if (res.status === 401) {
+          if (renewals < 1 && (await renewSession())) { renewals += 1; continue; }
+          signOut();
+          return;
+        }
+        renewals = 0;
+        // 404 is a postbox without the route; `use_api_key` is a capability token, which this
+        // stream does not accept. Neither gets better by retrying.
+        if (res.status === 404 || res.status === 400 || res.status === 403) {
+          pollFallback = true;
+          break;
+        }
+        if (!res.ok || !res.body) throw new Error("events " + res.status);
+
+        setOffline(false);
+        // Mail can land between the listing that drew the screen and the stream opening, and the
+        // server starts a cursor-less stream at *now*. One refresh on connect closes that gap.
+        loadInbox().then(render).catch(() => {});
+        backoff = 1000;
+
+        // Armed on every byte, keep-alive included, so it measures the stream rather than the mail.
+        let silent = false;
+        let watchdog = null;
+        const controller = live;
+        const rearm = () => {
+          if (watchdog) clearTimeout(watchdog);
+          watchdog = setTimeout(() => { silent = true; controller.abort(); }, LIVE_SILENCE_MS);
+        };
+        rearm();
+        try {
+          await readEventStream(res.body, rearm, (event, id, data) => {
+            if (id !== null) liveCursor = id;
+            if (event !== "mail") return;
+            // The stream is per account and the screen shows one mailbox. Refreshing for a sibling
+            // mailbox's mail would be a fetch that changes nothing.
+            let mailbox = null;
+            try { mailbox = JSON.parse(data).mailbox; } catch (_) { /* a shape we do not know */ }
+            if (mailbox && state.me && mailbox !== state.me.address) return;
+            loadInbox().then(render).catch(() => {});
+          });
+        } catch (e) {
+          // The watchdog aborts by design, so its own abort is not a network failure and must not
+          // be reported as one. Anything else is.
+          if (!silent) throw e;
+        } finally {
+          if (watchdog) clearTimeout(watchdog);
+        }
+        if (!liveWanted || gen !== liveGen) return;
+        // Twice, not once: one silent stream is a bad minute, two in a row is this network.
+        if (silent) {
+          if (++liveStrikes >= 2) { pollFallback = true; break; }
+        } else {
+          liveStrikes = 0;
+        }
+        // A stream that ended without an error is a middlebox or a restarted server. Reconnect
+        // from the cursor, which is the whole point of keeping one.
+      } catch (e) {
+        if (!liveWanted || gen !== liveGen) return;
+        setOffline(true);
+        await new Promise((r) => setTimeout(r, backoff));
+        backoff = Math.min(backoff * 2, 30000);
+      }
+    }
+    live = null;
+    if (liveWanted && gen === liveGen && pollFallback) startPolling();
+  }
+
+  // A minimal SSE reader: frames separated by a blank line, `id:`/`event:`/`data:` fields, `data:`
+  // repeatable and joined with newlines. Comment lines (`:`) are the keep-alive and are dropped.
+  async function readEventStream(body, onActivity, onEvent) {
+    const reader = body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      onActivity();
+      buffer += decoder.decode(value, { stream: true });
+      let cut;
+      while ((cut = buffer.indexOf("\n\n")) !== -1) {
+        const frame = buffer.slice(0, cut);
+        buffer = buffer.slice(cut + 2);
+        let event = "message";
+        let id = null;
+        const data = [];
+        for (const raw of frame.split("\n")) {
+          const line = raw.endsWith("\r") ? raw.slice(0, -1) : raw;
+          if (!line || line.startsWith(":")) continue;
+          const at = line.indexOf(":");
+          const field = at === -1 ? line : line.slice(0, at);
+          let value2 = at === -1 ? "" : line.slice(at + 1);
+          if (value2.startsWith(" ")) value2 = value2.slice(1);
+          if (field === "event") event = value2;
+          else if (field === "data") data.push(value2);
+          else if (field === "id" && /^\d+$/.test(value2)) id = Number(value2);
+        }
+        if (data.length || id !== null) onEvent(event, id, data.join("\n"));
+      }
+    }
+  }
+
+  // The fallback. The postbox holds the request open until mail lands or the budget runs out, so
+  // this is a live inbox without a socket and without hammering the server.
   let polling = false;
   let pollController = null;
 
@@ -1699,6 +1906,7 @@
           + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
         if (!polling) break;
+        setOffline(false);
         const before = state.inbound.length;
         adopt(body);
         if (state.inbound.length !== before) render();
@@ -1708,6 +1916,7 @@
         if (!polling) break;
         if (e instanceof ApiError && e.status === 401) { signOut(); return; }
         // Anything else — offline, proxy hiccup — is temporary. Back off rather than spin.
+        if (!(e instanceof ApiError)) setOffline(true);
         await new Promise((r) => setTimeout(r, backoff));
         backoff = Math.min(backoff * 2, 30000);
       }
@@ -2075,12 +2284,25 @@
       if (e.key === "Escape" && state.openPeer) closeThread();
     });
 
-    // Coming back to a backgrounded tab should show current mail, not a stale view.
+    // A hidden tab holds nothing open. A stream a phone has backgrounded is a socket the browser
+    // will freeze or drop anyway, and reopening from the cursor on the way back loses nothing —
+    // that is what `Last-Event-ID` is for.
     document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible" && getToken() && state.me) {
+      if (!getToken() || !state.me) return;
+      if (document.visibilityState === "visible") {
+        // Current mail, not a stale view, before the stream has said anything.
         loadInbox().then(render).catch(() => {});
+        startLive();
+      } else {
+        stopLive();
       }
     });
+
+    // The browser knows before a request has to time out to find it.
+    window.addEventListener("online", () => {
+      if (getToken() && state.me && document.visibilityState === "visible") startLive();
+    });
+    window.addEventListener("offline", () => setOffline(true));
 
     $("send-btn").disabled = true;
   }
@@ -2130,7 +2352,7 @@
             if (state.me) {
               renderMe();
               await loadAll();
-              startPolling();
+              startLive();
             }
           } catch (err) {
             create.disabled = false;
@@ -2143,7 +2365,7 @@
       }
       renderMe();
       await loadAll();
-      startPolling();
+      startLive();
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         signOut();

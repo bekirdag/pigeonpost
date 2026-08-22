@@ -63,6 +63,11 @@
       <div class="search">
         <input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search conversations">
       </div>
+      <!-- Not an error and not a dialog: what is loaded stays on screen and stays readable, and
+           this is the page admitting it may no longer be current. -->
+      <p class="offline-banner" id="offline-banner" role="status" hidden>
+        Offline — showing what was last loaded.
+      </p>
       <div class="archive-banner" id="archive-banner" hidden>
         <span>Archived conversations</span>
         <button id="archive-exit" class="linkish" type="button">Back to inbox</button>
