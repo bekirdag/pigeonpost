@@ -223,6 +223,31 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS devices_by_mailbox ON devices(mailbox);
 
+-- Attachments: what a file is, and which message carries it.
+--
+-- The bytes live on disk, content-addressed (see `blobs.rs`); this is everything else. `sha256` is
+-- the only link between the two, and several rows may share one — the same file sent to three
+-- mailboxes is stored once and claimed three times.
+--
+-- `message_id` is the claim. An attachment with none is an upload that was never sent: reachable
+-- only by the mailbox that made it, and swept later. That two-step exists because a file has to be
+-- uploaded before the message that carries it can name it.
+CREATE TABLE IF NOT EXISTS attachments (
+    id          TEXT PRIMARY KEY,
+    sha256      TEXT NOT NULL,
+    bytes       INTEGER NOT NULL,
+    media_type  TEXT NOT NULL,
+    filename    TEXT NOT NULL,
+    -- The mailbox that uploaded it. Kept after the claim is made, because deleting a message must
+    -- release only that mailbox's copy.
+    owner       TEXT NOT NULL,
+    message_id  TEXT,
+    created_at  INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS attachments_by_message ON attachments(message_id);
+CREATE INDEX IF NOT EXISTS attachments_by_owner ON attachments(owner);
+CREATE INDEX IF NOT EXISTS attachments_by_sha ON attachments(sha256);
+
 -- App Store subscriptions that bought a namespace.
 --
 -- Keyed on Apple's *original* transaction id, which is the identity of the subscription rather than
@@ -352,6 +377,31 @@ pub enum ProviderClaimRefusal {
     DifferentPerson,
     /// Already proved, by another Pigeonpost account.
     HeldByAnotherAccount,
+}
+
+/// A short random id, for rows this module mints itself.
+///
+/// Local rather than reaching into `main`: the store is the layer that owns its own primary keys,
+/// and a recipient's copy of an attachment is a row nobody outside this file asks for by name.
+fn random_hex(bytes: usize) -> String {
+    let mut buf = vec![0u8; bytes];
+    rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut buf);
+    buf.iter().fold(String::new(), |mut out, b| {
+        use std::fmt::Write;
+        let _ = write!(out, "{b:02x}");
+        out
+    })
+}
+
+/// One attachment, as everything but its bytes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Attachment {
+    pub id: String,
+    pub sha256: String,
+    pub bytes: i64,
+    pub media_type: String,
+    pub filename: String,
+    pub message_id: Option<String>,
 }
 
 /// What a mailbox is allowed, and whether it expires.
@@ -954,6 +1004,230 @@ impl Store {
             } else {
                 Tier::Free
             })
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Record an upload. Unclaimed until a message names it.
+    #[allow(clippy::too_many_arguments)]
+    pub async fn add_attachment(
+        &self,
+        id: String,
+        sha256: String,
+        bytes: i64,
+        media_type: String,
+        filename: String,
+        owner: String,
+        now: u64,
+    ) -> Result<(), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT INTO attachments
+                     (id, sha256, bytes, media_type, filename, owner, message_id, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, NULL, ?7)",
+                params![id, sha256, bytes, media_type, filename, owner, now as i64],
+            )?;
+            Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Bind uploads to the message that carries them, and copy each row for the recipient.
+    ///
+    /// A copy rather than a shared row, because the two sides own their copies independently: the
+    /// recipient deleting a message must not remove the attachment from the sender's sent copy.
+    /// The bytes are shared regardless — both rows carry the same `sha256`.
+    ///
+    /// Only the uploader's own unclaimed rows are bound. Naming somebody else's upload id, or one
+    /// already spent, binds nothing rather than stealing it.
+    pub async fn attach_to_message(
+        &self,
+        ids: Vec<String>,
+        owner: String,
+        message_id: String,
+        recipient_copy: Option<(String, String)>,
+        now: u64,
+    ) -> Result<usize, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<usize, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let mut bound = 0usize;
+            for id in ids {
+                let row: Option<(String, i64, String, String)> = tx
+                    .query_row(
+                        "SELECT sha256, bytes, media_type, filename FROM attachments
+                          WHERE id = ?1 AND owner = ?2 AND message_id IS NULL",
+                        params![id, owner],
+                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+                    )
+                    .optional()?;
+                let Some((sha256, bytes, media_type, filename)) = row else {
+                    continue;
+                };
+                tx.execute(
+                    "UPDATE attachments SET message_id = ?2 WHERE id = ?1",
+                    params![id, message_id],
+                )?;
+                bound += 1;
+                if let Some((recipient, recipient_message)) = &recipient_copy {
+                    tx.execute(
+                        "INSERT INTO attachments
+                             (id, sha256, bytes, media_type, filename, owner, message_id, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                        params![
+                            format!("att_{}", random_hex(12)),
+                            sha256,
+                            bytes,
+                            media_type,
+                            filename,
+                            recipient,
+                            recipient_message,
+                            now as i64
+                        ],
+                    )?;
+                }
+            }
+            tx.commit()?;
+            Ok(bound)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The attachments on a set of messages, for whoever owns those messages.
+    pub async fn attachments_for(
+        &self,
+        owner: String,
+        message_ids: Vec<String>,
+    ) -> Result<Vec<Attachment>, StoreError> {
+        if message_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Attachment>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let places = vec!["?"; message_ids.len()].join(",");
+            let sql = format!(
+                "SELECT id, sha256, bytes, media_type, filename, message_id FROM attachments
+                  WHERE owner = ? AND message_id IN ({places}) ORDER BY created_at"
+            );
+            let mut stmt = c.prepare(&sql)?;
+            let mut binds: Vec<&dyn rusqlite::ToSql> = vec![&owner];
+            for id in &message_ids {
+                binds.push(id);
+            }
+            let rows = stmt.query_map(binds.as_slice(), |r| {
+                Ok(Attachment {
+                    id: r.get(0)?,
+                    sha256: r.get(1)?,
+                    bytes: r.get(2)?,
+                    media_type: r.get(3)?,
+                    filename: r.get(4)?,
+                    message_id: r.get(5)?,
+                })
+            })?;
+            rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// One attachment, if this mailbox owns it.
+    ///
+    /// Ownership is the whole authorisation. An attachment id is not a secret — it travels in a
+    /// listing — so without this clause knowing one would be enough to read somebody else's file.
+    pub async fn attachment_for(
+        &self,
+        owner: String,
+        id: String,
+    ) -> Result<Option<Attachment>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<Attachment>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            c.query_row(
+                "SELECT id, sha256, bytes, media_type, filename, message_id FROM attachments
+                  WHERE id = ?1 AND owner = ?2",
+                params![id, owner],
+                |r| {
+                    Ok(Attachment {
+                        id: r.get(0)?,
+                        sha256: r.get(1)?,
+                        bytes: r.get(2)?,
+                        media_type: r.get(3)?,
+                        filename: r.get(4)?,
+                        message_id: r.get(5)?,
+                    })
+                },
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// What this mailbox's attachments occupy. Counted into the quota beside the messages, because
+    /// a mailbox holding a gigabyte of video is using a gigabyte whatever the message bodies say.
+    pub async fn attachment_bytes(&self, owner: String) -> Result<u64, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<u64, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let total: i64 = c.query_row(
+                "SELECT COALESCE(SUM(bytes), 0) FROM attachments WHERE owner = ?1",
+                params![owner],
+                |r| r.get(0),
+            )?;
+            Ok(total.max(0) as u64)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Release this mailbox's claims on a message's attachments, and say which blobs nothing
+    /// refers to any more.
+    ///
+    /// The caller deletes those from disk. Doing it here would mean holding the database lock
+    /// across filesystem work, and a blob that outlives its rows is recoverable while a row that
+    /// outlives its blob is a download that fails for ever.
+    pub async fn release_attachments(
+        &self,
+        owner: String,
+        message_id: String,
+    ) -> Result<Vec<String>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<String>, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let shas: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT sha256 FROM attachments WHERE owner = ?1 AND message_id = ?2",
+                )?;
+                let rows = stmt.query_map(params![owner, message_id], |r| r.get(0))?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            };
+            tx.execute(
+                "DELETE FROM attachments WHERE owner = ?1 AND message_id = ?2",
+                params![owner, message_id],
+            )?;
+            // Only the ones nothing else claims. The same file may be in another mailbox.
+            let mut orphaned = Vec::new();
+            for sha in shas {
+                let still: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM attachments WHERE sha256 = ?1",
+                    params![sha],
+                    |r| r.get(0),
+                )?;
+                if still == 0 {
+                    orphaned.push(sha);
+                }
+            }
+            tx.commit()?;
+            Ok(orphaned)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -2576,6 +2850,185 @@ mod wildcard_tests {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Who may read whose file. An attachment id travels in a listing, so it is not a secret —
+    /// the row naming a mailbox is the whole authorisation.
+    mod attachments {
+        use super::*;
+
+        async fn uploaded(store: &Store, owner: &str, id: &str, sha: &str, bytes: i64) {
+            store
+                .add_attachment(
+                    id.into(),
+                    sha.into(),
+                    bytes,
+                    "application/pdf".into(),
+                    "report.pdf".into(),
+                    owner.into(),
+                    100,
+                )
+                .await
+                .unwrap();
+        }
+
+        #[tokio::test]
+        async fn an_upload_is_unclaimed_until_a_message_names_it() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 10).await;
+            // Readable by its uploader immediately — they have to be able to attach it.
+            assert!(s
+                .attachment_for("/k/me".into(), "att_1".into())
+                .await
+                .unwrap()
+                .is_some());
+            // But on no message yet, so no listing carries it.
+            assert!(s
+                .attachments_for("/k/me".into(), vec!["m1".into()])
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        #[tokio::test]
+        async fn sending_gives_the_recipient_a_row_of_their_own() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 10).await;
+            let bound = s
+                .attach_to_message(
+                    vec!["att_1".into()],
+                    "/k/me".into(),
+                    "sent_1".into(),
+                    Some(("/k/you".into(), "delivered_1".into())),
+                    200,
+                )
+                .await
+                .unwrap();
+            assert_eq!(bound, 1);
+
+            let mine = s
+                .attachments_for("/k/me".into(), vec!["sent_1".into()])
+                .await
+                .unwrap();
+            let theirs = s
+                .attachments_for("/k/you".into(), vec!["delivered_1".into()])
+                .await
+                .unwrap();
+            assert_eq!(mine.len(), 1);
+            assert_eq!(theirs.len(), 1);
+            // Two rows, one file: the bytes are shared and stored once.
+            assert_eq!(mine[0].sha256, theirs[0].sha256);
+            assert_ne!(mine[0].id, theirs[0].id);
+        }
+
+        #[tokio::test]
+        async fn a_stranger_cannot_read_a_file_by_knowing_its_id() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 10).await;
+            assert!(s
+                .attachment_for("/k/stranger".into(), "att_1".into())
+                .await
+                .unwrap()
+                .is_none());
+        }
+
+        /// The attack this guards: naming somebody else's upload on your own send.
+        #[tokio::test]
+        async fn one_mailbox_cannot_attach_another_mailboxs_upload() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/victim", "att_1", "a".repeat(64).as_str(), 10).await;
+            let bound = s
+                .attach_to_message(
+                    vec!["att_1".into()],
+                    "/k/thief".into(),
+                    "sent_1".into(),
+                    Some(("/k/accomplice".into(), "delivered_1".into())),
+                    200,
+                )
+                .await
+                .unwrap();
+            assert_eq!(bound, 0);
+            assert!(s
+                .attachments_for("/k/accomplice".into(), vec!["delivered_1".into()])
+                .await
+                .unwrap()
+                .is_empty());
+        }
+
+        /// And using one upload twice, which would put one paid-for file on many messages.
+        #[tokio::test]
+        async fn an_upload_can_only_be_spent_once() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 10).await;
+            assert_eq!(
+                s.attach_to_message(
+                    vec!["att_1".into()],
+                    "/k/me".into(),
+                    "sent_1".into(),
+                    None,
+                    200
+                )
+                .await
+                .unwrap(),
+                1
+            );
+            assert_eq!(
+                s.attach_to_message(
+                    vec!["att_1".into()],
+                    "/k/me".into(),
+                    "sent_2".into(),
+                    None,
+                    300
+                )
+                .await
+                .unwrap(),
+                0
+            );
+        }
+
+        #[tokio::test]
+        async fn attachments_count_toward_what_a_mailbox_holds() {
+            let s = Store::open(":memory:").unwrap();
+            assert_eq!(s.attachment_bytes("/k/me".into()).await.unwrap(), 0);
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 1_000).await;
+            uploaded(&s, "/k/me", "att_2", "b".repeat(64).as_str(), 2_500).await;
+            assert_eq!(s.attachment_bytes("/k/me".into()).await.unwrap(), 3_500);
+            // Somebody else's files are not this mailbox's problem.
+            assert_eq!(s.attachment_bytes("/k/you".into()).await.unwrap(), 0);
+        }
+
+        /// Deleting frees the quota, and the bytes go only when the last claim does.
+        #[tokio::test]
+        async fn bytes_survive_until_the_last_mailbox_lets_go() {
+            let s = Store::open(":memory:").unwrap();
+            let sha = "c".repeat(64);
+            uploaded(&s, "/k/me", "att_1", &sha, 10).await;
+            s.attach_to_message(
+                vec!["att_1".into()],
+                "/k/me".into(),
+                "sent_1".into(),
+                Some(("/k/you".into(), "delivered_1".into())),
+                200,
+            )
+            .await
+            .unwrap();
+
+            // The sender deletes their copy: their quota is freed, the blob is not orphaned.
+            let orphaned = s
+                .release_attachments("/k/me".into(), "sent_1".into())
+                .await
+                .unwrap();
+            assert!(orphaned.is_empty(), "the recipient still has it");
+            assert_eq!(s.attachment_bytes("/k/me".into()).await.unwrap(), 0);
+            assert_eq!(s.attachment_bytes("/k/you".into()).await.unwrap(), 10);
+
+            // Now the recipient does too, and only now are the bytes unreferenced.
+            let orphaned = s
+                .release_attachments("/k/you".into(), "delivered_1".into())
+                .await
+                .unwrap();
+            assert_eq!(orphaned, vec![sha]);
+        }
+    }
 
     /// One purchase, one account, one name — and the ways round that, refused.
     mod apple {

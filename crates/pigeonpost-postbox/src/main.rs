@@ -52,6 +52,7 @@ use std::sync::Arc;
 use zeroize::Zeroize;
 
 mod appstore;
+mod blobs;
 mod github;
 mod mcp;
 mod oidc;
@@ -97,6 +98,10 @@ struct AppState {
     /// enough concurrent waiters that the wasted wakeups matter, that is the point to key it by
     /// recipient — not before.
     inbox_signal: Arc<tokio::sync::Notify>,
+    /// Where attachment bytes live, when this deployment has somewhere to put them. `None` closes
+    /// both attachment endpoints, so a postbox with no volume refuses files clearly rather than
+    /// accepting them and losing them.
+    blobs: Option<Arc<blobs::Blobs>>,
     /// The App Store, when this deployment can verify purchases. `None` closes the claim endpoint
     /// the same way an unconfigured namespace grant closes itself.
     appstore: Option<Arc<appstore::AppStore>>,
@@ -360,6 +365,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
+        blobs: blobs::Blobs::from_env().map(Arc::new),
     })
 }
 
@@ -447,6 +453,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/messages/delete", post(delete_message))
+        .route("/v1/attachments", post(upload_attachment))
+        .route("/v1/attachments/{id}", get(download_attachment))
         .route("/v1/quota", get(quota))
         .route("/v1/report-spam", post(report_spam))
         .route("/v1/events", get(events))
@@ -2445,11 +2453,19 @@ pub(crate) async fn do_send(
         .await
         .map_err(|_| ApiError::server("store_error"))?;
     let allowance = state.quota.bytes_for(tier);
+    // Messages and attachments together. A mailbox holding a gigabyte of video is using a
+    // gigabyte, whatever its message bodies add up to — counting only one of the two would make
+    // the quota a number about the wrong thing.
     let held = state
         .store
         .inbox_bytes(recipient.address.clone())
         .await
-        .map_err(|_| ApiError::server("store_error"))?;
+        .map_err(|_| ApiError::server("store_error"))?
+        + state
+            .store
+            .attachment_bytes(recipient.address.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
     if held >= allowance {
         return Err(ApiError::new(
             StatusCode::CONFLICT,
@@ -2599,7 +2615,13 @@ pub(crate) async fn do_send(
         });
     }
 
-    Ok(json!({ "message_id": message_id, "sent_copy_id": sent_copy_id }))
+    // The resolved address, not the spelling the caller used. `to` may be a handle, and anything
+    // filed against a handle would never be found again by a mailbox that knows itself as `/k/…`.
+    Ok(json!({
+        "message_id": message_id,
+        "sent_copy_id": sent_copy_id,
+        "recipient": recipient.address,
+    }))
 }
 
 /// Longest a caller may hold an inbox request open. Apache fronts this container with
@@ -2843,6 +2865,38 @@ pub(crate) async fn do_inbox(
             }));
         }
     }
+    // Attachments, in one query for the whole listing rather than one per message. A conversation
+    // with fifty messages should not cost fifty round trips to the database to find out that none
+    // of them carried a file.
+    let ids: Vec<String> = out
+        .iter()
+        .filter_map(|m| m["message_id"].as_str().map(str::to_string))
+        .collect();
+    if let Ok(files) = state.store.attachments_for(me.address.clone(), ids).await {
+        if !files.is_empty() {
+            let mut by_message: std::collections::HashMap<String, Vec<serde_json::Value>> =
+                std::collections::HashMap::new();
+            for file in files {
+                let Some(message_id) = file.message_id.clone() else {
+                    continue;
+                };
+                by_message.entry(message_id).or_default().push(json!({
+                    "id": file.id,
+                    "filename": file.filename,
+                    "media_type": file.media_type,
+                    "bytes": file.bytes,
+                }));
+            }
+            for message in out.iter_mut() {
+                if let Some(list) = message["message_id"]
+                    .as_str()
+                    .and_then(|id| by_message.remove(id))
+                {
+                    message["attachments"] = json!(list);
+                }
+            }
+        }
+    }
     Ok(json!({ "messages": out, "policy": policy_json(policy) }))
 }
 
@@ -2890,6 +2944,13 @@ struct SendReq {
     /// thread and naming a new one are different requests and honouring both would silently pick.
     #[serde(default)]
     thread: Option<String>,
+    /// Attachment ids from `POST /v1/attachments`, uploaded by this mailbox and not yet sent.
+    ///
+    /// Two steps rather than one multipart request: bytes and text have different sizes, different
+    /// failure modes and different retries, and an upload that succeeded should not have to happen
+    /// again because the message it belonged to was refused.
+    #[serde(default)]
+    attachments: Vec<String>,
 }
 
 /// `POST /v1/send` — seal a message to a hosted recipient and enqueue it.
@@ -2907,10 +2968,45 @@ async fn send(
         (None, Some(title)) => ThreadRequest::New(title.as_str()),
         (None, None) => ThreadRequest::Default,
     };
-    match do_send(&state, &me, &req.to, &req.body, thread).await {
-        Ok(v) => (StatusCode::CREATED, Json(v)).into_response(),
-        Err(e) => e.into_response(),
+    let sent = match do_send(&state, &me, &req.to, &req.body, thread).await {
+        Ok(v) => v,
+        Err(e) => return e.into_response(),
+    };
+
+    // After delivery, not before. An attachment bound to a message that was then refused would be
+    // spent — unclaimable by the retry, and counted against a quota for mail nobody received.
+    if !req.attachments.is_empty() {
+        let message_id = sent["message_id"].as_str().unwrap_or_default().to_string();
+        let sent_copy_id = sent["sent_copy_id"].as_str().map(str::to_string);
+        // The sender keeps their copy on the sent message; the recipient gets rows of their own
+        // against the delivered one, so either side can delete without touching the other.
+        let bound = state
+            .store
+            .attach_to_message(
+                req.attachments.clone(),
+                me.address.clone(),
+                sent_copy_id.clone().unwrap_or_else(|| message_id.clone()),
+                sent["recipient"]
+                    .as_str()
+                    .map(|to| (to.to_string(), message_id.clone())),
+                now_unix(),
+            )
+            .await;
+        match bound {
+            Ok(n) if n < req.attachments.len() => {
+                // Said rather than swallowed: the message went, and some of what was meant to be
+                // on it did not. Silence here is how somebody sends a report without its figures.
+                tracing::warn!(
+                    asked = req.attachments.len(),
+                    bound = n,
+                    "some attachments were not this sender's to attach"
+                );
+            }
+            Ok(_) => {}
+            Err(e) => tracing::error!(error = %e, "attaching files to a sent message failed"),
+        }
     }
+    (StatusCode::CREATED, Json(sent)).into_response()
 }
 
 #[derive(serde::Deserialize)]
@@ -4322,6 +4418,196 @@ async fn ack(
     }
 }
 
+/// `POST /v1/attachments` — store a file, and say what to call it in a send.
+///
+/// The bytes are the whole body; the metadata rides in headers. Not multipart: parsing multipart
+/// means either a dependency or a hand-written parser standing between the network and a
+/// filesystem, and neither is worth it for two strings.
+///
+/// The upload is unclaimed until a message names it. Until then it is reachable only by the
+/// mailbox that made it and counts against that mailbox's quota, which is what stops an upload
+/// endpoint from being free storage for anybody with a token.
+async fn upload_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: axum::body::Bytes,
+) -> Response {
+    let Some(blobs) = state.blobs.clone() else {
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let me = match acting_identity(
+        &state,
+        &headers,
+        header_str(&headers, "x-pigeonpost-identity"),
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    if body.is_empty() {
+        return ApiError::bad("empty_attachment", "an attachment needs bytes").into_response();
+    }
+    if body.len() > blobs.max_bytes() {
+        return ApiError::new(
+            StatusCode::PAYLOAD_TOO_LARGE,
+            "attachment_too_large",
+            format!(
+                "this postbox accepts attachments up to {} MB",
+                blobs.max_bytes() / 1024 / 1024
+            ),
+        )
+        .into_response();
+    }
+
+    // The same ceiling a message meets. An attachment is the larger half of what a mailbox holds,
+    // so exempting it would make the quota decorative.
+    let tier = match state.store.tier_of(me.address.clone(), now_unix()).await {
+        Ok(tier) => tier,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    let allowance = state.quota.bytes_for(tier);
+    let held = match (
+        state.store.inbox_bytes(me.address.clone()).await,
+        state.store.attachment_bytes(me.address.clone()).await,
+    ) {
+        (Ok(a), Ok(b)) => a + b,
+        _ => return ApiError::server("store_error").into_response(),
+    };
+    if held + body.len() as u64 > allowance {
+        return ApiError::new(
+            StatusCode::CONFLICT,
+            "mailbox_full",
+            format!(
+                "this mailbox holds {} MB of {} MB",
+                held / (1024 * 1024),
+                allowance / (1024 * 1024)
+            ),
+        )
+        .into_response();
+    }
+
+    let sha256 = match blobs.put(&body) {
+        Ok(sha) => sha,
+        Err(blobs::BlobError::TooLarge) => {
+            return ApiError::new(
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "attachment_too_large",
+                "too large",
+            )
+            .into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "could not store an attachment");
+            return ApiError::server("storage_error").into_response();
+        }
+    };
+
+    // Both are caller-supplied and both are treated as such: the type is narrowed to a set that
+    // cannot execute in a browser, and the name is stripped to something safe to echo.
+    let media_type =
+        blobs::safe_content_type(header_str(&headers, "x-pigeonpost-media-type").unwrap_or(""));
+    let filename =
+        blobs::safe_filename(header_str(&headers, "x-pigeonpost-filename").unwrap_or(""));
+    let id = format!("att_{}", rand_hex(12));
+
+    if let Err(e) = state
+        .store
+        .add_attachment(
+            id.clone(),
+            sha256,
+            body.len() as i64,
+            media_type.to_string(),
+            filename.clone(),
+            me.address.clone(),
+            now_unix(),
+        )
+        .await
+    {
+        tracing::error!(error = %e, "could not record an attachment");
+        return ApiError::server("store_error").into_response();
+    }
+    (
+        StatusCode::CREATED,
+        Json(json!({
+            "id": id,
+            "bytes": body.len(),
+            "media_type": media_type,
+            "filename": filename,
+        })),
+    )
+        .into_response()
+}
+
+/// `GET /v1/attachments/{id}` — the bytes, to whoever the row says may have them.
+///
+/// Ownership is the authorisation and there is no other check. An attachment id travels in a
+/// listing, so it is not a secret; what makes it safe is that a row exists naming *this* mailbox.
+/// Sender and recipient each hold their own row, which is why deleting one side's copy leaves the
+/// other's alone.
+async fn download_attachment(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> Response {
+    let Some(blobs) = state.blobs.clone() else {
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let me = match acting_identity(
+        &state,
+        &headers,
+        header_str(&headers, "x-pigeonpost-identity"),
+    )
+    .await
+    {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    let found = match state.store.attachment_for(me.address.clone(), id).await {
+        Ok(found) => found,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+    // Not yours and not there answer the same way, so this endpoint cannot be used to learn which
+    // attachment ids exist.
+    let Some(attachment) = found else {
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let Some(bytes) = blobs.get(&attachment.sha256) else {
+        tracing::error!(sha = %attachment.sha256, "an attachment row has no blob behind it");
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+
+    let mut response = Response::new(axum::body::Body::from(bytes));
+    let headers = response.headers_mut();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        attachment
+            .media_type
+            .parse()
+            .unwrap_or_else(|_| "application/octet-stream".parse().unwrap()),
+    );
+    // Never rendered in place, whatever the type says. These bytes came from another agent and are
+    // served from this API's own origin; a document that opened here would be running inside it.
+    headers.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        format!("attachment; filename=\"{}\"", attachment.filename)
+            .parse()
+            .unwrap_or_else(|_| "attachment".parse().unwrap()),
+    );
+    headers.insert("x-content-type-options", "nosniff".parse().unwrap());
+    // Content-addressed and immutable: the bytes at this id can never change.
+    headers.insert(
+        axum::http::header::CACHE_CONTROL,
+        "private, max-age=31536000, immutable".parse().unwrap(),
+    );
+    response
+}
+
+/// One header, as a string, when it is one.
+fn header_str<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers.get(name).and_then(|v| v.to_str().ok())
+}
+
 /// `POST /v1/messages/delete` — remove one message from the acting mailbox, for good.
 ///
 /// This exists because the quota does. Once a mailbox is bounded by size and never expires, a
@@ -4348,7 +4634,30 @@ async fn delete_message(
         // Not found is not an error worth distinguishing to the caller: deleting something twice
         // and deleting something that was never yours should look the same from outside, or the
         // endpoint answers questions about other people's mailboxes.
-        Ok(deleted) => Json(json!({ "deleted": deleted })).into_response(),
+        Ok(deleted) => {
+            // The files go with the message. Leaving them would mean deleting a photo from a
+            // conversation and still being charged for it — and a quota that counts bytes nobody
+            // can reach is a quota that can only be escaped by abandoning the mailbox.
+            if deleted {
+                match state
+                    .store
+                    .release_attachments(me.address.clone(), req.message_id.clone())
+                    .await
+                {
+                    Ok(orphaned) => {
+                        if let Some(blobs) = state.blobs.clone() {
+                            // Only what no other mailbox still claims. The same file may be in
+                            // somebody else's inbox, and their copy is theirs.
+                            for sha in orphaned {
+                                blobs.remove(&sha);
+                            }
+                        }
+                    }
+                    Err(e) => tracing::error!(error = %e, "releasing attachments failed"),
+                }
+            }
+            Json(json!({ "deleted": deleted })).into_response()
+        }
         Err(e) => {
             tracing::error!(error = %e, "delete failed");
             ApiError::server("store_error").into_response()
@@ -4369,9 +4678,12 @@ async fn quota(State(state): State<AppState>, headers: HeaderMap) -> Response {
         Ok(tier) => tier,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
-    let used = match state.store.inbox_bytes(me.address.clone()).await {
-        Ok(used) => used,
-        Err(_) => return ApiError::server("store_error").into_response(),
+    let used = match (
+        state.store.inbox_bytes(me.address.clone()).await,
+        state.store.attachment_bytes(me.address.clone()).await,
+    ) {
+        (Ok(messages), Ok(files)) => messages + files,
+        _ => return ApiError::server("store_error").into_response(),
     };
     let limit = state.quota.bytes_for(tier);
     Json(json!({
@@ -4567,6 +4879,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            blobs: None,
             github: None,
         }
     }
@@ -6929,6 +7242,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            blobs: None,
             github: None,
         };
         let _ = build_router(state);

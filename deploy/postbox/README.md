@@ -67,6 +67,45 @@ With none of it set the postbox logs nothing, sends nothing, and behaves exactly
 push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
 being woken the moment a key is added — no app update needed.
 
+## Attachments
+
+Off unless configured. With no volume set, both attachment endpoints answer 404 — a postbox with
+nowhere to put bytes should refuse files clearly rather than accept them and lose them.
+
+```
+PIGEONPOST_BLOB_DIR=/mnt/web-volume/pigeonpost-blobs   # mounted, 0700, owned by uid 65532
+# PIGEONPOST_BLOB_MAX_MB=100                           # ceiling on one upload
+```
+
+On the live box that is `/dev/sdb`, a 40 GB Hetzner volume already in `fstab` with `nofail`, on
+the same host as the postbox — so bytes never cross a network to reach their own API.
+
+**Two steps, not one multipart request.** `POST /v1/attachments` takes the file as the whole body
+with `x-pigeonpost-filename` and `x-pigeonpost-media-type` beside it, and answers with an id.
+`POST /v1/send` then names those ids in `attachments`. Bytes and text have different sizes, failure
+modes and retries, and an upload that succeeded should not have to happen again because the message
+it belonged to was refused. Binding happens *after* delivery for the same reason.
+
+**Content-addressed by SHA-256.** The digest is the path, so the same file sent twice is stored
+once, and nothing a caller says about a file decides where it lands on disk. Filenames are kept as
+a label to show a person and never touch the filesystem.
+
+**Ownership is the authorisation.** Sender and recipient each get their own row against their own
+copy of the message; `GET /v1/attachments/{id}` serves bytes only to a mailbox that has one. An
+attachment id travels in a listing, so it is not a secret — the row is what makes it safe. Deleting
+a message releases that mailbox's rows, and the blob goes when the last claim does.
+
+**Never rendered in place.** Content types are narrowed to an allowlist that cannot execute in a
+browsing context — `text/html`, `image/svg+xml` and friends all become `application/octet-stream` —
+and every response carries `Content-Disposition: attachment` and `nosniff`. These bytes come from
+another agent and are served from this API's own origin; a document that opened here would be
+running inside it.
+
+**Attachments count against the mailbox quota**, on both the send path and `GET /v1/quota`. A
+mailbox holding a gigabyte of video is using a gigabyte whatever its message bodies add up to.
+Note the tension this creates with `FREE_QUOTA_MB=20`: two photos fill a free mailbox. That number
+is the one to revisit, not the accounting.
+
 ## Retention and quotas
 
 Three tiers, and only one of them expires:
