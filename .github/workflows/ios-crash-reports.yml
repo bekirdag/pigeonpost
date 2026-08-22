@@ -1,0 +1,40 @@
+name: iOS crash reports
+
+# Why this exists: the crash reports live in App Store Connect and the key that reads them is a
+# repository secret, so the one place that can already ask is CI. Asking from a laptop means a
+# private key on a laptop, and this way nobody needs a copy of one to see whether the app is
+# crashing on somebody's phone.
+#
+# Runs on Linux: this only talks to the App Store Connect API.
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Weekly, so a crash that arrives while nobody is looking is still found. Nothing is acted on
+    # automatically — this reads.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-crash-reports
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    name: ask App Store Connect what crashed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Collect
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          BUNDLE_ID: dev.pigeonpost.inbox
+        run: python3 .github/scripts/crash_reports.py
