@@ -84,12 +84,16 @@ class Missing(Exception):
     """The endpoint is not available to this key, or does not exist on this account."""
 
 
-def get(path, **params):
+def get(path, accept=None, **params):
     url = path if path.startswith("http") else API + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
     req = urllib.request.Request(url, method="GET")
     req.add_header("Authorization", f"Bearer {TOKEN}")
+    # Xcode Metrics is the one route that will not answer to `application/json`; it has a media
+    # type of its own and 406s on anything else.
+    if accept:
+        req.add_header("Accept", accept)
     try:
         with urllib.request.urlopen(req, timeout=60) as resp:
             raw = resp.read()
@@ -98,7 +102,7 @@ def get(path, **params):
         detail = exc.read().decode(errors="replace")[:600]
         # 404 is "no such collection here", 403 is "this key may not see it". Neither is a broken
         # report — both are facts about the account, and saying which is the useful part.
-        if exc.code in (403, 404):
+        if exc.code in (403, 404, 406):
             raise Missing(f"{exc.code} {detail}") from None
         raise RuntimeError(f"GET {url} -> {exc.code} {detail}") from None
 
@@ -193,7 +197,7 @@ if not any_sig:
 # ---- 3. Aggregate metrics --------------------------------------------------------------------
 print("\n== Xcode Metrics (production aggregate) ==")
 try:
-    metrics = get(f"/apps/{app_id}/perfPowerMetrics")
+    metrics = get(f"/apps/{app_id}/perfPowerMetrics", accept="application/vnd.apple.xcode-metrics+json")
     rows = metrics.get("data", [])
     if not rows:
         print("  none — this needs enough adoption in production, which a beta does not have.")
