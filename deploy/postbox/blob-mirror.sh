@@ -45,9 +45,11 @@ if rsync -a --delete-delay --timeout=300 \
 else
     status=$?
     # The failure text matters more than the exit code — an expired key and a full disk both stop
-    # the mirror, and only one of them is urgent.
+    # the mirror, and only one of them is urgent. Bounded at twenty lines, because a run that goes
+    # wrong per-file writes one complaint per file: the first failure here put 195 KB of "mkdir
+    # failed" into this log, and a log that grows with the size of the mistake is its own problem.
     echo "$started FAILED rsync=$status" >>"$LOG"
-    sed 's/^/    /' /tmp/pigeonpost-blob-mirror.$$ >>"$LOG"
+    tail -20 /tmp/pigeonpost-blob-mirror.$$ | sed 's/^/    /' >>"$LOG"
     rm -f /tmp/pigeonpost-blob-mirror.$$
     exit "$status"
 fi
