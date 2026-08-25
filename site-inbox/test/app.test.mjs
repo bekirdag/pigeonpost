@@ -356,6 +356,41 @@ check("and reads as a request, not as JSON", mineReq.some((el) => text(el) === "
 // Nothing is written to the browser any more — the postbox keeps the sent copy.
 check("no per-device history is kept", window.localStorage.getItem("ppi_sent:/k/cz6900v2h90vnwefj7g7ezvbh4"), "null");
 
+console.log("\n— a read message stays read —");
+// The race everyone saw: a listing that was already in flight when the ack was sent comes back
+// carrying the state from before it, and adopting it verbatim brings the unread mark back.
+{
+  const fresh = {
+    message_id: "m_unread_race", from: "/k/aaaa1111bbbb2222cccc3333dd",
+    body: "does this stay read?", peer: "/bekir/agent1", thread_id: "t-agent1",
+    sender_handle: "/bekir/agent1", autonomy: "review", verb: null,
+    held_because: "not_a_request", received_at: now + 60, read: false,
+    sender_known: true, matched_contact: "/bekir/*", sender_standing: "unproven",
+    sender_tier: "handle", alias: null, untrusted: true,
+  };
+  INBOX.messages.push(fresh);
+  window.document.dispatchEvent(new window.Event("visibilitychange"));
+  await settle(120);
+
+  // Open that conversation, which acks it.
+  const rows = [...$("threads").querySelectorAll(".thread-row")];
+  const target = rows.find((r) => r.textContent.includes("my fleet")) || rows[0];
+  target.click();
+  await settle(150);
+  const readNow = [...$("threads").querySelectorAll(".thread-row")]
+    .find((r) => r.textContent.includes("my fleet"));
+  check("opening the conversation clears its mark", Boolean(readNow && !readNow.querySelector(".dot")), true);
+
+  // Now replay a listing captured *before* the ack was processed: this one message is unread
+  // again on the wire, exactly as an in-flight long poll would deliver it.
+  fresh.read = false;
+  window.document.dispatchEvent(new window.Event("visibilitychange"));
+  await settle(150);
+  const afterStale = [...$("threads").querySelectorAll(".thread-row")]
+    .find((r) => r.textContent.includes("my fleet"));
+  check("a stale listing does not resurrect it", Boolean(afterStale && !afterStale.querySelector(".dot")), true);
+}
+
 console.log("\n— markdown, and still never markup —");
 // The rule this file has always kept: a body is inserted as text. Rendering it as markdown must
 // not become a way around that.

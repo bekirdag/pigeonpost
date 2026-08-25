@@ -19,6 +19,13 @@ final class Inbox {
     private(set) var serverThreads: [ServerThread] = []
     private(set) var archived: Set<String> = []
     private(set) var quota: Quota?
+
+    /// Messages this device has acknowledged but has not yet seen the server report as read.
+    ///
+    /// In memory only. It is a correction to listings that are already in flight, not a second
+    /// record of what has been read — the server holds that, and this is empty again the moment
+    /// the server agrees.
+    private var acked: Set<String> = []
     private(set) var pending: [PendingMessage] = []
 
     /// The assembled list, rebuilt when something it is made of changes rather than on every read —
@@ -112,7 +119,21 @@ final class Inbox {
 
     /// Take a server listing as the truth, and retire any optimistic row it now accounts for.
     private func adopt(_ body: InboxResponse) {
-        messages = body.messages ?? []
+        // A listing is adopted whole, which is what makes the poll safe against a screen somebody
+        // is reading. But a long poll opened *before* an ack was sent comes back carrying the state
+        // from before it — so adopting it verbatim resurrects the unread mark on a message that was
+        // just read. Holding the ids this device has acked, until the server's own listing agrees,
+        // is what stops the badge coming back a second after it cleared.
+        let incoming = (body.messages ?? []).map { message -> Message in
+            guard acked.contains(message.messageId), !message.isRead else { return message }
+            return message.markedRead()
+        }
+        // Anything the server now reports as read needs remembering no longer.
+        let confirmed = Set(
+            (body.messages ?? []).filter { $0.isRead }.map(\.messageId)
+        )
+        acked.subtract(confirmed)
+        messages = incoming
         policy = body.policy ?? policy
         let known = Set(messages.map(\.messageId))
         pending.removeAll { row in
@@ -134,6 +155,8 @@ final class Inbox {
     /// Reset to nothing. Called when the acting mailbox changes: the previous mailbox's mail must
     /// not be on screen for even one frame while the new one loads.
     func reset() {
+        // Another mailbox's acknowledgements say nothing about this one's mail.
+        acked = []
         messages = []
         contacts = []
         serverThreads = []
@@ -240,7 +263,9 @@ final class Inbox {
 
         // Locally first: the mark is gone the moment it was read, and the server call is a
         // formality that either confirms it or is corrected by the next listing.
-        markRead(unread.map(\.messageId))
+        let ids = unread.map(\.messageId)
+        acked.formUnion(ids)
+        markRead(ids)
         guard !Fixtures.enabled else { return }
 
         for message in unread {

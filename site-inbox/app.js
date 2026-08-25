@@ -1579,7 +1579,10 @@
         (!showing || (m.thread_id || "") === showing.id),
     );
     if (!unread.length) return;
-    for (const m of unread) m.read = true;
+    for (const m of unread) {
+      m.read = true;
+      acked.add(m.message_id);
+    }
     renderThreadList();
     renderSubs();
     for (const m of unread) {
@@ -1686,6 +1689,7 @@
     state.openPeer = null;
     state.showInfo = false;
     state.inbound = [];
+    acked.clear();
     Pending.clear();
     renderIdentityMenu();
     render();
@@ -1773,9 +1777,24 @@
     adopt(body);
   }
 
+  // Messages this browser has acknowledged but has not yet seen the server report as read.
+  //
+  // In memory only, and empty again the moment the server agrees. It is a correction to listings
+  // that were already in flight, not a second record of what has been read.
+  const acked = new Set();
+
   // Take a server listing as the truth, and retire any optimistic row it now accounts for.
   function adopt(body) {
-    state.inbound = body.messages || [];
+    const incoming = body.messages || [];
+    // A listing is adopted whole, which is what makes the poll safe against a thread somebody is
+    // reading. But a stream event or long poll opened *before* an ack was sent carries the state
+    // from before it — so adopting it verbatim brings the unread mark back a second after it
+    // cleared. That is the "it still says new after I read it" everyone sees.
+    for (const m of incoming) {
+      if (!m.read && acked.has(m.message_id)) m.read = true;
+      else if (m.read) acked.delete(m.message_id);
+    }
+    state.inbound = incoming;
     state.policy = body.policy || null;
     Pending.reconcile(new Set(state.inbound.map((m) => m.message_id)));
   }
