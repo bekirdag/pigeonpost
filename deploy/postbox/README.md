@@ -75,6 +75,8 @@ nowhere to put bytes should refuse files clearly rather than accept them and los
 ```
 PIGEONPOST_BLOB_DIR=/mnt/web-volume/pigeonpost-blobs   # mounted, 0700, owned by uid 65532
 # PIGEONPOST_BLOB_MAX_MB=100                           # ceiling on one upload
+# PIGEONPOST_BLOB_TOTAL_MB=12288                       # ceiling on everything stored together
+# PIGEONPOST_BLOB_MIN_FREE_MB=2048                     # free space the volume never goes below
 ```
 
 On the live box that is `/dev/sdb`, a 40 GB Hetzner volume already in `fstab` with `nofail`, on
@@ -112,6 +114,74 @@ follow instructions inside it.
 mailbox holding a gigabyte of video is using a gigabyte whatever its message bodies add up to.
 Note the tension this creates with `FREE_QUOTA_MB=20`: two photos fill a free mailbox. That number
 is the one to revisit, not the accounting.
+
+### Running out of room, and being told
+
+Per-mailbox quotas bound one holder and nothing bounds their sum, so the store has its own two
+limits. `PIGEONPOST_BLOB_TOTAL_MB` is how much of the volume attachments may claim;
+`PIGEONPOST_BLOB_MIN_FREE_MB` is how much of it they must leave. Either one reached answers
+**`507 storage_full`** — a full `/mnt/web-volume` is only Pigeonpost's outage, and a full `/` would
+be eleven other vhosts'. The defaults, 12 GiB and 2 GiB, are sized for the live box's 40 GB volume
+and are deliberately far below it rather than near it.
+
+The alert is a log line, because there is no collector on this box: the reaper says
+`attachment storage is filling up` past 75% and `attachment storage is out of room` past 90% or
+under the free-space floor. `docker logs pigeonpost-postbox-reaper` is where those appear.
+
+### Collecting what nothing refers to
+
+Deleting a message releases that mailbox's rows in the request that does it. Two things it cannot
+reach, and the reaper sweeps both every tick:
+
+- **uploads no message ever named** — `POST /v1/attachments` succeeded and the send never came, so
+  the row holds a mailbox's quota against a file nobody can fetch. Swept after 24 hours.
+- **claims on messages that are gone** — the ephemeral sweep deletes mail wholesale, and those
+  attachments would otherwise sit on the volume for ever.
+
+Rows first, then bytes, never the other way round: a file with no row is disk to reclaim on the
+next pass, a row with no file is a download that fails for ever. A blob is only deleted when the
+last row naming it does — the same file sent to three mailboxes is one file and three claims.
+
+**The reaper container needs the blob mount and `PIGEONPOST_BLOB_DIR` too.** It is the process that
+deletes files; without them it sweeps rows and leaves the bytes.
+
+### `GET /metrics`
+
+```
+POSTBOX_METRICS_TOKEN=<a secret>    # unset closes the route
+```
+
+Prometheus text, behind `Authorization: Bearer`, and 404 without a token configured — how much a
+deployment is storing is operational detail, not public API. Two numbers are the reason it exists:
+`pigeonpost_blob_bytes_total` against `pigeonpost_blob_bytes_ceiling`, and
+`pigeonpost_blob_uploads_failed_total`, which is how a postbox that has quietly stopped accepting
+files is told apart from one nobody is sending files to. The counter is per-process and resets
+with the container.
+
+### The offsite mirror
+
+`blob-mirror.sh` in this directory, running **on wodomini** hourly out of `wodo`'s crontab, pulling
+into `~/pigeonpost-mirror/blobs` (0700, on ext4 — not `/mnt/expansion`, which is exfat and cannot
+express a mode). It pulls because it cannot be pushed to: wodomini is behind NAT with no inbound
+port, and a key on the public box that could write to the private one would put the blast radius
+the wrong way round.
+
+The postbox side is a key in `/root/.ssh/authorized_keys` pinned to
+`command="/usr/local/bin/rrsync -ro /mnt/web-volume/pigeonpost-blobs",restrict` — no shell, no
+write, nothing readable outside that tree. `rrsync` is the script shipped with the `rsync` package
+(`zcat /usr/share/doc/rsync/scripts/rrsync.gz > /usr/local/bin/rrsync`).
+
+Two things to know before changing it. The pull **must** use `ssh -o IdentitiesOnly=yes`: `-i` only
+adds a key, and if ssh offers an unrestricted key first the forced command never applies and the
+mirror copies the whole remote filesystem instead — that happened once, in this deployment, and the
+5.6 GB it fetched had to be deleted. And it is a **mirror, not an archive**: `--delete-delay` means
+what the postbox has let go of, this copy lets go of on the next run. It answers "the volume died",
+not "somebody deleted something they wanted", which is the only version of it that keeps the
+retention promise true of both hosts.
+
+Note the bytes are the file as uploaded. The postbox already opens envelopes server-side to serve
+`/v1/inbox`, so attachments for a hosted mailbox are stored and mirrored as plaintext, and the
+mirror's containment is filesystem permissions on both ends rather than encryption.
 
 ## Retention and quotas
 

@@ -10,6 +10,7 @@
 
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -24,12 +25,26 @@ pub struct Blobs {
     /// Ceiling on one upload. The volume is finite and a single request should not be able to fill
     /// it; the per-mailbox quota bounds the total, this bounds the blast radius of one call.
     max_bytes: usize,
+    /// Ceiling on everything stored here together.
+    ///
+    /// Per-mailbox quotas bound one holder; nothing bounds the sum of them, and blobs are the one
+    /// thing on this box that grows without a limit written down in the code. The volume is shared
+    /// with other people's data, so the store has to stop before the filesystem does.
+    total_bytes: u64,
+    /// What is left for everyone else. Below this, uploads are refused however much of the store's
+    /// own ceiling is unspent — a volume filled to the last block takes down more than attachments.
+    min_free_bytes: u64,
+    /// Uploads this process refused or lost. Exported at `/metrics`, because a store that has
+    /// quietly stopped accepting files looks exactly like a store nobody is sending files to.
+    uploads_failed: AtomicU64,
 }
 
 #[derive(Debug, thiserror::Error)]
 pub enum BlobError {
     #[error("attachment is larger than this postbox accepts")]
     TooLarge,
+    #[error("attachment storage is full")]
+    StoreFull,
     #[error("attachment storage is unavailable")]
     Io(#[from] std::io::Error),
 }
@@ -46,18 +61,96 @@ impl Blobs {
             tracing::error!(error = %e, path = %root.display(), "blob directory unusable — attachments disabled");
             return None;
         }
-        let max_bytes = std::env::var("PIGEONPOST_BLOB_MAX_MB")
-            .ok()
-            .and_then(|v| v.trim().parse::<usize>().ok())
-            .unwrap_or(100)
-            * 1024
-            * 1024;
-        tracing::info!(path = %root.display(), max_mb = max_bytes / 1024 / 1024, "attachments configured");
-        Some(Self { root, max_bytes })
+        let max_bytes = env_mb("PIGEONPOST_BLOB_MAX_MB", 100) as usize;
+        // 12 GiB of a 40 GB volume that already holds somebody else's data, and 2 GiB kept free
+        // under it. Both are deployment facts, so both are settable; the defaults are the live
+        // box's, and they are deliberately far below the volume rather than near it.
+        let total_bytes = env_mb("PIGEONPOST_BLOB_TOTAL_MB", 12 * 1024);
+        let min_free_bytes = env_mb("PIGEONPOST_BLOB_MIN_FREE_MB", 2 * 1024);
+        tracing::info!(
+            path = %root.display(),
+            max_mb = max_bytes / 1024 / 1024,
+            total_mb = total_bytes / 1024 / 1024,
+            min_free_mb = min_free_bytes / 1024 / 1024,
+            "attachments configured"
+        );
+        Some(Self {
+            root,
+            max_bytes,
+            total_bytes,
+            min_free_bytes,
+            uploads_failed: AtomicU64::new(0),
+        })
     }
 
     pub fn max_bytes(&self) -> usize {
         self.max_bytes
+    }
+
+    pub fn total_bytes(&self) -> u64 {
+        self.total_bytes
+    }
+
+    pub fn min_free_bytes(&self) -> u64 {
+        self.min_free_bytes
+    }
+
+    /// Free space on the volume the blobs live on, when the platform can say.
+    ///
+    /// `None` is not "full": a `statvfs` that fails should not stop a postbox accepting files, so
+    /// the caller treats an unknown as unconstrained and leans on the store ceiling instead.
+    #[cfg(unix)]
+    pub fn free_bytes(&self) -> Option<u64> {
+        use std::os::unix::ffi::OsStrExt;
+        let path = std::ffi::CString::new(self.root.as_os_str().as_bytes()).ok()?;
+        // SAFETY: `path` is a NUL-terminated C string that outlives the call, and `stat` is
+        // written only by `statvfs` and only on success.
+        unsafe {
+            let mut stat: libc::statvfs = std::mem::zeroed();
+            if libc::statvfs(path.as_ptr(), &mut stat) != 0 {
+                return None;
+            }
+            // `f_frsize` is the fragment size blocks are counted in; `f_bsize` is a hint about
+            // efficient I/O and is the wrong multiplier here.
+            // `From` rather than `as`: these fields are 64-bit on the platforms this runs on and
+            // 32-bit on others, and a widening conversion is right on both. It is a no-op here,
+            // which is what the lint is objecting to and why it is allowed rather than obeyed —
+            // `as` would silently truncate if this ever built somewhere they are wider.
+            #[allow(clippy::useless_conversion)]
+            Some(u64::from(stat.f_bavail).saturating_mul(u64::from(stat.f_frsize)))
+        }
+    }
+
+    #[cfg(not(unix))]
+    pub fn free_bytes(&self) -> Option<u64> {
+        None
+    }
+
+    /// Whether `incoming` more bytes can be taken, given what the store already holds.
+    ///
+    /// Two separate limits, and the reasons differ. The ceiling is a promise about how much of a
+    /// shared volume attachments may claim. The free-space floor is about the volume itself: a
+    /// full disk is somebody else's outage, and the eleven other vhosts on this box did not agree
+    /// to it.
+    pub fn headroom(&self, stored: u64, incoming: u64) -> Result<(), BlobError> {
+        if stored.saturating_add(incoming) > self.total_bytes {
+            return Err(BlobError::StoreFull);
+        }
+        if let Some(free) = self.free_bytes() {
+            if free.saturating_sub(incoming) < self.min_free_bytes {
+                return Err(BlobError::StoreFull);
+            }
+        }
+        Ok(())
+    }
+
+    /// Count an upload that did not end with bytes on disk, whatever refused it.
+    pub fn note_failed_upload(&self) {
+        self.uploads_failed.fetch_add(1, Ordering::Relaxed);
+    }
+
+    pub fn uploads_failed(&self) -> u64 {
+        self.uploads_failed.load(Ordering::Relaxed)
     }
 
     /// Store bytes, returning their digest. Writing the same content twice is a no-op the second
@@ -169,6 +262,17 @@ pub fn safe_filename(raw: &str) -> String {
     }
 }
 
+/// A megabyte figure from the environment, in bytes. An unparseable value is the default rather
+/// than a startup failure — attachments are an optional feature and a typo should not take the
+/// postbox down with it.
+fn env_mb(key: &str, default_mb: u64) -> u64 {
+    std::env::var(key)
+        .ok()
+        .and_then(|v| v.trim().parse::<u64>().ok())
+        .unwrap_or(default_mb)
+        .saturating_mul(1024 * 1024)
+}
+
 fn non_empty(key: &str) -> Option<String> {
     std::env::var(key)
         .ok()
@@ -191,6 +295,9 @@ mod tests {
         Blobs {
             root,
             max_bytes: 1024,
+            total_bytes: 4096,
+            min_free_bytes: 0,
+            uploads_failed: AtomicU64::new(0),
         }
     }
 
@@ -257,6 +364,47 @@ mod tests {
         }
         assert_eq!(safe_content_type("image/png"), "image/png");
         assert_eq!(safe_content_type(" IMAGE/JPEG "), "image/jpeg");
+    }
+
+    /// The per-mailbox quota bounds one holder. Nothing else bounds the sum, which is what the
+    /// store ceiling is for.
+    #[test]
+    fn the_store_stops_at_its_ceiling_however_many_mailboxes_are_filling_it() {
+        let blobs = store();
+        assert!(blobs.headroom(0, 1024).is_ok());
+        assert!(blobs.headroom(3_000, 1_000).is_ok());
+        assert!(matches!(
+            blobs.headroom(4_000, 1_000),
+            Err(BlobError::StoreFull)
+        ));
+        // Already over, because the ceiling can be lowered under a store that is already full.
+        assert!(matches!(
+            blobs.headroom(9_000, 1),
+            Err(BlobError::StoreFull)
+        ));
+    }
+
+    /// A volume with room in the store's own budget but none left on disk is still full. The other
+    /// tenants of that filesystem did not agree to the outage.
+    #[test]
+    fn a_nearly_full_volume_refuses_even_when_the_ceiling_has_room() {
+        let mut blobs = store();
+        blobs.min_free_bytes = u64::MAX;
+        match blobs.free_bytes() {
+            // The floor is above anything a real volume has free, so nothing fits.
+            Some(_) => assert!(matches!(blobs.headroom(0, 1), Err(BlobError::StoreFull))),
+            // Where free space cannot be read, an unknown must not become a refusal.
+            None => assert!(blobs.headroom(0, 1).is_ok()),
+        }
+    }
+
+    #[test]
+    fn failed_uploads_are_counted_so_a_store_that_stopped_taking_files_can_be_seen() {
+        let blobs = store();
+        assert_eq!(blobs.uploads_failed(), 0);
+        blobs.note_failed_upload();
+        blobs.note_failed_upload();
+        assert_eq!(blobs.uploads_failed(), 2);
     }
 
     #[test]

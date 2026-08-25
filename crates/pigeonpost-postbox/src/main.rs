@@ -83,6 +83,11 @@ struct AppState {
     trusted_proxy_hops: usize,
     /// SHA-256 of the namespace-grant shared secret, or `None` when the endpoint is closed.
     namespace_grant_hash: Option<[u8; 32]>,
+    /// SHA-256 of the metrics scrape secret, or `None` when `/metrics` is closed. How much a
+    /// postbox is storing and how often it is refusing uploads is operational detail, not public
+    /// API, so an unconfigured deployment answers that route the way it answers any other route it
+    /// does not have.
+    metrics_hash: Option<[u8; 32]>,
     /// Names nobody may claim in an open namespace, or `None` when no list is configured — in which
     /// case open namespaces refuse everything, which is the safe direction to fail.
     reserved_names: Option<Arc<std::collections::HashSet<String>>>,
@@ -185,6 +190,8 @@ struct Config {
     /// Absent means the grant endpoint is closed, not open — an unconfigured deployment must not
     /// hand out namespaces.
     namespace_grant_token: Option<String>,
+    /// Shared secret a monitor presents to scrape `/metrics`. Absent closes the route.
+    metrics_token: Option<String>,
 }
 
 impl Config {
@@ -217,6 +224,9 @@ impl Config {
             // Unset closes the grant endpoint. Defaulting it to anything would mean a fresh
             // deployment hands out paid namespaces to whoever guesses the default.
             namespace_grant_token: std::env::var("NAMESPACE_GRANT_TOKEN")
+                .ok()
+                .filter(|t| !t.trim().is_empty()),
+            metrics_token: std::env::var("POSTBOX_METRICS_TOKEN")
                 .ok()
                 .filter(|t| !t.trim().is_empty()),
         }
@@ -364,6 +374,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             .namespace_grant_token
             .as_deref()
             .map(|t| sha256(t.as_bytes())),
+        metrics_hash: cfg.metrics_token.as_deref().map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
         apns: push::Apns::from_env(),
         reserved_names: load_reserved_names(),
@@ -443,6 +454,7 @@ fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(onboard))
         .route("/health", get(health))
+        .route("/metrics", get(metrics))
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/accounts", post(create_account))
@@ -540,6 +552,88 @@ async fn health() -> impl IntoResponse {
         "version": env!("CARGO_PKG_VERSION"),
         "stage": "scaffold",
     }))
+}
+
+/// `GET /metrics` — what the attachment volume is doing, in Prometheus text format.
+///
+/// Two numbers matter here and neither is visible from outside: how much of the store's ceiling is
+/// spent, and how many uploads are being refused. A postbox that quietly stopped accepting files
+/// looks exactly like a postbox nobody is sending files to.
+///
+/// Behind a shared secret and 404 without one, for the same reason the namespace grant is: how
+/// much a deployment stores is operational detail, and an unconfigured postbox should not advertise
+/// a route it is not ready to answer. `blob_uploads_failed_total` is per-process and resets on
+/// restart, which is what a counter means.
+async fn metrics(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(expected) = state.metrics_hash else {
+        return err_response(StatusCode::NOT_FOUND, "not_found", None);
+    };
+    let presented = bearer(&headers).map(|token| sha256(token.as_bytes()));
+    if presented.is_none_or(|presented| !constant_time_eq(&presented, &expected)) {
+        return ApiError::unauthorized("invalid metrics credential").into_response();
+    }
+
+    let mut out = String::new();
+    if let Some(blobs) = state.blobs.as_ref() {
+        let (files, bytes) = state.store.blob_footprint().await.unwrap_or((0, 0));
+        let lines = [
+            (
+                "blob_bytes_total",
+                "what stored attachments occupy on disk, counted once per distinct file",
+                bytes,
+            ),
+            (
+                "blob_files_total",
+                "distinct attachment files stored",
+                files,
+            ),
+            (
+                "blob_bytes_ceiling",
+                "what this postbox will let attachments claim",
+                blobs.total_bytes(),
+            ),
+            (
+                "blob_free_bytes",
+                "free space on the volume the attachments live on",
+                blobs.free_bytes().unwrap_or_default(),
+            ),
+            (
+                "blob_min_free_bytes",
+                "free space this postbox refuses to go below",
+                blobs.min_free_bytes(),
+            ),
+            (
+                "blob_uploads_failed_total",
+                "uploads refused or lost since this process started",
+                blobs.uploads_failed(),
+            ),
+        ];
+        for (name, help, value) in lines {
+            // Only the refusals ever count up. Everything else is a level that can fall, which is
+            // a gauge whatever its name ends in.
+            let kind = if name == "blob_uploads_failed_total" {
+                "counter"
+            } else {
+                "gauge"
+            };
+            out.push_str(&format!(
+                "# HELP pigeonpost_{name} {help}\n# TYPE pigeonpost_{name} {kind}\npigeonpost_{name} {value}\n"
+            ));
+        }
+    }
+    out.push_str(&format!(
+        "# HELP pigeonpost_attachments_enabled whether this postbox accepts files at all\n\
+         # TYPE pigeonpost_attachments_enabled gauge\n\
+         pigeonpost_attachments_enabled {}\n",
+        u8::from(state.blobs.is_some())
+    ));
+
+    let mut response = Response::new(axum::body::Body::from(out));
+    response.headers_mut().insert(
+        axum::http::header::CONTENT_TYPE,
+        HeaderValue::from_static("text/plain; version=0.0.4; charset=utf-8"),
+    );
+    response
 }
 
 /// Recent anonymous creations before PoW difficulty climbs one bit (§14.1). Fixed input of `0` for
@@ -4454,6 +4548,7 @@ async fn upload_attachment(
         return ApiError::bad("empty_attachment", "an attachment needs bytes").into_response();
     }
     if body.len() > blobs.max_bytes() {
+        blobs.note_failed_upload();
         return ApiError::new(
             StatusCode::PAYLOAD_TOO_LARGE,
             "attachment_too_large",
@@ -4465,11 +4560,41 @@ async fn upload_attachment(
         .into_response();
     }
 
+    // What the whole store holds, which is a different question from what this mailbox holds. A
+    // mailbox with quota to spare on a volume with none is still refused: per-mailbox quotas bound
+    // one holder and nothing bounds their sum, and this volume is shared with other services.
+    let stored = match state.store.blob_footprint().await {
+        Ok((_, bytes)) => bytes,
+        Err(e) => {
+            tracing::error!(error = %e, "could not measure attachment storage");
+            blobs.note_failed_upload();
+            return ApiError::server("store_error").into_response();
+        }
+    };
+    if blobs.headroom(stored, body.len() as u64).is_err() {
+        blobs.note_failed_upload();
+        tracing::error!(
+            stored,
+            ceiling = blobs.total_bytes(),
+            free = blobs.free_bytes().unwrap_or_default(),
+            "attachment storage is full — refusing uploads"
+        );
+        return ApiError::new(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "storage_full",
+            "this postbox has no room for more attachments",
+        )
+        .into_response();
+    }
+
     // The same ceiling a message meets. An attachment is the larger half of what a mailbox holds,
     // so exempting it would make the quota decorative.
     let tier = match state.store.tier_of(me.address.clone(), now_unix()).await {
         Ok(tier) => tier,
-        Err(_) => return ApiError::server("store_error").into_response(),
+        Err(_) => {
+            blobs.note_failed_upload();
+            return ApiError::server("store_error").into_response();
+        }
     };
     let allowance = state.quota.bytes_for(tier);
     let held = match (
@@ -4477,9 +4602,13 @@ async fn upload_attachment(
         state.store.attachment_bytes(me.address.clone()).await,
     ) {
         (Ok(a), Ok(b)) => a + b,
-        _ => return ApiError::server("store_error").into_response(),
+        _ => {
+            blobs.note_failed_upload();
+            return ApiError::server("store_error").into_response();
+        }
     };
     if held + body.len() as u64 > allowance {
+        blobs.note_failed_upload();
         return ApiError::new(
             StatusCode::CONFLICT,
             "mailbox_full",
@@ -4495,15 +4624,26 @@ async fn upload_attachment(
     let sha256 = match blobs.put(&body) {
         Ok(sha) => sha,
         Err(blobs::BlobError::TooLarge) => {
+            blobs.note_failed_upload();
             return ApiError::new(
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "attachment_too_large",
                 "too large",
             )
-            .into_response()
+            .into_response();
+        }
+        Err(blobs::BlobError::StoreFull) => {
+            blobs.note_failed_upload();
+            return ApiError::new(
+                StatusCode::INSUFFICIENT_STORAGE,
+                "storage_full",
+                "this postbox has no room for more attachments",
+            )
+            .into_response();
         }
         Err(e) => {
             tracing::error!(error = %e, "could not store an attachment");
+            blobs.note_failed_upload();
             return ApiError::server("storage_error").into_response();
         }
     };
@@ -4530,6 +4670,7 @@ async fn upload_attachment(
         .await
     {
         tracing::error!(error = %e, "could not record an attachment");
+        blobs.note_failed_upload();
         return ApiError::server("store_error").into_response();
     }
     (
@@ -4744,10 +4885,15 @@ async fn not_found() -> impl IntoResponse {
     (StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" })))
 }
 
-/// The ephemeral-retention sweep. Stub: ticks on an interval and does nothing yet.
 /// Retention sweep loop. Opens the same store as the server (WAL makes that safe) and, each tick,
-/// drops ephemeral identities and messages older than `EPHEMERAL_RETENTION_DAYS`. In P0 every
-/// identity is ephemeral; when durable (paid) identities land they'll be excluded by a plan flag.
+/// drops ephemeral identities and messages older than `EPHEMERAL_RETENTION_DAYS`, then collects
+/// the attachments nothing refers to any more. In P0 every identity is ephemeral; when durable
+/// (paid) identities land they'll be excluded by a plan flag.
+///
+/// The attachment pass is the only thing that returns disk. Deleting a message releases that
+/// mailbox's rows in the request that does it, but nothing else does: an upload whose send never
+/// came, and a claim on a message the ephemeral sweep took, both leave bytes on the volume that no
+/// request will ever revisit.
 async fn reaper(cfg: Config) {
     let store = match store::Store::open(&cfg.db_path) {
         Ok(s) => s,
@@ -4756,10 +4902,14 @@ async fn reaper(cfg: Config) {
             std::process::exit(1);
         }
     };
+    // The same volume the server writes to, read from this process. Absent means this deployment
+    // takes no attachments, and the sweep below is then about rows that cannot exist.
+    let blobs = blobs::Blobs::from_env();
     let retention_secs = cfg.ephemeral_retention_days.saturating_mul(86_400);
     tracing::info!(
         interval_s = cfg.reaper_interval_secs,
         retention_days = cfg.ephemeral_retention_days,
+        attachments = blobs.is_some(),
         "reaper started"
     );
     let mut ticker = tokio::time::interval(std::time::Duration::from_secs(
@@ -4777,12 +4927,80 @@ async fn reaper(cfg: Config) {
                     Ok(_) => tracing::debug!(cutoff, "reaper: nothing to sweep"),
                     Err(e) => tracing::error!(error = %e, "reap failed"),
                 }
+                if let Some(blobs) = blobs.as_ref() {
+                    sweep_blobs(&store, blobs).await;
+                }
             }
             _ = shutdown_signal() => {
                 tracing::info!("reaper stopping");
                 break;
             }
         }
+    }
+}
+
+/// How long an upload may sit unnamed by any message before it is somebody's mistake rather than
+/// somebody's work in progress. Long enough for a retried send after an outage, short enough that
+/// a failed client cannot park bytes on the volume indefinitely.
+const UNCLAIMED_UPLOAD_TTL_SECS: u64 = 24 * 3_600;
+
+/// Collect the attachments nothing refers to, then say how full the volume is.
+///
+/// Rows first and bytes second, and never the other way round: a file with no row is disk to
+/// reclaim on the next pass, while a row with no file is a download that fails for ever.
+async fn sweep_blobs(store: &store::Store, blobs: &blobs::Blobs) {
+    let cutoff = now_unix().saturating_sub(UNCLAIMED_UPLOAD_TTL_SECS);
+    match store.sweep_attachments(cutoff).await {
+        Ok(swept) => {
+            let mut removed = 0usize;
+            for sha in &swept.blobs {
+                blobs.remove(sha);
+                removed += 1;
+            }
+            if swept.unclaimed > 0 || swept.unreferenced > 0 {
+                tracing::info!(
+                    unclaimed = swept.unclaimed,
+                    unreferenced = swept.unreferenced,
+                    files = removed,
+                    "released attachments nothing referred to"
+                );
+            }
+        }
+        Err(e) => tracing::error!(error = %e, "attachment sweep failed"),
+    }
+
+    // The alert. There is no metrics collector on this box, so the log is the channel — and a
+    // volume that fills silently takes eleven other vhosts with it.
+    let Ok((files, bytes)) = store.blob_footprint().await else {
+        return;
+    };
+    let ceiling = blobs.total_bytes().max(1);
+    let used_pct = bytes.saturating_mul(100) / ceiling;
+    let free = blobs.free_bytes();
+    let floor = blobs.min_free_bytes();
+    let critical = used_pct >= 90 || free.is_some_and(|f| f < floor);
+    let tight = used_pct >= 75 || free.is_some_and(|f| f < floor.saturating_mul(2));
+    if critical {
+        tracing::error!(
+            files,
+            bytes,
+            ceiling,
+            used_pct,
+            free_bytes = free.unwrap_or_default(),
+            min_free_bytes = floor,
+            "attachment storage is out of room — uploads are being refused"
+        );
+    } else if tight {
+        tracing::warn!(
+            files,
+            bytes,
+            ceiling,
+            used_pct,
+            free_bytes = free.unwrap_or_default(),
+            "attachment storage is filling up"
+        );
+    } else {
+        tracing::debug!(files, bytes, used_pct, "attachment storage");
     }
 }
 
@@ -4880,6 +5098,7 @@ mod tests {
             mint_limits: limits,
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
+            metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             reserved_names: None,
@@ -7244,6 +7463,7 @@ mod tests {
             },
             trusted_proxy_hops: 0,
             namespace_grant_hash: None,
+            metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             reserved_names: None,
@@ -7253,5 +7473,104 @@ mod tests {
             github: None,
         };
         let _ = build_router(state);
+    }
+
+    fn bearer_header(token: &str) -> HeaderMap {
+        let mut h = HeaderMap::new();
+        h.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        h
+    }
+
+    async fn body_text(response: Response) -> String {
+        let bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        String::from_utf8(bytes.to_vec()).unwrap()
+    }
+
+    /// How much a deployment is storing is operational detail. An unconfigured postbox answers the
+    /// way it answers any route it does not have, and a wrong secret is not told it exists either.
+    #[tokio::test]
+    async fn metrics_are_closed_without_a_scrape_secret() {
+        let state = state_with_limits(MintLimits {
+            per_window: 5,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        let closed = metrics(State(state.clone()), bearer_header("anything")).await;
+        assert_eq!(closed.status(), StatusCode::NOT_FOUND);
+
+        let open = AppState {
+            metrics_hash: Some(sha256(b"scrape-me")),
+            ..state
+        };
+        assert_eq!(
+            metrics(State(open.clone()), HeaderMap::new())
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+        assert_eq!(
+            metrics(State(open.clone()), bearer_header("wrong"))
+                .await
+                .status(),
+            StatusCode::UNAUTHORIZED
+        );
+
+        let ok = metrics(State(open), bearer_header("scrape-me")).await;
+        assert_eq!(ok.status(), StatusCode::OK);
+        // With no volume configured there are no blob numbers to report, and saying so is the
+        // useful answer — a monitor should be able to tell "off" from "empty".
+        let text = body_text(ok).await;
+        assert!(text.contains("pigeonpost_attachments_enabled 0"), "{text}");
+        assert!(!text.contains("pigeonpost_blob_bytes_total"), "{text}");
+    }
+
+    /// The number a full volume is diagnosed with, and the one that says uploads are being
+    /// refused rather than simply not arriving.
+    #[tokio::test]
+    async fn metrics_report_what_the_volume_holds_and_what_it_turned_away() {
+        let root = std::env::temp_dir().join(format!("pp-metrics-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        std::env::set_var("PIGEONPOST_BLOB_DIR", &root);
+        let blobs = Arc::new(blobs::Blobs::from_env().expect("a configured blob store"));
+        std::env::remove_var("PIGEONPOST_BLOB_DIR");
+        blobs.note_failed_upload();
+
+        let state = AppState {
+            metrics_hash: Some(sha256(b"scrape-me")),
+            blobs: Some(blobs),
+            ..state_with_limits(MintLimits {
+                per_window: 5,
+                window_secs: 3600,
+                lifetime: 1000,
+            })
+        };
+        state
+            .store
+            .add_attachment(
+                "att_1".into(),
+                "a".repeat(64),
+                4_096,
+                "application/pdf".into(),
+                "report.pdf".into(),
+                "/k/me".into(),
+                100,
+            )
+            .await
+            .unwrap();
+
+        let text = body_text(metrics(State(state), bearer_header("scrape-me")).await).await;
+        assert!(text.contains("pigeonpost_blob_bytes_total 4096"), "{text}");
+        assert!(text.contains("pigeonpost_blob_files_total 1"), "{text}");
+        assert!(
+            text.contains("pigeonpost_blob_uploads_failed_total 1"),
+            "{text}"
+        );
+        assert!(text.contains("pigeonpost_attachments_enabled 1"), "{text}");
+        let _ = std::fs::remove_dir_all(&root);
     }
 }

@@ -39,3 +39,8 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 jsonwebtoken = "9"
 # `http2` because APNs speaks nothing else. The other features are the realm JWKS fetch.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+
+# `statvfs`, for the free-space floor under the blob volume. Already in the tree through tokio and
+# rusqlite; this only makes the use direct.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

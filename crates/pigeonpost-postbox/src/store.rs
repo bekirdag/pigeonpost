@@ -457,6 +457,17 @@ pub struct ReapStats {
     pub messages: usize,
 }
 
+/// What one attachment sweep let go of.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub struct BlobSweep {
+    /// Uploads that were never named by a message and have run out of time to be.
+    pub unclaimed: usize,
+    /// Claims on messages that no longer exist.
+    pub unreferenced: usize,
+    /// Digests nothing refers to any more. These are files to delete.
+    pub blobs: Vec<String>,
+}
+
 /// A stored, sealed message awaiting delivery to `recipient`. `wrap_blob` is a JSON-serialized
 /// `pigeonpost_core::envelope::Wrap`.
 pub struct Message {
@@ -1228,6 +1239,87 @@ impl Store {
             }
             tx.commit()?;
             Ok(orphaned)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// What every attachment on this postbox occupies on disk, and how many files that is.
+    ///
+    /// Counted over distinct digests, not over rows. The same file claimed by a sender and three
+    /// recipients is four rows and one file, and the number this exists to answer — how much of
+    /// the volume is spent — is the file's.
+    pub async fn blob_footprint(&self) -> Result<(u64, u64), StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<(u64, u64), StoreError> {
+            let c = conn.lock().expect("store lock");
+            let (files, bytes): (i64, i64) = c.query_row(
+                "SELECT COUNT(*), COALESCE(SUM(bytes), 0)
+                   FROM (SELECT sha256, MAX(bytes) AS bytes FROM attachments GROUP BY sha256)",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )?;
+            Ok((files.max(0) as u64, bytes.max(0) as u64))
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// The rows nothing can reach any more, and the blobs left with no row at all.
+    ///
+    /// Two ways an attachment stops being anybody's. An upload whose message was never sent —
+    /// `POST /v1/attachments` succeeded and `POST /v1/send` never followed, so the row holds a
+    /// mailbox's quota against a file nobody can name. And a claim on a message that has since
+    /// gone without releasing it: the ephemeral sweep deletes message rows wholesale, and
+    /// `release_attachments` only runs on the delete-a-message path.
+    ///
+    /// Returns the digests nothing refers to any more; the caller removes those files. The order
+    /// is deliberate and the same as `release_attachments`: rows first, then bytes. A blob that
+    /// outlives its rows is recoverable, a row that outlives its blob is a download that fails
+    /// for ever.
+    pub async fn sweep_attachments(&self, unclaimed_cutoff: u64) -> Result<BlobSweep, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<BlobSweep, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            // Everything about to go, so the orphan check below asks about the right digests.
+            let touched: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT sha256 FROM attachments
+                      WHERE (message_id IS NULL AND created_at < ?1)
+                         OR (message_id IS NOT NULL
+                             AND message_id NOT IN (SELECT id FROM messages))",
+                )?;
+                let rows = stmt.query_map(params![unclaimed_cutoff as i64], |r| r.get(0))?;
+                rows.collect::<Result<Vec<String>, _>>()?
+            };
+            let unclaimed = tx.execute(
+                "DELETE FROM attachments WHERE message_id IS NULL AND created_at < ?1",
+                params![unclaimed_cutoff as i64],
+            )?;
+            let unreferenced = tx.execute(
+                "DELETE FROM attachments
+                  WHERE message_id IS NOT NULL
+                    AND message_id NOT IN (SELECT id FROM messages)",
+                [],
+            )?;
+            let mut blobs = Vec::new();
+            for sha in touched {
+                let still: i64 = tx.query_row(
+                    "SELECT COUNT(*) FROM attachments WHERE sha256 = ?1",
+                    params![sha],
+                    |r| r.get(0),
+                )?;
+                if still == 0 {
+                    blobs.push(sha);
+                }
+            }
+            tx.commit()?;
+            Ok(BlobSweep {
+                unclaimed,
+                unreferenced,
+                blobs,
+            })
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -3027,6 +3119,98 @@ mod tests {
                 .await
                 .unwrap();
             assert_eq!(orphaned, vec![sha]);
+        }
+
+        async fn delivered(store: &Store, id: &str, owner: &str) {
+            store.enqueue(msg(id, owner, 100)).await.unwrap();
+        }
+
+        /// An upload that no message ever named holds a mailbox's quota against a file nobody can
+        /// reach. It has to expire, or `POST /v1/attachments` is free storage with extra steps.
+        #[tokio::test]
+        async fn an_upload_nobody_sent_is_swept_once_it_is_old_enough() {
+            let s = Store::open(":memory:").unwrap();
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 10).await;
+
+            // Too young: still waiting for the send that names it.
+            let swept = s.sweep_attachments(50).await.unwrap();
+            assert_eq!(swept, BlobSweep::default());
+            assert_eq!(s.attachment_bytes("/k/me".into()).await.unwrap(), 10);
+
+            let swept = s.sweep_attachments(200).await.unwrap();
+            assert_eq!(swept.unclaimed, 1);
+            assert_eq!(swept.blobs, vec!["a".repeat(64)]);
+            assert_eq!(s.attachment_bytes("/k/me".into()).await.unwrap(), 0);
+        }
+
+        /// The ephemeral sweep deletes message rows wholesale. Without this pass their attachments
+        /// stay on the volume for ever, claimed by a message that no longer exists.
+        #[tokio::test]
+        async fn a_claim_on_a_message_that_is_gone_releases_the_file() {
+            let s = Store::open(":memory:").unwrap();
+            let sha = "d".repeat(64);
+            s.insert(sample("/k/me")).await.unwrap();
+            delivered(&s, "m1", "/k/me").await;
+            uploaded(&s, "/k/me", "att_1", &sha, 10).await;
+            s.attach_to_message(vec!["att_1".into()], "/k/me".into(), "m1".into(), None, 200)
+                .await
+                .unwrap();
+
+            // While the message stands, the claim stands with it — the cutoff is about unclaimed
+            // uploads and must not touch a file a message is carrying, however old.
+            assert_eq!(
+                s.sweep_attachments(u64::MAX).await.unwrap(),
+                BlobSweep::default()
+            );
+
+            // The ephemeral mailbox expires, taking its mail with it and leaving the claim behind.
+            let reaped = s.reap(1_000).await.unwrap();
+            assert_eq!(reaped.messages, 1);
+            let swept = s.sweep_attachments(u64::MAX).await.unwrap();
+            assert_eq!(swept.unreferenced, 1);
+            assert_eq!(swept.blobs, vec![sha]);
+        }
+
+        /// The sweep must not delete bytes another mailbox is still holding — the same file is one
+        /// blob and many rows.
+        #[tokio::test]
+        async fn a_file_another_mailbox_still_holds_is_not_deleted_from_disk() {
+            let s = Store::open(":memory:").unwrap();
+            let sha = "e".repeat(64);
+            delivered(&s, "sent_1", "/k/me").await;
+            delivered(&s, "delivered_1", "/k/you").await;
+            uploaded(&s, "/k/me", "att_1", &sha, 10).await;
+            s.attach_to_message(
+                vec!["att_1".into()],
+                "/k/me".into(),
+                "sent_1".into(),
+                Some(("/k/you".into(), "delivered_1".into())),
+                200,
+            )
+            .await
+            .unwrap();
+
+            s.delete_message("/k/me".into(), "sent_1".into())
+                .await
+                .unwrap();
+            let swept = s.sweep_attachments(u64::MAX).await.unwrap();
+            assert_eq!(swept.unreferenced, 1, "the sender's row goes");
+            assert!(
+                swept.blobs.is_empty(),
+                "but not the bytes — the recipient still has them"
+            );
+            assert_eq!(s.attachment_bytes("/k/you".into()).await.unwrap(), 10);
+        }
+
+        /// What the volume actually holds, which is a question about files rather than rows.
+        #[tokio::test]
+        async fn the_footprint_counts_a_shared_file_once() {
+            let s = Store::open(":memory:").unwrap();
+            assert_eq!(s.blob_footprint().await.unwrap(), (0, 0));
+            uploaded(&s, "/k/me", "att_1", "a".repeat(64).as_str(), 1_000).await;
+            uploaded(&s, "/k/you", "att_2", "a".repeat(64).as_str(), 1_000).await;
+            uploaded(&s, "/k/me", "att_3", "b".repeat(64).as_str(), 500).await;
+            assert_eq!(s.blob_footprint().await.unwrap(), (2, 1_500));
         }
     }
 
