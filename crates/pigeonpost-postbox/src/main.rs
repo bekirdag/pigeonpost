@@ -451,6 +451,16 @@ fn gen_cap_token() -> String {
 }
 
 fn build_router(state: AppState) -> Router {
+    // Axum buffers a `Bytes` body behind a 2 MB default, which silently made
+    // `PIGEONPOST_BLOB_MAX_MB` decorative: anything larger was refused by the framework, before the
+    // handler that would have said why, with a plain-text 413 no client parses. The limit that
+    // matters is the store's own, so say it here — and only on this route, because every other
+    // body on this service is JSON and 2 MB of JSON is already generous.
+    let upload_limit = state
+        .blobs
+        .as_ref()
+        .map(|b| b.max_bytes())
+        .unwrap_or(2 * 1024 * 1024);
     Router::new()
         .route("/", get(onboard))
         .route("/health", get(health))
@@ -470,7 +480,10 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/messages/delete", post(delete_message))
-        .route("/v1/attachments", post(upload_attachment))
+        .route(
+            "/v1/attachments",
+            post(upload_attachment).layer(axum::extract::DefaultBodyLimit::max(upload_limit)),
+        )
         .route("/v1/attachments/{id}", get(download_attachment))
         .route("/v1/quota", get(quota))
         .route("/v1/report-spam", post(report_spam))
@@ -1381,6 +1394,15 @@ const CORS_ORIGINS: [&str; 3] = [
     "https://inbox.pigeonpost.dev",
 ];
 
+/// The request headers a browser may send us.
+///
+/// Every one of them, or the browser sends none of them: a header a preflight does not name is a
+/// request that never leaves the page. The three `x-pigeonpost-*` names are what an attachment
+/// upload and download are made of, and their absence here is why the web inbox could not manage
+/// either — the CLI and the phone were unaffected, because neither asks permission first.
+const CORS_ALLOW_HEADERS: &str =
+    "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-filename, x-pigeonpost-media-type";
+
 /// Minimal CORS: echo an allowlisted `Origin`, answer preflight, allow the bearer header. Same-origin
 /// callers (the onboarding page, agents) are unaffected.
 async fn cors(req: Request, next: Next) -> Response {
@@ -1409,7 +1431,7 @@ async fn cors(req: Request, next: Next) -> Response {
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
-            HeaderValue::from_static("authorization, content-type"),
+            HeaderValue::from_static(CORS_ALLOW_HEADERS),
         );
         h.insert(header::VARY, HeaderValue::from_static("Origin"));
     }
@@ -5033,6 +5055,33 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The bug this is here to stop coming back: attachments were unreachable from the web inbox
+    /// for a whole release because `Access-Control-Allow-Headers` named only `authorization` and
+    /// `content-type`. Nothing failed on the server — the requests were never sent. Any new
+    /// `x-pigeonpost-*` header a browser must send belongs in this list *and* in this test.
+    #[test]
+    fn preflight_admits_every_header_a_browser_sends() {
+        for name in [
+            "authorization",
+            "content-type",
+            // Which mailbox is acting: every attachment call, upload and download.
+            "x-pigeonpost-identity",
+            // What to call the file, and what it claims to be: the upload.
+            "x-pigeonpost-filename",
+            "x-pigeonpost-media-type",
+        ] {
+            assert!(
+                CORS_ALLOW_HEADERS.split(", ").any(|h| h == name),
+                "a browser cannot send `{name}`: it is missing from CORS_ALLOW_HEADERS",
+            );
+        }
+        assert_eq!(
+            CORS_ALLOW_HEADERS,
+            CORS_ALLOW_HEADERS.to_ascii_lowercase(),
+            "header names are compared case-insensitively, but keep the list tidy",
+        );
+    }
 
     #[test]
     fn parses_port_from_bind() {

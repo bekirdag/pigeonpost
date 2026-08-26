@@ -724,6 +724,11 @@ check("both scrollers refuse sideways scroll", (css.match(/overflow-x:\s*hidden/
 check("viewport height has a fallback chain", /height:\s*100vh;[\s\S]{0,200}height:\s*100svh;[\s\S]{0,200}height:\s*100dvh;/.test(css), true);
 check("flex items may shrink below their longest word", /\.messages li \{[^}]*min-width:\s*0/s.test(css), true);
 check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
+// The staged-file list asks for a whole row (`flex-basis: 100%`). On a composer that does not wrap
+// that is a claim on the row the message field is already in, and the field collapses to nothing
+// the moment a file is chosen — which is what it did, for a whole release.
+check("composer wraps so staged files get a row of their own", /\.composer\s*\{[^}]*flex-wrap:\s*wrap/s.test(css), true);
+check("and the list asks for that whole row", /\.pending-files\s*\{[^}]*flex-basis:\s*100%/s.test(css), true);
 
 console.log("\n— dark mode is complete, or it is a bug nobody sees in daylight —");
 // A colour added to :root without a dark value does not fail anything. It is simply wrong on half

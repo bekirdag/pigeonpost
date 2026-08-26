@@ -79,6 +79,19 @@ PIGEONPOST_BLOB_DIR=/mnt/web-volume/pigeonpost-blobs   # mounted, 0700, owned by
 # PIGEONPOST_BLOB_MIN_FREE_MB=2048                     # free space the volume never goes below
 ```
 
+**Two limits in front of `PIGEONPOST_BLOB_MAX_MB` will quietly override it, and neither says so.**
+Both were doing exactly that until 2026-08-26, which made a nominal 100 MB ceiling a real one of
+1 MB:
+
+- **Apache.** The vhost carries `LimitRequestBody 1048576` for the whole service, which is right for
+  a JSON API and fatal for an upload. `/v1/attachments` now has a `<Location>` of its own at
+  100 MB; the rest of the service keeps the 1 MB. Raise both together or not at all — the
+  refusal Apache writes is an HTML page with no CORS headers on it, so a browser cannot even read
+  the reason.
+- **Axum.** A buffered `Bytes` body defaults to 2 MB. `build_router` now layers
+  `DefaultBodyLimit::max(PIGEONPOST_BLOB_MAX_MB)` on that one route, so the handler is the thing
+  that refuses a large file and the client gets JSON explaining why.
+
 On the live box that is `/dev/sdb`, a 40 GB Hetzner volume already in `fstab` with `nofail`, on
 the same host as the postbox — so bytes never cross a network to reach their own API.
 

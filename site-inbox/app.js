@@ -1630,7 +1630,10 @@
       try {
         attachments = await Promise.all(staged.map(uploadFile));
       } catch (e) {
-        toast(e instanceof ApiError ? e.detail || e.error || "Could not upload that file." : "Could not upload that file.");
+        // `ApiError`'s message is the postbox's own detail — "this mailbox holds 96 MB of 100 MB"
+        // says what to do about it, and `e.detail` (which this read, and which the class never
+        // sets) said nothing at all.
+        toast(e instanceof ApiError ? e.message || "Could not upload that file." : "Could not upload that file.");
         return;
       }
       staged.length = 0;
