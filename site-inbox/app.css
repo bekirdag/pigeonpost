@@ -773,6 +773,60 @@ button { font: inherit; color: inherit; }
   color: var(--muted);
 }
 .bubble .text hr { border: 0; border-top: 1px solid var(--rule); margin: 9px 0; }
+
+/* A table is the one block whose width is decided by its content rather than by the bubble, and the
+   bubble is 560px at the widest. So it gets a block of its own that scrolls. Letting it shrink
+   instead squeezes every column until the cells wrap to a word a line, which is a table with the
+   only property it has — things lining up — taken off it; and anything still too wide is clipped by
+   `.messages`, which hides horizontal overflow on purpose so one wide message cannot pan the whole
+   conversation sideways. */
+.bubble .text .md-table-wrap {
+  margin: 0 0 7px;
+  max-width: 100%;
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+/* A bar that is drawn and stays drawn, not the overlay one macOS fades in mid-gesture and hides
+   again: a table wider than its bubble has to *say* it is wider, or nobody thinks to move it.
+   Styling `::-webkit-scrollbar` at all is what opts a WebKit/Blink scroller out of the overlay
+   treatment, so these rules are the visibility as much as the colour. */
+.bubble .text .md-table-wrap::-webkit-scrollbar { height: 9px; }
+.bubble .text .md-table-wrap::-webkit-scrollbar-track { background: transparent; }
+.bubble .text .md-table-wrap::-webkit-scrollbar-thumb {
+  background: var(--muted);
+  border-radius: 5px;
+  /* Inset off the table's bottom edge rather than sitting hard against it. */
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+/* Firefox has no such pseudo-element and draws a real bar regardless — so it gets the standard
+   properties instead. They cannot go in the rule above: from Chrome 121 `scrollbar-width` wins
+   outright and switches the `::-webkit-scrollbar` styling above back off, which is how this first
+   shipped with a table that scrolled and no scrollbar to say so. */
+@supports not selector(::-webkit-scrollbar) {
+  .bubble .text .md-table-wrap {
+    scrollbar-width: thin;
+    scrollbar-color: var(--muted) transparent;
+  }
+}
+.bubble .text .md-table {
+  /* `auto`, never `100%`: the columns decide the width, and stretching them back to the bubble is
+     exactly the squeeze the wrapper exists to avoid. */
+  width: auto;
+  border-collapse: collapse;
+  font-size: 0.92em;
+}
+.bubble .text .md-table th,
+.bubble .text .md-table td {
+  border: 1px solid var(--rule);
+  padding: 4px 9px;
+  text-align: left;
+  /* Cells are labels and numbers, and `.text` sets `pre-wrap` for prose. Wrapping them is what
+     makes a narrow table unreadable; the wrapper scrolls instead. */
+  white-space: nowrap;
+}
+.bubble .text .md-table th { font-weight: 700; background: var(--wash); }
+.bubble .text .md-table tbody tr:nth-child(even) td { background: var(--wash); }
 .bubble .text .auto-caption {
   font-size: 12px;
   color: var(--muted);
@@ -783,6 +837,14 @@ button { font: inherit; color: inherit; }
 .mine .bubble .text code { background: rgba(255, 255, 255, 0.16); }
 .mine .bubble .text .md-quote { border-left-color: rgba(255, 255, 255, 0.35); color: rgba(255, 255, 255, 0.85); }
 .mine .bubble .text .auto-caption { color: rgba(255, 255, 255, 0.75); }
+.mine .bubble .text .md-table th,
+.mine .bubble .text .md-table td { border-color: rgba(255, 255, 255, 0.28); }
+.mine .bubble .text .md-table th,
+.mine .bubble .text .md-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.16); }
+.mine .bubble .text .md-table-wrap::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.5); }
+@supports not selector(::-webkit-scrollbar) {
+  .mine .bubble .text .md-table-wrap { scrollbar-color: rgba(255, 255, 255, 0.5) transparent; }
+}
 
 .mine .bubble .meta .failed { color: #fecdd3; }
 

@@ -1235,6 +1235,13 @@
       }
       // Code summarises nothing. Skipping it lets the prose above surface instead.
       if (inFence) continue;
+      // A table underline says nothing at a glance, and a table row says what it says without the
+      // pipes holding it up. Only a fenced row is treated this way: a sentence that happens to
+      // contain a pipe keeps it.
+      if (/^\|.*\|$/.test(s)) {
+        if (tableAlignments(s) !== null) continue;
+        s = s.slice(1, -1).split("|").map((c) => c.trim()).filter(Boolean).join(" — ");
+      }
       s = s.replace(/^#{1,6}\s*/, "").replace(/^[-*+>]\s+/, "");
       s = s.replace(/\*\*/g, "").replace(/`/g, "");
       s = s.trim();
@@ -1265,7 +1272,8 @@
   // `textContent` set; nothing is ever parsed as HTML, and no link is made clickable.
   //
   // The grammar is what agents actually send — headings, bullets, numbered lists, fenced code,
-  // quotes, rules, and inline emphasis. Anything unrecognised is shown as the literal line it was.
+  // quotes, rules, tables, and inline emphasis. Anything unrecognised is shown as the literal line
+  // it was.
   // A renderer that silently drops what it cannot parse loses somebody's message, which is far
   // worse than an unstyled one.
   function renderMarkdown(container, raw) {
@@ -1343,6 +1351,25 @@
         continue;
       }
 
+      // A table needs its underline. `| yes | no |` on its own is a line somebody typed, and only
+      // the `|---|---|` beneath it says the pipes were a grid — so a sentence containing a pipe
+      // stays the sentence it was. Rows run until a blank line or a line with no pipe in it.
+      if (trimmed.includes("|") && tableAlignments(lines[i + 1]) !== null) {
+        flush();
+        const header = tableCells(trimmed);
+        const aligns = tableAlignments(lines[i + 1]);
+        i += 1;
+        const rows = [];
+        while (i + 1 < lines.length) {
+          const next = lines[i + 1].trim();
+          if (!next || !next.includes("|")) break;
+          i += 1;
+          rows.push(tableCells(next));
+        }
+        container.append(buildTable(header, aligns, rows));
+        continue;
+      }
+
       const bullet = /^[-*+]\s+(.*)$/.exec(trimmed);
       const numbered = /^(\d{1,3})[.)]\s+(.*)$/.exec(trimmed);
       if (bullet || numbered) {
@@ -1391,6 +1418,74 @@
       last = match.index + token.length;
     }
     if (last < text.length) target.append(document.createTextNode(text.slice(last)));
+  }
+
+  // The cells of one row. A leading and a trailing pipe fence the row rather than being empty cells
+  // either side of it, so they come off before the split.
+  function tableCells(line) {
+    let s = String(line).trim();
+    if (s.startsWith("|")) s = s.slice(1);
+    if (s.endsWith("|")) s = s.slice(0, -1);
+    return s.split("|").map((cell) => cell.trim());
+  }
+
+  // `|---|:--:|` and nothing else: every cell dashes, optionally anchored by a colon at one end or
+  // both. Returns one alignment per column, or `null` if this line is not a table underline — which
+  // is what keeps the row above it prose.
+  function tableAlignments(line) {
+    if (line == null) return null;
+    const s = String(line).trim();
+    if (!s.includes("|") || !s.includes("-")) return null;
+    const cells = tableCells(s);
+    if (!cells.length) return null;
+    const out = [];
+    for (const cell of cells) {
+      const spec = /^(:?)(-+)(:?)$/.exec(cell);
+      if (!spec) return null;
+      out.push(spec[1] && spec[3] ? "center" : spec[3] ? "right" : spec[1] ? "left" : "");
+    }
+    return out;
+  }
+
+  // A table, in a block that scrolls.
+  //
+  // The wrapper is the point rather than decoration: a table's width is its columns', and a bubble
+  // is 560px at the widest. Without something to scroll, a wide table is either squeezed until
+  // every cell wraps to a word a line — which is a table with its one useful property gone — or
+  // clipped by `.messages`, which hides its own horizontal overflow on purpose so that one wide
+  // message cannot pan the whole conversation sideways.
+  function buildTable(header, aligns, rows) {
+    const wrap = document.createElement("div");
+    wrap.className = "md-table-wrap";
+    const table = document.createElement("table");
+    table.className = "md-table";
+
+    const cell = (tag, text, column) => {
+      const el = document.createElement(tag);
+      if (aligns[column]) el.style.textAlign = aligns[column];
+      inline(el, text == null ? "" : text);
+      return el;
+    };
+
+    const thead = document.createElement("thead");
+    const headRow = document.createElement("tr");
+    header.forEach((text, column) => headRow.append(cell("th", text, column)));
+    thead.append(headRow);
+    table.append(thead);
+
+    const tbody = document.createElement("tbody");
+    for (const row of rows) {
+      const tr = document.createElement("tr");
+      // A short row is padded out and a long one kept whole. The header says what shape the table
+      // is, but dropping the extra cell would drop somebody's data to make the shape true.
+      const width = Math.max(header.length, row.length);
+      for (let column = 0; column < width; column += 1) tr.append(cell("td", row[column], column));
+      tbody.append(tr);
+    }
+    table.append(tbody);
+
+    wrap.append(table);
+    return wrap;
   }
 
   function heldReason(code) {

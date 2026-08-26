@@ -416,6 +416,36 @@ check("a fence becomes a pre", Boolean(md.querySelector(".md-code")), true);
 check("markup inside a fence stays text", md.querySelector(".md-code").textContent.includes("<img"), true);
 check("and no image was ever created", md.querySelectorAll("img").length, 0);
 
+console.log("\n— tables —");
+INBOX.messages.push({
+  message_id: "m_table", from: "/k/aaaa1111bbbb2222cccc3333dd",
+  body: "Results:\n\n| Host | Port | State |\n| --- | ---: | :---: |\n| wodomini | 34251 | up |\n| postbox | 22 | up |\n\nNot a table | just a sentence with a pipe.",
+  peer: "/bekir/agent1", thread_id: "t-agent1", sender_handle: "/bekir/agent1",
+  autonomy: "review", verb: null, held_because: "not_a_request", received_at: now - 4, read: true,
+  sender_known: true, matched_contact: "/bekir/*", sender_standing: "unproven",
+  sender_tier: "handle", alias: null, untrusted: true,
+});
+window.document.dispatchEvent(new window.Event("visibilitychange"));
+await settle(120);
+const tbl = [...$("messages").querySelectorAll(".bubble .text")].find((el) => el.querySelector(".md-table"));
+check("the table message reached the view", Boolean(tbl), true);
+check("pipes become a table", Boolean(tbl.querySelector("table.md-table")), true);
+check("the header row is th cells", tbl.querySelectorAll("thead th").length, 3);
+check("header keeps its words", text(tbl.querySelector("thead th")), "Host");
+check("the body rows are kept", tbl.querySelectorAll("tbody tr").length, 2);
+check("and their cells", tbl.querySelectorAll("tbody tr:first-child td").length, 3);
+check("a cell keeps its words", text(tbl.querySelectorAll("tbody td")[1]), "34251");
+// The fix the table was asked for: the block that holds it is the thing that scrolls.
+check("the table sits in a scrolling block", Boolean(tbl.querySelector(".md-table-wrap > table")), true);
+// Alignment comes off the underline, not off a guess.
+check("a right-anchored column is right", tbl.querySelectorAll("thead th")[1].style.textAlign, "right");
+check("a colon at both ends is centred", tbl.querySelectorAll("thead th")[2].style.textAlign, "center");
+check("and an unanchored one says nothing", tbl.querySelectorAll("thead th")[0].style.textAlign, "");
+// Without an underline the pipes were punctuation, and the sentence stays a sentence.
+check("a lone pipe is not a table", tbl.querySelectorAll("table").length, 1);
+check("the sentence survives as prose",
+  [...tbl.querySelectorAll(".md-p")].some((p) => text(p).includes("just a sentence with a pipe")), true);
+
 console.log("\n— copy —");
 const copyButton = [...$("messages").querySelectorAll(".bubble .meta .copy")].pop();
 check("every message offers copy", Boolean(copyButton), true);
