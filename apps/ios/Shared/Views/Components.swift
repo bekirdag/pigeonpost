@@ -37,6 +37,40 @@ struct UnreadBadge: View {
     }
 }
 
+/// Open a conversation on its newest message, and stay there.
+///
+/// Stated as a property of the scroll view rather than as an event. Doing it in `onAppear` is a
+/// guess at the timing — that runs before the scroll view has measured its content, so a long
+/// conversation opens somewhere in the middle often enough to be a complaint, which is exactly what
+/// it was on the Mac.
+///
+/// Shared because the two clients had the same bug and only one of them had the fix.
+struct AnchoredToBottom: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        #if os(iOS)
+        if #available(iOS 18.0, *) {
+            content
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
+        #else
+        // Nothing, on purpose. macOS 14's single-argument `defaultScrollAnchor(.bottom)` does not
+        // settle a scroll view at its end: it puts the content outside the visible rectangle
+        // altogether, so a conversation of any length draws as an empty pane with the composer
+        // underneath it. Twelve messages, all present in the model, and not one pixel of them.
+        // The Mac scrolls to the floor explicitly after the first layout instead.
+        //
+        // The three-argument form is what iOS 18 uses above and is the one that behaves; it needs
+        // macOS 15, which is newer than this app's deployment target.
+        content
+        #endif
+    }
+}
+
 struct PillView: View {
     enum Kind { case held, auto, blocked }
 
@@ -158,4 +192,9 @@ extension View {
     func colorInvert(when condition: Bool) -> some View {
         if condition { colorInvert() } else { self }
     }
+}
+
+extension String {
+    /// Written often enough, in both apps, that spelling it out each time is the noise.
+    var trimmed: String { trimmingCharacters(in: .whitespacesAndNewlines) }
 }

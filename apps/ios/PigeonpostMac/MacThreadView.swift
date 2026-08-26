@@ -10,15 +10,30 @@ import UniformTypeIdentifiers
 
 struct MacThreadView: View {
     let peer: String
+    /// Which subject is being read, chosen in the sidebar. `nil` means the whole conversation.
+    let subthread: String?
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @State private var draft = ""
     @State private var staged: [StagedFile] = []
     @State private var dropping = false
+    /// What the toolbar's search field is looking for, inside this conversation.
+    @State private var find = ""
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
-    private var shown: [ThreadMessage] { conversation?.messages ?? [] }
+    private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
+
+    private var shown: [ThreadMessage] {
+        guard let conversation else { return [] }
+        let inSubject = subthread.map { id in
+            conversation.messages.filter { ($0.threadId ?? "") == id }
+        } ?? conversation.messages
+        guard !find.trimmed.isEmpty else { return inSubject }
+        // Narrowed to the messages that match, rather than highlighted in place. On a conversation
+        // long enough to need searching, "highlighted somewhere above" is the same as not found.
+        return inSubject.filter { $0.body.localizedCaseInsensitiveContains(find.trimmed) }
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -44,8 +59,26 @@ struct MacThreadView: View {
                 // too. The pattern is the paper a conversation is written on; the composer is a
                 // control sitting on top of the paper, not part of it.
                 .background { DoodleBackground() }
-                .onChange(of: shown.count) { _, _ in scroller.scrollTo(Self.floor, anchor: .bottom) }
-                .onAppear { scroller.scrollTo(Self.floor, anchor: .bottom) }
+                // Stated as a property of the scroll view, not as an event. `onAppear` fires
+                // before the scroll view has measured its content, which is why a long
+                // conversation kept opening somewhere in the middle.
+                // Explicitly, after the first layout. `onAppear` runs before the scroll view has
+                // measured its content, which is what made this unreliable rather than wrong, and
+                // the declarative anchor that replaces it on the phone is unusable here — see
+                // `AnchoredToBottom`.
+                .task(id: peer) {
+                    await Task.yield()
+                    scroller.scrollTo(Self.floor, anchor: .bottom)
+                }
+                // A message arriving, or being sent, belongs on screen.
+                .onChange(of: shown.count) { _, _ in
+                    scroller.scrollTo(Self.floor, anchor: .bottom)
+                }
+                // Changing subject is a different conversation as far as the reader is concerned,
+                // and it should open where that one left off.
+                .onChange(of: subthread) { _, _ in
+                    scroller.scrollTo(Self.floor, anchor: .bottom)
+                }
             }
             Divider()
             composer
@@ -70,9 +103,13 @@ struct MacThreadView: View {
                     .allowsHitTesting(false)
             }
         }
-        .task(id: peer) { await inbox.acknowledge(peer: peer, subthread: nil) }
+        .searchable(text: $find, prompt: "Search this conversation")
+        .task(id: taskKey) { await inbox.acknowledge(peer: peer, subthread: subthread) }
         .navigationTitle(conversation?.name ?? peer)
     }
+
+    /// Re-acknowledge when the subject changes or new mail lands, but not on every render.
+    private var taskKey: String { "\(peer)|\(subthread ?? "")|\(conversation?.unread ?? 0)" }
 
     private var composer: some View {
         VStack(spacing: 6) {
@@ -86,7 +123,15 @@ struct MacThreadView: View {
                     .padding(.horizontal, 12)
                 }
             }
-            HStack(alignment: .bottom, spacing: 8) {
+            // Centred on the field.
+            //
+            // `.bottom` lines up the *frames*, and those are not comparable: a button's frame
+            // carries its own hit-target padding, the field's carries 7pt of text inset. The
+            // paperclip ended up floating above the words it sits beside. `.lastTextBaseline` put
+            // it further out still, because a padded field's baseline is not where a bare glyph's
+            // is. Centre is the one alignment that means the same thing for both, and for a field
+            // that is one line almost always, it is also what it should look like.
+            HStack(alignment: .center, spacing: 8) {
                 Button { pick() } label: { Image(systemName: "paperclip") }
                     .buttonStyle(.plain)
                     .foregroundStyle(Theme.muted)
@@ -151,6 +196,9 @@ struct MacThreadView: View {
         let files = staged
         staged = []
         draft = ""
-        Task { await inbox.send(text, to: peer, threadId: nil, files: files) }
+        // Whichever subject is on screen, including the single one a quiet peer has where no strip
+        // is drawn. A reply that leaves the thread it answers is the only outcome nobody wants.
+        let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
+        Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
     }
 }

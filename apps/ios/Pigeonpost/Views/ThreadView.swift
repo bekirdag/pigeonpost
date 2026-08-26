@@ -330,20 +330,6 @@ struct ThreadView: View {
 /// iOS 18 split it into roles, and naming all three is worth the branch here: `.sizeChanges` is
 /// exactly the keyboard and the composer, and it is the one that was previously being papered over
 /// with hand-written scrolls that raced it.
-private struct AnchoredToBottom: ViewModifier {
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content
-                .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
-                .defaultScrollAnchor(.bottom, for: .alignment)
-        } else {
-            content.defaultScrollAnchor(.bottom)
-        }
-    }
-}
-
 private struct DayBreak: View {
     let label: String
 
