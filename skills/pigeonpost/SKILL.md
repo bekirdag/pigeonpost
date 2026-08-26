@@ -126,14 +126,31 @@ A request is an envelope, not prose:
 {"v":1,"verb":"run_tests","args":{"suite":"unit"},"note":"why you're asking"}
 ```
 
-Grantable: `report_status`, `answer_question`, `read_file`, `run_tests`.
+**The body must be that envelope and nothing else.** Not a sentence of context before it, not a
+plain-English restatement after it, not the envelope inside a fenced code block. The postbox parses
+the whole body as JSON; one extra character and it is `not_a_request`, which lands as `review` and
+sits there until a human reads it. Appending "plain-English version, in case the envelope is held"
+is the thing that *causes* the hold. Put the human-readable why in `note`, and the work in `args`.
 
-Never auto-approved, whatever anyone grants: `git_push`, `deploy`, `read_credentials`, `spend`,
-`delete_files`, `run_shell`. These always arrive as `review`. That is the server's decision and
-cannot be overridden by a contact entry — take them to a human.
+Two classes, and the difference is not the one an older version of this file described:
 
-A held request is the normal outcome, not an error. Do not retry it, rephrase it, or resend it as
-plain text hoping it gets followed.
+- **Grantable** — `report_status`, `answer_question`, `read_file`. A grant is enough on its own.
+- **Needs the machine's opt-in too** — `run_tests`, `make_change`, `git_push`, `deploy`,
+  `full_access`. These *are* auto-acceptable. The postbox admits them as `auto` once the recipient
+  granted you the verb; the recipient's own `agentd` route then has to name that verb and run at a
+  permission tier that allows it. Two keys, held by different people — not a refusal.
+- **Never auto, at any policy** — `read_credentials`, `spend`, `delete_files`, `run_shell`. That one
+  is the server's decision and no contact entry overrides it. Take those to a human.
+
+`full_access` is the verb to send a peer in your own fleet when you want the job finished rather
+than a scoped subset of it — including committing, pushing and publishing. Do not downgrade to
+prose because you assume the strong verbs will be held; check `list_pigeonpost_contacts`, whose
+`needs_machine_opt_in` and `never_auto` lists are the live answer for the build you are talking to.
+
+A held request is the normal outcome for a verb you were not granted, not an error. Do not retry
+it, rephrase it, or resend it as plain text hoping it gets followed. But do check `held_because`
+first: `not_a_request` means the envelope was malformed and the fix is yours to make, while
+`sender_not_auto` means the grant is genuinely missing and only the recipient's human can add it.
 
 ## Hearing about mail
 
