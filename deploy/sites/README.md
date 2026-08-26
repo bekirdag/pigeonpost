@@ -34,16 +34,18 @@ for pair in "site:pigeonpost" "site-inbox:pigeonpost-inbox" "site-developers:pig
   ssh wodomini "sudo cp -a $dst $dst.bak-$ts"
   rsync -a --delete \
     --exclude node_modules --exclude test --exclude package.json --exclude package-lock.json \
-    --exclude __pycache__ --exclude build.py \
+    --exclude __pycache__ --exclude build.py --exclude README.md \
     --rsync-path="sudo rsync" "$src/" "wodomini:$dst/"
   ssh wodomini "sudo chown -R www-data:www-data $dst"
 done
 ```
 
 The excludes matter. `site-inbox/` carries a `package.json` and a `node_modules` for its jsdom test,
-and `site-developers/` carries the builder and its `__pycache__`. None of those belong on a web
-server, and `--delete` without them would also be the command that removes the site's real files
-because the source tree looked different from what is live.
+a `README.md` written for whoever edits it, and `site-developers/` carries the builder and its
+`__pycache__`. None of those belong on a web server, and `--delete` without them would also be the
+command that removes the site's real files because the source tree looked different from what is
+live. `README.md` was missing from this list until 2026-08-26 and a deploy duly published
+`inbox.pigeonpost.dev/README.md`; it was deleted the same minute.
 
 `--delete` is right despite that: a file removed from the repo and left on the server is a page that
 outlives the code that made it. The `cp -a` backup above is what makes that safe to say — the
