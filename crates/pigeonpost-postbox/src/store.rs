@@ -637,6 +637,20 @@ impl Default for InboxPolicy {
     }
 }
 
+/// One handle an account holds, as the account page needs to show it.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct NamespaceHolding {
+    /// Bare, without the leading slash — the callers that display it add their own.
+    pub namespace: String,
+    /// What bought it: `apple`, `grant`, and whatever else binds one later. Shown to nobody, but
+    /// it is the difference between "your card renews this" and "the App Store renews this", and
+    /// answering that wrongly is worse than not answering.
+    pub source: String,
+    pub verified_at: u64,
+    /// `None` means it does not lapse. Everything bought so far does.
+    pub expires_at: Option<u64>,
+}
+
 /// The namespace-wide contact that would cover `peer`, e.g. `/bekir/*` for `/bekir/agent1`.
 ///
 /// `None` for a `/k/` address: those have no namespace to belong to, so nothing but an exact row
@@ -1413,6 +1427,44 @@ impl Store {
     /// remaining piece of Phase 1. Left public and unused rather than deleted because the mint
     /// path already reads what it writes, and the read half is worthless without it.
     #[allow(dead_code)]
+    /// Every handle this account holds, newest binding first.
+    ///
+    /// The account page has to show all of them whatever bought them — a name paid for on a phone
+    /// through the App Store and one paid for on the web with a card are the same kind of thing,
+    /// and an account that sees only half of what it owns will buy the other half again.
+    ///
+    /// Expired bindings are left out rather than reported as lapsed: this answers "what do I hold",
+    /// and a binding past its expiry is not held.
+    pub async fn namespaces_for_account(
+        &self,
+        account_id: String,
+        now: u64,
+    ) -> Result<Vec<NamespaceHolding>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<NamespaceHolding>, StoreError> {
+            let c = conn.lock().expect("store lock");
+            let mut stmt = c.prepare(
+                "SELECT namespace, source, verified_at, expires_at
+                   FROM namespaces
+                  WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)
+                  ORDER BY verified_at DESC",
+            )?;
+            let rows = stmt
+                .query_map(params![account_id, now as i64], |r| {
+                    Ok(NamespaceHolding {
+                        namespace: r.get(0)?,
+                        source: r.get(1)?,
+                        verified_at: r.get::<_, i64>(2)? as u64,
+                        expires_at: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                    })
+                })?
+                .collect::<Result<Vec<_>, _>>()?;
+            Ok(rows)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     pub async fn set_namespace_owner(
         &self,
         namespace: String,

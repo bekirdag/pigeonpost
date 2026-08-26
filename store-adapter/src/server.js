@@ -83,12 +83,16 @@ const server = http.createServer(async (req, res) => {
       }, origin);
     }
 
-    // Handle availability (registry read; the registry is authoritative on rules).
+    // Handle availability, from the postbox — the server that actually hands handles out.
+    //
+    // `null` means the postbox could not be reached, and the answer to "may I sell this" when you
+    // do not know is no. It used to be the opposite: an unreachable or erroring check read as
+    // "free", which is how the site came to offer a name it had already sold.
     const avail = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path);
     if (method === "GET" && avail) {
       const name = decodeURIComponent(avail[1]).toLowerCase();
-      const taken = await masaas.registryResolves(name);
-      return send(res, 200, { name, available: taken === null ? null : !taken }, origin);
+      const available = await masaas.handleAvailable(name);
+      return send(res, 200, { name, available: available === true, known: available !== null }, origin);
     }
 
     // ---- everything below needs the customer's token ---------------------------------------
@@ -97,14 +101,19 @@ const server = http.createServer(async (req, res) => {
 
     if (method === "GET" && path === "/v1/me/overview") {
       // One round-trip for the account page: subscriptions + billing + invoices + payment methods.
-      const [subs, profiles, invoices, methods] = await Promise.all([
+      const [subs, profiles, invoices, methods, handles] = await Promise.all([
         masaas.listSubscriptions(token).catch(() => null),
         masaas.listBillingProfiles(token).catch(() => null),
         masaas.listInvoices(token).catch(() => null),
         masaas.listPaymentMethods(token).catch(() => null),
+        // What the account actually owns, which the billing system is not the record of. A handle
+        // bought in the App Store has no subscription here, and listing only subscriptions is what
+        // made the account page say "No handles yet" to somebody holding two.
+        masaas.accountHandles(token).catch(() => null),
       ]);
       return send(res, 200, {
         subscriptions: normalizeSubs(subs),
+        handles: handles || [],
         billingProfiles: list(profiles),
         invoices: list(invoices),
         paymentMethods: list(methods),
@@ -169,6 +178,41 @@ const server = http.createServer(async (req, res) => {
       const url = pickHostedUrl(session);
       // If a card is already on file MASAAS may not need a hosted step; fall back to the account page.
       return send(res, 200, { subscription, checkoutUrl: url || back("/account?bought=1") }, origin);
+    }
+
+    // Deliver a handle the card paid for.
+    //
+    // Called by the account page when it comes back from checkout, and safe to call again: it
+    // proves the subscription is active before it binds anything, and the postbox upserts.
+    //
+    // This is the step the web purchase never had. Apple's path binds itself — the app claims the
+    // transaction and the postbox checks it with Apple — so a handle bought on a phone worked and
+    // one bought with a card did not resolve for anybody.
+    if (method === "POST" && path === "/v1/handles/claim") {
+      const { handle } = await readJson(req);
+      const name = String(handle || "").trim().toLowerCase().replace(/^\/+/, "");
+      if (!name) return send(res, 400, { error: "handle required" }, origin);
+
+      // The billing system is the authority on whether this was paid for, and it is asked with the
+      // member's own token so one account cannot claim another's purchase.
+      const subs = normalizeSubs(await masaas.listSubscriptions(token).catch(() => null));
+      const paid = subs.find(
+        (s) => String(s.handle || "").replace(/^\/+/, "").toLowerCase() === name &&
+               ["active", "trialing", "past_due"].includes(String(s.status || "").toLowerCase()),
+      );
+      if (!paid) return send(res, 402, { error: "no active subscription for that handle" }, origin);
+
+      const accountId = await masaas.accountIdFor(token);
+      if (!accountId) return send(res, 502, { error: "could not identify the account" }, origin);
+
+      const expiresAt = paid.renewsAt ? Math.floor(new Date(paid.renewsAt).getTime() / 1000) : 0;
+      const bound = await masaas.grantNamespace({
+        namespace: name,
+        accountId,
+        expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : 0,
+      });
+      if (!bound.ok) return send(res, 502, { error: `could not bind the handle: ${bound.reason}` }, origin);
+      return send(res, 200, { handle: name, bound: true }, origin);
     }
 
     return send(res, 404, { error: "not found" }, origin);

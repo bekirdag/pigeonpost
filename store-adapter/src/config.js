@@ -43,6 +43,23 @@ export const config = {
 
   registryUrl: trimSlash(process.env.PIGEONPOST_REGISTRY_URL || "https://registry.pigeonpost.dev"),
 
+  // The postbox, which is what actually knows who owns a handle.
+  //
+  // The registry is meant to be the public record and holds none of them: nothing publishes a
+  // namespace to it, and its resolve route is `/v1/resolve/{namespace}/{name}` rather than the
+  // `/v1/resolve/handle/{name}` this adapter was asking for — so every check 400'd, every 400 read
+  // as "free", and the site offered names that were already sold.
+  postboxUrl: trimSlash(process.env.PIGEONPOST_POSTBOX_URL || "https://inbox.pigeonpost.dev"),
+
+  // Lets this adapter bind a namespace in the postbox after a card purchase, so a handle bought on
+  // the web is the same kind of thing as one bought in the App Store — one record, in the one place
+  // that decides who may mint under a name.
+  //
+  // Empty means the reconciliation is inert: the postbox answers 404 to an ungranted caller and
+  // says nothing about having the endpoint at all. Set the same secret on both sides
+  // (`PIGEONPOST_NAMESPACE_GRANT` on the postbox) to turn it on.
+  namespaceGrantToken: process.env.PIGEONPOST_NAMESPACE_GRANT || "",
+
   requestTimeoutMs: Number(process.env.MASAAS_TIMEOUT_MS || 15000),
 };
 

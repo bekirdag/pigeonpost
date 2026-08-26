@@ -541,18 +541,68 @@
       </div>`;
   }
 
+  // The format check is local and instant; whether the name is *free* is a question only the
+  // postbox can answer, so it is asked, debounced, before the button is enabled.
+  //
+  // It used to say "availability confirmed at checkout" and enable the button on a well-formed name
+  // — but nothing downstream confirmed anything: checkout goes to the billing system, which does
+  // not know what a handle is, and the only availability check in the stack asked the registry over
+  // a route it does not serve. So the page offered names that were already sold, including one this
+  // very account had bought on its phone.
+  //
+  // Unknown is not free. If the check cannot be made, the button stays disabled and says so; the
+  // cost of that is somebody waiting, and the cost of the opposite is charging for a name they
+  // cannot have.
   function wireSearch(signedIn) {
     const input = $("#ac-handle"); if (!input) return;
     const status = $("#ac-handle-status");
     const buy = $("#ac-buy");
     let current = { ok: false };
+    let checking = 0;
+
+    async function check(v) {
+      const mine = ++checking;
+      status.className = "hs";
+      status.textContent = `checking /${v.name}…`;
+      buy.disabled = true;
+      let answer = null;
+      try {
+        const res = await fetch(api(`/v1/handles/${encodeURIComponent(v.name)}/availability`), {
+          headers: { accept: "application/json" },
+        });
+        answer = res.ok ? await res.json() : null;
+      } catch { answer = null; }
+      // A newer keystroke has overtaken this one; its answer is about a name nobody is asking for.
+      if (mine !== checking) return;
+
+      if (!answer || answer.known === false) {
+        status.classList.add("bad");
+        status.textContent = "✗ could not check that name just now — try again in a moment";
+        buy.disabled = true;
+        return;
+      }
+      if (!answer.available) {
+        status.classList.add("bad");
+        status.textContent = `✗ /${v.name} is already taken`;
+        buy.disabled = true;
+        return;
+      }
+      status.classList.add("ok");
+      status.textContent = `✓ /${v.name} is available`;
+      buy.disabled = false;
+    }
+
+    let debounce;
     input.oninput = () => {
       const v = validate(input.value); current = v;
       status.className = "hs";
-      if (v.silent) { status.textContent = ""; buy.disabled = true; return; }
-      if (!v.ok) { status.classList.add("bad"); status.textContent = "✗ " + v.reason; buy.disabled = true; return; }
-      status.classList.add("ok"); status.textContent = `✓ /${v.name} — availability confirmed at checkout`;
-      buy.disabled = false;
+      clearTimeout(debounce);
+      checking++; // whatever is in flight is now about a stale name
+      buy.disabled = true;
+      if (v.silent) { status.textContent = ""; return; }
+      if (!v.ok) { status.classList.add("bad"); status.textContent = "✗ " + v.reason; return; }
+      status.textContent = `checking /${v.name}…`;
+      debounce = setTimeout(() => check(v), 350);
     };
     buy.onclick = () => {
       if (!current.ok) return;
@@ -585,8 +635,33 @@
       focusStep("#ac-pay", "#ac-addcard");
       return;
     }
+    // Remembered across the redirect to the payment page, so the return can bind what was paid
+    // for. Cleared only once the handle is actually bound, not merely charged.
+    SS.setItem("pp_bought_handle", name);
     SS.removeItem("pp_pending_handle");
     buyHandle(name);
+  }
+
+  // Coming back from checkout. The charge and the handle are two different systems, and this is the
+  // step that joins them: the billing system took the money, and the postbox is what has to be told
+  // that this account may now mint under the name.
+  //
+  // Safe to run twice — the adapter re-proves the subscription before binding anything, and the
+  // binding is an upsert. It runs on every load while a bought handle is still unbound, which also
+  // repairs a purchase whose return never made it back to this page.
+  async function claimBoughtHandle() {
+    const name = SS.getItem("pp_bought_handle");
+    if (!name || !getToken()) return;
+    try {
+      await apiAction("/v1/handles/claim", { handle: name });
+      SS.removeItem("pp_bought_handle");
+      toast(`/${name} is yours.`);
+      loadOverview();
+    } catch (e) {
+      // Left in place deliberately: an unbound purchase should keep trying rather than quietly
+      // become money taken for nothing.
+      toast(`/${name} is paid for but not active yet — ${e.message}`);
+    }
   }
 
   // Scroll a card into view and put the cursor on the field/button that needs attention.
@@ -621,11 +696,18 @@
     const profiles = data.billingProfiles || [];
     const methods = data.paymentMethods || [];
     overview = { hasBilling: profiles.length > 0, hasCard: methods.length > 0 };
-    renderSubs(data.subscriptions || []);
+    renderSubs(data.subscriptions || [], data.handles || []);
     renderBilling(profiles);
     renderPay(methods);
     renderInvoices(data.invoices || []);
     resumePending();
+    // After the render, so a handle that binds successfully refreshes into the list above.
+    if (SS.getItem("pp_bought_handle") &&
+        !(data.handles || []).some((h) => String(h.namespace || "").replace(/^\/+/, "") === SS.getItem("pp_bought_handle"))) {
+      claimBoughtHandle();
+    } else if (SS.getItem("pp_bought_handle")) {
+      SS.removeItem("pp_bought_handle");
+    }
   }
 
   // A purchase the member started before completing billing/card (or before signing in) is parked in
@@ -642,14 +724,43 @@
     focusStep(".ac-search-card", "#ac-buy");
   }
 
-  function renderSubs(subs) {
+  // Two sources, one list. Subscriptions are what this billing system sold; `handles` is what the
+  // postbox says the account actually holds — and those differ, because a handle bought in the iOS
+  // app is a purchase Apple took and this system never saw. Listing only subscriptions is what told
+  // somebody holding two handles that they had none, directly above an offer to buy one of them
+  // back.
+  //
+  // Keyed on the name so a handle that appears in both is one row. The subscription is the richer
+  // record where there is one — it can be cancelled here — so it wins.
+  function renderSubs(subs, handles) {
     const el = $("#ac-subs"); if (!el) return;
-    if (!subs.length) { el.innerHTML = `<p class="muted">No handles yet. Search above to claim one.</p>`; return; }
-    el.innerHTML = subs.map((s) => `
+
+    const rows = new Map();
+    for (const h of handles) {
+      const name = String(h.namespace || "").replace(/^\/+/, "");
+      if (!name) continue;
+      rows.set(name, {
+        name,
+        detail: h.source === "apple" ? "App Store" : "active",
+        renewsAt: h.expires_at ? new Date(h.expires_at * 1000).toISOString() : "",
+        cancelId: "",
+      });
+    }
+    for (const s of subs) {
+      const name = String(s.handle || "").replace(/^\/+/, "");
+      if (!name) continue;
+      rows.set(name, { name, detail: s.status || "active", renewsAt: s.renewsAt || "", cancelId: s.id || "" });
+    }
+
+    const list = [...rows.values()];
+    if (!list.length) { el.innerHTML = `<p class="muted">No handles yet. Search above to claim one.</p>`; return; }
+    el.innerHTML = list.map((r) => `
       <div class="ac-row">
-        <div><span class="k">/${esc(s.handle || "—")}</span>
-          <span class="muted">${esc(s.status)}${s.renewsAt ? " · renews " + esc(String(s.renewsAt).slice(0, 10)) : ""}</span></div>
-        <button class="btn btn-small" data-cancel="${esc(s.id)}">Cancel</button>
+        <div><span class="k">/${esc(r.name)}</span>
+          <span class="muted">${esc(r.detail)}${r.renewsAt ? " · renews " + esc(String(r.renewsAt).slice(0, 10)) : ""}</span></div>
+        ${r.cancelId
+          ? `<button class="btn btn-small" data-cancel="${esc(r.cancelId)}">Cancel</button>`
+          : `<span class="muted">Managed in the App Store</span>`}
       </div>`).join("");
     el.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = () => cancelSub(b.getAttribute("data-cancel")));
   }

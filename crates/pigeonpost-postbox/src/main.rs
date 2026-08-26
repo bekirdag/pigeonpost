@@ -501,6 +501,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/archive", get(get_archive).put(put_archive))
         .route("/v1/threads", get(list_threads).post(open_thread))
         .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
+        .route("/v1/handles/{name}/availability", get(handle_availability))
+        .route("/v1/me/handles", get(my_handles))
         .route("/v1/claims/address", post(claim_address))
         .route("/v1/claims/apple", post(claim_apple).get(apple_claim_state))
         .route("/v1/devices", post(register_device))
@@ -4312,6 +4314,101 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
 /// the same canonicalisation, reserved-list and occupancy checks as every other route to a
 /// namespace. What the purchase buys is the *right* to mint under a name, not the name itself —
 /// that is why an occupied namespace refuses a perfectly valid purchase instead of taking it.
+/// Is this handle free? Asked before anybody is charged for it, by any client.
+///
+/// Public and unauthenticated on purpose: the answer is not private, and the two places that sell a
+/// handle — the App Store flow in the apps, and the card flow on the website — both need it before
+/// they have a token to offer. It is the *same* answer to both, which is the point. The website
+/// used to ask the registry over a path the registry does not serve, take the 400 for "free", and
+/// offer a name this postbox had already given somebody.
+///
+/// Canonicalised the same way `claim_apple` canonicalises, so "Alp", "/alp" and "alp" are one name
+/// and the reserved list cannot be walked past with a different spelling.
+async fn handle_availability(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+    let probe = format!("/{}/probe", name.trim_start_matches('/'));
+    let namespace = Destination::for_handle(&probe)
+        .ok()
+        .and_then(|destination| {
+            destination
+                .handle()
+                .and_then(|h| h.trim_start_matches('/').split('/').next())
+                .map(str::to_string)
+        })
+        .unwrap_or_default();
+    if namespace.is_empty() {
+        return Json(json!({ "name": name, "available": false, "reason": "invalid" }))
+            .into_response();
+    }
+
+    // No reserved list loaded means this deployment cannot say what is protected, and the safe
+    // answer to "may I sell this" when you do not know is no.
+    let Some(reserved) = state.reserved_names.as_ref() else {
+        return ApiError::server("reserved_names_unavailable").into_response();
+    };
+    if reserved.contains(&namespace) {
+        return Json(json!({ "name": namespace, "available": false, "reason": "reserved" }))
+            .into_response();
+    }
+
+    match state
+        .store
+        .namespace_owner(namespace.clone(), now_unix())
+        .await
+    {
+        Ok(Some(_)) => Json(json!({ "name": namespace, "available": false, "reason": "taken" }))
+            .into_response(),
+        Ok(None) => Json(json!({ "name": namespace, "available": true })).into_response(),
+        Err(_) => ApiError::server("store_error").into_response(),
+    }
+}
+
+/// Every handle the signed-in account holds, whatever paid for it.
+///
+/// The account page on the website listed subscriptions from the billing system and called that
+/// "your handles", so a name bought through the App Store appeared nowhere and the same account was
+/// invited to buy it again. This is the one answer both clients can ask for.
+async fn my_handles(State(state): State<AppState>, headers: HeaderMap) -> Response {
+    let Some(token) = bearer(&headers) else {
+        return ApiError::unauthorized("this endpoint needs a member token").into_response();
+    };
+    if !token.starts_with("eyJ") {
+        return ApiError::bad(
+            "member_token_required",
+            "listing what an account owns needs the account's own sign-in, not a capability token",
+        )
+        .into_response();
+    }
+    let claims = match state.oidc.validate(token).await {
+        Ok(claims) => claims,
+        Err(_) => return ApiError::unauthorized("invalid member token").into_response(),
+    };
+    let account = match state
+        .store
+        .account_for_sub(
+            claims.sub.clone(),
+            format!("acct_{}", rand_hex(12)),
+            now_unix(),
+        )
+        .await
+    {
+        Ok(account) => account,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+
+    match state
+        .store
+        .namespaces_for_account(account.clone(), now_unix())
+        .await
+    {
+        // The account id travels with the list because the thing that binds a *web* purchase — the
+        // namespace grant — is addressed by account id, and the only caller holding the member's
+        // token is the one that needs it. It is this postbox's own identifier for the account and
+        // means nothing anywhere else.
+        Ok(holdings) => Json(json!({ "account": account, "handles": holdings })).into_response(),
+        Err(_) => ApiError::server("store_error").into_response(),
+    }
+}
+
 async fn claim_apple(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -6257,6 +6354,144 @@ mod tests {
             .set_namespace_owner(namespace.into(), account.into(), "test", 1, None)
             .await
             .unwrap();
+    }
+
+    /// A state that knows what is reserved, which availability refuses to answer without.
+    fn state_with_reserved(names: &[&str]) -> AppState {
+        let mut state = state_with_limits(MintLimits {
+            per_window: 10,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        state.reserved_names = Some(Arc::new(names.iter().map(|n| n.to_string()).collect()));
+        state
+    }
+
+    async fn availability(state: &AppState, name: &str) -> serde_json::Value {
+        let response = handle_availability(State(state.clone()), Path(name.to_string())).await;
+        let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        serde_json::from_slice(&body).unwrap()
+    }
+
+    /// The bug this endpoint exists for: the website asked the registry over a path it does not
+    /// serve, read the error as "free", and offered a name this postbox had already given away.
+    #[tokio::test]
+    async fn a_handle_somebody_owns_is_not_available() {
+        let state = state_with_reserved(&["support"]);
+        own_namespace(&state, "alp", "acct_someone").await;
+
+        let taken = availability(&state, "alp").await;
+        assert_eq!(taken["available"], false);
+        assert_eq!(taken["reason"], "taken");
+
+        let free = availability(&state, "nobodyhasthis").await;
+        assert_eq!(free["available"], true);
+    }
+
+    /// One name, however it is spelled. Canonicalising here is what stops "Alp" being sold to a
+    /// second person while "alp" belongs to the first.
+    #[tokio::test]
+    async fn availability_canonicalises_before_it_answers() {
+        let state = state_with_reserved(&[]);
+        own_namespace(&state, "alp", "acct_someone").await;
+
+        for spelling in ["Alp", "/alp", "ALP"] {
+            let answer = availability(&state, spelling).await;
+            assert_eq!(
+                answer["available"], false,
+                "{spelling} should read as taken"
+            );
+        }
+    }
+
+    /// `support` and `admin` read as the operator whoever holds them, so they are not for sale at
+    /// any price. The paid path already refuses them; so does the question asked before paying.
+    #[tokio::test]
+    async fn a_reserved_name_is_never_available() {
+        let state = state_with_reserved(&["support"]);
+        let answer = availability(&state, "support").await;
+        assert_eq!(answer["available"], false);
+        assert_eq!(answer["reason"], "reserved");
+    }
+
+    /// A deployment that cannot say what is protected must not say "yes, sell it".
+    #[tokio::test]
+    async fn availability_refuses_rather_than_guesses_without_a_reserved_list() {
+        let state = state_with_limits(MintLimits {
+            per_window: 10,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        let response = handle_availability(State(state), Path("anything".into())).await;
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    /// A name that cannot be a handle is not "available" — offering to sell it would be the same
+    /// mistake in a different shape.
+    #[tokio::test]
+    async fn a_name_that_cannot_be_a_handle_is_not_offered() {
+        let state = state_with_reserved(&[]);
+        let answer = availability(&state, "  ").await;
+        assert_eq!(answer["available"], false);
+        assert_eq!(answer["reason"], "invalid");
+    }
+
+    /// Whatever bought them. An account seeing half of what it owns buys the other half again.
+    #[tokio::test]
+    async fn an_account_holds_every_handle_it_paid_for_by_any_route() {
+        let state = state_with_reserved(&[]);
+        state
+            .store
+            .set_namespace_owner("alp".into(), "acct_one".into(), "apple", 10, None)
+            .await
+            .unwrap();
+        state
+            .store
+            .set_namespace_owner("bekir".into(), "acct_one".into(), "grant", 20, None)
+            .await
+            .unwrap();
+        state
+            .store
+            .set_namespace_owner("someoneelse".into(), "acct_two".into(), "apple", 30, None)
+            .await
+            .unwrap();
+
+        let held = state
+            .store
+            .namespaces_for_account("acct_one".into(), 100)
+            .await
+            .unwrap();
+        let names: Vec<_> = held.iter().map(|h| h.namespace.as_str()).collect();
+        assert_eq!(names, vec!["bekir", "alp"], "newest binding first");
+        assert!(
+            !names.contains(&"someoneelse"),
+            "another account's handle is not this account's"
+        );
+        assert_eq!(held[1].source, "apple");
+    }
+
+    /// A lapsed binding is not a holding. Reporting it as one would show a handle the account can
+    /// no longer use, next to an offer to buy the one it just lost.
+    #[tokio::test]
+    async fn an_expired_handle_is_not_held_and_is_available_again() {
+        let state = state_with_reserved(&[]);
+        state
+            .store
+            .set_namespace_owner("lapsed".into(), "acct_one".into(), "apple", 10, Some(50))
+            .await
+            .unwrap();
+
+        let held = state
+            .store
+            .namespaces_for_account("acct_one".into(), 100)
+            .await
+            .unwrap();
+        assert!(held.is_empty(), "past its expiry it is not held");
+
+        let answer = availability(&state, "lapsed").await;
+        assert_eq!(answer["available"], true, "and it is for sale again");
     }
 
     #[test]

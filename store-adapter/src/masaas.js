@@ -131,15 +131,93 @@ export async function refreshOidcToken(refreshToken) {
   });
 }
 
-// ---- registry read (handle availability) ------------------------------------------------------
+// ---- postbox reads (handle availability, and what an account owns) ----------------------------
 
-export async function registryResolves(name) {
-  // A flat handle occupies the bare path segment. Resolving 200 = taken, 404 = free.
-  const url = `${config.registryUrl}/v1/resolve/handle/${encodeURIComponent(name)}`;
+/// Whether a handle can still be bought, according to the server that hands them out.
+///
+/// Returns `true`, `false`, or `null` for "could not tell" — and a caller that gets `null` must not
+/// sell the name. This used to ask the registry over `/v1/resolve/handle/<name>`, a route the
+/// registry does not serve: it answered 400 to everything, the 400 was read as "not taken", and the
+/// site cheerfully offered handles the postbox had already given to somebody. The registry holds no
+/// namespaces at all — nothing has ever published one to it.
+export async function handleAvailable(name) {
+  const url = `${config.postboxUrl}/v1/handles/${encodeURIComponent(name)}/availability`;
   try {
     const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
-    return res.status === 200;
+    if (!res.ok) return null;
+    const body = await res.json();
+    return typeof body?.available === "boolean" ? body.available : null;
   } catch {
-    return null; // unknown
+    return null;
+  }
+}
+
+/// The handles an account holds, whatever paid for them.
+///
+/// Travels on the customer's own token: the postbox does not require an audience, so the website's
+/// token is accepted for the same account the phone signs in as — which is the point, since one of
+/// those handles was bought in the App Store and the billing system has never heard of it.
+export async function accountHandles(token) {
+  const url = `${config.postboxUrl}/v1/me/handles`;
+  try {
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return Array.isArray(body?.handles) ? body.handles : [];
+  } catch {
+    return null;
+  }
+}
+
+/// Bind a handle to an account in the postbox, using this service's own credential.
+///
+/// The last piece of "one handle record, whatever paid for it". The App Store path binds itself:
+/// the app claims the purchase against the postbox and the postbox verifies it with Apple. A card
+/// purchase had no equivalent step at all — the billing system took the money and nothing told the
+/// postbox, so the name resolved for nobody.
+///
+/// Idempotent by construction: the postbox upserts the binding, and it refuses a namespace another
+/// account already holds.
+export async function grantNamespace({ namespace, accountId, expiresAt }) {
+  if (!config.namespaceGrantToken) return { ok: false, reason: "not_configured" };
+  const url = `${config.postboxUrl}/v1/namespaces`;
+  try {
+    const res = await fetch(url, {
+      method: "PUT",
+      headers: {
+        authorization: `Bearer ${config.namespaceGrantToken}`,
+        "content-type": "application/json",
+        accept: "application/json",
+      },
+      body: JSON.stringify({
+        namespace,
+        account_id: accountId,
+        ...(expiresAt ? { expires_at: expiresAt } : {}),
+      }),
+      signal: AbortSignal.timeout(8000),
+    });
+    if (res.ok) return { ok: true };
+    return { ok: false, reason: `postbox_${res.status}` };
+  } catch {
+    return { ok: false, reason: "postbox_unreachable" };
+  }
+}
+
+/// The postbox's own id for the signed-in account, which the grant above is addressed by.
+export async function accountIdFor(token) {
+  const url = `${config.postboxUrl}/v1/me/handles`;
+  try {
+    const res = await fetch(url, {
+      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+      signal: AbortSignal.timeout(6000),
+    });
+    if (!res.ok) return null;
+    const body = await res.json();
+    return body?.account || null;
+  } catch {
+    return null;
   }
 }
