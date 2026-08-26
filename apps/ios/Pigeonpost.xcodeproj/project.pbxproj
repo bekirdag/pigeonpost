@@ -14,6 +14,13 @@
 			);
 			target = PP0000000000000000000F /* Pigeonpost */;
 		};
+		PP00000000000000000079 /* Exceptions for "PigeonpostMac" folder in "PigeonpostMac" target */ = {
+			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
+			membershipExceptions = (
+				Info.plist,
+			);
+			target = PP0000000000000000006F /* PigeonpostMac */;
+		};
 /* End PBXFileSystemSynchronizedBuildFileExceptionSet section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
@@ -32,6 +39,9 @@
 		};
 		PP0000000000000000006A /* PigeonpostMac */ = {
 			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+				PP00000000000000000079 /* Exceptions for "PigeonpostMac" folder in "PigeonpostMac" target */,
+			);
 			path = PigeonpostMac;
 			sourceTree = "<group>";
 		};
@@ -333,7 +343,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "Pigeonpost Desktop";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;
@@ -363,7 +373,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox.mac;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "Pigeonpost Desktop";
 				SDKROOT = macosx;
 				SUPPORTED_PLATFORMS = macosx;

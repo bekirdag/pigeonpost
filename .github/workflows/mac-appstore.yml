@@ -1,0 +1,219 @@
+name: Mac App Store
+
+# The desktop twin of `ios-testflight.yml`, and manual for the same reason: App Store Connect
+# refuses a build number it has already seen, so the build number is the input and nothing here
+# fires on its own.
+#
+# It runs here rather than on a laptop for the same reason too — Apple refuses uploads built with an
+# SDK older than the current one, which needs an Xcode newer than the machine the fleet runs on.
+#
+# What differs from the iOS workflow is signing. An iOS upload needs one identity; a Mac App Store
+# upload needs two, because the thing uploaded is a `.pkg` and the installer around the app is
+# signed by its own certificate. See `apps/ios/MAC-APP-STORE.md`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "CFBundleVersion. Must be higher than any Mac build already uploaded."
+        required: true
+        type: string
+      upload:
+        description: "Upload to App Store Connect. Off means archive and export only."
+        required: true
+        default: true
+        type: boolean
+      runner:
+        description: "Runner image. Needs an Xcode recent enough for the store."
+        required: false
+        default: macos-26
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-appstore
+  cancel-in-progress: false
+
+jobs:
+  archive:
+    name: archive and upload
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # Newest Xcode on the image, compared by full version rather than major — the iOS workflow
+      # learned that comparing majors ties every 26.x and keeps whichever the glob listed first.
+      - name: Select an Xcode that can build for the store
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""
+          best_version=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+              "$app/Contents/Info.plist" 2>/dev/null || echo "")
+            [ -n "$version" ] || continue
+            echo "found $app — $version"
+            if [ -z "$best_version" ] ||
+               [ "$(printf '%s\n%s\n' "$version" "$best_version" | sort -V | tail -1)" = "$version" ]; then
+              best="$app"
+              best_version="$version"
+            fi
+          done
+          if [ -z "$best" ]; then
+            echo "::error::No Xcode found on this runner image."
+            exit 1
+          fi
+          echo "Using $best (Xcode $best_version)"
+          sudo xcode-select -s "$best/Contents/Developer"
+          xcodebuild -version
+          xcodebuild -showsdks | grep -i macos || true
+
+      # Two certificates and one profile, into a keychain that dies with the job. Never
+      # `-allowProvisioningUpdates`: an ephemeral runner holds no keychain, so Apple mints a fresh
+      # certificate every run, and ten runs later the eleventh fails with "Choose a certificate to
+      # revoke." That is how the iOS pipeline learned this.
+      - name: Import the signing identities
+        shell: bash
+        env:
+          P12: ${{ secrets.APPLE_DIST_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+          INSTALLER_P12: ${{ secrets.APPLE_MAC_INSTALLER_P12 }}
+          INSTALLER_P12_PASSWORD: ${{ secrets.APPLE_MAC_INSTALLER_P12_PASSWORD }}
+          PROFILE: ${{ secrets.APPLE_MAC_PROFILE }}
+        run: |
+          set -euo pipefail
+          for name in P12 P12_PASSWORD INSTALLER_P12 INSTALLER_P12_PASSWORD PROFILE; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Secret for $name is not set. See apps/ios/MAC-APP-STORE.md — the two installer secrets come from .github/scripts/mac_signing_assets.py."
+              exit 1
+            fi
+          done
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          pass="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+
+          import_p12() {
+            printf '%s' "$1" | base64 --decode > "$RUNNER_TEMP/import.p12"
+            security import "$RUNNER_TEMP/import.p12" -k "$keychain" -P "$2" \
+              -T /usr/bin/codesign -T /usr/bin/productbuild -T /usr/bin/security >/dev/null
+            rm -f "$RUNNER_TEMP/import.p12"
+          }
+          # The app's identity, and the installer's. `productbuild` needs the second one and is not
+          # `codesign`, which is why it is named in the tool list above.
+          import_p12 "$P12" "$P12_PASSWORD"
+          import_p12 "$INSTALLER_P12" "$INSTALLER_P12_PASSWORD"
+
+          security set-key-partition-list -S apple-tool:,apple:,codesign:,productbuild: -s -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+
+          # A macOS profile is a `.provisionprofile` and lives beside the iOS ones.
+          profiles=~/Library/MobileDevice/Provisioning\ Profiles
+          mkdir -p "$profiles"
+          printf '%s' "$PROFILE" | base64 --decode > "$profiles/pigeonpost-mac.provisionprofile"
+
+          echo "identities available:"
+          security find-identity -v "$keychain" | sed 's/[0-9A-F]\{40\}/<hash>/'
+
+      # Needs nothing but swiftc, so there is no reason for an upload to be the first thing that
+      # runs it.
+      - name: Test the thread model
+        working-directory: apps/ios
+        run: ./Tests/run.sh
+
+      - name: Write the App Store Connect key
+        shell: bash
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::APPLE_API_PRIVATE_KEY is not set."
+            exit 1
+          fi
+          install -m 700 -d "$RUNNER_TEMP/keys"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/keys/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/keys/AuthKey.p8"
+          head -1 "$RUNNER_TEMP/keys/AuthKey.p8" | grep -q "BEGIN PRIVATE KEY" \
+            || { echo "::error::The stored key does not start with a PEM header."; exit 1; }
+
+      - name: Archive
+        working-directory: apps/ios
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*) echo "::error::build_number must be a whole number; got '$BUILD_NUMBER'." ; exit 1 ;;
+          esac
+          xcodebuild \
+            -project Pigeonpost.xcodeproj \
+            -scheme PigeonpostMac \
+            -configuration Release \
+            -destination 'generic/platform=macOS' \
+            -archivePath "$RUNNER_TEMP/PigeonpostMac.xcarchive" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="Pigeonpost Desktop Mac App Store" \
+            DEVELOPMENT_TEAM=AH277897AV \
+            archive
+
+      # What went in the box, read out of the box rather than out of the project file. The bundle id
+      # is the line to look at: it has to match the iPhone app exactly, or this lands as a separate
+      # App Store record instead of the macOS half of the existing one.
+      - name: Say what was built
+        shell: bash
+        run: |
+          set -euo pipefail
+          plist="$RUNNER_TEMP/PigeonpostMac.xcarchive/Products/Applications/Pigeonpost Desktop.app/Contents/Info.plist"
+          for key in CFBundleIdentifier CFBundleShortVersionString CFBundleVersion LSMinimumSystemVersion DTSDKName; do
+            printf '%s = %s\n' "$key" "$(plutil -extract "$key" raw -o - "$plist" 2>/dev/null || echo '(absent)')"
+          done
+          echo "sandboxed: $(codesign -d --entitlements - --xml "$RUNNER_TEMP/PigeonpostMac.xcarchive/Products/Applications/Pigeonpost Desktop.app" 2>/dev/null | plutil -extract com.apple.security.app-sandbox raw -o - - 2>/dev/null || echo unknown)"
+
+      - name: Export and upload
+        working-directory: apps/ios
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          set -euo pipefail
+          options="$RUNNER_TEMP/ExportOptions.plist"
+          cp ExportOptions-macOS.plist "$options"
+          plutil -insert provisioningProfiles -json \
+            '{"dev.pigeonpost.inbox":"Pigeonpost Desktop Mac App Store"}' "$options" 2>/dev/null || true
+          if [ "$UPLOAD" != 'true' ]; then
+            plutil -replace destination -string export "$options"
+          fi
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/PigeonpostMac.xcarchive" \
+            -exportOptionsPlist "$options" \
+            -exportPath "$RUNNER_TEMP/export" \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+
+      - name: Keep the package and the symbols
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-mac-${{ inputs.build_number }}
+          path: |
+            ${{ runner.temp }}/export/*.pkg
+            ${{ runner.temp }}/PigeonpostMac.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Shred the key
+        if: always()
+        run: rm -rf "$RUNNER_TEMP/keys"

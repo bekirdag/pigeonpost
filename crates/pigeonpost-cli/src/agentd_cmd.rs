@@ -104,6 +104,21 @@ fn desktop_app_running() -> bool {
         .unwrap_or(false)
 }
 
+/// Whether this daemon should be the one to say so.
+///
+/// Split out from `notify` because it is the whole of the decision and none of the side effects:
+/// everything else in there talks to `osascript` or `notify-send`, which a test cannot.
+/// `desktop_running` is only consulted for `auto`, so an explicit setting costs no process spawn.
+fn should_notify(mode: &str, desktop_running: impl Fn() -> bool) -> bool {
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "never" => false,
+        "always" => true,
+        // Anything unrecognised reads as `auto` rather than as silence. A typo in a setting should
+        // not be the reason somebody stops hearing about their mail.
+        _ => !desktop_running(),
+    }
+}
+
 /// Tell the person at the machine. Best-effort by design: a missing notifier must not stop the
 /// spool being written, which is the delivery guarantee.
 ///
@@ -112,16 +127,12 @@ fn desktop_app_running() -> bool {
 /// `never` leaves it to the app. A headless box has no desktop app and is unaffected either way.
 fn notify(summary: &str, body: &str) {
     let mode = std::env::var("PIGEONPOST_AGENTD_NOTIFY").unwrap_or_else(|_| "auto".into());
-    match mode.trim().to_ascii_lowercase().as_str() {
-        "never" => return,
-        "always" => {}
-        _ =>
-        {
-            #[cfg(target_os = "macos")]
-            if desktop_app_running() {
-                return;
-            }
-        }
+    #[cfg(target_os = "macos")]
+    let running = desktop_app_running;
+    #[cfg(not(target_os = "macos"))]
+    let running = || false;
+    if !should_notify(&mode, running) {
+        return;
     }
     #[cfg(target_os = "macos")]
     let attempt = std::process::Command::new("osascript")
@@ -1906,6 +1917,46 @@ pub fn resume(home: &Path) -> Result<(), Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The default keeps quiet only while something better is announcing.
+    #[test]
+    fn auto_defers_to_the_desktop_app_and_speaks_up_without_it() {
+        assert!(!should_notify("auto", || true));
+        assert!(should_notify("auto", || false));
+    }
+
+    /// Both explicit settings ignore what is running, which is the point of setting them.
+    #[test]
+    fn always_and_never_mean_what_they_say() {
+        assert!(should_notify("always", || true));
+        assert!(!should_notify("never", || false));
+    }
+
+    /// A setting is typed by a person, so it is read the way a person wrote it.
+    #[test]
+    fn the_setting_is_read_loosely() {
+        assert!(!should_notify("  NEVER\n", || false));
+        assert!(should_notify("Always", || true));
+    }
+
+    /// An unrecognised value must not be a silent mute. Failing towards being told about your mail
+    /// is the only safe direction: the other one is indistinguishable from mail that never came.
+    #[test]
+    fn a_typo_falls_back_to_auto_rather_than_to_silence() {
+        assert!(should_notify("nevr", || false));
+        assert!(!should_notify("nevr", || true));
+    }
+
+    /// `auto` is the only mode that needs to know, and asking costs a process spawn.
+    #[test]
+    fn an_explicit_setting_does_not_look_for_the_app() {
+        let asked = std::cell::Cell::new(false);
+        let _ = should_notify("always", || {
+            asked.set(true);
+            false
+        });
+        assert!(!asked.get(), "an explicit setting should not spawn pgrep");
+    }
 
     /// The daemon runs once per machine, so an agent home must look upward for the spool rather
     /// than at its own empty one.

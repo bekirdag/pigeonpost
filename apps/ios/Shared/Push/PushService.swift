@@ -39,7 +39,19 @@ final class PushService: NSObject {
     ///
     /// No profile means the simulator, which cannot register for remote notifications anyway.
     static let environment: String = {
-        guard let url = Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision"),
+        // Two names for one file. iOS embeds `embedded.mobileprovision` in the bundle root; macOS
+        // embeds `embedded.provisionprofile` under `Contents/`, which is not in the resource search
+        // path, so it has to be named directly.
+        let embedded: URL? = {
+            #if canImport(UIKit)
+            return Bundle.main.url(forResource: "embedded", withExtension: "mobileprovision")
+            #else
+            let url = Bundle.main.bundleURL
+                .appendingPathComponent("Contents/embedded.provisionprofile")
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+            #endif
+        }()
+        guard let url = embedded,
               let data = try? Data(contentsOf: url),
               // The profile is CMS-signed with a plain plist inside it. Nothing here needs the
               // signature — the entitlement is the app's own, and it is being read for a hint about

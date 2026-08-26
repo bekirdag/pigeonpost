@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>method</key>
+	<string>app-store-connect</string>
+	<key>teamID</key>
+	<string>AH277897AV</string>
+	<key>signingStyle</key>
+	<string>manual</string>
+	<key>uploadSymbols</key>
+	<true/>
+	<key>destination</key>
+	<string>upload</string>
+	<!-- The Mac half of what the iOS options do not need. A Mac App Store submission is a `.pkg`,
+	     not an app bundle, and the installer is signed by a different certificate from the one that
+	     signs the app: "Apple Distribution" for the app, "3rd Party Mac Developer Installer" for the
+	     package around it. Omit this and the export fails at the very last step, after the archive,
+	     with no obvious connection to the certificate that is missing. -->
+	<key>installerSigningCertificate</key>
+	<string>3rd Party Mac Developer Installer</string>
+</dict>
+</plist>
