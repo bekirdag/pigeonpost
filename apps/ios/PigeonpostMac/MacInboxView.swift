@@ -196,12 +196,17 @@ struct MacInboxView: View {
                 Button { sheet = .settings } label: {
                     Image(systemName: "gearshape")
                 }
+                // Without this VoiceOver reads the symbol's own name — "gearshape" — because the
+                // label is an image with nothing to say. The other three get sensible names from
+                // the system; this one does not.
+                .accessibilityLabel("Settings")
                 .help("Settings")
 
                 Button { sheet = .peer } label: {
                     Image(systemName: "person.crop.circle")
                 }
                 .disabled(peer == nil)
+                .accessibilityLabel("About this sender")
                 .help("About this sender")
             }
         }
