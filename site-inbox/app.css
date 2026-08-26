@@ -673,10 +673,14 @@ button { font: inherit; color: inherit; }
 
 /* Attachments ------------------------------------------------------------------------------- */
 
+/* The same height as the send button, because the composer aligns its row to `flex-end` and a
+   button only as tall as its 20px glyph would hang off the bottom of it — level with the field's
+   last line rather than with the send button opposite. */
 .composer .attach {
   appearance: none;
   border: 0;
   background: none;
+  height: 38px;
   padding: 0 6px;
   color: var(--muted);
   cursor: pointer;
