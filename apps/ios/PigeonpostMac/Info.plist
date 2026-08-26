@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Without this the Mac app does not claim the callback scheme, and
+	     ASWebAuthenticationSession refuses to start at all — reported as "Couldn't communicate with
+	     a helper application", which says nothing about the cause. On iOS the same declaration is
+	     belt and braces because the session intercepts its own callback; on macOS the system checks
+	     that the asking app owns the scheme before it will run the flow.
+	     The scheme matches the redirect registered on the `pigeonpost-mobile` realm client. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>dev.pigeonpost.inbox.oauth</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>dev.pigeonpost.inbox</string>
+			</array>
+		</dict>
+	</array>
+	<!-- HTTPS and the platform's own TLS only. Declared so a submission is not held for an export
+	     compliance question we already know the answer to. -->
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
+</dict>
+</plist>
