@@ -8,9 +8,10 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ThreadMessage
-    /// A search hit. The Mac's find bar walks the matches and marks the one it has landed on, so
-    /// stepping through a long conversation shows you where you are rather than only scrolling
-    /// there. Nothing sets it on the phone, where there is no find bar to set it.
+    /// What the find bar is looking for, so the words themselves can be marked. Empty everywhere
+    /// but the Mac, which is the only client with a find bar.
+    var highlight: String = ""
+    /// Whether this is the match the find bar is standing on.
     var isFound: Bool = false
 
     @Environment(Inbox.self) private var inbox
@@ -38,7 +39,12 @@ struct MessageBubble: View {
                 } else if let reply = message.autoReply {
                     AutoReplyBody(reply: reply)
                 } else {
-                    MarkdownText(raw: message.body, onDark: isMine)
+                    MarkdownText(
+                        raw: message.body,
+                        onDark: isMine,
+                        highlight: highlight,
+                        isCurrentMatch: isFound
+                    )
                 }
                 if !message.attachments.isEmpty {
                     AttachmentList(attachments: message.attachments, isMine: isMine)
@@ -49,17 +55,14 @@ struct MessageBubble: View {
             .padding(.top, 8)
             .padding(.bottom, 6)
             .background(isMine ? Theme.navy : Theme.ground, in: RoundedRectangle(cornerRadius: 12))
+            // A border on the match you are standing on, and nothing else. The words inside carry
+            // the mark — see `MarkdownText.marked` — because a whole bubble tinted purple says
+            // "somewhere in these forty lines", which is barely narrower than not having searched.
+            // The outline is only so the eye lands on the right bubble after a jump.
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
                     .stroke(isFound ? Theme.found : (isMine ? Theme.navy : Theme.rule),
                             lineWidth: isFound ? 2 : 1)
-            )
-            // A wash over the bubble rather than a change of its fill: the fill says who wrote it,
-            // and a search result that recoloured your own messages differently from theirs would
-            // be answering a question nobody asked.
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .fill(isFound ? Theme.found.opacity(0.22) : .clear)
             )
             .frame(maxWidth: 560, alignment: isMine ? .trailing : .leading)
             if !isMine { Spacer(minLength: 40) }

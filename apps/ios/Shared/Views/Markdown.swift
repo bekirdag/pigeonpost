@@ -16,6 +16,13 @@ struct MarkdownText: View {
     let raw: String
     /// White-on-navy for your own bubble, ink on paper everywhere else.
     var onDark: Bool = false
+    /// What the find bar is looking for. Every occurrence of it in this text is marked.
+    var highlight: String = ""
+    /// Whether this is the match the find bar is standing on. Every hit is marked; the one you
+    /// stepped to is marked harder, the way a browser's find does it — otherwise "next" moves a
+    /// scroll position and nothing else, and you have to work out which of six identical marks is
+    /// the one it meant.
+    var isCurrentMatch: Bool = false
 
     private var primary: Color { onDark ? .white : Theme.ink }
     private var secondary: Color { onDark ? .white.opacity(0.86) : Theme.body }
@@ -80,7 +87,7 @@ struct MarkdownText: View {
             // Horizontal scrolling rather than wrapping: wrapped code is a different program to
             // read, and agents send diffs and stack traces where the column matters.
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(text)
+                Text(marked(AttributedString(text)))
                     .font(.system(size: 12.5, design: .monospaced))
                     .foregroundStyle(secondary)
                     .textSelection(.enabled)
@@ -178,9 +185,36 @@ struct MarkdownText: View {
             markdown: text,
             options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
         ) {
-            return Text(attributed)
+            return Text(marked(attributed))
         }
-        return Text(text)
+        return Text(marked(AttributedString(text)))
+    }
+
+    /// Mark every occurrence of the find term.
+    ///
+    /// On the text itself rather than on the message around it. A whole bubble tinted purple says
+    /// "the word is somewhere in these forty lines", which on the messages this app carries is
+    /// barely narrower than not having searched.
+    ///
+    /// Case-insensitive, and it walks the string rather than marking only the first: a paragraph
+    /// that says the word four times has four hits in it, and marking one of them would be a
+    /// different lie from marking none.
+    func marked(_ attributed: AttributedString) -> AttributedString {
+        let needle = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return attributed }
+        var out = attributed
+        var searchFrom = out.startIndex
+        while searchFrom < out.endIndex,
+              let found = out[searchFrom...].range(of: needle, options: [.caseInsensitive]) {
+            out[found].backgroundColor = isCurrentMatch
+                ? Theme.found
+                : Theme.found.opacity(0.28)
+            // White on the strong fill, because the found colour is dark enough in the light
+            // appearance to swallow ink-coloured text.
+            if isCurrentMatch { out[found].foregroundColor = .white }
+            searchFrom = found.upperBound
+        }
+        return out
     }
 }
 

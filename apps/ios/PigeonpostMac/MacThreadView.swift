@@ -68,7 +68,11 @@ struct MacThreadView: View {
                                     .foregroundStyle(Theme.muted)
                                     .padding(.vertical, 6)
                             }
-                            MessageBubble(message: message, isFound: message.id == currentMatch)
+                            MessageBubble(
+                                message: message,
+                                highlight: find,
+                                isFound: message.id == currentMatch
+                            )
                                 .id(message.id)
                         }
                         Color.clear.frame(height: 1).id(Self.floor)
@@ -142,28 +146,16 @@ struct MacThreadView: View {
                     .allowsHitTesting(false)
             }
         }
-        .searchable(text: $find, prompt: "Search this conversation")
-        // "3 of 21", and the two ways through them. Beside the field rather than inside it, because
-        // `.searchable` owns its field and will not take passengers.
+        // The find bar, drawn here rather than through `.searchable`.
+        //
+        // `.searchable` puts an `NSSearchField` in the toolbar and that field rendered its text in
+        // the light appearance while the window was dark: near-black on charcoal, measured at
+        // luminance 6 against a background of 40. Nothing in this app sets an appearance, and it is
+        // not a colour a caller can override — `.searchable` owns its field. A plain `TextField`
+        // with this app's own colours is readable by construction, and it also lets the count and
+        // the two chevrons sit *in* the bar where they belong instead of beside it.
         .toolbar {
-            if !find.trimmed.isEmpty {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Text(matches.isEmpty
-                         ? "no matches"
-                         : "\(min(matchIndex, matches.count - 1) + 1) of \(matches.count)")
-                        .font(.system(size: 12).monospacedDigit())
-                        .foregroundStyle(Theme.muted)
-                        .fixedSize()
-                    Button { step(-1) } label: { Image(systemName: "chevron.up") }
-                        .disabled(matches.isEmpty)
-                        .help("Previous match")
-                        .accessibilityLabel("Previous match")
-                    Button { step(1) } label: { Image(systemName: "chevron.down") }
-                        .disabled(matches.isEmpty)
-                        .help("Next match")
-                        .accessibilityLabel("Next match")
-                }
-            }
+            ToolbarItem(placement: .primaryAction) { findBar }
         }
         .task(id: taskKey) { await inbox.acknowledge(peer: peer, subthread: subthread) }
 
@@ -171,6 +163,54 @@ struct MacThreadView: View {
 
     /// Re-acknowledge when the subject changes or new mail lands, but not on every render.
     private var taskKey: String { "\(peer)|\(subthread ?? "")|\(conversation?.unread ?? 0)" }
+
+    /// Find in this conversation: a field, the tally, and the two ways through it.
+    private var findBar: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.muted)
+                .fixedSize()
+
+            TextField("Search this conversation", text: $find)
+                .textFieldStyle(.plain)
+                .font(.system(size: 12))
+                .foregroundStyle(Theme.ink)
+                .frame(width: 190)
+                .onExitCommand { find = "" }
+
+            if !find.trimmed.isEmpty {
+                Text(matches.isEmpty
+                     ? "none"
+                     : "\(min(matchIndex, matches.count - 1) + 1) of \(matches.count)")
+                    .font(.system(size: 11).monospacedDigit())
+                    .foregroundStyle(Theme.muted)
+                    .fixedSize()
+
+                findStep("chevron.up", "Previous match") { step(-1) }
+                findStep("chevron.down", "Next match") { step(1) }
+                findStep("xmark.circle.fill", "Clear") { find = "" }
+            }
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(Theme.ground, in: RoundedRectangle(cornerRadius: 7))
+        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.rule, lineWidth: 1))
+    }
+
+    /// Tapped images rather than buttons, for the same reason the columns use them: a `Button` in a
+    /// bar like this one has repeatedly cost the list beside it its width.
+    private func findStep(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 11, weight: .semibold))
+            .foregroundStyle(matches.isEmpty && symbol != "xmark.circle.fill" ? Theme.rule : Theme.muted)
+            .frame(width: 14, height: 14)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .help(label)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+    }
 
     private var composer: some View {
         VStack(spacing: 6) {
