@@ -46,6 +46,8 @@ struct MacInboxView: View {
     /// somebody is using it, and a permanently visible search box in a narrow column is mostly a
     /// permanently narrower column.
     @State private var searching = false
+    /// Whether the mailbox list is open under the bar.
+    @State private var switchingMailbox = false
     @State private var sheet: Sheet?
 
     private enum Sheet: String, Identifiable {
@@ -61,7 +63,9 @@ struct MacInboxView: View {
             // read better, but a plain VStack is the shape whose width behaviour is obvious, and
             // this column has already cost enough guessing — see the note on the Menu below.
             VStack(spacing: 0) {
+                sidebarActions
                 mailboxBar
+                if switchingMailbox { mailboxList }
                 // Its own row rather than a second line inside the bar. Everything about this
                 // column's width has been fragile, and a flat stack of rows is the shape with the
                 // fewest opinions in it.
@@ -111,12 +115,30 @@ struct MacInboxView: View {
             }
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         } detail: {
-            if let peer, inbox.conversation(with: peer) != nil {
+            if let peer, let conversation = inbox.conversation(with: peer) {
                 // Keyed on the peer alone. Changing subject inside one conversation is not a
                 // different screen, and rebuilding it would throw away the scroll position along
                 // with the draft.
                 MacThreadView(peer: peer, subthread: subthread)
                     .id(peer)
+                    // Who you are writing to, over the conversation rather than in the sidebar's
+                    // toolbar — and the name is the button, not a label beside one. A name at the
+                    // top of a conversation is the thing people click to ask "who is this".
+                    .toolbar {
+                        ToolbarItem(placement: .navigation) {
+                            Button { sheet = .peer } label: {
+                                HStack(spacing: 6) {
+                                    Avatar(peer: conversation.peer, size: 18)
+                                    Text(conversation.name)
+                                        .font(.system(size: 13, weight: .semibold))
+                                        .foregroundStyle(Theme.ink)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel("About \(conversation.name)")
+                            .help("About this sender")
+                        }
+                    }
             } else {
                 ContentUnavailableView("Pick a conversation", systemImage: "tray")
             }
@@ -169,46 +191,6 @@ struct MacInboxView: View {
         }
         .onReceive(NotificationCenter.default.publisher(for: .newConversation)) { _ in
             showingNew = true
-        }
-        // Every control lives in the window toolbar rather than in the sidebar header.
-        //
-        // Not a style preference — a `Button` placed in that header collapses the List beside it:
-        // the rows get proposed the header's ideal width and every conversation name truncates to
-        // nothing. A `.frame` on the button does not help, and neither does flattening the stack
-        // around it; the same shape has now broken this column three times, once via `.fixedSize()`
-        // on the mailbox menu and twice via a plain button. The toolbar is outside the sidebar's
-        // layout altogether, and is also where a Mac user looks for these.
-        .toolbar {
-            ToolbarItemGroup(placement: .navigation) {
-                Button {
-                    searching.toggle()
-                    if !searching { inbox.filter = "" }
-                } label: {
-                    Image(systemName: "magnifyingglass")
-                }
-                .help("Search senders")
-
-                Button { showingNew = true } label: {
-                    Image(systemName: "square.and.pencil")
-                }
-                .help("New conversation")
-
-                Button { sheet = .settings } label: {
-                    Image(systemName: "gearshape")
-                }
-                // Without this VoiceOver reads the symbol's own name — "gearshape" — because the
-                // label is an image with nothing to say. The other three get sensible names from
-                // the system; this one does not.
-                .accessibilityLabel("Settings")
-                .help("Settings")
-
-                Button { sheet = .peer } label: {
-                    Image(systemName: "person.crop.circle")
-                }
-                .disabled(peer == nil)
-                .accessibilityLabel("About this sender")
-                .help("About this sender")
-            }
         }
         .sheet(isPresented: $showingNew) {
             MacNewConversationSheet { peer in selection = .conversation(peer) }
@@ -281,39 +263,111 @@ struct MacInboxView: View {
         .onTapGesture { openingThread = ThreadTarget(id: peer) }
     }
 
+    /// Search, compose and settings, at the top left of the column.
+    ///
+    /// Tapped images rather than `Button`s, and that is load-bearing: a real button anywhere in
+    /// this header collapses the List beneath it, every conversation name truncating to nothing. It
+    /// has happened three times. A `contentShape` and an `onTapGesture` do the same job and ask the
+    /// layout for nothing.
+    private var sidebarActions: some View {
+        HStack(spacing: 14) {
+            sidebarAction("magnifyingglass", "Search senders", active: searching) {
+                searching.toggle()
+                if !searching { inbox.filter = "" }
+            }
+            sidebarAction("square.and.pencil", "New conversation") { showingNew = true }
+            sidebarAction("gearshape", "Settings") { sheet = .settings }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+        .padding(.bottom, 2)
+    }
+
+    private func sidebarAction(
+        _ symbol: String,
+        _ label: String,
+        active: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Image(systemName: symbol)
+            .font(.system(size: 13))
+            .foregroundStyle(active ? Theme.navy : Theme.muted)
+            .frame(width: 16, height: 16)
+            .contentShape(Rectangle())
+            .onTapGesture(perform: action)
+            .help(label)
+            .accessibilityLabel(label)
+            .accessibilityAddTraits(.isButton)
+    }
+
+    /// Which mailbox is being read, and the way to change it.
+    ///
+    /// The whole row is the target and there is no `Menu`: a menu here popped a floating list over
+    /// the window, and one of its modifiers collapsed the column beneath it for a while. The web
+    /// app drops its identity list *inside* the sidebar, spanning the column, and that is both the
+    /// nicer shape and the one that cannot fight this List for width.
     private var mailboxBar: some View {
         HStack(spacing: 8) {
             Text(account.me?.handle.map(PeerFace.displayName) ?? account.me?.label ?? "—")
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(Theme.ink)
-            Spacer()
+            Spacer(minLength: 0)
             if account.mailboxes.count > 1 {
-                Menu {
-                    ForEach(account.mailboxes, id: \.address) { mailbox in
-                        Button(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address) {
-                            guard mailbox.address != account.me?.address else { return }
-                            selection = nil
-                            inbox.reset()
-                            account.act(as: mailbox)
-                        }
-                    }
-                } label: {
-                    Image(systemName: "chevron.down")
-                }
-            // A definite width, and never `.fixedSize()`.
-            //
-            // `.fixedSize()` here is what squeezed the whole sidebar. It makes the Menu ask for
-            // its ideal size, and that unspecified-width proposal came back out of this bar and
-            // became the width the List proposed to every row — so the conversation names
-            // truncated to "Pig…" while the column sat 300pt wide. Three attempts went into the
-            // row before a plain `Text` in its place truncated identically and pointed here.
-                .menuStyle(.borderlessButton)
-                .menuIndicator(.hidden)
-                .frame(width: 16)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(Theme.muted)
+                    .rotationEffect(.degrees(switchingMailbox ? 180 : 0))
+                    .fixedSize()
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard account.mailboxes.count > 1 else { return }
+            switchingMailbox.toggle()
+        }
+    }
+
+    /// The other mailboxes on this account, as rows in the column rather than a popup over it.
+    private var mailboxList: some View {
+        // Capped and scrolling, the way the web app caps its identity list at 60vh. An account with
+        // seventeen mailboxes would otherwise push the conversations off the bottom of the column,
+        // which is the opposite of what opening a switcher is for.
+        ScrollView {
+            VStack(spacing: 0) {
+                ForEach(account.mailboxes, id: \.address) { mailbox in
+                    let isCurrent = mailbox.address == account.me?.address
+                    HStack(spacing: 8) {
+                        Avatar(peer: mailbox.handle ?? mailbox.address, size: 20)
+                        Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.ink)
+                            .lineLimit(1)
+                        Spacer(minLength: 0)
+                        if isCurrent {
+                            Image(systemName: "checkmark")
+                                .font(.system(size: 10, weight: .semibold))
+                                .foregroundStyle(Theme.navy)
+                                .fixedSize()
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 5)
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        switchingMailbox = false
+                        guard !isCurrent else { return }
+                        selection = nil
+                        inbox.reset()
+                        account.act(as: mailbox)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 260)
+        .padding(.bottom, 4)
     }
 }
 

@@ -105,7 +105,11 @@ struct MacThreadView: View {
         }
         .searchable(text: $find, prompt: "Search this conversation")
         .task(id: taskKey) { await inbox.acknowledge(peer: peer, subthread: subthread) }
-        .navigationTitle(conversation?.name ?? peer)
+        // Empty on purpose. The sender is drawn as a button in the toolbar by the view that owns
+        // the sheet it opens; a navigation title beside it would say the same name twice, and
+        // leaving it unset falls back to the application's name, which says it three times.
+        .navigationTitle("")
+
     }
 
     /// Re-acknowledge when the subject changes or new mail lands, but not on every render.
