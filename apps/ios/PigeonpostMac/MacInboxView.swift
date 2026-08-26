@@ -87,29 +87,45 @@ private struct MacConversationRow: View {
     let conversation: Conversation
 
     var body: some View {
-        HStack(spacing: 9) {
+        // The spacers live *inside* the two rows, never beside the column that holds them. Put one
+        // next to the column and it takes the width instead: the name and preview collapse to two
+        // characters and an ellipsis while the sidebar sits there half empty. That is what the Mac
+        // build did, and the iOS row had the right shape all along.
+        HStack(alignment: .top, spacing: 9) {
+            Avatar(peer: conversation.peer, size: 26)
             VStack(alignment: .leading, spacing: 2) {
-                HStack(spacing: 6) {
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
-                    if conversation.held > 0 { PillView(text: "held", kind: .blocked) }
+                    Spacer(minLength: 0)
+                    if conversation.last > 0 {
+                        Text(Time.listTime(conversation.last))
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(Theme.muted)
+                    }
                 }
-                Text(conversation.messages.last.map(ConversationBuilder.preview) ?? "")
-                    .font(.system(size: 12))
-                    .foregroundStyle(Theme.muted)
-                    .lineLimit(1)
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Text(conversation.messages.last.map(ConversationBuilder.preview) ?? "")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.body)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    if conversation.held > 0 { PillView(text: "held", kind: .held) }
+                    if conversation.unread > 0 {
+                        Text("\(conversation.unread)")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 5)
+                            .padding(.vertical, 1.5)
+                            .background(Theme.navy, in: Capsule())
+                    }
+                }
             }
-            Spacer(minLength: 0)
-            if conversation.unread > 0 {
-                Text("\(conversation.unread)")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Theme.navy, in: Capsule())
-            }
+            // The column takes the row's width; without this the HStack sizes it to its content
+            // and the truncation comes back on a narrow sidebar.
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 3)
     }
