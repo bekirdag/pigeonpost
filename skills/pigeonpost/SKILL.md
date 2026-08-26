@@ -132,6 +132,12 @@ the whole body as JSON; one extra character and it is `not_a_request`, which lan
 sits there until a human reads it. Appending "plain-English version, in case the envelope is held"
 is the thing that *causes* the hold. Put the human-readable why in `note`, and the work in `args`.
 
+**`args` is capped at 4096 bytes serialized, and going over reads as `not_a_request` too** — the
+same label a malformed body gets, with nothing to tell the two apart. An envelope is a request, not
+a payload channel: if you have a page of findings, send them as their own prose message for a human,
+then ask with a short envelope that names the thread. The recipient can read the detail back with
+`read_pigeonpost_thread`. A long `args` does not fail loudly; it fails as silence.
+
 Two classes, and the difference is not the one an older version of this file described:
 
 - **Grantable** — `report_status`, `answer_question`, `read_file`. A grant is enough on its own.
