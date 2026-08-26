@@ -1,8 +1,8 @@
 //  Agent replies are markdown, so they are shown as markdown.
 //
 //  Not a full CommonMark implementation, and deliberately not: this renders what agents actually
-//  send — headings, bullets, numbered lists, fenced code, block quotes, rules, and inline emphasis —
-//  and shows anything it does not understand as the literal text it was. Falling back to the raw
+//  send — headings, bullets, numbered lists, fenced code, block quotes, rules, tables, and inline
+//  emphasis — and shows anything it does not understand as the literal text it was. Falling back to the raw
 //  line is the important half: a renderer that silently drops what it cannot parse loses somebody's
 //  message.
 //
@@ -89,6 +89,39 @@ struct MarkdownText: View {
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(panel, in: RoundedRectangle(cornerRadius: 7))
 
+        case let .table(header, alignments, rows):
+            // Scrolling sideways, for the reason the code block does: a table's width is its
+            // columns', and a bubble is a fraction of a phone. Squeezing it to fit wraps every cell
+            // to a word a line, and a table whose columns no longer line up is not a table.
+            //
+            // Indicators on, unlike the code block's: code that runs off the edge reads as code
+            // that runs off the edge, but a truncated grid just looks like the wrong grid, so this
+            // one has to say it can be moved.
+            let width = max(header.count, rows.map(\.count).max() ?? 0)
+            ScrollView(.horizontal, showsIndicators: true) {
+                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                    GridRow {
+                        ForEach(Array(0..<width), id: \.self) { column in
+                            cell(at(header, column), isHeader: true)
+                                .gridColumnAlignment(gridAlignment(alignments, column))
+                        }
+                    }
+                    ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
+                        GridRow {
+                            ForEach(Array(0..<width), id: \.self) { column in
+                                // Banded, so the eye keeps its place across a row it had to scroll
+                                // to read.
+                                cell(at(row, column), isHeader: false, shaded: !index.isMultiple(of: 2))
+                            }
+                        }
+                    }
+                }
+                .clipShape(RoundedRectangle(cornerRadius: 7))
+                .overlay(RoundedRectangle(cornerRadius: 7).stroke(panel, lineWidth: 1))
+                .padding(.bottom, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
         case let .quote(text):
             HStack(alignment: .top, spacing: 8) {
                 RoundedRectangle(cornerRadius: 1.5)
@@ -107,6 +140,30 @@ struct MarkdownText: View {
         }
     }
 
+    /// One cell. A short row is padded out and a long one kept whole: the header says what shape
+    /// the table is, but dropping the extra cell would drop somebody's data to make the shape true.
+    private func at(_ row: [String], _ column: Int) -> String {
+        row.indices.contains(column) ? row[column] : ""
+    }
+
+    private func cell(_ text: String, isHeader: Bool, shaded: Bool = false) -> some View {
+        inline(text)
+            .font(.system(size: 13.5, weight: isHeader ? .semibold : .regular))
+            .foregroundStyle(isHeader ? primary : secondary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .frame(maxHeight: .infinity, alignment: .leading)
+            .background(isHeader ? panel : (shaded ? panel.opacity(0.45) : Color.clear))
+    }
+
+    private func gridAlignment(_ alignments: [Markdown.Column], _ column: Int) -> HorizontalAlignment {
+        switch alignments.indices.contains(column) ? alignments[column] : .leading {
+        case .leading: return .leading
+        case .center: return .center
+        case .trailing: return .trailing
+        }
+    }
+
     /// Inline emphasis, via the system parser. On anything it refuses, the literal text is shown —
     /// an unparseable line is still somebody's sentence.
     private func inline(_ text: String) -> Text {
@@ -121,6 +178,10 @@ struct MarkdownText: View {
 }
 
 enum Markdown {
+    /// Which way a column's cells sit, as the underline asked. Its own type rather than SwiftUI's
+    /// `Alignment` so the block model stays a plain value the tests can compare.
+    enum Column: Equatable { case leading, center, trailing }
+
     enum Block: Equatable {
         case heading(level: Int, text: String)
         case paragraph(String)
@@ -128,6 +189,7 @@ enum Markdown {
         case numbered([String])
         case code(String, language: String?)
         case quote(String)
+        case table(header: [String], alignments: [Column], rows: [[String]])
         case rule
     }
 
@@ -206,6 +268,25 @@ enum Markdown {
                 continue
             }
 
+            // A table needs its underline. `| yes | no |` on its own is a line somebody typed, and
+            // only the `|---|---|` beneath it says the pipes were a grid — so a sentence containing
+            // a pipe stays the sentence it was. `lines.first` is already the line after this one.
+            if trimmed.contains("|"), let next = lines.first, let alignments = tableAlignments(of: next) {
+                flushAll()
+                lines = lines.dropFirst() // the underline, now that it has been read
+                let header = tableCells(of: trimmed)
+                var rows: [[String]] = []
+                // Rows run until a blank line or a line with no pipe in it.
+                while let candidate = lines.first {
+                    let row = candidate.trimmingCharacters(in: .whitespaces)
+                    guard !row.isEmpty, row.contains("|") else { break }
+                    lines = lines.dropFirst()
+                    rows.append(tableCells(of: row))
+                }
+                blocks.append(.table(header: header, alignments: alignments, rows: rows))
+                continue
+            }
+
             if let item = bulletItem(of: trimmed) {
                 flushParagraph()
                 if !numbered.isEmpty { flushLists() }
@@ -244,6 +325,37 @@ enum Markdown {
             return String(line.dropFirst(marker.count))
         }
         return nil
+    }
+
+    /// The cells of one row. A leading and a trailing pipe fence the row rather than being empty
+    /// cells either side of it, so they come off before the split.
+    static func tableCells(of line: String) -> [String] {
+        var rest = Substring(line.trimmingCharacters(in: .whitespaces))
+        if rest.hasPrefix("|") { rest = rest.dropFirst() }
+        if rest.hasSuffix("|") { rest = rest.dropLast() }
+        return rest.split(separator: "|", omittingEmptySubsequences: false)
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    /// `|---|:--:|` and nothing else: every cell dashes, optionally anchored by a colon at one end
+    /// or both. One alignment per column, or `nil` if this line is not a table underline — which is
+    /// what keeps the row above it prose.
+    static func tableAlignments(of line: String) -> [Column]? {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        guard trimmed.contains("|"), trimmed.contains("-") else { return nil }
+        let cells = tableCells(of: trimmed)
+        guard !cells.isEmpty else { return nil }
+        var out: [Column] = []
+        for cell in cells {
+            var body = Substring(cell)
+            let left = body.hasPrefix(":")
+            if left { body = body.dropFirst() }
+            let right = body.hasSuffix(":")
+            if right { body = body.dropLast() }
+            guard !body.isEmpty, body.allSatisfy({ $0 == "-" }) else { return nil }
+            out.append(left && right ? .center : right ? .trailing : .leading)
+        }
+        return out
     }
 
     private static func numberedItem(of line: String) -> String? {

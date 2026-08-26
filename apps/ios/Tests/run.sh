@@ -7,8 +7,8 @@ cd "$(dirname "$0")/.."
 out=$(mktemp -d)
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
-  Pigeonpost/API/Models.swift \
-  Pigeonpost/Model/Conversation.swift \
+  Shared/API/Models.swift \
+  Shared/Model/Conversation.swift \
   Pigeonpost/Design/PeerFace.swift \
   Pigeonpost/Design/Theme.swift \
   Pigeonpost/Views/Markdown.swift

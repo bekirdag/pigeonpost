@@ -245,6 +245,31 @@ equal(Markdown.blocks(of: "").count, 0, "an empty body is no blocks, not an empt
 let messy = "# Title\n\nSome text\n- a\n- b\n\n```\ncode\n```\n\nmore"
 equal(Markdown.blocks(of: messy).count, 5, "a mixed document keeps all five of its blocks")
 
+print("\ntables")
+// The same rule the web app applies, so a table read on the phone is the table read in the browser.
+let table = "| Host | Port | State |\n| --- | ---: | :---: |\n| wodomini | 34251 | up |\n| postbox | 22 | up |"
+equal(Markdown.blocks(of: table).first,
+      .table(header: ["Host", "Port", "State"],
+             alignments: [.leading, .trailing, .center],
+             rows: [["wodomini", "34251", "up"], ["postbox", "22", "up"]]),
+      "pipes under an underline are a table, alignments and all")
+// The underline is what makes it a table. Without one the pipes were punctuation.
+equal(Markdown.blocks(of: "not a table | just a sentence").first,
+      .paragraph("not a table | just a sentence"),
+      "a pipe with no underline beneath it is a sentence")
+// Not a table, and neither line is lost: they are two ordinary lines of one paragraph.
+equal(Markdown.blocks(of: "| a | b |\n| --- | oops |").first,
+      .paragraph("| a | b |\n| --- | oops |"),
+      "an underline that is not all dashes does not make a table")
+// A blank line ends it, and what follows is its own block rather than another row.
+equal(Markdown.blocks(of: "| a |\n| - |\n| x |\n\nafter").count, 2,
+      "a blank line ends the table and the prose after it survives")
+equal(Markdown.blocks(of: "| a | b |\n| --- | --- |\n| only one |").first,
+      .table(header: ["a", "b"], alignments: [.leading, .leading], rows: [["only one"]]),
+      "a short row is kept as it was rather than dropped for not fitting")
+equal(Markdown.tableCells(of: "| a | b |"), ["a", "b"],
+      "the fencing pipes are a fence, not two empty cells")
+
 print("\npreviews")
 // Everything these clients send is full_access, so a list of them previewing the verb would be a
 // list of one repeated line. The words are the information there.

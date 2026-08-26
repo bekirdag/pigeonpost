@@ -65,29 +65,32 @@ struct ThreadView: View {
             .scrollDismissesKeyboard(.interactively)
             .contentShape(Rectangle())
             .onTapGesture { composing = false }
-            // Open on the newest message, which is what a thread is for. Doing this in `onAppear`
-            // was a guess at the timing — it runs before the scroll view has laid its content out,
-            // so a long conversation opened at the top often enough to be a complaint. This is the
-            // same intent stated as a property of the scroll view rather than as an event.
-            .defaultScrollAnchor(.bottom)
-            // Everything that can change what "the bottom" means, in one place.
+            // Open on the newest message, and stay there. Doing this in `onAppear` was a guess at
+            // the timing — it runs before the scroll view has laid its content out, so a long
+            // conversation opened at the top often enough to be a complaint. This is the same
+            // intent stated as a property of the scroll view rather than as an event.
+            .modifier(AnchoredToBottom())
+            // The subject filter and the peer are the only two things still scrolled to by hand,
+            // and both are somebody tapping a different conversation into view — a moment where a
+            // jump to the bottom is the answer rather than an interruption.
             //
-            // `defaultScrollAnchor(.bottom)` handles the first paint and nothing after it, and the
-            // first paint is not the only moment this gets decided: the subject filter is applied
-            // in `onAppear`, so the content changes once more immediately afterwards; mail lands
-            // while the thread is open; and the keyboard takes half the screen without the scroll
-            // view moving to compensate. Each of those left the conversation somewhere other than
-            // its newest message, which is the complaint.
-            .onChange(of: shown.count) { _, _ in scrollToFloor(scroller, animated: true) }
-            .onChange(of: subthread) { _, _ in scrollToFloor(scroller, animated: false) }
-            .onChange(of: composing) { _, focused in
-                if focused { scrollToFloor(scroller, animated: true) }
-            }
+            // What used to be here as well: an animated scroll on every change to the message count
+            // and another whenever the field took focus. Both were fighting the anchor above rather
+            // than helping it, and the fight is what was on screen. A send changes the count three
+            // times in a second — the optimistic row goes in, the listing comes back, the row it
+            // accounts for is retired — while the composer is also shrinking, because the draft was
+            // just cleared and the staged files with it; each of those is a size change the anchor
+            // is already absorbing, and a 0.2s animation started from a stale offset in the middle
+            // of one is the conversation visibly moving up and down under the person who sent it.
+            // Focus was the same bug with one cause: the keyboard changes the scroll view's bottom
+            // safe area, the anchor keeps the last message against it, and the extra scroll only
+            // added a second opinion about where the bottom had got to.
+            .onChange(of: subthread) { _, _ in scrollToFloor(scroller) }
             .task(id: peer) {
                 // After the first layout, not during it. `onAppear` runs before the scroll view has
                 // measured its content, which is what made this unreliable rather than wrong.
                 await Task.yield()
-                scrollToFloor(scroller, animated: false)
+                scrollToFloor(scroller)
             }
 
         }
@@ -292,13 +295,12 @@ struct ThreadView: View {
     /// The bottom, named once.
     private static let floor = "thread-floor"
 
-    private func scrollToFloor(_ scroller: ScrollViewProxy, animated: Bool) {
+    /// Unanimated on purpose. Every remaining caller is putting a different conversation on screen,
+    /// where there is nothing to animate *from*, and an animation here is what put this in a race
+    /// with the bottom anchor.
+    private func scrollToFloor(_ scroller: ScrollViewProxy) {
         guard !shown.isEmpty else { return }
-        if animated {
-            withAnimation(.easeOut(duration: 0.2)) { scroller.scrollTo(Self.floor, anchor: .bottom) }
-        } else {
-            scroller.scrollTo(Self.floor, anchor: .bottom)
-        }
+        scroller.scrollTo(Self.floor, anchor: .bottom)
     }
 
     private func send() {
@@ -313,6 +315,32 @@ struct ThreadView: View {
         // answers.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
         Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+    }
+}
+
+/// The bottom, said in every way the scroll view will hear it.
+///
+/// A conversation is read from its newest message, and everything about this screen changes size
+/// while somebody is looking at it: the keyboard opens and takes the bottom half, the composer grows
+/// a row for a staged file and loses it again on send, the field itself is one line until it is
+/// five. Each of those resizes the scroll view or its content, and the question every time is what
+/// stays still. The answer is always the bottom.
+///
+/// On iOS 17 that is one modifier covering where the content starts and what a resize does to it.
+/// iOS 18 split it into roles, and naming all three is worth the branch here: `.sizeChanges` is
+/// exactly the keyboard and the composer, and it is the one that was previously being papered over
+/// with hand-written scrolls that raced it.
+private struct AnchoredToBottom: ViewModifier {
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content
+                .defaultScrollAnchor(.bottom, for: .initialOffset)
+                .defaultScrollAnchor(.bottom, for: .sizeChanges)
+                .defaultScrollAnchor(.bottom, for: .alignment)
+        } else {
+            content.defaultScrollAnchor(.bottom)
+        }
     }
 }
 
