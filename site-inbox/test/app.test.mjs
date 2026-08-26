@@ -698,6 +698,79 @@ window.document.dispatchEvent(new window.KeyboardEvent("keydown", { key: "Escape
 await settle(60);
 check("escape closes it", $("thread-sheet").hidden, true);
 
+console.log("\n— dropping a file on the conversation —");
+// jsdom has neither DragEvent nor DataTransfer, so the events are built by hand. That is not a
+// weaker test than the real thing: what this app does with a drop is decided entirely by
+// `dataTransfer.types`, `.items` and `.files`, and those are what is being handed over here.
+{
+  const fire = (type, dt) => {
+    const e = new window.Event(type, { bubbles: true, cancelable: true });
+    Object.defineProperty(e, "dataTransfer", { value: dt });
+    window.document.dispatchEvent(e);
+    return e;
+  };
+  const fileDrag = (files) => ({ types: ["Files"], files, items: [] });
+  const note = new window.File(["hello"], "notes.txt", { type: "text/plain" });
+  const veil = $("drop-veil");
+  const names = () => [...$("pending-files").querySelectorAll(".pf-name")].map((el) => text(el));
+
+  // The thread on screen was closed by the escape check above, and a drop needs somewhere to land.
+  [...$("threads").querySelectorAll(".thread-row")]
+    .find((r) => text(r.querySelector(".tr-name")) === "my fleet").click();
+  await settle(80);
+  check("a conversation is open to drop onto", $("composer").hidden, false);
+
+
+  fire("dragenter", fileDrag([]));
+  check("dragging a file marks the conversation", veil.hidden, false);
+  fire("dragleave", fileDrag([]));
+  check("and dragging back out unmarks it", veil.hidden, true);
+
+  // Without a cancelled dragover the browser refuses the drop and the drop event never fires at
+  // all — the single most common way this feature is shipped broken.
+  check("dragover is cancelled so a drop can happen", fire("dragover", fileDrag([])).defaultPrevented, true);
+
+  fire("dragenter", fileDrag([note]));
+  const dropped = fire("drop", fileDrag([note]));
+  // The other half of the feature, and the half that costs something when it is missing: an
+  // unhandled drop navigates the tab to the file, taking the half-written message with it.
+  check("the drop is taken from the browser", dropped.defaultPrevented, true);
+  check("the file is staged", names(), "notes.txt");
+  check("the list is shown", $("pending-files").hidden, false);
+  check("and the overlay is gone", veil.hidden, true);
+
+  // A drag of words is somebody rearranging their own message. It must pass straight through.
+  const words = fire("drop", { types: ["text/plain"], files: [], items: [] });
+  check("a drag of text is left alone", words.defaultPrevented, false);
+  check("and stages nothing", names(), "notes.txt");
+
+  // A dropped folder arrives as a File with no readable bytes and fails at upload time with
+  // nothing useful to say, so it is refused here where it can be said out loud.
+  const item = (kind, isDirectory, file) => ({
+    kind, getAsFile: () => file, webkitGetAsEntry: () => ({ isDirectory }),
+  });
+  const shot = new window.File(["png"], "shot.png", { type: "image/png" });
+  fire("drop", {
+    types: ["Files"], files: [shot],
+    items: [item("file", true, null), item("file", false, shot)],
+  });
+  check("a folder dropped alongside a file is left out", names(), "notes.txt,shot.png");
+  check("and it is said out loud", text($("toast")).includes("Folders"), true);
+
+  // Nothing to attach to. The drop is still swallowed — navigating away from the app is worse
+  // than doing nothing — and the reason is given.
+  for (const b of [...$("pending-files").querySelectorAll(".pf-drop")].reverse()) b.click();
+  $("back-btn").click();
+  await settle(60);
+  check("the thread is closed", $("composer").hidden, true);
+  fire("dragenter", fileDrag([note]));
+  check("no conversation, no drop target", veil.hidden, true);
+  const homeless = fire("drop", fileDrag([note]));
+  check("the drop is still taken from the browser", homeless.defaultPrevented, true);
+  check("but nothing is staged", names().length, 0);
+  check("and the reason is given", text($("toast")), "Open a conversation first, then drop the file.");
+}
+
 console.log("\n— the phone walks out one screen at a time —");
 const subsCss = readFileSync(`${APP}/app.css`, "utf8");
 check("threads pane is a screen of its own on a phone", /@media \(max-width: 780px\)[\s\S]*\.pane-subs \{[\s\S]*position: fixed/.test(subsCss), true);

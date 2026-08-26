@@ -291,11 +291,92 @@
     if (!button || !input) return;
     button.addEventListener("click", () => input.click());
     input.addEventListener("change", () => {
-      for (const file of input.files || []) staged.push(file);
+      stageFiles(input.files);
       // Cleared so choosing the same file twice in a row still fires a change.
       input.value = "";
-      renderStaged();
     });
+  }
+
+  function stageFiles(files) {
+    const chosen = Array.from(files || []);
+    if (!chosen.length) return;
+    for (const file of chosen) staged.push(file);
+    renderStaged();
+  }
+
+  // Dragging a file onto the conversation is the same act as choosing one with the paperclip, and
+  // it is what people try first. What makes it worth wiring carefully is what the browser does
+  // with a drop nobody handled: it navigates the tab to the file, which throws away a half-written
+  // message and the thread it was being written in. So every file drop anywhere in the window is
+  // swallowed here, and one that arrives with a conversation open is staged.
+  function wireDrop() {
+    const veil = $("drop-veil");
+    if (!veil) return;
+
+    // `types` is an array in current browsers and a DOMStringList in the ones that are not; this
+    // reads both. A drag of text or of a link is left alone entirely — dragging words about inside
+    // the message box is a thing people do, and it must keep working.
+    const carriesFiles = (e) =>
+      !!e.dataTransfer && Array.prototype.indexOf.call(e.dataTransfer.types || [], "Files") !== -1;
+
+    // Browsers fire dragenter/dragleave for every element the cursor crosses, so a plain pair of
+    // handlers strobes. Counting entries against leaves is what holds the overlay still.
+    let depth = 0;
+    const hide = () => { depth = 0; veil.hidden = true; };
+
+    document.addEventListener("dragenter", (e) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      depth += 1;
+      veil.hidden = !state.openPeer;
+    });
+    document.addEventListener("dragleave", (e) => {
+      if (!carriesFiles(e)) return;
+      depth -= 1;
+      if (depth <= 0) hide();
+    });
+    document.addEventListener("dragend", hide);
+    document.addEventListener("dragover", (e) => {
+      if (!carriesFiles(e)) return;
+      // Not optional: the default action of a dragover is to refuse the drop, and without this the
+      // drop event never happens at all.
+      e.preventDefault();
+      if (e.dataTransfer) e.dataTransfer.dropEffect = state.openPeer ? "copy" : "none";
+    });
+    document.addEventListener("drop", (e) => {
+      if (!carriesFiles(e)) return;
+      e.preventDefault();
+      hide();
+      if (!state.openPeer) {
+        toast("Open a conversation first, then drop the file.");
+        return;
+      }
+      const dropped = droppedFiles(e.dataTransfer);
+      stageFiles(dropped.files);
+      if (dropped.folders && !dropped.files.length) toast("Folders cannot be attached, only files.");
+      else if (dropped.folders) toast("Folders were left out — only the files were attached.");
+    });
+  }
+
+  // A dropped folder is handed over as a `File` with no type and no readable bytes, which fails at
+  // upload time with nothing useful to say. `webkitGetAsEntry` is the only way to tell one from a
+  // file at drop time, and it must be called before the event returns; where it is missing the
+  // drop is taken at face value.
+  function droppedFiles(dt) {
+    const items = dt && dt.items ? Array.from(dt.items) : [];
+    if (!items.length || typeof items[0].webkitGetAsEntry !== "function") {
+      return { files: Array.from((dt && dt.files) || []), folders: 0 };
+    }
+    const files = [];
+    let folders = 0;
+    for (const item of items) {
+      if (item.kind !== "file") continue;
+      const entry = item.webkitGetAsEntry();
+      if (entry && entry.isDirectory) { folders += 1; continue; }
+      const file = item.getAsFile();
+      if (file) files.push(file);
+    }
+    return { files, folders };
   }
 
   function renderStaged() {
@@ -2467,6 +2548,7 @@
     });
 
     wireAttach();
+    wireDrop();
     $("composer").addEventListener("submit", (e) => {
       e.preventDefault();
       const text = compose.value.trim();

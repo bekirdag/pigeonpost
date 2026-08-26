@@ -128,6 +128,16 @@ the reason spelled out — rather than as the raw JSON envelope it is on the wir
 what a person recognises, falling back to the key address. Outbound is normalised through the same
 map, so writing to `/k/…` and hearing back from `/bekir/agent1` stays one conversation.
 
+**A file drop is taken from the browser everywhere in the window.** Dropping a file on the
+conversation attaches it, which is what people try before they find the paperclip. The reason the
+handlers are on the document rather than on the composer is the other half: a drop the page does
+not handle is one the browser handles, and its answer is to navigate the tab to the file — throwing
+away a half-written message and the thread it was being written in. So every file drop is
+cancelled, one over an open conversation stages the file, and one with no conversation open says so
+instead. Drags of text and links are left alone, because rearranging words inside the message box
+is a drag too. A dropped folder is refused where it can be explained, rather than at upload time
+where it fails as unreadable bytes.
+
 **Sign-in is `offline_access`.** A mail app that signs you out every half hour is one nobody opens.
 The refresh token lives in `localStorage` and is dropped on sign out.
 

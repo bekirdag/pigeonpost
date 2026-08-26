@@ -61,6 +61,10 @@
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
   --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
+  /* Laid over the conversation while a file is being dragged onto it. Light enough to read the
+     thread through — the point is where the file lands, not hiding what it lands on. */
+  --drop-veil: rgba(247, 249, 251, 0.72);
+
   /* The layer over the chat doodle. Alpha is its strength: 0.94 hid it entirely, 0.80 reads as a
      faint pattern you notice only if you look for it. */
   --doodle-veil: rgba(240, 244, 249, 0.80);
@@ -127,6 +131,8 @@
     --shadow-toast: rgba(0, 0, 0, .5);
     --shadow-bubble: rgba(0, 0, 0, .25);
     --shadow-btn: rgba(0, 0, 0, .3);
+
+    --drop-veil: rgba(11, 13, 17, 0.72);
 
     /* Stronger than the light veil, as on the phone. The artwork is near-black strokes and CSS
        cannot recolour a background image the way `colorInvert` does on the phone, so here the
@@ -303,6 +309,9 @@ button { font: inherit; color: inherit; }
   min-height: 0;
   min-width: 0;
   background: var(--wash);
+  /* The containing block for the drop overlay. On a phone the pane is `position: fixed`, which
+     does the same job. */
+  position: relative;
 }
 
 /* ---- list header -------------------------------------------------------------------------- */
@@ -894,6 +903,38 @@ button { font: inherit; color: inherit; }
 }
 .send:disabled { background: var(--send-off); cursor: default; }
 .send svg { width: 18px; height: 18px; margin-left: -1px; }
+
+/* ---- drop target ---------------------------------------------------------------------------
+   Covers the whole conversation, composer included, so the answer to "where do I let go" is the
+   whole pane rather than a strip of it. */
+
+.drop-veil {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+  background: var(--drop-veil);
+  /* The veil must never be under the cursor: an element appearing there mid-drag is a `dragleave`
+     on what was under it, and the overlay would flicker itself off the moment it appeared. */
+  pointer-events: none;
+}
+.drop-card {
+  margin: 0;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border: 2px dashed var(--edge-hover);
+  border-radius: 14px;
+  background: var(--ground);
+  box-shadow: 0 10px 30px var(--shadow-menu);
+  color: var(--ink);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+.drop-card svg { width: 20px; height: 20px; color: var(--muted); }
 
 /* ---- toast -------------------------------------------------------------------------------- */
 
