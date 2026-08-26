@@ -57,3 +57,6 @@ dist/
 
 # pigeonpost: holds this repo's mailbox token
 .mcp.json
+
+# Local todo scratchpad for issues sent over Pigeonpost
+/AGENT-TODO.md
