@@ -32,7 +32,9 @@ final class MenuBarItem {
         // inverted while the menu is open. A coloured icon would look right in exactly one of those.
         // A silhouette, not the app icon: the colour version would look right in exactly one of the
         // three ways the system draws a status item — light bar, dark bar, and inverted while its
-        // menu is open. The asset is generated from the same artwork with the page dropped out.
+        // menu is open. The asset is `assets/img/logo_only_symbol_black.png`, trimmed to its ink
+        // and squared; the white twin is not needed here, because a template image *is* the black
+        // one and the system paints it whichever way the bar requires.
         let icon = NSImage(named: "MenuBarIcon")
         icon?.isTemplate = true
         icon?.size = NSSize(width: 17, height: 17)
