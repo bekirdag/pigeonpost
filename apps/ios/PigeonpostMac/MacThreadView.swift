@@ -20,19 +20,40 @@ struct MacThreadView: View {
     @State private var dropping = false
     /// What the toolbar's search field is looking for, inside this conversation.
     @State private var find = ""
+    /// Which hit is being shown, as an index into `matches`.
+    @State private var matchIndex = 0
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
-        let inSubject = subthread.map { id in
+        return subthread.map { id in
             conversation.messages.filter { ($0.threadId ?? "") == id }
         } ?? conversation.messages
-        guard !find.trimmed.isEmpty else { return inSubject }
-        // Narrowed to the messages that match, rather than highlighted in place. On a conversation
-        // long enough to need searching, "highlighted somewhere above" is the same as not found.
-        return inSubject.filter { $0.body.localizedCaseInsensitiveContains(find.trimmed) }
+    }
+
+    /// The messages the find bar has matched, in the order they appear.
+    ///
+    /// A find bar, not a filter. Filtering hides everything around a hit, which is most of what
+    /// makes a hit worth finding — you search a conversation to read the part *near* the words, not
+    /// to see the words alone.
+    private var matches: [ThreadMessage] {
+        let needle = find.trimmed
+        guard !needle.isEmpty else { return [] }
+        return shown.filter { $0.body.localizedCaseInsensitiveContains(needle) }
+    }
+
+    private var currentMatch: String? {
+        guard !matches.isEmpty else { return nil }
+        return matches[min(matchIndex, matches.count - 1)].id
+    }
+
+    /// Step to the next hit, wrapping. Wrapping rather than stopping at the end, because a find bar
+    /// that goes dead on the last match makes you retype the word to start again.
+    private func step(_ by: Int) {
+        guard !matches.isEmpty else { return }
+        matchIndex = (matchIndex + by + matches.count) % matches.count
     }
 
     var body: some View {
@@ -47,7 +68,7 @@ struct MacThreadView: View {
                                     .foregroundStyle(Theme.muted)
                                     .padding(.vertical, 6)
                             }
-                            MessageBubble(message: message)
+                            MessageBubble(message: message, isFound: message.id == currentMatch)
                                 .id(message.id)
                         }
                         Color.clear.frame(height: 1).id(Self.floor)
@@ -79,6 +100,24 @@ struct MacThreadView: View {
                 .onChange(of: subthread) { _, _ in
                     scroller.scrollTo(Self.floor, anchor: .bottom)
                 }
+                // Typing restarts the walk. Keeping the old index would land you in the middle of
+                // the results for a word you have only just finished typing.
+                .onChange(of: find) { _, _ in
+                    matchIndex = 0
+                    if let first = matches.first?.id {
+                        withAnimation(.easeInOut(duration: 0.15)) {
+                            scroller.scrollTo(first, anchor: .center)
+                        }
+                    }
+                }
+                // Centred, not merely brought on screen: a hit at the very edge of the view is one
+                // you have to look for twice.
+                .onChange(of: matchIndex) { _, _ in
+                    guard let current = currentMatch else { return }
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        scroller.scrollTo(current, anchor: .center)
+                    }
+                }
             }
             Divider()
             composer
@@ -104,6 +143,28 @@ struct MacThreadView: View {
             }
         }
         .searchable(text: $find, prompt: "Search this conversation")
+        // "3 of 21", and the two ways through them. Beside the field rather than inside it, because
+        // `.searchable` owns its field and will not take passengers.
+        .toolbar {
+            if !find.trimmed.isEmpty {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Text(matches.isEmpty
+                         ? "no matches"
+                         : "\(min(matchIndex, matches.count - 1) + 1) of \(matches.count)")
+                        .font(.system(size: 12).monospacedDigit())
+                        .foregroundStyle(Theme.muted)
+                        .fixedSize()
+                    Button { step(-1) } label: { Image(systemName: "chevron.up") }
+                        .disabled(matches.isEmpty)
+                        .help("Previous match")
+                        .accessibilityLabel("Previous match")
+                    Button { step(1) } label: { Image(systemName: "chevron.down") }
+                        .disabled(matches.isEmpty)
+                        .help("Next match")
+                        .accessibilityLabel("Next match")
+                }
+            }
+        }
         .task(id: taskKey) { await inbox.acknowledge(peer: peer, subthread: subthread) }
 
     }

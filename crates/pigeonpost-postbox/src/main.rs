@@ -500,7 +500,10 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/archive", get(get_archive).put(put_archive))
         .route("/v1/threads", get(list_threads).post(open_thread))
-        .route("/v1/threads/{id}", axum::routing::patch(patch_thread))
+        .route(
+            "/v1/threads/{id}",
+            axum::routing::patch(patch_thread).delete(delete_thread),
+        )
         .route("/v1/handles/{name}/availability", get(handle_availability))
         .route("/v1/me/handles", get(my_handles))
         .route("/v1/claims/address", post(claim_address))
@@ -3417,6 +3420,41 @@ struct PatchThreadReq {
     archived: Option<bool>,
     #[serde(default)]
     identity: Option<String>,
+}
+
+/// `DELETE /v1/threads/{id}` — remove one thread and its mail, in this mailbox only.
+///
+/// The other side keeps its copy, the same way archiving a peer does not reach into theirs.
+/// Irreversible here: archiving is what files a subject away, and this is for the ones that should
+/// not be kept at all.
+async fn delete_thread(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    Query(q): Query<ThreadsQuery>,
+) -> Response {
+    let me = match acting_identity(&state, &headers, q.identity.as_deref()).await {
+        Ok(m) => m,
+        Err(e) => return e.into_response(),
+    };
+    match state.store.delete_thread(me.address.clone(), id).await {
+        Ok(Some(orphaned)) => {
+            // The bytes go only when the last row pointing at them has gone.
+            if let Some(blobs) = state.blobs.as_ref() {
+                for sha in orphaned {
+                    blobs.remove(&sha);
+                }
+            }
+            Json(json!({ "ok": true })).into_response()
+        }
+        Ok(None) => {
+            ApiError::bad("unknown_thread", "no such thread in this mailbox").into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, "thread delete failed");
+            ApiError::server("store_error").into_response()
+        }
+    }
 }
 
 /// `PATCH /v1/threads/{id}` — rename or file one thread, in this mailbox only.

@@ -8,6 +8,10 @@ import SwiftUI
 
 struct MessageBubble: View {
     let message: ThreadMessage
+    /// A search hit. The Mac's find bar walks the matches and marks the one it has landed on, so
+    /// stepping through a long conversation shows you where you are rather than only scrolling
+    /// there. Nothing sets it on the phone, where there is no find bar to set it.
+    var isFound: Bool = false
 
     @Environment(Inbox.self) private var inbox
     @State private var confirmingReport = false
@@ -47,7 +51,15 @@ struct MessageBubble: View {
             .background(isMine ? Theme.navy : Theme.ground, in: RoundedRectangle(cornerRadius: 12))
             .overlay(
                 RoundedRectangle(cornerRadius: 12)
-                    .stroke(isMine ? Theme.navy : Theme.rule, lineWidth: 1)
+                    .stroke(isFound ? Theme.found : (isMine ? Theme.navy : Theme.rule),
+                            lineWidth: isFound ? 2 : 1)
+            )
+            // A wash over the bubble rather than a change of its fill: the fill says who wrote it,
+            // and a search result that recoloured your own messages differently from theirs would
+            // be answering a question nobody asked.
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(isFound ? Theme.found.opacity(0.22) : .clear)
             )
             .frame(maxWidth: 560, alignment: isMine ? .trailing : .leading)
             if !isMine { Spacer(minLength: 40) }

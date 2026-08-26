@@ -23,6 +23,9 @@ enum Theme {
     /// tint on every control; at #16326B it is nearly black against a dark ground, so it lifts.
     static let navy = adaptive(light: 0x16326B, dark: 0x4A73D6)
     static let blue = adaptive(light: 0x2563EB, dark: 0x6C9BFF)
+    /// The one search result you are standing on. Purple rather than the app's own blue, so a hit
+    /// is never mistaken for a selection or for a message of your own — both of which are blue.
+    static let found = adaptive(light: 0x7C3AED, dark: 0xA78BFA)
     static let green = adaptive(light: 0x22C55E, dark: 0x34D06A)
     static let amber = adaptive(light: 0xB45309, dark: 0xE9A23B)
 

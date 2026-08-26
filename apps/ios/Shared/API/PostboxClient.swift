@@ -255,6 +255,15 @@ struct PostboxClient {
         _ = try await sendRaw("/v1/devices/\(token)", method: "DELETE")
     }
 
+    /// Delete one thread and its mail, in this mailbox only. The other side keeps its copy.
+    func deleteThread(identity: String, id: String) async throws {
+        _ = try await sendRaw(
+            "/v1/threads/\(id)",
+            method: "DELETE",
+            query: [.init(name: "identity", value: identity)]
+        )
+    }
+
     func openThread(identity: String, peer: String, title: String) async throws -> String {
         try await send("/v1/threads", method: "POST", json: ["peer": peer, "title": title, "identity": identity], as: OpenedThread.self).threadId
     }

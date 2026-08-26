@@ -947,6 +947,108 @@ impl Store {
 
     /// Rename or file one thread. Local to this mailbox in both cases: a title the peer could
     /// rewrite is a title that is not yours, and filing is about one reader's attention.
+    /// Delete one thread and the mail in it, in this mailbox only.
+    ///
+    /// The other side keeps its copy. A thread exists once per participant — `(id, owner)` is what
+    /// identifies a row — and deleting your own does not reach into theirs, in exactly the way
+    /// archiving a peer does not. Anything else would let one party erase a conversation from
+    /// somebody else's records.
+    ///
+    /// Returns the attachment digests that were only referred to by the deleted mail, so the caller
+    /// can release the blobs; a file stays on disk while any surviving row still points at it.
+    ///
+    /// Both statements run in one transaction. A thread row that outlived its messages is an empty
+    /// subject nobody can delete twice, and messages that outlived their thread are mail that
+    /// appears in no thread at all.
+    pub async fn delete_thread(
+        &self,
+        owner: String,
+        id: String,
+    ) -> Result<Option<Vec<String>>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Option<Vec<String>>, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+
+            let exists: Option<i64> = tx
+                .query_row(
+                    "SELECT 1 FROM threads WHERE owner = ?1 AND id = ?2",
+                    params![owner, id],
+                    |r| r.get(0),
+                )
+                .optional()?;
+            if exists.is_none() {
+                return Ok(None);
+            }
+
+            let orphaned: Vec<String> = {
+                let mut stmt = tx.prepare(
+                    "SELECT DISTINCT a.sha256 FROM attachments a
+                      JOIN messages m ON m.id = a.message_id
+                     WHERE m.thread_id = ?2 AND COALESCE(m.owner, m.recipient) = ?1",
+                )?;
+                let rows = stmt
+                    .query_map(params![owner, id], |r| r.get::<_, String>(0))?
+                    .collect::<Result<Vec<_>, _>>()?;
+                rows
+            };
+
+            tx.execute(
+                "DELETE FROM attachments WHERE message_id IN
+                   (SELECT id FROM messages
+                     WHERE thread_id = ?2 AND COALESCE(owner, recipient) = ?1)",
+                params![owner, id],
+            )?;
+            tx.execute(
+                "DELETE FROM messages
+                  WHERE thread_id = ?2 AND COALESCE(owner, recipient) = ?1",
+                params![owner, id],
+            )?;
+            tx.execute(
+                "DELETE FROM threads WHERE owner = ?1 AND id = ?2",
+                params![owner, id],
+            )?;
+            tx.commit()?;
+
+            // Only the ones nothing else refers to any more.
+            let c = &*c;
+            let mut still = Vec::new();
+            for sha in orphaned {
+                let referred: Option<i64> = c
+                    .query_row(
+                        "SELECT 1 FROM attachments WHERE sha256 = ?1 LIMIT 1",
+                        params![sha],
+                        |r| r.get(0),
+                    )
+                    .optional()?;
+                if referred.is_none() {
+                    still.push(sha);
+                }
+            }
+            Ok(Some(still))
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Test-only: a named thread row, which production only ever creates through `open_thread`.
+    #[cfg(test)]
+    pub async fn upsert_thread_for_test(&self, id: &str, owner: &str, peer: &str) {
+        let conn = self.conn.clone();
+        let (id, owner, peer) = (id.to_string(), owner.to_string(), peer.to_string());
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().expect("store lock");
+            c.execute(
+                "INSERT OR IGNORE INTO threads (id, owner, peer, title, is_default, created_at, last_at)
+                 VALUES (?1, ?2, ?3, 'a subject', 0, 1, 1)",
+                params![id, owner, peer],
+            )
+            .unwrap();
+        })
+        .await
+        .unwrap();
+    }
+
     pub async fn update_thread(
         &self,
         owner: String,
@@ -3271,6 +3373,100 @@ mod tests {
             uploaded(&s, "/k/you", "att_2", "a".repeat(64).as_str(), 1_000).await;
             uploaded(&s, "/k/me", "att_3", "b".repeat(64).as_str(), 500).await;
             assert_eq!(s.blob_footprint().await.unwrap(), (2, 1_500));
+        }
+    }
+
+    /// Deleting a subject, and what it must not reach.
+    mod thread_deletion {
+        use super::*;
+
+        fn mail(id: &str, owner: &str, peer: &str, thread: &str) -> Message {
+            Message {
+                id: id.into(),
+                recipient: owner.into(),
+                sender: peer.into(),
+                wrap_blob: vec![1, 2, 3],
+                created_at: 100,
+                read: false,
+                owner: owner.into(),
+                outgoing: false,
+                thread_id: thread.into(),
+            }
+        }
+
+        async fn seeded() -> Store {
+            let s = Store::open(":memory:").unwrap();
+            for (owner, peer) in [("/k/me", "/k/them"), ("/k/them", "/k/me")] {
+                s.ensure_default_thread("t-keep".into(), owner.into(), peer.into(), 1)
+                    .await
+                    .unwrap();
+            }
+            // The subject being deleted exists in both mailboxes, as every thread does.
+            for (owner, peer) in [("/k/me", "/k/them"), ("/k/them", "/k/me")] {
+                s.upsert_thread_for_test("t-go", owner, peer).await;
+            }
+            s.enqueue(mail("m1", "/k/me", "/k/them", "t-go"))
+                .await
+                .unwrap();
+            s.enqueue(mail("m2", "/k/me", "/k/them", "t-go"))
+                .await
+                .unwrap();
+            s.enqueue(mail("m3", "/k/me", "/k/them", "t-keep"))
+                .await
+                .unwrap();
+            s.enqueue(mail("m4", "/k/them", "/k/me", "t-go"))
+                .await
+                .unwrap();
+            s
+        }
+
+        #[tokio::test]
+        async fn it_takes_the_thread_and_its_mail() {
+            let s = seeded().await;
+            let gone = s
+                .delete_thread("/k/me".into(), "t-go".into())
+                .await
+                .unwrap();
+            assert!(gone.is_some(), "the thread was there to delete");
+
+            let left: Vec<_> = s.list_for("/k/me".into()).await.unwrap();
+            let ids: Vec<_> = left.iter().map(|m| m.id.as_str()).collect();
+            assert_eq!(ids, vec!["m3"], "only the other subject survives");
+        }
+
+        /// The other side keeps its copy. Anything else lets one party erase a conversation from
+        /// somebody else's records.
+        #[tokio::test]
+        async fn it_does_not_reach_into_the_other_mailbox() {
+            let s = seeded().await;
+            s.delete_thread("/k/me".into(), "t-go".into())
+                .await
+                .unwrap();
+
+            let theirs = s.list_for("/k/them".into()).await.unwrap();
+            assert_eq!(
+                theirs.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(),
+                vec!["m4"],
+                "their copy of the same thread is untouched"
+            );
+        }
+
+        /// Deleting one that is not there is not an error worth inventing state for — it is a
+        /// "no such thread", and the caller says so rather than reporting a success.
+        #[tokio::test]
+        async fn an_unknown_thread_reports_itself_as_unknown() {
+            let s = seeded().await;
+            assert!(s
+                .delete_thread("/k/me".into(), "never-existed".into())
+                .await
+                .unwrap()
+                .is_none());
+            // And another mailbox's thread is not this mailbox's to delete.
+            assert!(s
+                .delete_thread("/k/stranger".into(), "t-go".into())
+                .await
+                .unwrap()
+                .is_none());
         }
     }
 

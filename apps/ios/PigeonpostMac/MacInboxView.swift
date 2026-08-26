@@ -19,6 +19,9 @@ struct MacInboxView: View {
     /// The subject inside it. The middle column's selection; `nil` means the whole conversation.
     @State private var subthread: String?
     @State private var openingThread: ThreadTarget?
+    /// The subject a right-click asked to delete, held until the question is answered. Deleting mail
+    /// is not undoable and not something to do on one stray click.
+    @State private var deletingThread: Subthread?
     @State private var showingNew = false
     /// Whether the sender search is open. Closed by default: the field is worth its row only while
     /// somebody is using it, and a permanently visible search box in a narrow column is mostly a
@@ -117,6 +120,25 @@ struct MacInboxView: View {
                 peer = target.id
                 subthread = id
             }
+        }
+        .confirmationDialog(
+            "Delete this thread?",
+            isPresented: Binding(get: { deletingThread != nil }, set: { if !$0 { deletingThread = nil } }),
+            presenting: deletingThread
+        ) { thread in
+            Button("Delete \(thread.name)", role: .destructive) {
+                let peerForDelete = peer
+                deletingThread = nil
+                guard let peerForDelete else { return }
+                if subthread == thread.id { subthread = nil }
+                Task {
+                    do { try await inbox.deleteThread(thread.id, with: peerForDelete) }
+                    catch { inbox.toast = "Could not delete that thread." }
+                }
+            }
+            Button("Cancel", role: .cancel) { deletingThread = nil }
+        } message: { thread in
+            Text("\(thread.messages.count) message\(thread.messages.count == 1 ? "" : "s") in “\(thread.name)” will be deleted from this mailbox. The other side keeps their copy.")
         }
         // One sheet at a time. Two `.sheet(isPresented:)` on one view are not reliably both
         // honoured — the phone lost Settings entirely to that shape once.
@@ -260,6 +282,15 @@ struct MacInboxView: View {
                     ForEach(inbox.subthreads(of: peer)) { thread in
                         MacThreadRow(thread: thread, isSelected: subthread == thread.id)
                             .tag(thread.id)
+                            .contextMenu {
+                                Button("Delete Thread", role: .destructive) {
+                                    deletingThread = thread
+                                }
+                                // The default thread is where mail with no subject lands, and there
+                                // is exactly one per correspondent. Deleting it would leave the next
+                                // message with nowhere to go.
+                                .disabled(thread.isDefault)
+                            }
                     }
                 }
                 .listStyle(.sidebar)

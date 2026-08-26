@@ -592,6 +592,19 @@ final class Inbox {
         return conversation(with: normalised)?.peer ?? normalised
     }
 
+    /// Delete a subject and the mail in it, from this mailbox.
+    ///
+    /// Irreversible, and only here — the other side keeps its copy, the same way archiving a peer
+    /// does not reach into theirs. The listing is reloaded rather than patched: the messages went
+    /// with it, and a local edit that guessed which ones would be a second opinion about what the
+    /// server just did.
+    func deleteThread(_ id: String, with peer: String) async throws {
+        guard let me else { throw AuthError.sessionExpired }
+        try await client.deleteThread(identity: me.address, id: id)
+        await loadThreads()
+        await loadAll()
+    }
+
     func openThread(with peer: String, title: String) async throws -> String {
         guard let me else { throw AuthError.sessionExpired }
         let id = try await client.openThread(identity: me.address, peer: peer, title: title)
