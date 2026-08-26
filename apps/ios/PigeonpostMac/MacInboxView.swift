@@ -16,20 +16,27 @@ struct MacInboxView: View {
         @Bindable var inbox = inbox
 
         NavigationSplitView {
-            List(selection: $selection) {
-                if inbox.offline {
-                    Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.muted)
+            // Stacked above the List rather than inset into its safe area. `.safeAreaInset` would
+            // read better, but a plain VStack is the shape whose width behaviour is obvious, and
+            // this column has already cost enough guessing — see the note on the Menu below.
+            VStack(spacing: 0) {
+                mailboxBar
+                Divider()
+                List(selection: $selection) {
+                    if inbox.offline {
+                        Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.muted)
+                    }
+                    ForEach(inbox.visible) { conversation in
+                        MacConversationRow(conversation: conversation)
+                            .tag(conversation.peer)
+                    }
                 }
-                ForEach(inbox.visible) { conversation in
-                    MacConversationRow(conversation: conversation)
-                        .tag(conversation.peer)
-                }
+                .listStyle(.sidebar)
             }
             .searchable(text: $inbox.filter, prompt: "Search")
             .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
-            .safeAreaInset(edge: .top, spacing: 0) { mailboxBar }
         } detail: {
             if let selection, inbox.conversation(with: selection) != nil {
                 MacThreadView(peer: selection)
@@ -74,8 +81,16 @@ struct MacInboxView: View {
                 } label: {
                     Image(systemName: "chevron.down")
                 }
+                // A definite width, and never `.fixedSize()`.
+                //
+                // `.fixedSize()` here is what squeezed the whole sidebar. It makes the Menu ask for
+                // its ideal size, and that unspecified-width proposal came back out of this bar and
+                // became the width the List proposed to every row — so the conversation names
+                // truncated to "Pig…" while the column sat 300pt wide. Three attempts went into the
+                // row before a plain `Text` in its place truncated identically and pointed here.
                 .menuStyle(.borderlessButton)
-                .fixedSize()
+                .menuIndicator(.hidden)
+                .frame(width: 16)
             }
         }
         .padding(.horizontal, 12)
@@ -99,6 +114,7 @@ private struct MacConversationRow: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
+                        .layoutPriority(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
@@ -111,6 +127,7 @@ private struct MacConversationRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.body)
                         .lineLimit(1)
+                        .layoutPriority(1)
                     Spacer(minLength: 0)
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }
                     if conversation.unread > 0 {
@@ -123,10 +140,12 @@ private struct MacConversationRow: View {
                     }
                 }
             }
-            // The column takes the row's width; without this the HStack sizes it to its content
-            // and the truncation comes back on a narrow sidebar.
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        // Take the full row so the whole strip is the click target, not just the text. This is not
+        // what fixed the truncation — that was a `.fixedSize()` two views up — but a sidebar row
+        // should still fill its column.
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .contentShape(Rectangle())
         .padding(.vertical, 3)
     }
 }
