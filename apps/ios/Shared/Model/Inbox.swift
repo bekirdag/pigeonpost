@@ -230,6 +230,17 @@ final class Inbox {
 
     var archivedCount: Int { archived.count }
 
+    /// Everything waiting, for a badge to count.
+    ///
+    /// Deliberately not built from `visible`, which is narrowed by the search field and by whether
+    /// the archive is open. A badge that drops to nothing because somebody typed in a search box is
+    /// not counting anything a person would recognise.
+    var unreadCount: Int {
+        conversations.reduce(0) { total, conversation in
+            archived.contains(conversation.peer) ? total : total + conversation.unread
+        }
+    }
+
     func conversation(with peer: String) -> Conversation? {
         conversations.first { $0.peer == peer }
     }
