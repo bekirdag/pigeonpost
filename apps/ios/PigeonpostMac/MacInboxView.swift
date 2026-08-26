@@ -4,11 +4,13 @@
 //  rather than an adaptation — a real sidebar the person can resize, and a detail pane that does
 //  not have to be pushed and popped.
 
+import AppKit
 import SwiftUI
 
 struct MacInboxView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(PushService.self) private var push
     @State private var selection: String?
     @State private var showingNew = false
 
@@ -46,8 +48,41 @@ struct MacInboxView: View {
             }
         }
         .task {
+            push.attach(to: account)
+            account.push = push
+            // Asked on the way in rather than at first launch. A desktop app that wants to notify
+            // you before it has shown you anything is a dialog people dismiss.
+            await push.askIfNeeded()
+            // The app is already long-polling the postbox, so it hears about mail before APNs would
+            // and can say so with its own name and icon on the notification. Announcing it from
+            // here is what replaced `osascript display notification`, which had neither and could
+            // not be clicked.
+            inbox.onArrival = { arrivals in
+                for message in arrivals {
+                    LocalNotifier.announce(
+                        title: PeerFace.displayName(message.peerKey),
+                        body: ConversationBuilder.preview(body: message.body),
+                        peer: message.peerKey,
+                        messageId: message.messageId
+                    )
+                }
+            }
             await inbox.loadAll()
             await inbox.live()
+        }
+        // What is on screen is not news. Told to the inbox rather than checked in the closure
+        // above, because that closure is captured once and would go on believing whatever was
+        // selected the moment it was made.
+        .onChange(of: selection) { _, peer in
+            inbox.reading = peer
+        }
+        // A clicked notification names the conversation it was about; opening anything else would
+        // answer a different question from the one that was asked.
+        .onChange(of: push.pendingPeer) { _, peer in
+            guard let peer else { return }
+            selection = peer
+            push.pendingPeer = nil
+            NSApplication.shared.activate(ignoringOtherApps: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: .refreshInbox)) { _ in
             Task { await inbox.loadAll() }

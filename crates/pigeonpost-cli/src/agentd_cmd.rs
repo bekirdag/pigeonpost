@@ -83,9 +83,46 @@ fn log_line(home: &Path, line: &str) {
     eprintln!("{line}");
 }
 
+/// Whether the desktop app is running on this machine.
+///
+/// When it is, it is the better notifier by every measure: it knows the sender's handle rather than
+/// their key address, it carries its own name and icon, and clicking it opens the conversation. It
+/// is also already long-polling the same postbox, so it hears about the same mail. Two notifications
+/// for one message, one of them anonymous and inert, is what this check exists to prevent.
+///
+/// Deliberately "is it running" rather than "is it installed": an installed app that is not open
+/// announces nothing, and staying quiet for it would lose the notification altogether.
+#[cfg(target_os = "macos")]
+fn desktop_app_running() -> bool {
+    std::process::Command::new("pgrep")
+        .arg("-f")
+        .arg("Pigeonpost Desktop.app/Contents/MacOS")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
 /// Tell the person at the machine. Best-effort by design: a missing notifier must not stop the
 /// spool being written, which is the delivery guarantee.
+///
+/// `PIGEONPOST_AGENTD_NOTIFY` decides who announces mail: `auto` (the default) keeps quiet while
+/// the desktop app is running and speaks up when it is not, `always` announces regardless, and
+/// `never` leaves it to the app. A headless box has no desktop app and is unaffected either way.
 fn notify(summary: &str, body: &str) {
+    let mode = std::env::var("PIGEONPOST_AGENTD_NOTIFY").unwrap_or_else(|_| "auto".into());
+    match mode.trim().to_ascii_lowercase().as_str() {
+        "never" => return,
+        "always" => {}
+        _ =>
+        {
+            #[cfg(target_os = "macos")]
+            if desktop_app_running() {
+                return;
+            }
+        }
+    }
     #[cfg(target_os = "macos")]
     let attempt = std::process::Command::new("osascript")
         .arg("-e")

@@ -332,7 +332,14 @@ enum ConversationBuilder {
 
     /// What a row in the list says under the name.
     static func preview(_ message: ThreadMessage) -> String {
-        if let envelope = RequestEnvelope(body: message.body) {
+        preview(body: message.body)
+    }
+
+    /// The same, from a body alone — which is all this ever needed. A notification has a `Message`
+    /// rather than a built `ThreadMessage`, and both should say the same sentence about the same
+    /// mail.
+    static func preview(body: String) -> String {
+        if let envelope = RequestEnvelope(body: body) {
             // A narrow verb is the information: "asks to run tests" says what a peer wants. But
             // everything these clients send is `full_access`, so previewing that would make every
             // line of the list identical — there the words somebody typed are the information.
@@ -343,7 +350,7 @@ enum ConversationBuilder {
         }
         // An unattended answer previews as the answer. Its two header lines are identical on every
         // one of them, so a list of them would otherwise read as a list of the same message.
-        let text = AutoReply(body: message.body)?.body ?? message.body
+        let text = AutoReply(body: body)?.body ?? body
         let flattened = plain(text).split(whereSeparator: \.isWhitespace).joined(separator: " ")
         return String(flattened.prefix(140))
     }

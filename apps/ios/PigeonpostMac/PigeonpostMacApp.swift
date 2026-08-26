@@ -8,6 +8,7 @@ import SwiftUI
 
 @main
 struct PigeonpostMacApp: App {
+    @NSApplicationDelegateAdaptor(MacPushDelegate.self) private var pushDelegate
     @State private var session = Session()
     @State private var account: Account
     @State private var inbox: Inbox
@@ -26,6 +27,7 @@ struct PigeonpostMacApp: App {
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
+                .environment(MacPushDelegate.service)
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)

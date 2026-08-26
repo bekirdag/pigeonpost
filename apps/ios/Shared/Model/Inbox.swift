@@ -26,6 +26,23 @@ final class Inbox {
     /// record of what has been read — the server holds that, and this is empty again the moment
     /// the server agrees.
     private var acked: Set<String> = []
+
+    /// Told when mail arrives that this inbox had not listed before.
+    ///
+    /// Set by the platform that wants to announce it. The Mac app posts a notification from here,
+    /// because on a desktop the app is usually the first to know; the phone leaves announcing to
+    /// the postbox and APNs, which can also reach it while it is closed.
+    var onArrival: (([Message]) -> Void)?
+
+    /// Which conversation is on screen, so arrivals in it are not announced. Reading a message and
+    /// being told about it at the same moment is the notification nobody wants.
+    var reading: String?
+
+    /// The ids of the previous listing. A listing is adopted whole, so anything in this one that
+    /// was not in that one is new. The *first* listing only seeds this: mail that was waiting
+    /// before the app opened is history, not news, and announcing all of it at launch is how a
+    /// notification centre gets muted.
+    private var listed: Set<String>?
     private(set) var pending: [PendingMessage] = []
 
     /// The assembled list, rebuilt when something it is made of changes rather than on every read —
@@ -133,6 +150,7 @@ final class Inbox {
             (body.messages ?? []).filter { $0.isRead }.map(\.messageId)
         )
         acked.subtract(confirmed)
+        announce(incoming)
         messages = incoming
         policy = body.policy ?? policy
         let known = Set(messages.map(\.messageId))
@@ -140,6 +158,21 @@ final class Inbox {
             row.status != .failed && (row.sentCopyId.map(known.contains) ?? false)
         }
         rebuild()
+    }
+
+    /// Hand anything newly arrived to whoever is announcing mail on this platform.
+    private func announce(_ incoming: [Message]) {
+        let ids = Set(incoming.map(\.messageId))
+        defer { listed = ids }
+        guard let listed else { return }
+        let fresh = incoming.filter { message in
+            !listed.contains(message.messageId)
+                && !message.isOutgoing
+                && !message.isRead
+                && message.peerKey != reading
+        }
+        guard !fresh.isEmpty else { return }
+        onArrival?(fresh)
     }
 
     private func rebuild() {
@@ -157,6 +190,8 @@ final class Inbox {
     func reset() {
         // Another mailbox's acknowledgements say nothing about this one's mail.
         acked = []
+        // A new mailbox has its own history; none of the previous one's mail is news here either.
+        listed = nil
         messages = []
         contacts = []
         serverThreads = []
