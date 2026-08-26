@@ -92,9 +92,9 @@ struct BuyHandleSection: View {
                         .foregroundStyle(Theme.muted)
                     TextField("yourname", text: $store.wantedName)
                         .font(.system(size: 16, design: .monospaced))
-                        .textInputAutocapitalization(.never)
+                        .noAutocapitalize()
                         .autocorrectionDisabled()
-                        .submitLabel(.done)
+                        .doneKey()
                 }
                 Button {
                     Task { await store.buy() }

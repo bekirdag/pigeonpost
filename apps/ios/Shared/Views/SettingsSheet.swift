@@ -76,6 +76,10 @@ struct SettingsSheet: View {
                     Text("Who this mailbox admits, and how far it trusts them. /namespace/* covers a whole fleet. Autonomy *auto* plus a verb lets that sender's request be acted on without asking you first.")
                 }
 
+                // Signing another machine in by pointing a camera at it. Offered only where there
+                // is a camera to point: on a Mac the code and the machine are usually the same
+                // screen, which makes this a row that cannot do anything.
+                #if os(iOS)
                 Section {
                     Button {
                         sheet = .scan
@@ -85,6 +89,7 @@ struct SettingsSheet: View {
                 } footer: {
                     Text("Signs a machine in by looking at it: run `pigeonpost login` there, and point this at the code it prints.")
                 }
+                #endif
 
                 Section("Account") {
                     LabeledContent("Signed in as", value: session.username ?? "—")
@@ -99,7 +104,7 @@ struct SettingsSheet: View {
                 .font(.system(size: 14))
             }
             .navigationTitle("Settings")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             // On the NavigationStack, whose identity does not change while this sheet is open, so
             // this runs once per visit rather than once per re-render.
             .task {
@@ -112,12 +117,19 @@ struct SettingsSheet: View {
                 #endif
                 await handle?.refresh()
             }
-            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .sheet(item: $sheet) { which in
                 switch which {
                 case .addSender: ContactSheet(existing: nil)
                 case let .edit(contact): ContactSheet(existing: contact)
-                case .scan: ScanView()
+                case .scan:
+                    // A camera pointed at somebody else's screen. There is no Mac equivalent worth
+                    // having, and the row that offers it is hidden there too.
+                    #if os(iOS)
+                    ScanView()
+                    #else
+                    EmptyView()
+                    #endif
                 }
             }
         }
@@ -163,7 +175,7 @@ struct ContactSheet: View {
             Form {
                 Section("Address") {
                     TextField("/bekir/* or /bekir/agent1", text: $peer)
-                        .textInputAutocapitalization(.never)
+                        .noAutocapitalize()
                         .autocorrectionDisabled()
                         .font(.system(size: 15, design: .monospaced))
                         .disabled(existing != nil)
@@ -212,10 +224,10 @@ struct ContactSheet: View {
                 }
             }
             .navigationTitle(existing == nil ? "Add a sender" : "Trusted sender")
-            .navigationBarTitleDisplayMode(.inline)
+            .inlineTitle()
             .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) {
+                ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+                ToolbarItem(placement: .confirmationAction) {
                     Button("Save") { save() }.disabled(working || peer.trimmed.isEmpty)
                 }
             }

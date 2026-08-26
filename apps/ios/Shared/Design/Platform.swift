@@ -39,3 +39,58 @@ enum RemoteNotifications {
         #endif
     }
 }
+
+//  The modifiers that exist on one platform and have no counterpart on the other.
+//
+//  Named for what they are asking for rather than for the API they call, so a shared view can say
+//  it once. Each is a no-op where the concept does not exist: a Mac has no navigation bar to give a
+//  display mode to, no sheet detents, and no software keyboard to tell about capitalisation.
+//
+//  Toolbar placement is deliberately *not* here. `.cancellationAction` and `.confirmationAction`
+//  exist on both and already mean the right thing in both — leading and trailing on a phone, the
+//  correct corners of a Mac sheet — so the shared sheets use those instead of the `topBar…`
+//  placements they were written with.
+
+import SwiftUI
+
+extension View {
+    /// A title that sits on one line with the bar rather than above it.
+    @ViewBuilder
+    func inlineTitle() -> some View {
+        #if os(iOS)
+        navigationBarTitleDisplayMode(.inline)
+        #else
+        self
+        #endif
+    }
+
+    /// A sheet that covers half the screen. A Mac sheet is sized by its content instead.
+    @ViewBuilder
+    func mediumDetent() -> some View {
+        #if os(iOS)
+        presentationDetents([.medium])
+        #else
+        self
+        #endif
+    }
+
+    /// A field whose text is an address or a name, where an automatic capital is always wrong.
+    @ViewBuilder
+    func noAutocapitalize() -> some View {
+        #if os(iOS)
+        textInputAutocapitalization(.never)
+        #else
+        self
+        #endif
+    }
+
+    /// What the keyboard's return key should say. There is no software keyboard on a Mac.
+    @ViewBuilder
+    func doneKey() -> some View {
+        #if os(iOS)
+        submitLabel(.done)
+        #else
+        self
+        #endif
+    }
+}
