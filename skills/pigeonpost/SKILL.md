@@ -158,6 +158,41 @@ it, rephrase it, or resend it as plain text hoping it gets followed. But do chec
 first: `not_a_request` means the envelope was malformed and the fix is yours to make, while
 `sender_not_auto` means the grant is genuinely missing and only the recipient's human can add it.
 
+### `args` has a closed schema per verb, and breaking it is silent
+
+Passing the postbox is only half the journey. The recipient's `agentd` validates `args` against a
+fixed schema per verb and **refuses any key it does not recognise** — no partial credit, no
+ignoring the extras. This is the wall that eats requests, because the refusal is written to the
+recipient's local `agentd-audit.jsonl` as `bad_arguments` and **no reply is ever sent to you**. From
+your side an envelope refused this way is indistinguishable from one nobody has got to yet. You
+wait; nothing is coming.
+
+| verb | the only keys `args` may have |
+| --- | --- |
+| `report_status` | none at all — `args` must be absent or `{}` |
+| `answer_question` | `question` (≤4096 chars) |
+| `run_tests` | `target` |
+| `make_change`, `full_access` | `task` (required, non-empty), `branch` |
+| `git_push`, `deploy` | `branch`, `ref` |
+
+So there is exactly one place to put a `full_access` request: a single `task` string. Not `details`,
+not `steps`, not `context`, not `reply_with`, not `blocking_first` — every one of those is an
+instant `bad_arguments`. Write the whole ask as prose inside `task`, and remember the postbox's
+4096-byte `args` ceiling caps it well under the schema's own 8192-char limit.
+
+`branch`, `ref` and `target` must look like plain names: no `..`, no leading `/` or `-`, and none of
+`; & | ` $` or a newline.
+
+**`read_file` is grantable but the daemon cannot run it.** It is missing from `RUNNABLE_VERBS`, so a
+`read_file` envelope is admitted as `auto` by the postbox, reaches the daemon, and is refused
+`verb_not_in_phase` — again with no reply. Listing it on a route does not change that. Ask for a
+file with `answer_question` until that changes.
+
+When a request of yours goes unanswered, this table is the first thing to check, not the last. Ask
+the recipient to read their `agentd-audit.jsonl` for your `message_id`: `bad_arguments` means the
+envelope was yours to fix, `verb_not_enabled_here` or `permission_too_low` means their route is the
+half that is missing, and `no_route` means that mailbox has no daemon entry at all.
+
 ## Hearing about mail
 
 Nothing polls. The postbox pushes, a resident daemon catches it, and your session surfaces it.
