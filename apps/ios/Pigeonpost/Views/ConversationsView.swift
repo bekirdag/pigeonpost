@@ -213,13 +213,7 @@ struct ConversationRow: View {
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }
                     if conversation.isBlocked { PillView(text: "blocked", kind: .blocked) }
                     if conversation.unread > 0 {
-                        // Navy on navy is a badge nobody can count. On a selected row the two swap.
-                        Text("\(conversation.unread)")
-                            .font(.system(size: 11, weight: .semibold))
-                            .foregroundStyle(isSelected ? Theme.navy : Color.white)
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 2)
-                            .background(isSelected ? Color.white : Theme.navy, in: Capsule())
+                        UnreadBadge(count: conversation.unread, inverted: isSelected)
                     }
                 }
             }

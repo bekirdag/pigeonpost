@@ -2,6 +2,41 @@
 
 import SwiftUI
 
+/// The unread count, centred on the digits rather than on the line box.
+///
+/// A `Text` centres its line box, and a line box reserves descender space that no digit ever uses —
+/// so the plain version of this badge drew the number a point high inside its circle. Proportional
+/// figures put it half a point left as well, because "1" is narrow and its side bearings are not
+/// symmetric. Monospaced digits fix the horizontal: tabular figures centre each glyph in a uniform
+/// advance, which also stops the badge changing width as a count ticks 1 → 7. The vertical is fixed
+/// by aligning on the digits' own centre — half a cap height above the baseline — instead of on the
+/// box that contains them.
+struct UnreadBadge: View {
+    let count: Int
+    /// On a selected row the two colours swap: navy on navy is a badge nobody can count.
+    var inverted: Bool = false
+
+    private static let size: CGFloat = 11
+    /// SF's cap height is very close to 0.72 em, and this only has to be right to the pixel.
+    private static let capHeight: CGFloat = size * 0.72
+
+    var body: some View {
+        Text("\(count)")
+            .font(.system(size: Self.size, weight: .semibold))
+            .monospacedDigit()
+            .foregroundStyle(inverted ? Theme.navy : Color.white)
+            .alignmentGuide(VerticalAlignment.center) { d in
+                d[.firstTextBaseline] - Self.capHeight / 2
+            }
+            .padding(.horizontal, 5)
+            .frame(minWidth: 18, minHeight: 18)
+            .background(inverted ? Color.white : Theme.navy, in: Capsule())
+            // Never let a neighbour compress it; the count is two characters at most and all of it
+            // matters.
+            .fixedSize()
+    }
+}
+
 struct PillView: View {
     enum Kind { case held, auto, blocked }
 

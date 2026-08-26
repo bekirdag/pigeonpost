@@ -133,15 +133,7 @@ private struct MacConversationRow: View {
                     // hands the winner everything it asks for first, which left the unread count a
                     // one-pixel blue sliver at the edge of the column.
                     if conversation.held > 0 { PillView(text: "held", kind: .held).fixedSize() }
-                    if conversation.unread > 0 {
-                        Text("\(conversation.unread)")
-                            .font(.system(size: 10.5, weight: .semibold))
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 5)
-                            .padding(.vertical, 1.5)
-                            .background(Theme.navy, in: Capsule())
-                            .fixedSize()
-                    }
+                    if conversation.unread > 0 { UnreadBadge(count: conversation.unread) }
                 }
             }
         }
