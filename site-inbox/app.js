@@ -2252,7 +2252,12 @@
 
     $("new-send").disabled = true;
     try {
-      await api("/v1/send", { method: "POST", body: { to, body, from: state.me.address } });
+      // Through `composeBody` for the same reason the composer is: the first message to a peer is
+      // still a message from this app, and sending it as prose is what left it classified
+      // `not_a_request` and parked for a human. That the *opening* message was the one going out
+      // bare is what made this look like the recipient was broken rather than the sender — every
+      // reply after it was already an envelope, so nothing further in the thread showed it.
+      await api("/v1/send", { method: "POST", body: { to, body: composeBody(body), from: state.me.address } });
       closeSheet("new-sheet");
       await loadAll();
       // A conversation started with a namespace or a `/k/` address is filed by the server under

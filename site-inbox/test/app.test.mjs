@@ -567,7 +567,16 @@ $("new-send").click();
 await settle(150);
 const newSend = calls.filter((c) => c.path === "/v1/send").pop();
 check("addressed as typed", newSend.body.to, "/bekir/fresh");
-check("carrying the message", newSend.body.body, "first contact");
+// The opening message is a request like every other one this app sends. It used to go out as
+// bare prose — the one send that did not go through the composer — so the first thing a peer
+// ever heard from this mailbox classified `not_a_request` and was parked for a human, while
+// every reply after it in the same thread was an envelope. That is why it read as the
+// recipient being broken rather than the sender.
+const opening = JSON.parse(newSend.body.body);
+check("opening message is an envelope", opening.v, 1);
+check("asking for work like every other", opening.verb, "full_access");
+check("carrying the message as the task", opening.args.task, "first contact");
+check("and as the note", opening.note, "first contact");
 check("and the sheet closes", $("new-sheet").hidden, true);
 
 console.log("\n— trusted senders —");
