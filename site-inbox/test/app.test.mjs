@@ -446,6 +446,28 @@ check("a lone pipe is not a table", tbl.querySelectorAll("table").length, 1);
 check("the sentence survives as prose",
   [...tbl.querySelectorAll(".md-p")].some((p) => text(p).includes("just a sentence with a pipe")), true);
 
+console.log("\n— bullets —");
+// A bullet carrying code spans is what the flex rule wrecked. The DOM was always right, so the
+// assertion is that the list is a list and its item is one run of text rather than a row of columns.
+INBOX.messages.push({
+  message_id: "m_bullets", from: "/k/aaaa1111bbbb2222cccc3333dd",
+  body: "Done:\n\n- ran `cargo test` on `main` and it passed\n- second bullet\n\n1. first\n2. second",
+  peer: "/bekir/agent1", thread_id: "t-agent1", sender_handle: "/bekir/agent1",
+  autonomy: "review", verb: null, held_because: "not_a_request", received_at: now - 3, read: true,
+  sender_known: true, matched_contact: "/bekir/*", sender_standing: "unproven",
+  sender_tier: "handle", alias: null, untrusted: true,
+});
+window.document.dispatchEvent(new window.Event("visibilitychange"));
+await settle(120);
+const bul = [...$("messages").querySelectorAll(".bubble .text")].find((el) => text(el).includes("cargo test"));
+check("the bullet message reached the view", Boolean(bul), true);
+check("dashes become a list", bul.querySelectorAll("ul.md-list > li").length, 2);
+check("and numbers an ordered one", bul.querySelectorAll("ol.md-list > li").length, 2);
+check("a bullet keeps its whole sentence", text(bul.querySelector("ul.md-list > li")),
+  "ran cargo test on main and it passed");
+check("its code spans are inline children, not blocks", bul.querySelectorAll("ul.md-list > li code").length, 2);
+check("a bullet is not a table", bul.querySelectorAll("ul.md-list table").length, 0);
+
 console.log("\n— copy —");
 const copyButton = [...$("messages").querySelectorAll(".bubble .meta .copy")].pop();
 check("every message offers copy", Boolean(copyButton), true);
@@ -834,7 +856,17 @@ check("both scrollers refuse sideways scroll", (css.match(/overflow-x:\s*hidden/
 // A single viewport unit is a single point of failure: a browser that does not know `dvh` drops the
 // declaration, the shell loses its height, and the composer floats off the bottom of a grown page.
 check("viewport height has a fallback chain", /height:\s*100vh;[\s\S]{0,200}height:\s*100svh;[\s\S]{0,200}height:\s*100dvh;/.test(css), true);
-check("flex items may shrink below their longest word", /\.messages li \{[^}]*min-width:\s*0/s.test(css), true);
+check("flex items may shrink below their longest word", /\.messages > li \{[^}]*min-width:\s*0/s.test(css), true);
+// And it must stay a *child* selector. A rendered body lives at `.messages > li > .bubble > .text`,
+// so as a descendant rule this made every markdown bullet a flex row: its text runs and its `<code>`
+// spans became columns squeezed to two or three characters each, and the marker went with
+// `display: list-item`.
+check("a message row is a flex row, a bullet is not", /^\.messages li\b/m.test(css), false);
+check("markdown bullets stay list items", /\.md-list li \{[^}]*display:\s*list-item/s.test(css), true);
+// `.messages` sets `list-style: none`, which a nested list inherits, and two levels down the default
+// marker is a hollow circle anyway. So the marker is named rather than left to the browser.
+check("bullets are discs", /ul\.md-list \{[^}]*list-style:\s*disc/s.test(css), true);
+check("numbers are numbers", /ol\.md-list \{[^}]*list-style:\s*decimal/s.test(css), true);
 check("parked thread pane is not focusable", /\.pane-thread\s*\{[^}]*visibility:\s*hidden/s.test(css), true);
 // The staged-file list asks for a whole row (`flex-basis: 100%`). On a composer that does not wrap
 // that is a claim on the row the message field is already in, and the field collapses to nothing

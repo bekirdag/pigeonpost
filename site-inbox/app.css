@@ -612,8 +612,13 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   gap: 8px;
 }
-.messages li { margin: 0; display: flex; min-width: 0; }
-.messages li.mine { justify-content: flex-end; }
+/* `> li`, not `li`. A message row is a flex container, and a rendered body is nested inside one:
+   `.messages > li > .bubble > .text > .md-list > li`. As a descendant selector this rule caught the
+   markdown bullets too, so every list item became a flex row — its text runs and its `<code>` spans
+   turned into columns squeezed to a few characters each, and the marker vanished with
+   `display: list-item`. The same applies to the two rules that align a row. */
+.messages > li { margin: 0; display: flex; min-width: 0; }
+.messages > li.mine { justify-content: flex-end; }
 
 .bubble {
   min-width: 0;
@@ -745,8 +750,12 @@ button { font: inherit; color: inherit; }
 .bubble .text .md-h1 { font-size: 1.18em; }
 .bubble .text .md-h2 { font-size: 1.08em; }
 .bubble .text .md-h3 { font-size: 1em; }
-.bubble .text .md-list { margin: 0 0 7px; padding-left: 20px; }
-.bubble .text .md-list li { margin: 2px 0; }
+/* The marker is named rather than left to the browser: this list is nested inside `ul.messages`,
+   which is two levels deep, so the default would be a hollow circle, and `.messages`' own
+   `list-style: none` is inherited besides. */
+.bubble .text ul.md-list { margin: 0 0 7px; padding-left: 20px; list-style: disc; }
+.bubble .text ol.md-list { margin: 0 0 7px; padding-left: 20px; list-style: decimal; }
+.bubble .text .md-list li { margin: 2px 0; display: list-item; }
 .bubble .text .md-code {
   margin: 0 0 7px;
   padding: 8px 9px;
@@ -859,7 +868,7 @@ button { font: inherit; color: inherit; }
   border-radius: 20px;
   padding: 3px 12px;
 }
-.messages li.sep { justify-content: center; }
+.messages > li.sep { justify-content: center; }
 
 /* A scoped request is an envelope, not prose — render it as the structured thing it is. */
 .request {
