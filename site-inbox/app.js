@@ -1777,8 +1777,9 @@
     Pending.clear();
     renderIdentityMenu();
     render();
-    await loadAll();
-    startLive();
+    // The stream regardless: an opening that did not arrive is exactly when the mailbox most needs
+    // something retrying behind it.
+    try { await loadAll(); } finally { startLive(); }
   }
 
   // ---- loading -------------------------------------------------------------------------------
@@ -1832,9 +1833,28 @@
     renderIdentityMenu();
   }
 
+  // The four opening calls, and one verdict about the network settled after all of them.
+  //
+  // `Promise.all` was wrong twice over. It rejected the moment one of the four did, so a postbox
+  // that was unreachable for the second the page loaded took `startLive()` down with it — no
+  // stream, no long poll, no retry of any kind. The banner went up and stayed up, over a mailbox
+  // nothing was ever going to refresh again, until someone reloaded the page. And because these
+  // four run together and each decides the banner for itself, whichever finished last decided it:
+  // when the order fell the other way a `/v1/contacts` that arrived cleared the banner a failed
+  // `/v1/inbox` had just raised, and the page went back to claiming it was current over a listing
+  // it had not managed to load.
   async function loadAll() {
-    await Promise.all([loadInbox(), loadContacts(), loadArchive(), loadThreads()]);
+    const results = await Promise.allSettled([loadInbox(), loadContacts(), loadArchive(), loadThreads()]);
     render();
+    // The last word, so the answer no longer depends on which call finished first. The other three
+    // absorb their own failures — one route being unavailable is not the account being offline —
+    // so what is left to settle is whether the inbox itself arrived, which is what the banner is
+    // about. Refused is not the same as did not arrive: a postbox that answered is reachable.
+    setOffline(!results.every((r) => r.status === "fulfilled" || r.reason instanceof ApiError));
+    // Only `loadInbox` rethrows, and only an answer — a 401 above all — is something the caller
+    // has to act on. A request that never arrived is weather, and the live loop is what retries it.
+    const refused = results.find((r) => r.status === "rejected" && r.reason instanceof ApiError);
+    if (refused) throw refused.reason;
   }
 
   async function loadInbox(signal) {
@@ -2591,9 +2611,13 @@
       }
     });
 
-    // The browser knows before a request has to time out to find it.
+    // The browser knows before a request has to time out to find it. Reopening the stream is not
+    // enough on its own: one that is already open but asleep in its backoff will not notice for up
+    // to thirty seconds, and until it does the page still says it is offline. Ask for the mail.
     window.addEventListener("online", () => {
-      if (getToken() && state.me && document.visibilityState === "visible") startLive();
+      if (!getToken() || !state.me || document.visibilityState !== "visible") return;
+      loadInbox().then(render).catch(() => {});
+      startLive();
     });
     window.addEventListener("offline", () => setOffline(true));
 
@@ -2644,8 +2668,7 @@
             await loadIdentities();
             if (state.me) {
               renderMe();
-              await loadAll();
-              startLive();
+              try { await loadAll(); } finally { startLive(); }
             }
           } catch (err) {
             create.disabled = false;
@@ -2657,8 +2680,7 @@
         return;
       }
       renderMe();
-      await loadAll();
-      startLive();
+      try { await loadAll(); } finally { startLive(); }
     } catch (e) {
       if (e instanceof ApiError && e.status === 401) {
         signOut();

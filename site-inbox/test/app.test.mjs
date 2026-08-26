@@ -926,6 +926,61 @@ console.log("\n— a postbox without the stream, and a network that comes and go
   check("and holds what was loaded", $2("threads").children.length, onScreen);
 }
 
+console.log("\n— the postbox is unreachable for the second the page loads —");
+// The reported bug, and the worst kind: not a wrong pixel but an app that stops. The four opening
+// calls used to run under `Promise.all`, so one that did not arrive rejected the lot and
+// `startLive()` — the only thing in the page that ever retries anything — was never reached. What
+// was left was the banner, over a mailbox with no stream, no long poll and no timer behind it. It
+// did not clear when the network came back because nothing was watching for the network to come
+// back. Visiting the page later found it exactly as it was left.
+{
+  EVENTS.mode = "absent";
+  EVENTS.opened = [];
+  const calls3 = [];
+  let unreachable = true;
+  const dom3 = new JSDOM(readFileSync(`${APP}/index.html`, "utf8"), {
+    url: "https://inbox.pigeonpost.dev/", runScripts: "outside-only",
+    pretendToBeVisual: true, virtualConsole,
+  });
+  const w3 = dom3.window;
+  Object.defineProperty(w3, "crypto", { value: webcrypto, configurable: true });
+  w3.fetch = (url, opts) => {
+    const path = String(url).replace("https://postbox.pigeonpost.dev", "");
+    calls3.push(path);
+    // Identities answer: the account is signed in and the page gets as far as having a mailbox to
+    // show. It is the mail itself that does not arrive.
+    if (unreachable && !path.startsWith("/v1/identities") && !path.startsWith("/v1/whoami")) {
+      return Promise.reject(new TypeError("Failed to fetch"));
+    }
+    // The long poll has to be able to answer here, or "it recovered" cannot be told from "it is
+    // still waiting". A real one is held for `waitSeconds`; this one comes back promptly.
+    if (path.includes("wait=")) {
+      return new Promise((r) => setTimeout(
+        () => r({ ok: true, status: 200, json: () => Promise.resolve(INBOX) }), 30));
+    }
+    return fakeFetch(url, opts);
+  };
+  w3.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
+  w3.localStorage.setItem("ppi_token", "eyJfake.token.here");
+  w3.eval(readFileSync(`${APP}/config.js`, "utf8"));
+  w3.eval(readFileSync(`${APP}/app.js`, "utf8"));
+  await settle(250);
+
+  const $3 = (id) => w3.document.getElementById(id);
+  check("a mailbox that would not load says so", $3("offline-banner").hidden, false);
+  // The whole point. Something has to be trying, or the banner is permanent.
+  check("but something is still trying",
+    calls3.filter((p) => p.startsWith("/v1/events")).length > 0, true);
+
+  unreachable = false;
+  await settle(1400);
+  check("the network comes back and the page stops claiming to be offline",
+    $3("offline-banner").hidden, true);
+  check("without anybody reloading it", $3("threads").children.length > 0, true);
+  check("and it settled on the long poll this postbox needs",
+    calls3.some((p) => p.includes("wait=")), true);
+}
+
 console.log(`\n${errors.length} script error(s)`);
 errors.forEach((e) => console.log("  " + e.split("\n")[0]));
 
