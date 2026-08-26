@@ -1592,14 +1592,22 @@ impl Store {
     pub async fn apple_subscription_for(
         &self,
         account_id: String,
+        now: u64,
     ) -> Result<Option<(String, i64)>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Option<(String, i64)>, StoreError> {
             let c = conn.lock().expect("store lock");
+            // Live ones only. Without the expiry clause this returned the newest subscription
+            // whatever its state, so the app went on showing a handle whose subscription had
+            // lapsed — "your handle /alp, renews 22 August" four days after the 22nd — while the
+            // same name was correctly free everywhere else and on sale on the website. The two
+            // surfaces disagreeing is what that looked like from outside; only one of them was
+            // wrong, and it was this one.
             c.query_row(
                 "SELECT namespace, expires_at FROM apple_subscriptions
-                  WHERE account_id = ?1 ORDER BY expires_at DESC LIMIT 1",
-                params![account_id],
+                  WHERE account_id = ?1 AND expires_at > ?2
+                  ORDER BY expires_at DESC LIMIT 1",
+                params![account_id, now as i64],
                 |r| Ok((r.get(0)?, r.get(1)?)),
             )
             .optional()
@@ -3473,7 +3481,7 @@ mod tests {
         async fn the_account_can_read_back_what_it_bought() {
             let s = store();
             assert!(s
-                .apple_subscription_for("acct_a".into())
+                .apple_subscription_for("acct_a".into(), 100)
                 .await
                 .unwrap()
                 .is_none());
@@ -3488,7 +3496,9 @@ mod tests {
             .await
             .unwrap();
             assert_eq!(
-                s.apple_subscription_for("acct_a".into()).await.unwrap(),
+                s.apple_subscription_for("acct_a".into(), 100)
+                    .await
+                    .unwrap(),
                 Some(("alex".to_string(), FOREVER))
             );
         }

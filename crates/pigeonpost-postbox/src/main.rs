@@ -4295,7 +4295,11 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
         Ok(account) => account,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
-    let held = match state.store.apple_subscription_for(account).await {
+    let held = match state
+        .store
+        .apple_subscription_for(account, now_unix())
+        .await
+    {
         Ok(held) => held,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
@@ -6414,6 +6418,43 @@ mod tests {
         let answer = availability(&state, "support").await;
         assert_eq!(answer["available"], false);
         assert_eq!(answer["reason"], "reserved");
+    }
+
+    /// A lapsed subscription is not a handle. The app showed one as owned for four days after it
+    /// expired, and offered no way to buy the name back, while every other surface had it for sale.
+    #[tokio::test]
+    async fn a_lapsed_apple_subscription_is_not_a_held_handle() {
+        let state = state_with_reserved(&[]);
+        state
+            .store
+            .bind_apple_subscription(
+                "txn-1".into(),
+                "acct_one".into(),
+                "alp".into(),
+                "Sandbox".into(),
+                500,
+                10,
+            )
+            .await
+            .unwrap();
+
+        let live = state
+            .store
+            .apple_subscription_for("acct_one".into(), 100)
+            .await
+            .unwrap();
+        assert_eq!(live.map(|(name, _)| name).as_deref(), Some("alp"));
+
+        let lapsed = state
+            .store
+            .apple_subscription_for("acct_one".into(), 900)
+            .await
+            .unwrap();
+        assert!(lapsed.is_none(), "past its expiry it is not held");
+
+        // And the name is buyable again, by them or by anybody.
+        let answer = availability(&state, "alp").await;
+        assert_eq!(answer["available"], true);
     }
 
     /// A deployment that cannot say what is protected must not say "yes, sell it".
