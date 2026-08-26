@@ -7,7 +7,6 @@
 
 import Foundation
 import Observation
-import UIKit
 import UserNotifications
 
 @MainActor
@@ -80,7 +79,7 @@ final class PushService: NSObject {
         let settings = await UNUserNotificationCenter.current().notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
-            UIApplication.shared.registerForRemoteNotifications()
+            RemoteNotifications.register()
         default:
             break
         }
@@ -95,12 +94,12 @@ final class PushService: NSObject {
         let settings = await centre.notificationSettings()
         switch settings.authorizationStatus {
         case .authorized, .provisional, .ephemeral:
-            UIApplication.shared.registerForRemoteNotifications()
+            RemoteNotifications.register()
         case .notDetermined:
             guard !hasAsked else { return }
             hasAsked = true
             let granted = (try? await centre.requestAuthorization(options: [.alert, .sound, .badge])) ?? false
-            if granted { UIApplication.shared.registerForRemoteNotifications() }
+            if granted { RemoteNotifications.register() }
         case .denied:
             // Their answer. Asking again is what Settings is for.
             break
@@ -169,27 +168,5 @@ extension PushService: UNUserNotificationCenterDelegate {
             self.pendingPeer = peer
             self.clearBadge()
         }
-    }
-}
-
-/// The one thing SwiftUI has no equivalent for: `application(_:didRegisterForRemoteNotifications…)`
-/// is a UIKit delegate callback and there is no other way to receive a device token.
-final class PushDelegate: NSObject, UIApplicationDelegate {
-    static let service = PushService()
-
-    func application(
-        _ application: UIApplication,
-        didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data
-    ) {
-        Task { await Self.service.adopt(deviceToken: deviceToken) }
-    }
-
-    func application(
-        _ application: UIApplication,
-        didFailToRegisterForRemoteNotificationsWithError error: Error
-    ) {
-        // Simulators before iOS 16 could not register at all, and a device in aeroplane mode cannot
-        // either. Neither is worth interrupting somebody over.
-        NSLog("push registration failed: \(error.localizedDescription)")
     }
 }

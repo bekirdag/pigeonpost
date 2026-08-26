@@ -5,7 +5,6 @@
 //  in `autonomy`; this only ever shows that decision.
 
 import SwiftUI
-import UIKit
 
 struct MessageBubble: View {
     let message: ThreadMessage
@@ -56,7 +55,7 @@ struct MessageBubble: View {
         .padding(.vertical, 2)
         .contextMenu {
             Button {
-                UIPasteboard.general.string = message.body
+                Clipboard.copy(message.body)
             } label: {
                 Label("Copy", systemImage: "doc.on.doc")
             }
@@ -112,7 +111,7 @@ struct MessageBubble: View {
             // most often want out of this app and into somewhere else, and an affordance nobody
             // can see is one most people never find.
             Button {
-                UIPasteboard.general.string = message.copyText
+                Clipboard.copy(message.copyText)
                 copied = true
                 Task {
                     try? await Task.sleep(nanoseconds: 1_400_000_000)

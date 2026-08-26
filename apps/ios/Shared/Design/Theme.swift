@@ -14,6 +14,8 @@
 import SwiftUI
 #if canImport(UIKit)
 import UIKit
+#elseif canImport(AppKit)
+import AppKit
 #endif
 
 enum Theme {
@@ -77,16 +79,26 @@ enum Theme {
         static let blockedStroke = adaptive(light: 0xFECDD3, dark: 0x4C2028)
     }
 
-    /// One token, two values, resolved by the trait collection at draw time rather than read once at
-    /// launch — so the app follows a change of appearance without being restarted.
+    /// One token, two values, resolved at draw time rather than read once at launch — so the app
+    /// follows a change of appearance without being restarted.
     ///
-    /// The `#else` is for the thread-model test, which compiles this file for the mac it runs on and
-    /// never draws anything. It is not a macOS port.
+    /// Both platforms have the same idea under different names: a colour that is asked which
+    /// appearance it is being drawn into. Neither branch decides anything the other does not; the
+    /// values above are the single source, and this only says who is asking.
     private static func adaptive(light: UInt32, dark: UInt32) -> Color {
         #if canImport(UIKit)
         return Color(uiColor: UIColor { traits in
             UIColor(rgb: traits.userInterfaceStyle == .dark ? dark : light)
         })
+        #elseif canImport(AppKit)
+        return Color(
+            nsColor: NSColor(name: nil) { appearance in
+                // `bestMatch` rather than reading the name: an appearance can be a vibrant or
+                // high-contrast variant, and those still answer this question correctly.
+                let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+                return NSColor(rgb: isDark ? dark : light)
+            }
+        )
         #else
         return Color(hex: light)
         #endif
@@ -110,6 +122,17 @@ extension UIColor {
     convenience init(rgb: UInt32) {
         self.init(
             red: CGFloat((rgb >> 16) & 0xFF) / 255,
+            green: CGFloat((rgb >> 8) & 0xFF) / 255,
+            blue: CGFloat(rgb & 0xFF) / 255,
+            alpha: 1
+        )
+    }
+}
+#elseif canImport(AppKit)
+extension NSColor {
+    convenience init(rgb: UInt32) {
+        self.init(
+            srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255,
             green: CGFloat((rgb >> 8) & 0xFF) / 255,
             blue: CGFloat(rgb & 0xFF) / 255,
             alpha: 1

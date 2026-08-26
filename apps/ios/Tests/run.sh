@@ -10,6 +10,6 @@ swiftc -O -o "$out/thread-model" \
   Shared/API/Models.swift \
   Shared/Model/Conversation.swift \
   Pigeonpost/Design/PeerFace.swift \
-  Pigeonpost/Design/Theme.swift \
+  Shared/Design/Theme.swift \
   Pigeonpost/Views/Markdown.swift
 "$out/thread-model"
