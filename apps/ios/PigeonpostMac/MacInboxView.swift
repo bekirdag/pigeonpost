@@ -114,12 +114,12 @@ private struct MacConversationRow: View {
                         .font(.system(size: 13, weight: .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
-                        .layoutPriority(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
                             .font(.system(size: 10.5))
                             .foregroundStyle(Theme.muted)
+                            .fixedSize()
                     }
                 }
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
@@ -127,9 +127,12 @@ private struct MacConversationRow: View {
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.body)
                         .lineLimit(1)
-                        .layoutPriority(1)
                     Spacer(minLength: 0)
-                    if conversation.held > 0 { PillView(text: "held", kind: .held) }
+                    // The accessories are rigid and the text beside them is what gives way. Say it
+                    // this way round rather than with a `.layoutPriority` on the preview: priority
+                    // hands the winner everything it asks for first, which left the unread count a
+                    // one-pixel blue sliver at the edge of the column.
+                    if conversation.held > 0 { PillView(text: "held", kind: .held).fixedSize() }
                     if conversation.unread > 0 {
                         Text("\(conversation.unread)")
                             .font(.system(size: 10.5, weight: .semibold))
@@ -137,6 +140,7 @@ private struct MacConversationRow: View {
                             .padding(.horizontal, 5)
                             .padding(.vertical, 1.5)
                             .background(Theme.navy, in: Capsule())
+                            .fixedSize()
                     }
                 }
             }
