@@ -40,6 +40,10 @@ struct MacThreadView: View {
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                 }
+                // Behind the messages and not behind the composer, which is where the phone puts it
+                // too. The pattern is the paper a conversation is written on; the composer is a
+                // control sitting on top of the paper, not part of it.
+                .background { DoodleBackground() }
                 .onChange(of: shown.count) { _, _ in scroller.scrollTo(Self.floor, anchor: .bottom) }
                 .onAppear { scroller.scrollTo(Self.floor, anchor: .bottom) }
             }

@@ -129,11 +129,15 @@ struct DoodleBackground: View {
     var body: some View {
         Theme.wash
             .overlay {
-                // By name rather than through the generated symbol: the asset lives in the iOS
-                // target's catalogue, and a target that does not carry it should get the plain
-                // ground instead of failing to compile. The pattern is decoration; the colour
-                // underneath is the part that matters.
-                Image("doodle")
+                // "Doodle", with the capital, is the name of the imageset. It was spelled
+                // "doodle" here, asset lookup is case-sensitive, and SwiftUI answers a name it
+                // cannot find with an empty image rather than a complaint — so the pattern was
+                // silently absent on the phone for as long as this has existed, leaving the veil
+                // sitting on the plain ground and looking exactly like a design decision.
+                //
+                // The artwork now lives in `Shared/Assets.xcassets`, so the Mac target has it too;
+                // before, it was in the iOS catalogue where only one of the two could see it.
+                Image("Doodle")
                     .resizable(resizingMode: .tile)
                     // The artwork is near-black strokes on transparency, which is a pattern only on
                     // paper. Inverted, the same strokes are the light-on-dark version of themselves
