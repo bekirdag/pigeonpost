@@ -94,7 +94,11 @@ struct DoodleBackground: View {
     var body: some View {
         Theme.wash
             .overlay {
-                Image(.doodle)
+                // By name rather than through the generated symbol: the asset lives in the iOS
+                // target's catalogue, and a target that does not carry it should get the plain
+                // ground instead of failing to compile. The pattern is decoration; the colour
+                // underneath is the part that matters.
+                Image("doodle")
                     .resizable(resizingMode: .tile)
                     // The artwork is near-black strokes on transparency, which is a pattern only on
                     // paper. Inverted, the same strokes are the light-on-dark version of themselves

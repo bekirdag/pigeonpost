@@ -102,8 +102,7 @@ struct MarkdownText: View {
                 Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
                     GridRow {
                         ForEach(Array(0..<width), id: \.self) { column in
-                            cell(at(header, column), isHeader: true)
-                                .gridColumnAlignment(gridAlignment(alignments, column))
+                            cell(at(header, column), align: alignment(alignments, column), isHeader: true)
                         }
                     }
                     ForEach(Array(rows.enumerated()), id: \.offset) { index, row in
@@ -111,7 +110,8 @@ struct MarkdownText: View {
                             ForEach(Array(0..<width), id: \.self) { column in
                                 // Banded, so the eye keeps its place across a row it had to scroll
                                 // to read.
-                                cell(at(row, column), isHeader: false, shaded: !index.isMultiple(of: 2))
+                                cell(at(row, column), align: alignment(alignments, column),
+                                     isHeader: false, shaded: !index.isMultiple(of: 2))
                             }
                         }
                     }
@@ -146,17 +146,24 @@ struct MarkdownText: View {
         row.indices.contains(column) ? row[column] : ""
     }
 
-    private func cell(_ text: String, isHeader: Bool, shaded: Bool = false) -> some View {
+    /// Both `maxWidth` and `maxHeight` matter, and the width is the one that is easy to leave out.
+    /// A `Grid` sizes each column to its widest cell and then places the narrower ones inside it at
+    /// their own size — so a background applied without this fills the words rather than the cell,
+    /// and the banding comes out as loose blocks with white gaps between the columns instead of
+    /// stripes. Filling first, aligning inside the fill second, is what makes it read as a grid.
+    /// The column widths are unaffected: `maxWidth` only accepts a proposal, it does not ask for
+    /// one, so the ideal width the `Grid` measures is still the text's.
+    private func cell(_ text: String, align: Alignment, isHeader: Bool, shaded: Bool = false) -> some View {
         inline(text)
             .font(.system(size: 13.5, weight: isHeader ? .semibold : .regular))
             .foregroundStyle(isHeader ? primary : secondary)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
-            .frame(maxHeight: .infinity, alignment: .leading)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: align)
             .background(isHeader ? panel : (shaded ? panel.opacity(0.45) : Color.clear))
     }
 
-    private func gridAlignment(_ alignments: [Markdown.Column], _ column: Int) -> HorizontalAlignment {
+    private func alignment(_ alignments: [Markdown.Column], _ column: Int) -> Alignment {
         switch alignments.indices.contains(column) ? alignments[column] : .leading {
         case .leading: return .leading
         case .center: return .center

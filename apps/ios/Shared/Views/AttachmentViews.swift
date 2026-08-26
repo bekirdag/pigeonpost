@@ -8,6 +8,11 @@
 
 import SwiftUI
 import UniformTypeIdentifiers
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 /// One chosen file, above the composer, with a way to change your mind.
 struct StagedFileChip: View {
@@ -92,11 +97,19 @@ struct AttachmentList: View {
             }
         }
         .padding(.top, 4)
-        // The system's own sheet decides what to do with it — save, open elsewhere, share. This app
-        // does not open another agent's file itself.
-        .sheet(item: $saved) { url in
-            ShareSheet(url: url)
+        // What happens to a downloaded file is the system's decision, not this app's — it does not
+        // open another agent's file itself. The two platforms disagree about what "hand it over"
+        // means, and that is a real difference rather than a spelling one: a phone shares, a Mac
+        // puts the file somewhere and shows you where.
+        #if canImport(UIKit)
+        .sheet(item: $saved) { url in ShareSheet(url: url) }
+        #elseif canImport(AppKit)
+        .onChange(of: saved) { _, url in
+            guard let url else { return }
+            NSWorkspace.shared.activateFileViewerSelecting([url])
+            saved = nil
         }
+        #endif
     }
 
     private func fetch(_ file: MessageAttachment) {
@@ -128,6 +141,7 @@ extension URL: @retroactive Identifiable {
     public var id: String { absoluteString }
 }
 
+#if canImport(UIKit)
 private struct ShareSheet: UIViewControllerRepresentable {
     let url: URL
 
@@ -137,3 +151,4 @@ private struct ShareSheet: UIViewControllerRepresentable {
 
     func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
+#endif

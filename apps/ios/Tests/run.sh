@@ -9,7 +9,7 @@ swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \
   Shared/Model/Conversation.swift \
-  Pigeonpost/Design/PeerFace.swift \
+  Shared/Design/PeerFace.swift \
   Shared/Design/Theme.swift \
-  Pigeonpost/Views/Markdown.swift
+  Shared/Views/Markdown.swift
 "$out/thread-model"

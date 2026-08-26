@@ -130,7 +130,7 @@ enum Fixtures {
           "sent_at":\(now - 600),"received_at":\(now - 600),"read":true},
 
          {"message_id":"m_reply","from":"/k/aaaa1111bbbb2222cccc3333dd",
-          "body":"pigeonpost-auto-reply v1 in_reply_to=m_out2 answered=full_access\\nGenerated unattended by this mailbox's agent. Nobody read it before it was sent.\\n\\n## Pinned it\\n\\nThe fixture listener was **non-blocking**, which macOS inherits onto the accepted socket and Linux does not.\\n\\n- `set_nonblocking(false)` in `serve_http_request`\\n- one test added for the accepted socket\\n\\n```rust\\nstream.set_nonblocking(false)?;\\n```\\n\\nPushed as `4f21c0e` and CI is green.",
+          "body":"pigeonpost-auto-reply v1 in_reply_to=m_out2 answered=full_access\\nGenerated unattended by this mailbox's agent. Nobody read it before it was sent.\\n\\n## Pinned it\\n\\nThe fixture listener was **non-blocking**, which macOS inherits onto the accepted socket and Linux does not.\\n\\n- `set_nonblocking(false)` in `serve_http_request`\\n- one test added for the accepted socket\\n\\n```rust\\nstream.set_nonblocking(false)?;\\n```\\n\\nPushed as `4f21c0e` and CI is green.\\n\\n| Job | Runner | Time | Result |\\n| --- | --- | ---: | :---: |\\n| fmt | ubuntu-24.04 | 4s | pass |\\n| clippy | ubuntu-24.04 | 51s | pass |\\n| test (linux) | ubuntu-24.04 | 2m18s | pass |\\n| test (macos) | macos-15 | 3m02s | pass |",
           "sender_standing":"unproven","sender_tier":"handle","sender_known":true,"matched_contact":"/bekir/*",
           "sender_handle":"/bekir/agent1","peer":"/bekir/agent1","peer_handle":"/bekir/agent1",
           "thread_id":"t-agent1","direction":"in","autonomy":"auto","received_at":\(now - 420),"read":true},

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Sandboxed from the first build rather than retrofitted: what the app may reach is easier to
+	     keep narrow than to make narrow later, and the App Store requires it. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The postbox and the realm. Nothing here listens. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Attachments: chosen by the person through the system picker, and written where they say. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+</dict>
+</plist>

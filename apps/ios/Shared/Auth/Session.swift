@@ -9,6 +9,11 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+#if canImport(UIKit)
+import UIKit
+#elseif canImport(AppKit)
+import AppKit
+#endif
 
 enum AuthError: LocalizedError {
     case cancelled
@@ -340,13 +345,25 @@ final class Session {
 }
 
 /// The window the sign-in sheet hangs from.
+///
+/// `ASPresentationAnchor` is a `UIWindow` on one platform and an `NSWindow` on the other, and
+/// finding the key window is the only part that differs. Everything else about the sign-in — PKCE,
+/// the exchange, where the tokens are kept — is the same code on both.
 private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentationContextProviding {
     func presentationAnchor(for session: ASWebAuthenticationSession) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
-            UIApplication.shared.connectedScenes
+            #if canImport(UIKit)
+            return UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .flatMap(\.windows)
                 .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+            #elseif canImport(AppKit)
+            return NSApplication.shared.keyWindow
+                ?? NSApplication.shared.windows.first
+                ?? ASPresentationAnchor()
+            #else
+            return ASPresentationAnchor()
+            #endif
         }
     }
 }
