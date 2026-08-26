@@ -79,18 +79,19 @@ PIGEONPOST_BLOB_DIR=/mnt/web-volume/pigeonpost-blobs   # mounted, 0700, owned by
 # PIGEONPOST_BLOB_MIN_FREE_MB=2048                     # free space the volume never goes below
 ```
 
-**Two limits in front of `PIGEONPOST_BLOB_MAX_MB` will quietly override it, and neither says so.**
-Both were doing exactly that until 2026-08-26, which made a nominal 100 MB ceiling a real one of
-1 MB:
+**A limit in front of `PIGEONPOST_BLOB_MAX_MB` was quietly overriding it.** Axum buffers a `Bytes`
+body behind a 2 MB default, so until 2026-08-26 a nominal 100 MB ceiling was a real one of 2 MB, and
+the refusal was a plain-text 413 from the framework rather than the handler's JSON — which every
+client reported as an unexplained failure. `build_router` now layers
+`DefaultBodyLimit::max(PIGEONPOST_BLOB_MAX_MB)` on `/v1/attachments` alone; every other body on this
+service is JSON, and 2 MB of JSON is already generous.
 
-- **Apache.** The vhost carries `LimitRequestBody 1048576` for the whole service, which is right for
-  a JSON API and fatal for an upload. `/v1/attachments` now has a `<Location>` of its own at
-  100 MB; the rest of the service keeps the 1 MB. Raise both together or not at all — the
-  refusal Apache writes is an HTML page with no CORS headers on it, so a browser cannot even read
-  the reason.
-- **Axum.** A buffered `Bytes` body defaults to 2 MB. `build_router` now layers
-  `DefaultBodyLimit::max(PIGEONPOST_BLOB_MAX_MB)` on that one route, so the handler is the thing
-  that refuses a large file and the client gets JSON explaining why.
+**The vhost's `LimitRequestBody 1048576` is not a second limit, though it reads like one.** Measured
+on this box on 2026-08-26: Apache 2.4.29 does not apply `LimitRequestBody` to a request
+`mod_proxy_http` hands on — neither at vhost level nor inside a `<Location>` — and a 1.5 MB body
+reaches the container either way. It stays in the vhost, with a comment saying so, because it costs
+nothing and would bind if this ever stopped being a proxy. Do not put a route's size limit there
+expecting it to hold; the postbox's own is the only one that does.
 
 On the live box that is `/dev/sdb`, a 40 GB Hetzner volume already in `fstab` with `nofail`, on
 the same host as the postbox — so bytes never cross a network to reach their own API.
