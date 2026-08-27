@@ -274,6 +274,11 @@ pub async fn fan_out(apns: Arc<Apns>, store: Arc<Store>, mailbox: String, note: 
 }
 
 /// The first line of a message, short enough for a lock screen.
+///
+/// Says the same sentence the two clients put in their conversation lists — see
+/// `ConversationBuilder.preview` in `apps/ios/Shared/Model/Conversation.swift` and `preview()` in
+/// `site-inbox/app.js`. It did not, and the difference was every notification this postbox has ever
+/// sent about a message a person wrote.
 pub fn preview_of(body: &str) -> String {
     // A scoped request is JSON on the wire and reads as noise on a lock screen. Say what it asks
     // for, exactly as both clients do in a conversation list.
@@ -281,15 +286,85 @@ pub fn preview_of(body: &str) -> String {
         if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(body) {
             if parsed.get("v").and_then(|v| v.as_i64()) == Some(1) {
                 if let Some(verb) = parsed.get("verb").and_then(|v| v.as_str()) {
+                    // Except `full_access`, which is what the web inbox, the phone and the Mac app
+                    // all send for everything a person types. Previewed as its verb, every one of
+                    // them reached a lock screen as "asks to full access" — the same eighteen
+                    // characters for every message any human being has ever sent through this
+                    // postbox, with the words they wrote sitting unread in `note`.
+                    let note = parsed
+                        .get("note")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .trim();
+                    if verb == "full_access" && !note.is_empty() {
+                        return cut(&flatten(note));
+                    }
                     return format!("asks to {}", verb.replace('_', " "));
                 }
             }
         }
     }
-    let flattened = body.split_whitespace().collect::<Vec<_>>().join(" ");
+    // An unattended answer previews as the answer. Its first two lines are identical on every one
+    // of them, so without this a whole fleet's replies announce themselves the same way.
+    cut(&flatten(&plain(strip_auto_reply_header(body))))
+}
+
+/// An auto-reply without the two machine-readable lines it opens with. Anything else, unchanged.
+fn strip_auto_reply_header(body: &str) -> &str {
+    if !body.starts_with("pigeonpost-auto-reply v1") {
+        return body;
+    }
+    let mut rest = match body.split_once('\n') {
+        Some((_, rest)) => rest,
+        None => return "",
+    };
+    // The second line is the standing disclaimer, and it says the same thing every time.
+    if rest.starts_with("Generated unattended") {
+        rest = rest.split_once('\n').map(|(_, r)| r).unwrap_or("");
+    }
+    rest.trim_start_matches(['\n', '\r'])
+}
+
+/// Markdown with its punctuation taken off, for one line on a lock screen.
+///
+/// `## Pinned it` glanced at is two stray hashes, and a fenced block is not a summary of anything —
+/// skipping it lets the prose above it surface instead. The same rules as the clients', in the same
+/// order.
+fn plain(text: &str) -> String {
+    let mut out: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in text.lines() {
+        let mut s = line.trim();
+        if s.starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        s = s.trim_start_matches('#');
+        for marker in ["- ", "* ", "+ ", "> "] {
+            if let Some(rest) = s.strip_prefix(marker) {
+                s = rest;
+            }
+        }
+        let cleaned = s.replace("**", "").replace('`', "");
+        let cleaned = cleaned.trim();
+        if !cleaned.is_empty() {
+            out.push(cleaned.to_string());
+        }
+    }
+    out.join(" ")
+}
+
+fn flatten(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+fn cut(flattened: &str) -> String {
     match flattened.char_indices().nth(PREVIEW_CHARS) {
-        Some((cut, _)) => format!("{}…", &flattened[..cut]),
-        None => flattened,
+        Some((at, _)) => format!("{}…", &flattened[..at]),
+        None => flattened.to_string(),
     }
 }
 
@@ -308,6 +383,38 @@ mod tests {
     fn a_request_previews_as_what_it_asks_for() {
         let body = r#"{"v":1,"verb":"run_tests","args":{"suite":"unit"},"note":"before the tag"}"#;
         assert_eq!(preview_of(body), "asks to run tests");
+    }
+
+    #[test]
+    fn a_persons_message_previews_as_what_they_wrote() {
+        // What every client sends for everything a person types. Previewed as its verb this said
+        // "asks to full access", which is the same sentence for every message ever sent.
+        let body = r#"{"v":1,"verb":"full_access","args":{"task":"pin the flaky macOS test"},"note":"pin the flaky macOS test and push a fix"}"#;
+        assert_eq!(preview_of(body), "pin the flaky macOS test and push a fix");
+    }
+
+    #[test]
+    fn full_access_with_nothing_written_still_says_what_it_asks_for() {
+        let body = r#"{"v":1,"verb":"full_access","args":{}}"#;
+        assert_eq!(preview_of(body), "asks to full access");
+    }
+
+    #[test]
+    fn an_unattended_answer_previews_as_the_answer() {
+        let body = "pigeonpost-auto-reply v1 in_reply_to=m1 answered=full_access\n\
+                    Generated unattended by this mailbox's agent. Nobody read it before it was sent.\n\
+                    \n\
+                    ## Pinned it\n\
+                    \n\
+                    The fixture listener was **non-blocking**.\n\
+                    \n\
+                    ```rust\n\
+                    stream.set_nonblocking(false)?;\n\
+                    ```\n";
+        assert_eq!(
+            preview_of(body),
+            "Pinned it The fixture listener was non-blocking."
+        );
     }
 
     #[test]
