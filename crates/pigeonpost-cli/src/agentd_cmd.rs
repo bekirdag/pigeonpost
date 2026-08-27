@@ -530,22 +530,38 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
             // failure costs an answer; at a tier that changes things it costs an answer about a
             // half-finished change, which is the one outcome nobody can act on.
             log_line(home, &format!("run failed: {failure}"));
-            let body = crate::runner::refusal_body(
-                &action.verb,
-                &event.message_id,
-                &format!(
+            // A blocked panel is not a run that fell over: the work was done and is committed
+            // locally, and this mailbox is configured to withhold the reply when nothing read it.
+            // Saying so is the difference between "retry" and "go and look".
+            let why = match &failure {
+                crate::runner::RunFailure::PanelBlocked(detail) => format!(
+                    "The work was done, but this mailbox will not send an answer nothing has \
+                     reviewed, and the review could not be held ({detail}). The work is committed \
+                     locally and nothing was published — ask its human to look, or ask again once \
+                     the reviewer is back."
+                ),
+                _ => format!(
                     "The run failed ({}). Nothing here knows what state it left behind, so treat \
                      this as unfinished rather than as not started.",
                     failure.detail()
                 ),
-            );
+            };
+            let body = crate::runner::refusal_body(&action.verb, &event.message_id, &why);
             let _ = crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref())
                 .await;
             return give_back(failure.as_str(), Some(&failure.detail()));
         }
     };
 
-    let body = crate::runner::reply_body(&action.verb, &event.message_id, &run.text);
+    // How the answer was produced, when that is worth a sentence. A route with no panel sends the
+    // exact two-line header it always has.
+    let provenance = run.panel.as_ref().and_then(crate::panel::provenance);
+    let body = crate::runner::reply_body(
+        &action.verb,
+        &event.message_id,
+        provenance.as_deref(),
+        &run.text,
+    );
     if let Err(e) =
         crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref()).await
     {
@@ -575,6 +591,12 @@ async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailE
         (Some(a), false) => format!("{} via {a}", action.verb),
         (None, true) => format!("{}, truncated", action.verb),
         (None, false) => action.verb.clone(),
+    };
+    // A clause on the end rather than a new shape, so anything already reading this log keeps
+    // working. The per-spawn `panel_spawn` lines are written by the panel itself.
+    let detail = match &run.panel {
+        Some(summary) => format!("{detail}, {}", crate::panel::audit_clause(summary)),
+        None => detail,
     };
     log_line(home, &format!("replied to {sender} ({detail})"));
     note("executed", Some(&detail));
@@ -758,21 +780,13 @@ fn machine_home(home: &Path) -> PathBuf {
 /// The route goes in the **machine** home, because that is where the one daemon reads it, while the
 /// mailbox comes from the **agent** home this was invoked for. That split is the whole reason this
 /// is a command rather than a documented example.
-#[allow(clippy::too_many_arguments)]
-pub fn answer(
-    home: &Path,
-    verbs: &[String],
-    runtime: &str,
-    timeout_secs: Option<u64>,
-    permission: crate::executor::Permission,
-    branches: &[String],
-    daily_runs: Option<u32>,
-    install: bool,
-    off: bool,
-) -> Result<(), Error> {
-    // Refuse a spelling this build cannot use, before it is written anywhere. `agentd status` would
-    // report it as UNUSABLE afterwards, but only if somebody looked.
-    let parsed: crate::executor::Runtime = runtime.parse().map_err(|refusal| match refusal {
+/// A runtime spelling, or the reason somebody typing it should reach for a different one.
+///
+/// Three different fixes hide behind "that runtime is not supported", and telling them apart is
+/// the whole value of this: a family named without its agent is a one-word spelling mistake, and a
+/// managed remote agent under the local spelling is a decision about where the text goes.
+fn parse_runtime(runtime: &str) -> Result<crate::executor::Runtime, String> {
+    runtime.parse().map_err(|refusal| match refusal {
         // Says which agent to name, and how to find one, rather than implying mcoda is unsupported.
         crate::executor::Refusal::RuntimeNotPinned => format!(
             "`{runtime}` needs the agent named too, e.g. `{runtime}:claude-sonnet` — the slug is \
@@ -785,10 +799,185 @@ pub fn answer(
              credentials this machine does not control."
         ),
         _ => format!(
-            "`{runtime}` is not a runtime this build understands — use `claude`, \
+            "`{runtime}` is not a runtime this build understands — use `claude`, `codex`, \
              `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`"
         ),
-    })?;
+    })
+}
+
+/// Everything `agentd answer` was asked for.
+///
+/// A struct rather than a positional list. The list was already at nine and carrying an
+/// `#[allow(clippy::too_many_arguments)]`; the panel adds five more, at which point the order of
+/// two adjacent `Option`s becomes something a caller can get wrong silently.
+pub struct Answer<'a> {
+    pub verbs: &'a [String],
+    pub runtime: &'a str,
+    pub timeout_secs: Option<u64>,
+    pub permission: crate::executor::Permission,
+    pub branches: &'a [String],
+    pub daily_runs: Option<u32>,
+    /// Runtimes that read the work and comment before the reply is sent. Empty is one agent
+    /// answering, which is the default and what every route did before panels existed.
+    pub reviewers: &'a [String],
+    pub panel_rounds: Option<u8>,
+    pub panel_verbs: &'a [String],
+    pub panel_permission: Option<crate::executor::Permission>,
+    pub panel_on_failure: Option<crate::executor::PanelFailure>,
+    pub install: bool,
+    pub off: bool,
+}
+
+/// Turn the `--reviewer` / `--panel-*` flags into a [`crate::executor::Panel`], refusing anything
+/// that would be written and then quietly ignored.
+///
+/// Refusing rather than clamping, throughout. Clamping is right for a config file, which may have
+/// been written by an older build or edited by hand — but a person typing `--panel-rounds 9` has
+/// said something specific, and silently writing 3 is how a setting comes to mean something other
+/// than what it says.
+fn build_panel(spec: &Answer<'_>) -> Result<Option<crate::executor::Panel>, Error> {
+    use crate::executor::{Panel, MAX_PANEL_ROUNDS};
+
+    let configured = spec.panel_rounds.is_some()
+        || !spec.panel_verbs.is_empty()
+        || spec.panel_permission.is_some()
+        || spec.panel_on_failure.is_some();
+    if spec.reviewers.is_empty() {
+        // A panel flag with nobody to review reads as configured and does nothing, which is the
+        // worst state for a setting whose whole job is to have run.
+        if configured {
+            return Err(
+                "--panel-… needs at least one --reviewer; on its own it configures a panel \
+                        that never sits."
+                    .into(),
+            );
+        }
+        return Ok(None);
+    }
+
+    for reviewer in spec.reviewers {
+        // Refused here, where somebody is looking, rather than at 3am when mail arrives.
+        let parsed = parse_runtime(reviewer)?;
+        if !parsed.is_local() {
+            eprintln!(
+                "note: reviewer {reviewer} is a managed remote agent. It will be sent the whole \
+                 draft — which at `make_change` and above quotes this repository — to run \
+                 elsewhere, with tools and credentials this machine does not control."
+            );
+        }
+    }
+
+    let rounds = match spec.panel_rounds {
+        Some(n) if !(1..=MAX_PANEL_ROUNDS).contains(&n) => {
+            return Err(format!(
+                "--panel-rounds must be 1 to {MAX_PANEL_ROUNDS}. Unbounded \"loop until they \
+                 agree\" is not offered: two models can disagree for as long as somebody is \
+                 willing to pay for it, and nobody is watching this run."
+            )
+            .into())
+        }
+        Some(n) => n,
+        None => 1,
+    };
+
+    for verb in spec.panel_verbs {
+        if !spec.verbs.iter().any(|v| v == verb) {
+            return Err(format!(
+                "--panel-verb {verb} names a verb this mailbox does not answer, so nothing would \
+                 ever be reviewed for it. Add --verb {verb} first, or drop it."
+            )
+            .into());
+        }
+    }
+
+    let permission = spec.panel_permission.unwrap_or_default();
+    if permission.at_most(spec.permission) != permission {
+        return Err(format!(
+            "--panel-permission {} is above this mailbox's own `{}`, and a reviewer cannot be \
+             allowed more than the agent it is reviewing.",
+            permission.as_str(),
+            spec.permission.as_str()
+        )
+        .into());
+    }
+
+    Ok(Some(Panel {
+        reviewers: spec.reviewers.to_vec(),
+        rounds,
+        verbs: spec.panel_verbs.to_vec(),
+        permission,
+        timeout_secs: None,
+        on_failure: spec.panel_on_failure.unwrap_or_default(),
+    }))
+}
+
+/// What a panel costs, in the two currencies somebody actually has: wall clock and tokens.
+///
+/// Printed on the dry run as well as on the write, because before is when it is worth reading.
+/// `timeout` is per run and always has been, so a panel silently turns a number somebody read as
+/// the ceiling for a message into a fraction of it.
+fn print_panel_notes(route: &crate::executor::MailboxRoute, max_concurrent: usize) {
+    if let Some(panel) = &route.panel {
+        println!("  reviewers:  {}", panel.reviewers.join(", "));
+        println!(
+            "  panel:      {} round{}, reviewers run {}, {} if the review fails",
+            panel.rounds(),
+            if panel.rounds() == 1 { "" } else { "s" },
+            panel.permission.as_str(),
+            panel.on_failure.as_str()
+        );
+        let covers = if panel.verbs.is_empty() {
+            crate::executor::DEFAULT_PANEL_VERBS.join(", ")
+        } else {
+            panel.verbs.join(", ")
+        };
+        println!("  reviewing:  {covers}");
+        println!();
+        // The arithmetic, said out loud. `timeout` is per run and always has been, so a panel
+        // turns a number somebody read as the ceiling for a message into a fraction of it.
+        let one = route.timeout_secs;
+        if one == 0 {
+            println!(
+                "A panel is {} runs for one message, each with no time limit of its own.",
+                2 + panel.reviewers.len()
+            );
+        } else {
+            let ceiling = one + one + one * u64::from(panel.rounds());
+            println!(
+                "A panel is {} runs for one message. `timeout` is per run, so one message can now \
+             take up to about {}s ({}s draft + {}s of review + {}s of rework), and it holds one \
+             of this machine's {} concurrency slots for all of it.",
+                2 + panel.reviewers.len() * usize::from(panel.rounds()),
+                ceiling,
+                one,
+                one * u64::from(panel.rounds()),
+                one * u64::from(panel.rounds()),
+                max_concurrent
+            );
+        }
+        println!(
+            "It also costs roughly {}× the tokens of the same request answered by one agent.",
+            2 + panel.reviewers.len()
+        );
+        println!();
+    }
+}
+
+pub fn answer(home: &Path, spec: &Answer<'_>) -> Result<(), Error> {
+    let Answer {
+        verbs,
+        runtime,
+        timeout_secs,
+        permission,
+        branches,
+        daily_runs,
+        install,
+        off,
+        ..
+    } = *spec;
+    // Refuse a spelling this build cannot use, before it is written anywhere. `agentd status` would
+    // report it as UNUSABLE afterwards, but only if somebody looked.
+    let parsed = parse_runtime(runtime)?;
     if !parsed.is_local() {
         eprintln!(
             "note: {runtime} delegates to a managed remote agent, which runs with tools and \
@@ -874,6 +1063,8 @@ pub fn answer(
         );
     }
 
+    let panel = build_panel(spec)?;
+
     let route = crate::executor::MailboxRoute {
         address: address.clone(),
         workspace: workspace.clone(),
@@ -883,6 +1074,7 @@ pub fn answer(
         permission,
         branches: branches.to_vec(),
         daily_runs_per_sender: daily_runs.unwrap_or(0),
+        panel,
     };
 
     // Replace rather than append, so re-running is a correction instead of a second route that
@@ -899,6 +1091,7 @@ pub fn answer(
             crate::executor::config_path(&machine).display()
         );
         println!("{}", toml::to_string_pretty(&route)?);
+        print_panel_notes(&route, config.max_concurrent);
         println!("Add --install to write it. Nothing answers unattended until you do.");
         return Ok(());
     }
@@ -916,6 +1109,7 @@ pub fn answer(
     if !branches.is_empty() {
         println!("  branches:   {}", branches.join(", "));
     }
+    print_panel_notes(&route, config.max_concurrent);
     if matches!(permission, crate::executor::Permission::Full) {
         println!();
         println!("`full` means a message from a granted sender can change and publish this");
@@ -2015,6 +2209,7 @@ mod tests {
                 permission: crate::executor::Permission::ReadOnly,
                 branches: Vec::new(),
                 daily_runs_per_sender: 50,
+                panel: None,
             }],
             max_concurrent: 2,
             execute: true,
@@ -2123,6 +2318,133 @@ mod tests {
         assert_eq!(recorded_path("nothing here"), None);
     }
 
+    // --- `agentd answer --reviewer` ------------------------------------------------------------
+
+    fn spec<'a>(
+        verbs: &'a [String],
+        permission: crate::executor::Permission,
+        reviewers: &'a [String],
+    ) -> Answer<'a> {
+        Answer {
+            verbs,
+            runtime: "claude",
+            timeout_secs: None,
+            permission,
+            branches: &[],
+            daily_runs: None,
+            reviewers,
+            panel_rounds: None,
+            panel_verbs: &[],
+            panel_permission: None,
+            panel_on_failure: None,
+            install: false,
+            off: false,
+        }
+    }
+
+    fn strings(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn no_reviewer_is_no_panel() {
+        let verbs = strings(&["make_change"]);
+        let built =
+            build_panel(&spec(&verbs, crate::executor::Permission::Workspace, &[])).unwrap();
+        assert!(built.is_none());
+    }
+
+    /// A panel flag with nobody to review reads as configured and does nothing, which is the worst
+    /// state for a setting whose whole job is to have run.
+    #[test]
+    fn a_panel_flag_without_a_reviewer_is_refused() {
+        let verbs = strings(&["make_change"]);
+        let mut asked = spec(&verbs, crate::executor::Permission::Workspace, &[]);
+        asked.panel_rounds = Some(2);
+        assert!(build_panel(&asked).is_err());
+    }
+
+    /// Refused rather than clamped, because somebody typed it. Clamping is for a file that may
+    /// have been written by an older build.
+    #[test]
+    fn a_round_count_that_cannot_end_is_refused_where_somebody_typed_it() {
+        let verbs = strings(&["make_change"]);
+        let reviewers = strings(&["codex"]);
+        let mut asked = spec(&verbs, crate::executor::Permission::Workspace, &reviewers);
+        asked.panel_rounds = Some(9);
+        assert!(build_panel(&asked).is_err());
+        asked.panel_rounds = Some(0);
+        assert!(build_panel(&asked).is_err());
+        asked.panel_rounds = Some(3);
+        assert_eq!(build_panel(&asked).unwrap().unwrap().rounds, 3);
+    }
+
+    /// Refused at the moment somebody is looking, rather than at 3am when mail arrives.
+    #[test]
+    fn a_reviewer_this_build_cannot_spawn_is_refused_before_it_is_written() {
+        let verbs = strings(&["make_change"]);
+        for bad in [
+            strings(&["mcoda"]),
+            strings(&["nonsense"]),
+            strings(&["mcoda:mswarm-cloud-x"]),
+        ] {
+            assert!(
+                build_panel(&spec(&verbs, crate::executor::Permission::Workspace, &bad)).is_err(),
+                "{bad:?} should not be writable as a reviewer"
+            );
+        }
+    }
+
+    /// Possible, and never a default. A cloud reviewer is sent the whole draft, which at
+    /// `make_change` and above quotes the repository — so it is accepted under its own spelling
+    /// and flagged, exactly as `runtime` already is.
+    #[test]
+    fn a_managed_remote_reviewer_is_accepted_under_its_own_spelling() {
+        let verbs = strings(&["make_change"]);
+        let reviewers = strings(&["mcoda-cloud:gpt-5-high"]);
+        let built = build_panel(&spec(
+            &verbs,
+            crate::executor::Permission::Workspace,
+            &reviewers,
+        ))
+        .unwrap()
+        .unwrap();
+        assert_eq!(built.reviewers, reviewers);
+    }
+
+    #[test]
+    fn a_panel_verb_this_mailbox_does_not_answer_is_refused() {
+        let verbs = strings(&["make_change"]);
+        let reviewers = strings(&["codex"]);
+        let panel_verbs = strings(&["deploy"]);
+        let mut asked = spec(&verbs, crate::executor::Permission::Workspace, &reviewers);
+        asked.panel_verbs = &panel_verbs;
+        assert!(build_panel(&asked).is_err());
+    }
+
+    #[test]
+    fn a_reviewer_cannot_be_typed_above_the_mailbox_it_reviews() {
+        let verbs = strings(&["make_change"]);
+        let reviewers = strings(&["codex"]);
+        let mut asked = spec(&verbs, crate::executor::Permission::Workspace, &reviewers);
+        asked.panel_permission = Some(crate::executor::Permission::Full);
+        assert!(build_panel(&asked).is_err());
+
+        asked.panel_permission = Some(crate::executor::Permission::Workspace);
+        assert_eq!(
+            build_panel(&asked).unwrap().unwrap().permission,
+            crate::executor::Permission::Workspace
+        );
+
+        // And the default is the safe one, whatever the route's own tier is.
+        asked.panel_permission = None;
+        asked.permission = crate::executor::Permission::Full;
+        assert_eq!(
+            build_panel(&asked).unwrap().unwrap().permission,
+            crate::executor::Permission::ReadOnly
+        );
+    }
+
     #[test]
     fn status_names_the_program_each_route_will_spawn() {
         let route = |runtime: &str| crate::executor::MailboxRoute {
@@ -2134,6 +2456,7 @@ mod tests {
             permission: crate::executor::Permission::ReadOnly,
             branches: Vec::new(),
             daily_runs_per_sender: 50,
+            panel: None,
         };
         let config = crate::executor::RoutingConfig {
             mailbox: vec![

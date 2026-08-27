@@ -100,6 +100,139 @@ pub struct MailboxRoute {
     /// intentions.
     #[serde(default)]
     pub daily_runs_per_sender: u32,
+    /// A second agent that reads the work and comments before the reply is sent.
+    ///
+    /// Absent means one agent answers, which is what every config written before this existed
+    /// says and what this build still does by default. Nothing about a route changes by loading
+    /// it on a build that knows about panels.
+    ///
+    /// **This field must stay last.** TOML requires a table's scalars before its sub-tables, and
+    /// `panel` is a table inside an array-of-tables element — so any field declared after it is
+    /// emitted after the `[mailbox.panel]` header and lands *inside* the panel. That is a file
+    /// this build writes and then cannot read back. `write_routing` already exists for the same
+    /// reason one level up; `a_route_with_a_panel_survives_being_written_and_read_back` is what
+    /// holds it here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub panel: Option<Panel>,
+}
+
+/// Verbs a panel covers when the config does not name any.
+///
+/// The three where a second opinion is worth what it costs. `report_status` and `answer_question`
+/// are left out because doubling the price of a status ping buys very little — they re-derive from
+/// live state anyway — and `git_push` and `deploy` because the review would arrive after the act;
+/// see [`Panel`]'s note on what a panel does and does not bound. All four remain selectable by
+/// naming them explicitly.
+pub const DEFAULT_PANEL_VERBS: &[&str] = &["make_change", "full_access", "run_tests"];
+
+/// Ceiling on draft/comment/rework cycles.
+///
+/// "Loop until the reviewers are happy" is rejected outright: two models can disagree for as long
+/// as somebody is willing to pay for it, and nobody is watching this run.
+pub const MAX_PANEL_ROUNDS: u8 = 3;
+
+fn default_rounds() -> u8 {
+    1
+}
+
+/// What to do when the panel itself falls over, as opposed to the work.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    serde::Deserialize,
+    serde::Serialize,
+    clap::ValueEnum,
+)]
+#[serde(rename_all = "kebab-case")]
+#[clap(rename_all = "kebab-case")]
+pub enum PanelFailure {
+    /// Send the draft anyway, and say in the reply that the review did not happen. The default:
+    /// once the draft has run at a writing tier the files are already changed, and replying with
+    /// nothing leaves a peer with no answer *and* a dirty working tree.
+    #[default]
+    Proceed,
+    /// Refuse instead, naming the failure. The work still stays committed locally — this withholds
+    /// the reply, not the work.
+    Block,
+}
+
+impl PanelFailure {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            PanelFailure::Proceed => "proceed",
+            PanelFailure::Block => "block",
+        }
+    }
+}
+
+/// A second opinion on the work, before the reply goes out.
+///
+/// One draft/comment/rework cycle: the route's own runtime does the work, every reviewer reads what
+/// it did and comments, and the main runtime gets its own draft back with the comments attached.
+///
+/// **What this bounds, and what it does not.** A panel is a quality gate on the reply and on the
+/// local working tree. It is *not* a gate on publishing: at [`Permission::Full`] the draft phase is
+/// authorised to push and deploy, and by the time a reviewer sees the draft the push has happened.
+/// The draft prompt asks the main agent to hold the last step until the review is in, but that is a
+/// request to a model rather than an enforced barrier. Say "reviewed before it was sent"; never
+/// "reviewed before it was published".
+#[derive(Debug, Clone, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
+pub struct Panel {
+    /// Runtime spellings, the same grammar `runtime` uses. Empty means no panel, so a table left
+    /// behind with its reviewers removed is single-agent rather than an error.
+    #[serde(default)]
+    pub reviewers: Vec<String>,
+    /// Draft/comment/rework cycles. Clamped to `1..=MAX_PANEL_ROUNDS` on load.
+    #[serde(default = "default_rounds")]
+    pub rounds: u8,
+    /// Which verbs are worth a panel. Empty means [`DEFAULT_PANEL_VERBS`].
+    #[serde(default)]
+    pub verbs: Vec<String>,
+    /// What a reviewer may do. Clamped to the route's own tier on load, and read-only by default:
+    /// a reviewer that edits is a second author, and two authors in one working tree produce a
+    /// conflict nobody is present to resolve.
+    #[serde(default)]
+    pub permission: Permission,
+    /// Wall-clock ceiling for one reviewer run. Absent means the route's own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timeout_secs: Option<u64>,
+    /// What to do when the panel cannot be held at all.
+    #[serde(default)]
+    pub on_failure: PanelFailure,
+}
+
+impl Panel {
+    /// Whether this verb gets a panel.
+    pub fn applies(&self, verb: &str) -> bool {
+        if self.reviewers.is_empty() {
+            return false;
+        }
+        if self.verbs.is_empty() {
+            DEFAULT_PANEL_VERBS.contains(&verb)
+        } else {
+            self.verbs.iter().any(|v| v == verb)
+        }
+    }
+
+    /// Rounds, as a number this build will actually conduct.
+    pub fn rounds(&self) -> u8 {
+        self.rounds.clamp(1, MAX_PANEL_ROUNDS)
+    }
+
+    /// Fold in whatever the route says, so nothing downstream has to remember the ceilings.
+    ///
+    /// Clamping rather than refusing, because this runs against a file that may have been written
+    /// by an older build or edited by hand. A person typing the same thing at the command line is
+    /// refused instead — see `agentd answer`.
+    fn settle(&mut self, route_permission: Permission) {
+        self.rounds = self.rounds();
+        self.permission = self.permission.at_most(route_permission);
+        self.reviewers.retain(|r| !r.trim().is_empty());
+    }
 }
 
 #[allow(dead_code)]
@@ -158,6 +291,23 @@ impl Permission {
             Permission::ReadOnly => "read-only",
             Permission::Workspace => "workspace",
             Permission::Full => "full",
+        }
+    }
+
+    /// This tier, or `ceiling` — whichever allows less.
+    ///
+    /// Used where one tier is configured beneath another and must not be able to exceed it: a
+    /// panel's reviewers, whose ceiling is the route they belong to.
+    pub fn at_most(self, ceiling: Permission) -> Permission {
+        let rank = |p: Permission| match p {
+            Permission::ReadOnly => 0u8,
+            Permission::Workspace => 1,
+            Permission::Full => 2,
+        };
+        if rank(self) > rank(ceiling) {
+            ceiling
+        } else {
+            self
         }
     }
 
@@ -302,7 +452,19 @@ pub fn config_path(home: &Path) -> PathBuf {
 
 pub fn load_routing(home: &Path) -> Result<RoutingConfig, Error> {
     match std::fs::read_to_string(config_path(home)) {
-        Ok(body) => Ok(toml::from_str(&body)?),
+        Ok(body) => {
+            let mut config: RoutingConfig = toml::from_str(&body)?;
+            // Ceilings applied once, here, rather than remembered at every use. A config is a file
+            // on disk: it can be hand-edited, and it can have been written by a build that had not
+            // heard of a limit this one enforces.
+            for route in &mut config.mailbox {
+                let tier = route.permission;
+                if let Some(panel) = route.panel.as_mut() {
+                    panel.settle(tier);
+                }
+            }
+            Ok(config)
+        }
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(RoutingConfig::default()),
         Err(e) => Err(e.into()),
     }
@@ -815,6 +977,150 @@ mod tests {
         assert!(Runtime::Codex.slug().is_none());
     }
 
+    // --- panels -------------------------------------------------------------------------------
+
+    /// The test written first, and the one that matters most: a machine that has never heard of a
+    /// panel must behave exactly as it did, and its config file must survive being rewritten.
+    #[test]
+    fn a_config_with_no_panel_loads_and_writes_back_unchanged() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = config(&["report_status"], dir.path());
+        write_routing(dir.path(), &cfg).unwrap();
+        let before = std::fs::read_to_string(config_path(dir.path())).unwrap();
+
+        let loaded = load_routing(dir.path()).unwrap();
+        assert!(loaded.mailbox[0].panel.is_none());
+        write_routing(dir.path(), &loaded).unwrap();
+        assert_eq!(
+            before,
+            std::fs::read_to_string(config_path(dir.path())).unwrap(),
+            "a route with no panel must round-trip byte for byte"
+        );
+        assert!(!before.contains("panel"));
+    }
+
+    /// The field-ordering trap. `panel` is a table inside an array-of-tables element, so a scalar
+    /// declared after it would be emitted after the `[mailbox.panel]` header and parse as part of
+    /// the panel — a file this build writes and then cannot read. Nothing about the struct says
+    /// that out loud, so this is what holds it.
+    #[test]
+    fn a_route_with_a_panel_survives_being_written_and_read_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["make_change"], dir.path());
+        cfg.mailbox[0].permission = Permission::Full;
+        cfg.mailbox[0].panel = Some(Panel {
+            reviewers: vec!["codex".into(), "mcoda:gpt-5-high".into()],
+            rounds: 2,
+            verbs: vec!["make_change".into()],
+            permission: Permission::Workspace,
+            timeout_secs: Some(300),
+            on_failure: PanelFailure::Block,
+        });
+        write_routing(dir.path(), &cfg).unwrap();
+
+        let loaded = load_routing(dir.path()).unwrap();
+        assert_eq!(loaded.mailbox[0], cfg.mailbox[0]);
+        // And the daily-runs scalar declared just before it did not fall inside the panel.
+        assert_eq!(loaded.mailbox[0].daily_runs_per_sender, 50);
+    }
+
+    #[test]
+    fn rounds_are_clamped_to_something_that_can_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["make_change"], dir.path());
+        cfg.mailbox[0].panel = Some(Panel {
+            reviewers: vec!["codex".into()],
+            rounds: 99,
+            verbs: Vec::new(),
+            permission: Permission::ReadOnly,
+            timeout_secs: None,
+            on_failure: PanelFailure::Proceed,
+        });
+        write_routing(dir.path(), &cfg).unwrap();
+        let loaded = load_routing(dir.path()).unwrap();
+        assert_eq!(
+            loaded.mailbox[0].panel.as_ref().unwrap().rounds,
+            MAX_PANEL_ROUNDS
+        );
+
+        cfg.mailbox[0].panel.as_mut().unwrap().rounds = 0;
+        write_routing(dir.path(), &cfg).unwrap();
+        let loaded = load_routing(dir.path()).unwrap();
+        assert_eq!(loaded.mailbox[0].panel.as_ref().unwrap().rounds, 1);
+    }
+
+    /// A reviewer's job is to read and comment. One that edits is a second author in the same
+    /// working tree, and there is nobody present to resolve the conflict.
+    #[test]
+    fn a_reviewer_cannot_be_allowed_more_than_the_agent_it_reviews() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut cfg = config(&["make_change"], dir.path());
+        cfg.mailbox[0].permission = Permission::Workspace;
+        cfg.mailbox[0].panel = Some(Panel {
+            reviewers: vec!["codex".into()],
+            rounds: 1,
+            verbs: Vec::new(),
+            permission: Permission::Full,
+            timeout_secs: None,
+            on_failure: PanelFailure::Proceed,
+        });
+        write_routing(dir.path(), &cfg).unwrap();
+        let loaded = load_routing(dir.path()).unwrap();
+        assert_eq!(
+            loaded.mailbox[0].panel.as_ref().unwrap().permission,
+            Permission::Workspace
+        );
+
+        // And the default is read-only even on a `full` route, so raising the tier of the work
+        // never silently raises what may be done while reviewing it.
+        cfg.mailbox[0].permission = Permission::Full;
+        cfg.mailbox[0].panel.as_mut().unwrap().permission = Permission::ReadOnly;
+        write_routing(dir.path(), &cfg).unwrap();
+        let loaded = load_routing(dir.path()).unwrap();
+        assert_eq!(
+            loaded.mailbox[0].panel.as_ref().unwrap().permission,
+            Permission::ReadOnly
+        );
+    }
+
+    #[test]
+    fn a_panel_covers_the_three_verbs_worth_the_cost_unless_told_otherwise() {
+        let mut panel = Panel {
+            reviewers: vec!["codex".into()],
+            rounds: 1,
+            verbs: Vec::new(),
+            permission: Permission::ReadOnly,
+            timeout_secs: None,
+            on_failure: PanelFailure::Proceed,
+        };
+        for verb in DEFAULT_PANEL_VERBS {
+            assert!(panel.applies(verb), "{verb} should get a panel by default");
+        }
+        // Doubling the cost of a status ping buys very little, and a review of a push arrives
+        // after the push.
+        for verb in ["report_status", "answer_question", "git_push", "deploy"] {
+            assert!(!panel.applies(verb), "{verb} should not, by default");
+        }
+
+        panel.verbs = vec!["deploy".into()];
+        assert!(panel.applies("deploy"));
+        assert!(!panel.applies("make_change"));
+
+        // A table left behind with its reviewers removed is single-agent, not an error.
+        panel.verbs = Vec::new();
+        panel.reviewers = Vec::new();
+        assert!(!panel.applies("make_change"));
+    }
+
+    #[test]
+    fn a_tier_can_be_held_beneath_another_one() {
+        use Permission::*;
+        assert_eq!(Full.at_most(ReadOnly), ReadOnly);
+        assert_eq!(Full.at_most(Workspace), Workspace);
+        assert_eq!(ReadOnly.at_most(Full), ReadOnly);
+        assert_eq!(Workspace.at_most(Workspace), Workspace);
+    }
+
     fn route(verbs: &[&str], workspace: &Path) -> MailboxRoute {
         MailboxRoute {
             address: "/bekir/agent1".into(),
@@ -825,6 +1131,7 @@ mod tests {
             permission: Permission::ReadOnly,
             branches: Vec::new(),
             daily_runs_per_sender: 50,
+            panel: None,
         }
     }
 

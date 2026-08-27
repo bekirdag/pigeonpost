@@ -34,6 +34,17 @@ audit line for every decision including the refusals.
 **Still refused: `read_file`.** `full` supersedes it, and a path-confined reader is a different
 feature with a different threat model.
 
+**Designed, not built: a real publish barrier for panels.** A route can now ask for a panel — a
+second model reads the work and comments before the reply is sent. What that bounds is the reply and
+the local working tree. It is not a gate on publishing: at `full` the draft phase is authorised to
+push and deploy, and by the time a reviewer sees the draft the push has happened. The draft prompt
+asks the main agent to hold the last step until the review is in, and that is a request to a model
+rather than a barrier — so the documentation says "reviewed before it was sent" and never "reviewed
+before it was published". Making it real means splitting the draft into propose-then-execute, with
+the executing half gated on the panel's verdict. That is a larger feature with its own failure modes
+(a proposal that cannot be replayed, a machine that changed underneath it), and it is recorded here
+rather than half-built.
+
 **Still true: no session continuity.** A headless run starts cold every time. For a status report
 that is arguably better, since it goes and looks rather than recalling; for anything conversational
 it is a real loss, and it cannot be fixed while an idle session cannot be woken.

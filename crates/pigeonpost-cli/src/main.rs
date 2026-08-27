@@ -14,6 +14,7 @@ mod loft_key;
 mod login_cmd;
 mod onboard_cmd;
 mod output;
+mod panel;
 mod postbox_cmd;
 mod registry_cmd;
 mod runner;
@@ -306,7 +307,7 @@ enum AgentdAction {
         /// A request that may be answered unattended. Repeatable.
         #[arg(long = "verb")]
         verbs: Vec<String>,
-        /// What runs the request: `claude`, `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`.
+        /// What runs the request: `claude`, `codex`, `mcoda:<pinned-slug>`, or `mcoda-cloud:<pinned-slug>`.
         #[arg(long, default_value = "claude")]
         runtime: String,
         /// Wall-clock ceiling for one action, in seconds. A report that goes and looks needs
@@ -328,6 +329,27 @@ enum AgentdAction {
         /// stopping the operator, not an attacker.
         #[arg(long)]
         daily_runs: Option<u32>,
+        /// A second agent that reads the work and comments before the reply is sent. Repeatable.
+        /// Absent, one agent answers, which is the default. Roughly (2 + reviewers)× the cost of
+        /// the same request, and one message then holds a concurrency slot for every run of it.
+        #[arg(long = "reviewer")]
+        reviewers: Vec<String>,
+        /// Draft/comment/rework cycles. 1 to 3, default 1.
+        #[arg(long)]
+        panel_rounds: Option<u8>,
+        /// A verb that gets a panel. Repeatable. Default: make_change, full_access, run_tests —
+        /// git_push and deploy are left out because the review would arrive after the act.
+        #[arg(long = "panel-verb")]
+        panel_verbs: Vec<String>,
+        /// What a reviewer may do. Cannot exceed this mailbox's own tier. Default `read-only`: a
+        /// reviewer that edits is a second author in one working tree.
+        #[arg(long, value_enum)]
+        panel_permission: Option<executor::Permission>,
+        /// What to do when the review cannot be held at all: send the draft and say so
+        /// (`proceed`, the default), or withhold the reply (`block`). Either way the work the
+        /// draft did stays committed locally.
+        #[arg(long, value_enum)]
+        panel_on_failure: Option<executor::PanelFailure>,
         /// Write the config instead of printing it.
         #[arg(long)]
         install: bool,
@@ -1331,18 +1353,30 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     permission,
                     branches,
                     daily_runs,
+                    reviewers,
+                    panel_rounds,
+                    panel_verbs,
+                    panel_permission,
+                    panel_on_failure,
                     install,
                     off,
                 } => agentd_cmd::answer(
                     &home,
-                    verbs,
-                    runtime,
-                    *timeout,
-                    *permission,
-                    branches,
-                    *daily_runs,
-                    *install,
-                    *off,
+                    &agentd_cmd::Answer {
+                        verbs,
+                        runtime,
+                        timeout_secs: *timeout,
+                        permission: *permission,
+                        branches,
+                        daily_runs: *daily_runs,
+                        reviewers,
+                        panel_rounds: *panel_rounds,
+                        panel_verbs,
+                        panel_permission: *panel_permission,
+                        panel_on_failure: *panel_on_failure,
+                        install: *install,
+                        off: *off,
+                    },
                 ),
                 AgentdAction::Pause => agentd_cmd::pause(&home),
                 AgentdAction::Resume => agentd_cmd::resume(&home),

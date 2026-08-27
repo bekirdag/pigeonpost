@@ -19,10 +19,12 @@
 //! Nobody types that. Every value in it is derivable from where the command was run and who is
 //! signed in, so this derives them and says what it decided.
 //!
-//! Every value except two. Which model reads a repository unattended, and how much it may do, are
-//! not derivable from anything — so they are the only things this asks about, and it asks only
-//! about runtimes it can see on the PATH the daemon will run with. `--runtime` skips the question
-//! entirely, which is how a script runs this.
+//! Every value except three. Which model reads a repository unattended, how much it may do, and
+//! whether a second model should read the work before the reply is sent, are not derivable from
+//! anything — so they are the only things this asks about, and it asks only about runtimes it can
+//! see on the PATH the daemon will run with. `--runtime` skips the questions entirely, which is
+//! how a script runs this; so does a stdin that is not a terminal, and both leave a single-agent
+//! mailbox.
 //!
 //! The middle line above is the one that used to be missing. Without it the mailbox is created,
 //! the daemon is installed, and nothing answers — which reads as the daemon being broken rather
@@ -155,7 +157,12 @@ fn route_this_mailbox(home: &Path, requested: Option<&str>) -> Result<(), Error>
 
     // Given explicitly, so nothing is asked. This is the path a script takes.
     if let Some(runtime) = requested {
-        return write_route(&machine, runtime, crate::executor::Permission::ReadOnly);
+        return write_route(
+            &machine,
+            runtime,
+            crate::executor::Permission::ReadOnly,
+            &[],
+        );
     }
 
     let found = runtime_pick::detect(|program| {
@@ -194,7 +201,71 @@ fn route_this_mailbox(home: &Path, requested: Option<&str>) -> Result<(), Error>
         family => family.to_string(),
     };
     let permission = runtime_pick::choose_permission();
-    write_route(&machine, &runtime, permission)
+    let reviewers = choose_reviewers(&found, found[picked].family)?;
+    write_route(&machine, &runtime, permission, &reviewers)
+}
+
+/// Ask whether a second agent should read the work, when this machine has a second agent to offer.
+///
+/// The third and last question. It is asked only when more than one runtime was detected — one
+/// runtime has nothing to review with — and `choose` itself returns `None` when there is nobody to
+/// ask, so every non-interactive path still produces a single-agent mailbox exactly as before.
+fn choose_reviewers(
+    found: &[crate::runtime_pick::Detected],
+    main: &str,
+) -> Result<Vec<String>, Error> {
+    use crate::runtime_pick;
+
+    let others: Vec<&str> = found
+        .iter()
+        .map(|d| d.family)
+        .filter(|family| *family != main)
+        .collect();
+    if others.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    // Built alongside the words, so the option somebody reads and the runtimes they get cannot
+    // drift apart.
+    let mut options = vec!["No — one agent answers. Fastest and cheapest.".to_string()];
+    let mut picks: Vec<Vec<&str>> = vec![Vec::new()];
+    for other in &others {
+        options.push(format!(
+            "{other} reviews {main}'s work, then {main} reworks it. Roughly 3× the cost."
+        ));
+        picks.push(vec![*other]);
+    }
+    if others.len() > 1 {
+        options.push(format!(
+            "{} both review. Roughly {}× the cost.",
+            others.join(" and "),
+            2 + others.len()
+        ));
+        picks.push(others.clone());
+    }
+
+    let Some(chosen) = runtime_pick::choose(
+        "Have another agent review the work before it is sent?",
+        &options,
+        0,
+    ) else {
+        return Ok(Vec::new());
+    };
+
+    let mut spellings = Vec::new();
+    for family in &picks[chosen] {
+        match *family {
+            // The same sub-menu the main runtime gets: a route can only name a pinned slug, never
+            // the family, so there is nothing to write until one is chosen.
+            "mcoda" => {
+                if let Some(spelling) = pick_mcoda_agent()? {
+                    spellings.push(spelling);
+                }
+            }
+            family => spellings.push(family.to_string()),
+        }
+    }
+    Ok(spellings)
 }
 
 /// Local or managed-remote first, then which agent — because the two lists have nothing in common
@@ -248,6 +319,7 @@ fn write_route(
     machine: &Path,
     runtime: &str,
     permission: crate::executor::Permission,
+    reviewers: &[String],
 ) -> Result<(), Error> {
     // Every verb the postbox will grant, so the route matches the trust that was just set up.
     // The permission tier is the second key and is chosen separately — a verb being answerable
@@ -266,7 +338,24 @@ fn write_route(
         Vec::new()
     };
     crate::agentd_cmd::answer(
-        machine, &verbs, runtime, None, permission, &branches, None, true, false,
+        machine,
+        &crate::agentd_cmd::Answer {
+            verbs: &verbs,
+            runtime,
+            timeout_secs: None,
+            permission,
+            branches: &branches,
+            daily_runs: None,
+            reviewers,
+            // Every panel default, because onboarding asks one question about this and writing
+            // four answers from it would be inventing three of them.
+            panel_rounds: None,
+            panel_verbs: &[],
+            panel_permission: None,
+            panel_on_failure: None,
+            install: true,
+            off: false,
+        },
     )
 }
 

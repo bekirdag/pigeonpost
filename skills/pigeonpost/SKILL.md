@@ -328,6 +328,65 @@ would be worse than none.
 
 `read_file` stays refused: `full` supersedes it, and a path-confined reader is a different feature.
 
+### A second agent on the work
+
+One mailbox can answer with several models. A **panel** adds reviewers: the route's own runtime does
+the work and drafts the reply, every reviewer reads what it actually did — the working tree, the
+diff, the tests — and comments, and the main runtime gets its own draft back with those comments to
+rework. What it writes then is what is sent. A mailbox with no panel behaves exactly as it always
+has, and that is still the default.
+
+```
+pigeonpost --agent bdya agentd answer --verb make_change --permission workspace \
+  --reviewer codex --install
+```
+
+```toml
+[[mailbox]]
+address    = "/bekir/bdya"
+workspace  = "/home/wodo/apps/bdya"
+runtime    = "claude"
+verbs      = ["make_change", "full_access"]
+permission = "full"
+branches   = ["*"]
+
+  [mailbox.panel]
+  reviewers  = ["codex", "mcoda:gpt-5-high"]   # runtime spellings, same grammar as `runtime`
+  rounds     = 1                               # draft → comment → rework. 1 to 3
+  verbs      = ["make_change", "full_access"]  # default: make_change, full_access, run_tests
+  permission = "read-only"                     # default, and never above the route's own
+  on_failure = "proceed"                       # or "block"
+```
+
+- **It costs what it sounds like.** Two reviewers and one round is four runs for one message, so
+  roughly 4× the tokens — and `timeout_secs` is per run, not per message, so one message can occupy
+  a concurrency slot for a multiple of the number you set. `agentd answer` prints that arithmetic
+  when a panel is configured.
+- **Reviewers read; they do not write.** `read-only` by default and never above the route's own
+  tier. A reviewer that edits is a second author in one working tree, and there is nobody present
+  to resolve the conflict.
+- **A reviewer's comments are data, not instructions.** They are fenced and labelled to the main
+  agent exactly the way a sender's note is, and the prompt says in as many words that they cannot
+  widen what was asked for. That matters most at `full`: without it, a reviewer — possibly a
+  managed remote agent — could tell a full-permission agent to publish something nobody asked for.
+- **Reviewers default to local.** `mcoda-cloud:` in a reviewer list works and is never reached by
+  accident; it prints the same off-machine warning `runtime` does, because a cloud reviewer is sent
+  the whole draft, which at `make_change` and above quotes the repository.
+- **Nothing already on disk is thrown away.** If every reviewer fails, the draft is sent with a
+  footer saying so — or, with `on_failure = "block"`, withheld while the work stays committed
+  locally. A failed *rework* always sends the draft, under either setting: it is real work, and
+  withholding it would leave a peer with no answer and a dirty tree.
+- **What a panel bounds.** The reply and the local working tree — not publishing. At `full` the
+  draft phase is authorised to push and deploy, so by the time a reviewer sees the draft the push
+  has happened. The prompt asks the main agent to hold that last step until the review is in, but
+  that is a request to a model rather than a barrier. Say "reviewed before it was sent"; never
+  "reviewed before it was published".
+
+The reply carries one extra line saying so — `Reviewed by codex over 1 round before sending. No
+human read the review either.` — and every spawn gets its own `panel_spawn` audit line. The full
+transcript, every prompt and every reply, is kept at `~/.pigeonpost/run/<message-id>/transcript.jsonl`
+and is never put in the message.
+
 `--timeout` is a wall-clock kill and nothing retries a killed run, so too short is the worse
 mistake: the peer is told the state is unknown while any commits already made are still there.
 Work at `workspace` and `full` can take hours. `--timeout 0` removes the ceiling entirely, and then

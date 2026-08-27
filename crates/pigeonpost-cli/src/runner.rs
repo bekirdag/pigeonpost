@@ -55,6 +55,9 @@ pub enum RunFailure {
     NotLocal(String),
     /// Staging the prompt or reading the pipes failed.
     Io(String),
+    /// The panel could not be held, and this route said that withholds the reply. The work the
+    /// draft did is still on disk — this is a refusal to *send*, not a refusal to have acted.
+    PanelBlocked(String),
 }
 
 impl RunFailure {
@@ -65,12 +68,16 @@ impl RunFailure {
             RunFailure::Empty => "empty_output",
             RunFailure::NotLocal(_) => "adapter_not_local",
             RunFailure::Io(_) => "io_error",
+            RunFailure::PanelBlocked(_) => "panel_blocked",
         }
     }
 
     pub fn detail(&self) -> String {
         match self {
-            RunFailure::Spawn(e) | RunFailure::NotLocal(e) | RunFailure::Io(e) => e.clone(),
+            RunFailure::Spawn(e)
+            | RunFailure::NotLocal(e)
+            | RunFailure::Io(e)
+            | RunFailure::PanelBlocked(e) => e.clone(),
             RunFailure::Timeout(secs) => format!("killed after {secs}s"),
             RunFailure::Empty => "no output".into(),
         }
@@ -92,6 +99,9 @@ pub struct Run {
     pub truncated: bool,
     /// The adapter that answered, where the runtime reports one. Recorded for the audit log.
     pub adapter: Option<String>,
+    /// How a panel produced this, when one did. `None` is the single-agent answer, which is still
+    /// what almost every route does.
+    pub panel: Option<crate::panel::Summary>,
 }
 
 /// Build the prompt for one action.
@@ -414,10 +424,18 @@ pub fn extract(runtime: &Runtime, stdout: &str) -> Result<(String, Option<String
 ///   build that checks it — the header below carries the same statement for anyone who does.
 /// * The requester still needs to tie an answer to its question, which is what `in_reply_to` is
 ///   for, and a human reading `postbox inbox` still gets something legible.
-pub fn reply_body(verb: &str, in_reply_to: &str, text: &str) -> String {
+pub fn reply_body(verb: &str, in_reply_to: &str, provenance: Option<&str>, text: &str) -> String {
+    // One line, and only when there is one to say. An agent receiving unattended work should know
+    // how it was produced, and "two models agreed" is materially different provenance from "one
+    // model said so" — but a route with no panel must keep the exact header it has always sent.
+    let provenance = match provenance {
+        Some(line) => format!("{line}\n"),
+        None => String::new(),
+    };
     format!(
         "pigeonpost-auto-reply v1 in_reply_to={in_reply_to} answered={verb}\n\
-         Generated unattended by this mailbox's agent. Nobody read it before it was sent.\n\n{text}\n"
+         Generated unattended by this mailbox's agent. Nobody read it before it was sent.\n\
+         {provenance}\n{text}\n"
     )
 }
 
@@ -444,13 +462,24 @@ pub fn refusal_body(verb: &str, in_reply_to: &str, why: &str) -> String {
 }
 
 /// Stage the prompt where the child can read it, owner-only.
-fn stage_prompt(home: &Path, message_id: &str, body: &str) -> Result<PathBuf, RunFailure> {
+///
+/// The tag is in the filename because one message is no longer one spawn. A panel runs the main
+/// runtime, every reviewer and then the main runtime again, all for the same message id — so a name
+/// derived from the id alone would have four spawns overwriting each other's prompt, and the
+/// [`Staged`] guard deleting a file another phase was still reading from.
+fn stage_prompt(
+    home: &Path,
+    message_id: &str,
+    tag: &str,
+    body: &str,
+) -> Result<PathBuf, RunFailure> {
     use std::io::Write;
     let dir = home.join(RUN_DIR);
     std::fs::create_dir_all(&dir).map_err(|e| RunFailure::Io(e.to_string()))?;
     let path = dir.join(format!(
-        "{}.prompt",
-        &message_id[..16.min(message_id.len())]
+        "{}-{}.prompt",
+        &message_id[..16.min(message_id.len())],
+        safe_tag(tag)
     ));
     let mut file = std::fs::File::create(&path).map_err(|e| RunFailure::Io(e.to_string()))?;
     restrict(&file).map_err(|e| RunFailure::Io(e.to_string()))?;
@@ -459,35 +488,77 @@ fn stage_prompt(home: &Path, message_id: &str, body: &str) -> Result<PathBuf, Ru
     Ok(path)
 }
 
+/// A tag as a filename component: letters, digits and dashes, and never empty.
+///
+/// Tags are written by this crate rather than arriving from anywhere, so this is a belt on top of
+/// braces — but it is a value that becomes a path, and those are worth being sure about.
+fn safe_tag(tag: &str) -> String {
+    let cleaned: String = tag
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let cleaned = cleaned.trim_matches('-').to_string();
+    if cleaned.is_empty() {
+        "spawn".into()
+    } else {
+        cleaned
+    }
+}
+
 #[cfg(unix)]
-fn restrict(file: &std::fs::File) -> std::io::Result<()> {
+pub(crate) fn restrict(file: &std::fs::File) -> std::io::Result<()> {
     use std::os::unix::fs::PermissionsExt;
     file.set_permissions(std::fs::Permissions::from_mode(0o600))
 }
 
 #[cfg(not(unix))]
-fn restrict(_file: &std::fs::File) -> std::io::Result<()> {
+pub(crate) fn restrict(_file: &std::fs::File) -> std::io::Result<()> {
     Ok(())
 }
 
-/// Run one action to completion, or fail trying.
-pub async fn run(
+/// One spawn of one runtime, described in full.
+///
+/// The reason this exists rather than everything being derived from an [`Action`]: a reviewer runs
+/// a *different* runtime at a *different* tier with a *different* prompt in the *same* workspace,
+/// and an `Action` can only describe the route's own answer.
+pub struct Spawn<'a> {
+    pub runtime: &'a Runtime,
+    pub permission: Permission,
+    pub workspace: &'a Path,
+    /// Wall-clock ceiling. Zero means none, as it does everywhere else on this route.
+    pub timeout_secs: u64,
+    pub prompt: &'a str,
+    /// Which spawn this is — `main`, `r1-reviewer-0`, `r1-rework`. Names the prompt file and
+    /// labels the audit line, so four spawns for one message stay tellable apart afterwards.
+    pub tag: &'a str,
+}
+
+/// Run one runtime to completion, or fail trying.
+///
+/// Every impure part of this module is here. `prompt`, `argv` and `extract` are pure and tested
+/// without a model anywhere near them; this is the part that has to be exercised against a real
+/// child process.
+pub async fn spawn_once(
     home: &Path,
-    action: &Action,
-    sender: &str,
     message_id: &str,
+    spawn: Spawn<'_>,
 ) -> Result<Run, RunFailure> {
-    let body = prompt(action, sender);
     // Held in a guard so every exit below removes it. A prompt carries another agent's text and the
     // shape of this workspace; leaving copies behind on the failure paths is how a debugging aid
     // turns into a pile of stale context nobody remembers writing.
-    let staged = Staged(stage_prompt(home, message_id, &body)?);
-    let (program, args, stdin) = argv(&action.runtime, &staged.0, action.route.permission);
+    let staged = Staged(stage_prompt(home, message_id, spawn.tag, spawn.prompt)?);
+    let (program, args, stdin) = argv(spawn.runtime, &staged.0, spawn.permission);
 
     let mut command = tokio::process::Command::new(&program);
     command
         .args(&args)
-        .current_dir(&action.route.workspace)
+        .current_dir(spawn.workspace)
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
         // Not the default, and it has to be set: tokio leaves a child running when its handle is
@@ -516,14 +587,14 @@ pub async fn run(
     // Real work at the higher tiers can run for hours, and nothing retries a killed run, so too
     // short is a worse failure than too long: the peer is told the state is unknown, while any
     // commits already made are still there. `agentd pause` is the stop button, not this.
-    let output = if action.route.timeout_secs == 0 {
+    let output = if spawn.timeout_secs == 0 {
         child.wait_with_output().await
     } else {
-        let ceiling = std::time::Duration::from_secs(action.route.timeout_secs);
+        let ceiling = std::time::Duration::from_secs(spawn.timeout_secs);
         match tokio::time::timeout(ceiling, child.wait_with_output()).await {
             Ok(finished) => finished,
             // Dropping the future drops the child, and `kill_on_drop` above makes that a kill.
-            Err(_) => return Err(RunFailure::Timeout(action.route.timeout_secs)),
+            Err(_) => return Err(RunFailure::Timeout(spawn.timeout_secs)),
         }
     };
     let output = match output {
@@ -532,7 +603,7 @@ pub async fn run(
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let (mut text, adapter) = extract(&action.runtime, &stdout).map_err(|e| match e {
+    let (mut text, adapter) = extract(spawn.runtime, &stdout).map_err(|e| match e {
         // Carry the child's own complaint into the audit line, since an empty stdout with a
         // populated stderr is the shape a missing login takes.
         RunFailure::Empty => {
@@ -562,7 +633,39 @@ pub async fn run(
         text,
         truncated,
         adapter,
+        panel: None,
     })
+}
+
+/// Run one action to completion, or fail trying.
+///
+/// Either one spawn, which is what every route did before panels existed and what almost all of
+/// them still do, or a panel — and which of those it is, is the route's own decision.
+pub async fn run(
+    home: &Path,
+    action: &Action,
+    sender: &str,
+    message_id: &str,
+) -> Result<Run, RunFailure> {
+    if let Some(panel) = &action.route.panel {
+        if panel.applies(&action.verb) {
+            return crate::panel::conduct(home, action, sender, message_id, panel).await;
+        }
+    }
+    let body = prompt(action, sender);
+    spawn_once(
+        home,
+        message_id,
+        Spawn {
+            runtime: &action.runtime,
+            permission: action.route.permission,
+            workspace: &action.route.workspace,
+            timeout_secs: action.route.timeout_secs,
+            prompt: &body,
+            tag: "main",
+        },
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -581,6 +684,7 @@ mod tests {
                 permission: Permission::ReadOnly,
                 branches: Vec::new(),
                 daily_runs_per_sender: 50,
+                panel: None,
             },
             verb: verb.into(),
             note: note.map(str::to_string),
@@ -921,9 +1025,31 @@ mod tests {
     }
 
     /// An answer must not be able to come back as a request, whatever the peer granted us.
+    /// The header a route with no panel sends is the header it has always sent — anything reading
+    /// these two lines keeps working, and only a reviewed reply gains a third.
+    #[test]
+    fn provenance_is_a_line_a_panel_adds_and_nothing_else_does() {
+        let plain = reply_body("make_change", "abc123", None, "done");
+        assert_eq!(plain.lines().count(), 4);
+        assert!(plain.lines().nth(2).unwrap().is_empty());
+
+        let reviewed = reply_body(
+            "make_change",
+            "abc123",
+            Some("Reviewed by codex over 1 round before sending."),
+            "done",
+        );
+        assert_eq!(
+            reviewed.lines().nth(2).unwrap(),
+            "Reviewed by codex over 1 round before sending."
+        );
+        assert!(reviewed.lines().nth(3).unwrap().is_empty());
+        assert!(reviewed.contains("\n\ndone\n"));
+    }
+
     #[test]
     fn a_reply_is_not_a_request_envelope() {
-        let body = reply_body("report_status", "abc123", "everything is fine");
+        let body = reply_body("report_status", "abc123", None, "everything is fine");
         assert!(serde_json::from_str::<serde_json::Value>(&body).is_err());
         assert!(
             body.starts_with("pigeonpost-auto-reply v1 in_reply_to=abc123 answered=report_status")
@@ -935,7 +1061,7 @@ mod tests {
     #[test]
     fn a_staged_prompt_is_owner_only_and_holds_the_body() {
         let dir = tempfile::tempdir().unwrap();
-        let path = stage_prompt(dir.path(), "abcdef0123456789ff", "hello").unwrap();
+        let path = stage_prompt(dir.path(), "abcdef0123456789ff", "main", "hello").unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "hello");
         #[cfg(unix)]
         {
@@ -991,10 +1117,37 @@ mod tests {
         assert!(left.is_empty(), "prompt files left behind: {left:?}");
     }
 
+    /// One message is no longer one spawn. Four prompts named from the message id alone would
+    /// overwrite each other, and the `Staged` guard would delete a file another phase was still
+    /// reading from.
+    #[test]
+    fn each_spawn_of_one_message_stages_its_own_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "abcdef0123456789ff";
+        let main = stage_prompt(dir.path(), id, "main", "draft").unwrap();
+        let reviewer = stage_prompt(dir.path(), id, "r1-reviewer-0", "review").unwrap();
+        let rework = stage_prompt(dir.path(), id, "r1-rework", "rework").unwrap();
+        assert_ne!(main, reviewer);
+        assert_ne!(reviewer, rework);
+        assert_eq!(std::fs::read_to_string(&main).unwrap(), "draft");
+        assert_eq!(std::fs::read_to_string(&reviewer).unwrap(), "review");
+        assert_eq!(std::fs::read_to_string(&rework).unwrap(), "rework");
+    }
+
+    /// A tag becomes a path. Nothing outside this crate writes one, which is exactly why it is
+    /// cheap to be certain about.
+    #[test]
+    fn a_tag_cannot_become_a_path_of_its_own() {
+        assert_eq!(safe_tag("r1-reviewer-0"), "r1-reviewer-0");
+        assert_eq!(safe_tag("../../etc/passwd"), "etc-passwd");
+        assert_eq!(safe_tag(""), "spawn");
+        assert_eq!(safe_tag("///"), "spawn");
+    }
+
     #[test]
     fn a_staged_prompt_is_removed_when_its_guard_goes_out_of_scope() {
         let dir = tempfile::tempdir().unwrap();
-        let path = stage_prompt(dir.path(), "abcdef0123456789ff", "hello").unwrap();
+        let path = stage_prompt(dir.path(), "abcdef0123456789ff", "main", "hello").unwrap();
         {
             let _guard = Staged(path.clone());
             assert!(path.exists());

@@ -662,6 +662,60 @@ the default. The slug is always pinned: a routing default that drifted onto a ma
 would hand another agent's text to a runtime this machine does not control, and reaching one of
 those has its own spelling, `mcoda-cloud:<slug>`.
 
+### A second agent on the work
+
+One mailbox can answer with several models. A **panel** adds reviewers: the route's own runtime does
+the work and drafts the reply, every reviewer reads what it actually did — the working tree, the
+diff, the tests — and comments, and the main runtime gets its own draft back with those comments to
+rework. What it writes then is what is sent. A route with no `[mailbox.panel]` behaves exactly as it
+did before this existed, which is still the default.
+
+```bash
+pigeonpost --agent bdya agentd answer --verb make_change --permission workspace \
+  --reviewer codex --install
+```
+
+```toml
+  [mailbox.panel]
+  reviewers  = ["codex", "mcoda:gpt-5-high"]   # runtime spellings, same grammar as `runtime`
+  rounds     = 1                               # draft → comment → rework. 1 to 3
+  verbs      = ["make_change", "full_access"]  # default: make_change, full_access, run_tests
+  permission = "read-only"                     # default, and never above the route's own
+  on_failure = "proceed"                       # or "block"
+```
+
+The three phases are strictly ordered, and that ordering is the whole reason reviewers can share the
+main agent's checkout: reviewers run concurrently with each other, but no reader starts until the
+writer has finished and the writer does not resume while a reader is still running. Reviewers are
+`read-only` by default and can never be given more than the route itself has — a reviewer that edits
+is a second author in one working tree, with nobody present to resolve the conflict.
+
+Their comments reach the main agent as **data**, fenced and labelled the way a sender's note is,
+under a line saying they cannot widen what was asked for. That is the part the feature rests on: a
+panel opens a second channel of model-authored text into an agent that may be running at `full`, and
+without that framing a reviewer — possibly a managed remote agent whose configuration this machine
+does not own — could talk it into publishing something nobody asked for. `mcoda-cloud:` reviewers
+work and are never a default; they get the same off-machine warning `runtime` does, because a cloud
+reviewer is sent the whole draft.
+
+A panel is `2 + reviewers` runs for one message, so roughly that multiple of the tokens — and
+`timeout_secs` is per run rather than per message, so one message holds a concurrency slot for a
+multiple of the number you set. `agentd answer` prints that arithmetic rather than leaving it to be
+discovered. If every reviewer fails the draft is still sent, with a footer saying the review did not
+happen; `on_failure = "block"` withholds the reply instead, and the work stays committed locally
+either way. A failed *rework* always sends the draft, under both settings.
+
+What a panel bounds is the reply and the local working tree — **not publishing**. At `full` the
+draft phase is authorised to push and deploy, so by the time a reviewer sees the draft the push has
+already happened. The draft prompt asks the main agent to hold that last step until the review is
+in, but that is a request to a model and not an enforced barrier. Reviewed before it was *sent*;
+never reviewed before it was published.
+
+A reviewed reply carries one extra provenance line — `Reviewed by codex over 1 round before sending.
+No human read the review either.` — every spawn gets its own `panel_spawn` audit line, and the full
+transcript of every prompt and reply is kept at `~/.pigeonpost/run/<message-id>/transcript.jsonl`.
+It is never put in the message: it would crowd out the answer inside the size the transport carries.
+
 `agentd install` records the `PATH` it was run with, because a service manager gives its jobs a
 minimal one and the runtimes are never on it — install the daemon from a shell where the runtime
 works, and re-run it if that stops being true.
