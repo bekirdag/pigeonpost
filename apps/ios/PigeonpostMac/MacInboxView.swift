@@ -44,7 +44,9 @@ struct MacInboxView: View {
     // gives up on the whole body — "unable to type-check this expression in reasonable time", and
     // then blames whichever line it happened to be looking at.
     var body: some View {
-        NavigationSplitView {
+        @Bindable var inbox = inbox
+
+        return NavigationSplitView {
             sidebar
         } content: {
             threadsColumn
@@ -55,8 +57,16 @@ struct MacInboxView: View {
         // unset title falls back to the application's name — which put "Pigeonpost Desktop"
         // immediately beside "bdya" and made the bar read as two titles.
         .navigationTitle("")
+        // Mail for another conversation, said inside the window rather than by Notification Centre.
+        // A desktop notification is right when the app is behind something and wrong when it is in
+        // front — see `Announcer`, and `Inbox.tell(about:)` for which of the two happens when.
+        .announcements($inbox.announcement) { arrived in
+            peer = arrived
+            subthread = nil
+        }
         .task {
             push.attach(to: account)
+            push.attach(to: inbox)
             account.push = push
             // Asked on the way in rather than at first launch. A desktop app that wants to notify
             // you before it has shown you anything is a dialog people dismiss.
@@ -65,10 +75,16 @@ struct MacInboxView: View {
             // and can say so with its own name and icon on the notification. Announcing it from
             // here is what replaced `osascript display notification`, which had neither and could
             // not be clicked.
+            //
+            // Only reached when the app is *behind* something — `Inbox` shows a line in the window
+            // instead when it is in front. A desktop notification about a message you can already
+            // see, in a window you are already looking at, is a thing to dismiss and nothing else.
+            let mailbox = account.me.map { $0.handle ?? $0.label ?? $0.address } ?? ""
             inbox.onArrival = { arrivals in
                 for message in arrivals {
                     LocalNotifier.announce(
                         title: PeerFace.displayName(message.peerKey),
+                        subtitle: PeerFace.displayName(mailbox),
                         body: ConversationBuilder.preview(body: message.body),
                         peer: message.peerKey,
                         messageId: message.messageId

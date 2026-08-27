@@ -147,6 +147,89 @@ extension View {
     }
 }
 
+/// Mail that arrived somewhere other than the screen you are on, said by the app itself.
+///
+/// The half of a notification that belongs to an app that is already open. A system banner there is
+/// the app being interrupted by an announcement about itself — it covers the navigation bar, it has
+/// to be dismissed before the thing underneath can be used, and at its worst it is a banner about
+/// the message on screen. This is the same information without any of that: it names who wrote and
+/// what they said, it goes on its own after a few seconds, it can be pushed away, and tapping it
+/// opens the conversation it is about.
+///
+/// It is never shown for the conversation being read — `Inbox` drops those before they reach here.
+private struct Announcer: ViewModifier {
+    @Binding var announcement: Inbox.Announcement?
+    let open: (String) -> Void
+
+    func body(content: Content) -> some View {
+        content.overlay(alignment: .top) {
+            if let announcement {
+                line(announcement)
+                    .transition(.move(edge: .top).combined(with: .opacity))
+                    // Pushed up and away, the gesture the system's own banners take.
+                    .gesture(
+                        DragGesture(minimumDistance: 12)
+                            .onEnded { drag in
+                                if drag.translation.height < 0 { self.announcement = nil }
+                            }
+                    )
+                    // Keyed on the id, so a second message restarts the clock rather than
+                    // inheriting what was left of the first one's.
+                    .task(id: announcement.id) {
+                        try? await Task.sleep(nanoseconds: 4_500_000_000)
+                        guard !Task.isCancelled else { return }
+                        self.announcement = nil
+                    }
+            }
+        }
+        .animation(.easeOut(duration: 0.2), value: announcement)
+    }
+
+    private func line(_ announcement: Inbox.Announcement) -> some View {
+        Button {
+            let peer = announcement.peer
+            self.announcement = nil
+            open(peer)
+        } label: {
+            HStack(alignment: .top, spacing: 10) {
+                Avatar(peer: announcement.peer, size: 30)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(announcement.title)
+                        .font(.system(size: 13.5, weight: .semibold))
+                        .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                    Text(announcement.body)
+                        .font(.system(size: 12.5))
+                        .foregroundStyle(Theme.body)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .frame(maxWidth: 460)
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.rule, lineWidth: 1))
+            .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+        }
+        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+        .accessibilityLabel("\(announcement.title): \(announcement.body). Open this conversation")
+    }
+}
+
+extension View {
+    /// See `Announcer`. `open` is given the peer the line was about.
+    func announcements(
+        _ announcement: Binding<Inbox.Announcement?>,
+        open: @escaping (String) -> Void
+    ) -> some View {
+        modifier(Announcer(announcement: announcement, open: open))
+    }
+}
+
 /// The tiled doodle behind a conversation, the same one the web inbox uses.
 ///
 /// Three layers, bottom to top: the page colour, the artwork tiled over it, and the veil that sets

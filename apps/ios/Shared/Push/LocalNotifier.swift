@@ -16,9 +16,13 @@ import UserNotifications
 enum LocalNotifier {
     /// Announce one message. The identifier is the message id, so the same message announced twice
     /// replaces its own notification rather than stacking a duplicate.
-    static func announce(title: String, body: String, peer: String, messageId: String) {
+    static func announce(title: String, subtitle: String, body: String, peer: String, messageId: String) {
         let content = UNMutableNotificationContent()
         content.title = title
+        // Which of the account's mailboxes it landed in. The postbox puts it in the same place on a
+        // remote notification, and somebody holding a fleet cannot tell two of them apart without
+        // it — "bdya wrote" is half a sentence when four mailboxes can be written to.
+        content.subtitle = subtitle
         content.body = body
         content.sound = .default
         content.userInfo = ["peer": peer]

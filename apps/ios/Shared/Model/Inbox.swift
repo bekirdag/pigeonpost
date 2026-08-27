@@ -27,12 +27,29 @@ final class Inbox {
     /// the server agrees.
     private var acked: Set<String> = []
 
-    /// Told when mail arrives that this inbox had not listed before.
+    /// Told when mail arrives that this inbox had not listed before, **and the app is not in front
+    /// of anybody**.
     ///
-    /// Set by the platform that wants to announce it. The Mac app posts a notification from here,
-    /// because on a desktop the app is usually the first to know; the phone leaves announcing to
-    /// the postbox and APNs, which can also reach it while it is closed.
+    /// Set by the platform that wants to announce it. The Mac app posts a system notification from
+    /// here, because on a desktop the app is usually the first to know; the phone leaves announcing
+    /// to the postbox and APNs, which can also reach it while it is closed. While the app *is* in
+    /// front of somebody neither of those is right, and `announcement` is what happens instead.
     var onArrival: (([Message]) -> Void)?
+
+    /// Mail to say something about without taking anybody off the screen they are on.
+    ///
+    /// Cleared by whoever showed it. Keyed by the message id, so the same message arriving twice —
+    /// once down the poll and once through APNs — replaces its own line rather than stacking a
+    /// second one.
+    var announcement: Announcement?
+
+    struct Announcement: Identifiable, Equatable {
+        /// The message id, which is also what makes this replace rather than repeat.
+        let id: String
+        let peer: String
+        let title: String
+        let body: String
+    }
 
     /// Which conversation is on screen, so arrivals in it are not announced. Reading a message and
     /// being told about it at the same moment is the notification nobody wants.
@@ -172,7 +189,39 @@ final class Inbox {
                 && message.peerKey != reading
         }
         guard !fresh.isEmpty else { return }
-        onArrival?(fresh)
+        tell(about: fresh)
+    }
+
+    /// Say it in the way that suits where the person is.
+    ///
+    /// In front of the app: a line at the top of the screen they are already looking at. Anywhere
+    /// else: the platform's own notification, which is the only one that can reach a closed window
+    /// or a locked phone. Never both, and — because `announce` has already dropped anything for the
+    /// conversation on screen — never for the message being read.
+    func tell(about fresh: [Message]) {
+        guard let latest = fresh.last else { return }
+        guard AppLife.isActive else {
+            onArrival?(fresh)
+            return
+        }
+        announcement = Announcement(
+            id: latest.messageId,
+            peer: latest.peerKey,
+            title: fresh.count > 1
+                ? "\(PeerFace.displayName(latest.peerKey)) and \(fresh.count - 1) more"
+                : PeerFace.displayName(latest.peerKey),
+            body: ConversationBuilder.preview(body: latest.body)
+        )
+    }
+
+    /// The same line, for a notification that arrived through APNs while the app was open.
+    ///
+    /// The poll announces everything in the mailbox on screen; this covers the rest — mail for
+    /// another of the account's mailboxes, which nothing here is watching and which would otherwise
+    /// be a system banner over an app perfectly capable of saying it itself.
+    func tell(remote peer: String, title: String, body: String, messageId: String) {
+        guard peer != reading else { return }
+        announcement = Announcement(id: messageId, peer: peer, title: title, body: body)
     }
 
     private func rebuild() {
@@ -190,6 +239,8 @@ final class Inbox {
     func reset() {
         // Another mailbox's acknowledgements say nothing about this one's mail.
         acked = []
+        // And nothing it was about to say about them.
+        announcement = nil
         // A new mailbox has its own history; none of the previous one's mail is news here either.
         listed = nil
         messages = []
@@ -313,10 +364,43 @@ final class Inbox {
         acked.formUnion(ids)
         markRead(ids)
         guard !Fixtures.enabled else { return }
+        confirm(ids, as: me.address)
+    }
 
-        for message in unread {
-            // Nothing is lost by a failed ack — the message is still there on the next poll.
-            try? await client.ack(identity: me.address, messageId: message.messageId)
+    /// Tell the postbox, from a task of this inbox's own rather than from the caller's.
+    ///
+    /// This used to be a loop in `acknowledge`, and not one ack ever left the device. The caller is
+    /// a `.task(id:)` on the conversation whose id is made partly of the unread count — so marking
+    /// the mail read locally, on the line above, changes that id, SwiftUI cancels the task that did
+    /// it, and every `await` after that point is cancelled before it can reach the network.
+    /// `try?` then swallowed the `CancellationError` and the loop ran to its end sending nothing.
+    /// Measured on an iPhone 16 Pro with a probe build: `Task.isCancelled` was already true on the
+    /// line after the local mark, every time.
+    ///
+    /// So the mark cleared on screen and the server never heard. It stayed cleared only because
+    /// `acked` corrects the listings in flight — and `acked` is emptied by `reset()`, which is what
+    /// switching mailbox does. Come back, and every mark is there again, exactly as reported.
+    ///
+    /// An unstructured `Task` does not inherit its parent's cancellation, which is the whole point:
+    /// this outlives the screen that asked for it. The identity is captured rather than read later,
+    /// so a mailbox switch mid-flight still acknowledges the mailbox the mail was read in.
+    private func confirm(_ ids: [String], as identity: String) {
+        let client = self.client
+        Task {
+            for id in ids {
+                // Twice, and then let it go. A failed ack loses nothing — the message is still
+                // there — but it is a mark that comes back, which is worth one more attempt over
+                // a dropped connection.
+                for attempt in 0..<2 {
+                    do {
+                        try await client.ack(identity: identity, messageId: id)
+                        break
+                    } catch {
+                        guard attempt == 0 else { break }
+                        try? await Task.sleep(nanoseconds: 400_000_000)
+                    }
+                }
+            }
         }
     }
 

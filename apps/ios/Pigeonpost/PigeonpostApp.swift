@@ -29,6 +29,9 @@ struct PigeonpostApp: App {
                 .environment(push)
                 .task {
                     push.attach(to: account)
+                    // And the inbox, which is what the notification delegate consults before it
+                    // decides whether the system needs to say anything at all.
+                    push.attach(to: inbox)
                     account.push = push
                 }
         }

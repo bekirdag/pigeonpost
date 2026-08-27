@@ -46,6 +46,14 @@ struct ConversationsView: View {
             }
         }
         .navigationSplitViewStyle(.balanced)
+        // What is on screen is not news — the inbox drops arrivals for it rather than announcing
+        // them, and until this was set that guard had never once been true on the phone.
+        .onChange(of: selection, initial: true) { _, picked in
+            inbox.reading = picked
+        }
+        // Mail for another conversation, said by the app rather than by the system. See
+        // `Announcer`, and `PushService`'s delegate for the notifications this replaces.
+        .announcements($inbox.announcement) { peer in selection = peer }
         // The poll lives exactly as long as the app is in front of somebody. `.task(id:)` restarts
         // it when the mailbox changes and cancels it on the way to the background — a long poll held
         // open by a suspended app is a socket the system kills anyway, and one this app would then

@@ -28,6 +28,9 @@ final class PushService: NSObject {
     /// for the system to hand it over again.
     private var deviceToken: String?
     private weak var account: Account?
+    /// The mailbox on screen, so a notification about something it is already showing can be left
+    /// unposted and said in the app instead.
+    private weak var inbox: Inbox?
 
     /// Which Apple minted the token, read from the build's own provisioning profile.
     ///
@@ -78,6 +81,12 @@ final class PushService: NSObject {
     func attach(to account: Account) {
         self.account = account
         UNUserNotificationCenter.current().delegate = self
+    }
+
+    /// Which inbox is on screen. Held weakly and only read from the delegate below, which needs to
+    /// know what is already being looked at before it decides to interrupt it.
+    func attach(to inbox: Inbox) {
+        self.inbox = inbox
     }
 
     /// Ask for a token when permission already exists, without ever asking for permission.
@@ -159,14 +168,40 @@ final class PushService: NSObject {
 }
 
 extension PushService: UNUserNotificationCenterDelegate {
-    /// A notification that lands while the app is open. Shown as a banner: the list only updates
-    /// itself for the mailbox on screen, and mail for another of your mailboxes is exactly what you
-    /// would want to be told about.
+    /// A notification that lands while the app is open.
+    ///
+    /// Never as a system banner. This method is only ever called with the app in front of somebody,
+    /// and a banner from the system there is the app being interrupted by an announcement about
+    /// itself: it covers the navigation bar, it has to be dismissed, and at its worst it is a
+    /// banner about the very message on screen.
+    ///
+    /// So nothing is presented, and the app says it itself — a line at the top of the screen that
+    /// is already open, which can be tapped to go there and which knows not to appear for the
+    /// conversation being read. Mail for another of the account's mailboxes still gets said; that
+    /// is the case the system banner was really covering, and the only one it was right about.
     nonisolated func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         willPresent notification: UNNotification
     ) async -> UNNotificationPresentationOptions {
-        [.banner, .sound]
+        let content = notification.request.content
+        let info = content.userInfo
+        let peer = info["peer"] as? String
+        let messageId = info["message_id"] as? String ?? notification.request.identifier
+        await MainActor.run {
+            guard let peer, let inbox = self.inbox else { return }
+            inbox.tell(
+                remote: peer,
+                // The postbox writes the sender's handle into the title and the mailbox it landed
+                // in into the subtitle; both are worth more than "New message" and neither is
+                // rebuilt here, so a notification says the same thing whichever way it arrived.
+                title: content.subtitle.isEmpty
+                    ? PeerFace.displayName(content.title)
+                    : "\(PeerFace.displayName(content.title)) → \(PeerFace.displayName(content.subtitle))",
+                body: content.body,
+                messageId: messageId
+            )
+        }
+        return []
     }
 
     /// Tapped. The payload carries the peer, so the app opens the conversation it is about rather

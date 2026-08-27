@@ -10,6 +10,24 @@ import UIKit
 import AppKit
 #endif
 
+/// Whether the app is in front of the person right now.
+///
+/// The question every notification has to answer before it is posted. A system banner over the app
+/// that is already showing the message is the notification nobody wants — and on a Mac, where the
+/// app hears about mail before APNs does, it was the only kind there was.
+@MainActor
+enum AppLife {
+    static var isActive: Bool {
+        #if canImport(UIKit)
+        return UIApplication.shared.applicationState == .active
+        #elseif canImport(AppKit)
+        return NSApplication.shared.isActive
+        #else
+        return true
+        #endif
+    }
+}
+
 enum Clipboard {
     /// Put text on the pasteboard. AppKit needs the old contents cleared first, which UIKit does
     /// on assignment — the one real difference between them here.
