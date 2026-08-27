@@ -70,21 +70,46 @@ struct ThreadView: View {
             // conversation opened at the top often enough to be a complaint. This is the same
             // intent stated as a property of the scroll view rather than as an event.
             .modifier(AnchoredToBottom())
-            // The subject filter and the peer are the only two things still scrolled to by hand,
-            // and both are somebody tapping a different conversation into view — a moment where a
-            // jump to the bottom is the answer rather than an interruption.
+            // What the anchor does not cover, measured rather than assumed.
             //
-            // What used to be here as well: an animated scroll on every change to the message count
-            // and another whenever the field took focus. Both were fighting the anchor above rather
-            // than helping it, and the fight is what was on screen. A send changes the count three
-            // times in a second — the optimistic row goes in, the listing comes back, the row it
-            // accounts for is retired — while the composer is also shrinking, because the draft was
-            // just cleared and the staged files with it; each of those is a size change the anchor
-            // is already absorbing, and a 0.2s animation started from a stale offset in the middle
-            // of one is the conversation visibly moving up and down under the person who sent it.
-            // Focus was the same bug with one cause: the keyboard changes the scroll view's bottom
-            // safe area, the anchor keeps the last message against it, and the extra scroll only
-            // added a second opinion about where the bottom had got to.
+            // `.sizeChanges` is the *content* size changing, and the two moments that matter here
+            // are not that. Driven through the accessibility interface on an iPhone 16 Pro, with
+            // the conversation opened at its newest message: tapping the field moved the composer
+            // from y=805 to y=503 and left the last message at y=597 — behind the composer, under
+            // the keyboard — and a message sent from there landed at y=797, off the screen, and was
+            // never brought back. A message you have just sent that you cannot see is the whole
+            // complaint.
+            //
+            // So the thread follows the end at the two moments the person put it there — they
+            // tapped the field, or they sent — and at no other. Mail arriving on its own still
+            // moves nothing, which is what stops a peer's reply throwing somebody who is reading
+            // history to the bottom of it.
+            //
+            // Unanimated, which is what makes these safe beside the anchor instead of a race with
+            // it: both are scrolling to the same place, so whichever of them wins, the conversation
+            // ends up where it belongs. The version that bounced used `withAnimation` and started
+            // from a stale offset — an animation is the only way a race here becomes visible.
+            .task(id: composing) {
+                guard composing else { return }
+                scrollToFloor(scroller)
+                // And again once the keyboard has finished arriving. The safe area it takes lands
+                // after the focus does, so the first scroll is to where the bottom used to be —
+                // with only that one, the last message stayed at y=597 behind a composer that had
+                // moved to y=503, which is the state this was supposed to fix.
+                try? await Task.sleep(nanoseconds: 400_000_000)
+                guard !Task.isCancelled else { return }
+                scrollToFloor(scroller)
+            }
+            .onChange(of: shown.count) { _, _ in
+                // Only what this person sent. A send changes the count three times in a second —
+                // the optimistic row goes in, the listing comes back, the row it accounts for is
+                // retired — and all three land on the same floor.
+                guard shown.last?.kind == .outgoing else { return }
+                scrollToFloor(scroller)
+            }
+            // The subject filter and the peer are the other two, and both are somebody tapping a
+            // different conversation into view — a moment where a jump to the bottom is the answer
+            // rather than an interruption.
             .onChange(of: subthread) { _, _ in scrollToFloor(scroller) }
             .task(id: peer) {
                 // After the first layout, not during it. `onAppear` runs before the scroll view has
