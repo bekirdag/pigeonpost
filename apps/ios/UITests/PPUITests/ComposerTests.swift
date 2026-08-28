@@ -27,6 +27,30 @@ final class ComposerTests: XCTestCase {
         )
     }
 
+    /// The composer clears by replacing its text field, which costs the field its first
+    /// responder, which the send hands straight back. If that hand-back ever stops working the
+    /// keyboard drops between two messages and nothing else looks wrong — so it is asked here
+    /// rather than noticed later.
+    func testKeyboardStaysUpAcrossASend() throws {
+        let app = openThread()
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
+        field.tap()
+        field.typeText("still typing after this one")
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
+                      "no keyboard to begin with — is the simulator's software keyboard off?")
+        app.buttons["Send"].tap()
+        Thread.sleep(forTimeInterval: 2)
+        assertCleared(app, "keyboard round trip")
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
+                      "the keyboard left when the message did")
+        // And the replacement field is the one being typed into, not a ghost of the old one.
+        app.textFields.firstMatch.typeText("second")
+        Thread.sleep(forTimeInterval: 1)
+        XCTAssertEqual(drafted(app), "second", "keys went somewhere else after the send")
+    }
+
     /// Ordinary prose, long enough to grow the field past one line.
     func testDraftClearsAfterSending() throws {
         let app = openThread()

@@ -16,6 +16,30 @@ struct ThreadView: View {
     @Environment(PushService.self) private var push
 
     @State private var draft = ""
+
+    /// Bumped by every send, to hand the composer a text field that has never held anything.
+    ///
+    /// Emptying `draft` is not enough, and the screenshot that finally showed this says so
+    /// plainly: the Send button in it is drawn in `Theme.muted`, and muted is `sendable == false`,
+    /// which is an empty `draft` and no staged files. The model had cleared. The field sitting
+    /// above it was still showing every word of the message that had just gone.
+    ///
+    /// That gap is UIKit's rule rather than a fault in the binding. A text field holding marked
+    /// text is mid-composition, and SwiftUI will not overwrite a composition in progress — for
+    /// two-stage input, Japanese or Chinese or dictation, doing so would destroy what somebody is
+    /// halfway through typing. iOS 17's inline predictive text puts an ordinary English sentence
+    /// into that same state on a device, for the word last typed, which is every send that ends
+    /// in a word. So the write lands in `draft` and stops there.
+    ///
+    /// It is also why this was read as fixed twice. Inline prediction is off in the simulator, so
+    /// the field there has no composition to protect and follows the binding — the XCUITests that
+    /// type and send pass on a build that does this on a phone.
+    ///
+    /// A new identity is the one lever SwiftUI has that reaches it: the old field is torn down
+    /// with its composition, and what is built in its place reads a `draft` that is already empty.
+    /// Focus is given back on the next turn so the keyboard does not leave between two messages.
+    @State private var composerLife = 0
+
     @State private var subthread: String?
     /// One sheet at a time. Two stacked `.sheet` modifiers on one view are not reliably both
     /// honoured — see `ConversationsView`, where the same shape lost Settings entirely.
@@ -274,6 +298,7 @@ struct ThreadView: View {
                 .background(Theme.wash, in: RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.rule, lineWidth: 1))
                 .focused($composing)
+                .id(composerLife)
 
             Button(action: send) {
                 Image(systemName: "paperplane.fill")
@@ -380,13 +405,30 @@ struct ThreadView: View {
         guard sendable else { return }
         let files = staged
         staged = []
-        draft = ""
+        clearComposer()
         // Whichever subject is on screen — including the one a peer with a single conversation has,
         // where no strip is drawn. Sending into the conversation you are reading is the only
         // behaviour that does not surprise: the alternative is a reply that leaves the thread it
         // answers.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
         Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+    }
+
+    /// Empty the composer in both of the places it exists — the state, and the field drawing it.
+    /// See `composerLife` for why the second one is not the first one said over again.
+    ///
+    /// Focus is dropped and taken back rather than left alone: the field that holds it is the old
+    /// field, which is about to stop existing, and re-asserting a `@FocusState` that already reads
+    /// `true` is not a change and so moves nothing. Off and on again is what puts the keyboard in
+    /// front of the field that replaced it. If the keyboard was already down — a file sent with
+    /// nothing typed — it stays down.
+    private func clearComposer() {
+        let keyboardWasUp = composing
+        draft = ""
+        composing = false
+        composerLife &+= 1
+        guard keyboardWasUp else { return }
+        Task { @MainActor in composing = true }
     }
 }
 
