@@ -24,19 +24,24 @@ struct ThreadView: View {
     /// which is an empty `draft` and no staged files. The model had cleared. The field sitting
     /// above it was still showing every word of the message that had just gone.
     ///
-    /// That gap is UIKit's rule rather than a fault in the binding. A text field holding marked
-    /// text is mid-composition, and SwiftUI will not overwrite a composition in progress — for
-    /// two-stage input, Japanese or Chinese or dictation, doing so would destroy what somebody is
-    /// halfway through typing. iOS 17's inline predictive text puts an ordinary English sentence
-    /// into that same state on a device, for the word last typed, which is every send that ends
-    /// in a word. So the write lands in `draft` and stops there.
+    /// What is proven is that gap: state emptied, field not. The mechanism behind it is inference,
+    /// and worth reading as one. The likeliest is UIKit's rule about marked text — a field holding
+    /// it is mid-composition, and SwiftUI will not overwrite a composition in progress, because for
+    /// two-stage input (Japanese, Chinese, dictation) that would destroy what somebody is halfway
+    /// through typing. iOS 17's inline predictive text puts an ordinary English sentence into that
+    /// same state on a device, for the word last typed, which is every send that ends in a word;
+    /// the write would then land in `draft` and stop there. It also explains why this was read as
+    /// fixed twice from the code and why a suite that types and sends passes: inline prediction is
+    /// off in the simulator, so the field there has no composition to protect. But no device
+    /// confirmed it — a phone with predictive text turned off still emptying the field would say
+    /// the cause is something else.
     ///
-    /// It is also why this was read as fixed twice. Inline prediction is off in the simulator, so
-    /// the field there has no composition to protect and follows the binding — the XCUITests that
-    /// type and send pass on a build that does this on a phone.
+    /// The fix does not rest on that being the right cause. Any state the old field is holding on
+    /// to goes with the old field.
     ///
-    /// A new identity is the one lever SwiftUI has that reaches it: the old field is torn down
-    /// with its composition, and what is built in its place reads a `draft` that is already empty.
+    /// A new identity is the one lever SwiftUI has that reaches a field's own state: the old one
+    /// is torn down with whatever it was holding, and what replaces it reads a `draft` already
+    /// empty.
     /// Focus is given back on the next turn so the keyboard does not leave between two messages.
     @State private var composerLife = 0
 
