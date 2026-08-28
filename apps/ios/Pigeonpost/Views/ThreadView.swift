@@ -5,6 +5,7 @@
 //  is only ever a list of two or three names is a dead end, so the subjects are a strip along the
 //  top of the thread instead — the same choice, made without leaving the conversation.
 
+import PhotosUI
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -50,7 +51,19 @@ struct ThreadView: View {
     /// honoured — see `ConversationsView`, where the same shape lost Settings entirely.
     @State private var sheet: Sheet?
     @State private var picking = false
+    @State private var pickingPhotos = false
+    /// What the photo picker last handed back. Emptied by `stage(_:)` as soon as the bytes are in
+    /// `staged`, so this never holds a selection between one attachment and the next.
+    @State private var photos: [PhotosPickerItem] = []
     @State private var staged: [StagedFile] = []
+    /// Photos whose bytes are still on their way. A photo the picker names is not a photo the app
+    /// holds: `loadTransferable` is a copy, and for a big one — or one that has to come down from
+    /// iCloud first — it is a copy that takes long enough to press send in the middle of. See
+    /// `send`.
+    @State private var loadingPhotos = 0
+    /// A send that is waiting for `loadingPhotos` to reach zero. It stops the send button offering
+    /// to do the same thing twice while the first one waits.
+    @State private var sendPending = false
 
     private enum Sheet: String, Identifiable {
         case info, newThread
@@ -61,6 +74,10 @@ struct ThreadView: View {
     /// Set the moment somebody scrolls this conversation themselves, which is the moment the app
     /// stops having an opinion about where it should be. See `landOnFloor`.
     @State private var touched = false
+
+    /// Counts the times this screen has asked to be at the end of the conversation. Nothing reads
+    /// the number; `AsksForTheBottomEdge` watches it change. See `scrollToFloor`.
+    @State private var asked = 0
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
@@ -88,6 +105,7 @@ struct ThreadView: View {
                     Color.clear
                         .frame(height: 1)
                         .id(Self.floor)
+                        .modifier(ReportsItsPlace(measure: \.maxY, report: LandingReport.floor))
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 10)
@@ -103,6 +121,8 @@ struct ThreadView: View {
             // conversation opened at the top often enough to be a complaint. This is the same
             // intent stated as a property of the scroll view rather than as an event.
             .modifier(AnchoredToBottom())
+            // And the way back to the end once the first paint is over. See `scrollToFloor`.
+            .modifier(AsksForTheBottomEdge(asked: asked))
             // What the anchor does not cover, measured rather than assumed.
             //
             // `.sizeChanges` is the *content* size changing, and the two moments that matter here
@@ -156,7 +176,9 @@ struct ThreadView: View {
         // started, so hiding it until a second subject exists means there is no way to make one —
         // and the layout no longer changes shape underneath somebody the moment they do.
         .safeAreaInset(edge: .top, spacing: 0) { subjects }
-        .safeAreaInset(edge: .bottom, spacing: 0) { composer }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            composer.modifier(ReportsItsPlace(measure: \.minY, report: LandingReport.composer))
+        }
         .navigationTitle(conversation?.name ?? PeerFace.displayName(peer))
         .navigationBarTitleDisplayMode(.inline)
         // Glass rather than paint. This was opaque for a while, because the doodle showed through
@@ -286,14 +308,30 @@ struct ThreadView: View {
 
     private var composerRow: some View {
         HStack(alignment: .bottom, spacing: 8) {
-            Button { picking = true } label: {
+            // Two places a phone keeps things, and they are not the same place. Everything a person
+            // photographs is in the library and almost nothing else is; Files is where a document
+            // that arrived from somewhere else lives. The paperclip used to open only the second,
+            // which meant sending a photo was a trip through Files > Browse > Photos, on the chance
+            // somebody knew it was there at all.
+            Menu {
+                Button {
+                    pickingPhotos = true
+                } label: {
+                    Label("Photo Library", systemImage: "photo.on.rectangle")
+                }
+                Button {
+                    picking = true
+                } label: {
+                    Label("Files", systemImage: "folder")
+                }
+            } label: {
                 Image(systemName: "paperclip")
                     .font(.system(size: 17))
                     .foregroundStyle(Theme.muted)
                     .frame(width: 32, height: 36)
                     .contentShape(Rectangle())
             }
-            .accessibilityLabel("Attach a file")
+            .accessibilityLabel("Attach")
 
             TextField("Write a message", text: $draft, axis: .vertical)
                 .lineLimit(1...5)
@@ -326,6 +364,55 @@ struct ThreadView: View {
             guard case let .success(urls) = result else { return }
             for url in urls { stage(url) }
         }
+        // Photos, not everything a library holds. A video is a file like any other and Files will
+        // still hand one over; what it is not is something to let somebody attach by accident, since
+        // a minute of 4K is a couple of hundred megabytes and the first this app would say about it
+        // is the postbox refusing the upload.
+        .photosPicker(
+            isPresented: $pickingPhotos,
+            selection: $photos,
+            matching: .images,
+            photoLibrary: .shared()
+        )
+        .onChange(of: photos) { _, chosen in
+            guard !chosen.isEmpty else { return }
+            Task { await stage(chosen) }
+        }
+    }
+
+    /// Read the chosen photos now, for the same reason a file is read now: the picker's hold on them
+    /// is scoped to this moment.
+    ///
+    /// One at a time and in the order they were chosen, so the staged strip reads the way the
+    /// selection did. `loadTransferable` is the whole of the transfer — the picker runs out of
+    /// process and hands back bytes, which is why this needs no photo-library permission and why a
+    /// failure here is a failure to copy rather than a failure to be allowed.
+    @MainActor
+    private func stage(_ chosen: [PhotosPickerItem]) async {
+        loadingPhotos += 1
+        defer { loadingPhotos -= 1 }
+        let now = Date()
+        var failed = 0
+        for (index, item) in chosen.enumerated() {
+            guard let data = try? await item.loadTransferable(type: Data.self) else {
+                failed += 1
+                continue
+            }
+            let type = item.supportedContentTypes.first
+            staged.append(StagedFile(
+                name: PickedImage.filename(for: type, index: index, at: now),
+                mediaType: PickedImage.mediaType(for: type),
+                data: data
+            ))
+        }
+        if failed > 0 {
+            inbox.toast = failed == 1
+                ? "Could not read that photo."
+                : "Could not read \(failed) of those photos."
+        }
+        // Emptied so the same photo can be chosen again after it has been removed from the strip.
+        // The guard in `onChange` is what stops this coming straight back round.
+        photos = []
     }
 
     /// Read now, not at send time. The picker hands back a URL into another process's sandbox and
@@ -348,7 +435,12 @@ struct ThreadView: View {
 
     /// A message needs words or a file. Sending a file with nothing typed is an ordinary thing.
     private var sendable: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty
+        guard !sendPending else { return false }
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            || !staged.isEmpty
+            // A photo still being read is something to send. Without this the button goes dead
+            // between choosing a photo and its chip appearing, which on an iCloud photo is seconds.
+            || loadingPhotos > 0
     }
 
     /// The bottom, named once.
@@ -364,9 +456,38 @@ struct ThreadView: View {
     /// Unanimated on purpose. Every remaining caller is putting a different conversation on screen,
     /// where there is nothing to animate *from*, and an animation here is what put this in a race
     /// with the bottom anchor.
+    ///
+    /// Two asks, and it takes both. This is the fix for a long conversation opening in its middle,
+    /// and what it corrects is an assumption rather than a timing: that asking a scroll view for a
+    /// row is a thing that can be relied on to do anything at all.
+    ///
+    /// `ScrollViewProxy.scrollTo` needs the view it names to exist, and a `LazyVStack` does not keep
+    /// the rows it is not drawing. So a scroll that stops short of the end has destroyed its own way
+    /// back to it: the floor is gone, and every retry afterwards is a call that returns having moved
+    /// nothing. That is not a slow convergence, it is a stall, and it is why last week's fix — ask
+    /// again, every 50ms for a second — did not hold. Measured on the `-long` fixture: the offset
+    /// settles at 18459 in a content 19228 tall and never moves again, while `scrollTo(floor)` is
+    /// called two hundred times over ten seconds.
+    ///
+    /// `scrollTo(edge: .bottom)` names no row, so there is nothing for the stack to have discarded,
+    /// and it is what gets a thread of any length back to where its last rows are being drawn. But
+    /// it goes to the end of the content the scroll view currently *believes* in, and on a lazy
+    /// stack that is an estimate — on four hundred messages it stops short and, the estimate being
+    /// what it is, thinks it has arrived. So the second ask names the newest message, which the
+    /// first ask has just brought within reach, and lands on it exactly. Neither alone is enough:
+    /// with the edge on its own the four-hundred-message thread never draws its last row, and with
+    /// the row on its own the ninety-message thread stalls in the middle as before.
+    ///
+    /// The floor stays as the fallback it has always been, for the moment before the first message
+    /// exists. iOS 17 has no `scrollTo(edge:)`, so it gets the row ask alone and is not fixed by
+    /// this — a long thread stalls there as it did. What did change for it is the row named: the
+    /// newest message rather than the floor anchor, both of which a lazy stack discards alike, so
+    /// this is the same behaviour aimed at a better target and not a behaviour that was measured.
+    /// Everything below was measured on 18.3.
     private func scrollToFloor(_ scroller: ScrollViewProxy) {
         guard !shown.isEmpty else { return }
-        scroller.scrollTo(Self.floor, anchor: .bottom)
+        if #available(iOS 18.0, *) { asked += 1 }
+        scroller.scrollTo(shown.last?.id ?? Self.floor, anchor: .bottom)
     }
 
     /// Put the newest message on screen, and keep it there while the conversation is still
@@ -405,18 +526,49 @@ struct ThreadView: View {
         }
     }
 
+    /// Send what is in the composer, once all of it is actually there.
+    ///
+    /// The wait is for photos. `stage(_ chosen:)` is asynchronous because `loadTransferable` is, and
+    /// between choosing a photo and its bytes arriving there is a window — a second or two on a big
+    /// one, longer on one that has to come down from iCloud — in which the composer draws no chip
+    /// for it. Pressing send inside that window used to take a copy of `staged` that the photo was
+    /// not in yet: the message left without it, and the photo then appeared in the strip afterwards,
+    /// attached to nothing, as though it had been left behind on purpose.
+    ///
+    /// So a send with a photo in flight is held until the reading finishes, and `sendPending` holds
+    /// the button while it waits — otherwise a second press queues a second message and the first
+    /// one to reach `staged` takes the files, leaving the other to send bare text.
+    ///
+    /// With nothing in flight this is what it always was: clear the composer, send, one turn, no
+    /// window in which the same files could be taken twice.
     private func send() {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard sendable else { return }
-        let files = staged
-        staged = []
-        clearComposer()
         // Whichever subject is on screen — including the one a peer with a single conversation has,
         // where no strip is drawn. Sending into the conversation you are reading is the only
         // behaviour that does not surprise: the alternative is a reply that leaves the thread it
         // answers.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
-        Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+        clearComposer()
+        guard loadingPhotos > 0 else {
+            let files = staged
+            staged = []
+            Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+            return
+        }
+        sendPending = true
+        Task { @MainActor in
+            while loadingPhotos > 0 {
+                try? await Task.sleep(nanoseconds: 20_000_000)
+            }
+            let files = staged
+            staged = []
+            sendPending = false
+            // Every photo it was waiting for failed to read, and nothing was typed. The toast
+            // `stage` raised has already said so; an empty message would only say it again.
+            guard !text.isEmpty || !files.isEmpty else { return }
+            await inbox.send(text, to: peer, threadId: threadId, files: files)
+        }
     }
 
     /// Empty the composer in both of the places it exists — the state, and the field drawing it.
@@ -434,6 +586,44 @@ struct ThreadView: View {
         composerLife &+= 1
         guard keyboardWasUp else { return }
         Task { @MainActor in composing = true }
+    }
+}
+
+/// Take the scroll view to its own end, without naming anything in it.
+///
+/// `ScrollPosition` is iOS 18's, and `scrollTo(edge: .bottom)` is the only way to ask a scroll view
+/// for its end rather than for a view that happens to be at it. That distinction is the whole of the
+/// long-thread fix — a `LazyVStack` discards the rows it is not drawing, and a row that has been
+/// discarded cannot be scrolled to — so where the call does not exist, `ThreadView` is left with the
+/// row ask alone, and a long thread still opens in its middle there.
+///
+/// The count is the message. Nothing reads its value; each change is one request to go to the end,
+/// which is what lets the ask live in `ThreadView` beside the reasons for it while the position
+/// itself lives here, where it is allowed to exist.
+private struct AsksForTheBottomEdge: ViewModifier {
+    let asked: Int
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            Bottom(asked: asked, content: content)
+        } else {
+            content
+        }
+    }
+
+    @available(iOS 18.0, *)
+    private struct Bottom: View {
+        let asked: Int
+        let content: Content
+
+        @State private var position = ScrollPosition(idType: String.self)
+
+        var body: some View {
+            content
+                .scrollPosition($position)
+                .onChange(of: asked) { _, _ in position.scrollTo(edge: .bottom) }
+        }
     }
 }
 
@@ -462,18 +652,11 @@ private struct EndsTheLanding: ViewModifier {
     }
 }
 
-/// The bottom, said in every way the scroll view will hear it.
+/// The date, between the last message of one day and the first of the next.
 ///
-/// A conversation is read from its newest message, and everything about this screen changes size
-/// while somebody is looking at it: the keyboard opens and takes the bottom half, the composer grows
-/// a row for a staged file and loses it again on send, the field itself is one line until it is
-/// five. Each of those resizes the scroll view or its content, and the question every time is what
-/// stays still. The answer is always the bottom.
-///
-/// On iOS 17 that is one modifier covering where the content starts and what a resize does to it.
-/// iOS 18 split it into roles, and naming all three is worth the branch here: `.sizeChanges` is
-/// exactly the keyboard and the composer, and it is the one that was previously being papered over
-/// with hand-written scrolls that raced it.
+/// What stood here was `AnchoredToBottom`'s documentation, left behind when that modifier moved to
+/// `Components.swift` in d833e57 — including its account of naming all three scroll anchors, which
+/// the move had already stopped being true.
 private struct DayBreak: View {
     let label: String
 

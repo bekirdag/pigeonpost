@@ -7,10 +7,12 @@
 
 /* Begin PBXBuildFile section */
 		AA0000000000000000000001 /* ComposerTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000002 /* ComposerTests.swift */; };
+		AA0000000000000000000010 /* AttachmentTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000011 /* AttachmentTests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		AA0000000000000000000002 /* ComposerTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ComposerTests.swift; sourceTree = "<group>"; };
+		AA0000000000000000000011 /* AttachmentTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AttachmentTests.swift; sourceTree = "<group>"; };
 		AA0000000000000000000003 /* PPUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = PPUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -20,7 +22,7 @@
 
 /* Begin PBXGroup section */
 		AA0000000000000000000005 = {isa = PBXGroup; children = (AA0000000000000000000006 /* PPUITests */, AA0000000000000000000007 /* Products */); sourceTree = "<group>"; };
-		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA0000000000000000000002 /* ComposerTests.swift */); path = PPUITests; sourceTree = "<group>"; };
+		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA0000000000000000000002 /* ComposerTests.swift */, AA0000000000000000000011 /* AttachmentTests.swift */); path = PPUITests; sourceTree = "<group>"; };
 		AA0000000000000000000007 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000003 /* PPUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -56,7 +58,7 @@
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000000000000000000001 /* ComposerTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
+		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000000000000000000001 /* ComposerTests.swift in Sources */, AA0000000000000000000010 /* AttachmentTests.swift in Sources */); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

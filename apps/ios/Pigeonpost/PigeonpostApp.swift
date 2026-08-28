@@ -16,7 +16,12 @@ struct PigeonpostApp: App {
         _account = State(initialValue: account)
         _inbox = State(initialValue: inbox)
         #if DEBUG
-        if Fixtures.enabled { Fixtures.apply(session: session, account: account, inbox: inbox) }
+        if Fixtures.enabled {
+            Fixtures.apply(session: session, account: account, inbox: inbox)
+            // `-long` on top of them. Six short messages fit on one screen, so the fixture mailbox
+            // cannot show what a long conversation does when it opens. See `LongThread`.
+            LongThread.install(into: inbox)
+        }
         #endif
     }
 
