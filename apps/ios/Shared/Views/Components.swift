@@ -37,12 +37,29 @@ struct UnreadBadge: View {
     }
 }
 
-/// Open a conversation on its newest message, and stay there.
+/// Open a conversation on its newest message.
 ///
 /// Stated as a property of the scroll view rather than as an event. Doing it in `onAppear` is a
 /// guess at the timing — that runs before the scroll view has measured its content, so a long
 /// conversation opens somewhere in the middle often enough to be a complaint, which is exactly what
 /// it was on the Mac.
+///
+/// `.sizeChanges` used to be named here too, and taking it out is half of a fix rather than a
+/// tidy-up. It re-anchors whenever the *content* resizes, and a `LazyVStack`'s content resizes
+/// constantly — every row realising its true height is a resize. Each of those adjustments landed
+/// on top of whatever scroll `ThreadView` had asked for rather than instead of it, and the two
+/// added up: a second scroll to the end of a long thread put it a screen past the end, a third put
+/// it further, and what somebody saw was a conversation they knew had messages in it drawn as an
+/// empty pane with the composer underneath. Ninety messages, all present in the model, and not one
+/// pixel of them — the same shape of failure the `#else` branch below describes on macOS, arrived
+/// at by a different road.
+///
+/// Nothing wanted it, either. What it would buy is following mail that arrives on its own, and the
+/// phone deliberately does not do that: being thrown to the bottom of a conversation you are
+/// reading the history of was the complaint that the hand-written scrolls were removed for. Your
+/// own sends are followed by `.onChange(of: shown.count)`, and the keyboard by the focus scrolls,
+/// which is where that job already lived — `.sizeChanges` is the *content* resizing and the
+/// keyboard is the *container*, so it never covered the keyboard in the first place.
 ///
 /// Shared because the two clients had the same bug and only one of them had the fix.
 struct AnchoredToBottom: ViewModifier {
@@ -52,7 +69,6 @@ struct AnchoredToBottom: ViewModifier {
         if #available(iOS 18.0, *) {
             content
                 .defaultScrollAnchor(.bottom, for: .initialOffset)
-                .defaultScrollAnchor(.bottom, for: .sizeChanges)
                 .defaultScrollAnchor(.bottom, for: .alignment)
         } else {
             content.defaultScrollAnchor(.bottom)

@@ -29,6 +29,10 @@ struct ThreadView: View {
     }
     @FocusState private var composing: Bool
 
+    /// Set the moment somebody scrolls this conversation themselves, which is the moment the app
+    /// stops having an opinion about where it should be. See `landOnFloor`.
+    @State private var touched = false
+
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
 
@@ -107,16 +111,16 @@ struct ThreadView: View {
                 guard shown.last?.kind == .outgoing else { return }
                 scrollToFloor(scroller)
             }
-            // The subject filter and the peer are the other two, and both are somebody tapping a
-            // different conversation into view — a moment where a jump to the bottom is the answer
-            // rather than an interruption.
-            .onChange(of: subthread) { _, _ in scrollToFloor(scroller) }
-            .task(id: peer) {
-                // After the first layout, not during it. `onAppear` runs before the scroll view has
-                // measured its content, which is what made this unreliable rather than wrong.
-                await Task.yield()
-                scrollToFloor(scroller)
+            // The subject filter and the peer are the other two, and both are somebody putting a
+            // different conversation in front of themselves — a moment where a jump to the bottom
+            // is the answer rather than an interruption. One `.task` for the pair, because they
+            // are the same event, and because changing either has to cancel the landing already in
+            // flight rather than race it.
+            .task(id: ScrollKey(peer: peer, subthread: subthread)) {
+                await landOnFloor(scroller)
             }
+            // And the person always wins: their first scroll ends the landing.
+            .modifier(EndsTheLanding { touched = true })
 
         }
         // Always, even for a peer with one conversation. The strip is where a second subject is
@@ -320,12 +324,55 @@ struct ThreadView: View {
     /// The bottom, named once.
     private static let floor = "thread-floor"
 
+    /// What "a different set of messages is on screen" is, said once. Either half changing means
+    /// the landing in flight is landing the wrong conversation.
+    private struct ScrollKey: Equatable {
+        let peer: String
+        let subthread: String?
+    }
+
     /// Unanimated on purpose. Every remaining caller is putting a different conversation on screen,
     /// where there is nothing to animate *from*, and an animation here is what put this in a race
     /// with the bottom anchor.
     private func scrollToFloor(_ scroller: ScrollViewProxy) {
         guard !shown.isEmpty else { return }
         scroller.scrollTo(Self.floor, anchor: .bottom)
+    }
+
+    /// Put the newest message on screen, and keep it there while the conversation is still
+    /// measuring itself.
+    ///
+    /// What this replaces was `await Task.yield()` and a single scroll: a bet that the scroll view
+    /// had finished measuring its content by the next turn of the main actor. On a real
+    /// conversation it has not. These rows are a `LazyVStack`'s, so the first scroll to the end is
+    /// made against *estimated* heights, and every row afterwards measured for real moves the end
+    /// further down. Nothing went back for it — the anchor covers the first paint, `.onChange(of:
+    /// shown.count)` is for this person's own sends, and the focus scroll waits for a keyboard
+    /// nobody asked for — so the placement made against the estimate was the one somebody was left
+    /// with: a screen or more short of the end, the newest message arriving cut off mid-sentence.
+    ///
+    /// There is no signal to wait for instead, and it was looked for. A `GeometryReader` over the
+    /// stack reports the estimate once and is never heard from again when the rows correct it, and
+    /// a `PreferenceKey` raised inside a lazy container does not arrive at all — both measured
+    /// against a build whose rows deliberately finished growing after their first layout, where the
+    /// reported height stayed at the estimate to the point.
+    ///
+    /// So this asks for the end again, for as long as the conversation is plausibly still arriving.
+    /// It costs nothing once the end is where it belongs: an unanimated scroll to where you already
+    /// are moves nothing and draws nothing. That is only true with `.sizeChanges` gone from
+    /// `AnchoredToBottom` — while it was there a repeat did not land on the same place but a screen
+    /// past it, and the two halves of this fix are one fix.
+    ///
+    /// To be bothered by the window somebody would have to scroll away from the newest message
+    /// inside the first second of opening a conversation, and doing that is what ends it.
+    private func landOnFloor(_ scroller: ScrollViewProxy) async {
+        touched = false
+        for _ in 0..<20 {
+            guard !touched else { return }
+            scrollToFloor(scroller)
+            try? await Task.sleep(nanoseconds: 50_000_000)
+            guard !Task.isCancelled else { return }
+        }
     }
 
     private func send() {
@@ -340,6 +387,31 @@ struct ThreadView: View {
         // answers.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
         Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+    }
+}
+
+/// Notice somebody scrolling, without getting in the way of their doing it.
+///
+/// `onScrollPhaseChange` is iOS 18's, and it is the reason this is a modifier rather than a line:
+/// it reports `.interacting` while a finger is on the scroll view and says nothing otherwise, which
+/// is exactly the question. The iOS 17 way to ask would be a `DragGesture` hung off the scroll
+/// view, and a gesture that fails to be simultaneous does not fail quietly — it takes scrolling
+/// down with it. So iOS 17 keeps the bounded window on its own, and the worst that costs there is a
+/// second of a conversation insisting on its own newest message. That is much the smaller of the
+/// two mistakes, and it is why this is shaped the way it is: where the phase never arrives, what is
+/// left still behaves.
+private struct EndsTheLanding: ViewModifier {
+    let scrolled: () -> Void
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        if #available(iOS 18.0, *) {
+            content.onScrollPhaseChange { _, phase in
+                if phase == .interacting { scrolled() }
+            }
+        } else {
+            content
+        }
     }
 }
 
