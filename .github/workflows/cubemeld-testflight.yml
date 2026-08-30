@@ -15,7 +15,7 @@ on:
       build_number:
         description: "CFBundleVersion. Must be higher than every Cubemeld build already uploaded."
         required: true
-        default: "1"
+        default: "2"
         type: string
       upload:
         description: "Upload to App Store Connect. Off means archive and export only."
@@ -233,7 +233,7 @@ jobs:
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             MARKETING_VERSION=1.0 \
             CUBEIO_BACKEND_BASE_URL=https://api.cubemeld.com \
-            CUBEIO_GAME_SERVER_URL=wss://game.cubemeld.com/v3/arena \
+            CUBEIO_GAME_SERVER_URL=wss://server.cubemeld.com/v3/arena \
             DEVELOPMENT_TEAM=AH277897AV \
             PRODUCT_BUNDLE_IDENTIFIER=com.wodo.gamehub \
             CODE_SIGN_STYLE=Manual \
@@ -254,6 +254,8 @@ jobs:
           [ "$(plutil -extract CFBundleIdentifier raw -o - "$plist")" = "com.wodo.gamehub" ]
           [ "$(plutil -extract CFBundleDisplayName raw -o - "$plist")" = "Cubemeld" ]
           [ "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$plist")" = "false" ]
+          [ "$(plutil -extract CubeioBackendBaseURL raw -o - "$plist")" = "https://api.cubemeld.com" ]
+          [ "$(plutil -extract CubeioGameServerURL raw -o - "$plist")" = "wss://server.cubemeld.com/v3/arena" ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
           for icon_spec in "AppIcon60x60@2x.png:120:120" "AppIcon76x76@2x~ipad.png:152:152"; do
