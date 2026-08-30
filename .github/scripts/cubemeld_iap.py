@@ -16,7 +16,6 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
-import uuid
 from dataclasses import dataclass
 from decimal import Decimal
 
@@ -461,7 +460,8 @@ def ensure_price(client: Client, iap_id: str, product: Product) -> None:
         return
 
     price_point_id = find_usa_price_point(client, iap_id, product.price_usd)
-    manual_price_id = str(uuid.uuid4())
+    # App Store Connect requires a literal JSON:API local identifier for an inline resource.
+    manual_price_id = "${price1}"
     client.call(
         "POST",
         "/v1/inAppPurchasePriceSchedules",
