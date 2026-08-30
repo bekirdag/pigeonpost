@@ -1,0 +1,54 @@
+name: Cubemeld App Store Gold Catalog
+
+# Manual and fail-closed: the audit is read-only by default. APPLY creates only the exact five
+# products already shipped in Cubemeld's signed TestFlight binary and never changes an existing
+# price. The production-release environment holds the existing Wodo App Store Connect key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Create missing Gold products, localizations, availability, and prices."
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cubemeld-app-store-gold-catalog
+  cancel-in-progress: false
+
+jobs:
+  catalog:
+    name: audit or provision Gold products
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    environment: production-release
+    steps:
+      - name: Check out the release broker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Cubemeld's immutable catalog
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bekirdag/cubeio_ios_game
+          ref: cubemeld-production-readiness
+          path: cubemeld
+          ssh-key: ${{ secrets.CUBEMELD_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Validate the checked-in StoreKit contract
+        working-directory: cubemeld
+        run: ruby scripts/validate_cubemeld_iap_contract.rb
+
+      - name: Audit or provision App Store Connect
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLY: ${{ inputs.apply }}
+        run: python3 .github/scripts/cubemeld_iap.py
