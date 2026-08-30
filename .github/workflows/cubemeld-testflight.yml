@@ -1,0 +1,314 @@
+name: Cubemeld iOS TestFlight
+
+# Cubemeld lives in a private repository that does not duplicate Wodo's signing credentials.
+# This manual broker reuses the Wodo credentials already proven by Pigeonpost while checking out
+# Cubemeld through a repository-scoped, read-only deploy key.
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: "Commit, tag, or branch from bekirdag/cubeio_ios_game."
+        required: true
+        default: cubemeld-production-readiness
+        type: string
+      build_number:
+        description: "CFBundleVersion. Must be higher than every Cubemeld build already uploaded."
+        required: true
+        default: "1"
+        type: string
+      upload:
+        description: "Upload to App Store Connect. Off means archive and export only."
+        required: true
+        default: true
+        type: boolean
+      status_only:
+        description: "Only inspect Cubemeld in App Store Connect; do not check out or build it."
+        required: true
+        default: false
+        type: boolean
+      runner:
+        description: "Runner image. Needs Xcode 26 or later."
+        required: false
+        default: macos-26
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cubemeld-ios-testflight
+  cancel-in-progress: false
+
+jobs:
+  status:
+    name: App Store Connect preflight
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: production-release
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Inspect Cubemeld and its TestFlight groups
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          BUNDLE_ID: com.wodo.gamehub
+        run: python3 .github/scripts/testflight_status.py
+
+  archive:
+    name: archive and upload
+    needs: status
+    if: ${{ !inputs.status_only }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 60
+    environment: production-release
+    steps:
+      - name: Check out the release broker
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check out Cubemeld through its read-only deploy key
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: bekirdag/cubeio_ios_game
+          ref: ${{ inputs.source_ref }}
+          path: cubemeld
+          ssh-key: ${{ secrets.CUBEMELD_DEPLOY_KEY }}
+          persist-credentials: false
+
+      - name: Select an Xcode that can build for the store
+        shell: bash
+        run: |
+          set -euo pipefail
+          best=""
+          best_version=""
+          for app in /Applications/Xcode*.app; do
+            [ -d "$app" ] || continue
+            version=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" \
+              "$app/Contents/Info.plist" 2>/dev/null || echo "")
+            [ -n "$version" ] || continue
+            echo "found $app — $version"
+            if [ -z "$best_version" ] ||
+               [ "$(printf '%s\n%s\n' "$version" "$best_version" | sort -V | tail -1)" = "$version" ]; then
+              best="$app"
+              best_version="$version"
+            fi
+          done
+          if [ -z "$best" ]; then
+            echo "::error::No Xcode found on this runner image."
+            exit 1
+          fi
+          echo "Using $best (Xcode $best_version)"
+          sudo xcode-select -s "$best/Contents/Developer"
+          sdk=$(xcodebuild -showsdks | sed -n 's/.*-sdk iphoneos\([0-9][0-9]*\).*/\1/p' | sort -n | tail -1)
+          echo "iOS SDK: $sdk"
+          if [ "${sdk:-0}" -lt 26 ]; then
+            echo "::error::The newest iOS SDK is ${sdk:-none}; App Store Connect requires iOS 26 or newer."
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Reconcile the simulator runtime with the SDK
+        shell: bash
+        run: |
+          set -euo pipefail
+          sdk_build=$(xcodebuild -version -sdk iphonesimulator ProductBuildVersion 2>/dev/null || true)
+          runtime_build=$(xcrun simctl list runtimes --json | python3 -c "import json,sys; rs=[r for r in json.load(sys.stdin)['runtimes'] if r.get('platform')=='iOS' and r.get('isAvailable')]; rs.sort(key=lambda r: [int(n) for n in r['version'].split('.') if n.isdigit()]); print(rs[-1]['buildversion'] if rs else '')")
+          echo "simulator SDK build: ${sdk_build:-none}, newest iOS runtime: ${runtime_build:-none}"
+          if [ -n "$sdk_build" ] && [ -n "$runtime_build" ]; then
+            xcrun simctl runtime match set "$sdk_build" "$runtime_build" ||
+              echo "::warning::Could not pin runtime $runtime_build to SDK $sdk_build; continuing."
+            xcrun simctl runtime match list || true
+          fi
+
+      - name: Import and validate the Wodo signing assets
+        shell: bash
+        env:
+          P12: ${{ secrets.APPLE_DIST_P12 }}
+          P12_PASSWORD: ${{ secrets.APPLE_DIST_P12_PASSWORD }}
+          PROFILE: ${{ secrets.CUBEMELD_APPLE_PROFILE }}
+        run: |
+          set -euo pipefail
+          for name in P12 P12_PASSWORD PROFILE; do
+            if [ -z "${!name:-}" ]; then
+              echo "::error::Required signing secret $name is not set."
+              exit 1
+            fi
+          done
+
+          keychain="$RUNNER_TEMP/cubemeld-signing.keychain-db"
+          pass="$(python3 -c 'import secrets; print(secrets.token_urlsafe(24))')"
+          security create-keychain -p "$pass" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$pass" "$keychain"
+
+          printf '%s' "$P12" | base64 --decode > "$RUNNER_TEMP/cubemeld-dist.p12"
+          security import "$RUNNER_TEMP/cubemeld-dist.p12" -k "$keychain" -P "$P12_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security >/dev/null
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$pass" "$keychain" >/dev/null
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          rm -f "$RUNNER_TEMP/cubemeld-dist.p12"
+
+          raw_profile="$RUNNER_TEMP/cubemeld.mobileprovision"
+          profile_plist="$RUNNER_TEMP/cubemeld-profile.plist"
+          printf '%s' "$PROFILE" | base64 --decode > "$raw_profile"
+          echo "ff9540a754919e98d2ae100b1e65ee274abde125e693f5cce5fa07b47ed70fe3  $raw_profile" |
+            shasum -a 256 -c -
+          security cms -D -i "$raw_profile" > "$profile_plist"
+
+          team=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" "$profile_plist")
+          app_id=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" "$profile_plist")
+          name=$(/usr/libexec/PlistBuddy -c "Print :Name" "$profile_plist")
+          uuid=$(/usr/libexec/PlistBuddy -c "Print :UUID" "$profile_plist")
+          [ "$team" = "AH277897AV" ] || { echo "::error::Unexpected profile team."; exit 1; }
+          [ "$app_id" = "AH277897AV.com.wodo.gamehub" ] || { echo "::error::Unexpected profile app identifier."; exit 1; }
+          [ "$name" = "Cubemeld App Store" ] || { echo "::error::Unexpected profile name."; exit 1; }
+
+          profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
+          mkdir -p "$profiles"
+          cp "$raw_profile" "$profiles/$uuid.mobileprovision"
+          security find-identity -v -p codesigning "$keychain" | sed 's/[0-9A-F]\{40\}/<hash>/'
+
+      - name: Validate Cubemeld's release contract
+        working-directory: cubemeld
+        run: |
+          set -euo pipefail
+          ruby -c scripts/generate_xcode_project.rb
+          plutil -lint Cubeio/Resources/Info.plist
+          plutil -lint Cubeio/Resources/Cubemeld.entitlements
+          plutil -lint ExportOptions-Cubemeld.plist
+          ruby scripts/validate_cubemeld_iap_contract.rb
+          swift test --package-path Packages/CubeioGameCore
+
+      - name: Test the iOS client
+        working-directory: cubemeld
+        run: |
+          set -euo pipefail
+          device_id=$(xcrun simctl list devices available --json | python3 -c "import json,sys; data=json.load(sys.stdin)['devices']; phones=[d for devices in data.values() for d in devices if d.get('isAvailable') and d.get('name','').startswith('iPhone')]; print(phones[0]['udid'] if phones else '')")
+          if [ -z "$device_id" ]; then
+            echo "::error::No available iPhone simulator was found."
+            exit 1
+          fi
+          xcodebuild test \
+            -project Cubeio.xcodeproj \
+            -scheme Cubeio \
+            -destination "platform=iOS Simulator,id=$device_id"
+
+      - name: Write the App Store Connect key
+        shell: bash
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${KEY:-}" ]; then
+            echo "::error::APPLE_API_PRIVATE_KEY is not set."
+            exit 1
+          fi
+          install -m 700 -d "$RUNNER_TEMP/keys"
+          printf '%s\n' "$KEY" > "$RUNNER_TEMP/keys/AuthKey.p8"
+          chmod 600 "$RUNNER_TEMP/keys/AuthKey.p8"
+          head -1 "$RUNNER_TEMP/keys/AuthKey.p8" | grep -q "BEGIN PRIVATE KEY" ||
+            { echo "::error::The API key is not a PEM private key."; exit 1; }
+
+      - name: Archive Cubemeld
+        working-directory: cubemeld
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          case "$BUILD_NUMBER" in
+            ''|*[!0-9]*) echo "::error::build_number must be a whole number; got '$BUILD_NUMBER'." ; exit 1 ;;
+          esac
+          xcodebuild \
+            -project Cubeio.xcodeproj \
+            -scheme Cubeio \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$RUNNER_TEMP/Cubemeld.xcarchive" \
+            CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
+            MARKETING_VERSION=1.0 \
+            CUBEIO_BACKEND_BASE_URL=https://api.cubemeld.com \
+            CUBEIO_GAME_SERVER_URL=wss://game.cubemeld.com/v3/arena \
+            DEVELOPMENT_TEAM=AH277897AV \
+            PRODUCT_BUNDLE_IDENTIFIER=com.wodo.gamehub \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Apple Distribution" \
+            PROVISIONING_PROFILE_SPECIFIER="Cubemeld App Store" \
+            archive
+
+      - name: Verify the signed archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          app=$(find "$RUNNER_TEMP/Cubemeld.xcarchive/Products/Applications" -maxdepth 1 -type d -name '*.app' -print -quit)
+          [ -n "$app" ] || { echo "::error::Archive contains no application bundle."; exit 1; }
+          plist="$app/Info.plist"
+          for key in CFBundleDisplayName CFBundleIdentifier CFBundleShortVersionString CFBundleVersion MinimumOSVersion DTSDKName ITSAppUsesNonExemptEncryption CubeioBackendBaseURL CubeioGameServerURL; do
+            printf '%s = %s\n' "$key" "$(plutil -extract "$key" raw -o - "$plist")"
+          done
+          [ "$(plutil -extract CFBundleIdentifier raw -o - "$plist")" = "com.wodo.gamehub" ]
+          [ "$(plutil -extract CFBundleDisplayName raw -o - "$plist")" = "Cubemeld" ]
+          [ "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$plist")" = "false" ]
+          codesign --verify --deep --strict "$app"
+
+      - name: Export and optionally upload
+        working-directory: cubemeld
+        env:
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          UPLOAD: ${{ inputs.upload }}
+        run: |
+          set -euo pipefail
+          options="$RUNNER_TEMP/ExportOptions-Cubemeld.plist"
+          cp ExportOptions-Cubemeld.plist "$options"
+          plutil -replace signingStyle -string manual "$options"
+          plutil -replace signingCertificate -string "Apple Distribution" "$options"
+          plutil -replace provisioningProfiles -json '{"com.wodo.gamehub":"Cubemeld App Store"}' "$options"
+          if [ "$UPLOAD" = "true" ]; then
+            plutil -replace destination -string upload "$options"
+          else
+            plutil -replace destination -string export "$options"
+          fi
+          xcodebuild -exportArchive \
+            -archivePath "$RUNNER_TEMP/Cubemeld.xcarchive" \
+            -exportOptionsPlist "$options" \
+            -exportPath "$RUNNER_TEMP/CubemeldExport" \
+            -authenticationKeyPath "$RUNNER_TEMP/keys/AuthKey.p8" \
+            -authenticationKeyID "$KEY_ID" \
+            -authenticationKeyIssuerID "$ISSUER_ID"
+
+      - name: Put the build in front of internal testers
+        if: inputs.upload
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          BUNDLE_ID: com.wodo.gamehub
+          WAIT_FOR: ${{ inputs.build_number }}
+          WAIT_MINUTES: "30"
+          FIX: "true"
+        run: python3 .github/scripts/testflight_status.py
+
+      - name: Keep the IPA and symbols
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cubemeld-ios-${{ inputs.build_number }}
+          path: |
+            ${{ runner.temp }}/CubemeldExport/*.ipa
+            ${{ runner.temp }}/Cubemeld.xcarchive/dSYMs
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Remove transient signing material
+        if: always()
+        run: |
+          rm -rf "$RUNNER_TEMP/keys"
+          rm -f "$RUNNER_TEMP/cubemeld-dist.p12" "$RUNNER_TEMP/cubemeld.mobileprovision" "$RUNNER_TEMP/cubemeld-profile.plist"
+          rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
+          security delete-keychain "$RUNNER_TEMP/cubemeld-signing.keychain-db" 2>/dev/null || true
