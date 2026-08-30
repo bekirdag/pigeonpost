@@ -202,7 +202,6 @@ def create_product(client: Client, app_id: str, product: Product):
                     "productId": product.product_id,
                     "inAppPurchaseType": "CONSUMABLE",
                     "reviewNote": f"Consumable credit of {product.gold_amount:,} Gold in Cubemeld.",
-                    "availableInAllTerritories": True,
                 },
                 "relationships": {"app": {"data": {"type": "apps", "id": app_id}}},
             }
@@ -222,8 +221,6 @@ def ensure_parent_metadata(client: Client, remote, product: Product) -> None:
         changes["name"] = product.reference_name
     if attrs.get("reviewNote") != desired_note:
         changes["reviewNote"] = desired_note
-    if attrs.get("availableInAllTerritories") is not True:
-        changes["availableInAllTerritories"] = True
     if not changes:
         return
     if not APPLY:
@@ -329,6 +326,63 @@ def ensure_localization(client: Client, iap_id: str, product: Product) -> None:
             },
         )
         print("  localization: updated en-US")
+
+
+def ensure_availability(client: Client, iap_id: str) -> None:
+    territories = client.list_all("/v1/territories", {"limit": 200})
+    territory_ids = {territory["id"] for territory in territories}
+    if "USA" not in territory_ids or len(territory_ids) < 100:
+        raise RuntimeError("App Store Connect returned an incomplete territory catalog")
+
+    availability = client.call(
+        "GET",
+        f"/v2/inAppPurchases/{iap_id}/inAppPurchaseAvailability",
+        allow_404=True,
+    )
+    available_ids = set()
+    includes_new = False
+    if availability is not None and availability.get("data"):
+        availability_data = availability["data"]
+        includes_new = availability_data.get("attributes", {}).get("availableInNewTerritories") is True
+        available_ids = {
+            territory["id"]
+            for territory in client.list_all(
+                f"/v1/inAppPurchaseAvailabilities/{availability_data['id']}/availableTerritories",
+                {"limit": 200},
+            )
+        }
+    if includes_new and available_ids == territory_ids:
+        print(f"  availability: all {len(territory_ids)} territories plus future territories")
+        return
+    if not APPLY:
+        print(
+            f"  availability: {len(available_ids)}/{len(territory_ids)} territories; "
+            f"future={includes_new}"
+        )
+        return
+
+    client.call(
+        "POST",
+        "/v1/inAppPurchaseAvailabilities",
+        {
+            "data": {
+                "type": "inAppPurchaseAvailabilities",
+                "attributes": {"availableInNewTerritories": True},
+                "relationships": {
+                    "availableTerritories": {
+                        "data": [
+                            {"type": "territories", "id": territory_id}
+                            for territory_id in sorted(territory_ids)
+                        ]
+                    },
+                    "inAppPurchase": {
+                        "data": {"type": "inAppPurchases", "id": iap_id}
+                    },
+                },
+            }
+        },
+    )
+    print(f"  availability: enabled all {len(territory_ids)} territories plus future territories")
 
 
 def current_usa_price(client: Client, iap_id: str):
@@ -481,6 +535,7 @@ def main() -> None:
             print(f"  product: exists id={remote['id']} state={remote['attributes'].get('state')}")
 
         ensure_parent_metadata(client, remote, product)
+        ensure_availability(client, remote["id"])
         ensure_localization(client, remote["id"], product)
         ensure_price(client, remote["id"], product)
 
