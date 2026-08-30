@@ -254,6 +254,16 @@ jobs:
           [ "$(plutil -extract CFBundleIdentifier raw -o - "$plist")" = "com.wodo.gamehub" ]
           [ "$(plutil -extract CFBundleDisplayName raw -o - "$plist")" = "Cubemeld" ]
           [ "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$plist")" = "false" ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
+          for icon_spec in "AppIcon60x60@2x.png:120:120" "AppIcon76x76@2x~ipad.png:152:152"; do
+            IFS=: read -r filename width height <<< "$icon_spec"
+            icon="$app/$filename"
+            [ -f "$icon" ] || { echo "::error::Archive is missing $filename."; exit 1; }
+            [ "$(sips -g pixelWidth "$icon" | tail -1 | awk '{print $2}')" = "$width" ]
+            [ "$(sips -g pixelHeight "$icon" | tail -1 | awk '{print $2}')" = "$height" ]
+            [ "$(sips -g hasAlpha "$icon" | tail -1 | awk '{print $2}')" = "no" ]
+          done
           codesign --verify --deep --strict "$app"
 
       - name: Export and optionally upload
