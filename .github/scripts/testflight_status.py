@@ -10,7 +10,8 @@ With FIX=true it also does the two things that are safe to do unattended: answer
 compliance from the value the app already declares in its Info.plist, and adds the build to every
 internal group. With WAIT_FOR=<build number> it waits for that build to finish processing first,
 which is what the upload workflow needs — an upload returns long before Apple has a build to hand
-anybody.
+anybody. With REINVITE_PENDING=true it resends an invitation only to existing email-invited
+testers who remain pending in an internal group that contains the selected downloadable build.
 
 Standard library only, on purpose. This runs on the macOS upload runner as well as on Linux, and
 a pip install is one more thing that can be down on the morning you need this to work.
@@ -34,6 +35,7 @@ KEY_ID = os.environ["KEY_ID"]
 ISSUER_ID = os.environ["ISSUER_ID"]
 BUNDLE_ID = os.environ.get("BUNDLE_ID", "dev.pigeonpost.inbox")
 FIX = os.environ.get("FIX", "false").lower() == "true"
+REINVITE_PENDING = os.environ.get("REINVITE_PENDING", "false").lower() == "true"
 WAIT_FOR = (os.environ.get("WAIT_FOR") or "").strip()
 WAIT_MINUTES = int(os.environ.get("WAIT_MINUTES", "30"))
 
@@ -176,9 +178,20 @@ print("Beta groups")
 print("-" * 78)
 if not groups["data"]:
     print("  NONE. A build in no group reaches nobody.")
+testers_by_id = {}
+target_internal_group_names = []
+target_tester_ids = set()
 for g in groups["data"]:
     a = g["attributes"]
     testers = get(f"/betaGroups/{g['id']}/betaTesters", limit=200)["data"]
+    target_in_group = False
+    if REINVITE_PENDING and target is not None and a["isInternalGroup"]:
+        target_in_group = any(
+            build["id"] == target["id"]
+            for build in get(f"/betaGroups/{g['id']}/builds", limit=200)["data"]
+        )
+        if target_in_group:
+            target_internal_group_names.append(a["name"])
     print(
         f"  {a['name']}  internal={a['isInternalGroup']}  publicLink={a.get('publicLinkEnabled')}  "
         f"autoAddBuilds={a.get('hasAccessToAllBuilds')}  testers={len(testers)}"
@@ -191,7 +204,62 @@ for g in groups["data"]:
         # group, and has their invitation been accepted.
         who = " ".join(x for x in (ta.get("firstName"), ta.get("lastName")) if x) or t["id"][:8]
         print(f"      - {who}  state={ta.get('state')}  invite={ta.get('inviteType')}")
+    for t in testers:
+        testers_by_id.setdefault(t["id"], t)
+        if target_in_group:
+            target_tester_ids.add(t["id"])
 print()
+
+if REINVITE_PENDING:
+    print("REINVITE PENDING TESTERS")
+    print("-" * 78)
+    if target is None:
+        sys.exit("No build exists, so no tester can be safely reinvited.")
+    target_attributes = target["attributes"]
+    if target_attributes["processingState"] != "VALID" or target_attributes["expired"]:
+        sys.exit(
+            f"Build {target_attributes['version']} is not a valid, unexpired build; no invitations sent."
+        )
+    if target_attributes.get("usesNonExemptEncryption") is None:
+        sys.exit(f"Build {target_attributes['version']} has unanswered export compliance.")
+    detail_id = (target["relationships"].get("buildBetaDetail", {}).get("data") or {}).get("id", "")
+    detail = included.get(("buildBetaDetails", detail_id))
+    internal_state = detail["attributes"].get("internalBuildState") if detail else None
+    if internal_state != "IN_BETA_TESTING":
+        sys.exit(
+            f"Build {target_attributes['version']} internal state is {internal_state}; no invitations sent."
+        )
+    if not target_internal_group_names:
+        sys.exit(f"Build {target_attributes['version']} is not assigned to an internal tester group.")
+
+    pending = [
+        testers_by_id[tester_id]
+        for tester_id in sorted(target_tester_ids)
+        if testers_by_id[tester_id]["attributes"].get("state") == "INVITED"
+        and testers_by_id[tester_id]["attributes"].get("inviteType") == "EMAIL"
+    ]
+    for tester in pending:
+        call(
+            "POST",
+            "/betaTesterInvitations",
+            {
+                "data": {
+                    "type": "betaTesterInvitations",
+                    "relationships": {
+                        "app": {"data": {"type": "apps", "id": app_id}},
+                        "betaTester": {
+                            "data": {"type": "betaTesters", "id": tester["id"]}
+                        },
+                    },
+                }
+            },
+        )
+    print(
+        f"  Resent {len(pending)} pending email invitation(s) for build "
+        f"{target_attributes['version']} in {target_internal_group_names}."
+    )
+    print("  Accepted and installed testers were left unchanged.")
+    print()
 
 if FIX and target:
     a = target["attributes"]

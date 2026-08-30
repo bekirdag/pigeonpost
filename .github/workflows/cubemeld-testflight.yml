@@ -27,6 +27,11 @@ on:
         required: true
         default: false
         type: boolean
+      reinvite_pending:
+        description: "Resend invitations only to existing email testers still pending. Requires status_only."
+        required: true
+        default: false
+        type: boolean
       runner:
         description: "Runner image. Needs Xcode 26 or later."
         required: false
@@ -51,12 +56,23 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Validate invitation mode
+        env:
+          REINVITE_PENDING: ${{ inputs.reinvite_pending }}
+          STATUS_ONLY: ${{ inputs.status_only }}
+        run: |
+          if [ "$REINVITE_PENDING" = "true" ] && [ "$STATUS_ONLY" != "true" ]; then
+            echo "::error::reinvite_pending requires status_only=true."
+            exit 1
+          fi
+
       - name: Inspect Cubemeld and its TestFlight groups
         env:
           KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           BUNDLE_ID: com.wodo.gamehub
+          REINVITE_PENDING: ${{ inputs.reinvite_pending }}
         run: python3 .github/scripts/testflight_status.py
 
   archive:
