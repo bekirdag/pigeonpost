@@ -414,6 +414,8 @@ def current_usa_price(client: Client, iap_id: str):
         if item.get("attributes", {}).get("startDate") is None
         and item.get("attributes", {}).get("endDate") is None
     ]
+    if not current:
+        return None
     if len(current) != 1:
         raise RuntimeError(f"{iap_id}: expected one current USA manual price, found {len(current)}")
     point_id = current[0].get("relationships", {}).get("inAppPurchasePricePoint", {}).get("data", {}).get(
