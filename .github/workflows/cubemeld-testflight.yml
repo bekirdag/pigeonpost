@@ -97,6 +97,70 @@ jobs:
           ssh-key: ${{ secrets.CUBEMELD_DEPLOY_KEY }}
           persist-credentials: false
 
+      - name: Require an immutable Cubemeld source commit
+        shell: bash
+        working-directory: cubemeld
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "::error::source_ref must be a full lowercase 40-character commit SHA."
+            exit 1
+          fi
+          checked_out=$(git rev-parse HEAD)
+          if [ "$checked_out" != "$SOURCE_REF" ]; then
+            echo "::error::Checked out $checked_out instead of the requested immutable source."
+            exit 1
+          fi
+
+      - name: Configure read-only WodoSync package access
+        shell: bash
+        env:
+          WODOSYNC_DEPLOY_KEY: ${{ secrets.WODOSYNC_DEPLOY_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${WODOSYNC_DEPLOY_KEY:-}" ]; then
+            echo "::error::WODOSYNC_DEPLOY_KEY is not set."
+            exit 1
+          fi
+
+          ssh_dir="$RUNNER_TEMP/wodosync-ssh"
+          install -m 700 -d "$ssh_dir"
+          printf '%s\n' "$WODOSYNC_DEPLOY_KEY" > "$ssh_dir/deploy-key"
+          chmod 600 "$ssh_dir/deploy-key"
+
+          curl --proto '=https' --tlsv1.2 --fail --silent --show-error \
+            https://api.github.com/meta > "$ssh_dir/github-meta.json"
+          python3 - "$ssh_dir/github-meta.json" "$ssh_dir/known_hosts" <<'PY'
+          import json
+          import pathlib
+          import sys
+
+          source, destination = map(pathlib.Path, sys.argv[1:])
+          keys = json.loads(source.read_text(encoding="utf-8")).get("ssh_keys", [])
+          allowed = ("ssh-ed25519 ", "ecdsa-sha2-nistp256 ", "ssh-rsa ")
+          keys = [key for key in keys if isinstance(key, str) and key.startswith(allowed)]
+          if not keys:
+              raise SystemExit("GitHub metadata did not contain a supported SSH host key")
+          destination.write_text("".join(f"github.com {key}\n" for key in keys), encoding="utf-8")
+          PY
+          chmod 600 "$ssh_dir/known_hosts"
+
+          {
+            echo "Host github.com"
+            echo "  HostName github.com"
+            echo "  User git"
+            echo "  IdentityFile $ssh_dir/deploy-key"
+            echo "  IdentitiesOnly yes"
+            echo "  StrictHostKeyChecking yes"
+            echo "  UserKnownHostsFile $ssh_dir/known_hosts"
+          } > "$ssh_dir/config"
+          chmod 600 "$ssh_dir/config"
+          echo "GIT_SSH_COMMAND=ssh -F $ssh_dir/config" >> "$GITHUB_ENV"
+          GIT_SSH_COMMAND="ssh -F $ssh_dir/config" \
+            git ls-remote git@github.com:wodo-platform/wodosync.git HEAD >/dev/null
+
       - name: Select an Xcode that can build for the store
         shell: bash
         run: |
@@ -249,7 +313,7 @@ jobs:
             CURRENT_PROJECT_VERSION="$BUILD_NUMBER" \
             MARKETING_VERSION=1.0 \
             CUBEIO_BACKEND_BASE_URL=https://api.cubemeld.com \
-            CUBEIO_GAME_SERVER_URL=wss://server.cubemeld.com/v3/arena \
+            CUBEIO_GAME_SERVER_URL=wss://server.cubemeld.com/wodosync/v1/arena \
             DEVELOPMENT_TEAM=AH277897AV \
             PRODUCT_BUNDLE_IDENTIFIER=com.wodo.gamehub \
             CODE_SIGN_STYLE=Manual \
@@ -271,7 +335,7 @@ jobs:
           [ "$(plutil -extract CFBundleDisplayName raw -o - "$plist")" = "Cubemeld" ]
           [ "$(plutil -extract ITSAppUsesNonExemptEncryption raw -o - "$plist")" = "false" ]
           [ "$(plutil -extract CubeioBackendBaseURL raw -o - "$plist")" = "https://api.cubemeld.com" ]
-          [ "$(plutil -extract CubeioGameServerURL raw -o - "$plist")" = "wss://server.cubemeld.com/v3/arena" ]
+          [ "$(plutil -extract CubeioGameServerURL raw -o - "$plist")" = "wss://server.cubemeld.com/wodosync/v1/arena" ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
           for icon_spec in "AppIcon60x60@2x.png:120:120" "AppIcon76x76@2x~ipad.png:152:152"; do
@@ -337,6 +401,7 @@ jobs:
         if: always()
         run: |
           rm -rf "$RUNNER_TEMP/keys"
+          rm -rf "$RUNNER_TEMP/wodosync-ssh"
           rm -f "$RUNNER_TEMP/cubemeld-dist.p12" "$RUNNER_TEMP/cubemeld.mobileprovision" "$RUNNER_TEMP/cubemeld-profile.plist"
           rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
           security delete-keychain "$RUNNER_TEMP/cubemeld-signing.keychain-db" 2>/dev/null || true
