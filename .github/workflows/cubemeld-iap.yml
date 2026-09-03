@@ -1,14 +1,19 @@
 name: Cubemeld App Store Gold Catalog
 
 # Manual and fail-closed: the audit is read-only by default. APPLY creates only the exact five
-# products already shipped in Cubemeld's signed TestFlight binary and never changes an existing
-# price. The production-release environment holds the existing Wodo App Store Connect key.
+# products already shipped in Cubemeld's signed TestFlight binary, never changes an existing
+# price, and only uploads a Git/checksum-pinned review screenshot without replacing one. The
+# production-release environment holds the existing Wodo App Store Connect key.
 
 on:
   workflow_dispatch:
     inputs:
+      source_ref:
+        description: "Exact 40-character Cubemeld source commit to audit or provision."
+        required: true
+        type: string
       apply:
-        description: "Create missing Gold products, localizations, availability, and prices."
+        description: "Fill missing Gold metadata, including a committed review screenshot."
         required: true
         default: false
         type: boolean
@@ -32,14 +37,34 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Test the fail-closed App Store broker
+        run: python3 .github/scripts/test_cubemeld_iap.py
+
       - name: Check out Cubemeld's immutable catalog
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: bekirdag/cubeio_ios_game
-          ref: cubemeld-production-readiness
+          ref: ${{ inputs.source_ref }}
           path: cubemeld
           ssh-key: ${{ secrets.CUBEMELD_DEPLOY_KEY }}
           persist-credentials: false
+
+      - name: Require an immutable Cubemeld source commit
+        shell: bash
+        working-directory: cubemeld
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          set -euo pipefail
+          if [[ ! "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]]; then
+            echo '::error::source_ref must be an exact lowercase 40-character commit SHA.'
+            exit 1
+          fi
+          actual_ref="$(git rev-parse HEAD)"
+          if [[ "$actual_ref" != "$SOURCE_REF" ]]; then
+            echo '::error::Cubemeld checkout does not match source_ref.'
+            exit 1
+          fi
 
       - name: Validate the checked-in StoreKit contract
         working-directory: cubemeld
@@ -51,4 +76,5 @@ jobs:
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
           ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           APPLY: ${{ inputs.apply }}
+          REVIEW_SCREENSHOT_MANIFEST_PATH: cubemeld/fastlane/iap_review_screenshot.json
         run: python3 .github/scripts/cubemeld_iap.py

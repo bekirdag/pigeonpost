@@ -67,6 +67,8 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Test the fail-closed Cubemeld App Store broker
+        run: python3 .github/scripts/test_cubemeld_iap.py
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           components: rustfmt, clippy
