@@ -12,6 +12,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import urllib.error
 import urllib.request
 import zlib
 from pathlib import Path
@@ -28,6 +29,150 @@ IAP = importlib.util.module_from_spec(SPEC)
 assert SPEC.loader is not None
 sys.modules[SPEC.name] = IAP
 SPEC.loader.exec_module(IAP)
+
+
+def http_error(
+    status: int,
+    *,
+    url: str = "https://api.appstoreconnect.apple.com/v1/apps?cursor=signed-secret",
+    headers=None,
+    detail: str = "sensitive response detail",
+) -> urllib.error.HTTPError:
+    payload = {
+        "errors": [
+            {
+                "status": str(status),
+                "code": "TEST_ERROR",
+                "title": "Test API error",
+                "detail": detail,
+            }
+        ]
+    }
+    return urllib.error.HTTPError(
+        url,
+        status,
+        "error",
+        headers or {},
+        io.BytesIO(json.dumps(payload).encode()),
+    )
+
+
+def json_response(payload):
+    response = mock.MagicMock()
+    response.__enter__.return_value.read.return_value = json.dumps(payload).encode()
+    return response
+
+
+class ClientRetryTests(unittest.TestCase):
+    @staticmethod
+    def client(token: str = "original-token"):
+        client = object.__new__(IAP.Client)
+        client.token = token
+        return client
+
+    def test_get_recovers_from_bounded_5xx_and_429(self):
+        client = self.client()
+        with (
+            mock.patch.object(
+                urllib.request,
+                "urlopen",
+                side_effect=[
+                    http_error(500),
+                    http_error(429, headers={"Retry-After": "300"}),
+                    json_response({"data": []}),
+                ],
+            ) as urlopen,
+            mock.patch.object(IAP.time, "sleep") as sleep,
+        ):
+            self.assertEqual(client.call("GET", "/v1/apps", params={"limit": 1}), {"data": []})
+        self.assertEqual(urlopen.call_count, 3)
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(30)])
+
+    def test_get_remints_once_after_401(self):
+        client = self.client()
+        with (
+            mock.patch.object(IAP, "mint_token", return_value="fresh-token") as mint,
+            mock.patch.object(
+                urllib.request,
+                "urlopen",
+                side_effect=[http_error(401), json_response({"data": [{"id": "app-1"}]})],
+            ) as urlopen,
+        ):
+            result = client.call("GET", "/v1/apps")
+        self.assertEqual(result, {"data": [{"id": "app-1"}]})
+        mint.assert_called_once_with()
+        requests = [item.args[0] for item in urlopen.call_args_list]
+        self.assertEqual(requests[0].get_header("Authorization"), "Bearer original-token")
+        self.assertEqual(requests[1].get_header("Authorization"), "Bearer fresh-token")
+
+    def test_second_401_fails_without_another_remint(self):
+        client = self.client()
+        with (
+            mock.patch.object(IAP, "mint_token", return_value="fresh-token") as mint,
+            mock.patch.object(
+                urllib.request,
+                "urlopen",
+                side_effect=[http_error(401), http_error(401)],
+            ) as urlopen,
+        ):
+            with self.assertRaises(IAP.ApiError) as raised:
+                client.call("GET", "/v1/apps")
+        self.assertEqual(raised.exception.status, 401)
+        self.assertEqual(urlopen.call_count, 2)
+        mint.assert_called_once_with()
+
+    def test_transient_retries_are_bounded_and_redacted(self):
+        client = self.client(token="bearer-secret")
+        failures = [
+            http_error(
+                503,
+                detail="https://store-030.blobstore.apple.com/upload?Signature=body-secret",
+            )
+            for _ in range(4)
+        ]
+        with (
+            mock.patch.object(urllib.request, "urlopen", side_effect=failures) as urlopen,
+            mock.patch.object(IAP.time, "sleep") as sleep,
+        ):
+            with self.assertRaises(IAP.ApiError) as raised:
+                client.call(
+                    "GET",
+                    "https://api.appstoreconnect.apple.com/v1/apps?cursor=query-secret",
+                )
+        message = str(raised.exception)
+        self.assertEqual(urlopen.call_count, 4)
+        self.assertEqual(sleep.call_args_list, [mock.call(1), mock.call(2), mock.call(4)])
+        self.assertNotIn("query-secret", message)
+        self.assertNotIn("body-secret", message)
+        self.assertNotIn("bearer-secret", message)
+        self.assertIn("response body omitted", message)
+
+    def test_semantic_4xx_and_mutations_fail_without_retry(self):
+        for method, status in (("GET", 422), ("POST", 500), ("PATCH", 401)):
+            with self.subTest(method=method, status=status):
+                client = self.client()
+                with (
+                    mock.patch.object(
+                        urllib.request,
+                        "urlopen",
+                        side_effect=http_error(status),
+                    ) as urlopen,
+                    mock.patch.object(IAP, "mint_token") as mint,
+                    mock.patch.object(IAP.time, "sleep") as sleep,
+                ):
+                    with self.assertRaises(IAP.ApiError):
+                        client.call(method, "/v1/inAppPurchases", body={"data": {}})
+                urlopen.assert_called_once()
+                mint.assert_not_called()
+                sleep.assert_not_called()
+
+    def test_allowed_404_returns_none_without_retry(self):
+        client = self.client()
+        with mock.patch.object(
+            urllib.request, "urlopen", side_effect=http_error(404)
+        ) as urlopen:
+            self.assertIsNone(client.call("GET", "/v1/missing", allow_404=True))
+        urlopen.assert_called_once()
 
 
 def png_chunk(kind: bytes, payload: bytes) -> bytes:
@@ -220,6 +365,26 @@ class UploadOperationTests(unittest.TestCase):
         request = urlopen.call_args.args[0]
         self.assertEqual(request.data, b"bcd")
         self.assertNotIn("Authorization", dict(request.header_items()))
+
+    def test_binary_upload_error_redacts_signed_url_and_untrusted_detail(self):
+        client = object.__new__(IAP.Client)
+        client.token = "must-not-leak"
+        with mock.patch.object(
+            urllib.request,
+            "urlopen",
+            side_effect=http_error(
+                500,
+                url="https://store-030.blobstore.apple.com/upload?Signature=query-secret",
+                detail="signed body-secret",
+            ),
+        ):
+            with self.assertRaises(IAP.ApiError) as raised:
+                client.upload(self.operation(), b"abcdef")
+        message = str(raised.exception)
+        self.assertNotIn("query-secret", message)
+        self.assertNotIn("body-secret", message)
+        self.assertNotIn("must-not-leak", message)
+        self.assertIn("response body omitted", message)
 
 
 class FakeUploadClient:

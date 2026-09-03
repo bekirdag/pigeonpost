@@ -39,6 +39,8 @@ REVIEW_SCREENSHOT_TYPE = "inAppPurchaseAppStoreReviewScreenshots"
 MAX_REVIEW_SCREENSHOT_BYTES = 50 * 1024 * 1024
 REVIEW_SCREENSHOT_POLL_ATTEMPTS = 45
 REVIEW_SCREENSHOT_POLL_INTERVAL_SECONDS = 2
+API_READ_RETRY_DELAYS_SECONDS = (1, 2, 4)
+MAX_RETRY_AFTER_SECONDS = 30
 # Apple says an IAP review image may use any screenshot size the app supports. Cubemeld is an
 # iPhone game, so this allowlist mirrors Apple's current iPhone screenshot specification. Keeping
 # it explicit makes a newly introduced size a reviewed broker change instead of an implicit upload.
@@ -93,6 +95,25 @@ class ApiError(RuntimeError):
     def __init__(self, method: str, url: str, status: int, detail: str):
         super().__init__(f"{method} {url} -> {status} {detail}")
         self.status = status
+
+
+def _safe_url_for_log(url: str) -> str:
+    """Keep the API origin/path while dropping signed or otherwise sensitive query data."""
+    parsed = urllib.parse.urlsplit(url)
+    return urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
+
+
+def _safe_error_detail(raw: bytes) -> str:
+    """Never reflect an upstream response body into release logs."""
+    del raw
+    return "response body omitted"
+
+
+def _retry_delay_seconds(headers, fallback: int) -> int:
+    retry_after = headers.get("Retry-After") if headers is not None else None
+    if isinstance(retry_after, str) and retry_after.strip().isdigit():
+        return min(int(retry_after.strip()), MAX_RETRY_AFTER_SECONDS)
+    return fallback
 
 
 @dataclass(frozen=True)
@@ -162,6 +183,7 @@ class Client:
         self.token = mint_token()
 
     def call(self, method: str, path: str, body=None, params=None, allow_404=False):
+        method = method.upper()
         if path.startswith("https://"):
             parsed = urllib.parse.urlsplit(path)
             if (
@@ -181,19 +203,43 @@ class Client:
         if params:
             url += ("&" if "?" in url else "?") + urllib.parse.urlencode(params)
         data = json.dumps(body).encode() if body is not None else None
-        request = urllib.request.Request(url, data=data, method=method)
-        request.add_header("Authorization", f"Bearer {self.token}")
-        if data is not None:
-            request.add_header("Content-Type", "application/json")
-        try:
-            with urllib.request.urlopen(request, timeout=60) as response:
-                raw = response.read()
-            return json.loads(raw) if raw else {}
-        except urllib.error.HTTPError as exc:
-            detail = exc.read().decode(errors="replace")[:1200]
-            if allow_404 and exc.code == 404:
-                return None
-            raise ApiError(method, url, exc.code, detail) from None
+        safe_url = _safe_url_for_log(url)
+        retry_delays = iter(API_READ_RETRY_DELAYS_SECONDS)
+        refreshed_token = False
+        while True:
+            request = urllib.request.Request(url, data=data, method=method)
+            request.add_header("Authorization", f"Bearer {self.token}")
+            if data is not None:
+                request.add_header("Content-Type", "application/json")
+            try:
+                with urllib.request.urlopen(request, timeout=60) as response:
+                    raw = response.read()
+                return json.loads(raw) if raw else {}
+            except urllib.error.HTTPError as exc:
+                raw_error = exc.read(1200)
+                exc.close()
+                if allow_404 and exc.code == 404:
+                    return None
+                # Only reads are replay-safe. A mutation can have succeeded even when its response
+                # was lost, so retrying one could create or patch a resource twice.
+                if method == "GET" and exc.code == 401 and not refreshed_token:
+                    self.token = mint_token()
+                    refreshed_token = True
+                    continue
+                if method == "GET" and (exc.code == 429 or 500 <= exc.code < 600):
+                    try:
+                        fallback = next(retry_delays)
+                    except StopIteration:
+                        pass
+                    else:
+                        time.sleep(_retry_delay_seconds(exc.headers, fallback))
+                        continue
+                raise ApiError(
+                    method,
+                    safe_url,
+                    exc.code,
+                    _safe_error_detail(raw_error),
+                ) from None
 
     def list_all(self, path: str, params=None):
         result = []
@@ -220,9 +266,9 @@ class Client:
                 response.read()
         except urllib.error.HTTPError as exc:
             # Apple's upload URL contains a time-limited signature. Never emit its query string.
-            parsed = urllib.parse.urlsplit(url)
-            safe_url = urllib.parse.urlunsplit((parsed.scheme, parsed.netloc, parsed.path, "", ""))
-            detail = exc.read().decode(errors="replace")[:1200]
+            safe_url = _safe_url_for_log(url)
+            detail = _safe_error_detail(exc.read(1200))
+            exc.close()
             raise ApiError(method, safe_url, exc.code, detail) from None
         except urllib.error.URLError:
             raise RuntimeError(
