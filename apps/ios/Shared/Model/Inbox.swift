@@ -89,49 +89,59 @@ final class Inbox {
 
     func loadAll() async {
         guard let me else { return }
+        let identity = me.address
         loading = !hasLoaded
-        async let inbox: Void = loadInbox()
-        async let contacts: Void = loadContacts()
-        async let archive: Void = loadArchive()
-        async let threads: Void = loadThreads()
-        async let usage: Void = refreshQuota()
+        async let inbox: Void = loadInbox(identity: identity)
+        async let contacts: Void = loadContacts(identity: identity)
+        async let archive: Void = loadArchive(identity: identity)
+        async let threads: Void = loadThreads(identity: identity)
+        async let usage: Void = loadQuota(identity: identity)
         _ = await (inbox, contacts, archive, threads, usage)
-        _ = me
+        guard self.me?.address == identity, !Task.isCancelled else { return }
         loading = false
         hasLoaded = true
         rebuild()
     }
 
-    private func loadInbox() async {
-        guard let me else { return }
+    private func loadInbox(identity requested: String? = nil) async {
+        guard let identity = requested ?? me?.address else { return }
         do {
-            adopt(try await client.inbox(identity: me.address))
+            let body = try await client.inbox(identity: identity)
+            guard me?.address == identity, !Task.isCancelled else { return }
+            adopt(body)
             offline = false
         } catch let error as APIError {
+            guard me?.address == identity, !Task.isCancelled else { return }
             offline = true
             if !hasLoaded { toast = error.errorDescription }
         } catch {
+            guard me?.address == identity, !Task.isCancelled else { return }
             offline = true
         }
     }
 
-    private func loadContacts() async {
-        guard let me else { return }
+    private func loadContacts(identity requested: String? = nil) async {
+        guard let identity = requested ?? me?.address else { return }
         do {
-            let body = try await client.contacts(identity: me.address)
+            let body = try await client.contacts(identity: identity)
+            guard me?.address == identity, !Task.isCancelled else { return }
             contacts = body.contacts ?? []
             vocabulary = body.vocabulary
             policy = body.policy ?? policy
         } catch {
+            guard me?.address == identity, !Task.isCancelled else { return }
             contacts = []
         }
     }
 
-    private func loadThreads() async {
-        guard let me else { return }
+    private func loadThreads(identity requested: String? = nil) async {
+        guard let identity = requested ?? me?.address else { return }
         do {
-            serverThreads = try await client.threads(identity: me.address)
+            let loaded = try await client.threads(identity: identity)
+            guard me?.address == identity, !Task.isCancelled else { return }
+            serverThreads = loaded
         } catch {
+            guard me?.address == identity, !Task.isCancelled else { return }
             // A postbox that does not know about threads yet answers 404/501 here. Everything still
             // works: threads are then whatever the messages themselves say, and a peer with one
             // conversation — all such a postbox can produce — shows no thread list at all.
@@ -139,11 +149,14 @@ final class Inbox {
         }
     }
 
-    private func loadArchive() async {
-        guard let me else { return }
+    private func loadArchive(identity requested: String? = nil) async {
+        guard let identity = requested ?? me?.address else { return }
         do {
-            archived = try await client.archive(identity: me.address)
+            let loaded = try await client.archive(identity: identity)
+            guard me?.address == identity, !Task.isCancelled else { return }
+            archived = loaded
         } catch {
+            guard me?.address == identity, !Task.isCancelled else { return }
             // An archive we could not read must not hide anything. Failing open shows a
             // conversation that should have been filed; failing closed hides one that should not
             // be. Only one of those loses mail.
@@ -249,7 +262,10 @@ final class Inbox {
         archived = []
         pending = []
         conversations = []
+        loading = false
         hasLoaded = false
+        offline = false
+        reading = nil
         filter = ""
         viewingArchive = false
     }
@@ -312,12 +328,12 @@ final class Inbox {
     /// the caller's task lives — which is while the conversation list is on screen and the app is
     /// in front of the person.
     func live() async {
+        guard let identity = me?.address else { return }
         var backoff: UInt64 = 1
         while !Task.isCancelled {
-            guard let me else { return }
             do {
-                let body = try await client.inbox(identity: me.address, wait: Config.waitSeconds)
-                if Task.isCancelled { return }
+                let body = try await client.inbox(identity: identity, wait: Config.waitSeconds)
+                guard !Task.isCancelled, me?.address == identity else { return }
                 adopt(body)
                 offline = false
                 backoff = 1
@@ -326,11 +342,12 @@ final class Inbox {
             } catch let error as URLError where error.code == .cancelled {
                 return
             } catch let error as APIError where error.status == 401 {
+                guard me?.address == identity, !Task.isCancelled else { return }
                 // The client already spent a refresh token on this and the realm still says no.
                 account.sessionExpired()
                 return
             } catch {
-                if Task.isCancelled { return }
+                guard !Task.isCancelled, me?.address == identity else { return }
                 // Offline, proxy hiccup, a postbox restarting. Temporary — back off rather than
                 // spin, and leave what is on screen where it is.
                 offline = true
@@ -452,8 +469,14 @@ final class Inbox {
         #if DEBUG
         if stageQuota() { return }
         #endif
-        guard let me, !Fixtures.enabled else { return }
-        quota = try? await client.quota(identity: me.address)
+        guard let identity = me?.address, !Fixtures.enabled else { return }
+        await loadQuota(identity: identity)
+    }
+
+    private func loadQuota(identity: String) async {
+        let loaded = try? await client.quota(identity: identity)
+        guard me?.address == identity, !Task.isCancelled else { return }
+        quota = loaded
     }
 
     #if DEBUG
@@ -670,6 +693,11 @@ final class Inbox {
     /// resolves to a mailbox.
     func startConversation(to peer: String, body text: String) async throws -> String {
         guard let me else { throw AuthError.sessionExpired }
+        if Fixtures.enabled {
+            await send(text, to: peer, threadId: nil)
+            let normalised = ConversationBuilder.normalise(peer, against: messages)
+            return conversation(with: normalised)?.peer ?? normalised
+        }
         _ = try await client.sendMessage(from: me.address, to: peer, body: RequestEnvelope.work(text), threadId: nil)
         await loadAll()
         let normalised = ConversationBuilder.normalise(peer, against: messages)

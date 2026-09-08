@@ -200,7 +200,20 @@ struct MarkdownText: View {
     /// that says the word four times has four hits in it, and marking one of them would be a
     /// different lie from marking none.
     func marked(_ attributed: AttributedString) -> AttributedString {
-        let needle = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        SearchHighlight.marked(
+            attributed, needle: highlight, isCurrentMatch: isCurrentMatch)
+    }
+}
+
+/// One implementation for markdown, request cards, and unattended replies. Keeping it here makes
+/// "a match" mean the same purple, case-insensitive mark in every kind of message bubble.
+enum SearchHighlight {
+    static func marked(
+        _ attributed: AttributedString,
+        needle rawNeedle: String,
+        isCurrentMatch: Bool
+    ) -> AttributedString {
+        let needle = rawNeedle.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return attributed }
         var out = attributed
         var searchFrom = out.startIndex
@@ -209,8 +222,6 @@ struct MarkdownText: View {
             out[found].backgroundColor = isCurrentMatch
                 ? Theme.found
                 : Theme.found.opacity(0.28)
-            // White on the strong fill, because the found colour is dark enough in the light
-            // appearance to swallow ink-coloured text.
             if isCurrentMatch { out[found].foregroundColor = .white }
             searchFrom = found.upperBound
         }

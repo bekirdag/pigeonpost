@@ -34,10 +34,12 @@ struct MessageBubble: View {
                         // were never subject to one — and a "held" pill on your own request would
                         // be a lie about somebody else's decision.
                         showsDecision: message.kind == .incoming,
-                        isMine: isMine
+                        isMine: isMine,
+                        highlight: highlight,
+                        isCurrentMatch: isFound
                     )
                 } else if let reply = message.autoReply {
-                    AutoReplyBody(reply: reply)
+                    AutoReplyBody(reply: reply, highlight: highlight, isCurrentMatch: isFound)
                 } else {
                     MarkdownText(
                         raw: message.body,
@@ -169,6 +171,8 @@ struct RequestCard: View {
     var showsDecision: Bool = true
     /// On the navy bubble the card is white-on-dark; everywhere else it is ink on paper.
     var isMine: Bool = false
+    var highlight: String = ""
+    var isCurrentMatch: Bool = false
 
     private var primary: Color { isMine ? .white : Theme.ink }
     private var secondary: Color { isMine ? .white.opacity(0.82) : Theme.body }
@@ -189,7 +193,7 @@ struct RequestCard: View {
             // clients send is `full_access`, so labelling every message with it is a banner
             // repeated on every line — it tells the reader nothing they did not already know.
             if envelope.verb != "full_access" {
-                Text(envelope.title)
+                markedText(envelope.title)
                     .font(.system(size: 14.5, weight: .semibold))
                     .foregroundStyle(primary)
             }
@@ -198,10 +202,10 @@ struct RequestCard: View {
                 VStack(alignment: .leading, spacing: 2) {
                     ForEach(visibleArgs.keys.sorted(), id: \.self) { key in
                         HStack(alignment: .top, spacing: 6) {
-                            Text(key)
+                            markedText(key)
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(faint)
-                            Text(visibleArgs[key] ?? "")
+                            markedText(visibleArgs[key] ?? "")
                                 .font(.system(size: 12, design: .monospaced))
                                 .foregroundStyle(secondary)
                         }
@@ -213,7 +217,7 @@ struct RequestCard: View {
             }
 
             if let note = envelope.note, !note.isEmpty {
-                Text(note)
+                markedText(note)
                     .font(.system(size: 13))
                     .foregroundStyle(secondary)
             }
@@ -225,7 +229,7 @@ struct RequestCard: View {
                 } else {
                     PillView(text: "held", kind: .held)
                     if let heldBecause {
-                        Text(ConversationBuilder.heldReason(heldBecause))
+                        markedText(ConversationBuilder.heldReason(heldBecause))
                             .font(.system(size: 11.5))
                             .foregroundStyle(faint)
                             .fixedSize(horizontal: false, vertical: true)
@@ -235,12 +239,19 @@ struct RequestCard: View {
             }
         }
     }
+
+    private func markedText(_ text: String) -> Text {
+        Text(SearchHighlight.marked(
+            AttributedString(text), needle: highlight, isCurrentMatch: isCurrentMatch))
+    }
 }
 
 /// An answer generated without a human reading it. The two header lines every one of them carries
 /// become one small caption, so the answer is what you see.
 struct AutoReplyBody: View {
     let reply: AutoReply
+    var highlight: String = ""
+    var isCurrentMatch: Bool = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
@@ -254,7 +265,11 @@ struct AutoReplyBody: View {
 
             // The one place markdown matters most: an agent's report is nearly always headings,
             // bullets and fenced code, and as flat text it reads as a wall.
-            MarkdownText(raw: reply.body)
+            MarkdownText(
+                raw: reply.body,
+                highlight: highlight,
+                isCurrentMatch: isCurrentMatch
+            )
         }
     }
 

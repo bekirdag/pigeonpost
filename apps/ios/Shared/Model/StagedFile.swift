@@ -20,3 +20,13 @@ struct StagedFile: Identifiable, Equatable {
         return formatter.string(fromByteCount: Int64(data.count))
     }
 }
+
+enum DroppedFile {
+    /// `NSItemProvider` supplies `public.file-url` as a URL data representation, not reliably as a
+    /// bridged `URL` object. Decode that representation first, with its textual form as a fallback
+    /// for providers that serialize the absolute string directly.
+    static func url(from data: Data) -> URL? {
+        URL(dataRepresentation: data, relativeTo: nil)
+            ?? String(data: data, encoding: .utf8).flatMap(URL.init(string:))
+    }
+}

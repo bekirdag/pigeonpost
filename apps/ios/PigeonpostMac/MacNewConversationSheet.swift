@@ -11,6 +11,12 @@ struct MacNewConversationSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(Inbox.self) private var inbox
     @State private var peer = ""
+    @State private var message = ""
+    @State private var working = false
+    @State private var error: String?
+    @FocusState private var focused: Field?
+
+    private enum Field { case peer, message }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -20,26 +26,59 @@ struct MacNewConversationSheet: View {
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 13, design: .monospaced))
                 .frame(width: 340)
-                .onSubmit(open)
-            Text("An address is a handle or a /k/ key address. Nothing is sent until you write one.")
+                .focused($focused, equals: .peer)
+                .onSubmit { focused = .message }
+            TextField("First message", text: $message, axis: .vertical)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(size: 13))
+                .lineLimit(3...8)
+                .frame(width: 340)
+                .focused($focused, equals: .message)
+            Text("The first message creates the conversation and appears in the inbox after it is sent.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(Theme.muted)
+            if let error {
+                Text(error)
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Theme.Pill.blockedText)
+                    .frame(width: 340, alignment: .leading)
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                     .keyboardShortcut(.cancelAction)
-                Button("Open") { open() }
+                    .disabled(working)
+                Button(working ? "Sending…" : "Send") { open() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(peer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!sendable || working)
             }
         }
         .padding(20)
+        .onAppear { focused = .peer }
+    }
+
+    private var sendable: Bool {
+        !peer.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+            && !message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     private func open() {
         let trimmed = peer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
-        opened(trimmed)
-        dismiss()
+        let body = message.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !body.isEmpty, !working else { return }
+        working = true
+        error = nil
+        Task {
+            defer { working = false }
+            do {
+                let started = try await inbox.startConversation(to: trimmed, body: body)
+                opened(started)
+                dismiss()
+            } catch let apiError as APIError {
+                error = apiError.errorDescription ?? "Could not start that conversation."
+            } catch {
+                self.error = "Could not start that conversation."
+            }
+        }
     }
 }

@@ -16,9 +16,13 @@ struct PigeonpostMacApp: App {
     init() {
         let session = Session()
         let account = Account(session: session)
+        let inbox = Inbox(account: account)
         _session = State(initialValue: session)
         _account = State(initialValue: account)
-        _inbox = State(initialValue: Inbox(account: account))
+        _inbox = State(initialValue: inbox)
+        #if DEBUG
+        if Fixtures.enabled { Fixtures.apply(session: session, account: account, inbox: inbox) }
+        #endif
     }
 
     var body: some Scene {

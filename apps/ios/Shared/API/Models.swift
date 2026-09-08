@@ -90,6 +90,9 @@ struct Mailbox: Identifiable, Equatable, Hashable {
     var id: String { address }
     /// What trust matches on, and what the app keys conversations by.
     var key: String { handle ?? address }
+    /// The unabridged identity shown by a mailbox picker. A handle is an address, not a display
+    /// name: shortening `/bekir/bdya` to `bdya` makes two namespaces indistinguishable.
+    var displayAddress: String { handle ?? label ?? address }
 }
 
 struct ServerThread: Decodable, Equatable {

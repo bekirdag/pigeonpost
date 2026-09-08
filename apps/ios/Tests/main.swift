@@ -189,6 +189,12 @@ equal(ConversationBuilder.targetThread(subthreads: subs, selected: "t-agent1-dep
       "and to the subject on screen when there is a choice")
 equal(ConversationBuilder.targetThread(subthreads: [], selected: nil), nil,
       "nil only when there is no thread to name — a postbox with no thread routes")
+equal(ConversationBuilder.selectedThread(subthreads: subs, current: "t-agent1-deploy"),
+      "t-agent1-deploy", "a valid desktop thread selection is preserved")
+equal(ConversationBuilder.selectedThread(subthreads: subs, current: "missing"),
+      subs.first?.id, "an invalid desktop thread selection falls back to the first thread")
+equal(ConversationBuilder.selectedThread(subthreads: [], current: nil), nil,
+      "a peer with no thread route has no selection to invent")
 
 // Belt as well as braces: a message that arrives with no thread id at all still belongs to the
 // default conversation rather than beside it.
@@ -216,6 +222,35 @@ equal(PeerFace.initials("/bekir/agent1"), "AG", "initials come from the name")
 equal(PeerFace.toneIndex("/bekir/agent1"), 6, "/bekir/agent1 keeps the tone the web app gives it")
 equal(PeerFace.toneIndex("/bekir/docdex"), 1, "/bekir/docdex too")
 equal(PeerFace.toneIndex("/k/eeee5555ffff6666gggg7777hh"), 6, "and a key address")
+equal(Mailbox(address: "/k/bdya", handle: "/bekir/bdya", label: "BDYA").displayAddress,
+      "/bekir/bdya", "a mailbox picker keeps the full readable address")
+
+print("\nconversation find")
+let findMessages = [
+    ThreadMessage(id: "find-plain", kind: .incoming, at: 1,
+                  body: "Run LiNt before release", threadId: "t"),
+    ThreadMessage(id: "find-request", kind: .outgoing, at: 2,
+                  body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{\"task\":\"fix lint now\"},\"note\":\"fix lint now\"}",
+                  threadId: "t"),
+    ThreadMessage(id: "find-auto", kind: .incoming, at: 3,
+                  body: "pigeonpost-auto-reply v1 in_reply_to=x answered=full_access\nGenerated unattended by this mailbox's agent. Nobody read it before it was sent.\n\nLint is clean.",
+                  threadId: "t"),
+]
+equal(ConversationSearch.matchingMessageIDs(in: findMessages, query: " lint "),
+      ["find-plain", "find-request", "find-auto"],
+      "find is trimmed, case-insensitive, and preserves message order")
+equal(ConversationSearch.matchingMessageIDs(in: findMessages, query: "pigeonpost-auto-reply"),
+      [], "wire-only unattended-reply headers are not phantom matches")
+equal(ConversationSearch.matchingMessageIDs(in: findMessages, query: "Request full access"),
+      [], "a hidden full-access request title is not a phantom match")
+equal(ConversationSearch.matchingMessageIDs(in: findMessages, query: "task"),
+      [], "a request argument hidden because its note repeats it is not a phantom match")
+equal(ConversationSearch.matchingMessageIDs(in: findMessages, query: "   "), [],
+      "a blank find phrase performs no work")
+
+let droppedURL = URL(fileURLWithPath: "/tmp/pigeonpost dropped file.txt")
+equal(DroppedFile.url(from: droppedURL.dataRepresentation), droppedURL,
+      "a dragged public.file-url data representation decodes to its file URL")
 
 print("\nmarkdown")
 // What agents actually send, and the shapes that must not be swallowed.

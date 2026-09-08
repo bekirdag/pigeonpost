@@ -16,7 +16,7 @@ struct MacInboxView: View {
 
     /// The conversation being read. The sidebar's selection.
     @State private var peer: String?
-    /// The subject inside it. The middle column's selection; `nil` means the whole conversation.
+    /// The subject inside it. The middle column always selects the first available thread.
     @State private var subthread: String?
     @State private var openingThread: ThreadTarget?
     /// The subject a right-click asked to delete, held until the question is answered. Deleting mail
@@ -62,15 +62,22 @@ struct MacInboxView: View {
         // front — see `Announcer`, and `Inbox.tell(about:)` for which of the two happens when.
         .announcements($inbox.announcement) { arrived in
             peer = arrived
-            subthread = nil
         }
         .task {
             push.attach(to: account)
             push.attach(to: inbox)
             account.push = push
+            if let opened = Fixtures.openPeer { peer = opened }
+            guard !Fixtures.enabled else { return }
             // Asked on the way in rather than at first launch. A desktop app that wants to notify
             // you before it has shown you anything is a dialog people dismiss.
             await push.askIfNeeded()
+        }
+        // The poll and every initial listing belong to exactly one mailbox. Keying this task makes
+        // SwiftUI cancel the old long poll and start a new load when the picker changes identity;
+        // Inbox independently rejects a response whose captured identity is no longer current.
+        .task(id: account.me?.address) {
+            guard !Fixtures.enabled, let current = account.me else { return }
             // The app is already long-polling the postbox, so it hears about mail before APNs would
             // and can say so with its own name and icon on the notification. Announcing it from
             // here is what replaced `osascript display notification`, which had neither and could
@@ -79,7 +86,7 @@ struct MacInboxView: View {
             // Only reached when the app is *behind* something — `Inbox` shows a line in the window
             // instead when it is in front. A desktop notification about a message you can already
             // see, in a window you are already looking at, is a thing to dismiss and nothing else.
-            let mailbox = account.me.map { $0.handle ?? $0.label ?? $0.address } ?? ""
+            let mailbox = current.displayAddress
             inbox.onArrival = { arrivals in
                 for message in arrivals {
                     LocalNotifier.announce(
@@ -99,9 +106,17 @@ struct MacInboxView: View {
         // selected the moment it was made.
         .onChange(of: peer) { _, picked in
             inbox.reading = picked
-            // A different conversation has its own subjects; carrying the last one's id across
-            // would filter this one down to nothing.
-            subthread = nil
+            guard let picked else {
+                subthread = nil
+                return
+            }
+            subthread = ConversationBuilder.selectedThread(
+                subthreads: inbox.subthreads(of: picked), current: nil)
+        }
+        // Threads and messages load concurrently. A peer can be selected before its thread routes
+        // arrive, so repair the selection when that list changes as well as when the peer changes.
+        .onChange(of: currentThreadIDs, initial: true) { _, ids in
+            subthread = ids.contains(subthread ?? "") ? subthread : ids.first
         }
         // `initial: true` because the count is already right when this appears — the first listing
         // lands before anybody changes anything, and waiting for a change would leave the Dock
@@ -115,7 +130,6 @@ struct MacInboxView: View {
         .onChange(of: push.pendingPeer) { _, tapped in
             guard let tapped else { return }
             peer = tapped
-            subthread = nil
             push.pendingPeer = nil
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
@@ -128,7 +142,6 @@ struct MacInboxView: View {
         .sheet(isPresented: $showingNew) {
             MacNewConversationSheet { started in
                 peer = started
-                subthread = nil
             }
         }
         .sheet(item: $openingThread) { target in
@@ -168,14 +181,31 @@ struct MacInboxView: View {
             case .peer:
                 if let peer, let conversation = inbox.conversation(with: peer) {
                     PeerInfoSheet(conversation: conversation) { mailbox in
-                        account.act(as: mailbox)
-                        self.peer = nil
-                        inbox.reset()
+                        switchTo(mailbox)
                     }
                     .frame(width: 520, height: 620)
                 }
             }
         }
+    }
+
+    private var currentThreadIDs: [String] {
+        guard let peer else { return [] }
+        return inbox.subthreads(of: peer).map(\.id)
+    }
+
+    /// One state transition for every mailbox-switching surface. Clearing before changing the
+    /// account prevents a frame where the new identity is paired with the old selection; the
+    /// mailbox-keyed task above owns loading the replacement list.
+    private func switchTo(_ mailbox: Mailbox) {
+        guard mailbox.address != account.me?.address else { return }
+        peer = nil
+        subthread = nil
+        inbox.reset()
+        account.act(as: mailbox)
+        #if DEBUG
+        Fixtures.applyInbox(for: mailbox, inbox: inbox)
+        #endif
     }
 
     // ---- the columns ---------------------------------------------------------------------------
@@ -378,7 +408,7 @@ struct MacInboxView: View {
     /// nicer shape and the one that cannot fight this List for width.
     private var mailboxBar: some View {
         HStack(spacing: 8) {
-            Text(account.me?.handle.map(PeerFace.displayName) ?? account.me?.label ?? "—")
+            Text(account.me?.displayAddress ?? "—")
                 .font(.system(size: 12.5, weight: .semibold))
                 .foregroundStyle(Theme.ink)
             Spacer(minLength: 0)
@@ -410,7 +440,7 @@ struct MacInboxView: View {
                     let isCurrent = mailbox.address == account.me?.address
                     HStack(spacing: 8) {
                         Avatar(peer: mailbox.handle ?? mailbox.address, size: 20)
-                        Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
+                        Text(mailbox.displayAddress)
                             .font(.system(size: 12))
                             .foregroundStyle(Theme.ink)
                             .lineLimit(1)
@@ -428,9 +458,7 @@ struct MacInboxView: View {
                     .onTapGesture {
                         switchingMailbox = false
                         guard !isCurrent else { return }
-                        peer = nil
-                        inbox.reset()
-                        account.act(as: mailbox)
+                        switchTo(mailbox)
                     }
                 }
             }
@@ -522,6 +550,7 @@ private struct MacConversationRow: View {
         // what fixed the truncation — that was a `.fixedSize()` two views up — but a sidebar row
         // should still fill its column.
         .frame(maxWidth: .infinity, alignment: .leading)
+        .frame(height: 44)
         .contentShape(Rectangle())
         .padding(.vertical, 3)
     }

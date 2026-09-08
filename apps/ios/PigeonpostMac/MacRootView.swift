@@ -23,6 +23,7 @@ struct MacRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.wash)
         .task(id: session.status) {
+            guard !Fixtures.enabled else { return }
             guard session.status == .signedIn else { return }
             await account.loadIdentities()
         }

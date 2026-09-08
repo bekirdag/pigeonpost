@@ -72,10 +72,6 @@ enum Fixtures {
     #if DEBUG
     @MainActor
     static func apply(session: Session, account: Account, inbox: Inbox) {
-        let now = Int(Date().timeIntervalSince1970)
-        let decoder = JSONDecoder()
-        decoder.keyDecodingStrategy = .convertFromSnakeCase
-
         if emptyAccount {
             session.installFixtureSession()
             account.installEmptyFixture()
@@ -89,12 +85,24 @@ enum Fixtures {
             Mailbox(address: "/k/qq2222v2h90vnwefj7g7ezvbh7", handle: nil, label: "scratch"),
         ]
 
+        session.installFixtureSession()
+        account.installFixtures(mailboxes: fleet, me: me)
+        applyInbox(for: me, inbox: inbox)
+    }
+
+    /// Reinstall inert fixture mail after the desktop mailbox picker clears the previous mailbox.
+    /// Production switches always load from the postbox; this exists only so a debug UI run can
+    /// exercise repeated switches without touching a real mailbox.
+    @MainActor
+    static func applyInbox(for mailbox: Mailbox, inbox: Inbox) {
+        guard enabled else { return }
+        _ = mailbox
+        let now = Int(Date().timeIntervalSince1970)
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
         let messages = (try? decoder.decode(InboxResponse.self, from: Data(inboxJSON(now).utf8)))?.messages ?? []
         let contactsBody = try? decoder.decode(ContactsResponse.self, from: Data(contactsJSON.utf8))
         let threads = (try? decoder.decode(ThreadsResponse.self, from: Data(threadsJSON(now).utf8)))?.threads ?? []
-
-        session.installFixtureSession()
-        account.installFixtures(mailboxes: fleet, me: me)
         inbox.installFixtures(
             messages: messages,
             contacts: contactsBody?.contacts ?? [],

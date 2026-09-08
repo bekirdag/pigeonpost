@@ -60,6 +60,42 @@ struct ThreadMessage: Identifiable, Equatable {
         if let autoReply { return autoReply.body }
         return body
     }
+
+    /// What the find bar can actually point at. Request JSON and unattended-reply headers are wire
+    /// framing, not words drawn in the bubble, so searching them would produce an unhighlightable
+    /// "match". The rendered request fields and reply prose are the searchable surface.
+    var searchText: String {
+        if let envelope {
+            var pieces: [String] = envelope.verb == "full_access" ? [] : [envelope.title]
+            let visibleArgs = envelope.args.filter { _, value in
+                envelope.note.map { value != $0 } ?? true
+            }
+            pieces.append(contentsOf: visibleArgs.keys.sorted().flatMap { key in
+                [key, visibleArgs[key] ?? ""]
+            })
+            if let note = envelope.note { pieces.append(note) }
+            if let heldBecause { pieces.append(ConversationBuilder.heldReason(heldBecause)) }
+            return pieces.joined(separator: "\n")
+        }
+        if let autoReply { return autoReply.body }
+        return body
+    }
+}
+
+/// Pure conversation-find logic, kept outside SwiftUI so a long thread can be tested without a
+/// window and the view does not accidentally rescan every message once per rendered bubble.
+enum ConversationSearch {
+    static func query(_ raw: String) -> String {
+        raw.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    static func matchingMessageIDs(in messages: [ThreadMessage], query raw: String) -> [String] {
+        let needle = query(raw)
+        guard !needle.isEmpty else { return [] }
+        return messages.compactMap { message in
+            message.searchText.localizedCaseInsensitiveContains(needle) ? message.id : nil
+        }
+    }
 }
 
 /// A message sent since the last poll, or one that failed outright.
@@ -124,6 +160,13 @@ struct Subthread: Identifiable, Equatable {
 }
 
 enum ConversationBuilder {
+    /// Keep a valid thread selection, otherwise choose the first thread in the list. The desktop
+    /// app always shows one thread at a time; `nil` is reserved for a peer with no thread route.
+    static func selectedThread(subthreads: [Subthread], current: String?) -> String? {
+        if let current, subthreads.contains(where: { $0.id == current }) { return current }
+        return subthreads.first?.id
+    }
+
     /// The whole list, newest first.
     static func build(
         messages: [Message],
