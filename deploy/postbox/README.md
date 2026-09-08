@@ -40,8 +40,30 @@ Live setup (SSH `-p 34251 root@159.69.201.24`):
   cannot tell that apart from a quiet mailbox, which is why the web app treats silence past the
   15-second keep-alive as a broken stream and goes back to long-polling. `timeout=120` stays: the
   keep-alive is well inside it, so an idle stream is never mistaken for a dead backend.
-- **Redeploy:** rsync the tree, rebuild the image, `docker rm -f` + re-`docker run` both containers.
-  Data and TLS persist.
+- **Redeploy:** keep the source directory as a clean Git checkout, fetch `origin`, and fast-forward
+  `main` to the tested deployment commit. Build from that checkout, tag the image with the commit,
+  then recreate both containers with the log limits below. Data, credentials, and TLS stay in the
+  separate runtime directory. Verify the source checkout's `HEAD` and clean status after deployment.
+
+### Bound container logs on every deployment
+
+Both manual `docker run` commands must include
+`--log-driver json-file --log-opt max-size=10m --log-opt max-file=3`.
+The Compose stack applies the same limit to every service. Recreate existing containers to apply
+it; restarting them does not change their logging configuration. Verify with
+`docker inspect --format '{{json .HostConfig.LogConfig}}' pigeonpost-postbox pigeonpost-postbox-reaper`.
+
+An incident on 2026-09-08 exhausted the root filesystem with a 91 GB postbox log. Inbox polls
+repeatedly logged the same held requests at `info`, and the container had no rotation configured.
+SQLite then failed inbox reads with `database or disk is full`, surfaced by the web app as
+`Could not load your mailboxes: store_error`. Mailbox and attachment quotas cannot bound Docker
+logs, which live on the host's Docker filesystem.
+
+Per-message authorization diagnostics now log at `debug`; responses still include every autonomy
+decision and hold reason. Keep normal production logging at `info` or above. During disk-pressure
+recovery, inspect container log sizes first, preserve diagnostic samples, and reclaim diagnostic
+storage without removing the database, its WAL, or attachment files. Verify database integrity,
+authenticated inbox reads, and free space before declaring recovery complete.
 
 ## Push notifications (APNs)
 

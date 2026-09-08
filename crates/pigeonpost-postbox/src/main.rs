@@ -2921,16 +2921,16 @@ pub(crate) async fn do_inbox(
             // arrive marked `auto`.
             let decision = verbs::decide(body.as_str(), sender_is_auto(contact, policy), granted);
 
-            // Log every message a trusted sender could have had acted on, whichever way it went —
-            // an `auto` peer reaching for a denied verb is the signal worth having, and it is
-            // invisible if only the successes are recorded.
+            // Inbox reads re-evaluate the same messages on every poll. These diagnostics belong
+            // at debug: logging each decision at info lets unread mail fill the server's disk.
+            // The current decision is always returned below, including why a request is held.
             match &decision {
-                verbs::Decision::Auto { verb } => tracing::info!(
+                verbs::Decision::Auto { verb } => tracing::debug!(
                     to = %me.address, from = %from, verb = %verb, message_id = %m.id,
                     outcome = "auto", "scoped request auto-accepted"
                 ),
                 verbs::Decision::Review { held, verb } if *held != verbs::Held::SenderNotAuto => {
-                    tracing::info!(
+                    tracing::debug!(
                         to = %me.address, from = %from, verb = verb.as_deref().unwrap_or("-"),
                         message_id = %m.id, outcome = held.as_str(), "scoped request held"
                     )

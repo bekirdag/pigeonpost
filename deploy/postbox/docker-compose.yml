@@ -8,6 +8,13 @@
 #            docker compose up -d --build
 name: pigeonpost-postbox
 
+# Bound diagnostic storage independently of mailbox and attachment quotas.
+x-logging: &bounded-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 networks:
   edge: {}
   internal:
@@ -21,6 +28,7 @@ services:
   caddy:
     image: caddy:2
     restart: unless-stopped
+    logging: *bounded-logging
     ports:
       - "80:80"     # public on 159.69.201.24 (ACME + redirect)
       - "443:443"
@@ -38,6 +46,7 @@ services:
       dockerfile: deploy/postbox/Dockerfile
     restart: unless-stopped
     env_file: [./postbox.env]              # copied from postbox.env.example; keep 600, never committed
+    logging: *bounded-logging
     networks: [internal]
     volumes:
       - data:/data
@@ -52,6 +61,7 @@ services:
   reaper:
     image: pigeonpost-postbox:latest
     restart: unless-stopped
+    logging: *bounded-logging
     command: ["--reaper"]                  # ephemeral-retention sweep loop
     env_file: [./postbox.env]
     networks: [internal]
@@ -63,6 +73,7 @@ services:
   backup:
     image: offen/docker-volume-backup:latest
     restart: unless-stopped
+    logging: *bounded-logging
     environment:
       BACKUP_CRON_EXPRESSION: "0 3 * * *"
       BACKUP_FILENAME: "postbox-%Y%m%d.tar.gz"
