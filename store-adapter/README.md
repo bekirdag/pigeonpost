@@ -1,6 +1,6 @@
 # Pigeonpost store adapter
 
-The small service that sits between the handle store (`site-store/`) and MASAAS. It follows the
+The small service that sits between the account page (`site/account.js`) and MASAAS. It follows the
 same pattern as the `theneuralledger` adapter: the browser holds the customer's own OIDC token, and
 this service **forwards member billing operations to MASAAS with that token** plus an
 `x-product-slug` header. It uses a privileged **runtime token** only for catalog and entitlement
@@ -28,15 +28,17 @@ Mirrors the theneuralledger adapter so an operator wires it the same way.
 | `MASAAS_PRODUCT_APP_URL` | Member app base, default `https://app-pigeonpost.masaas.org` |
 | `MASAAS_SAAS_API_URL` | Member SaaS backend; defaults to `<app url>/saas-api` |
 | `MASAAS_PRODUCT_SLUG` | `pigeonpost` |
-| `MASAAS_RUNTIME_TOKEN` | Runtime/service token — catalog + entitlement reads only. **Required for live mode.** |
+| `MASAAS_RUNTIME_TOKEN` | Runtime/service token for entitlement reads; member billing uses the customer's token |
+| `MASAAS_PLAN_SLUG` | Handle price plan, default `handle-yearly-annual-usd` |
 | `OIDC_ISSUER` | `https://sso.sealunit.com/realms/pigeonpost` |
 | `OIDC_CLIENT_ID` | The store's OIDC client |
 | `OIDC_CLIENT_SECRET` | Empty for a public (PKCE) client |
-| `PIGEONPOST_REGISTRY_URL` | For handle availability reads |
-| `STORE_ALLOWED_ORIGINS` | CORS allowlist, default `https://store.pigeonpost.dev` |
+| `PIGEONPOST_POSTBOX_URL` | Handle availability and ownership, default `https://postbox.pigeonpost.dev` |
+| `PIGEONPOST_NAMESPACE_GRANT` | Service credential matching the postbox's `NAMESPACE_GRANT_TOKEN`; required before checkout |
+| `STORE_ALLOWED_ORIGINS` | CORS allowlist; first origin is the payment return origin, default `https://pigeonpost.dev` |
 
-With no `MASAAS_RUNTIME_TOKEN` the adapter runs in preview: `/healthz` reports `configured:false`,
-catalog returns empty, member routes still require a token.
+With no `MASAAS_RUNTIME_TOKEN`, `/healthz` reports `configured:false`. Member routes still operate
+with the signed-in customer's token; this flag is not a billing readiness check.
 
 ## Routes the store calls
 
@@ -44,14 +46,29 @@ catalog returns empty, member routes still require a token.
 | --- | --- | --- |
 | GET | `/healthz` | Liveness + whether live wiring is present |
 | GET | `/v1/packages` | Public catalog from MASAAS |
-| GET | `/v1/handles/:name/availability` | Registry read; registry is authoritative on rules |
+| GET | `/v1/handles/:name/availability` | Authoritative postbox availability read |
 | POST | `/v1/auth/exchange` | OIDC code → member session (client secret, if any, stays here) |
 | GET | `/v1/subscriptions` | The signed-in customer's handles |
-| POST | `/v1/checkout/session` | Create subscription in MASAAS, return the hosted payment URL |
+| POST | `/v1/checkout` | Start or resume payment for `{handle, operationId}`; operationId is 32 random hex characters retained for retries |
+| GET/POST | `/v1/checkout/callback` | Bridge the bank's return to the account page; this does not authorize delivery |
+| POST | `/v1/checkout/complete` | Verify `{subscriptionId, paymentId}` with the member's token, complete payment and deliver the handle |
+| POST | `/v1/handles/claim` | Reconcile an already paid handle with postbox ownership |
 | POST | `/v1/subscriptions/:id/cancel` | Cancel |
 
-## What it does not do
+## Checkout contract and deployment
 
-Issue the handle on payment. The registry has no flat-handle namespace yet, and the
-billing→registry binding is unbuilt. This proves the money path; name issuance is the separate
-registry build.
+Deploy the backend's `20260910120000_subscription_external_reference` migration and API support
+before this adapter. Subscriptions store `external_reference: pigeonpost:handle:<name>` at creation.
+The backend rejects arbitrary `metadata`; card setup is separate from subscription payment.
+
+The create response either supplies `payment_action_required` with a hosted bank URL or a paid
+subscription. Existing pending payments are resumed from their member-scoped payment records;
+they are never passed to `retry-payment`, which would start a second charge. Bank completion
+re-reads the subscription and its payment, resolving the session from the stored payment record.
+
+Delivery requires the exact reference and configured plan, `active` status, and a future paid
+period. `past_due`, `trialing`, missing status, and expired terms cannot grant a handle. The
+postbox grant uses that paid term as the namespace expiry and can be retried without a payment.
+
+Run `node --test test/checkout.test.mjs` from this directory. The tests use local HTTP fixtures
+and exercise the actual adapter routes without contacting a payment gateway.

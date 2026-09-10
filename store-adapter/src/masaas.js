@@ -50,7 +50,7 @@ export async function entitlementSnapshot(tenantId) {
 
 // ---- member-token proxy (subscriptions, billing profile, hosted payment) ----------------------
 
-export async function memberBackend(memberToken, method, path, body) {
+export async function memberBackend(memberToken, method, path, body, requestKey) {
   const headers = {
     accept: "application/json",
     authorization: `Bearer ${memberToken}`,
@@ -60,21 +60,53 @@ export async function memberBackend(memberToken, method, path, body) {
   const hasBody = body !== undefined && method !== "GET";
   if (hasBody) {
     headers["content-type"] = "application/json";
-    headers["idempotency-key"] = idempotencyKey(`pp_${method.toLowerCase()}`);
+    headers["idempotency-key"] = requestKey || idempotencyKey(`pp_${method.toLowerCase()}`);
   }
   const target = /^https?:\/\//i.test(path) ? path : `${config.masaasSaasApiBase}${path.startsWith("/") ? path : `/${path}`}`;
   return doFetch(target, { method, headers, body: hasBody ? JSON.stringify(body) : undefined });
 }
 
-// Subscriptions
-export const listSubscriptions = (t) => memberBackend(t, "GET", "/v1/subscriptions?limit=20");
-export const cancelSubscription = (t, id, reason) =>
-  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/cancel`, { reason: reason || "customer_requested" });
+// Read every page before deciding whether a purchase already exists.
+async function memberList(token, path) {
+  const rows = [];
+  const seen = new Set();
+  let cursor;
+  do {
+    const page = await memberBackend(token, "GET", `${path}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
+    if (Array.isArray(page)) return rows.concat(page);
+    if (!Array.isArray(page?.data)) throw new Error("Invalid billing list response");
+    rows.push(...page.data);
+    cursor = page.next_cursor;
+    if (cursor && seen.has(cursor)) throw new Error("Billing pagination did not advance");
+    if (cursor) seen.add(cursor);
+  } while (cursor);
+  return rows;
+}
 
-// The buy: subscribe to a price plan by its stable slug (never the regenerated price_plan UUID).
-// MASAAS creates the subscription; the hosted payment session captures the card.
-export const subscribeToPlan = (t, planSlug, metadata) =>
-  memberBackend(t, "POST", "/v1/subscriptions", { plan_slug: planSlug, ...(metadata ? { metadata } : {}) });
+export const listSubscriptions = (t) => memberList(t, "/v1/subscriptions");
+export async function getSubscription(token, id) {
+  const subscription = (await listSubscriptions(token)).find((s) => s.id === id);
+  if (!subscription) throw Object.assign(new Error("Subscription not found"), { status: 404 });
+  return subscription;
+}
+export const listPayments = (t) => memberList(t, "/v1/billing/payments");
+export const getPayment = (t, id) => memberBackend(t, "GET", `/v1/billing/payments/${encodeURIComponent(id)}`);
+export const cancelSubscription = (t, id) =>
+  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {});
+
+// Creating the subscription starts its payment. Card setup is a separate, earlier operation.
+export const subscribeToPlan = (t, planSlug, externalReference, callbackUrl, key) =>
+  memberBackend(t, "POST", "/v1/subscriptions", {
+    plan_slug: planSlug, external_reference: externalReference, payment_callback_url: callbackUrl,
+  }, key);
+export const retrySubscriptionPayment = (t, id, callbackUrl, key) =>
+  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/retry-payment`, {
+    payment_callback_url: callbackUrl,
+  }, key);
+export const completeSubscriptionPayment = (t, id, paymentId, sessionId, key) =>
+  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/payment-checkout/complete`, {
+    payment_id: paymentId, session_id: sessionId,
+  }, key);
 
 // Billing profile (individual or entity + tax fields)
 export const listBillingProfiles = (t) => memberBackend(t, "GET", "/v1/billing/profiles?limit=20");

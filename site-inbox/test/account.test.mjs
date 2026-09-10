@@ -8,6 +8,92 @@ const source = readFileSync(new URL("../../site/account.js", import.meta.url), "
 const config = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "https://pigeonpost.dev/account", completeStatus = 200 } = {}) {
+  const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  window.sessionStorage.setItem("pp_session", "member-token");
+  const originalTimeout = window.setTimeout.bind(window);
+  window.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay === 350 ? 0 : delay, ...args);
+  const calls = [];
+  window.fetch = async (url, init = {}) => {
+    const path = new URL(url, window.location.origin).pathname;
+    calls.push({ path, body: init.body && JSON.parse(init.body) });
+    const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
+    if (path === "/api/v1/me/overview") return response({ subscriptions: [], handles: [], invoices: [], billingProfiles: [{ id: "profile-1" }], paymentMethods: [{ id: "card-1" }] });
+    if (path.endsWith("/availability")) return response({ available: true, known: true });
+    if (path === "/api/v1/checkout") return response(checkoutBody || { status: "payment_action_required", subscriptionId: "subscription-1", paymentId: "payment-1", checkoutUrl: "https://bank.example.test/checkout" }, checkoutStatus);
+    if (path === "/api/v1/checkout/complete") return response(completeStatus === 200 ? { status: "active", handle: "example", bound: true } : { error: "Payment is still under review" }, completeStatus);
+    return response({ identities: [], keys: [], namespaces: [], packages: [] });
+  };
+  window.eval(source);
+  for (let i = 0; i < 30 && !window.document.querySelector("#ac-buy"); i++) await tick();
+  return {
+    window, calls,
+    async buy() {
+      const input = window.document.querySelector("#ac-handle");
+      input.value = "example"; input.dispatchEvent(new window.Event("input"));
+      const button = window.document.querySelector("#ac-buy");
+      for (let i = 0; i < 30 && button.disabled; i++) await new Promise((resolve) => setTimeout(resolve, 1));
+      assert.equal(button.disabled, false);
+      button.click(); button.click();
+      for (let i = 0; i < 20; i++) await tick();
+    },
+  };
+}
+
+test("Get it keeps the payment reference before redirect and ignores a double click", async (t) => {
+  const page = await checkoutPage(t);
+  await page.buy();
+  const calls = page.calls.filter((c) => c.path === "/api/v1/checkout");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].body.operationId, /^[a-f0-9]{32}$/);
+  const pending = JSON.parse(page.window.sessionStorage.getItem("pp_checkout"));
+  assert.equal(pending.subscriptionId, "subscription-1");
+  assert.equal(pending.paymentId, "payment-1");
+  assert.equal(page.window.localStorage.getItem("pp_bought_handle"), null, "starting payment does not claim that the handle is paid for");
+  assert.equal(page.calls.some((c) => c.path === "/api/v1/handles/claim"), false);
+});
+
+test("an ambiguous checkout failure keeps a stable attempt and never claims payment success", async (t) => {
+  const page = await checkoutPage(t, { checkoutStatus: 502, checkoutBody: { error: "Example checkout rejection" } });
+  await page.buy();
+  const first = page.calls.find((c) => c.path === "/api/v1/checkout");
+  await page.buy();
+  const attempts = page.calls.filter((c) => c.path === "/api/v1/checkout");
+  assert.equal(attempts[1].body.operationId, first.body.operationId);
+  assert.equal(page.window.localStorage.getItem("pp_bought_handle"), null);
+  assert.equal(page.window.document.querySelector("#ac-toast").textContent, "Checkout couldn't start: Example checkout rejection");
+});
+
+test("a definite payment rejection allows a fresh attempt after correction", async (t) => {
+  const page = await checkoutPage(t, { checkoutStatus: 400, checkoutBody: { error: "Payment declined" } });
+  await page.buy();
+  const first = page.calls.find((c) => c.path === "/api/v1/checkout");
+  await page.buy();
+  assert.notEqual(page.calls.filter((c) => c.path === "/api/v1/checkout")[1].body.operationId, first.body.operationId);
+});
+
+test("a completed checkout shows the delivered handle without another hosted step", async (t) => {
+  const page = await checkoutPage(t, { checkoutBody: { status: "active", handle: "example", bound: true } });
+  await page.buy();
+  assert.equal(page.window.sessionStorage.getItem("pp_checkout"), null);
+  assert.equal(page.window.document.querySelector("#ac-toast").textContent, "/example is yours.");
+});
+
+for (const completeStatus of [200, 400]) {
+  test(`bank return checks payment and ${completeStatus === 200 ? "shows ownership" : "preserves pending state"}`, async (t) => {
+    const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account?checkout_return=1&subscription_id=subscription-1&payment_id=payment-1", completeStatus });
+    for (let i = 0; i < 10; i++) await tick();
+    const completion = page.calls.find((c) => c.path === "/api/v1/checkout/complete");
+    assert.deepEqual(completion.body, { subscriptionId: "subscription-1", paymentId: "payment-1" });
+    assert.equal(page.calls.some((c) => c.path === "/api/v1/checkout"), false);
+    assert.equal(page.window.location.search, "");
+    assert.equal(Boolean(page.window.sessionStorage.getItem("pp_checkout")), completeStatus !== 200);
+  });
+}
+
 async function account(t, { remember, rejectFresh = false }) {
   const dom = new JSDOM('<main id="account-root"></main>', {
     url: "https://pigeonpost.dev/account?code=test-code&state=test-state",
