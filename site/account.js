@@ -16,25 +16,31 @@
   // purchase gate knows to fetch it before deciding whether billing/card are missing.
   let overview = null;
 
-  // localStorage, not sessionStorage: the PKCE verifier and session must survive the full-page
+  // localStorage, not sessionStorage: the PKCE verifier must survive the full-page
   // redirect out to Keycloak and back. sessionStorage is meant to persist across that, but in
   // practice some browsers drop it across a cross-site OAuth round-trip, which loses the verifier
   // and makes every exchange fail invalid_grant — a silent sign-in loop. localStorage is durable.
   const SS = window.localStorage;
-  const getToken = () => SS.getItem("pp_session");
-  const setToken = (t) => SS.setItem("pp_session", t);
-  const clearToken = () => SS.removeItem("pp_session");
+  const TS = window.sessionStorage;
 
-  // "Remember me" keeps a refresh token so the access token can be silently renewed for up to 30
-  // days (Keycloak offline session), instead of forcing a fresh sign-in when the short-lived access
-  // token expires. Only stored when the user opts in.
-  const getRefresh = () => SS.getItem("pp_refresh");
-  const setRefresh = (t) => (t ? SS.setItem("pp_refresh", t) : SS.removeItem("pp_refresh"));
-  const clearRefresh = () => SS.removeItem("pp_refresh");
+  // Every signed-in tab needs to renew its short-lived access token while a form is open.
+  // Keep access and refresh tokens together: a remembered sign-in in another tab must not pair
+  // its access token with this tab's temporary refresh token. Only remembered sessions persist.
+  const sessionStore = () => TS.getItem("pp_session") ? TS : SS;
+  const getToken = () => sessionStore().getItem("pp_session");
   const wantsRemember = () => SS.getItem("pp_remember") === "1";
+  function clearSession() {
+    for (const storage of [TS, SS]) {
+      storage.removeItem("pp_session");
+      storage.removeItem("pp_refresh");
+    }
+  }
+  function storeSession(storage, body) {
+    storage.setItem("pp_session", body.session);
+    if (body.refresh) storage.setItem("pp_refresh", body.refresh);
+  }
   function signOut() {
-    clearToken();
-    clearRefresh();
+    clearSession();
     SS.removeItem("pp_remember");
   }
 
@@ -121,11 +127,8 @@
       });
       const body = await res.json().catch(() => ({}));
       if (body.session) {
-        setToken(body.session);
-        // Keep the refresh token only when the user asked to be remembered. Keycloak returns one
-        // whenever offline_access was granted, but we honour the checkbox regardless.
-        if (wantsRemember() && body.refresh) setRefresh(body.refresh);
-        else clearRefresh();
+        clearSession();
+        storeSession(wantsRemember() ? SS : TS, body);
         if (SS.getItem("pp_postaction") === "totp") toast("Two-factor authentication is now set up.");
       } else {
         // Surface the reason rather than looping silently — this is what turned a real bug into a
@@ -148,7 +151,8 @@
   // refresh is shared so a burst of 401s doesn't spend the (rotating) refresh token several times.
   let refreshInFlight = null;
   async function refreshSession() {
-    const refresh = getRefresh();
+    const storage = sessionStore();
+    const refresh = storage.getItem("pp_refresh");
     if (!refresh) return false;
     if (!refreshInFlight) {
       refreshInFlight = (async () => {
@@ -159,12 +163,13 @@
             body: JSON.stringify({ refresh }),
           });
           const body = await res.json().catch(() => ({}));
+          // A logout or new sign-in during renewal must not restore the previous credentials.
+          if (sessionStore() !== storage || storage.getItem("pp_refresh") !== refresh) return false;
           if (res.ok && body.session) {
-            setToken(body.session);
-            if (body.refresh) setRefresh(body.refresh); // Keycloak rotates refresh tokens
+            storeSession(storage, body);
             return true;
           }
-          clearRefresh(); // refresh token is dead/expired — stop trying it
+          storage.removeItem("pp_refresh"); // refresh token is dead/expired — stop trying it
           return false;
         } catch (_) {
           return false; // network blip: keep the refresh token, let the caller surface the error
