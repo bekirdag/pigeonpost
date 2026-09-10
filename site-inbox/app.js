@@ -521,6 +521,7 @@
     return {
       me: null,          // { address, handle }
       identities: [],    // [{ address, handle, label }]
+      openingInbox: false,
       inbound: [],       // messages from the server
       contacts: [],      // contact rows, including wildcards
       policy: null,
@@ -721,9 +722,17 @@
 
   function render() {
     const signedIn = Boolean(getToken());
-    $("signin").hidden = signedIn;
-    $("app").hidden = !signedIn;
-    if (!signedIn) return;
+    // A session can exist before its first mailbox. The setup controls live in #signin, so
+    // hiding that panel just because a token exists strands every new account.
+    const ready = signedIn && Boolean(state.me);
+    $("signin").hidden = ready;
+    $("signin-btn").hidden = signedIn;
+    $("app").hidden = !ready;
+    if (!signedIn) {
+      $("create-inbox-btn").hidden = true;
+      $("signin-note").textContent = "";
+    }
+    if (!ready) return;
     renderMe();
     renderThreadList();
     renderSubs();
@@ -2721,6 +2730,56 @@
 
   // ---- boot ---------------------------------------------------------------------------------
 
+  async function openInbox(createIfMissing = false) {
+    if (!getToken() || state.openingInbox) return;
+    state.openingInbox = true;
+    const create = $("create-inbox-btn");
+    const note = $("signin-note");
+    create.disabled = true;
+    note.textContent = createIfMissing ? "Creating your inbox…" : "Loading your inbox…";
+    render();
+
+    try {
+      // A previous mint may have succeeded even when its response (or the following listing)
+      // was lost. Reconcile before another POST so a retry opens that mailbox instead of minting
+      // a second one. This also picks up a mailbox created on another device in the meantime.
+      await loadIdentities();
+      if (!state.me && createIfMissing) {
+        await api("/v1/identities", { method: "POST", body: {} });
+        await loadIdentities();
+        if (!state.me) throw new Error("Your inbox is not available yet. Please try again.");
+      }
+      if (!state.me) {
+        note.textContent = "You are signed in. Create your inbox to get started.";
+        create.textContent = "Create my inbox";
+        create.hidden = false;
+        create.onclick = () => openInbox(true);
+        return;
+      }
+      note.textContent = "";
+      create.hidden = true;
+      render();
+      // Resume setup without wiring the page twice. Mail loading has its own recovery loop.
+      try { await loadAll(); } finally { startLive(); }
+    } catch (e) {
+      if (e instanceof ApiError && e.status === 401) {
+        signOut();
+        toast("Your session has expired. Sign in again.");
+      } else if (state.me) {
+        toast("Could not load your inbox: " + e.message);
+      } else {
+        note.textContent = (createIfMissing ? "Could not create your inbox: " : "Could not load your mailboxes: ") + e.message;
+        create.textContent = "Try again";
+        create.hidden = false;
+        create.onclick = () => openInbox(createIfMissing);
+      }
+    } finally {
+      state.openingInbox = false;
+      create.disabled = false;
+      render();
+    }
+  }
+
   async function boot() {
     wire();
     await completeLoginIfReturning();
@@ -2738,52 +2797,7 @@
     document.addEventListener("visibilitychange", () => {
       if (!document.hidden) resumeSession();
     });
-    render();
-
-    try {
-      await loadIdentities();
-      if (!state.me) {
-        // Signing in used to end here, telling someone who had just authenticated in a browser to
-        // go and install a command line tool. An account holder needs no proof-of-work to mint —
-        // the postbox creates under the account on the strength of this very token — so the whole
-        // remaining step is one call the page can already make.
-        $("signin-note").textContent = "You are signed in, but have no inbox yet.";
-        const create = $("create-inbox-btn");
-        create.hidden = false;
-        create.disabled = false;
-        create.onclick = async () => {
-          create.disabled = true;
-          $("signin-note").textContent = "Creating your inbox…";
-          try {
-            await api("/v1/identities", { method: "POST", body: {} });
-            $("signin-note").textContent = "";
-            create.hidden = true;
-            // Resume where boot() left off rather than re-running it: boot wires the event
-            // handlers, and running it twice would bind every one of them a second time.
-            await loadIdentities();
-            if (state.me) {
-              renderMe();
-              try { await loadAll(); } finally { startLive(); }
-            }
-          } catch (err) {
-            create.disabled = false;
-            $("signin-note").textContent =
-              "Could not create an inbox: " + (err && err.message ? err.message : "unknown error");
-          }
-        };
-        render();
-        return;
-      }
-      renderMe();
-      try { await loadAll(); } finally { startLive(); }
-    } catch (e) {
-      if (e instanceof ApiError && e.status === 401) {
-        signOut();
-        toast("Your session has expired. Sign in again.");
-        return;
-      }
-      toast("Could not load your mailboxes: " + e.message);
-    }
+    await openInbox();
   }
 
   boot();
