@@ -111,6 +111,8 @@ export const completeSubscriptionPayment = (t, id, paymentId, sessionId, key) =>
 // Billing profile (individual or entity + tax fields)
 export const listBillingProfiles = (t) => memberBackend(t, "GET", "/v1/billing/profiles?limit=20");
 export const createBillingProfile = (t, profile) => memberBackend(t, "POST", "/v1/billing/profiles", profile);
+export const updateBillingProfile = (t, id, profile) =>
+  memberBackend(t, "PATCH", `/v1/billing/profiles/${encodeURIComponent(id)}`, profile);
 
 // Payment methods — MASAAS hosts the card capture; setup-session returns the hosted URL.
 export const listPaymentMethods = (t) => memberBackend(t, "GET", "/v1/billing/payment-methods?limit=20");
