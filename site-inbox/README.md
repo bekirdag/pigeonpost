@@ -101,15 +101,25 @@ origin to `CORS_ORIGINS` on a locally run postbox. Do not add localhost to the p
 ## Tests
 
 ```
-npm i jsdom && node site-inbox/test/app.test.mjs
+npm ci --prefix site-inbox --ignore-scripts
+npm test --prefix site-inbox
 ```
 
-Deliberately outside CI: everything else here tests with node builtins only and the repo carries no
-`package.json`. The harness drives the real `index.html` and `app.js` in jsdom against fixture data
+The `inbox web` CI job runs the same suite on every pull request and main push.
+The harness drives the real `index.html` and `app.js` in jsdom against fixture data
 copied from the postbox's response shapes, and asserts the parts that are quiet when they break —
 thread assembly and ordering, a scoped request rendering as a request, opening a thread
 acknowledging its unread mail, a send being addressed and attributed correctly, and a hostile
 message body staying inert text.
+
+`test/onboarding.test.mjs` also covers a signed-in account with no mailbox, creation failures,
+expired sessions, and retries after a successful mint whose response or following listing was
+lost. Visibility assertions include ancestors: the original signup bug unhid **Create my inbox**
+inside a panel that `render()` immediately hid because the user had a token.
+
+Sign-in and mailbox readiness are separate. Setup remains visible until a mailbox is loaded;
+errors offer a retry. Before creating on a retry, the page checks for an existing mailbox so a
+lost response does not mint another. Existing account holders open their current mailbox directly.
 
 ## Decisions worth knowing
 

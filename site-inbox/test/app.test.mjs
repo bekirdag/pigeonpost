@@ -1,11 +1,9 @@
 // Drive the inbox app in jsdom against fixture data copied from the postbox's real response shapes
 // (`do_inbox`, `do_list_identities`, `whoami`, `do_list_contacts`).
 //
-// Deliberately NOT wired into CI. Everything else in this repo tests with node builtins only and
-// carries no package.json, and this app is not worth a dependency in that pipeline. Run it by hand
-// when changing app.js:
+// CI runs this alongside handle and first-inbox onboarding regressions. Run it locally with:
 //
-//     npm i jsdom && node site-inbox/test/app.test.mjs
+//     npm ci --prefix site-inbox --ignore-scripts && npm test --prefix site-inbox
 //
 // It asserts the things that are easy to break and expensive to notice: which threads exist and in
 // what order, that a scoped request renders as a request rather than as JSON, that opening a thread
