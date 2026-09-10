@@ -25,13 +25,17 @@
   const setToken = (t) => SS.setItem("pp_session", t);
   const clearToken = () => SS.removeItem("pp_session");
 
-  // "Remember me" keeps a refresh token so the access token can be silently renewed for up to 30
-  // days (Keycloak offline session), instead of forcing a fresh sign-in when the short-lived access
-  // token expires. Only stored when the user opts in.
-  const getRefresh = () => SS.getItem("pp_refresh");
-  const setRefresh = (t) => (t ? SS.setItem("pp_refresh", t) : SS.removeItem("pp_refresh"));
-  const clearRefresh = () => SS.removeItem("pp_refresh");
+  // Every signed-in tab needs to renew its short-lived access token while a form is open.
+  // "Remember me" persists the refresh token across browser sessions; otherwise keep it only
+  // in this tab. Discarding it entirely made normal sessions expire after five minutes.
+  const TS = window.sessionStorage;
+  const getRefresh = () => TS.getItem("pp_refresh") || SS.getItem("pp_refresh");
+  const clearRefresh = () => { TS.removeItem("pp_refresh"); SS.removeItem("pp_refresh"); };
   const wantsRemember = () => SS.getItem("pp_remember") === "1";
+  const setRefresh = (t) => {
+    clearRefresh();
+    if (t) (wantsRemember() ? SS : TS).setItem("pp_refresh", t);
+  };
   function signOut() {
     clearToken();
     clearRefresh();
@@ -122,10 +126,8 @@
       const body = await res.json().catch(() => ({}));
       if (body.session) {
         setToken(body.session);
-        // Keep the refresh token only when the user asked to be remembered. Keycloak returns one
-        // whenever offline_access was granted, but we honour the checkbox regardless.
-        if (wantsRemember() && body.refresh) setRefresh(body.refresh);
-        else clearRefresh();
+        // Normal refresh tokens stay in this tab; only remembered sessions persist across tabs.
+        setRefresh(body.refresh);
         if (SS.getItem("pp_postaction") === "totp") toast("Two-factor authentication is now set up.");
       } else {
         // Surface the reason rather than looping silently — this is what turned a real bug into a
