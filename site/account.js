@@ -15,6 +15,7 @@
   // What loadOverview last learned about the signed-in member. Null until the first load, so the
   // purchase gate knows to fetch it before deciding whether billing/card are missing.
   let overview = null;
+  let purchasing = false;
 
   // localStorage, not sessionStorage: the PKCE verifier must survive the full-page
   // redirect out to Keycloak and back. sessionStorage is meant to persist across that, but in
@@ -42,6 +43,7 @@
   function signOut() {
     clearSession();
     SS.removeItem("pp_remember");
+    TS.removeItem("pp_checkout");
   }
 
   // ---- PKCE ---------------------------------------------------------------------------------
@@ -640,11 +642,8 @@
       focusStep("#ac-pay", "#ac-addcard");
       return;
     }
-    // Remembered across the redirect to the payment page, so the return can bind what was paid
-    // for. Cleared only once the handle is actually bound, not merely charged.
-    SS.setItem("pp_bought_handle", name);
     SS.removeItem("pp_pending_handle");
-    buyHandle(name);
+    await buyHandle(name);
   }
 
   // Coming back from checkout. The charge and the handle are two different systems, and this is the
@@ -665,7 +664,7 @@
     } catch (e) {
       // Left in place deliberately: an unbound purchase should keep trying rather than quietly
       // become money taken for nothing.
-      toast(`/${name} is paid for but not active yet — ${e.message}`);
+      toast(`Could not finish /${name}: ${e.message}`);
     }
   }
 
@@ -681,17 +680,69 @@
     }
   }
 
+  function checkoutState() {
+    try { return JSON.parse(TS.getItem("pp_checkout") || "null"); } catch { return null; }
+  }
+
   async function buyHandle(name) {
+    if (purchasing) return;
+    purchasing = true;
+    const button = $("#ac-buy");
+    if (button) button.disabled = true;
     try {
-      const body = await apiAction("/v1/checkout", { handle: name });
-      if (body.checkoutUrl) { window.location.href = body.checkoutUrl; return; }
+      let pending = checkoutState();
+      if (!pending || pending.handle !== name) pending = { handle: name, operationId: randomString(16) };
+      TS.setItem("pp_checkout", JSON.stringify(pending));
+      const body = await apiAction("/v1/checkout", { handle: name, operationId: pending.operationId });
+      if (body.status === "active" && body.bound) {
+        TS.removeItem("pp_checkout"); SS.removeItem("pp_bought_handle");
+        toast(`/${name} is yours.`);
+        await loadOverview();
+        return;
+      }
+      if (body.status === "payment_action_required" && body.checkoutUrl) {
+        TS.setItem("pp_checkout", JSON.stringify({ ...pending, returning: false, subscriptionId: body.subscriptionId, paymentId: body.paymentId }));
+        window.location.href = body.checkoutUrl;
+        return;
+      }
       toast(body.error || "Could not start checkout.");
     } catch (e) {
-      // A 401 that survived the refresh-and-retry means the session token is genuinely stale (expired,
-      // or minted before the current realm claims). Tell the user how to fix it rather than showing a
-      // cryptic "unauthorized"; anything else surfaces the real backend reason.
+      // A definite rejection can be followed by a new attempt after correcting the problem.
+      // Keep the key for ambiguous transport failures so a lost response cannot duplicate it.
+      if (e.status === 400 || e.status === 422) {
+        const pending = checkoutState();
+        if (pending) TS.setItem("pp_checkout", JSON.stringify({ ...pending, operationId: randomString(16) }));
+      }
       if (e.status === 401) toast("Your session has expired — sign out and sign back in, then try again.");
       else toast("Checkout couldn't start: " + e.message);
+    } finally {
+      purchasing = false;
+      if (button && $("#ac-handle")?.value.trim().toLowerCase() === name) button.disabled = false;
+    }
+  }
+
+  async function completeCheckoutIfReturning() {
+    const params = new URLSearchParams(window.location.search);
+    let pending = checkoutState();
+    if (params.get("checkout_return") === "1") {
+      pending = { ...pending, returning: true,
+        subscriptionId: params.get("subscription_id") || pending?.subscriptionId,
+        paymentId: params.get("payment_id") || pending?.paymentId };
+      TS.setItem("pp_checkout", JSON.stringify(pending));
+      ["checkout_return", "subscription_id", "payment_id"].forEach((key) => params.delete(key));
+      history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : ""));
+    }
+    if (!pending?.returning || !getToken()) return;
+    try {
+      const result = await apiAction("/v1/checkout/complete", {
+        subscriptionId: pending.subscriptionId, paymentId: pending.paymentId,
+      });
+      if (result.status !== "active" || !result.bound) throw new Error("Payment has not been confirmed yet");
+      TS.removeItem("pp_checkout"); SS.removeItem("pp_bought_handle");
+      toast(`/${result.handle} is yours.`);
+    } catch (e) {
+      // Keep the return for another status check. A failed check must never create a new charge.
+      toast("Could not finish checkout: " + e.message);
     }
   }
 
@@ -754,7 +805,8 @@
     for (const s of subs) {
       const name = String(s.handle || "").replace(/^\/+/, "");
       if (!name) continue;
-      rows.set(name, { name, detail: s.status || "active", renewsAt: s.renewsAt || "", cancelId: s.id || "" });
+      rows.set(name, { name, detail: s.status === "past_due" ? "Payment pending" : s.status || "unknown",
+        renewsAt: s.renewsAt || "", cancelId: s.id || "", pending: s.status === "past_due" });
     }
 
     const list = [...rows.values()];
@@ -763,10 +815,12 @@
       <div class="ac-row">
         <div><span class="k">/${esc(r.name)}</span>
           <span class="muted">${esc(r.detail)}${r.renewsAt ? " · renews " + esc(String(r.renewsAt).slice(0, 10)) : ""}</span></div>
+        ${r.pending ? `<button class="btn btn-small" data-continue="${esc(r.name)}">Continue payment</button>` : ""}
         ${r.cancelId
           ? `<button class="btn btn-small" data-cancel="${esc(r.cancelId)}">Cancel</button>`
           : `<span class="muted">Managed in the App Store</span>`}
       </div>`).join("");
+    el.querySelectorAll("[data-continue]").forEach((b) => b.onclick = () => startPurchase(b.getAttribute("data-continue")));
     el.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = () => cancelSub(b.getAttribute("data-cancel")));
   }
   async function cancelSub(id) {
@@ -902,6 +956,7 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     await completeLoginIfReturning();
+    await completeCheckoutIfReturning();
     await completeCardSetupIfReturning();
     render();
   });

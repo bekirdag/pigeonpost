@@ -33,6 +33,8 @@ jobs:
           cache-dependency-path: site-inbox/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm test
+      - name: Exercise handle checkout against the billing contract
+        run: node --test ../store-adapter/test/checkout.test.mjs
 
   test:
     name: test (${{ matrix.os }})

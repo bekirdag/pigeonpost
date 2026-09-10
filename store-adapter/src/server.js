@@ -8,6 +8,7 @@
 import http from "node:http";
 import { config, configured } from "./config.js";
 import * as masaas from "./masaas.js";
+import { startCheckout, completeCheckout, claimHandle, subscriptionHandle } from "./checkout.js";
 
 function send(res, status, body, origin) {
   const headers = { "content-type": "application/json", "cache-control": "no-store" };
@@ -95,6 +96,21 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { name, available: available === true, known: available !== null }, origin);
     }
 
+    // Banks can POST their return. Static /account cannot accept that POST; bridge it to a GET.
+    // These identifiers only select a purchase. The authenticated completion still verifies it.
+    if (["GET", "POST"].includes(method) && path === "/v1/checkout/callback") {
+      req.resume();
+      const incoming = new URL(req.url, "http://localhost").searchParams;
+      const target = new URL(back("/account"));
+      target.searchParams.set("checkout_return", "1");
+      for (const key of ["subscription_id", "payment_id"]) {
+        const value = incoming.get(key);
+        if (value && /^[a-f0-9-]{36}$/i.test(value)) target.searchParams.set(key, value);
+      }
+      res.writeHead(303, { location: target.href, "cache-control": "no-store", "referrer-policy": "no-referrer" });
+      return res.end();
+    }
+
     // ---- everything below needs the customer's token ---------------------------------------
     const token = bearer(req);
     if (!token) return send(res, 401, { error: "sign in required" }, origin);
@@ -170,49 +186,15 @@ const server = http.createServer(async (req, res) => {
       return send(res, 200, { paymentMethod }, origin);
     }
 
-    // Buy a handle: subscribe to the plan, then hand back the hosted payment URL.
     if (method === "POST" && path === "/v1/checkout") {
-      const { handle } = await readJson(req);
-      const subscription = await masaas.subscribeToPlan(token, config.planSlug, handle ? { handle } : undefined);
-      const session = await masaas.paymentSetupSession(token, back("/account?bought=1"), back("/account"));
-      const url = pickHostedUrl(session);
-      // If a card is already on file MASAAS may not need a hosted step; fall back to the account page.
-      return send(res, 200, { subscription, checkoutUrl: url || back("/account?bought=1") }, origin);
+      return send(res, 200, await startCheckout(token, await readJson(req)), origin);
     }
-
-    // Deliver a handle the card paid for.
-    //
-    // Called by the account page when it comes back from checkout, and safe to call again: it
-    // proves the subscription is active before it binds anything, and the postbox upserts.
-    //
-    // This is the step the web purchase never had. Apple's path binds itself — the app claims the
-    // transaction and the postbox checks it with Apple — so a handle bought on a phone worked and
-    // one bought with a card did not resolve for anybody.
+    if (method === "POST" && path === "/v1/checkout/complete") {
+      return send(res, 200, await completeCheckout(token, await readJson(req)), origin);
+    }
     if (method === "POST" && path === "/v1/handles/claim") {
       const { handle } = await readJson(req);
-      const name = String(handle || "").trim().toLowerCase().replace(/^\/+/, "");
-      if (!name) return send(res, 400, { error: "handle required" }, origin);
-
-      // The billing system is the authority on whether this was paid for, and it is asked with the
-      // member's own token so one account cannot claim another's purchase.
-      const subs = normalizeSubs(await masaas.listSubscriptions(token).catch(() => null));
-      const paid = subs.find(
-        (s) => String(s.handle || "").replace(/^\/+/, "").toLowerCase() === name &&
-               ["active", "trialing", "past_due"].includes(String(s.status || "").toLowerCase()),
-      );
-      if (!paid) return send(res, 402, { error: "no active subscription for that handle" }, origin);
-
-      const accountId = await masaas.accountIdFor(token);
-      if (!accountId) return send(res, 502, { error: "could not identify the account" }, origin);
-
-      const expiresAt = paid.renewsAt ? Math.floor(new Date(paid.renewsAt).getTime() / 1000) : 0;
-      const bound = await masaas.grantNamespace({
-        namespace: name,
-        accountId,
-        expiresAt: Number.isFinite(expiresAt) && expiresAt > 0 ? expiresAt : 0,
-      });
-      if (!bound.ok) return send(res, 502, { error: `could not bind the handle: ${bound.reason}` }, origin);
-      return send(res, 200, { handle: name, bound: true }, origin);
+      return send(res, 200, await claimHandle(token, handle), origin);
     }
 
     return send(res, 404, { error: "not found" }, origin);
@@ -245,8 +227,8 @@ function normalizeSubs(payload) {
   const arr = list(payload);
   return arr.map((s) => ({
     id: s.id || s.subscription_id,
-    handle: s.metadata?.handle || s.handle || "",
-    status: s.status || "active",
+    handle: subscriptionHandle(s),
+    status: s.status || "unknown",
     renewsAt: s.current_period_end || s.renews_at || s.renewsAt || "",
     planSlug: s.plan_slug || s.planSlug || "",
   }));
@@ -254,5 +236,5 @@ function normalizeSubs(payload) {
 
 server.listen(config.port, () => {
   // eslint-disable-next-line no-console
-  console.log(`pigeonpost store adapter on :${config.port} configured=${configured()} product=${config.masaasProductSlug}`);
+  console.log(`pigeonpost store adapter on :${server.address().port} configured=${configured()} product=${config.masaasProductSlug}`);
 });
