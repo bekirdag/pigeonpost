@@ -70,6 +70,8 @@ for (const remember of [false, true]) {
     const { window, calls } = page;
     const refreshStorage = remember ? window.localStorage : window.sessionStorage;
     const otherStorage = remember ? window.sessionStorage : window.localStorage;
+    assert.equal(refreshStorage.getItem("pp_session"), "original-access");
+    assert.equal(otherStorage.getItem("pp_session"), null);
     assert.equal(refreshStorage.getItem("pp_refresh"), "original-refresh");
     assert.equal(otherStorage.getItem("pp_refresh"), null);
 
@@ -81,15 +83,36 @@ for (const remember of [false, true]) {
     assert.deepEqual(calls.filter((c) => c.path === "/api/v1/billing/profiles").map((c) => c.authorization), ["Bearer original-access", "Bearer renewed-access"]);
     assert.equal(calls.filter((c) => c.path === "/api/v1/auth/refresh").length, 1);
     assert.equal(refreshStorage.getItem("pp_refresh"), "rotated-refresh");
+    assert.equal(refreshStorage.getItem("pp_session"), "renewed-access");
     assert.equal(otherStorage.getItem("pp_refresh"), null);
     assert.ok(window.document.querySelector("#ac-billing-edit"), "saved profile is shown");
 
     window.document.querySelector("#ac-logout").click();
+    assert.equal(window.localStorage.getItem("pp_session"), null);
+    assert.equal(window.sessionStorage.getItem("pp_session"), null);
     assert.equal(window.localStorage.getItem("pp_refresh"), null);
     assert.equal(window.sessionStorage.getItem("pp_refresh"), null);
     assert.ok(window.document.querySelector("#ac-signin"));
   });
 }
+
+test("another tab's remembered sign-in cannot replace this tab's temporary account", async (t) => {
+  const page = await account(t, { remember: false });
+  const { window } = page;
+  // localStorage is shared between tabs; another tab can sign in as a different account.
+  window.localStorage.setItem("pp_session", "other-account-access");
+  window.localStorage.setItem("pp_refresh", "other-account-refresh");
+  window.localStorage.setItem("pp_remember", "1");
+
+  await page.save();
+
+  assert.equal(page.profile?.id, "profile-1");
+  assert.deepEqual(page.calls.filter((c) => c.path === "/api/v1/billing/profiles").map((c) => c.authorization), ["Bearer original-access", "Bearer renewed-access"]);
+  assert.equal(window.sessionStorage.getItem("pp_session"), "renewed-access");
+  assert.equal(window.sessionStorage.getItem("pp_refresh"), "rotated-refresh");
+  assert.equal(window.localStorage.getItem("pp_session"), "other-account-access");
+  assert.equal(window.localStorage.getItem("pp_refresh"), "other-account-refresh");
+});
 
 test("a rejected renewed token stops after one retry and keeps the billing form", async (t) => {
   const page = await account(t, { remember: true, rejectFresh: true });
@@ -100,4 +123,35 @@ test("a rejected renewed token stops after one retry and keeps the billing form"
   assert.equal(page.form.querySelector(".ac-msg").textContent, "Could not save: Unauthorized");
   assert.equal(page.form.elements.namedItem("legal_name").value, page.fields.legal_name);
   assert.ok(page.window.document.querySelector("#ac-logout"));
+});
+
+test("logging out during renewal cannot restore the old session", async (t) => {
+  const page = await account(t, { remember: false });
+  const { window } = page;
+  const originalFetch = window.fetch;
+  let releaseRefresh;
+  let refreshStarted;
+  const started = new Promise((resolve) => { refreshStarted = resolve; });
+  const released = new Promise((resolve) => { releaseRefresh = resolve; });
+  window.fetch = async (url, init) => {
+    if (new URL(url, window.location.origin).pathname === "/api/v1/auth/refresh") {
+      refreshStarted();
+      await released;
+    }
+    return originalFetch(url, init);
+  };
+
+  const saving = page.save();
+  await started;
+  window.document.querySelector("#ac-logout").click();
+  releaseRefresh();
+  await saving;
+
+  assert.equal(page.profile, null);
+  assert.equal(page.calls.filter((c) => c.path === "/api/v1/billing/profiles").length, 1);
+  for (const storage of [window.localStorage, window.sessionStorage]) {
+    assert.equal(storage.getItem("pp_session"), null);
+    assert.equal(storage.getItem("pp_refresh"), null);
+  }
+  assert.ok(window.document.querySelector("#ac-signin"));
 });
