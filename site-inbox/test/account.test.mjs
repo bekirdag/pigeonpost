@@ -94,7 +94,7 @@ for (const completeStatus of [200, 400]) {
   });
 }
 
-async function account(t, { remember, rejectFresh = false }) {
+async function account(t, { remember, rejectFresh = false, existingProfile = null }) {
   const dom = new JSDOM('<main id="account-root"></main>', {
     url: "https://pigeonpost.dev/account?code=test-code&state=test-state",
     runScripts: "outside-only", virtualConsole: new VirtualConsole(),
@@ -106,7 +106,7 @@ async function account(t, { remember, rejectFresh = false }) {
   window.localStorage.setItem("pp_state", "test-state");
   window.localStorage.setItem("pp_pkce", "test-verifier");
   const calls = [];
-  let profile = null;
+  let profile = existingProfile;
   window.fetch = async (url, init = {}) => {
     const path = new URL(url, window.location.origin).pathname;
     calls.push({ path, method: init.method || "GET", body: init.body, authorization: init.headers?.authorization });
@@ -121,25 +121,28 @@ async function account(t, { remember, rejectFresh = false }) {
     if (path === "/api/v1/me/overview") {
       return response({ subscriptions: [], handles: [], invoices: [], paymentMethods: [], billingProfiles: profile ? [profile] : [] });
     }
-    if (path === "/api/v1/billing/profiles") {
+    if (path === "/api/v1/billing/profiles" || path === `/api/v1/billing/profiles/${profile?.id}`) {
       // The original access token expired while the user was filling in the form.
       if (rejectFresh || init.headers?.authorization !== "Bearer renewed-access") {
         return response({ error: "Unauthorized" }, 401);
       }
-      profile = { id: "profile-1", ...JSON.parse(init.body) };
-      return response(profile, 201);
+      if (path !== "/api/v1/billing/profiles") assert.equal(init.method, "PATCH");
+      profile = { id: "profile-1", ...profile, ...JSON.parse(init.body) };
+      return response(profile, init.method === "PATCH" ? 200 : 201);
     }
     return response({ identities: [], keys: [], namespaces: [], packages: [] });
   };
   window.eval(source);
-  for (let i = 0; i < 30 && !window.document.querySelector("#ac-billing form"); i++) await tick();
+  for (let i = 0; i < 30 && !window.document.querySelector("#ac-billing form, #ac-billing-edit"); i++) await tick();
+  if (existingProfile) window.document.querySelector("#ac-billing-edit").click();
   const form = window.document.querySelector("#ac-billing form");
   assert.ok(form, "sign-in completes and the billing form appears");
   const fields = {
     legal_name: "Example User", billing_email: "billing@example.test", phone: "",
-    line1: "1 Example Street", city: "Example City", postal_code: "12345", country: "TR",
+    line1: "1 Example Street", city: "Example City", state: "Example District", postal_code: "12345", country: "TR",
+    identity_number: "10000000000",
   };
-  for (const [key, value] of Object.entries(fields)) form.elements.namedItem(key).value = value;
+  if (!existingProfile) for (const [key, value] of Object.entries(fields)) form.elements.namedItem(key).value = value;
   return {
     window, calls, form, fields,
     get profile() { return profile; },
@@ -148,6 +151,92 @@ async function account(t, { remember, rejectFresh = false }) {
       for (let i = 0; i < 5; i++) await tick();
     },
   };
+}
+
+test("individual Turkish billing requires TCKN and district before saving", async (t) => {
+  const page = await account(t, { remember: false });
+  const identity = page.form.elements.namedItem("identity_number");
+  const district = page.form.elements.namedItem("state");
+  assert.equal(identity.disabled, false);
+  assert.equal(identity.required, true);
+  assert.equal(identity.closest("label").style.display, "");
+  for (const invalid of ["", "1234567890", "1234567890x"]) {
+    identity.value = invalid;
+    await page.save();
+    assert.equal(page.calls.some((c) => c.path.includes("/billing/profiles")), false);
+  }
+  identity.value = page.fields.identity_number;
+  district.value = "   ";
+  await page.save();
+  assert.equal(district.validity.valueMissing, true);
+  assert.equal(page.profile, null);
+  district.value = page.fields.state;
+  await page.save();
+  assert.equal(page.profile.identity_number, page.fields.identity_number);
+  assert.equal(page.profile.address.state, page.fields.state);
+  assert.equal(page.profile.tax_id, null);
+});
+
+test("editing adds TCKN to the existing profile and preserves its nested address", async (t) => {
+  const existingProfile = {
+    id: "saved-profile", account_type: "individual", legal_name: "Example User", billing_email: "billing@example.test",
+    identity_number: null, address: { line1: "1 Example Street", line2: "Unit 2", city: "Example City",
+      state: null, postal_code: "12345", country: "Türkiye" },
+  };
+  const page = await account(t, { remember: false, existingProfile });
+  for (const [key, value] of Object.entries(existingProfile.address)) {
+    assert.equal(page.form.elements.namedItem(key).value, value || "");
+  }
+  assert.equal(page.form.elements.namedItem("identity_number").required, true);
+  page.form.elements.namedItem("identity_number").value = "10000000000";
+  page.form.elements.namedItem("state").value = "Example District";
+  await page.save();
+  const writes = page.calls.filter((c) => c.path.includes("/billing/profiles"));
+  assert.equal(writes.length, 2, "expired token is retried once");
+  assert.ok(writes.every((c) => c.method === "PATCH" && c.path === "/api/v1/billing/profiles/saved-profile"));
+  const payload = JSON.parse(writes.at(-1).body);
+  assert.equal(payload.identity_number, "10000000000");
+  assert.deepEqual(payload.address, { ...existingProfile.address, state: "Example District" });
+  assert.equal(page.profile.id, existingProfile.id);
+  page.window.document.querySelector("#ac-billing-edit").click();
+  assert.equal(page.window.document.querySelector('[name="identity_number"]').value, "10000000000");
+  assert.equal(page.window.document.querySelector('[name="state"]').value, "Example District");
+});
+
+test("company billing uses its VKN and does not submit the hidden individual TCKN", async (t) => {
+  const page = await account(t, { remember: false });
+  const field = (name) => page.form.elements.namedItem(name);
+  field("account_type").value = "entity";
+  field("account_type").dispatchEvent(new page.window.Event("change"));
+  field("entity_name").value = "Example Company";
+  field("tax_id").value = "1234567890";
+  assert.equal(field("identity_number").disabled, true);
+  assert.equal(field("identity_number").required, false);
+  assert.equal(field("tax_id").required, true);
+  await page.save();
+  assert.equal(page.profile.tax_id, "1234567890");
+  assert.equal(page.profile.identity_number, null);
+  assert.equal(page.profile.entity_name, "Example Company");
+});
+
+for (const accountType of ["individual", "entity"]) {
+  test(`foreign ${accountType} billing does not require Turkish identity or district`, async (t) => {
+    const page = await account(t, { remember: false });
+    const field = (name) => page.form.elements.namedItem(name);
+    field("account_type").value = accountType;
+    field("country").value = "Germany";
+    field("country").dispatchEvent(new page.window.Event("input"));
+    field("identity_number").value = "";
+    field("state").value = "";
+    field("tax_id").value = "DE123456789";
+    field("entity_name").value = "Example Company";
+    assert.equal(field("identity_number").required, false);
+    assert.equal(field("state").required, false);
+    await page.save();
+    assert.equal(page.profile.address.country, "Germany");
+    assert.equal(page.profile.identity_number, null);
+    assert.equal(page.profile.tax_id, accountType === "entity" ? "DE123456789" : null);
+  });
 }
 
 for (const remember of [false, true]) {

@@ -15,7 +15,7 @@ function send(res, status, body, origin) {
   if (origin && config.allowedOrigins.includes(origin)) {
     headers["access-control-allow-origin"] = origin;
     headers["access-control-allow-headers"] = "authorization, content-type";
-    headers["access-control-allow-methods"] = "GET, POST, OPTIONS";
+    headers["access-control-allow-methods"] = "GET, POST, PATCH, OPTIONS";
     headers["vary"] = "origin";
   }
   res.writeHead(status, headers);
@@ -152,6 +152,11 @@ const server = http.createServer(async (req, res) => {
     if (method === "POST" && path === "/v1/billing/profiles") {
       const profile = await readJson(req);
       return send(res, 201, await masaas.createBillingProfile(token, profile), origin);
+    }
+    const billingProfile = /^\/v1\/billing\/profiles\/([^/]+)$/.exec(path);
+    if (method === "PATCH" && billingProfile) {
+      const profile = await readJson(req);
+      return send(res, 200, await masaas.updateBillingProfile(token, decodeURIComponent(billingProfile[1]), profile), origin);
     }
 
     if (method === "GET" && path === "/v1/billing/invoices") {

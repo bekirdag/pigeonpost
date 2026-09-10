@@ -221,7 +221,7 @@
   // the real reason instead. There is intentionally no plain "apiPost" that signs out on 401; that
   // was the phantom "please sign in again" bounce.
   const apiGet = (path) => apiFetch(path, null, false);
-  const apiAction = (path, body) => apiFetch(path, { method: "POST", body: JSON.stringify(body || {}), keepSession: true }, false);
+  const apiAction = (path, body, method = "POST") => apiFetch(path, { method, body: JSON.stringify(body || {}), keepSession: true }, false);
 
   // ---- handle validation --------------------------------------------------------------------
 
@@ -855,34 +855,82 @@
         <label>Billing email <input name="billing_email" type="email" required></label>
         <label>Phone <input name="phone" placeholder="+90…"></label>
         <label>Address <input name="line1" required></label>
+        <label>Address line 2 (optional) <input name="line2"></label>
         <label>City <input name="city" required></label>
+        <label><span data-district-label>District (İlçe)</span> <input name="state"></label>
         <label>Postal code <input name="postal_code" required></label>
-        <label>Country <input name="country" placeholder="TR" required></label>
+        <label>Country <input name="country" placeholder="Türkiye / TR" required></label>
+        <label class="ac-individual">TCKN (Turkish identity number)
+          <input name="identity_number" inputmode="numeric" maxlength="11" pattern="[0-9]{11}" title="Enter your 11 digit TCKN.">
+          <small class="muted">Required for billing addresses in Türkiye.</small></label>
         <label class="ac-entity">Company name <input name="entity_name"></label>
-        <label class="ac-entity">Tax ID / VAT <input name="tax_id"></label>
+        <label class="ac-entity">Tax ID / VAT (VKN in Türkiye) <input name="tax_id"></label>
         <label class="ac-entity">Tax office <input name="tax_office"></label>
       </div>
       <button class="btn btn-primary" type="submit">Save billing details</button>
       <span class="ac-msg"></span>`;
     if (existing) {
-      for (const [k, v] of Object.entries(existing)) {
-        const f = wrap.querySelector(`[name="${k}"]`); if (f && typeof v !== "object") f.value = v;
+      const values = { ...existing, ...existing.address };
+      for (const field of wrap.elements) {
+        const value = values[field.name];
+        if (value != null && typeof value !== "object") field.value = value;
       }
     }
-    const type = wrap.querySelector('[name="account_type"]');
-    const toggleEntity = () => wrap.querySelectorAll(".ac-entity").forEach((e) => e.style.display = type.value === "entity" ? "" : "none");
-    type.onchange = toggleEntity; toggleEntity();
+    const field = (name) => wrap.elements.namedItem(name);
+    const updateRequirements = () => {
+      const entity = field("account_type").value === "entity";
+      const country = field("country").value.replace(/[ıİ]/g, "i").normalize("NFKD")
+        .replace(/[\u0300-\u036f]/g, "").toLowerCase().replace(/[^a-z0-9]/g, "");
+      const turkish = !country || ["tr", "tur", "turkey", "turkiye"].includes(country);
+      for (const [selector, shown] of [[".ac-entity", entity], [".ac-individual", !entity]]) {
+        wrap.querySelectorAll(selector).forEach((label) => {
+          label.style.display = shown ? "" : "none";
+          label.querySelectorAll("input").forEach((input) => { input.disabled = !shown; });
+        });
+      }
+      field("identity_number").required = turkish && !entity;
+      field("tax_id").required = turkish && entity;
+      if (turkish) {
+        field("tax_id").pattern = "[0-9]{10,11}";
+        field("tax_id").title = "Enter a 10 digit VKN or 11 digit TCKN.";
+      } else {
+        field("tax_id").removeAttribute("pattern");
+        field("tax_id").removeAttribute("title");
+      }
+      field("state").required = turkish;
+      wrap.querySelector("[data-district-label]").textContent = turkish ? "District (İlçe)" : "State / region (optional)";
+    };
+    field("account_type").onchange = updateRequirements;
+    field("country").oninput = updateRequirements;
+    field("country").onchange = updateRequirements;
+    updateRequirements();
+    const save = wrap.querySelector('[type="submit"]');
     wrap.onsubmit = async (e) => {
       e.preventDefault();
+      if (save.disabled) return;
+      wrap.querySelectorAll("input").forEach((input) => { input.value = input.value.trim(); });
+      updateRequirements();
+      if (!wrap.reportValidity()) return;
       const fd = Object.fromEntries(new FormData(wrap).entries());
       const payload = {
         account_type: fd.account_type, legal_name: fd.legal_name, billing_email: fd.billing_email,
-        phone: fd.phone, address: { line1: fd.line1, city: fd.city, postal_code: fd.postal_code, country: fd.country },
+        phone: fd.phone, address: { line1: fd.line1, line2: fd.line2 || null, city: fd.city,
+          state: fd.state || null, postal_code: fd.postal_code, country: fd.country },
       };
-      if (fd.account_type === "entity") Object.assign(payload, { entity_name: fd.entity_name, tax_id: fd.tax_id, tax_office: fd.tax_office });
+      if (fd.account_type === "entity") {
+        Object.assign(payload, { entity_name: fd.entity_name, tax_id: fd.tax_id, tax_office: fd.tax_office, identity_number: null });
+      } else {
+        Object.assign(payload, { identity_number: fd.identity_number || null, entity_name: null, tax_id: null, tax_office: null });
+      }
+      save.disabled = true;
       wrap.querySelector(".ac-msg").textContent = "Saving…";
-      try { await apiAction("/v1/billing/profiles", payload); loadOverview(); }
+      try {
+        await apiAction(existing?.id ? `/v1/billing/profiles/${encodeURIComponent(existing.id)}` : "/v1/billing/profiles",
+          payload, existing?.id ? "PATCH" : "POST");
+        await loadOverview();
+      }
       catch (err) { wrap.querySelector(".ac-msg").textContent = "Could not save: " + err.message; }
+      finally { save.disabled = false; }
     };
     return wrap;
   }

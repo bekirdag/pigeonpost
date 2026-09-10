@@ -25,6 +25,11 @@ test("checkout follows the subscription payment contract over HTTP", async (t) =
     if (url.pathname.endsWith("/availability")) return send(res, 200, { available });
     if (url.pathname === "/v1/namespaces") { grants.push(body); return send(res, 200, { ok: true }); }
     if (req.headers.authorization !== "Bearer member-token") return send(res, 401, { message: "Unauthorized" });
+    if (url.pathname === "/v1/billing/profiles/saved-profile" && req.method === "PATCH") {
+      assert.equal(req.headers["x-product-slug"], "pigeonpost");
+      assert.ok(req.headers["idempotency-key"]);
+      return send(res, 200, { id: "saved-profile", ...body });
+    }
     if (url.pathname === "/v1/subscriptions" && req.method === "GET") return send(res, 200, { data: subs, next_cursor: null });
     if (url.pathname === "/v1/billing/payments" && req.method === "GET") return send(res, 200, { data: payments, next_cursor: null });
     if (url.pathname === `/v1/billing/payments/${paymentId}`) return send(res, 200, payments[0]);
@@ -69,6 +74,31 @@ test("checkout follows the subscription payment contract over HTTP", async (t) =
     return { status: response.status, body: await response.json() };
   };
   const buy = () => post("/v1/checkout", { handle: "example", operationId: "a".repeat(32) });
+
+  await t.test("billing edits forward PATCH with member auth, TCKN and district", async () => {
+    reset();
+    const body = { account_type: "individual", identity_number: "10000000000", address: {
+      line1: "1 Example Street", line2: "Unit 2", city: "Example City", state: "Example District", postal_code: "12345", country: "TR",
+    } };
+    const options = { method: "PATCH", headers: { "content-type": "application/json", origin: "https://pigeonpost.dev" }, body: JSON.stringify(body) };
+    const denied = await fetch(base + "/api/v1/billing/profiles/saved-profile", options);
+    assert.equal(denied.status, 401);
+    assert.equal(calls.length, 0);
+    const response = await fetch(base + "/api/v1/billing/profiles/saved-profile", {
+      ...options, headers: { ...options.headers, authorization: "Bearer member-token" },
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { id: "saved-profile", ...body });
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].method, "PATCH");
+    assert.equal(calls[0].path, "/v1/billing/profiles/saved-profile");
+    assert.deepEqual(calls[0].body, body);
+    const preflight = await fetch(base + "/api/v1/billing/profiles/saved-profile", {
+      method: "OPTIONS", headers: { origin: "https://pigeonpost.dev", "access-control-request-method": "PATCH" },
+    });
+    assert.equal(preflight.status, 204);
+    assert.ok(preflight.headers.get("access-control-allow-methods").split(", ").includes("PATCH"));
+  });
 
   await t.test("Get it starts hosted payment without the rejected metadata or another card setup", async () => {
     reset();
