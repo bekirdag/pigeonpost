@@ -1,0 +1,31 @@
+{
+  "contacts": [
+    {
+      "peer": "/bekir/*",
+      "alias": "my fleet",
+      "admission": "allow",
+      "autonomy": "review",
+      "allowed_verbs": []
+    }
+  ],
+  "policy": {
+    "accept_all": true,
+    "auto_accept_known": false
+  },
+  "vocabulary": {
+    "grantable": [
+      "report_status",
+      "answer_question",
+      "read_file",
+      "run_tests"
+    ],
+    "never_auto": [
+      "git_push",
+      "deploy",
+      "read_credentials",
+      "spend",
+      "delete_files",
+      "run_shell"
+    ]
+  }
+}

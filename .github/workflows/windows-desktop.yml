@@ -1,0 +1,60 @@
+name: Windows desktop preview
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/windows/**'
+      - '.github/workflows/windows-desktop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core behavior
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run domain, API and state tests
+        working-directory: apps/windows
+        run: dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c Release
+
+  desktop:
+    name: Windows ${{ matrix.architecture }}
+    needs: core
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Compile native app and validate unsigned MSIX
+        shell: pwsh
+        run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package
+      - name: Upload development artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-windows-preview-${{ matrix.architecture }}
+          path: |
+            apps/windows/artifacts/**/*.zip
+            apps/windows/artifacts/**/*.msix
+          if-no-files-found: error
+          retention-days: 14
