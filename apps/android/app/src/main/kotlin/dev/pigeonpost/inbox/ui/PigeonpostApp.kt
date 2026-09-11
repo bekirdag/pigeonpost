@@ -231,8 +231,10 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
             ActionIcon("Find in conversation", Icons.Outlined.Search) { searching = !searching; if (!searching) query = "" }
             ActionIcon("Conversation info", Icons.Outlined.Info, info)
         }
-        Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            subjects.forEach { item -> FilterChip(item.id == subject?.id, { store.selectSubject(item.id) }, label = { Text(item.name + if (item.unread > 0) " (${item.unread})" else "") }) }
+        Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                subjects.forEach { item -> FilterChip(item.id == subject?.id, { store.selectSubject(item.id) }, label = { Text(item.name + if (item.unread > 0) " (${item.unread})" else "") }) }
+            }
             ActionIcon("New subject", Icons.Outlined.Add, newSubject)
             if (subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
         }
