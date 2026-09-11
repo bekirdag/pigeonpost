@@ -17,6 +17,8 @@ enum Config {
     static let primaryNamespace = "/bekir"
 
     enum OIDC {
+        enum IdentityProvider: String { case apple }
+
         static let issuer = URL(string: "https://auth.pigeonpost.dev/realms/pigeonpost-prod")!
 
         /// The app's own public client — deliberately not the browser's `pigeonpost-web`. A native
@@ -38,6 +40,29 @@ enum Config {
 
         static func endpoint(_ path: String) -> URL {
             issuer.appendingPathComponent("protocol/openid-connect").appendingPathComponent(path)
+        }
+
+        /// Select a provider through Keycloak while preserving the app's PKCE flow and issuer.
+        static func authorizationURL(challenge: String, state: String, otherAccount: Bool = false,
+                                     provider: IdentityProvider? = nil) -> URL {
+            var components = URLComponents(url: endpoint("auth"), resolvingAgainstBaseURL: false)!
+            components.queryItems = [
+                URLQueryItem(name: "client_id", value: clientId),
+                URLQueryItem(name: "response_type", value: "code"),
+                URLQueryItem(name: "scope", value: scope),
+                URLQueryItem(name: "redirect_uri", value: redirectURI),
+                URLQueryItem(name: "code_challenge", value: challenge),
+                URLQueryItem(name: "code_challenge_method", value: "S256"),
+                URLQueryItem(name: "state", value: state),
+            ]
+            if let provider {
+                components.queryItems?.append(URLQueryItem(name: "kc_idp_hint", value: provider.rawValue))
+            }
+            // An explicit Apple choice must not silently reuse a different provider's realm session.
+            if otherAccount || provider != nil {
+                components.queryItems?.append(URLQueryItem(name: "prompt", value: "login"))
+            }
+            return components.url!
         }
     }
 

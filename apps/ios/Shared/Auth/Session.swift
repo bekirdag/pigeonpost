@@ -102,12 +102,13 @@ final class Session {
     /// already signed in there — so the person is returned to the identity they were trying to
     /// leave, having been shown no choice. `prompt=login` asks the realm not to reuse a session, and
     /// an ephemeral browser guarantees it by carrying no cookie any provider could recognise.
-    func signIn(otherAccount: Bool = false) async {
+    func signIn(otherAccount: Bool = false, provider: Config.OIDC.IdentityProvider? = nil) async {
         lastError = nil
         do {
             let verifier = Self.randomToken(64)
             let expectedState = Self.randomToken(16)
-            let callback = try await authorize(verifier: verifier, state: expectedState, otherAccount: otherAccount)
+            let callback = try await authorize(verifier: verifier, state: expectedState,
+                                               otherAccount: otherAccount, provider: provider)
             let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let value = { (name: String) in items.first { $0.name == name }?.value }
 
@@ -264,21 +265,10 @@ final class Session {
         return body
     }
 
-    private func authorize(verifier: String, state: String, otherAccount: Bool) async throws -> URL {
-        var components = URLComponents(url: Config.OIDC.endpoint("auth"), resolvingAgainstBaseURL: false)!
-        components.queryItems = [
-            URLQueryItem(name: "client_id", value: Config.OIDC.clientId),
-            URLQueryItem(name: "response_type", value: "code"),
-            URLQueryItem(name: "scope", value: Config.OIDC.scope),
-            URLQueryItem(name: "redirect_uri", value: Config.OIDC.redirectURI),
-            URLQueryItem(name: "code_challenge", value: Self.challenge(for: verifier)),
-            URLQueryItem(name: "code_challenge_method", value: "S256"),
-            URLQueryItem(name: "state", value: state),
-        ]
-        if otherAccount {
-            components.queryItems?.append(URLQueryItem(name: "prompt", value: "login"))
-        }
-        let url = components.url!
+    private func authorize(verifier: String, state: String, otherAccount: Bool,
+                           provider: Config.OIDC.IdentityProvider?) async throws -> URL {
+        let url = Config.OIDC.authorizationURL(challenge: Self.challenge(for: verifier), state: state,
+                                               otherAccount: otherAccount, provider: provider)
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
