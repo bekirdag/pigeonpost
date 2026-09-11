@@ -82,6 +82,18 @@ struct MacSignInView: View {
             Button(working ? "Signing in…" : "Sign in") { go(otherAccount: false) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(working)
+            Button {
+                go(otherAccount: false, provider: .apple)
+            } label: {
+                Label("Sign in with Apple", systemImage: "apple.logo")
+                    .font(.system(size: 17, weight: .medium))
+                    .frame(width: 260, height: 48)
+            }
+            .buttonStyle(.plain)
+            .background(.black, in: RoundedRectangle(cornerRadius: 10))
+            .foregroundStyle(.white)
+            .accessibilityIdentifier("signInWithApple")
+            .disabled(working)
             Button("Use a different account") { go(otherAccount: true) }
                 .buttonStyle(.plain)
                 .font(.system(size: 12.5))
@@ -99,10 +111,11 @@ struct MacSignInView: View {
         .padding(40)
     }
 
-    private func go(otherAccount: Bool) {
+    private func go(otherAccount: Bool, provider: Config.OIDC.IdentityProvider? = nil) {
+        guard !working else { return }
+        working = true
         Task {
-            working = true
-            await session.signIn(otherAccount: otherAccount)
+            await session.signIn(otherAccount: otherAccount, provider: provider)
             working = false
         }
     }

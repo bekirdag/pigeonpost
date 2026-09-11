@@ -5,6 +5,9 @@
 set -e
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
+trap 'rm -rf "$out"' EXIT
+swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
+"$out/auth"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \

@@ -113,6 +113,7 @@ jobs:
           # the standard verified-address claim so an account can prove the address it signs in
           # with and be given a handle named after it. The claim's key is the spec's spelling, and
           # a serde field cannot be renamed around a word.
+          # App Store Connect invitation tooling also uses Apple's fixed transport enum.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
@@ -120,6 +121,8 @@ jobs:
               ':(exclude)site/reserved.js' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
+              ':(exclude).github/scripts/testflight_status.py' \
+              ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)CLA.md'; then
             echo '::error::Use Pigeonpost/message/inbox vocabulary in the shipped tree.'
             exit 1

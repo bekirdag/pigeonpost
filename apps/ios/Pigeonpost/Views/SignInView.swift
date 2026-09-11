@@ -32,6 +32,19 @@ struct SignInView: View {
                 .foregroundStyle(.white)
                 .disabled(working)
 
+                Button {
+                    go(otherAccount: false, provider: .apple)
+                } label: {
+                    Label("Sign in with Apple", systemImage: "apple.logo")
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(maxWidth: .infinity, minHeight: 48)
+                }
+                .buttonStyle(.plain)
+                .background(.black, in: RoundedRectangle(cornerRadius: 10))
+                .foregroundStyle(.white)
+                .accessibilityIdentifier("signInWithApple")
+                .disabled(working)
+
                 // Quiet, and below the main button, because it is the rarer intent — but present,
                 // because without it somebody signed in through a provider has no way back to the
                 // chooser. The provider's cookie answers for them, and the screen they need never
@@ -60,10 +73,11 @@ struct SignInView: View {
         .background(Theme.ground)
     }
 
-    private func go(otherAccount: Bool) {
+    private func go(otherAccount: Bool, provider: Config.OIDC.IdentityProvider? = nil) {
+        guard !working else { return }
+        working = true
         Task {
-            working = true
-            await session.signIn(otherAccount: otherAccount)
+            await session.signIn(otherAccount: otherAccount, provider: provider)
             working = false
         }
     }
