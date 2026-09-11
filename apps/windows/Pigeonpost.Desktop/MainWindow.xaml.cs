@@ -3,7 +3,6 @@ using Microsoft.UI.Windowing;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Controls.Primitives;
-using Microsoft.UI.Xaml.Data;
 using Microsoft.UI.Xaml.Input;
 using Microsoft.UI.Xaml.Media;
 using Pigeonpost.Core;
@@ -15,6 +14,7 @@ namespace Pigeonpost.Desktop;
 public sealed partial class MainWindow : Window
 {
     public InboxViewModel ViewModel { get; } = new(new PreviewInboxService());
+    public Visibility ToVisibility(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
     private bool initialized;
     private bool dialogOpen;
     private string? messageContext;
@@ -129,7 +129,7 @@ public sealed partial class MainWindow : Window
     private async void Refresh_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await ViewModel.RefreshAsync(); }
     private async void Send_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (FocusManager.GetFocusedElement(Root.XamlRoot) != Composer) return;
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer)) return;
         args.Handled = true;
         await ViewModel.SendDraftAsync();
     }
@@ -173,10 +173,4 @@ public sealed class MessageTemplateSelector : DataTemplateSelector
     public DataTemplate? Outgoing { get; set; }
     protected override DataTemplate SelectTemplateCore(object item) => item is ThreadMessage { IsOutgoing: true } ? Outgoing! : Incoming!;
     protected override DataTemplate SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
-}
-
-public sealed class BooleanVisibilityConverter : IValueConverter
-{
-    public object Convert(object value, Type targetType, object parameter, string language) => value is true ? Visibility.Visible : Visibility.Collapsed;
-    public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
 }

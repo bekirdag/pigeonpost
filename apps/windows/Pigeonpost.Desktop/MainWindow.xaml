@@ -7,7 +7,6 @@
     Title="Pigeonpost — Windows preview">
     <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded">
         <Grid.Resources>
-            <local:BooleanVisibilityConverter x:Key="BooleanVisibility" />
             <DataTemplate x:Key="IncomingMessage" x:DataType="core:ThreadMessage">
                 <Border HorizontalAlignment="Left" MaxWidth="640" Margin="12,5,64,5" Padding="16,12" CornerRadius="12"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
@@ -95,7 +94,7 @@
                     </ListView>
                     <TextBlock Text="{x:Bind ViewModel.EmptyListMessage, Mode=OneWay}" TextWrapping="Wrap" Margin="12,20"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" IsHitTestVisible="False"
-                               Visibility="{x:Bind ViewModel.IsListEmpty, Mode=OneWay, Converter={StaticResource BooleanVisibility}}" />
+                               Visibility="{x:Bind ToVisibility(ViewModel.IsListEmpty), Mode=OneWay}" />
                 </Grid>
                 <StackPanel Grid.Row="4" Spacing="10">
                     <Button Content="New conversation" Click="NewConversation_Click" HorizontalAlignment="Stretch" AutomationProperties.HelpText="Control N" />
