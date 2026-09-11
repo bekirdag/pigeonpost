@@ -17,5 +17,12 @@
 - Both architectures passed Developer ID signature, hardened runtime and debugger-entitlement checks. Stapler and Gatekeeper pass. The arm64 executable and the x86_64 executable under Rosetta each launched and remained running; only the test processes were terminated.
 - The user clarified they use Codex TUI. Corrected the desktop-only browser instructions with the official MCP command for Playwright; a live browser connection is still unavailable in this running session.
 
-## Remaining
-Implement and test the page, publish the verified artifact, deploy the narrow route policy, verify the public download and sync source checkouts.
+## Live delivery
+- Published https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.0-30 from app source 486d16fde2a6fa694e30bf81a7bd5955502ce420. Its public ZIP and SHA256SUMS are downloadable without authentication. The CLI's latest release remains v0.7.15.
+- Deployed all seven public files from implementation commit 340cc03 to wodomini. Backup: /srv/backups/pigeonpost-download-20260911-340cc03, containing the prior static site and Nginx configuration. nginx -t passed before and after the narrow include was installed, then Nginx was reloaded.
+- /download, //download, /download/ and /download.html return HTTP 200 with the exact source HTML, the intended same-origin script CSP, and no-store caching. Download JavaScript/CSS, branding CSS, white logo, homepage and account HTML also match source hashes. The homepage retains script-src 'none'.
+- Downloaded the public ZIP afresh with no authentication. Its checksum matches both the approved notarized archive and public SHA256SUMS. The native verifier passes again on that downloaded copy for both architectures, signing, hardened runtime, stapled ticket and Gatekeeper.
+- PR https://github.com/bekirdag/pigeonpost/pull/5 merged as 196c38f. Relevant CI web, lint, audit, Linux and release-contract checks passed. Local main and both production /opt/pigeonpost-src checkouts were verified clean at the merged implementation, including the Mac release tag. Rust service source/configuration and native app code did not change.
+
+## Validation limits
+Visual browser inspection could not run because the current Codex TUI session has no browser connection. Device behavior was tested through the actual HTML/JavaScript with jsdom; production HTTP and archive checks passed. Intel execution was tested under Rosetta on Apple silicon, not on a separate physical Intel Mac. Publication and deployment work are complete.
