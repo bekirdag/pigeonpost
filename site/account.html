@@ -13,6 +13,7 @@
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/brand.css">
 <link rel="stylesheet" href="/account.css">
 <meta name="robots" content="noindex">
 </head>
@@ -21,7 +22,10 @@
 <div class="wrap">
 
   <header>
-    <a href="/"><img src="/logo.png" alt="Pigeonpost"></a>
+    <a href="/"><picture class="brand-logo">
+      <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
+      <img src="/logo.png" alt="Pigeonpost" width="640" height="213">
+    </picture></a>
   </header>
 
   <main class="account">
@@ -31,6 +35,7 @@
   <footer>
     <nav>
       <a href="/">Home</a>
+      <a href="/download">Download</a>
       <a href="https://developers.pigeonpost.dev">Developer docs</a>
       <a href="https://inbox.pigeonpost.dev">Inbox</a>
       <a href="/privacy">Privacy Policy</a>

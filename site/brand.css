@@ -1,0 +1,14 @@
+/* Keep both supplied logo canvases in the same header footprint. */
+.brand-logo {
+  display: block;
+  width: 232px;
+  max-width: 62vw;
+  aspect-ratio: 640 / 213;
+  overflow: hidden;
+}
+.brand-logo img {
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
