@@ -151,6 +151,17 @@ fn validate_token(token: &str, key: &DecodingKey, issuer: &str) -> Result<Claims
 }
 
 #[cfg(test)]
+impl Claims {
+    pub(crate) fn fixture(sub: &str, address: &str, verified: bool) -> Self {
+        Self {
+            sub: sub.into(),
+            email: Some(address.into()),
+            email_verified: Some(verified),
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use jsonwebtoken::{encode, EncodingKey, Header};

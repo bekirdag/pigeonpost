@@ -174,10 +174,7 @@ mod tests {
     use super::*;
 
     fn tester(verified: bool) -> oidc::Claims {
-        serde_json::from_value(
-            json!({"sub":"tester-sub", "email":"Tester@Example.test", "email_verified":verified}),
-        )
-        .unwrap()
+        oidc::Claims::fixture("tester-sub", "Tester@Example.test", verified)
     }
     fn setup() -> AppState {
         let mut state = crate::tests::state_with_reserved(&["support"]);
