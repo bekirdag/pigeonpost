@@ -67,3 +67,46 @@ last pushed to the box, so `git log` on the box is not the answer — compare ha
 shasum -a256 site-inbox/app.js
 ssh wodomini 'shasum -a256 /var/www/pigeonpost-inbox/app.js'
 ```
+
+## Public Mac download
+
+`site/download.html` serves `/download` and offers a universal Mac app for both Apple silicon and
+Intel. Its links point to a versioned GitHub release, so the archive is independent of static-site
+deployment and cannot be removed by the `rsync --delete` above. Both chip choices stay visible;
+the script recommends the universal app on Macs and the web inbox on other recognized devices.
+It does not infer a Mac's chip from an `Intel` browser user agent.
+
+The direct download must use **Developer ID Application** signing, hardened runtime, both
+`arm64` and `x86_64`, and an Apple notarization ticket. App Store signing and ad-hoc signatures
+do not satisfy the website distribution requirement. Use `.github/workflows/mac-notarize.yml`
+on a draft release, then download its final, stapled ZIP and validate it on a Mac:
+
+```bash
+python3 deploy/sites/verify-mac-download.py /path/to/Pigeonpost-Desktop-1.0-30.zip \
+  --version 1.0 --build 30 \
+  --sha256 551898e7ddf71bbe0afa383a274601251ff6af7e8fa64462fd2840ff15ab7db3
+```
+
+For a new build, use its approved final SHA-256 and matching version/build number. The verifier
+checks the checksum before extraction, both architectures' Developer ID identities and hardened
+runtime, absence of the debugger entitlement, the stapled ticket, and Gatekeeper acceptance.
+Keep the `SHA256SUMS` release asset in step with the exact ZIP. Publish the separate
+`macos-<version>-<build>` release with `--latest=false` so it cannot replace the CLI's latest
+`v*` release. Update every archive/release/checksum link and the version, size and minimum macOS
+text in `download.html`. Re-download the public asset and rerun the verifier before handoff.
+
+The general site's `script-src 'none'` must stay in place. Install `download-location.conf` as
+`/etc/nginx/snippets/pigeonpost-download.conf` and include it **inside the pigeonpost.dev TLS
+server**, using `include /etc/nginx/snippets/pigeonpost-download.conf;`. Back up the active
+configuration first; run `nginx -t` before reloading. The include permits the page's same-origin
+script only on `/download`, `/download/`, and `/download.html`, and keeps its page uncached.
+Deploy `download.html`, `download.css`, `download.js`, `brand.css`, `logo_white.png`, and the
+updated `index.html`/`account.html` from the same checkout. Copy the new assets before the HTML.
+The white logo is the unmodified `assets/img/logo_white.png`, selected by a native `<picture>`
+media source in dark themes. No script is needed for the logo or basic download links.
+
+After deployment, verify `/download` and `//download` return the new page, `/download.js` has the
+expected contents, and the page's CSP permits `script-src 'self'`. Confirm `/` still has
+`script-src 'none'`, `/account` still responds, and the public ZIP matches its approved SHA-256.
+To roll back, restore the backed-up site files, active Nginx configuration and prior snippet (or
+remove the new include), validate the configuration again, then reload Nginx.
