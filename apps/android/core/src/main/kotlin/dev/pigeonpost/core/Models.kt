@@ -95,7 +95,22 @@ data class Quota(@SerialName("used_bytes") val usedBytes: Long, @SerialName("lim
     val warning get() = warnAtBytes > 0 && usedBytes >= warnAtBytes
 }
 @Serializable
-data class HandleOffer(val namespace: String? = null, @SerialName("expires_at") val expiresAt: Long? = null)
+data class HandleOffer(
+    val namespace: String? = null,
+    @SerialName("expires_at") val expiresAt: Long? = null,
+    val eligible: Boolean = false,
+    val mailbox: String? = null,
+    val source: String? = null,
+)
+@Serializable
+data class HandleAvailability(val name: String, val available: Boolean, val reason: String? = null)
+
+fun tidyHandle(raw: String): String = raw.trim().trim('/').lowercase(java.util.Locale.ROOT)
+fun validHandleName(raw: String): Boolean {
+    val name = tidyHandle(raw)
+    return name.length in 1..32 && name !in setOf("k", "gh") && !name.startsWith('-') && !name.endsWith('-') &&
+        name.all { it in 'a'..'z' || it in '0'..'9' || it in "._-" }
+}
 
 enum class Delivery { SENT, SENDING, FAILED }
 data class PendingMessage(

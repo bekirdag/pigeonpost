@@ -17,7 +17,7 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "handles")) return null
         return AppGraph(FixtureSession(mode != "signin"), FixturePostbox(mode), fixtures = true)
     }
 }
@@ -33,7 +33,8 @@ private class FixtureSession(signedIn: Boolean) : UserSession {
 private class FixturePostbox(private val mode: String) : PostboxApi {
     private var created = mode != "empty"
     private val now = System.currentTimeMillis() / 1000
-    private val boxes = listOf(IdentityRow("/k/demo-main", "Main"), IdentityRow("/k/demo-agent", "Build agent"))
+    private val boxes = mutableListOf(IdentityRow("/k/demo-main", "Main"), IdentityRow("/k/demo-agent", "Build agent"))
+    private var preview: HandleOffer = HandleOffer(eligible = mode == "handles")
     private val messages = mutableListOf(
         Message("m_1", "The Android build is ready for review.\n\n- Native Kotlin and Compose\n- The same conversations and subjects\n- Files stay with each message", from = "/k/demo-agent", peer = "/k/demo-agent", peerHandle = "/demo/builder", receivedAt = now - 70, read = false, autonomy = "auto", verb = "report_status", threadId = "t_build"),
         Message("m_2", workEnvelope("Please run the Android tests and send me the results."), to = "/demo/builder", peerHandle = "/demo/builder", direction = "out", sentAt = now - 160, threadId = "t_build"),
@@ -50,7 +51,7 @@ private class FixturePostbox(private val mode: String) : PostboxApi {
         if (mode == "long") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
     }
     override suspend fun identities() = if (created) boxes else emptyList()
-    override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == boxes.first().address) "/demo/main" else "/demo/builder")
+    override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == "/k/preview") preview.mailbox else if (identity == boxes.first().address) "/demo/main" else "/demo/builder")
     override suspend fun createIdentity(handle: String?): String { created = true; return boxes.first().address }
     override suspend fun inbox(identity: String, wait: Int?): InboxResponse {
         if (mode == "offline") throw IOException("You’re offline. Check your connection and try again.")
@@ -61,7 +62,14 @@ private class FixturePostbox(private val mode: String) : PostboxApi {
     override suspend fun contacts(identity: String) = ContactsResponse(if (identity == boxes.first().address) people.toList() else emptyList(), Vocabulary(listOf("report_status", "answer_question", "read_file", "run_tests", "run_shell"), listOf("run_shell", "git_push", "deploy", "read_credentials", "spend", "delete_files")))
     override suspend fun archive(identity: String) = archived.toSet()
     override suspend fun quota(identity: String) = Quota(23 * 1024 * 1024, 250 * 1024 * 1024, 200 * 1024 * 1024, "Free")
-    override suspend fun handleOffer() = HandleOffer()
+    override suspend fun handleOffer() = preview
+    override suspend fun checkHandle(name: String) = HandleAvailability(name, name !in setOf("support", "taken"), if (name == "support") "reserved" else "taken")
+    override suspend fun claimHandle(name: String): HandleOffer {
+        check(preview.eligible)
+        preview = HandleOffer("/$name", eligible = true, mailbox = "/$name/main", source = "test_preview")
+        if (boxes.none { it.address == "/k/preview" }) boxes += IdentityRow("/k/preview")
+        return preview
+    }
     override suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String>): SendResponse {
         delay(150)
         val id = "sent_" + UUID.randomUUID()

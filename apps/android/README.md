@@ -21,7 +21,9 @@ The second command needs a connected device or emulator. The wrapper pins Gradle
 
 ## Implemented workflows
 
-Browser sign-in with PKCE and provider selection; first-inbox creation; mailbox switching; inbox/search/unread/held states; conversation subjects; message history, send and acknowledgement; native Markdown, find, copy and original text; delete/report spam; document/photo attachments and Android open/share/save; contacts with namespace precedence and explicit permission confirmation; archive; quota; own-handle status; account sign-out; QR sign-in scanning; phone and wide-screen layouts; system light/dark appearance.
+Browser sign-in with PKCE and provider selection; first-inbox creation; mailbox switching; inbox/search/unread/held states; conversation subjects; message history, send and acknowledgement; native Markdown, find, copy and original text; delete/report spam; document/photo attachments and Android open/share/save; contacts with namespace precedence and explicit permission confirmation; archive; quota; free handle registration for approved testers; account sign-out; QR sign-in scanning; phone and wide-screen layouts; system light/dark appearance; adaptive and themed Pigeonpost launcher icons.
+
+Settings follows the iOS handle flow: enter a name, check availability, confirm registration, then open the new `/name/main` inbox. The preview has no payment SDK, payment details, real charge or automatic renewal. The server verifies the signed-in account against its private tester allowlist and atomically grants one complimentary handle per account. Existing paid/owned handles remain visible. See [server configuration](../../deploy/postbox/README.md#complimentary-preview-handles). Play internal-test membership and free-handle eligibility are separate lists.
 
 `core` owns wire models, conversation/subject assembly, the API client and coroutine state. `app` owns Compose, Android lifecycle, AppAuth, Keystore, file pickers/FileProvider and QR capture. HTTP, response decoding and Markdown parsing run off the UI thread. History always requests both sent and read messages. Drafts are isolated by mailbox, peer and subject and live for the view model's lifetime; they are cleared by sign-out and are not restored after process death. A failed or uncertain send is never automatically repeated.
 
@@ -38,7 +40,7 @@ adb shell am start -S -n dev.pigeonpost.inbox.debug/dev.pigeonpost.inbox.MainAct
   --es pigeonpost.fixtures inbox
 ```
 
-Modes: `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, purchase or notification was delivered.
+Modes: `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages), `handles` (approved tester registration). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, registration or notification was delivered.
 
 ## Release signing and service work
 
@@ -51,7 +53,7 @@ Remaining release gates:
 - Finish a real account sign-in, refresh/logout, two-inbox messaging and attachment round trip on Android. The live authorization entry point is checked separately from fixture tests.
 - Test a physical device's camera QR flow, file/photo providers, TalkBack, background/foreground lifecycle and low-memory recovery.
 - Configure Firebase/FCM and implement Android token registration and postbox delivery. The current server sends APNs only; background Android notifications are unavailable. Foreground inbox updates work through bounded long polling.
-- Configure Google Play products and server-verified Google purchase handling before enabling Android handle purchases. The Apple transaction route must not receive Google purchases. Existing owned-namespace information can be displayed.
+- Paid Android purchases remain disabled. If introduced later, use Google Play products and server verification; never send Google purchases to the Apple transaction route or replace server authorization with a client flag.
 - Complete Data safety/store content, broader testing and production-device acceptance before a public download or production store release. Company registration and signing setup are complete; the first release uses internal testing.
 
 References: [Kotlin-first Android](https://developer.android.com/kotlin/first), [AGP compatibility](https://developer.android.com/build/releases/agp-8-13-0-release-notes), [AppAuth](https://github.com/openid/AppAuth-Android), [Android app signing](https://developer.android.com/studio/publish/app-signing).

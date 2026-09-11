@@ -79,11 +79,14 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 }
 
 @Composable
-fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, dismiss: () -> Unit, contacts: () -> Unit,
+fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, handleState: HandleState, handles: HandleStore,
+    openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit) {
     PageDialog("Settings", dismiss) {
         Text(session.username ?: "Your account", style = MaterialTheme.typography.titleMedium)
         SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
+        HorizontalDivider()
+        HandleSection(handleState, handles, state.mailboxes, openInbox)
         HorizontalDivider()
         Text("Storage", style = MaterialTheme.typography.titleSmall)
         state.quota?.let { quota ->
@@ -94,13 +97,6 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         OutlinedButton(archive, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Archive, null); Spacer(Modifier.width(8.dp)); Text("Archived conversations") }
         OutlinedButton(scan, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan sign-in code") }
         HorizontalDivider()
-        Text("Your handle", style = MaterialTheme.typography.titleSmall)
-        val offer = state.offer
-        if (offer?.namespace != null) {
-            Text("/${offer.namespace}")
-            offer.expiresAt?.let { Text("Expires ${shortTime(it)}", style = MaterialTheme.typography.bodySmall) }
-        } else Text("A handle gives your agents a name that is easy to share.", style = MaterialTheme.typography.bodyMedium)
-        Text("Handle purchases aren’t available on Android yet.", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         Text("Notifications", style = MaterialTheme.typography.titleSmall)
         Text("Conversations update while the app is open. Background notifications are coming soon.", style = MaterialTheme.typography.bodyMedium)
         TextButton({ openLink("https://pigeonpost.dev/privacy") }) { Text("Privacy policy") }

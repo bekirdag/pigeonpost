@@ -127,7 +127,7 @@ class InboxStoreTest {
     }
 }
 
-private open class FakePostbox : PostboxApi {
+internal open class FakePostbox : PostboxApi {
     var rows = emptyList<Message>()
     var sends = 0
     val acked = mutableListOf<Pair<String, String>>()
@@ -152,4 +152,6 @@ private open class FakePostbox : PostboxApi {
     override suspend fun upload(identity: String, file: File, filename: String, mediaType: String) = Attachment("attachment", filename, mediaType, file.length())
     override suspend fun download(identity: String, id: String, output: OutputStream, maximumBytes: Long) {}
     override suspend fun handleOffer() = HandleOffer()
+    override suspend fun checkHandle(name: String) = HandleAvailability(name, true)
+    override suspend fun claimHandle(name: String) = HandleOffer("/$name", eligible = true, mailbox = "/$name/main", source = "test_preview")
 }

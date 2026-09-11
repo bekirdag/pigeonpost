@@ -22,6 +22,24 @@ class PostboxClientTest {
     private val tokens = object : TokenProvider { override suspend fun token(rejected: String?) = if (rejected == null) "first" else "renewed" }
     @Before fun setup() { server = MockWebServer(); server.start(); client = PostboxClient(tokens, server.url("/"), allowLoopbackForTests = true) }
     @After fun teardown() { server.shutdown() }
+    @Test fun testerRegistrationUsesAuthenticatedPreviewRoutesAndOnlySendsTheName() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"eligible":true,"namespace":null}"""))
+        server.enqueue(MockResponse().setBody("""{"name":"alex","available":true}"""))
+        server.enqueue(MockResponse().setBody("""{"eligible":true,"namespace":"/alex","mailbox":"/alex/main","source":"test_preview"}"""))
+        assertTrue(client.handleOffer().eligible)
+        assertTrue(client.checkHandle(" /Alex/ ").available)
+        assertEquals("/alex/main", client.claimHandle(" /Alex/ ").mailbox)
+        val offer = server.takeRequest(); assertEquals("/v1/claims/test", offer.path)
+        val availability = server.takeRequest(); assertEquals("/v1/handles/alex/availability", availability.path)
+        val claim = server.takeRequest(); assertEquals("/v1/claims/test", claim.path); assertEquals("POST", claim.method)
+        assertEquals("Bearer first", claim.getHeader("Authorization"))
+        assertEquals("""{"namespace":"alex"}""", claim.body.readUtf8())
+    }
+    @Test fun invalidHandleNamesNeverReachTheNetwork() = runBlocking {
+        try { client.claimHandle("/a/b"); fail("Expected invalid namespace") } catch (_: IllegalArgumentException) {}
+        try { client.checkHandle("a".repeat(33)); fail("Expected invalid namespace") } catch (_: IllegalArgumentException) {}
+        assertEquals(0, server.requestCount)
+    }
     @Test fun initialFetchAndPollKeepSentAndReadHistory() = runBlocking {
         repeat(2) { server.enqueue(MockResponse().setBody("{\"messages\":[]}")) }
         client.inbox("/team/main")

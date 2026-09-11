@@ -50,6 +50,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     choosePhoto: () -> Unit, scan: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
     val session by model.session.state.collectAsStateWithLifecycle()
     val state by model.inbox.state.collectAsStateWithLifecycle()
+    val handleState by model.handles.state.collectAsStateWithLifecycle()
     val store = model.inbox
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
@@ -94,7 +95,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null })
             "new" -> NewConversationDialog(state, { store.selectPeer(it); sheet = null }, { sheet = null })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
-            "settings" -> SettingsDialog(state, session, model.graph.fixtures, { sheet = null },
+            "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
+                openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null })

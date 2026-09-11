@@ -65,6 +65,8 @@ interface PostboxApi {
     suspend fun upload(identity: String, file: File, filename: String, mediaType: String): Attachment
     suspend fun download(identity: String, id: String, output: OutputStream, maximumBytes: Long = MAX_ATTACHMENT_BYTES)
     suspend fun handleOffer(): HandleOffer
+    suspend fun checkHandle(name: String): HandleAvailability
+    suspend fun claimHandle(name: String): HandleOffer
 }
 
 const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024
@@ -96,7 +98,15 @@ class PostboxClient(
     override suspend fun contacts(identity: String) = decode<ContactsResponse>(request("contacts", identity = identity))
     override suspend fun archive(identity: String) = decode<ArchiveResponse>(request("archive", identity = identity)).archived.orEmpty().toSet()
     override suspend fun quota(identity: String) = decode<Quota>(request("quota", identity = identity))
-    override suspend fun handleOffer() = decode<HandleOffer>(request("claims/apple"))
+    override suspend fun handleOffer() = decode<HandleOffer>(request("claims/test"))
+    override suspend fun checkHandle(name: String): HandleAvailability {
+        require(validHandleName(name))
+        return decode(request("handles/${tidyHandle(name)}/availability"))
+    }
+    override suspend fun claimHandle(name: String): HandleOffer {
+        require(validHandleName(name))
+        return decode(request("claims/test", method = "POST", json = buildJsonObject { put("namespace", tidyHandle(name)) }))
+    }
 
     override suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String>): SendResponse {
         require(validAddress(to)) { "Enter an address such as /name/agent." }

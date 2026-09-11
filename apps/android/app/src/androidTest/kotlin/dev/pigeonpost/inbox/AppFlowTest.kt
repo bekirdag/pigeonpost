@@ -105,6 +105,36 @@ class AppFlowTest {
             shown("No conversations yet")
         }
     }
+    @Test fun approvedTesterRegistersAFreeHandleAndOpensItsInbox() {
+        launch("handles").use {
+            shown("Inbox")
+            ui.onNodeWithContentDescription("Settings").performClick()
+            shown("Handle name")
+            ui.onNodeWithText("Handle name").performTextInput("support")
+            ui.onNodeWithText("Check availability").performScrollTo().performClick()
+            shown("That name is reserved")
+            ui.onNodeWithText("Handle name").performTextReplacement("alex")
+            ui.onNodeWithText("Check availability").performScrollTo().performClick()
+            shown("/alex is available")
+            ui.onNodeWithText("Register for free").performScrollTo().performClick()
+            ui.onNodeWithText("Register handle").performClick()
+            shown("/alex/main")
+            shown("Free preview handle. No payment or automatic renewal.")
+            ui.onNodeWithText("Open this inbox").performScrollTo().performClick()
+            shown("No conversations yet")
+            ui.onNodeWithText("Inbox").performClick()
+            shown("/alex/main")
+        }
+    }
+    @Test fun unapprovedAccountCannotStartRegistration() {
+        launch().use {
+            shown("Inbox")
+            ui.onNodeWithContentDescription("Settings").performClick()
+            shown("Free handle registration is available to approved testers")
+            ui.onNodeWithText("Handle name").assertDoesNotExist()
+            ui.onNodeWithText("Register for free").assertDoesNotExist()
+        }
+    }
     @Test fun encryptedSessionAndAttachmentsUsePrivateStorage() = runBlocking {
         val root = File(context.cacheDir, "storage-test").apply { mkdirs() }
         try {
