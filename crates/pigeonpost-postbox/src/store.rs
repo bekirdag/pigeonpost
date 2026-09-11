@@ -269,6 +269,14 @@ CREATE TABLE IF NOT EXISTS apple_subscriptions (
 );
 CREATE INDEX IF NOT EXISTS apple_subscriptions_by_account ON apple_subscriptions(account_id);
 
+-- One complimentary preview handle per approved account. Keep the claim even if a later
+-- entitlement changes: retrying registration must never mint a second name.
+CREATE TABLE IF NOT EXISTS test_handle_claims (
+    account_id TEXT PRIMARY KEY,
+    namespace TEXT NOT NULL UNIQUE,
+    created_at INTEGER NOT NULL
+);
+
 -- Per-inbox defaults for senders with no contact row. Absent = the defaults in `InboxPolicy`.
 CREATE TABLE IF NOT EXISTS inbox_policy (
     address           TEXT PRIMARY KEY,
@@ -428,6 +436,13 @@ pub enum AppleClaim {
     /// This subscription already bought a different name, which it keeps.
     AlreadyNamed(String),
     /// Somebody else holds that namespace. A valid purchase does not take it from them.
+    NamespaceTaken,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TestHandleClaim {
+    Granted,
+    AlreadyNamed(String),
     NamespaceTaken,
 }
 
@@ -1565,6 +1580,52 @@ impl Store {
         })
         .await
         .map_err(|_| StoreError::Join)?
+    }
+
+    /// Claim a complimentary tester handle without ever replacing an existing binding.
+    /// Eligibility is checked by the authenticated route; quota and ownership share this
+    /// transaction so concurrent devices cannot claim two names or take somebody else's.
+    pub async fn claim_test_namespace(
+        &self,
+        account_id: String,
+        namespace: String,
+        now: u64,
+    ) -> Result<TestHandleClaim, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<TestHandleClaim, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let prior: Option<String> = tx.query_row(
+                "SELECT namespace FROM test_handle_claims WHERE account_id = ?1",
+                [&account_id], |r| r.get(0),
+            ).optional()?;
+            if let Some(name) = prior.as_ref() {
+                if name != &namespace { return Ok(TestHandleClaim::AlreadyNamed(name.clone())); }
+            }
+            // Even expired paid bindings are protected from complimentary registration.
+            let occupant: Option<String> = tx.query_row(
+                "SELECT account_id FROM namespaces WHERE namespace = ?1",
+                [&namespace], |r| r.get(0),
+            ).optional()?;
+            if occupant.is_some() {
+                return Ok(if prior.is_some() && occupant.as_ref() == Some(&account_id) {
+                    TestHandleClaim::Granted
+                } else { TestHandleClaim::NamespaceTaken });
+            }
+            // A deleted/reassigned preview grant cannot be replayed to acquire it again.
+            if let Some(name) = prior { return Ok(TestHandleClaim::AlreadyNamed(name)); }
+            tx.execute(
+                "INSERT INTO test_handle_claims (account_id, namespace, created_at) VALUES (?1, ?2, ?3)",
+                params![account_id, namespace, now as i64],
+            )?;
+            tx.execute(
+                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
+                 VALUES (?1, ?2, 'test_preview', ?3, NULL)",
+                params![namespace, account_id, now as i64],
+            )?;
+            tx.commit()?;
+            Ok(TestHandleClaim::Granted)
+        }).await.map_err(|_| StoreError::Join)?
     }
 
     pub async fn set_namespace_owner(
@@ -3467,6 +3528,109 @@ mod tests {
                 .await
                 .unwrap()
                 .is_none());
+        }
+    }
+
+    mod tester_handles {
+        use super::*;
+
+        #[tokio::test]
+        async fn concurrent_names_share_one_account_allowance() {
+            let s = Store::open(":memory:").unwrap();
+            let (a, b) = tokio::join!(
+                s.claim_test_namespace("acct_a".into(), "alex".into(), 100),
+                s.claim_test_namespace("acct_a".into(), "blake".into(), 100),
+            );
+            let results = [a.unwrap(), b.unwrap()];
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|r| **r == TestHandleClaim::Granted)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                s.namespaces_for_account("acct_a".into(), 200)
+                    .await
+                    .unwrap()
+                    .len(),
+                1
+            );
+        }
+
+        #[tokio::test]
+        async fn concurrent_accounts_cannot_both_take_a_name() {
+            let s = Store::open(":memory:").unwrap();
+            let (a, b) = tokio::join!(
+                s.claim_test_namespace("acct_a".into(), "alex".into(), 100),
+                s.claim_test_namespace("acct_b".into(), "alex".into(), 100),
+            );
+            let results = [a.unwrap(), b.unwrap()];
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|r| **r == TestHandleClaim::Granted)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|r| **r == TestHandleClaim::NamespaceTaken)
+                    .count(),
+                1
+            );
+        }
+
+        #[tokio::test]
+        async fn preview_registration_preserves_even_expired_paid_bindings() {
+            let s = Store::open(":memory:").unwrap();
+            s.set_namespace_owner("alex".into(), "acct_owner".into(), "apple", 1, Some(50))
+                .await
+                .unwrap();
+            assert_eq!(
+                s.claim_test_namespace("acct_tester".into(), "alex".into(), 100)
+                    .await
+                    .unwrap(),
+                TestHandleClaim::NamespaceTaken
+            );
+            assert_eq!(
+                s.namespace_owner("alex".into(), 20)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_owner")
+            );
+            // A conflict does not spend the tester's allowance.
+            assert_eq!(
+                s.claim_test_namespace("acct_tester".into(), "blake".into(), 100)
+                    .await
+                    .unwrap(),
+                TestHandleClaim::Granted
+            );
+        }
+
+        #[tokio::test]
+        async fn retry_cannot_overwrite_an_entitlement_upgrade() {
+            let s = Store::open(":memory:").unwrap();
+            s.claim_test_namespace("acct_a".into(), "alex".into(), 100)
+                .await
+                .unwrap();
+            s.set_namespace_owner("alex".into(), "acct_a".into(), "apple", 200, Some(300))
+                .await
+                .unwrap();
+            assert_eq!(
+                s.claim_test_namespace("acct_a".into(), "alex".into(), 250)
+                    .await
+                    .unwrap(),
+                TestHandleClaim::Granted
+            );
+            let held = s
+                .namespaces_for_account("acct_a".into(), 250)
+                .await
+                .unwrap();
+            assert_eq!(held[0].source, "apple");
+            assert_eq!(held[0].expires_at, Some(300));
         }
     }
 

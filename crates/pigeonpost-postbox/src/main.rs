@@ -60,6 +60,7 @@ mod pow;
 mod push;
 mod reputation;
 mod store;
+mod tester_handles;
 mod vault;
 mod verbs;
 
@@ -114,6 +115,8 @@ struct AppState {
     /// The App Store, when this deployment can verify purchases. `None` closes the claim endpoint
     /// the same way an unconfigured namespace grant closes itself.
     appstore: Option<Arc<appstore::AppStore>>,
+    /// Verified sign-in addresses explicitly approved for one complimentary preview handle.
+    test_handle_testers: Arc<std::collections::HashSet<String>>,
     /// GitHub device login, when this postbox is configured for it. `None` closes the endpoints
     /// rather than failing per request, so an unconfigured deployment says so once and plainly.
     github: Option<Arc<github::Github>>,
@@ -380,6 +383,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
+        test_handle_testers: tester_handles::configured_testers(),
         blobs: blobs::Blobs::from_env().map(Arc::new),
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
     })
@@ -506,6 +510,10 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/handles/{name}/availability", get(handle_availability))
         .route("/v1/me/handles", get(my_handles))
+        .route(
+            "/v1/claims/test",
+            get(tester_handles::state).post(tester_handles::claim),
+        )
         .route("/v1/claims/address", post(claim_address))
         .route("/v1/claims/apple", post(claim_apple).get(apple_claim_state))
         .route("/v1/devices", post(register_device))
@@ -5291,6 +5299,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            test_handle_testers: Arc::new(std::collections::HashSet::new()),
             blobs: None,
             public_url: "https://postbox.example".into(),
             github: None,
@@ -6399,7 +6408,7 @@ mod tests {
     }
 
     /// A state that knows what is reserved, which availability refuses to answer without.
-    fn state_with_reserved(names: &[&str]) -> AppState {
+    pub(super) fn state_with_reserved(names: &[&str]) -> AppState {
         let mut state = state_with_limits(MintLimits {
             per_window: 10,
             window_secs: 3600,
@@ -7831,6 +7840,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            test_handle_testers: Arc::new(std::collections::HashSet::new()),
             blobs: None,
             public_url: "https://postbox.example".into(),
             github: None,

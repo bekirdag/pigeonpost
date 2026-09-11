@@ -65,6 +65,29 @@ recovery, inspect container log sizes first, preserve diagnostic samples, and re
 storage without removing the database, its WAL, or attachment files. Verify database integrity,
 authenticated inbox reads, and free space before declaring recovery complete.
 
+## Complimentary preview handles
+
+`GET /v1/claims/test` reports the signed-in account's handle and tester eligibility.
+`POST /v1/claims/test` accepts only `{"namespace":"yourname"}` and registers one complimentary
+handle per approved account. It creates `/yourname/main` using the normal identity path. No
+payment provider or payment credential is involved.
+
+Opt in on the server with `POSTBOX_TEST_HANDLE_TESTERS`, a comma-separated list of approved
+sign-in addresses in the private runtime environment. Addresses must be verified in the signed
+OIDC claims. The list defaults to empty; capability tokens, app-provided identity/eligibility
+fields, unverified accounts and unlisted accounts cannot claim. Keep participant identities out
+of source control. Internal Google Play tester membership alone does not authorize a grant.
+
+The `test_handle_claims` table and namespace binding are written in one transaction. Retries of
+the same claim are idempotent, each account can register one name, and existing bindings (including
+expired paid names) cannot be replaced. Preview bindings use source `test_preview`, have no charge
+or automatic renewal, and do not expire automatically. Removing a participant from the allowlist
+prevents new registration; it does not delete a handle or inbox already granted.
+
+Back up SQLite before deployment as usual. The schema change only adds a table; an older server
+can still read existing namespace bindings during rollback. Never restore an old database over
+messages received since deployment.
+
 ## Push notifications (APNs)
 
 Off unless configured, and configured only from the environment — no key is ever committed, and
