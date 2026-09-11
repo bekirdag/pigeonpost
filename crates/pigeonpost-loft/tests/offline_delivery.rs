@@ -8,7 +8,10 @@
 
 use std::sync::Arc;
 
-use pigeonpost_compliance_format::{ComplianceKeyId, CompliancePurpose, Jurisdiction};
+use pigeonpost_compliance_format::{
+    attribution_epoch_end_ms, ComplianceKeyId, CompliancePurpose, Jurisdiction,
+    TRACE_EPOCH_DURATION_MS,
+};
 use pigeonpost_core::{
     envelope, keys::SuccessorCommitment, AgentRecord, AttributionRequirement, FetchAuth, Identity,
     RecipientPolicy, RotationRecord, Token,
@@ -535,19 +538,32 @@ async fn only_v3_writes_are_admitted() {
 #[tokio::test]
 async fn attribution_required_is_enforced_with_a_live_registry_key() {
     let compliance_key = [0xC1; 32];
-    let key_id = ComplianceKeyId::new(
-        CompliancePurpose::Attribution,
-        Jurisdiction::Test,
-        [0xA1; 32],
-        1_785_542_400_000,
-        1,
-    );
+    // The writer and live server both require a key from the current calendar month.
+    let now = now_secs();
+    let now_ms = now.saturating_mul(1_000);
+    let day_start_ms = now_ms - now_ms % TRACE_EPOCH_DURATION_MS;
+    let (key_id, not_after_ms) = (0..=31)
+        .find_map(|days_back| {
+            let start = day_start_ms.checked_sub(days_back * TRACE_EPOCH_DURATION_MS)?;
+            let id = ComplianceKeyId::new(
+                CompliancePurpose::Attribution,
+                Jurisdiction::Test,
+                [0xA1; 32],
+                start,
+                1,
+            );
+            attribution_epoch_end_ms(&id)
+                .ok()
+                .filter(|end| now_ms < *end)
+                .map(|end| (id, end))
+        })
+        .expect("current UTC month has a canonical first day");
     let resolver: Arc<dyn AttributionKeyResolver> = Arc::new(FixedResolver {
         id: key_id,
         key: ResolvedAttributionKey {
             public_key: compliance_key,
-            not_before_ms: 1_785_542_400_000,
-            not_after_ms: 1_788_220_800_000,
+            not_before_ms: key_id.epoch_start_ms,
+            not_after_ms,
             status: ComplianceKeyStatus::Active,
         },
     });
@@ -570,13 +586,13 @@ async fn attribution_required_is_enforced_with_a_live_registry_key() {
         .await
         .unwrap();
 
-    let absent = envelope::wrap(&alice, &bob.verifying_key(), "absent", NOW).unwrap();
+    let absent = envelope::wrap(&alice, &bob.verifying_key(), "absent", now).unwrap();
     assert!(client.publish(&absent, None).await.is_err());
     let attributed = envelope::wrap_attributed(
         &alice,
         &bob.verifying_key(),
         "present",
-        NOW,
+        now,
         &compliance_key,
         &key_id,
     )
