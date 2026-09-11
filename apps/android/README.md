@@ -42,9 +42,9 @@ Modes: `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages)
 
 ## Release signing and service work
 
-Before publishing, reserve `dev.pigeonpost.inbox` in the company Google Play account and enroll in Play App Signing. Keep Google's distribution signing key separate from the upload key. The existing iOS/Windows registrations do not register an Android package.
+`dev.pigeonpost.inbox` is registered as Pigeonpost in Wodo's company Google Play account, with Play App Signing enabled. Keep Google's distribution signing key separate from the dedicated upload key. The iOS/Windows registrations are separate from this Android package.
 
-The release build accepts these environment variables together: `ANDROID_UPLOAD_KEYSTORE` (absolute file path), `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. Keep the upload key and passwords in an appropriate secret store. Providing an incomplete set fails the build; providing none produces unsigned release artifacts. No production key has been created or committed, and CI does not publish to Google Play.
+The release build accepts these environment variables together: `ANDROID_UPLOAD_KEYSTORE` (absolute file path), `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. Keep the upload key and passwords in an appropriate secret store. Providing an incomplete set fails the build; providing none produces unsigned release artifacts. The dedicated upload key is stored outside the repository and its password is in macOS Keychain. No signing key is committed, and CI does not publish to Google Play.
 
 Remaining release gates:
 
@@ -52,6 +52,6 @@ Remaining release gates:
 - Test a physical device's camera QR flow, file/photo providers, TalkBack, background/foreground lifecycle and low-memory recovery.
 - Configure Firebase/FCM and implement Android token registration and postbox delivery. The current server sends APNs only; background Android notifications are unavailable. Foreground inbox updates work through bounded long polling.
 - Configure Google Play products and server-verified Google purchase handling before enabling Android handle purchases. The Apple transaction route must not receive Google purchases. Existing owned-namespace information can be displayed.
-- Complete company Play enrollment, release signing, Data safety/store content, closed testing and production-device acceptance before a public download or store release.
+- Complete Data safety/store content, broader testing and production-device acceptance before a public download or production store release. Company registration and signing setup are complete; the first release uses internal testing.
 
 References: [Kotlin-first Android](https://developer.android.com/kotlin/first), [AGP compatibility](https://developer.android.com/build/releases/agp-8-13-0-release-notes), [AppAuth](https://github.com/openid/AppAuth-Android), [Android app signing](https://developer.android.com/studio/publish/app-signing).
