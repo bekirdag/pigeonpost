@@ -1,0 +1,99 @@
+name: macOS notarization
+
+# Signs are produced on the Mac that holds the Developer ID identity. This step
+# notarizes that exact archive using the existing App Store Connect credentials.
+on:
+  workflow_dispatch:
+    inputs:
+      build_number:
+        description: "Build number of the macos-1.0-N draft release."
+        required: true
+        type: string
+      sha256:
+        description: "SHA-256 of the signed Pigeonpost-Desktop-1.0-N.zip archive."
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: mac-notarization
+  cancel-in-progress: false
+
+jobs:
+  notarize:
+    runs-on: macos-26
+    timeout-minutes: 30
+    env:
+      GH_TOKEN: ${{ github.token }}
+      BUILD_NUMBER: ${{ inputs.build_number }}
+      EXPECTED_SHA256: ${{ inputs.sha256 }}
+    steps:
+      - name: Download and verify the signed archive
+        shell: bash
+        run: |
+          set -euo pipefail
+          [[ "$BUILD_NUMBER" =~ ^[0-9]+$ ]]
+          [[ "$EXPECTED_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          tag="macos-1.0-$BUILD_NUMBER"
+          archive="Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip"
+          mkdir -p "$RUNNER_TEMP/input" "$RUNNER_TEMP/unpacked" "$RUNNER_TEMP/output"
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern "$archive" --dir "$RUNNER_TEMP/input"
+          cd "$RUNNER_TEMP/input"
+          printf '%s  %s\n' "$EXPECTED_SHA256" "$archive" | shasum -a 256 -c -
+          ditto -x -k "$archive" "$RUNNER_TEMP/unpacked"
+          app="$RUNNER_TEMP/unpacked/Pigeonpost Desktop.app"
+          codesign --verify --deep --strict "$app"
+          codesign -d --verbose=4 "$app" 2>&1 | grep -Fx 'TeamIdentifier=AH277897AV'
+          codesign -d --verbose=4 "$app" 2>&1 | grep 'flags=.*runtime'
+          codesign -d --entitlements - "$app" > "$RUNNER_TEMP/entitlements.plist" 2>/dev/null
+          if plutil -extract com.apple.security.get-task-allow raw -o - "$RUNNER_TEMP/entitlements.plist" 2>/dev/null | grep -q true; then
+            echo '::error::A distribution build must not permit debugging.'
+            exit 1
+          fi
+
+      - name: Submit to Apple and attach the ticket
+        shell: bash
+        env:
+          APPLE_KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_ISSUER: ${{ secrets.APPLE_API_ISSUER_ID }}
+        run: |
+          set -euo pipefail
+          key="$RUNNER_TEMP/notary-key.p8"
+          umask 077
+          printf '%s\n' "$APPLE_KEY" > "$key"
+          trap 'rm -f "$key"' EXIT
+          xcrun notarytool submit "$RUNNER_TEMP/input/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip" \
+            --key "$key" --key-id "$APPLE_KEY_ID" --issuer "$APPLE_ISSUER" \
+            --wait --timeout 20m --output-format json > "$RUNNER_TEMP/notarization.json"
+          cat "$RUNNER_TEMP/notarization.json"
+          status=$(plutil -extract status raw -o - "$RUNNER_TEMP/notarization.json")
+          if [ "$status" != Accepted ]; then
+            submission=$(plutil -extract id raw -o - "$RUNNER_TEMP/notarization.json")
+            xcrun notarytool log "$submission" --key "$key" --key-id "$APPLE_KEY_ID" --issuer "$APPLE_ISSUER"
+            exit 1
+          fi
+          app="$RUNNER_TEMP/unpacked/Pigeonpost Desktop.app"
+          xcrun stapler staple "$app"
+          xcrun stapler validate "$app"
+          spctl --assess --type execute --verbose=2 "$app"
+          ditto -c -k --sequesterRsrc --keepParent "$app" "$RUNNER_TEMP/output/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip"
+
+      - name: Update the draft download
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "macos-1.0-$BUILD_NUMBER" \
+            "$RUNNER_TEMP/output/Pigeonpost-Desktop-1.0-$BUILD_NUMBER.zip" \
+            --repo "$GITHUB_REPOSITORY" --clobber
+
+      - name: Keep the notarization report
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-mac-notarization-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/notarization.json
+          if-no-files-found: warn
+          retention-days: 30
