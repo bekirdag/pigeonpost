@@ -125,7 +125,7 @@ def metadata(client, group, product, slot):
 
 
 def provision_prices(client, product, territories):
-    existing = client.list_all(f"/v1/subscriptions/{product}/prices", {"limit": 200})
+    existing = client.list_all(f"/v1/subscriptions/{product}/prices", {"limit": 200, "include": "territory"})
     present = {p["relationships"]["territory"]["data"]["id"] for p in existing}
     usa_price(client, product)
     points = client.list_all(f"/v1/subscriptions/{product}/pricePoints", {
@@ -135,7 +135,7 @@ def provision_prices(client, product, territories):
     if len(eight) != 1:
         raise RuntimeError(f"Expected one exact $8 price point for {product}")
     base = eight[0]
-    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/equalizations", {"limit": 8000})
+    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/equalizations", {"limit": 8000, "include": "territory"})
     mapping = {p["relationships"]["territory"]["data"]["id"]: p for p in equalized}
     mapping["USA"] = base
     if set(territories) - mapping.keys():
