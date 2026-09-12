@@ -1,0 +1,8 @@
+Handle purchases are now easier to complete and recover.
+
+- Check a name's availability before confirming a purchase.
+- Register up to ten personal handles. Each has an independent $8/year US subscription; ten total $80/year. Other storefronts show local prices.
+- Restore all owned names, finish interrupted registration without paying again, and open each handle's inbox from Settings.
+- See the matching App Store subscription name beside each handle when managing renewals or cancellations.
+
+Please test a second handle, cancelling the payment sheet, and restoring purchases. TestFlight purchases use Apple's sandbox and do not charge real money.

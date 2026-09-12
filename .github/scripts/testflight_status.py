@@ -27,6 +27,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from pathlib import Path
 
 API = "https://api.appstoreconnect.apple.com/v1"
 
@@ -268,6 +269,31 @@ if FIX and target:
     if a["processingState"] != "VALID":
         print(f"  Build {a['version']} is {a['processingState']}; nothing to hand a tester yet.")
         sys.exit(0)
+
+    notes_file = os.environ.get("RELEASE_NOTES_FILE", "")
+    if notes_file:
+        if BUNDLE_ID != "dev.pigeonpost.inbox" or WAIT_FOR != a["version"] or notes_file != "apps/ios/Store/TESTFLIGHT-NOTES.txt":
+            sys.exit("Release notes require the explicit Pigeonpost build and prepared notes file.")
+        notes = Path(notes_file).read_text(encoding="utf-8").strip()
+        if not notes or len(notes) > 4000:
+            sys.exit("TestFlight release notes must contain 1–4000 characters.")
+        localizations = get(f"/builds/{target['id']}/betaBuildLocalizations", limit=50)["data"]
+        english = [item for item in localizations if item["attributes"]["locale"] == "en-US"]
+        if english:
+            localization_id = english[0]["id"]
+            call("PATCH", f"/betaBuildLocalizations/{localization_id}", {"data": {
+                "type": "betaBuildLocalizations", "id": localization_id, "attributes": {"whatsNew": notes},
+            }})
+        else:
+            value = call("POST", "/betaBuildLocalizations", {"data": {
+                "type": "betaBuildLocalizations", "attributes": {"locale": "en-US", "whatsNew": notes},
+                "relationships": {"build": {"data": {"type": "builds", "id": target["id"]}}},
+            }})
+            localization_id = value["data"]["id"]
+        saved = get(f"/betaBuildLocalizations/{localization_id}")["data"]["attributes"]["whatsNew"]
+        if saved != notes:
+            sys.exit("Apple did not retain the prepared release notes.")
+        print(f"  Saved and verified release notes for build {a['version']} (en-US).")
 
     if a.get("usesNonExemptEncryption") is None:
         call(

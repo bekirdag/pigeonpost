@@ -17,6 +17,11 @@ on:
         required: false
         default: false
         type: boolean
+      build_number:
+        description: "Optional exact build to wait for and distribute; also installs its prepared release notes when fix is on."
+        required: false
+        default: ""
+        type: string
       handle_catalog:
         description: "Inspect or provision the approved iOS handle subscription catalog."
         required: false
@@ -49,6 +54,8 @@ jobs:
           ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           FIX: ${{ inputs.fix }}
           BUNDLE_ID: dev.pigeonpost.inbox
+          WAIT_FOR: ${{ inputs.build_number }}
+          RELEASE_NOTES_FILE: ${{ inputs.build_number != '' && 'apps/ios/Store/TESTFLIGHT-NOTES.txt' || '' }}
         run: python3 .github/scripts/testflight_status.py
 
       - name: Handle subscription catalog
