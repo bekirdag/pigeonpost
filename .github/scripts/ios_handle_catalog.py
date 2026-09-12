@@ -8,6 +8,7 @@ import json
 import os
 import time
 import hashlib
+import urllib.parse
 from pathlib import Path
 from decimal import Decimal
 from cubemeld_iap import Client, mint_token
@@ -83,6 +84,7 @@ def metadata(client, group, product, slot):
             {"fileName": "handle-subscription-review.png", "fileSize": len(content)},
             {"subscription": rel("subscriptions", product)})
         for operation in asset["attributes"]["uploadOperations"]:
+            print(json.dumps({"review_upload_host": urllib.parse.urlsplit(operation["url"]).hostname}), flush=True)
             client.upload(operation, content)
         client.call("PATCH", f"/v1/subscriptionAppStoreReviewScreenshots/{asset['id']}", {"data": {
             "type": "subscriptionAppStoreReviewScreenshots", "id": asset["id"],
@@ -170,6 +172,10 @@ def run(client):
         _, saved_territories = plan(client, product["id"])
         saved_prices = usa_price(client, product["id"])
         current = client.call("GET", f"/v1/subscriptions/{product['id']}")["data"]
+        shot = client.call("GET", f"/v1/subscriptions/{product['id']}/appStoreReviewScreenshot", allow_404=True)
+        if shot and shot.get("data"):
+            print(json.dumps({"review_asset": product['id'], "state": shot['data']['attributes'].get('assetDeliveryState'),
+                "upload_hosts": [urllib.parse.urlsplit(op['url']).hostname for op in shot['data']['attributes'].get('uploadOperations', [])]}), flush=True)
         print(json.dumps({"product": identifier, "id": product["id"], "group": group["id"],
             "state": current["attributes"]["state"], "usd_yearly": list(map(str, saved_prices)),
             "available_territory_count": len(saved_territories)}), flush=True)
