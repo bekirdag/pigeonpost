@@ -141,9 +141,10 @@ def provision_prices(client, product, territories):
     if len(eight) != 1:
         raise RuntimeError(f"Expected one exact $8 price point for {product}")
     base = eight[0]
-    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/adjustedEqualizations", {
-        "limit": 8000, "include": "territory", "filter[planType]": "UPFRONT",
-        "filter[upfrontPricePointId]": base["id"], "filter[subscription]": product,
+    # The live adjustedEqualizations endpoint accepts MONTHLY only. Annual up-front
+    # billing uses ordinary equalizations after declaring its plan availability.
+    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/equalizations", {
+        "limit": 8000, "include": "territory", "filter[subscription]": product,
     })
     mapping = {p["relationships"]["territory"]["data"]["id"]: p for p in equalized}
     mapping["USA"] = base
