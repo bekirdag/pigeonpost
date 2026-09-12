@@ -74,7 +74,7 @@ def metadata(client, group, product, slot):
     locales = client.list_all(f"/v1/subscriptions/{product}/subscriptionLocalizations", {"limit": 50})
     if not any(x["attributes"]["locale"] == "en-US" for x in locales):
         create(client, "subscriptionLocalizations", {"name": f"Handle {slot} — yearly", "locale": "en-US",
-               "description": "Register one personal name with its own inbox for one year."},
+               "description": "One personal name and inbox for one year."},
                {"subscription": rel("subscriptions", product)})
     shot = client.call("GET", f"/v1/subscriptions/{product}/appStoreReviewScreenshot", allow_404=True)
     if not shot or not shot.get("data"):
