@@ -328,9 +328,13 @@ impl WitnessedRegistryKeyCache {
         {
             return Err(AttributionResolutionError::Unavailable);
         }
+        // Recover the authenticated checkpoint even after downtime exceeds the freshness window.
+        // Its signatures must have been valid when the snapshot was accepted. Readiness and key
+        // resolution still require a fresh cosignature at the current time via ensure_fresh().
+        // Rejecting an old snapshot here prevents refresh and strands every later restart.
         persisted
             .audit
-            .verify_witnesses(&self.trust, current_ms / 1_000)
+            .verify_witnesses(&self.trust, persisted.observed_at_ms / 1_000)
             .map_err(|_| AttributionResolutionError::Unavailable)?;
         let keys = cached_audit_keys(&persisted.audit)?;
         let mut state = self
