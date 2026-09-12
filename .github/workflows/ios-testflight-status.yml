@@ -33,7 +33,8 @@ permissions:
   contents: read
 
 concurrency:
-  group: ios-testflight-status
+  # Read-only reports can inspect a long catalog setup; all writes stay serialized.
+  group: ios-testflight-status${{ !inputs.fix && inputs.handle_catalog != 'apply' && '-read' || '' }}
   cancel-in-progress: false
 
 jobs:
