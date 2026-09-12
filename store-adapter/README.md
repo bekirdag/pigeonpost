@@ -3,8 +3,8 @@
 The small service that sits between the account page (`site/account.js`) and MASAAS. It follows the
 same pattern as the `theneuralledger` adapter: the browser holds the customer's own OIDC token, and
 this service **forwards member billing operations to MASAAS with that token** plus an
-`x-product-slug` header. It uses a privileged **runtime token** only for catalog and entitlement
-reads.
+`x-product-slug` header. The catalog is public. An optional **runtime token** supports entitlement
+reads; it is not required by the current account and checkout routes.
 
 **No payment-gateway keys live here.** MASAAS holds the Stripe (or iyzico) keys and hosts the card
 capture. The buy flow creates a subscription in MASAAS and redirects the browser to the hosted
@@ -37,8 +37,10 @@ Mirrors the theneuralledger adapter so an operator wires it the same way.
 | `PIGEONPOST_NAMESPACE_GRANT` | Service credential matching the postbox's `NAMESPACE_GRANT_TOKEN`; required before checkout |
 | `STORE_ALLOWED_ORIGINS` | CORS allowlist; first origin is the payment return origin, default `https://pigeonpost.dev` |
 
-With no `MASAAS_RUNTIME_TOKEN`, `/healthz` reports `configured:false`. Member routes still operate
-with the signed-in customer's token; this flag is not a billing readiness check.
+`/healthz` reports `configured:true` when the API, postbox, OIDC and browser-origin URLs are valid,
+the product/plan/client identifiers are present, and `PIGEONPOST_NAMESPACE_GRANT` is set so paid
+handles can be delivered. The optional runtime token does not affect this flag. This checks local
+configuration completeness; it does not verify upstream availability, credentials or payments.
 
 ## Routes the store calls
 
@@ -70,5 +72,5 @@ Delivery requires the exact reference and configured plan, `active` status, and 
 period. `past_due`, `trialing`, missing status, and expired terms cannot grant a handle. The
 postbox grant uses that paid term as the namespace expiry and can be retried without a payment.
 
-Run `node --test test/checkout.test.mjs` from this directory. The tests use local HTTP fixtures
+Run `node --test test/*.test.mjs` from this directory. The tests use local HTTP fixtures
 and exercise the actual adapter routes without contacting a payment gateway.
