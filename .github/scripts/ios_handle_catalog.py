@@ -13,7 +13,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from decimal import Decimal
-from cubemeld_iap import Client, mint_token, validate_upload_operation
+from cubemeld_iap import Client, ApiError, mint_token, validate_upload_operation
 
 BUNDLE = "dev.pigeonpost.inbox"
 APP_ID = "6803521541"
@@ -31,7 +31,13 @@ class CatalogClient(Client):
         if time.monotonic() - self.issued > 900:
             self.token = mint_token()
             self.issued = time.monotonic()
-        return super().call(*args, **kwargs)
+        for attempt in range(5):
+            try:
+                return super().call(*args, **kwargs)
+            except ApiError as error:
+                if args[0] != "GET" or error.status not in (429, 500, 502, 503, 504) or attempt == 4:
+                    raise
+                time.sleep(2 ** attempt)
 
     def upload(self, operation, content):
         # The subscription API now returns this Apple host. Apply the shared method,
