@@ -4062,7 +4062,8 @@ struct ClaimAppleReq {
     /// Apple's id for the purchase. A pointer, not evidence — see `claim_apple`.
     transaction_id: String,
     /// The name being bought, in any spelling; canonicalised before it is used.
-    namespace: String,
+    #[serde(default)]
+    namespace: Option<String>,
 }
 
 /// `PUT /v1/namespaces` — bind a purchased namespace to an account.
@@ -4341,18 +4342,30 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
         Ok(account) => account,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
-    let held = match state
+    let mut held = match state
         .store
-        .apple_subscription_for(account, now_unix())
+        .apple_subscriptions_for(account.clone(), now_unix())
         .await
     {
         Ok(held) => held,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
+    for subscription in &mut held {
+        subscription.namespace = format!("/{}", subscription.namespace);
+        if subscription.product_id.is_empty() {
+            subscription.product_id = appstore.product_id().to_owned();
+        }
+    }
+    let first = held.iter().find(|subscription| subscription.active);
     Json(json!({
         "product_id": appstore.product_id(),
-        "namespace": held.as_ref().map(|(namespace, _)| format!("/{namespace}")),
-        "expires_at": held.as_ref().map(|(_, expires_at)| *expires_at),
+        "product_ids": appstore.product_ids(),
+        "max_handles": appstore::MAX_HANDLES,
+        "account": account,
+        "app_account_token": appstore::account_token(&account),
+        "namespace": first.map(|subscription| &subscription.namespace),
+        "expires_at": first.map(|subscription| subscription.expires_at),
+        "handles": held,
     }))
     .into_response()
 }
@@ -4375,15 +4388,9 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
 /// Canonicalised the same way `claim_apple` canonicalises, so "Alp", "/alp" and "alp" are one name
 /// and the reserved list cannot be walked past with a different spelling.
 async fn handle_availability(State(state): State<AppState>, Path(name): Path<String>) -> Response {
-    let probe = format!("/{}/probe", name.trim_start_matches('/'));
-    let namespace = Destination::for_handle(&probe)
-        .ok()
-        .and_then(|destination| {
-            destination
-                .handle()
-                .and_then(|h| h.trim_start_matches('/').split('/').next())
-                .map(str::to_string)
-        })
+    let normalized = format!("/{}", name.trim().trim_matches('/'));
+    let namespace = pigeonpost_core::address::namespace_root(&normalized)
+        .map(|name| name.trim_start_matches('/').to_owned())
         .unwrap_or_default();
     if namespace.is_empty() {
         return Json(json!({ "name": name, "available": false, "reason": "invalid" }))
@@ -4395,7 +4402,10 @@ async fn handle_availability(State(state): State<AppState>, Path(name): Path<Str
     let Some(reserved) = state.reserved_names.as_ref() else {
         return ApiError::server("reserved_names_unavailable").into_response();
     };
-    if reserved.contains(&namespace) {
+    if reserved.contains(&namespace)
+        || PROVIDER_NAMESPACES.contains(&namespace.as_str())
+        || OPEN_NAMESPACES.contains(&namespace.as_str())
+    {
         return Json(json!({ "name": namespace, "available": false, "reason": "reserved" }))
             .into_response();
     }
@@ -4488,37 +4498,6 @@ async fn claim_apple(
         }
     };
 
-    // Canonicalise before anything else looks at it, so "Alex", "/alex" and "alex" are one name and
-    // the reserved list cannot be walked past with different spelling.
-    let probe = format!("/{}/probe", req.namespace.trim_start_matches('/'));
-    let Ok(destination) = Destination::for_handle(&probe) else {
-        return ApiError::bad("invalid_namespace", "that name cannot be a handle").into_response();
-    };
-    let namespace = destination
-        .handle()
-        .and_then(|h| h.trim_start_matches('/').split('/').next())
-        .unwrap_or_default()
-        .to_string();
-    if namespace.is_empty() {
-        return ApiError::bad("invalid_namespace", "that name cannot be a handle").into_response();
-    }
-    // The reserved list guards paid names for the same reason it guards free ones: `support` and
-    // `admin` read as the operator whoever paid for them.
-    match state.reserved_names.as_ref() {
-        Some(reserved) if reserved.contains(&namespace) => {
-            return ApiError::new(
-                StatusCode::CONFLICT,
-                "name_reserved",
-                format!("{namespace} is reserved and cannot be bought"),
-            )
-            .into_response();
-        }
-        Some(_) => {}
-        None => {
-            return ApiError::server("reserved_names_unavailable").into_response();
-        }
-    }
-
     let entitlement = match appstore.entitlement(&req.transaction_id).await {
         Ok(entitlement) => entitlement,
         Err(appstore::AppStoreError::NotFound) => {
@@ -4565,14 +4544,93 @@ async fn claim_apple(
         Err(_) => return ApiError::server("store_error").into_response(),
     };
 
+    if entitlement
+        .app_account_token
+        .as_ref()
+        .is_some_and(|token| !token.eq_ignore_ascii_case(&appstore::account_token(&account)))
+    {
+        return ApiError::new(
+            StatusCode::CONFLICT,
+            "purchase_already_used",
+            "that purchase belongs to another Pigeonpost account",
+        )
+        .into_response();
+    }
+    if entitlement.product_id != appstore.product_id() && entitlement.app_account_token.is_none() {
+        return ApiError::bad(
+            "purchase_account_required",
+            "buy this handle from an updated Pigeonpost app",
+        )
+        .into_response();
+    }
+
+    // The original transaction owns its name. Restores and renewals need no typed placeholder,
+    // and a pending name for a different transaction must never rename this subscription.
+    let namespace = match state
+        .store
+        .apple_subscription_owner(entitlement.original_transaction_id.clone())
+        .await
+    {
+        Ok(Some((owner, _))) if owner != account => {
+            return ApiError::new(
+                StatusCode::CONFLICT,
+                "purchase_already_used",
+                "that subscription belongs to another Pigeonpost account",
+            )
+            .into_response()
+        }
+        Ok(Some((_, namespace))) => namespace,
+        Ok(None) => {
+            let Some(raw) = req
+                .namespace
+                .as_deref()
+                .filter(|name| !name.trim().is_empty())
+            else {
+                return ApiError::bad(
+                    "name_required",
+                    "choose a name to finish this purchase; no further payment is needed",
+                )
+                .into_response();
+            };
+            let normalized = format!("/{}", raw.trim().trim_matches('/'));
+            let Some(name) = pigeonpost_core::address::namespace_root(&normalized) else {
+                return ApiError::bad(
+                    "invalid_namespace",
+                    "choose a name of 1–32 letters, numbers, dots, underscores or hyphens",
+                )
+                .into_response();
+            };
+            let namespace = name.trim_start_matches('/').to_owned();
+            let Some(reserved) = state.reserved_names.as_ref() else {
+                return ApiError::server("reserved_names_unavailable").into_response();
+            };
+            if reserved.contains(&namespace)
+                || PROVIDER_NAMESPACES.contains(&namespace.as_str())
+                || OPEN_NAMESPACES.contains(&namespace.as_str())
+            {
+                return ApiError::new(
+                    StatusCode::CONFLICT,
+                    "name_reserved",
+                    "that name is reserved",
+                )
+                .into_response();
+            }
+            namespace
+        }
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
+
     match state
         .store
         .bind_apple_subscription(
-            entitlement.original_transaction_id.clone(),
+            store::ApplePurchase {
+                original_transaction_id: entitlement.original_transaction_id.clone(),
+                product_id: entitlement.product_id.clone(),
+                environment: entitlement.environment.clone(),
+                expires_at: entitlement.expires_at,
+            },
             account.clone(),
             namespace.clone(),
-            entitlement.environment.clone(),
-            entitlement.expires_at,
             now_unix(),
         )
         .await
@@ -4610,6 +4668,18 @@ async fn claim_apple(
             StatusCode::CONFLICT,
             "namespace_taken",
             format!("/{namespace} is already someone else's"),
+        )
+        .into_response(),
+        Ok(store::AppleClaim::LimitReached) => ApiError::new(
+            StatusCode::CONFLICT,
+            "handle_limit_reached",
+            "this account already has ten active Apple handles",
+        )
+        .into_response(),
+        Ok(store::AppleClaim::NamespaceAlreadySubscribed) => ApiError::new(
+            StatusCode::CONFLICT,
+            "handle_already_subscribed",
+            "that handle already has a subscription; restore it instead",
         )
         .into_response(),
         Err(e) => {
@@ -6475,11 +6545,14 @@ mod tests {
         state
             .store
             .bind_apple_subscription(
-                "txn-1".into(),
+                store::ApplePurchase {
+                    original_transaction_id: "txn-1".into(),
+                    product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                    environment: "Sandbox".into(),
+                    expires_at: 500,
+                },
                 "acct_one".into(),
                 "alp".into(),
-                "Sandbox".into(),
-                500,
                 10,
             )
             .await

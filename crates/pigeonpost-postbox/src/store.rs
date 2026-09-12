@@ -263,6 +263,7 @@ CREATE TABLE IF NOT EXISTS apple_subscriptions (
     account_id              TEXT NOT NULL,
     namespace               TEXT NOT NULL,
     environment             TEXT NOT NULL,
+    product_id              TEXT NOT NULL DEFAULT '',
     expires_at              INTEGER NOT NULL,
     created_at              INTEGER NOT NULL,
     updated_at              INTEGER NOT NULL
@@ -291,6 +292,7 @@ CREATE TABLE IF NOT EXISTS inbox_policy (
 // afterwards, once their columns are guaranteed to exist. (SQLite unique indexes treat NULLs as
 // distinct, so many API-key accounts can share a NULL oidc_sub.)
 const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE apple_subscriptions ADD COLUMN product_id TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE identities ADD COLUMN account_id TEXT",
     "CREATE INDEX IF NOT EXISTS identities_by_account ON identities(account_id)",
     "ALTER TABLE accounts ADD COLUMN oidc_sub TEXT",
@@ -437,6 +439,28 @@ pub enum AppleClaim {
     AlreadyNamed(String),
     /// Somebody else holds that namespace. A valid purchase does not take it from them.
     NamespaceTaken,
+    /// Ten different names already use this account's Apple subscriptions.
+    LimitReached,
+    /// A second subscription must not charge the account again for the same live name.
+    NamespaceAlreadySubscribed,
+}
+
+#[derive(Clone, Debug)]
+pub struct ApplePurchase {
+    pub original_transaction_id: String,
+    pub product_id: String,
+    pub environment: String,
+    pub expires_at: i64,
+}
+
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct AppleSubscription {
+    pub original_transaction_id: String,
+    pub namespace: String,
+    pub product_id: String,
+    pub environment: String,
+    pub expires_at: i64,
+    pub active: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1668,17 +1692,21 @@ impl Store {
     /// subscription for the same name just moves `expires_at` forward.
     pub async fn bind_apple_subscription(
         &self,
-        original_transaction_id: String,
+        purchase: ApplePurchase,
         account_id: String,
         namespace: String,
-        environment: String,
-        expires_at: i64,
         now: u64,
     ) -> Result<AppleClaim, StoreError> {
+        let ApplePurchase {
+            original_transaction_id,
+            product_id,
+            environment,
+            expires_at,
+        } = purchase;
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<AppleClaim, StoreError> {
             let mut c = conn.lock().expect("store lock");
-            let tx = c.transaction()?;
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
 
             let held: Option<(String, String)> = tx
                 .query_row(
@@ -1700,6 +1728,17 @@ impl Store {
                 }
             }
 
+            let duplicate: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM apple_subscriptions WHERE account_id = ?1
+                    AND namespace = ?2 AND original_transaction_id != ?3 AND expires_at > ?4)",
+                params![account_id, namespace, original_transaction_id, now as i64], |r| r.get(0))?;
+            if duplicate { return Ok(AppleClaim::NamespaceAlreadySubscribed); }
+            let live_count: i64 = tx.query_row(
+                "SELECT COUNT(DISTINCT namespace) FROM apple_subscriptions WHERE account_id = ?1
+                    AND namespace != ?2 AND expires_at > ?3",
+                params![account_id, namespace, now as i64], |r| r.get(0))?;
+            if live_count >= crate::appstore::MAX_HANDLES as i64 { return Ok(AppleClaim::LimitReached); }
+
             // Somebody else's live namespace is never taken, even by a valid purchase. `namespaces`
             // upserts on conflict, so without this check a paid claim would silently hijack it.
             let occupant: Option<String> = tx
@@ -1719,25 +1758,28 @@ impl Store {
             tx.execute(
                 "INSERT INTO apple_subscriptions
                      (original_transaction_id, account_id, namespace, environment,
-                      expires_at, created_at, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6)
+                      expires_at, created_at, updated_at, product_id)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)
                  ON CONFLICT(original_transaction_id) DO UPDATE SET
-                     expires_at = ?5, environment = ?4, updated_at = ?6",
+                     expires_at = MAX(apple_subscriptions.expires_at, ?5), environment = ?4, updated_at = ?6,
+                     product_id = ?7",
                 params![
                     original_transaction_id,
                     account_id,
                     namespace,
                     environment,
                     expires_at,
-                    now as i64
+                    now as i64,
+                    product_id
                 ],
             )?;
             tx.execute(
                 "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
                  VALUES (?1, ?2, 'apple', ?3, ?4)
                  ON CONFLICT(namespace) DO UPDATE SET
-                     account_id = ?2, source = 'apple', verified_at = ?3, expires_at = ?4",
-                params![namespace, account_id, now as i64, expires_at],
+                     account_id = ?2, source = 'apple', verified_at = ?3,
+                     expires_at = (SELECT expires_at FROM apple_subscriptions WHERE original_transaction_id = ?5)",
+                params![namespace, account_id, now as i64, expires_at, original_transaction_id],
             )?;
             tx.commit()?;
             Ok(if held.is_some() {
@@ -1750,8 +1792,46 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// Includes expired subscriptions for explicit renewal, and identifies the names still held.
+    pub async fn apple_subscriptions_for(
+        &self,
+        account_id: String,
+        now: u64,
+    ) -> Result<Vec<AppleSubscription>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().expect("store lock");
+            let mut statement = c.prepare(
+                "SELECT s.original_transaction_id, s.namespace, s.product_id, s.environment, s.expires_at,
+                    COALESCE(n.account_id = s.account_id AND n.source = 'apple'
+                        AND s.expires_at > ?2 AND (n.expires_at IS NULL OR n.expires_at > ?2), 0)
+                 FROM apple_subscriptions s LEFT JOIN namespaces n ON n.namespace = s.namespace
+                 WHERE s.account_id = ?1 ORDER BY s.created_at, s.namespace")?;
+            let records = statement.query_map(params![account_id, now as i64], |r| Ok(AppleSubscription {
+                original_transaction_id: r.get(0)?, namespace: r.get(1)?, product_id: r.get(2)?,
+                environment: r.get(3)?, expires_at: r.get(4)?, active: r.get(5)?,
+            }))?;
+            records.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+        }).await.map_err(|_| StoreError::Join)?
+    }
+
+    /// Resolves renewals/restores without inventing a namespace or trusting the client's field.
+    pub async fn apple_subscription_owner(
+        &self,
+        original_transaction_id: String,
+    ) -> Result<Option<(String, String)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let c = conn.lock().expect("store lock");
+            c.query_row("SELECT account_id, namespace FROM apple_subscriptions WHERE original_transaction_id = ?1",
+                params![original_transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))
+                .optional().map_err(Into::into)
+        }).await.map_err(|_| StoreError::Join)?
+    }
+
     /// What this account has already bought, so the app can show it instead of offering to sell it
     /// again.
+    #[cfg(test)]
     pub async fn apple_subscription_for(
         &self,
         account_id: String,
@@ -3638,6 +3718,202 @@ mod tests {
     mod apple {
         use super::*;
 
+        fn purchase(slot: usize, expires_at: i64) -> ApplePurchase {
+            ApplePurchase {
+                original_transaction_id: format!("tx-{slot}"),
+                product_id: format!("handle-{slot}"),
+                environment: "Sandbox".into(),
+                expires_at,
+            }
+        }
+
+        #[tokio::test]
+        async fn ten_independent_handles_and_renewal_at_the_limit() {
+            let s = store();
+            for slot in 1..=10 {
+                assert_eq!(
+                    s.bind_apple_subscription(
+                        purchase(slot, 200),
+                        "acct_a".into(),
+                        format!("name{slot}"),
+                        100
+                    )
+                    .await
+                    .unwrap(),
+                    AppleClaim::Granted
+                );
+            }
+            assert_eq!(
+                s.bind_apple_subscription(
+                    purchase(11, 200),
+                    "acct_a".into(),
+                    "eleventh".into(),
+                    100
+                )
+                .await
+                .unwrap(),
+                AppleClaim::LimitReached
+            );
+            assert_eq!(
+                s.bind_apple_subscription(purchase(1, 300), "acct_a".into(), "name1".into(), 100)
+                    .await
+                    .unwrap(),
+                AppleClaim::Renewed
+            );
+            let rows = s
+                .apple_subscriptions_for("acct_a".into(), 100)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 10);
+            assert!(rows.iter().all(|row| row.active));
+            assert_eq!(
+                rows.iter()
+                    .find(|row| row.namespace == "name1")
+                    .unwrap()
+                    .expires_at,
+                300
+            );
+            assert!(s
+                .namespace_owner("eleventh".into(), 100)
+                .await
+                .unwrap()
+                .is_none());
+        }
+
+        #[tokio::test]
+        async fn competing_purchases_cannot_exceed_the_ten_handle_limit() {
+            let s = store();
+            for slot in 1..=9 {
+                s.bind_apple_subscription(
+                    purchase(slot, 200),
+                    "acct_a".into(),
+                    format!("name{slot}"),
+                    100,
+                )
+                .await
+                .unwrap();
+            }
+            let (a, b) = tokio::join!(
+                s.bind_apple_subscription(purchase(10, 200), "acct_a".into(), "tenth".into(), 100),
+                s.bind_apple_subscription(
+                    purchase(11, 200),
+                    "acct_a".into(),
+                    "eleventh".into(),
+                    100
+                )
+            );
+            let results = [a.unwrap(), b.unwrap()];
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|r| **r == AppleClaim::Granted)
+                    .count(),
+                1
+            );
+            assert_eq!(
+                results
+                    .iter()
+                    .filter(|r| **r == AppleClaim::LimitReached)
+                    .count(),
+                1
+            );
+        }
+
+        #[tokio::test]
+        async fn duplicate_payment_does_not_replace_the_original_subscription() {
+            let s = store();
+            s.bind_apple_subscription(purchase(1, 300), "acct_a".into(), "alex".into(), 100)
+                .await
+                .unwrap();
+            assert_eq!(
+                s.bind_apple_subscription(purchase(2, 400), "acct_a".into(), "alex".into(), 100)
+                    .await
+                    .unwrap(),
+                AppleClaim::NamespaceAlreadySubscribed
+            );
+            assert!(s
+                .apple_subscription_owner("tx-2".into())
+                .await
+                .unwrap()
+                .is_none());
+        }
+
+        #[tokio::test]
+        async fn restoring_an_older_period_never_shortens_the_paid_term() {
+            let s = store();
+            s.bind_apple_subscription(purchase(1, 300), "acct_a".into(), "alex".into(), 100)
+                .await
+                .unwrap();
+            s.bind_apple_subscription(purchase(1, 200), "acct_a".into(), "alex".into(), 100)
+                .await
+                .unwrap();
+            assert_eq!(
+                s.apple_subscriptions_for("acct_a".into(), 100)
+                    .await
+                    .unwrap()[0]
+                    .expires_at,
+                300
+            );
+            assert_eq!(
+                s.namespace_owner("alex".into(), 250)
+                    .await
+                    .unwrap()
+                    .as_deref(),
+                Some("acct_a")
+            );
+        }
+
+        #[tokio::test]
+        async fn expired_handles_are_visible_for_renewal_but_not_active() {
+            let s = store();
+            s.bind_apple_subscription(purchase(1, 200), "acct_a".into(), "alex".into(), 100)
+                .await
+                .unwrap();
+            let rows = s
+                .apple_subscriptions_for("acct_a".into(), 201)
+                .await
+                .unwrap();
+            assert_eq!(rows.len(), 1);
+            assert!(!rows[0].active);
+            assert_eq!(rows[0].product_id, "handle-1");
+            assert_eq!(
+                s.apple_subscription_owner("tx-1".into()).await.unwrap(),
+                Some(("acct_a".into(), "alex".into()))
+            );
+        }
+
+        #[tokio::test]
+        async fn legacy_subscription_migration_preserves_ownership() {
+            let path = std::env::temp_dir().join(format!(
+                "pigeonpost-apple-migration-{}-{}.db",
+                std::process::id(),
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ));
+            {
+                let c = Connection::open(&path).unwrap();
+                c.execute_batch("CREATE TABLE apple_subscriptions (original_transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, namespace TEXT NOT NULL, environment TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO apple_subscriptions VALUES ('legacy-tx','acct_old','alex','Production',300,100,100);").unwrap();
+            }
+            {
+                let s = Store::open(path.to_str().unwrap()).unwrap();
+                assert_eq!(
+                    s.apple_subscription_owner("legacy-tx".into())
+                        .await
+                        .unwrap(),
+                    Some(("acct_old".into(), "alex".into()))
+                );
+                let rows = s
+                    .apple_subscriptions_for("acct_old".into(), 100)
+                    .await
+                    .unwrap();
+                assert_eq!(rows[0].product_id, "");
+                assert_eq!(rows[0].expires_at, 300);
+            }
+            std::fs::remove_file(path).unwrap();
+        }
+
         const TX: &str = "2000000900000001";
         const FOREVER: i64 = 4_102_444_800; // 2100-01-01
 
@@ -3650,11 +3926,14 @@ mod tests {
             let s = store();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_a".into(),
                     "alex".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     100,
                 )
                 .await
@@ -3675,22 +3954,28 @@ mod tests {
         async fn renewing_moves_the_expiry_and_is_not_a_conflict() {
             let s = store();
             s.bind_apple_subscription(
-                TX.into(),
+                ApplePurchase {
+                    original_transaction_id: TX.into(),
+                    product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                    environment: "Sandbox".into(),
+                    expires_at: 1_000,
+                },
                 "acct_a".into(),
                 "alex".into(),
-                "Sandbox".into(),
-                1_000,
                 100,
             )
             .await
             .unwrap();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_a".into(),
                     "alex".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     200,
                 )
                 .await
@@ -3712,22 +3997,28 @@ mod tests {
         async fn one_purchase_cannot_be_restored_onto_a_second_account() {
             let s = store();
             s.bind_apple_subscription(
-                TX.into(),
+                ApplePurchase {
+                    original_transaction_id: TX.into(),
+                    product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                    environment: "Sandbox".into(),
+                    expires_at: FOREVER,
+                },
                 "acct_a".into(),
                 "alex".into(),
-                "Sandbox".into(),
-                FOREVER,
                 100,
             )
             .await
             .unwrap();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_b".into(),
                     "blake".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     200,
                 )
                 .await
@@ -3746,22 +4037,28 @@ mod tests {
         async fn one_subscription_cannot_move_to_a_second_name() {
             let s = store();
             s.bind_apple_subscription(
-                TX.into(),
+                ApplePurchase {
+                    original_transaction_id: TX.into(),
+                    product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                    environment: "Sandbox".into(),
+                    expires_at: FOREVER,
+                },
                 "acct_a".into(),
                 "alex".into(),
-                "Sandbox".into(),
-                FOREVER,
                 100,
             )
             .await
             .unwrap();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_a".into(),
                     "better".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     200,
                 )
                 .await
@@ -3784,11 +4081,14 @@ mod tests {
                 .unwrap();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_b".into(),
                     "alex".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     100,
                 )
                 .await
@@ -3818,11 +4118,14 @@ mod tests {
             .unwrap();
             let out = s
                 .bind_apple_subscription(
-                    TX.into(),
+                    ApplePurchase {
+                        original_transaction_id: TX.into(),
+                        product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                        environment: "Sandbox".into(),
+                        expires_at: FOREVER,
+                    },
                     "acct_b".into(),
                     "alex".into(),
-                    "Sandbox".into(),
-                    FOREVER,
                     500,
                 )
                 .await
@@ -3846,11 +4149,14 @@ mod tests {
                 .unwrap()
                 .is_none());
             s.bind_apple_subscription(
-                TX.into(),
+                ApplePurchase {
+                    original_transaction_id: TX.into(),
+                    product_id: "dev.pigeonpost.inbox.handle.yearly".into(),
+                    environment: "Sandbox".into(),
+                    expires_at: FOREVER,
+                },
                 "acct_a".into(),
                 "alex".into(),
-                "Sandbox".into(),
-                FOREVER,
                 100,
             )
             .await

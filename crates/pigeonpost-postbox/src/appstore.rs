@@ -23,8 +23,10 @@ use jsonwebtoken::{encode, Algorithm, EncodingKey, Header};
 use serde_json::json;
 use tokio::sync::Mutex;
 
-/// Apple rejects a token older than an hour. Re-signing every 45 minutes sits inside that.
-const TOKEN_LIFETIME: Duration = Duration::from_secs(45 * 60);
+/// Refresh before the provider JWT's twenty-minute expiry, including clock skew and request time.
+const TOKEN_CACHE_LIFETIME: Duration = Duration::from_secs(15 * 60);
+const TOKEN_VALIDITY_SECONDS: u64 = 20 * 60;
+pub const MAX_HANDLES: usize = 10;
 
 const PRODUCTION: &str = "https://api.storekit.itunes.apple.com";
 const SANDBOX: &str = "https://api.storekit-sandbox.itunes.apple.com";
@@ -37,6 +39,8 @@ pub struct Entitlement {
     /// again as if it were new.
     pub original_transaction_id: String,
     pub product_id: String,
+    /// Set by newer clients to bind a purchase to the signed-in Pigeonpost account.
+    pub app_account_token: Option<String>,
     /// Unix seconds. Apple reports milliseconds; converted here so nothing downstream has to know.
     pub expires_at: i64,
     /// `Production` or `Sandbox`, as Apple spells it. Recorded so a sandbox purchase can never be
@@ -72,9 +76,8 @@ pub struct AppStore {
     key_id: String,
     issuer_id: String,
     bundle_id: String,
-    /// The one product that buys a namespace. A second product would be a second entitlement with
-    /// different terms, so it is named rather than inferred.
-    product_id: String,
+    /// Each explicitly configured product buys one independently renewable name.
+    product_ids: Vec<String>,
     http: reqwest::Client,
     bearer: Mutex<Option<(String, Instant)>>,
 }
@@ -102,6 +105,16 @@ impl AppStore {
             .unwrap_or_else(|| "dev.pigeonpost.inbox".to_string());
         let product_id = non_empty("PIGEONPOST_APPSTORE_PRODUCT_ID")
             .unwrap_or_else(|| "dev.pigeonpost.inbox.handle.yearly".to_string());
+        let product_ids = match product_catalog(
+            &product_id,
+            non_empty("PIGEONPOST_APPSTORE_PRODUCT_IDS").as_deref(),
+        ) {
+            Some(ids) => ids,
+            None => {
+                tracing::error!("invalid App Store handle catalog — purchases disabled");
+                return None;
+            }
+        };
 
         let pem = match non_empty("PIGEONPOST_APPSTORE_KEY_PATH") {
             Some(path) => match std::fs::read(&path) {
@@ -138,21 +151,25 @@ impl AppStore {
             key_id,
             issuer_id,
             bundle_id,
-            product_id,
+            product_ids,
             http,
             bearer: Mutex::new(None),
         }))
     }
 
     pub fn product_id(&self) -> &str {
-        &self.product_id
+        &self.product_ids[0]
     }
 
-    /// The provider token, minted at most every 45 minutes.
+    pub fn product_ids(&self) -> &[String] {
+        &self.product_ids
+    }
+
+    /// The provider token, refreshed before it expires.
     async fn bearer(&self) -> Result<String, jsonwebtoken::errors::Error> {
         let mut held = self.bearer.lock().await;
         if let Some((token, minted)) = held.as_ref() {
-            if minted.elapsed() < TOKEN_LIFETIME {
+            if minted.elapsed() < TOKEN_CACHE_LIFETIME {
                 return Ok(token.clone());
             }
         }
@@ -166,7 +183,7 @@ impl AppStore {
             &json!({
                 "iss": self.issuer_id,
                 "iat": issued,
-                "exp": issued + 20 * 60,
+                "exp": issued + TOKEN_VALIDITY_SECONDS,
                 "aud": "appstoreconnect-v1",
                 "bid": self.bundle_id,
             }),
@@ -194,7 +211,18 @@ impl AppStore {
         let mut unauthorized = 0;
         for host in [PRODUCTION, SANDBOX] {
             match self.fetch(host, transaction_id).await {
-                Ok(payload) => return judge(&payload, &self.bundle_id, &self.product_id),
+                Ok(payload) => {
+                    let product = payload
+                        .get("productId")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default();
+                    if !self.product_ids.iter().any(|id| id == product) {
+                        return Err(AppStoreError::NotOurs(
+                            "that product does not buy a handle".into(),
+                        ));
+                    }
+                    return judge(&payload, &self.bundle_id, product);
+                }
                 Err(AppStoreError::NotFound) => continue,
                 Err(AppStoreError::Unauthorized) => {
                     unauthorized += 1;
@@ -304,6 +332,10 @@ fn judge(
     Ok(Entitlement {
         original_transaction_id: original.to_string(),
         product_id: product.to_string(),
+        app_account_token: claims
+            .get("appAccountToken")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned),
         expires_at,
         // Absent means production: Apple omits the field on older transactions, and defaulting the
         // other way would file a real purchase as a test one.
@@ -312,6 +344,48 @@ fn judge(
             other => other.to_string(),
         },
     })
+}
+
+fn product_catalog(primary: &str, configured: Option<&str>) -> Option<Vec<String>> {
+    let ids: Vec<String> = configured
+        .unwrap_or(primary)
+        .split(',')
+        .map(|id| id.trim().to_owned())
+        .collect();
+    if ids.is_empty()
+        || ids.len() > MAX_HANDLES
+        || ids.first().map(String::as_str) != Some(primary)
+        || ids.iter().any(|id| {
+            id.is_empty()
+                || !id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'.' || b == b'_' || b == b'-')
+        })
+        || ids.iter().collect::<std::collections::HashSet<_>>().len() != ids.len()
+    {
+        return None;
+    }
+    Some(ids)
+}
+
+/// An opaque, stable UUID for StoreKit's appAccountToken; the server verifies it after Apple.
+pub fn account_token(account: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let mut bytes = Sha256::digest(format!("pigeonpost.appstore.account.v1:{account}"));
+    bytes[6] = (bytes[6] & 0x0f) | 0x80;
+    bytes[8] = (bytes[8] & 0x3f) | 0x80;
+    let hex = bytes[..16]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect::<String>();
+    format!(
+        "{}-{}-{}-{}-{}",
+        &hex[..8],
+        &hex[8..12],
+        &hex[12..16],
+        &hex[16..20],
+        &hex[20..]
+    )
 }
 
 /// The middle segment of a JWS, as JSON. See the module note on why the signature is not checked.
@@ -372,6 +446,53 @@ mod tests {
 
     const BUNDLE: &str = "dev.pigeonpost.inbox";
     const PRODUCT: &str = "dev.pigeonpost.inbox.handle.yearly";
+
+    #[test]
+    fn catalog_is_explicit_bounded_and_keeps_the_legacy_product_first() {
+        assert_eq!(product_catalog(PRODUCT, None).unwrap(), vec![PRODUCT]);
+        let ids = std::iter::once(PRODUCT.to_owned())
+            .chain((2..=10).map(|n| format!("dev.pigeonpost.inbox.handle{n}.yearly")))
+            .collect::<Vec<_>>();
+        assert_eq!(product_catalog(PRODUCT, Some(&ids.join(","))).unwrap(), ids);
+        for invalid in [
+            format!("{PRODUCT},{PRODUCT}"),
+            format!("{PRODUCT},bad/id"),
+            format!("other,{PRODUCT}"),
+            format!("{PRODUCT},"),
+            format!("{},extra", ids.join(",")),
+        ] {
+            assert!(product_catalog(PRODUCT, Some(&invalid)).is_none());
+        }
+    }
+
+    #[test]
+    fn apple_account_token_is_stable_scoped_and_uuid_shaped() {
+        let token = account_token("acct_one");
+        assert_eq!(token, account_token("acct_one"));
+        assert_ne!(token, account_token("acct_two"));
+        assert_eq!(token.len(), 36);
+        assert_eq!(token.chars().nth(14), Some('8'));
+        assert!(matches!(token.chars().nth(19), Some('8' | '9' | 'a' | 'b')));
+    }
+
+    #[test]
+    fn signed_transaction_preserves_the_pigeonpost_account_token() {
+        let mut payload = good();
+        payload["appAccountToken"] = json!(account_token("acct_one"));
+        assert_eq!(
+            judge(&payload, BUNDLE, PRODUCT).unwrap().app_account_token,
+            Some(account_token("acct_one"))
+        );
+        assert_eq!(
+            judge(&good(), BUNDLE, PRODUCT).unwrap().app_account_token,
+            None
+        );
+    }
+
+    #[test]
+    fn cached_bearer_expires_before_its_apple_jwt() {
+        assert!(TOKEN_CACHE_LIFETIME.as_secs() < TOKEN_VALIDITY_SECONDS);
+    }
 
     fn future_ms() -> i64 {
         (now_unix() as i64 + 86_400) * 1000
