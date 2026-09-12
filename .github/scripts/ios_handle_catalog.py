@@ -135,18 +135,20 @@ def provision_prices(client, product, territories):
     if len(eight) != 1:
         raise RuntimeError(f"Expected one exact $8 price point for {product}")
     base = eight[0]
-    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/equalizations", {"limit": 8000, "include": "territory"})
+    equalized = client.list_all(f"/v1/subscriptionPricePoints/{base['id']}/adjustedEqualizations", {
+        "limit": 8000, "include": "territory", "filter[planType]": "UPFRONT",
+        "filter[upfrontPricePointId]": base["id"], "filter[subscription]": product,
+    })
     mapping = {p["relationships"]["territory"]["data"]["id"]: p for p in equalized}
     mapping["USA"] = base
     if set(territories) - mapping.keys():
         raise RuntimeError("Apple has no equalized prices for all required territories")
-    for territory in territories:
+    for territory in ["USA"] + [t for t in territories if t != "USA"]:
         if territory in present:
             continue
-        create(client, "subscriptionPrices", {"startDate": None, "preserveCurrentPrice": False, "planType": "UPFRONT"}, {
+        create(client, "subscriptionPrices", {"startDate": None, "planType": "UPFRONT"}, {
             "subscription": rel("subscriptions", product),
             "subscriptionPricePoint": rel("subscriptionPricePoints", mapping[territory]["id"]),
-            "territory": rel("territories", territory),
         })
 
 
@@ -190,7 +192,6 @@ def run(client):
             raise RuntimeError(f"Subscription configuration drift: {identifier}")
         if slot > 1 and APPLY:
             metadata(client, group["id"], product["id"], slot)
-            provision_prices(client, product["id"], territories)
             saved_plan, saved_territories = plan(client, product["id"])
             if saved_plan and saved_territories != territories:
                 raise RuntimeError(f"Availability drift: {identifier}")
@@ -199,6 +200,7 @@ def run(client):
                     "planType": "UPFRONT", "availableInNewTerritories": primary_plan["attributes"]["availableInNewTerritories"],
                 }, {"subscription": rel("subscriptions", product["id"]),
                     "availableTerritories": {"data": [{"type": "territories", "id": t} for t in territories]}})
+            provision_prices(client, product["id"], territories)
         _, saved_territories = plan(client, product["id"])
         saved_prices = usa_price(client, product["id"])
         current = client.call("GET", f"/v1/subscriptions/{product['id']}")["data"]
