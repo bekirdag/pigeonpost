@@ -17,6 +17,7 @@ final class NativeHandleStoreKitTests: XCTestCase {
         let apple = AppleHandlePurchases()
         let products = try await apple.products(ids)
         XCTAssertEqual(products.map(\.id), ids)
+        XCTAssertEqual(products.map(\.displayName), (1...10).map { "Handle \($0) yearly" })
         XCTAssertEqual(products.reduce(Decimal(0)) { $0 + $1.price }, 80)
         XCTAssertTrue(products.allSatisfy { $0.price == 8 && $0.currencyCode == "USD" })
         let token = UUID()

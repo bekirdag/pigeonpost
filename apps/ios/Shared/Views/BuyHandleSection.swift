@@ -25,6 +25,9 @@ struct BuyHandleSection: View {
                     }
                     Text("Paid through \(handle.paidThrough.formatted(date: .abbreviated, time: .omitted))")
                         .font(.caption).foregroundStyle(Theme.muted)
+                    if let title = store.products.first(where: { $0.id == handle.productId })?.displayName {
+                        Text("App Store: \(title)").font(.caption).foregroundStyle(Theme.muted)
+                    }
                     if handle.active {
                         if let mailbox = account.mailbox(inNamespace: handle.namespace) {
                             Button {

@@ -6,6 +6,7 @@ struct HandleProduct: Equatable, Identifiable, Sendable {
     let displayPrice: String
     let price: Decimal
     let currencyCode: String
+    var displayName: String? = nil
 
     func total(for count: Int) -> String {
         (price * Decimal(count)).formatted(.currency(code: currencyCode))
@@ -85,7 +86,8 @@ final class AppleHandlePurchases: HandlePurchasing {
         let annual = values.filter { $0.type == .autoRenewable && $0.subscription?.subscriptionPeriod.unit == .year && $0.subscription?.subscriptionPeriod.value == 1 }
         for product in annual { catalog[product.id] = product }
         return ids.compactMap { id in annual.first(where: { $0.id == id }).map {
-            HandleProduct(id: $0.id, displayPrice: $0.displayPrice, price: $0.price, currencyCode: $0.priceFormatStyle.currencyCode)
+            HandleProduct(id: $0.id, displayPrice: $0.displayPrice, price: $0.price,
+                currencyCode: $0.priceFormatStyle.currencyCode, displayName: $0.displayName)
         } }
     }
 
