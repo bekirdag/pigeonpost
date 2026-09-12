@@ -59,7 +59,7 @@ services:
       - /tmp:size=64m,mode=1777,noexec,nosuid,nodev
 
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7717/ready"]
+      test: ["CMD", "/usr/local/bin/pigeonpost-healthcheck", "loft"]
       interval: 30s
       timeout: 5s
       retries: 3
