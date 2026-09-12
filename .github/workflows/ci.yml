@@ -112,6 +112,33 @@ jobs:
             echo '::error::the health probe accepted an unknown service name'
             exit 1
           fi
+          # ...and the probe's source must be inside the image build context. .dockerignore
+          # denies everything and allowlists, so a COPY of a path nobody allowlisted fails at
+          # `docker build` and nowhere earlier — which is exactly how it shipped: the stage that
+          # compiles this probe was added without `deploy/` being allowed in, and the release that
+          # first tried to build it is the one that found out.
+          python3 - <<'CONTEXT'
+          import re, sys
+          allow = [l.strip()[1:] for l in open(".dockerignore")
+                   if l.strip().startswith("!")]
+          exact = {a.rstrip("/") for a in allow if not a.endswith("**")}
+          globs = {a[:-3] for a in allow if a.endswith("/**")}
+          def covered(src):
+              src = src.rstrip("/")
+              return src in exact or any(src == g or src.startswith(g + "/") for g in globs)
+          missing = []
+          for line in open("deploy/Dockerfile"):
+              match = re.match(r"^COPY\s+(.*)$", line.rstrip())
+              if not match or "--from=" in match.group(1):
+                  continue
+              for src in match.group(1).split()[:-1]:
+                  if not covered(src):
+                      missing.append(src)
+          if missing:
+              print("::error::deploy/Dockerfile copies paths .dockerignore excludes: "
+                    + ", ".join(missing))
+              sys.exit(1)
+          CONTEXT
           # Every Compose healthcheck must name this probe and a service the probe knows.
           python3 - <<'CHECK'
           import json, re, sys

@@ -6,3 +6,5 @@
 !crates/**
 !dist/
 !dist/**
+!deploy/
+!deploy/healthcheck.rs
