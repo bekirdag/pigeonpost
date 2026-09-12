@@ -21,6 +21,14 @@ final class Account {
 
     let session: Session
     let client: PostboxClient
+    @ObservationIgnored private var purchaseStore: HandleStore?
+
+    var handles: HandleStore {
+        if let purchaseStore { return purchaseStore }
+        let store = HandleStore(account: self)
+        purchaseStore = store
+        return store
+    }
 
     private let rememberedKey = "ppi_identity"
 
@@ -102,10 +110,15 @@ final class Account {
     @discardableResult
     func ensureMailbox(inNamespace namespace: String) async -> Mailbox? {
         if let existing = mailbox(inNamespace: namespace) { return existing }
+        // The claim normally created /name/main already. Reload before attempting another mint.
+        await loadIdentities()
+        if let existing = mailbox(inNamespace: namespace) { return existing }
         do {
             _ = try await client.createIdentity(handle: "\(namespace)/main")
         } catch {
-            return nil
+            // Another device may have created it between the read and the mint.
+            await loadIdentities()
+            return mailbox(inNamespace: namespace)
         }
         await loadIdentities()
         return mailbox(inNamespace: namespace)
@@ -193,6 +206,8 @@ final class Account {
     }
 
     private func forgetLocal() {
+        purchaseStore?.reset()
+        purchaseStore = nil
         mailboxes = []
         me = nil
         load = .idle

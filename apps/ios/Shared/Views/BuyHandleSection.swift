@@ -1,142 +1,123 @@
-//  The top of Settings: a readable name for this account's agents.
-//
-//  Sits above the archive because it is the one thing in Settings a new person is looking for, and
-//  below nothing because it is also the only thing here that costs money — putting it anywhere else
-//  would mean surfacing a price in a screen someone opened to change a setting.
-
 import SwiftUI
 
-//  The store is owned by `SettingsSheet` and handed in, rather than created here in a `.task`.
-//
-//  Creating it here meant the task belonged to a view whose *type* changes with the phase — a
-//  placeholder, then a Section — and inside a List that re-identifies the rows. So the task
-//  restarted, `phase` went back to `.loading`, the rows changed again, and the scroll position
-//  snapped to the top. On a phone that read as the list flickering while being scrolled, with
-//  "Checking your handle…" pinned at the top for ever because the work never got to finish.
 struct BuyHandleSection: View {
     let store: HandleStore
-    /// Only to name the mailbox the handle bought. The account is the authority on which mailboxes
-    /// exist; `HandleStore` is the authority on what was paid for, and neither should answer for
-    /// the other.
     @Environment(Account.self) private var account
+    @Environment(\.dismiss) private var dismiss
 
     var body: some View {
-        content(store)
-    }
-
-    @ViewBuilder
-    private func content(_ store: HandleStore) -> some View {
         @Bindable var store = store
-        switch store.phase {
-        case .idle, .loading:
-            Section {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Checking your handle…")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.muted)
-                }
+        Section {
+            if !store.loaded && store.activity == .loading {
+                progress("Checking your handles…")
             }
-
-        case .unavailable:
-            // Deliberately nothing. A deployment that cannot sell handles should not advertise them.
-            EmptyView()
-
-        case let .notOnSaleYet(why):
-            // Visible, because this postbox does sell handles — it is this build that cannot buy
-            // one yet. Hiding it here is what made the feature look unimplemented.
-            Section {
-                Text(why)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.body)
-                Button("Check again") { Task { await store.refresh() } }
-                    .font(.system(size: 14))
-            } header: {
-                Text("Handle")
-            } footer: {
-                Text("A handle is a readable name for this account's mailboxes — /yourname/agent1 instead of /k/fd7qzt3z…. It costs $8 a year once it is on sale.")
+            if store.loaded {
+                LabeledContent("Active handles", value: "\(store.activeCount) of \(store.maximum)")
             }
-
-        case let .owned(namespace, renews):
-            Section {
-                LabeledContent("Your handle") {
-                    Text(namespace)
-                        .font(.system(size: 15, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.ink)
-                }
-                // The mailbox the name bought. Shown because a handle on its own is a right to mint,
-                // and the thing that actually receives mail is this — the row that was missing when
-                // a paid name led to an empty Mailboxes list.
-                if let mailbox = account.mailbox(inNamespace: namespace)?.handle {
-                    LabeledContent("Mailbox") {
-                        Text(mailbox)
-                            .font(.system(size: 14, design: .monospaced))
-                            .foregroundStyle(Theme.body)
+            ForEach(store.handles) { handle in
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text(handle.namespace).font(.system(.body, design: .monospaced).weight(.semibold))
+                            .textSelection(.enabled)
+                        Spacer()
+                        Text(handle.active ? "Active" : "Expired")
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                    Text("Paid through \(handle.paidThrough.formatted(date: .abbreviated, time: .omitted))")
+                        .font(.caption).foregroundStyle(Theme.muted)
+                    if handle.active {
+                        if let mailbox = account.mailbox(inNamespace: handle.namespace) {
+                            Button {
+                                account.act(as: mailbox)
+                                dismiss()
+                            } label: {
+                                Label("Open \(mailbox.handle ?? mailbox.address)", systemImage: "tray")
+                                    .font(.subheadline)
+                            }
+                            .accessibilityIdentifier("handle-inbox-" + handle.namespace)
+                        } else if store.missingMailboxes.contains(handle.namespace) {
+                            Button("Create or reload inbox") { Task { await store.repairMailbox(handle.namespace) } }
+                                .font(.subheadline).disabled(store.busy)
+                        }
+                    } else if let product = store.products.first(where: { $0.id == handle.productId }) {
+                        Button("Renew for \(product.displayPrice) a year") { Task { await store.renew(handle) } }
+                            .font(.subheadline).disabled(store.busy)
                     }
                 }
-                if let renews {
-                    LabeledContent("Renews", value: renews.formatted(date: .abbreviated, time: .omitted))
-                        .font(.system(size: 14))
-                }
-            } header: {
-                Text("Handle")
-            } footer: {
-                Text("Every mailbox on this account can use \(namespace)/… as its address. Manage or cancel the subscription in the App Store.")
+                .padding(.vertical, 4)
             }
 
-        case let .forSale(displayPrice):
-            Section {
-                HStack(spacing: 2) {
-                    Text("/")
-                        .font(.system(size: 16, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(Theme.muted)
+            if store.enabled && (store.activeCount < store.maximum || !store.unassigned.isEmpty) {
+                HStack(spacing: 3) {
+                    Text("/").font(.system(.body, design: .monospaced)).foregroundStyle(Theme.muted)
                     TextField("yourname", text: $store.wantedName)
-                        .font(.system(size: 16, design: .monospaced))
-                        .noAutocapitalize()
-                        .autocorrectionDisabled()
-                        .doneKey()
+                        .font(.system(.body, design: .monospaced))
+                        .noAutocapitalize().autocorrectionDisabled().doneKey()
+                        .disabled(store.activity == .buying || store.activity == .claiming)
+                        .onSubmit { Task { await store.checkAvailability() } }
+                }
+                if !store.wantedName.isEmpty && !HandleStore.valid(store.wantedName) {
+                    Text("Use 1–32 letters, numbers, dots, underscores or hyphens. Start and end with a letter or number.")
+                        .font(.caption).foregroundStyle(Theme.Pill.blockedText)
+                }
+                Button("Check availability") { Task { await store.checkAvailability() } }
+                    .disabled(store.busy || !HandleStore.valid(store.wantedName))
+                if let result = store.checkedMessage {
+                    Text(result).font(.subheadline)
+                        .foregroundStyle(store.availability?.available == true ? Theme.ink : Theme.Pill.blockedText)
+                        .accessibilityIdentifier("handle-availability")
                 }
                 Button {
                     Task { await store.buy() }
                 } label: {
-                    HStack {
-                        Text("Buy for \(displayPrice) a year")
-                            .font(.system(size: 15, weight: .semibold))
-                        Spacer()
-                        Image(systemName: "chevron.right")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Theme.muted)
+                    if !store.unassigned.isEmpty {
+                        Text("Finish registration — no further payment")
+                    } else {
+                        Text("Buy for \(store.nextProduct?.displayPrice ?? store.products.first?.displayPrice ?? "…") a year")
                     }
                 }
-                .disabled(HandleStore.tidy(store.wantedName).isEmpty)
-                Button("Restore a purchase") { Task { await store.restore() } }
-                    .font(.system(size: 14))
-            } header: {
-                Text("Handle")
-            } footer: {
-                Text("Your mailboxes have cryptographic addresses, which are exact but unreadable. A handle is a readable name that stands in for them — /yourname/agent1 instead of /k/fd7qzt3z…. Renews yearly; cancel any time in the App Store.")
-            }
-
-        case .buying:
-            Section {
-                HStack(spacing: 10) {
-                    ProgressView()
-                    Text("Talking to the App Store…")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Theme.muted)
+                .font(.system(.body).weight(.semibold))
+                .disabled(!store.canBuy)
+                if let product = store.nextProduct ?? store.products.first, store.unassigned.isEmpty {
+                    Text("Each handle: \(product.displayPrice)/year. Ten handles: \(product.total(for: 10))/year.")
+                        .font(.caption).foregroundStyle(Theme.muted)
                 }
+            } else if store.activeCount >= store.maximum {
+                Text("You have all ten handle subscriptions.")
+                    .font(.subheadline).foregroundStyle(Theme.muted)
             }
 
-        case let .failed(why):
-            Section {
-                Text(why)
-                    .font(.system(size: 14))
-                    .foregroundStyle(Theme.Pill.blockedText)
-                Button("Try again") { Task { await store.refresh() } }
-                    .font(.system(size: 14))
-            } header: {
-                Text("Handle")
+            if store.activity != .none && store.activity != .loading {
+                progress(activityText)
             }
+            if let message = store.message {
+                Text(message).font(.subheadline).foregroundStyle(Theme.body)
+                    .accessibilityIdentifier("handle-message")
+            }
+            HStack {
+                Button("Restore purchases") { Task { await store.refresh(restoring: true) } }
+                Spacer()
+                Button("Refresh") { Task { await store.refresh() } }
+            }
+            .disabled(store.busy)
+            Link("Manage subscriptions", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+        } header: {
+            Text("Your handles")
+        } footer: {
+            Text("Each name has its own yearly subscription and stays associated with that subscription. Apple charges your account after you confirm. Subscriptions renew automatically unless cancelled at least 24 hours before renewal. Manage or cancel each one in the App Store.")
         }
+    }
+
+    private var activityText: String {
+        switch store.activity {
+        case .checking: return "Checking availability…"
+        case .buying: return "Confirm your purchase with Apple…"
+        case .claiming: return "Registering your handle…"
+        case .restoring: return "Restoring your purchases…"
+        default: return "Checking your handles…"
+        }
+    }
+    private func progress(_ text: String) -> some View {
+        HStack(spacing: 10) { ProgressView(); Text(text).font(.subheadline).foregroundStyle(Theme.muted) }
     }
 }

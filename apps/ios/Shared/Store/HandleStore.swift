@@ -1,265 +1,323 @@
-//  Buying a handle.
-//
-//  StoreKit 2 does the payment; it does not do the entitlement. What the app learns from a purchase
-//  is a transaction id, which it hands to the postbox — and the postbox asks Apple what that id
-//  means. Nothing here decides that a name was bought, which is why a jailbroken phone, a patched
-//  binary or a replayed receipt buys nothing: the only party whose word counts never runs on this
-//  device.
-//
-//  The unfinished-transaction listener is the other half. A purchase can complete while the app is
-//  closed, on another device, or after a renewal nobody was watching, and StoreKit will hand it over
-//  the next time the app runs. Finishing a transaction before the postbox has recorded it would
-//  throw away the only pointer we had.
-
 import Foundation
-import StoreKit
+import Observation
 
-private struct TimedOut: Error {}
+@MainActor
+struct HandleServices {
+    var subject: () -> String?
+    var offer: () async throws -> HandleOffer
+    var availability: (String) async throws -> HandleAvailability
+    var claim: (String, String?) async throws -> HandleOffer
+    var ensureMailbox: (String) async -> Bool
+    var purchases: HandlePurchasing
+    var defaults: UserDefaults = .standard
+    var timeout: Double = 20
+}
+
+private struct PendingHandle: Codable {
+    var productId: String
+    var name: String
+    var awaitingApproval = false
+}
 
 @MainActor
 @Observable
 final class HandleStore {
-    enum Phase: Equatable {
-        case idle
-        case loading
-        /// This deployment does not sell handles at all — the postbox has no App Store key and
-        /// answers 404. The only case that should render nothing, because there is nothing to say.
-        case unavailable
-        /// The postbox sells handles, but the App Store will not hand this build a product to buy:
-        /// awaiting review, not sold in this storefront, or the store was unreachable.
-        ///
-        /// Its own case, because folding it into `unavailable` meant the section vanished and left
-        /// nobody — including me — able to tell "not for sale here" from "something went wrong".
-        /// Silence is the one answer that cannot be acted on.
-        case notOnSaleYet(String)
-        case forSale(displayPrice: String)
-        case buying
-        case owned(namespace: String, renews: Date?)
-        case failed(String)
+    enum Activity: Equatable { case none, loading, checking, buying, claiming, restoring }
+    private(set) var activity: Activity = .none
+    private(set) var loaded = false
+    private(set) var enabled = true
+    private(set) var handles: [PurchasedHandle] = []
+    private(set) var products: [HandleProduct] = []
+    private(set) var maximum = 10
+    private(set) var availability: HandleAvailability?
+    private(set) var message: String?
+    private(set) var unassigned: [HandleTransaction] = []
+    private(set) var missingMailboxes: Set<String> = []
+    var wantedName = "" {
+        didSet { if Self.tidy(oldValue) != Self.tidy(wantedName) { availability = nil } }
     }
 
-    private(set) var phase: Phase = .idle
-    /// The name being bought, as typed. Held here so a failed purchase does not lose it.
-    var wantedName = ""
+    @ObservationIgnored private var services: HandleServices
+    @ObservationIgnored private var offer: HandleOffer?
+    @ObservationIgnored private var pending: [PendingHandle] = []
+    @ObservationIgnored private var epoch = 0
+    @ObservationIgnored private var pendingRefresh = false
+    @ObservationIgnored private nonisolated(unsafe) var listener: Task<Void, Never>?
 
-    private var product: Product?
-    /// Written once in `init` and read once in `deinit`, both on the main actor's own terms and
-    /// never concurrently — which `deinit` cannot prove, since it is nonisolated. Leaving the task
-    /// uncancelled instead would keep one `Transaction.updates` loop alive per Settings visit.
-    private nonisolated(unsafe) var listener: Task<Void, Never>?
-    private weak var account: Account?
-
-    init(account: Account?) {
-        self.account = account
-        listener = Task { [weak self] in
-            // Every transaction StoreKit has not been told is finished, including ones that
-            // completed while the app was not running.
-            for await update in Transaction.updates {
-                await self?.settle(update)
+    init(services: HandleServices) {
+        self.services = services
+        listener = Task { [weak self, updates = services.purchases.updates] in
+            for await _ in updates {
+                guard let self else { return }
+                if self.activity != .none { self.pendingRefresh = true }
+                else { await self.refresh() }
             }
         }
     }
-
     deinit { listener?.cancel() }
 
-    /// What this account owns, and what it would cost if it owns nothing.
-    func refresh() async {
-        // Never in fixture mode. There is no token there, and asking for one walks
-        // `Session.token()` → `renew()` → `forget()`, which signs the app out — so simply opening
-        // Settings threw you back to the sign-in screen. The same path is reachable for real: a
-        // session that has just expired would then be ended by a screen somebody opened to read a
-        // setting, rather than by the request they were actually making.
-        guard !Fixtures.enabled else {
-            phase = .unavailable
-            return
-        }
-        guard let client = account?.client else { return }
-        phase = .loading
-        do {
-            // A ceiling on the whole lookup. `.loading` renders as "Checking your handle…", and a
-            // request that never returns leaves that on screen for ever — which is exactly what a
-            // phone showed. The postbox call carries the long-poll timeout of 90 seconds, and
-            // StoreKit's has no stated bound at all, so neither can be relied on to end this.
-            let offer = try await withTimeout(seconds: 12) { try await client.handleOffer() }
-            if let namespace = offer.namespace {
-                phase = .owned(namespace: namespace, renews: offer.renewsOn)
-                // A name with no mailbox under it is not an address. The postbox mints one when the
-                // purchase lands; this is for the namespaces bought before it did — including the
-                // one whose owner reported that the handle they had just paid for appeared in no
-                // list anywhere.
-                await account?.ensureMailbox(inNamespace: namespace)
-                return
-            }
-            guard let productId = offer.productId else {
-                phase = .unavailable
-                return
-            }
-            let products = try await withTimeout(seconds: 12) {
-                try await Product.products(for: [productId])
-            }
-            guard let product = products.first else {
-                // An empty list, not an error: a product still awaiting review, or not sold in this
-                // storefront, comes back this way.
-                phase = .notOnSaleYet(
-                    "Handles are not on sale from this build yet. The subscription is still going through App Store review."
-                )
-                return
-            }
-            self.product = product
-            phase = .forSale(displayPrice: product.displayPrice)
-        } catch let failure as APIError where failure.status == 404 {
-            // The postbox has no App Store key. Selling is simply not a thing this deployment does.
-            phase = .unavailable
-        } catch let failure as APIError {
-            phase = .notOnSaleYet(failure.errorDescription ?? "The postbox could not be asked about handles.")
-        } catch is TimedOut {
-            phase = .notOnSaleYet("Checking your handle took too long. Tap to try again.")
-        } catch {
-            phase = .notOnSaleYet("Could not reach the App Store.")
+    var busy: Bool { activity != .none }
+    var activeCount: Int { Set(handles.filter(\.active).map(\.namespace)).count }
+    var waitingForApproval: Bool { pending.contains(where: \.awaitingApproval) }
+    var nextProduct: HandleProduct? {
+        let occupied = Set(handles.map(\.productId))
+        return products.first { !occupied.contains($0.id) }
+    }
+    var canBuy: Bool {
+        guard !busy, Self.valid(wantedName), !waitingForApproval else { return false }
+        if !unassigned.isEmpty { return true }
+        return enabled && offer?.appAccountToken.flatMap(UUID.init(uuidString:)) != nil
+            && activeCount < maximum && nextProduct != nil && availability?.available == true
+            && availability?.name == Self.tidy(wantedName)
+    }
+    var checkedMessage: String? {
+        guard let availability, availability.name == Self.tidy(wantedName) else { return nil }
+        if availability.available { return "/\(availability.name) is available." }
+        switch availability.reason {
+        case "reserved": return "That name is reserved. Choose another."
+        case "invalid": return "Use 1–32 letters, numbers, dots, underscores or hyphens."
+        default: return "That name is already taken. Choose another."
         }
     }
 
-    /// Buy, then claim. The name is sent with the claim rather than with the purchase because Apple
-    /// has no field for it — which means the two can disagree, and the postbox is what reconciles
-    /// them.
+    private func current(_ stamp: Int, _ subject: String) -> Bool {
+        epoch == stamp && services.subject() == subject
+    }
+    private var pendingKey: String? { services.subject().map { "ppi_handle_pending:" + $0 } }
+    private func persist() {
+        guard let key = pendingKey, let data = try? JSONEncoder().encode(pending) else { return }
+        services.defaults.set(data, forKey: key)
+    }
+    private func finishOperation(_ stamp: Int, _ subject: String) {
+        guard current(stamp, subject) else { return }
+        activity = .none
+        if pendingRefresh {
+            pendingRefresh = false
+            Task { [weak self] in await self?.refresh() }
+        }
+    }
+    private func install(_ value: HandleOffer) {
+        offer = value
+        maximum = min(10, max(1, value.maxHandles ?? 1))
+        handles = value.handles ?? value.namespace.map {
+            [PurchasedHandle(originalTransactionId: "legacy", namespace: $0,
+                productId: value.productId ?? "", environment: "Production", expiresAt: value.expiresAt ?? 0, active: true)]
+        } ?? []
+        loaded = true
+    }
+
+    func refresh(restoring: Bool = false) async {
+        guard !busy, let subject = services.subject() else { return }
+        let stamp = epoch
+        activity = restoring ? .restoring : .loading
+        message = nil
+        defer { finishOperation(stamp, subject) }
+        do {
+            if let key = pendingKey, let data = services.defaults.data(forKey: key) {
+                pending = (try? JSONDecoder().decode([PendingHandle].self, from: data)) ?? []
+            }
+            if restoring { try await services.purchases.restore() }
+            let value = try await withHandleDeadline(seconds: services.timeout, services.offer)
+            guard current(stamp, subject) else { return }
+            enabled = true
+            install(value)
+            let ids = value.productIds ?? value.productId.map { [$0] } ?? []
+            let loadedProducts = try await withHandleDeadline(seconds: services.timeout) { [purchases = services.purchases] in
+                try await purchases.products(ids)
+            }
+            guard current(stamp, subject) else { return }
+            products = loadedProducts
+            let transactions = try await withHandleTransactions()
+            guard current(stamp, subject) else { return }
+            unassigned = []
+            for transaction in transactions where ids.contains(transaction.productId) {
+                guard current(stamp, subject) else { return }
+                await settle(transaction, desiredName: nil, stamp: stamp, subject: subject)
+            }
+            guard current(stamp, subject) else { return }
+            let updated = try await withHandleDeadline(seconds: services.timeout, services.offer)
+            guard current(stamp, subject) else { return }
+            install(updated)
+            for handle in handles where handle.active {
+                let exists = await services.ensureMailbox(handle.namespace)
+                guard current(stamp, subject) else { return }
+                if exists { missingMailboxes.remove(handle.namespace) }
+                else { missingMailboxes.insert(handle.namespace) }
+            }
+            if products.isEmpty && message == nil {
+                message = "The App Store did not return these subscriptions. You can still restore purchases or try again."
+            } else if restoring && handles.isEmpty && unassigned.isEmpty && message == nil {
+                message = "No active handle purchases were found for this Apple account."
+            }
+        } catch is CancellationError { }
+        catch let error as APIError where error.status == 404 {
+            if current(stamp, subject) { enabled = false; loaded = true; message = "Handle purchases are temporarily unavailable." }
+        } catch {
+            if current(stamp, subject) { message = Self.explain(error) }
+        }
+    }
+
+    private func withHandleTransactions() async throws -> [HandleTransaction] {
+        try await withHandleDeadline(seconds: services.timeout) { [purchases = services.purchases] in
+            await purchases.transactions()
+        }
+    }
+
+    func checkAvailability() async {
+        guard !busy, let subject = services.subject() else { return }
+        let name = Self.tidy(wantedName), stamp = epoch
+        guard Self.valid(name) else {
+            availability = nil; message = "Use 1–32 letters, numbers, dots, underscores or hyphens; start and end with a letter or number."
+            return
+        }
+        activity = .checking; message = nil
+        defer { finishOperation(stamp, subject) }
+        do {
+            let result = try await withHandleDeadline(seconds: services.timeout) { [probe = services.availability] in try await probe(name) }
+            guard current(stamp, subject), Self.tidy(wantedName) == name else { return }
+            availability = result
+        } catch { if current(stamp, subject) { message = Self.explain(error) } }
+    }
+
     func buy() async {
-        guard !Fixtures.enabled, let product else { return }
-        let name = Self.tidy(wantedName)
-        guard !name.isEmpty else {
-            phase = .failed("Choose a name first.")
+        guard canBuy else { return }
+        if let transaction = unassigned.first {
+            await finishPurchase(transaction)
             return
         }
-        phase = .buying
+        guard let product = nextProduct else { return }
+        await purchase(product, name: Self.tidy(wantedName))
+    }
+
+    func renew(_ handle: PurchasedHandle) async {
+        guard !busy, !handle.active, let product = products.first(where: { $0.id == handle.productId }) else { return }
+        await purchase(product, name: Self.tidy(handle.namespace))
+    }
+
+    private func purchase(_ product: HandleProduct, name: String) async {
+        guard !busy, let subject = services.subject(), let token = offer?.appAccountToken.flatMap(UUID.init(uuidString:)),
+              Self.valid(name), activeCount < maximum else { return }
+        let stamp = epoch
+        activity = .checking; message = nil
+        defer { finishOperation(stamp, subject) }
         do {
-            switch try await product.purchase() {
-            case let .success(verification):
-                await settle(verification)
-            case .userCancelled:
-                await refresh()
+            let checked = try await withHandleDeadline(seconds: services.timeout) { [probe = services.availability] in try await probe(name) }
+            guard current(stamp, subject) else { return }
+            guard checked.available, checked.name == name else { availability = checked; message = "That name cannot be bought. Choose an available name."; return }
+            pending.removeAll { $0.productId == product.id }
+            pending.append(PendingHandle(productId: product.id, name: name))
+            persist()
+            activity = .buying
+            // The Apple confirmation sheet belongs to the person. It has no artificial deadline.
+            let result = try await services.purchases.purchase(product.id, accountToken: token)
+            guard current(stamp, subject) else { return }
+            switch result {
+            case let .purchased(transaction):
+                activity = .claiming
+                await settle(transaction, desiredName: name, stamp: stamp, subject: subject)
+                guard current(stamp, subject) else { return }
+                let updated = try await withHandleDeadline(seconds: services.timeout, services.offer)
+                guard current(stamp, subject) else { return }
+                install(updated)
+            case .cancelled:
+                pending.removeAll { $0.productId == product.id }; persist()
+                message = "Purchase cancelled. Your name is still here."
             case .pending:
-                // Ask to Buy, or a payment the bank is still thinking about. The transaction will
-                // arrive through `Transaction.updates` if it ever completes.
-                phase = .failed("That purchase is waiting for approval. It will appear here once it goes through.")
-            @unknown default:
-                await refresh()
+                if let index = pending.firstIndex(where: { $0.productId == product.id }) { pending[index].awaitingApproval = true; persist() }
+                message = "Waiting for Apple purchase approval. The name will be registered when approval arrives."
             }
-        } catch {
-            phase = .failed("The purchase did not complete.")
-        }
+        } catch { if current(stamp, subject) { message = Self.explain(error) } }
     }
 
-    /// Purchases made on another device, or on this one before a reinstall.
-    func restore() async {
-        guard !Fixtures.enabled else { return }
-        phase = .buying
+    private func finishPurchase(_ transaction: HandleTransaction) async {
+        guard !busy, let subject = services.subject(), Self.valid(wantedName) else { return }
+        let stamp = epoch
+        activity = .claiming; message = nil
+        defer { finishOperation(stamp, subject) }
+        await settle(transaction, desiredName: Self.tidy(wantedName), stamp: stamp, subject: subject)
+        guard current(stamp, subject) else { return }
         do {
-            try await AppStore.sync()
-        } catch {
-            // `sync` throws when the person dismisses the sign-in sheet, which is not a failure
-            // worth reporting as one.
-        }
-        for await entitlement in Transaction.currentEntitlements {
-            await settle(entitlement, finishing: false)
-        }
-        await refresh()
+            let value = try await withHandleDeadline(seconds: services.timeout, services.offer)
+            guard current(stamp, subject) else { return }
+            install(value)
+        } catch { if current(stamp, subject) { message = Self.explain(error) } }
     }
 
-    /// Take one transaction as far as it goes: verify locally, tell the postbox, and only then let
-    /// StoreKit forget it.
-    private func settle(_ result: VerificationResult<Transaction>, finishing: Bool = true) async {
-        guard case let .verified(transaction) = result else {
-            // StoreKit could not verify its own signature. Nothing to send: the postbox would ask
-            // Apple and be told the same thing, one round trip later.
-            phase = .failed("That purchase could not be verified.")
-            return
-        }
-        guard let client = account?.client else { return }
-        let name = Self.tidy(wantedName)
+    private func settle(_ transaction: HandleTransaction, desiredName: String?, stamp: Int, subject: String) async {
+        guard current(stamp, subject), transaction.active else { return }
+        if let token = transaction.accountToken, token.uuidString.lowercased() != offer?.appAccountToken?.lowercased() { return }
+        let existing = handles.first { $0.originalTransactionId == transaction.originalId }
+        let selectedName = existing == nil ? (desiredName ?? pending.first { $0.productId == transaction.productId }?.name) : nil
         do {
-            let offer = try await client.claimHandle(
-                transactionId: String(transaction.id),
-                // A renewal arriving unattended has no typed name; the postbox already knows which
-                // one this subscription bought and ignores what we send.
-                namespace: name.isEmpty ? "renewal" : name
-            )
-            if finishing { await transaction.finish() }
-            if let namespace = offer.namespace {
-                phase = .owned(namespace: namespace, renews: offer.renewsOn)
-                wantedName = ""
-                // The postbox mints `<namespace>/main` as part of the claim, so this is mostly a
-                // reload — but it is what puts the new mailbox in the Mailboxes list without
-                // waiting for the next launch, and it still covers a mint the postbox could not do.
-                await account?.ensureMailbox(inNamespace: namespace)
-            } else {
-                await refresh()
-            }
-        } catch let failure as APIError {
-            // Left unfinished on purpose. The money is Apple's problem and it has been taken; the
-            // namespace is ours and has not been granted. Finishing here would discard the id that
-            // is the only way to try again.
-            phase = .failed(Self.explain(failure))
+            let claim = services.claim
+            let value = try await withHandleDeadline(seconds: services.timeout) { try await claim(transaction.id, selectedName) }
+            guard current(stamp, subject) else { return }
+            guard let namespace = value.namespace else { throw APIError(status: 200, code: "bad_response", detail: "The postbox did not confirm a handle. Try again.") }
+            await services.purchases.finish(transaction.id)
+            guard current(stamp, subject) else { return }
+            pending.removeAll { $0.productId == transaction.productId }; persist()
+            unassigned.removeAll { $0.originalId == transaction.originalId }
+            if Self.tidy(wantedName) == selectedName { wantedName = ""; availability = nil }
+            let exists = await services.ensureMailbox(namespace)
+            guard current(stamp, subject) else { return }
+            if exists { missingMailboxes.remove(namespace) }
+            else { missingMailboxes.insert(namespace) }
+            if current(stamp, subject), desiredName != nil { message = "\(namespace) is ready." }
         } catch {
-            phase = .failed("Could not reach the postbox. Your purchase is safe — reopen Settings to finish.")
-        }
-    }
-
-    /// The postbox's codes, said the way a person would say them.
-    private static func explain(_ failure: APIError) -> String {
-        switch failure.code {
-        case "namespace_taken": return "Someone already has that name. Try another."
-        case "name_reserved": return "That name is reserved. Try another."
-        case "purchase_already_named":
-            return failure.detail ?? "This subscription already bought a different name."
-        case "purchase_already_used":
-            return "That subscription belongs to another Pigeonpost account."
-        case "purchase_expired": return "That subscription has lapsed."
-        case "purchase_refunded": return "That purchase was refunded."
-        case "invalid_namespace": return "That name cannot be a handle."
-        default: return failure.errorDescription ?? "Could not claim that name."
-        }
-    }
-
-    #if DEBUG
-    /// Put the section into a fixed state for a screenshot. See `Fixtures.handleState`.
-    func stage(_ state: String) {
-        switch state {
-        case "owned":
-            phase = .owned(namespace: "/alex", renews: Date(timeIntervalSince1970: 1_818_800_000))
-        case "soon":
-            phase = .notOnSaleYet("Handles are not on sale from this build yet. The subscription is still going through App Store review.")
-        default:
-            wantedName = "alex"
-            phase = .forSale(displayPrice: "$8.00")
-        }
-    }
-    #endif
-
-    /// Run `work`, or give up.
-    ///
-    /// There is no shared deadline between a URLSession call and a StoreKit one, and a view state
-    /// that only ever ends when a network call chooses to is not a state — it is a hang with a
-    /// label on it.
-    private func withTimeout<T: Sendable>(
-        seconds: UInt64,
-        _ work: @escaping @Sendable () async throws -> T
-    ) async throws -> T {
-        try await withThrowingTaskGroup(of: T.self) { group in
-            group.addTask { try await work() }
-            group.addTask {
-                try await Task.sleep(nanoseconds: seconds * 1_000_000_000)
-                throw TimedOut()
+            guard current(stamp, subject) else { return }
+            if let failure = error as? APIError, ["purchase_already_used", "purchase_expired", "purchase_refunded"].contains(failure.code ?? "") {
+                message = Self.explain(error)
+                return
             }
-            guard let first = try await group.next() else { throw TimedOut() }
-            group.cancelAll()
-            return first
+            if !unassigned.contains(where: { $0.originalId == transaction.originalId }) { unassigned.append(transaction) }
+            if wantedName.isEmpty { wantedName = selectedName ?? "" }
+            message = "Your purchase is saved. \(Self.explain(error)) Finish registration here without another payment."
         }
     }
 
-    /// What the postbox will canonicalise anyway, done here so the field shows it. Trimming a
-    /// leading slash matters: people type the address they have seen, not the name.
+    func repairMailbox(_ namespace: String) async {
+        guard !busy, let subject = services.subject() else { return }
+        let stamp = epoch
+        activity = .claiming
+        defer { finishOperation(stamp, subject) }
+        let exists = await services.ensureMailbox(namespace)
+        guard current(stamp, subject) else { return }
+        if exists { missingMailboxes.remove(namespace) }
+        else { message = "The name is yours, but its inbox could not be loaded. Try again." }
+    }
+
+    func reset() {
+        epoch += 1; listener?.cancel(); listener = nil
+        activity = .none; loaded = false; offer = nil; handles = []; products = []
+        pending = []; unassigned = []; wantedName = ""; availability = nil; message = nil
+        pendingRefresh = false; missingMailboxes = []
+    }
+
     static func tidy(_ raw: String) -> String {
-        raw.trimmingCharacters(in: .whitespacesAndNewlines)
-            .trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-            .lowercased()
+        raw.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/")).lowercased()
+    }
+    static func valid(_ raw: String) -> Bool {
+        let name = tidy(raw)
+        let bytes = Array(name.utf8)
+        func alnum(_ b: UInt8) -> Bool { (97...122).contains(b) || (48...57).contains(b) }
+        return (1...32).contains(bytes.count) && bytes.first.map(alnum) == true && bytes.last.map(alnum) == true
+            && bytes.allSatisfy { alnum($0) || $0 == 45 || $0 == 46 || $0 == 95 }
+            && !["k", "gh"].contains(name)
+    }
+    private static func explain(_ error: Error) -> String {
+        if let failure = error as? APIError {
+            switch failure.code {
+            case "namespace_taken", "handle_already_subscribed": return "That name is already held. Choose another name or restore its purchase."
+            case "name_reserved": return "That name is reserved. Choose another."
+            case "name_required": return "Choose a name for it."
+            case "purchase_already_used": return "This purchase belongs to another Pigeonpost account. Sign in to that account."
+            case "handle_limit_reached": return "This account already has ten active Apple handles."
+            case "purchase_expired": return "That subscription has expired."
+            case "purchase_refunded": return "That purchase was refunded."
+            case "appstore_unavailable": return "Apple verification is temporarily unavailable. Try again."
+            default: return failure.errorDescription ?? "The postbox could not finish the request."
+            }
+        }
+        return (error as? LocalizedError)?.errorDescription ?? "The request did not complete. Try again."
     }
 }

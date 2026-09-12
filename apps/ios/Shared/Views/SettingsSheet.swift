@@ -108,13 +108,14 @@ struct SettingsSheet: View {
             // On the NavigationStack, whose identity does not change while this sheet is open, so
             // this runs once per visit rather than once per re-render.
             .task {
-                if handle == nil { handle = HandleStore(account: account) }
                 #if DEBUG
-                if let staged = Fixtures.handleState {
-                    handle?.stage(staged)
+                if Fixtures.enabled {
+                    if handle == nil { handle = HandleFixtures.make(Fixtures.handleState ?? "unavailable", account: account) }
+                    await handle?.refresh()
                     return
                 }
                 #endif
+                if handle == nil { handle = account.handles }
                 await handle?.refresh()
             }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }

@@ -16,3 +16,7 @@ swiftc -O -o "$out/thread-model" \
   Shared/Design/Theme.swift \
   Shared/Views/Markdown.swift
 "$out/thread-model"
+swiftc -O -o "$out/handles" \
+  Tests/HandleStoreTests.swift Shared/API/Models.swift Shared/API/APIError.swift \
+  Shared/Store/HandlePurchases.swift Shared/Store/HandleStore.swift
+"$out/handles"

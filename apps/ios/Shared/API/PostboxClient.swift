@@ -2,27 +2,6 @@
 
 import Foundation
 
-struct APIError: LocalizedError, Equatable {
-    let status: Int
-    /// The postbox's own machine-readable code — `not_admitted`, `recipient_unresolved`, and so on.
-    let code: String?
-    let detail: String?
-
-    var errorDescription: String? { detail ?? code ?? "The postbox answered \(status)." }
-
-    /// What to say to a person when a send does not go through. The codes are the postbox's; the
-    /// sentences are the web app's, so both clients fail with the same words.
-    var sendFailureMessage: String {
-        switch code {
-        case "not_admitted": return "They are not accepting mail from this mailbox."
-        case "recipient_unresolved": return "No mailbox at that address."
-        case "recipient_inbox_full": return "Their inbox is full."
-        case "unauthorized": return "Your session expired. Sign in again."
-        default: return errorDescription ?? "Could not send."
-        }
-    }
-}
-
 /// Anything that can hand out a live bearer token and spend a refresh token on demand.
 @MainActor
 protocol TokenProviding: AnyObject {
@@ -300,13 +279,19 @@ struct PostboxClient {
     /// Hand Apple's transaction id to the postbox, which asks Apple what it means. Deliberately not
     /// a receipt or an entitlement flag: this app is in no position to assert what was bought.
     @discardableResult
-    func claimHandle(transactionId: String, namespace: String) async throws -> HandleOffer {
-        try await send(
+    func claimHandle(transactionId: String, namespace: String?) async throws -> HandleOffer {
+        var payload: [String: Any] = ["transaction_id": transactionId]
+        if let namespace { payload["namespace"] = namespace }
+        return try await send(
             "/v1/claims/apple",
             method: "POST",
-            json: ["transaction_id": transactionId, "namespace": namespace],
+            json: payload,
             as: HandleOffer.self
         )
+    }
+
+    func checkHandle(_ name: String) async throws -> HandleAvailability {
+        try await send("/v1/handles/\(name)/availability", as: HandleAvailability.self)
     }
 
     // ---- the wire ------------------------------------------------------------------------------
@@ -351,7 +336,7 @@ struct PostboxClient {
             // A long poll is held open for as long as the postbox will hold it; the default 60s
             // timeout would cut a `wait=25` call short only sometimes, which is the worst kind of
             // bug to look for.
-            request.timeoutInterval = 90
+            request.timeoutInterval = path.hasPrefix("/v1/claims/") || path.hasPrefix("/v1/handles/") ? 25 : 90
             let (data, response) = try await URLSession.shared.data(for: request)
             return (data, response as? HTTPURLResponse ?? HTTPURLResponse())
         }

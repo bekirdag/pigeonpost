@@ -220,14 +220,37 @@ struct UploadedAttachment: Decodable {
 ///
 /// `namespace` is `nil` until something has been bought. Both the POST and the GET answer in this
 /// shape, so a fresh purchase and a restored one are read by the same code.
-struct HandleOffer: Decodable {
+struct HandleOffer: Decodable, Sendable {
     let productId: String?
     let namespace: String?
     let expiresAt: Int?
+    var productIds: [String]? = nil
+    var maxHandles: Int? = nil
+    var account: String? = nil
+    var appAccountToken: String? = nil
+    var handles: [PurchasedHandle]? = nil
+    var mailbox: String? = nil
 
     var owned: Bool { namespace != nil }
 
     var renewsOn: Date? { expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+}
+
+struct PurchasedHandle: Decodable, Equatable, Identifiable, Sendable {
+    var originalTransactionId: String
+    var namespace: String
+    var productId: String
+    var environment: String
+    var expiresAt: Int
+    var active: Bool
+    var id: String { originalTransactionId }
+    var paidThrough: Date { Date(timeIntervalSince1970: TimeInterval(expiresAt)) }
+}
+
+struct HandleAvailability: Decodable, Equatable, Sendable {
+    let name: String
+    let available: Bool
+    let reason: String?
 }
 
 /// An answer a mailbox's agent sent without anyone reading it first.

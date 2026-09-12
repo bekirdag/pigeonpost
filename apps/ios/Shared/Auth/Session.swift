@@ -85,6 +85,12 @@ final class Session {
         return claims["preferred_username"] as? String
     }
 
+    /// Local operation/pending-purchase scope. Entitlement authorization remains on the postbox.
+    var subject: String? {
+        guard let accessToken, let claims = Self.claims(of: accessToken) else { return nil }
+        return claims["sub"] as? String
+    }
+
     #if DEBUG
     /// Used only by `-fixtures`: no token is minted and none is stored, so nothing this sets can
     /// reach the postbox.

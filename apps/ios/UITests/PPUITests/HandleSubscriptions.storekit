@@ -1,0 +1,299 @@
+{
+  "identifier": "57efbc0b-121c-4f3b-a9da-2c8ddf42760a",
+  "nonRenewingSubscriptions": [],
+  "products": [],
+  "settings": {
+    "_applicationInternalID": "6803521541",
+    "_developerTeamID": "AH277897AV",
+    "_failTransactionsEnabled": false,
+    "_locale": "en_US",
+    "_storefront": "USA",
+    "_storeKitErrors": []
+  },
+  "subscriptionGroups": [
+    {
+      "id": "03340c8c-79b1-5c95-9883-b3019b94b538",
+      "localizations": [],
+      "name": "Handle 1",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "1",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 1 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 1",
+          "subscriptionGroupID": "03340c8c-79b1-5c95-9883-b3019b94b538",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "ec95a9f0-8680-5df9-93d3-6b5c418f82d5",
+      "localizations": [],
+      "name": "Handle 2",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "2",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 2 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle2.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 2",
+          "subscriptionGroupID": "ec95a9f0-8680-5df9-93d3-6b5c418f82d5",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "3de68371-567e-594f-b94b-04453a04f9d8",
+      "localizations": [],
+      "name": "Handle 3",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "3",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 3 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle3.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 3",
+          "subscriptionGroupID": "3de68371-567e-594f-b94b-04453a04f9d8",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "5349c953-48a9-5ef4-b51f-d6be5d45d1dc",
+      "localizations": [],
+      "name": "Handle 4",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "4",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 4 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle4.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 4",
+          "subscriptionGroupID": "5349c953-48a9-5ef4-b51f-d6be5d45d1dc",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "f93cac41-b02f-5cdc-997e-3c079573e831",
+      "localizations": [],
+      "name": "Handle 5",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "5",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 5 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle5.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 5",
+          "subscriptionGroupID": "f93cac41-b02f-5cdc-997e-3c079573e831",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "458ad9f0-8f09-5f08-8343-9900f8c2ff0d",
+      "localizations": [],
+      "name": "Handle 6",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "6",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 6 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle6.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 6",
+          "subscriptionGroupID": "458ad9f0-8f09-5f08-8343-9900f8c2ff0d",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "5428679d-89e8-5fe9-a645-8de337f0e7c4",
+      "localizations": [],
+      "name": "Handle 7",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "7",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 7 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle7.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 7",
+          "subscriptionGroupID": "5428679d-89e8-5fe9-a645-8de337f0e7c4",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "4068c9f1-779d-5780-91d1-78fb547a2935",
+      "localizations": [],
+      "name": "Handle 8",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "8",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 8 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle8.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 8",
+          "subscriptionGroupID": "4068c9f1-779d-5780-91d1-78fb547a2935",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "9b8ea923-516c-561b-9656-a03508ffa234",
+      "localizations": [],
+      "name": "Handle 9",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "9",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 9 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle9.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 9",
+          "subscriptionGroupID": "9b8ea923-516c-561b-9656-a03508ffa234",
+          "type": "RecurringSubscription"
+        }
+      ]
+    },
+    {
+      "id": "97d4bc49-2da5-5eb7-abf0-d5b044f9cee3",
+      "localizations": [],
+      "name": "Handle 10",
+      "subscriptions": [
+        {
+          "adHocOffers": [],
+          "codeOffers": [],
+          "displayPrice": "8.00",
+          "familyShareable": false,
+          "groupNumber": 1,
+          "internalID": "10",
+          "introductoryOffer": null,
+          "localizations": [
+            {
+              "description": "One personal name and inbox for one year.",
+              "displayName": "Handle 10 yearly",
+              "locale": "en_US"
+            }
+          ],
+          "productID": "dev.pigeonpost.inbox.handle10.yearly",
+          "recurringSubscriptionPeriod": "P1Y",
+          "referenceName": "Handle 10",
+          "subscriptionGroupID": "97d4bc49-2da5-5eb7-abf0-d5b044f9cee3",
+          "type": "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version": {
+    "major": 3,
+    "minor": 0
+  }
+}
