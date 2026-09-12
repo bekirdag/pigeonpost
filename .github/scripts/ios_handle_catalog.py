@@ -9,9 +9,11 @@ import os
 import time
 import hashlib
 import urllib.parse
+import urllib.request
+import urllib.error
 from pathlib import Path
 from decimal import Decimal
-from cubemeld_iap import Client, mint_token
+from cubemeld_iap import Client, mint_token, validate_upload_operation
 
 BUNDLE = "dev.pigeonpost.inbox"
 APP_ID = "6803521541"
@@ -30,6 +32,26 @@ class CatalogClient(Client):
             self.token = mint_token()
             self.issued = time.monotonic()
         return super().call(*args, **kwargs)
+
+    def upload(self, operation, content):
+        # The subscription API now returns this Apple host. Apply the shared method,
+        # range and header validation too, without emitting its signed query string.
+        parsed = urllib.parse.urlsplit(operation.get("url", ""))
+        if parsed.hostname != "northamerica-1.object-storage.apple.com":
+            return super().upload(operation, content)
+        checked = dict(operation)
+        checked["url"] = urllib.parse.urlunsplit(parsed._replace(netloc="validated.blobstore.apple.com"))
+        method, _, headers, offset, length = validate_upload_operation(checked, len(content))
+        if parsed.scheme != "https" or parsed.port not in (None, 443) or parsed.username or parsed.password or parsed.fragment:
+            raise RuntimeError("Invalid Apple object storage upload destination")
+        request = urllib.request.Request(operation["url"], data=content[offset:offset+length], method=method)
+        for name, value in headers:
+            request.add_header(name, value)
+        try:
+            with urllib.request.urlopen(request, timeout=60) as response:
+                response.read()
+        except (urllib.error.URLError, urllib.error.HTTPError) as error:
+            raise RuntimeError(f"Apple review image upload failed ({getattr(error, 'code', 'transport')})") from None
 
 
 def rel(kind, identifier):
@@ -78,19 +100,27 @@ def metadata(client, group, product, slot):
                "description": "One personal name and inbox for one year."},
                {"subscription": rel("subscriptions", product)})
     shot = client.call("GET", f"/v1/subscriptions/{product}/appStoreReviewScreenshot", allow_404=True)
+    content = Path("apps/ios/Store/handle-subscription-review.png").read_bytes()
     if not shot or not shot.get("data"):
-        content = Path("apps/ios/Store/handle-subscription-review.png").read_bytes()
         asset = create(client, "subscriptionAppStoreReviewScreenshots",
             {"fileName": "handle-subscription-review.png", "fileSize": len(content)},
             {"subscription": rel("subscriptions", product)})
-        for operation in asset["attributes"]["uploadOperations"]:
-            print(json.dumps({"review_upload_host": urllib.parse.urlsplit(operation["url"]).hostname}), flush=True)
+    else:
+        asset = shot["data"]
+    state = asset["attributes"].get("assetDeliveryState", {}).get("state")
+    if state in ("AWAITING_UPLOAD", None):
+        if asset["attributes"]["fileSize"] != len(content) or asset["attributes"]["fileName"] != "handle-subscription-review.png":
+            raise RuntimeError("Pending review asset differs from the prepared image")
+        operations = asset["attributes"].get("uploadOperations", [])
+        if not operations:
+            raise RuntimeError("Apple has not supplied review upload operations")
+        for operation in operations:
             client.upload(operation, content)
         client.call("PATCH", f"/v1/subscriptionAppStoreReviewScreenshots/{asset['id']}", {"data": {
             "type": "subscriptionAppStoreReviewScreenshots", "id": asset["id"],
             "attributes": {"uploaded": True, "sourceFileChecksum": hashlib.md5(content).hexdigest()},
         }})
-    elif shot["data"]["attributes"].get("assetDeliveryState", {}).get("state") not in ("COMPLETE", "UPLOAD_COMPLETE"):
+    elif state not in ("COMPLETE", "UPLOAD_COMPLETE"):
         raise RuntimeError(f"Review image is incomplete for {product}; inspect before retry")
 
 
