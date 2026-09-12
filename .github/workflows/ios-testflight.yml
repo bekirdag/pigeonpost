@@ -24,6 +24,11 @@ on:
         required: true
         default: true
         type: boolean
+      distribute:
+        description: "Add the processed build to internal tester groups. Off allows a coordinated server rollout first."
+        required: true
+        default: true
+        type: boolean
       runner:
         description: "Runner image. Needs Xcode 26 or later."
         required: false
@@ -236,7 +241,7 @@ jobs:
       # means that last step is a human clicking through the web UI. Builds 6 and 17 were the two
       # that got forgotten, and a build in no group looks, from the phone, exactly like an upload
       # that never happened.
-      - name: Put it in front of the testers
+      - name: Verify processing and distribute when requested
         if: inputs.upload
         env:
           KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
@@ -244,7 +249,7 @@ jobs:
           ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           BUNDLE_ID: dev.pigeonpost.inbox
           WAIT_FOR: ${{ inputs.build_number }}
-          FIX: "true"
+          FIX: ${{ inputs.distribute }}
         run: python3 .github/scripts/testflight_status.py
 
       # The symbols are the only way to read a crash report from a build nobody has locally.
