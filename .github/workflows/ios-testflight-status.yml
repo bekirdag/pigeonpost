@@ -17,6 +17,12 @@ on:
         required: false
         default: false
         type: boolean
+      handle_catalog:
+        description: "Inspect or provision the approved iOS handle subscription catalog."
+        required: false
+        default: none
+        type: choice
+        options: [none, audit, apply]
 
 permissions:
   contents: read
@@ -36,6 +42,7 @@ jobs:
           persist-credentials: false
 
       - name: Report
+        if: inputs.handle_catalog == 'none' || inputs.handle_catalog == ''
         env:
           KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
@@ -43,3 +50,12 @@ jobs:
           FIX: ${{ inputs.fix }}
           BUNDLE_ID: dev.pigeonpost.inbox
         run: python3 .github/scripts/testflight_status.py
+
+      - name: Handle subscription catalog
+        if: inputs.handle_catalog == 'audit' || inputs.handle_catalog == 'apply'
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          APPLY: ${{ inputs.handle_catalog == 'apply' }}
+        run: python3 .github/scripts/ios_handle_catalog.py
