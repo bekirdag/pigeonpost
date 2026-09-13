@@ -39,6 +39,8 @@
 .release-status { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--free-text); }
 .release-pending { color: var(--muted); }
 .download-option .btn { font-size: 14px; padding: 10px 14px; }
+.download-option .btn + .btn { margin-top: 10px; }
+.download-install code, #install-linux ~ p code { overflow-wrap: anywhere; }
 .download-install { padding-left: 24px; }
 .download-install li { padding-left: 6px; margin: 10px 0; }
 a:focus-visible { outline: 3px solid var(--blue); outline-offset: 4px; }

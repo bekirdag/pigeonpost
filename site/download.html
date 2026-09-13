@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Download Pigeonpost</title>
-<meta name="description" content="Find Pigeonpost for your device. Download the native Mac app, check Windows and Linux availability, or open your inbox in a browser.">
+<meta name="description" content="Download the native Pigeonpost desktop app for Mac or Linux, check Windows availability, or open your inbox in a browser.">
 <meta name="color-scheme" content="light dark">
 <link rel="canonical" href="https://pigeonpost.dev/download">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -13,8 +13,8 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/brand.css">
-<link rel="stylesheet" href="/download.css?v=20260913">
-<script src="/download.js?v=20260913" defer></script>
+<link rel="stylesheet" href="/download.css?v=20260913-linux">
+<script src="/download.js?v=20260913-linux" defer></script>
 </head>
 <body>
 <svg class="platform-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
@@ -72,11 +72,15 @@
           <p class="platform-description">The native Windows app is in development. Use your inbox in the browser for now.</p>
           <a class="btn btn-secondary platform-action" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>Open web inbox</span></a>
         </article>
-        <article class="download-option" data-platform="linux" data-recommendation-title="Pigeonpost on Linux">
+        <article class="download-option" data-platform="linux" data-recommendation-title="Download for Linux">
           <h3>Linux</h3>
-          <span class="release-status release-pending">Not yet available</span>
-          <p class="platform-description">A Linux desktop app is not available yet. Use your inbox in the browser for now.</p>
-          <a class="btn btn-secondary platform-action" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Open web inbox</span></a>
+          <span class="release-status">Available now</span>
+          <p class="platform-description">A native GTK desktop inbox. Choose Flatpak for your Linux distribution, or the Debian package for Debian 12+ and Ubuntu 24.04+.</p>
+          <p class="download-meta">Version 1.0.0 · x86_64 and ARM64<br>Requires a desktop session and a Secret Service keyring.</p>
+          <a class="btn btn-secondary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.0/Pigeonpost-Desktop-1.0.0-x86_64.flatpak"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · x86_64 Flatpak</span></a>
+          <a class="btn btn-secondary platform-action-arm" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.0/Pigeonpost-Desktop-1.0.0-aarch64.flatpak"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · ARM64 Flatpak</span></a>
+          <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.0/pigeonpost-desktop_1.0.0_all.deb"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Download Linux · Debian / Ubuntu</span></a>
+          <p class="download-links"><a href="#install-linux">Installation help</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/tag/linux-desktop-1.0.0">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.0/SHA256SUMS">Checksums</a></p>
         </article>
       </div>
     </section>
@@ -89,6 +93,14 @@
         <li>Open Pigeonpost Desktop and sign in.</li>
       </ol>
       <p>macOS may ask you to confirm the first time you open an app downloaded from the internet. No changes to your Mac’s security settings are needed.</p>
+    </section>
+
+    <section aria-labelledby="install-linux">
+      <h2 id="install-linux">Install on Linux</h2>
+      <p><strong>Flatpak:</strong> open the downloaded bundle with your software installer, or run <code>flatpak install --user ./Pigeonpost-Desktop-1.0.0-x86_64.flatpak</code> from its folder. For ARM64, use the <code>aarch64</code> filename instead. <a href="https://flatpak.org/setup/">Set up Flatpak</a> if it is not installed. The first installation also downloads the GNOME runtime.</p>
+      <p><strong>Debian / Ubuntu:</strong> open a terminal in the download folder and run <code>sudo apt install ./pigeonpost-desktop_1.0.0_all.deb</code>. This installs the app and its native dependencies.</p>
+      <p>Launch <strong>Pigeonpost</strong> from your applications menu, then sign in through your browser. Your desktop keyring remembers the account. Handle purchases open the Pigeonpost website.</p>
+      <p class="download-meta">Tested on Ubuntu 24.04 with x86_64 and ARM64 processors. Other desktops and distributions need the listed dependencies. These are direct release downloads; install a newer package from this page to update. The app is not yet listed on Flathub.</p>
     </section>
 
     <section aria-labelledby="web-title">

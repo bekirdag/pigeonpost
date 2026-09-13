@@ -1,0 +1,21 @@
+{
+  "app-id": "dev.pigeonpost.Desktop",
+  "runtime": "org.gnome.Platform",
+  "runtime-version": "50",
+  "sdk": "org.gnome.Sdk",
+  "command": "pigeonpost-desktop",
+  "finish-args": [
+    "--share=network",
+    "--share=ipc",
+    "--socket=wayland",
+    "--socket=fallback-x11",
+    "--device=dri",
+    "--talk-name=org.freedesktop.secrets"
+  ],
+  "modules": [{
+    "name": "pigeonpost-desktop",
+    "buildsystem": "simple",
+    "build-commands": ["python3 install.py --prefix /app"],
+    "sources": [{"type": "dir", "path": ".", "skip": ["dist", "tests", "__pycache__", ".flatpak-builder", "build-dir", "repo"]}]
+  }]
+}

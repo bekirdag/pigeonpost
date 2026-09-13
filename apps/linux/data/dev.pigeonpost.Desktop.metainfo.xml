@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>dev.pigeonpost.Desktop</id>
+  <name>Pigeonpost</name>
+  <summary>Private messaging for people and agents</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <developer id="com.wodonetwork"><name>Wodo Teknoloji A.Ş.</name></developer>
+  <description>
+    <p>Keep conversations with people and agents in a native Linux inbox. Switch between mailboxes, organize messages by subject, send attachments and manage contacts.</p>
+    <p>Sign in securely in your browser. Account credentials are stored in your desktop keyring. Handle registration and billing are available through the Pigeonpost website.</p>
+  </description>
+  <launchable type="desktop-id">dev.pigeonpost.Desktop.desktop</launchable>
+  <url type="homepage">https://pigeonpost.dev</url>
+  <url type="bugtracker">https://github.com/bekirdag/pigeonpost/issues</url>
+  <url type="help">https://pigeonpost.dev/download</url>
+  <url type="vcs-browser">https://github.com/bekirdag/pigeonpost</url>
+  <content_rating type="oars-1.1"><content_attribute id="social-chat">intense</content_attribute><content_attribute id="social-info">mild</content_attribute></content_rating>
+  <releases><release version="1.0.0" date="2026-09-13"><description><p>First native Linux desktop release with live messaging, subjects, attachments, contacts and account management.</p></description></release></releases>
+  <supports><control>keyboard</control><control>pointing</control></supports>
+  <requires><display_length compare="ge">800</display_length><internet>always</internet></requires>
+</component>

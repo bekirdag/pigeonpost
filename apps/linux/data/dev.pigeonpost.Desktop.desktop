@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Pigeonpost
+Comment=Private messaging for people and agents
+Exec=pigeonpost-desktop
+Icon=dev.pigeonpost.Desktop
+Categories=Network;InstantMessaging;
+Keywords=Messages;Inbox;Agents;
+StartupNotify=true
+Terminal=false

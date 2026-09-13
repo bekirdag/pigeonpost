@@ -5116,8 +5116,16 @@ async fn delete_message(
 ///
 /// Needed because the quota refuses the *sender*: when a mailbox fills, the bounce goes to whoever
 /// wrote, and the person who owns it sees nothing at all unless something like this tells them.
-async fn quota(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let me = match acting_identity(&state, &headers, None).await {
+async fn quota(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(q): Query<InboxQuery>,
+) -> Response {
+    let selected = q
+        .identity
+        .as_deref()
+        .or_else(|| header_str(&headers, "x-pigeonpost-identity"));
+    let me = match acting_identity(&state, &headers, selected).await {
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
@@ -5982,6 +5990,90 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(err.code, "invalid_policy");
+    }
+
+    #[tokio::test]
+    async fn quota_http_selects_owned_mailboxes_and_rejects_other_accounts() {
+        let state = test_state();
+        let (token, key) = new_api_key();
+        state
+            .store
+            .create_account("quota-owner".into(), key, now_unix())
+            .await
+            .unwrap();
+        let first = do_create_identity(&state, Some("quota-owner".into()), None, None)
+            .await
+            .unwrap();
+        let second = do_create_identity(&state, Some("quota-owner".into()), None, None)
+            .await
+            .unwrap();
+        let outsider = mint(&state).await;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/v1/quota", listener.local_addr().unwrap());
+        let app = build_router(state);
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::new();
+        for identity in [
+            first["address"].as_str().unwrap(),
+            second["address"].as_str().unwrap(),
+        ] {
+            let response = client
+                .get(&url)
+                .bearer_auth(&token)
+                .query(&[("identity", identity)])
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "query selector must reach quota"
+            );
+            assert!(
+                response.json::<serde_json::Value>().await.unwrap()["limit_bytes"]
+                    .as_u64()
+                    .unwrap()
+                    > 0
+            );
+            let response = client
+                .get(&url)
+                .bearer_auth(&token)
+                .header("x-pigeonpost-identity", identity)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                StatusCode::OK,
+                "attachment-style header also selects a mailbox"
+            );
+        }
+        assert_eq!(
+            client
+                .get(&url)
+                .bearer_auth(&token)
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::BAD_REQUEST
+        );
+        assert_eq!(
+            client
+                .get(&url)
+                .bearer_auth(&token)
+                .query(&[("identity", &outsider.address)])
+                .send()
+                .await
+                .unwrap()
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(
+            client.get(&url).send().await.unwrap().status(),
+            StatusCode::UNAUTHORIZED
+        );
+        server.abort();
     }
 
     /// A full mailbox refuses the sender rather than making room by deleting the holder's mail.
