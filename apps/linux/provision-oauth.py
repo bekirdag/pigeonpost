@@ -36,7 +36,7 @@ def provision(base, username, password, backup):
         "implicitFlowEnabled": False, "serviceAccountsEnabled": False,
         "redirectUris": [], "webOrigins": [],
         "attributes": {"oauth2.device.authorization.grant.enabled": "true", "pkce.code.challenge.method": ""},
-        "defaultClientScopes": mobile.get("defaultClientScopes", ["profile", "email", "roles"]),
+        "defaultClientScopes": mobile["defaultClientScopes"],
         "optionalClientScopes": mobile.get("optionalClientScopes", ["offline_access"]),
         "protocolMappers": [{k: v for k, v in mapper.items() if k != "id"} for mapper in mobile.get("protocolMappers", [])],
     }
