@@ -68,7 +68,7 @@ wait until its deadline to start. Verify the queue after every deployment.
 Never call the old single-mailbox `delete_identity` method as a substitute for
 account erasure: it has a different scope. Never run a broad sender/recipient
 delete that erases another account's delivered copies. Never mark a request
-completed merely because an email was sent or a queue row was created.
+completed merely because a notification was sent or a queue row was created.
 
 Apple permits manual fulfillment within a communicated timeframe, with completion
 confirmation: https://developer.apple.com/support/offering-account-deletion-in-your-app/.

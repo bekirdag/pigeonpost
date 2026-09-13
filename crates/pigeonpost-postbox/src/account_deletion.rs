@@ -1,4 +1,4 @@
-//! Explicit member consent for account deletion, without a support-email prerequisite.
+//! Explicit member consent for account deletion, without a support-message prerequisite.
 
 use crate::{bearer, now_unix, rand_hex, ApiError, AppState};
 use axum::{
