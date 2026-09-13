@@ -92,7 +92,7 @@ const server = http.createServer(async (req, res) => {
     const avail = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path);
     if (method === "GET" && avail) {
       const name = decodeURIComponent(avail[1]).toLowerCase();
-      const available = await masaas.handleAvailable(name);
+      const available = await masaas.handleAvailable(name, bearer(req));
       return send(res, 200, { name, available: available === true, known: available !== null }, origin);
     }
 

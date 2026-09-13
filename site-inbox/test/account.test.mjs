@@ -8,7 +8,7 @@ const source = readFileSync(new URL("../../site/account.js", import.meta.url), "
 const config = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "https://pigeonpost.dev/account", completeStatus = 200 } = {}) {
+async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "https://pigeonpost.dev/account", completeStatus = 200, recovery = false } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
@@ -22,7 +22,7 @@ async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "http
     calls.push({ path, body: init.body && JSON.parse(init.body) });
     const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
     if (path === "/api/v1/me/overview") return response({ subscriptions: [], handles: [], invoices: [], billingProfiles: [{ id: "profile-1" }], paymentMethods: [{ id: "card-1" }] });
-    if (path.endsWith("/availability")) return response({ available: true, known: true });
+    if (path.endsWith("/availability")) return response({ available: !recovery || init.headers?.authorization === "Bearer member-token", known: true });
     if (path === "/api/v1/checkout") return response(checkoutBody || { status: "payment_action_required", subscriptionId: "subscription-1", paymentId: "payment-1", checkoutUrl: "https://bank.example.test/checkout" }, checkoutStatus);
     if (path === "/api/v1/checkout/complete") return response(completeStatus === 200 ? { status: "active", handle: "example", bound: true } : { error: "Payment is still under review" }, completeStatus);
     return response({ identities: [], keys: [], namespaces: [], packages: [] });
@@ -54,6 +54,12 @@ test("Get it keeps the payment reference before redirect and ignores a double cl
   assert.equal(pending.paymentId, "payment-1");
   assert.equal(page.window.localStorage.getItem("pp_bought_handle"), null, "starting payment does not claim that the handle is paid for");
   assert.equal(page.calls.some((c) => c.path === "/api/v1/handles/claim"), false);
+});
+
+test("the signed-in owner can select an expired handle during recovery", async (t) => {
+  const page = await checkoutPage(t, { recovery: true });
+  await page.buy();
+  assert.equal(page.calls.filter((c) => c.path === "/api/v1/checkout").length, 1);
 });
 
 test("an ambiguous checkout failure keeps a stable attempt and never claims payment success", async (t) => {

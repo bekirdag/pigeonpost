@@ -22,7 +22,9 @@ test("checkout follows the subscription payment contract over HTTP", async (t) =
     const body = chunks.length ? JSON.parse(Buffer.concat(chunks)) : undefined;
     calls.push({ path: url.pathname, method: req.method, body, key: req.headers["idempotency-key"] });
     if (url.pathname === "/v1/me/handles") return send(res, 200, { account: "account-owner", handles: [] });
-    if (url.pathname.endsWith("/availability")) return send(res, 200, { available });
+    if (url.pathname.endsWith("/availability")) return send(res, 200, {
+      available: available === "owner-renewal" ? req.headers.authorization === "Bearer member-token" : available,
+    });
     if (url.pathname === "/v1/namespaces") { grants.push(body); return send(res, 200, { ok: true }); }
     if (req.headers.authorization !== "Bearer member-token") return send(res, 401, { message: "Unauthorized" });
     if (url.pathname === "/v1/billing/profiles/saved-profile" && req.method === "PATCH") {
@@ -177,6 +179,28 @@ test("checkout follows the subscription payment contract over HTTP", async (t) =
     reset(); available = false;
     assert.equal((await buy()).status, 409);
     assert.equal(calls.some((c) => c.method === "POST"), false);
+    assert.equal(grants.length, 0);
+  });
+
+  await t.test("a name in recovery is available only to its signed-in owner", async () => {
+    reset(); available = "owner-renewal";
+    for (const token of [null, "another-member", "member-token"]) {
+      const response = await fetch(base + "/v1/handles/example/availability", {
+        headers: token ? { authorization: `Bearer ${token}` } : {},
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { name: "example", available: token === "member-token", known: true });
+    }
+    assert.equal(calls.some((c) => c.method === "POST"), false);
+  });
+
+  await t.test("the original owner can start renewal checkout while the name is reserved", async () => {
+    reset(); available = "owner-renewal";
+    const response = await buy();
+    assert.equal(response.status, 200);
+    assert.equal(response.body.status, "payment_action_required");
+    assert.equal(calls.filter((c) => c.path === "/v1/subscriptions" && c.method === "POST").length, 1);
     assert.equal(grants.length, 0);
   });
 });

@@ -574,10 +574,13 @@
       buy.disabled = true;
       let answer = null;
       try {
-        const res = await fetch(api(`/v1/handles/${encodeURIComponent(v.name)}/availability`), {
-          headers: { accept: "application/json" },
-        });
-        answer = res.ok ? await res.json() : null;
+        const path = `/v1/handles/${encodeURIComponent(v.name)}/availability`;
+        if (signedIn) {
+          answer = await apiGet(path);
+        } else {
+          const res = await fetch(api(path), { headers: { accept: "application/json" } });
+          answer = res.ok ? await res.json() : null;
+        }
       } catch { answer = null; }
       // A newer keystroke has overtaken this one; its answer is about a name nobody is asking for.
       if (mine !== checking) return;

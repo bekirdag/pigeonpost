@@ -174,10 +174,13 @@ export async function refreshOidcToken(refreshToken) {
 /// registry does not serve: it answered 400 to everything, the 400 was read as "not taken", and the
 /// site cheerfully offered handles the postbox had already given to somebody. The registry holds no
 /// namespaces at all — nothing has ever published one to it.
-export async function handleAvailable(name) {
+export async function handleAvailable(name, memberToken) {
   const url = `${config.postboxUrl}/v1/handles/${encodeURIComponent(name)}/availability`;
   try {
-    const res = await fetch(url, { signal: AbortSignal.timeout(6000) });
+    const res = await fetch(url, {
+      signal: AbortSignal.timeout(6000),
+      headers: memberToken ? { authorization: `Bearer ${memberToken}` } : {},
+    });
     if (!res.ok) return null;
     const body = await res.json();
     return typeof body?.available === "boolean" ? body.available : null;

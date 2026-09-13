@@ -71,7 +71,7 @@ export async function startCheckout(token, { handle, operationId }) {
     const subscriptions = await billing.listSubscriptions(token);
     const paid = subscriptions.find((s) => matches(s, name) && paidThrough(s));
     if (paid) return await deliver(token, paid, name, accountId);
-    const available = await billing.handleAvailable(name);
+    const available = await billing.handleAvailable(name, token);
     if (available === null) fail(503, "Could not check handle availability. Try again shortly");
     if (!available) fail(409, `/${name} is already taken`);
 
