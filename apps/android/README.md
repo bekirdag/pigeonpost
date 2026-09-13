@@ -1,6 +1,6 @@
 # Pigeonpost for Android
 
-Native Kotlin and Jetpack Compose client for Pigeonpost, published by Wodo Teknoloji A.Ş. The iOS app under `apps/ios` is the page/workflow reference. This is an initial development build, with production API and browser sign-in wiring.
+Native Kotlin and Jetpack Compose client for Pigeonpost, published by Wodo Teknoloji A.Ş. The iOS app under `apps/ios` is the page/workflow reference. The client uses the production API, browser sign-in and Google Play handle subscriptions.
 
 ## Build
 
@@ -17,11 +17,11 @@ The second command needs a connected device or emulator. The wrapper pins Gradle
 - Unsigned release APK: `app/build/outputs/apk/release/app-release-unsigned.apk`.
 - Release bundle: `app/build/outputs/bundle/release/app-release.aab` (unsigned unless an upload key is supplied).
 - Minimum Android version: Android 8.0 / API 26. Compile and target: API 36.
-- GitHub Actions: [Android workflow](../../.github/workflows/android.yml) builds these artifacts and runs JVM and emulator tests. Artifacts are development builds, not a public release.
+- GitHub Actions: [Android workflow](../../.github/workflows/android.yml) builds these artifacts and runs JVM and emulator tests. CI validates and produces artifacts; Play releases require the dedicated upload key and a separate console submission.
 
 ## Implemented workflows
 
-Browser sign-in with PKCE and provider selection; first-inbox creation; mailbox switching; inbox/search/unread/held states; conversation subjects; message history, send and acknowledgement; native Markdown, find, copy and original text; delete/report spam; document/photo attachments and Android open/share/save; contacts with namespace precedence and explicit permission confirmation; archive; quota; free handle registration for approved testers; up to ten annual Google Play handle subscriptions with restoration; account deletion requests; account sign-out; QR sign-in scanning; phone and wide-screen layouts; system light/dark appearance; adaptive and themed Pigeonpost launcher icons.
+Browser sign-in with PKCE and provider selection; first-inbox creation; mailbox switching; inbox/search/unread/held states; conversation subjects; message history, send and acknowledgement; native Markdown, find, copy and original text; delete/report messages; document/photo attachments and Android open/share/save; contacts with namespace precedence and explicit permission confirmation; archive; quota; free handle registration for approved testers; up to ten annual Google Play handle subscriptions with restoration; versioned terms acceptance; policy/support links; account deletion requests; account sign-out; QR sign-in scanning; phone and wide-screen layouts; system light/dark appearance; adaptive and themed Pigeonpost launcher icons.
 
 Settings follows the iOS handle flow: enter a name, check availability, confirm registration, then open the new `/name/main` inbox. Approved testers retain one complimentary handle, authorized by the server's private allowlist. The separate paid section uses Google Play Billing 9.1.0 and server verification for up to ten annual subscriptions. The app displays Google's localized prices and renewal terms before checkout. See the [billing setup and validation guide](BILLING.md) and [complimentary handle configuration](../../deploy/postbox/README.md#complimentary-preview-handles). Play internal-test membership, license testing, and complimentary-handle eligibility are separate settings.
 
@@ -40,7 +40,7 @@ adb shell am start -S -n dev.pigeonpost.inbox.debug/dev.pigeonpost.inbox.MainAct
   --es pigeonpost.fixtures inbox
 ```
 
-Modes: `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages), `handles` (approved tester registration). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, registration or notification was delivered.
+Modes: `policy` (terms acceptance), `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages), `handles` (approved tester registration). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, registration or notification was delivered.
 
 ## Release signing and service work
 
@@ -48,12 +48,12 @@ Modes: `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages)
 
 The release build accepts these environment variables together: `ANDROID_UPLOAD_KEYSTORE` (absolute file path), `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. Keep the upload key and passwords in an appropriate secret store. Providing an incomplete set fails the build; providing none produces unsigned release artifacts. The dedicated upload key is stored outside the repository and its password is in macOS Keychain. No signing key is committed, and CI does not publish to Google Play.
 
-Remaining release gates:
+## Release validation and limits
 
-- Finish a real account sign-in, refresh/logout, two-inbox messaging and attachment round trip on Android. The live authorization entry point is checked separately from fixture tests.
-- Test a physical device's camera QR flow, file/photo providers, TalkBack, background/foreground lifecycle and low-memory recovery.
-- Configure Firebase/FCM and implement Android token registration and postbox delivery. The current server sends APNs only; background Android notifications are unavailable. Foreground inbox updates work through bounded long polling.
-- Complete a Google Play license-test purchase, restoration after reinstall, and cancellation/expiry check against the deployed server. Automated tests cover entitlement and UI behavior but do not prove that a live Play receipt is accepted.
-- Complete Data safety/store content, broader testing and production-device acceptance before a public download or production store release. Company registration and signing setup are complete; the first release uses internal testing.
+Android 0.2.1 (4) adds a terms acceptance screen before messaging. The current terms revision is saved with the encrypted session; a fresh sign-in, a changed terms revision or sign-out requires acceptance again. Policy, support and account deletion links remain available before acceptance. Received messages can be reported from their actions menu, and senders can be blocked from Conversation info.
+
+This release passed JVM tests, release lint/build/signature verification and all 14 emulator instrumentation tests, including consent persistence, a new account sign-in, report/block controls, handle purchases and existing message workflows. The consent screen was also checked at normal and 200% font scale. The preceding Play-installed 0.2.0 (3) passed real no-charge license-test purchases, server receipt verification, restoration and cancellation; see [billing validation](BILLING.md#validation). Fixture tests do not replace live service or device acceptance.
+
+Background Android notifications are unavailable: this version updates conversations while open using bounded long polling. Settings and store metadata disclose this limitation. Physical-device QR camera, TalkBack, low-memory recovery, a French billing account and the remaining accelerated billing lifecycle cases still need wider device acceptance. Recheck Play policy declarations, reviewer credentials, public deletion/privacy URLs and product availability for every public release.
 
 References: [Kotlin-first Android](https://developer.android.com/kotlin/first), [AGP compatibility](https://developer.android.com/build/releases/agp-8-13-0-release-notes), [AppAuth](https://github.com/openid/AppAuth-Android), [Android app signing](https://developer.android.com/studio/publish/app-signing).

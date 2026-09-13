@@ -15,3 +15,5 @@ signing.properties
 artifacts/
 screenshots/
 .DS_Store
+/.docdex/
+/.docdex-state/

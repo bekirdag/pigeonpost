@@ -39,6 +39,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pigeonpost.core.*
 import dev.pigeonpost.inbox.InboxViewModel
+import dev.pigeonpost.inbox.AppPolicy
 import dev.pigeonpost.inbox.R
 import dev.pigeonpost.inbox.auth.SessionState
 import kotlinx.coroutines.launch
@@ -60,8 +61,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visibleIds = state.subject?.messages.orEmpty().map { it.id }
     // A failed acknowledgement may revert read marks. That alone must not trigger a retry loop.
-    LaunchedEffect(state.acting?.address, state.selectedPeer, state.subject?.id, visibleIds, lifecycle) {
-        if (state.selectedPeer != null && lifecycle.isAtLeast(Lifecycle.State.RESUMED)) store.acknowledgeVisible()
+    LaunchedEffect(session.termsAccepted, state.acting?.address, state.selectedPeer, state.subject?.id, visibleIds, lifecycle) {
+        if (session.termsAccepted && state.selectedPeer != null && lifecycle.isAtLeast(Lifecycle.State.RESUMED)) store.acknowledgeVisible()
     }
     BackHandler(enabled = state.selectedPeer != null && sheet == null) { store.selectPeer(null) }
     BackHandler(enabled = state.viewingArchive && state.selectedPeer == null && sheet == null) { store.showArchive(false) }
@@ -70,7 +71,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
                 when {
                     session.loading -> Loading("Opening Pigeonpost…")
-                    !session.signedIn -> SignIn(session, signIn)
+                    !session.signedIn -> SignIn(session, signIn, openLink)
+                    !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
                     state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
                     state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
                     else -> BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -111,7 +113,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
 }
 
 @Composable
-private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit) {
+private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit, openLink: (String) -> Unit) {
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Image(painterResource(R.drawable.ic_pigeonpost), "Pigeonpost", Modifier.size(104.dp).clip(RoundedCornerShape(24.dp)))
@@ -126,6 +128,9 @@ private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit) {
             if (state.busy) CircularProgressIndicator(Modifier.size(24.dp))
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Your conversations, subjects, and contacts stay with your account.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            TextButton({ openLink(AppPolicy.TERMS_URL) }) { Text("Terms of service") }
+            TextButton({ openLink(AppPolicy.PRIVACY_URL) }) { Text("Privacy policy") }
+            TextButton({ openLink(AppPolicy.SUPPORT_URL) }) { Text("Support") }
         }
     }
 }
@@ -319,14 +324,14 @@ private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: I
                     DropdownMenuItem({ Text("Copy text") }, { menu = false; clipboard.setText(AnnotatedString(message.display.text)) })
                     DropdownMenuItem({ Text("Original message") }, { menu = false; original = true })
                     if (message.status != Delivery.SENDING) DropdownMenuItem({ Text(if (message.status == Delivery.FAILED) "Dismiss failed message" else "Delete message") }, { menu = false; confirm = "delete" })
-                    if (!message.outgoing) DropdownMenuItem({ Text("Report spam") }, { menu = false; confirm = "spam" })
+                    if (!message.outgoing) DropdownMenuItem({ Text("Report message") }, { menu = false; confirm = "spam" })
                 }
             }
         }
     }
     if (original) PageDialog("Original message", { original = false }) { SelectionContainer { Text(message.body, style = MaterialTheme.typography.bodyMedium) } }
-    if (confirm != null) Confirm(if (confirm == "spam") "Report spam?" else "Delete message?",
-        if (confirm == "spam") "This reports the sender’s message as spam to the postbox." else "This removes your copy only.",
+    if (confirm != null) Confirm(if (confirm == "spam") "Report this message?" else "Delete message?",
+        if (confirm == "spam") "Report this message and its sender for spam, abuse, or other prohibited content. This does not delete your copy." else "This removes your copy only.",
         if (confirm == "spam") "Report" else "Delete", { if (confirm == "spam") store.reportSpam(message.id) else store.deleteMessage(message.id); confirm = null }, { confirm = null })
 }
 

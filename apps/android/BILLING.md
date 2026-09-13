@@ -40,7 +40,9 @@ The server acknowledges purchases only after durable entitlement storage. Restor
 
 ## Validation
 
-Before a public rollout, use a license tester enrolled in the internal release to verify:
+The Play-installed 0.2.0 (3) release was checked on 2026-09-13 with an explicit no-charge Google test card: two purchases registered handles through the production verifier, restoration showed two active subscriptions, and the test subscriptions were canceled. The catalog contains ten active annual products at USD 8.00 in the U.S. The 0.2.1 policy update does not change billing; its full instrumentation suite still includes purchase and recovery UI coverage.
+
+Keep the following acceptance matrix for future billing changes. The live checks above do not establish every account, device, country or lifecycle case:
 
 1. All ten annual prices load, the U.S. price is USD 8.00, and a French account can see its local price.
 2. A test payment registers the requested handle and opens its inbox. Confirm the server stores and acknowledges the verified receipt.
