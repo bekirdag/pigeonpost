@@ -10,7 +10,10 @@ final class HandlePurchaseTests: XCTestCase {
     private func open(_ state: String) {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=\(state)"]
         app.launch()
-        app.buttons["settings-handles"].tap()
+        let handles = app.buttons["settings-handles"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: handles)
+        waitForExpectations(timeout: 8)
+        handles.tap()
         app.buttons["settings-purchases"].tap()
     }
 

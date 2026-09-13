@@ -25,3 +25,12 @@
 - Initial iOS UI run: 7/10 pass. Two new tests incorrectly selected the underlying Inbox navigation bar; scoped them to the actual Settings page. Inbox dismissal assertion now waits for the transition instead of returning immediately when it begins. Rerun pending.
 - Generic Docdex test runner initially lacked configuration; explicit runner environment succeeds. CSS/HTML AST is unsupported; DOM/browser validation covers those files.
 - Linux native runtime is unavailable on macOS and on the Wodomini host. Use isolated native Linux test packaging/CI, without installing GTK into the production host.
+
+
+## Native validation completed
+
+- Final iOS UI run: all 10 purchase/navigation tests pass (`ios-ui-tests-pass.log`, `ios-settings-pass.xcresult`). Found and fixed a real startup race: the Handles row now observes and waits for its stable store before allowing navigation, preventing a blank purchase page. Restored Done on every navigation page. Fixture launch staging now runs only once, so selecting an inbox does not reopen Settings during QA.
+- Linux Actions run `34779476791`: both x86_64 and aarch64 Debian/Flatpak builds, GTK navigation tests and installed package integration pass. Downloaded and inspected native Settings/Account/Handles screenshots.
+- Android signed 0.2.3 (6) bundle and APK built; upload certificate SHA-256 matches the existing Play upload key. No billing controller or price changes.
+- macOS visual QA uses a development-signed build. The existing local installation uses an Apple Development certificate; a Developer ID debug copy prompted for its keychain item. Declined that request and closed only the task-created process; no keychain password or access rule changed.
+- App Store Connect's browser login expired. Asked the user to sign in again while continuing builds. API credentials remain usable for uploads and TestFlight distribution.

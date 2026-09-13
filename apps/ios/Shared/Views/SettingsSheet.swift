@@ -50,7 +50,8 @@ struct SettingsSheet: View {
                     destination(.account, icon: "person.crop.circle", detail: session.username ?? "Your profile and devices")
                 }
                 Section {
-                    destination(.handles, icon: "at", detail: "Your names and subscriptions")
+                    destination(.handles, icon: "at", detail: handle == nil ? "Loading your handles…" : "Your names and subscriptions")
+                        .disabled(handle == nil)
                     destination(.inbox, icon: "tray", detail: "Storage and archived conversations")
                     destination(.contacts, icon: "person.2", detail: "Senders you know and trust")
                 }
