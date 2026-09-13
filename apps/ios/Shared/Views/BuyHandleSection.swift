@@ -3,36 +3,10 @@ import SwiftUI
 struct BuyHandleSection: View {
     let store: HandleStore
     @Environment(Account.self) private var account
-    @Environment(\.dismiss) private var dismiss
+    let closeSettings: () -> Void
 
     var body: some View {
         @Bindable var store = store
-        Section {
-            if !store.ownershipLoaded && store.ownershipError == nil { progress("Loading account handles…") }
-            ForEach(store.accountHandles) { handle in
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(handle.name).font(.system(.body, design: .monospaced).weight(.semibold))
-                        .textSelection(.enabled).accessibilityIdentifier("account-handle-" + handle.namespace)
-                    Text("\(handle.active ? "Active" : "Expired") · \(handle.provider)")
-                        .font(.caption).foregroundStyle(Theme.muted)
-                    if let date = handle.paidThrough {
-                        Text("\(handle.active ? "Paid through" : "Expired on") \(date.formatted(date: .abbreviated, time: .omitted))")
-                            .font(.caption).foregroundStyle(Theme.muted)
-                    }
-                    if handle.active, let mailbox = account.mailbox(inNamespace: handle.name) {
-                        Button("Open \(handle.name)") { account.act(as: mailbox); dismiss() }
-                    } else if handle.active {
-                        Button("Load or create inbox") { Task { await store.repairMailbox(handle.name) } }.disabled(store.busy)
-                    }
-                }.padding(.vertical, 4)
-            }
-            if store.ownershipLoaded && store.accountHandles.isEmpty && store.ownershipError == nil {
-                Text("No handles on this Pigeonpost account yet.").foregroundStyle(Theme.muted)
-            }
-            if let error = store.ownershipError { Text(error).font(.subheadline) }
-            Button("Refresh account handles") { Task { await account.loadIdentities(); await store.refresh() } }.disabled(store.busy)
-        } header: { Text("Your handles") }
-        footer: { Text("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.") }
         Section {
             if !store.loaded && store.activity == .loading {
                 progress("Checking your handles…")
@@ -58,7 +32,7 @@ struct BuyHandleSection: View {
                         if let mailbox = account.mailbox(inNamespace: handle.namespace) {
                             Button {
                                 account.act(as: mailbox)
-                                dismiss()
+                                closeSettings()
                             } label: {
                                 Label("Open \(mailbox.handle ?? mailbox.address)", systemImage: "tray")
                                     .font(.subheadline)
@@ -150,5 +124,41 @@ struct BuyHandleSection: View {
     }
     private func progress(_ text: String) -> some View {
         HStack(spacing: 10) { ProgressView(); Text(text).font(.subheadline).foregroundStyle(Theme.muted) }
+    }
+}
+
+/// Account ownership is separate from the App Store purchase form.
+struct AccountHandlesSection: View {
+    let store: HandleStore
+    let closeSettings: () -> Void
+    @Environment(Account.self) private var account
+
+    var body: some View {
+        Section {
+            if !store.ownershipLoaded && store.ownershipError == nil { HStack { ProgressView(); Text("Loading account handles…") } }
+            ForEach(store.accountHandles) { handle in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(handle.name).font(.system(.body, design: .monospaced).weight(.semibold))
+                        .textSelection(.enabled).accessibilityIdentifier("account-handle-" + handle.namespace)
+                    Text("\(handle.active ? "Active" : "Expired") · \(handle.provider)")
+                        .font(.caption).foregroundStyle(Theme.muted)
+                    if let date = handle.paidThrough {
+                        Text("\(handle.active ? "Paid through" : "Expired on") \(date.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                    if handle.active, let mailbox = account.mailbox(inNamespace: handle.name) {
+                        Button("Open \(handle.name)") { account.act(as: mailbox); closeSettings() }
+                    } else if handle.active {
+                        Button("Load or create inbox") { Task { await store.repairMailbox(handle.name) } }.disabled(store.busy)
+                    }
+                }.padding(.vertical, 4)
+            }
+            if store.ownershipLoaded && store.accountHandles.isEmpty && store.ownershipError == nil {
+                Text("No handles on this Pigeonpost account yet.").foregroundStyle(Theme.muted)
+            }
+            if let error = store.ownershipError { Text(error).font(.subheadline) }
+            Button("Refresh account handles") { Task { await account.loadIdentities(); await store.refresh() } }.disabled(store.busy)
+        } header: { Text("Your handles") }
+        footer: { Text("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.") }
     }
 }

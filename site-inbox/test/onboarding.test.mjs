@@ -101,6 +101,8 @@ test("inbox settings read the same handles across providers and distinguish look
   } });
   await until(() => a.$("me-sub").textContent === identity.address);
   a.$("settings-btn").click();
+  a.$("settings-nav-handles").click();
+  assert.ok(a.visible("acct-handles"));
   await until(() => a.$("acct-handles").textContent.includes("/google-name"));
   assert.match(a.$("acct-handles").textContent, /apple-name · Active · App Store/);
   assert.match(a.$("acct-handles").textContent, /google-name · Expired · Google Play/);
@@ -203,4 +205,36 @@ test("an expired session during setup returns to sign-in", async (t) => {
   assert.ok(a.visible("signin-btn"));
   assert.ok(!a.visible("create-inbox-btn"));
   assert.ok(!a.visible("app"));
+});
+
+
+test("settings has focused pages, restores focus on back and keeps controls usable", async t => {
+  const a = app(t, { existing: true });
+  await until(() => a.$("me-sub").textContent === identity.address);
+  a.$("settings-btn").click();
+  assert.ok(!a.visible("acct-handles"));
+  assert.ok(!a.visible("size-up"));
+  assert.equal(a.w.document.activeElement.id, "settings-nav-account");
+  for (const [page, control] of [["account", "acct-address"], ["handles", "acct-handles"], ["inbox", "size-up"], ["contacts", "contact-add"]]) {
+    a.$("settings-nav-" + page).click();
+    assert.ok(a.visible(control));
+    assert.equal(a.w.document.activeElement.id, "settings-title");
+    a.w.document.dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    assert.ok(a.visible("settings-nav-" + page));
+    assert.equal(a.w.document.activeElement.id, "settings-nav-" + page);
+  }
+  a.$("settings-nav-inbox").click();
+  a.$("size-up").click();
+  assert.equal(a.$("size-value").textContent, "110%");
+  a.$("settings-back").click();
+  a.$("settings-nav-inbox").click();
+  assert.equal(a.$("size-value").textContent, "110%");
+  a.$("settings-done").focus();
+  a.w.document.dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "Tab", bubbles: true, cancelable: true }));
+  assert.equal(a.w.document.activeElement.id, "settings-back");
+  a.$("settings-close").click();
+  assert.ok(!a.visible("settings-sheet"));
+  assert.equal(a.w.document.activeElement.id, "settings-btn");
+  a.$("settings-btn").click();
+  assert.ok(a.visible("settings-nav-account"));
 });

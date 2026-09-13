@@ -2343,6 +2343,7 @@
   }
   function closeSheet(id) {
     $(id).hidden = true;
+    if (id === "settings-sheet") $("settings-btn").focus();
     const at = sheetStack.indexOf(id);
     if (at !== -1) sheetStack.splice(at, 1);
   }
@@ -2398,6 +2399,23 @@
 
   // ---- settings --------------------------------------------------------------------------------
 
+  let settingsPage = "root";
+  const settingsTitles = { root: "Settings", account: "Account", handles: "Handles",
+    inbox: "Inbox and appearance", contacts: "Contacts and permissions", help: "Help and about" };
+  function showSettingsPage(next, focus = true) {
+    if (!Object.hasOwn(settingsTitles, next)) return;
+    const previous = settingsPage;
+    settingsPage = next;
+    document.querySelectorAll("[data-settings-page]").forEach(el => { el.hidden = el.dataset.settingsPage !== next; });
+    $("settings-title").textContent = settingsTitles[next];
+    $("settings-back").hidden = next === "root";
+    $("settings-sheet").querySelector(".sheet-body").scrollTop = 0;
+    if (focus) {
+      const target = next === "root" ? $("settings-nav-" + previous) || $("settings-nav-account") : $("settings-title");
+      target.focus();
+    }
+  }
+
   let handlesRequest = 0;
   async function loadAccountHandles() {
     const list = $("acct-handles"), refresh = $("acct-handles-refresh");
@@ -2436,7 +2454,9 @@
     renderContactList();
     $("acct-handles-refresh").onclick = () => { loadAccountHandles(); loadIdentities(); };
     loadAccountHandles();
+    showSettingsPage("root", false);
     openSheet("settings-sheet");
+    $("settings-nav-account").focus();
   }
 
   function renderContactList() {
@@ -2597,6 +2617,9 @@
     wireSheet("new-sheet");
 
     $("settings-btn").onclick = () => openSettings();
+    document.querySelectorAll("[data-settings-open]").forEach(el => { el.onclick = () => showSettingsPage(el.dataset.settingsOpen); });
+    $("settings-back").onclick = () => showSettingsPage("root");
+    $("settings-signout").onclick = () => signOut();
     $("settings-close").onclick = () => closeSheet("settings-sheet");
     $("settings-done").onclick = () => closeSheet("settings-sheet");
     wireSheet("settings-sheet");
@@ -2624,10 +2647,18 @@
     wireSheet("contact-sheet");
 
     document.addEventListener("keydown", (e) => {
+      if (e.key === "Tab" && sheetStack.at(-1) === "settings-sheet") {
+        const items = [...$("settings-sheet").querySelectorAll("button:not(:disabled), a[href], input:not(:disabled)")]
+          .filter(el => !el.closest("[hidden]"));
+        const first = items[0], last = items.at(-1);
+        if (first && e.shiftKey && (document.activeElement === first || document.activeElement === $("settings-title"))) { e.preventDefault(); last.focus(); }
+        else if (last && !e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
       if (e.key !== "Escape") return;
       for (let i = sheetStack.length - 1; i >= 0; i -= 1) {
         const id = sheetStack[i];
         if (!$(id).hidden) {
+          if (id === "settings-sheet" && settingsPage !== "root") { e.preventDefault(); showSettingsPage("root"); return; }
           closeSheet(id);
           return;
         }

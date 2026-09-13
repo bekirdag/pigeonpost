@@ -1258,3 +1258,24 @@ button { font: inherit; color: inherit; }
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .contact-list .cl-terms { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
 .contact-list .cl-empty { color: var(--muted); font-size: 12.5px; padding: 8px 0; }
+
+/* Focused Settings pages share the native apps' concise menu. */
+#settings-title { flex: 1; }
+#settings-sheet .sheet-body { padding: 20px; }
+.settings-row {
+  width: 100%; display: flex; align-items: center; gap: 14px;
+  min-height: 76px; padding: 14px; margin-bottom: 10px;
+  border: 1px solid var(--rule); border-radius: 12px;
+  background: var(--wash); color: var(--ink); text-align: left; font: inherit;
+  cursor: pointer;
+}
+.settings-row:hover { background: var(--ground); }
+.settings-row > svg { flex: 0 0 24px; width: 24px; height: 24px; fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.settings-row > span:not(.settings-chevron) { flex: 1; min-width: 0; }
+.settings-row strong { display: block; font-size: 15px; font-weight: 600; }
+.settings-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.settings-chevron { color: var(--muted); font-size: 24px; }
+#settings-sheet .field-note { font-size: 14px; }
+#settings-sheet .account-facts dd { overflow-wrap: anywhere; }
+.settings-links { display: flex; align-items: flex-start; flex-direction: column; gap: 12px; }
+.settings-links a { padding: 8px 0; }

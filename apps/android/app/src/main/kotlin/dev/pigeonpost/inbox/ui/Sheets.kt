@@ -6,6 +6,8 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
@@ -23,15 +25,18 @@ import dev.pigeonpost.inbox.BuildConfig
 import dev.pigeonpost.inbox.auth.SessionState
 
 @Composable
-fun PageDialog(title: String, dismiss: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
-    Dialog(dismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+fun PageDialog(title: String, dismiss: () -> Unit, back: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
+    Dialog({ (back ?: dismiss)() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.padding(16.dp).widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.92f), shape = MaterialTheme.shapes.extraLarge) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, back)
                     Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
                     ActionIcon("Close $title", Icons.Outlined.Close, dismiss)
                 }
-                Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
+                key(title) {
+                    Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
+                }
             }
         }
     }
@@ -79,16 +84,57 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
         dismissButton = { TextButton(dismiss) { Text("Cancel") } })
 }
 
+private enum class SettingsPage(val title: String) {
+    ROOT("Settings"), ACCOUNT("Account"), HANDLES("Handles"), PURCHASES("Get a handle"),
+    PREVIEW("Tester registration"), INBOX("Inbox and storage"), HELP("Help and about")
+}
+
+@Composable
+private fun SettingsRow(title: String, detail: String, icon: ImageVector, click: () -> Unit) {
+    Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 1.dp) {
+        ListItem(headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
+            supportingContent = { Text(detail) },
+            leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
+            trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+            modifier = Modifier.fillMaxWidth().clickable(onClick = click))
+    }
+}
+
 @Composable
 fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, handleState: HandleState, handles: HandleStore,
     paidHandles: PaidHandleStore? = null,
     accountHandles: AccountHandleStore? = null, refreshMailboxes: () -> Unit = {},
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit) {
-    PageDialog("Settings", dismiss) {
-        Text(session.username ?: "Your account", style = MaterialTheme.typography.titleMedium)
-        SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
-        HorizontalDivider()
+    var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
+    val page = SettingsPage.valueOf(pageName)
+    fun navigate(next: SettingsPage) { pageName = next.name }
+    val back: (() -> Unit)? = if (page == SettingsPage.ROOT) null else ({
+        navigate(if (page == SettingsPage.PURCHASES || page == SettingsPage.PREVIEW) SettingsPage.HANDLES else SettingsPage.ROOT)
+    })
+    PageDialog(page.title, dismiss, back = back) {
+        when (page) {
+            SettingsPage.ROOT -> {
+                SettingsRow("Account", session.username ?: "Your profile and devices", Icons.Outlined.AccountCircle) { navigate(SettingsPage.ACCOUNT) }
+                SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
+                SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
+                SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
+                SettingsRow("Help and about", "Support, privacy and app information", Icons.Outlined.HelpOutline) { navigate(SettingsPage.HELP) }
+            }
+            SettingsPage.ACCOUNT -> {
+                Text("Signed in as", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(session.username ?: "Your account", style = MaterialTheme.typography.titleLarge)
+                Text("Current inbox", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyLarge) }
+                HorizontalDivider()
+                SettingsRow("Scan sign-in code", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
+                HorizontalDivider()
+                OutlinedButton(signOut, Modifier.fillMaxWidth()) { Text("Sign out") }
+                TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
+            }
+            SettingsPage.HANDLES -> {
+                if (paidHandles != null) SettingsRow("Get a handle", "Register a name or restore purchases", Icons.Outlined.AddCircleOutline) { navigate(SettingsPage.PURCHASES) }
+                SettingsRow("Tester registration", "Complimentary names for approved testers", Icons.Outlined.CardGiftcard) { navigate(SettingsPage.PREVIEW) }
         accountHandles?.let { owned ->
             val holdings by owned.state.collectAsStateWithLifecycle()
             LaunchedEffect(owned) { owned.refresh() }
@@ -111,37 +157,37 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             holdings.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
             Text("Expired names need renewal through their original provider.", style = MaterialTheme.typography.bodySmall)
             OutlinedButton({ owned.refresh(); refreshMailboxes() }, Modifier.fillMaxWidth(), enabled = !holdings.loading) { Text("Refresh account handles") }
-            HorizontalDivider()
         }
-        HandleSection(handleState, handles, state.mailboxes, openInbox)
-        paidHandles?.let {
-            HorizontalDivider()
-            PaidHandleSection(it, state.mailboxes, openInbox, openLink)
+            }
+            SettingsPage.PURCHASES -> paidHandles?.let { PaidHandleSection(it, state.mailboxes, openInbox, openLink) }
+            SettingsPage.PREVIEW -> HandleSection(handleState, handles, state.mailboxes, openInbox)
+            SettingsPage.INBOX -> {
+                Text("Storage", style = MaterialTheme.typography.titleMedium)
+                state.quota?.let { quota ->
+                    LinearProgressIndicator(progress = { quota.fraction }, modifier = Modifier.fillMaxWidth(), color = if (quota.warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
+                    Text("${bytes(quota.usedBytes)} of ${bytes(quota.limitBytes)} · ${quota.tier}", style = MaterialTheme.typography.bodyMedium)
+                } ?: Text("Storage information is unavailable.")
+                SettingsRow("Archived conversations", "Saved conversations, out of the way", Icons.Outlined.Archive, archive)
+                HorizontalDivider()
+                Text("Notifications", style = MaterialTheme.typography.titleMedium)
+                Text("Conversations update while the app is open. Background notifications are not available yet.", style = MaterialTheme.typography.bodyMedium)
+            }
+            SettingsPage.HELP -> {
+                TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Contact support") }
+                TextButton({ openLink("https://pigeonpost.dev/app-privacy.html") }) { Text("Privacy policy") }
+                TextButton({ openLink("https://pigeonpost.dev/app-terms.html") }) { Text("Terms of service") }
+                HorizontalDivider()
+                Text("Pigeonpost ${BuildConfig.VERSION_NAME}", style = MaterialTheme.typography.titleMedium)
+                Text("Wodo Teknoloji A.Ş.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                if (fixtures) Text("Development fixtures", style = MaterialTheme.typography.labelSmall)
+            }
         }
-        HorizontalDivider()
-        Text("Storage", style = MaterialTheme.typography.titleSmall)
-        state.quota?.let { quota ->
-            LinearProgressIndicator(progress = { quota.fraction }, modifier = Modifier.fillMaxWidth(), color = if (quota.warning) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary)
-            Text("${bytes(quota.usedBytes)} of ${bytes(quota.limitBytes)} · ${quota.tier}", style = MaterialTheme.typography.bodyMedium)
-        } ?: Text("Storage information is unavailable.", style = MaterialTheme.typography.bodyMedium)
-        OutlinedButton(contacts, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.PeopleOutline, null); Spacer(Modifier.width(8.dp)); Text("Contacts and permissions") }
-        OutlinedButton(archive, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.Archive, null); Spacer(Modifier.width(8.dp)); Text("Archived conversations") }
-        OutlinedButton(scan, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan sign-in code") }
-        HorizontalDivider()
-        Text("Notifications", style = MaterialTheme.typography.titleSmall)
-        Text("Conversations update while the app is open. This version does not deliver background notifications.", style = MaterialTheme.typography.bodyMedium)
-        TextButton({ openLink("https://pigeonpost.dev/app-privacy.html") }) { Text("Privacy policy") }
-        TextButton({ openLink("https://pigeonpost.dev/app-terms.html") }) { Text("Terms of service") }
-        TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Support") }
-        TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
-        TextButton(signOut) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
-        Text("Pigeonpost ${BuildConfig.VERSION_NAME}\nWodo Teknoloji A.Ş." + if (fixtures) "\nDevelopment fixtures" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }
 }
 
 @Composable
-fun ContactsDialog(state: InboxState, edit: (Contact?) -> Unit, dismiss: () -> Unit) {
-    PageDialog("Contacts and permissions", dismiss) {
+fun ContactsDialog(state: InboxState, edit: (Contact?) -> Unit, dismiss: () -> Unit, back: (() -> Unit)? = null) {
+    PageDialog("Contacts and permissions", dismiss, back = back) {
         Text("Knowing a sender and letting their agent requests run automatically are separate choices.", style = MaterialTheme.typography.bodyMedium)
         Button({ edit(null) }, Modifier.fillMaxWidth()) { Text("Add contact") }
         if (state.contacts.isEmpty()) Text("No contacts yet.")

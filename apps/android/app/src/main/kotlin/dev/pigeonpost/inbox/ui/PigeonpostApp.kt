@@ -57,7 +57,16 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     var editContact by remember { mutableStateOf<Contact?>(null) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); store.clearError() } }
-    LaunchedEffect(session.signedIn, state.acting?.address) { sheet = null; editContact = null }
+    // Preserve a Settings subpage through rotation, but never carry it to another account/inbox.
+    var sheetOwner by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(session.signedIn, session.loading, session.username, state.acting?.address) {
+        val owner = if (session.signedIn && state.acting != null) "${session.username}\n${state.acting?.address}" else null
+        val signedOut = !session.loading && !session.signedIn
+        if (signedOut || (owner != null && sheetOwner != null && owner != sheetOwner)) {
+            sheet = null; editContact = null
+        }
+        if (owner != null || signedOut) sheetOwner = owner
+    }
     val lifecycle by LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visibleIds = state.subject?.messages.orEmpty().map { it.id }
     // A failed acknowledgement may revert read marks. That alone must not trigger a retry loop.
@@ -103,7 +112,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink)
-            "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null })
+            "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
             "peer" -> PeerDialog(state, store, { sheet = null }, { contact -> editContact = contact; sheet = "contact" })

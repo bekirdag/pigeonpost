@@ -57,7 +57,7 @@ class AppFlowTest {
         launch().use {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
-            shown("Storage")
+            shown("Settings")
             ui.onNodeWithText("Contacts and permissions").performScrollTo().performClick()
             ui.onNodeWithText("Add contact").performClick()
             ui.onNodeWithText("Address or /namespace/*").performTextInput("/demo/new-agent")
@@ -66,10 +66,12 @@ class AppFlowTest {
             shown("New agent")
             ui.onNodeWithContentDescription("Close Contacts and permissions").performClick()
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Inbox and storage").performClick()
             ui.onNodeWithText("Archived conversations").performScrollTo().performClick()
             shown("Archived agent")
             ui.onNodeWithContentDescription("Back to inbox").performClick()
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Account").performClick()
             ui.onNodeWithText("Sign out").performScrollTo().performClick()
             ui.onNodeWithText("Sign out").performClick()
             shown("A direct line to your agents.")
@@ -79,6 +81,7 @@ class AppFlowTest {
         launch().use {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Handles").performClick()
             shown("Your handles")
             ui.onNodeWithText("Active · App Store").performScrollTo().assertIsDisplayed()
             ui.onNodeWithText("Active · Google Play").performScrollTo().assertIsDisplayed()
@@ -122,6 +125,8 @@ class AppFlowTest {
         launch("handles").use {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Handles").performClick()
+            ui.onNodeWithText("Tester registration").performClick()
             val registrationField = hasSetTextAction() and hasAnyAncestor(isDialog())
             ui.waitUntil(10000) { ui.onAllNodes(registrationField).fetchSemanticsNodes().isNotEmpty() }
             // Material does not lay out an offscreen text-field label on every device size.
@@ -145,11 +150,39 @@ class AppFlowTest {
         launch().use {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Handles").performClick()
+            ui.onNodeWithText("Tester registration").performClick()
             shown("Free handle registration is available to approved testers")
             ui.onNodeWithText("Handle name").assertDoesNotExist()
             ui.onNodeWithText("Register for free").assertDoesNotExist()
         }
     }
+    @Test fun settingsSubpagesBackAndRecreationPreserveNavigation() {
+        launch().use { scenario ->
+            shown("Inbox")
+            ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Sign out").assertDoesNotExist()
+            ui.onNodeWithText("Restore purchases").assertDoesNotExist()
+            ui.onNodeWithText("Account").performClick()
+            ui.onNodeWithText("Delete account").assertExists()
+            ui.onNodeWithContentDescription("Back").performClick()
+            ui.onNodeWithText("Inbox and storage").performClick()
+            ui.onNodeWithText("Notifications").assertExists()
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            ui.onNodeWithText("Handles").performClick()
+            ui.onNodeWithText("Tester registration").performClick()
+            scenario.recreate()
+            shown("Free handle registration is available to approved testers")
+            ui.onNodeWithContentDescription("Back").performClick()
+            ui.onNodeWithText("Your handles").assertExists()
+            ui.onNodeWithContentDescription("Back").performClick()
+            ui.onNodeWithText("Help and about").performClick()
+            ui.onNodeWithText("Privacy policy").assertExists()
+            ui.onNodeWithContentDescription("Close Help and about").performClick()
+            ui.onNodeWithContentDescription("Settings").assertIsDisplayed()
+        }
+    }
+
     @Test fun encryptedSessionAndAttachmentsUsePrivateStorage() = runBlocking {
         val root = File(context.cacheDir, "storage-test").apply { mkdirs() }
         try {

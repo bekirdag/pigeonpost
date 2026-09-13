@@ -33,109 +33,147 @@ struct SettingsSheet: View {
         }
     }
 
+    private enum Page: String, Hashable {
+        case account = "Account"
+        case handles = "Handles"
+        case purchases = "Get a handle"
+        case inbox = "Inbox and storage"
+        case contacts = "Contacts and permissions"
+        case help = "Help and about"
+    }
+    @State private var confirmSignOut = false
+
     var body: some View {
         NavigationStack {
             List {
-                if let handle {
-                    BuyHandleSection(store: handle)
-                        // A stable identity across every phase. Without it a branch change is a
-                        // different row to SwiftUI, and a List that re-identifies its rows mid-drag
-                        // throws away where you were.
-                        .id("handle-section")
-                }
-                if let quota = inbox.quota {
-                    MailboxUsageSection(quota: quota)
-                }
-
                 Section {
-                    Button {
-                        inbox.viewingArchive = true
-                        dismiss()
-                    } label: {
-                        HStack {
-                            Label("Archived conversations", systemImage: "archivebox")
-                            Spacer()
-                            Text("\(inbox.archivedCount)")
-                                .foregroundStyle(Theme.muted)
-                        }
-                    }
-                } footer: {
-                    Text("Archiving hides a conversation from your inbox. Nothing is deleted, the other side is never told, and new mail from them still arrives and still counts as unread.")
+                    destination(.account, icon: "person.crop.circle", detail: session.username ?? "Your profile and devices")
                 }
-
                 Section {
-                    ForEach(inbox.contacts, id: \.peer) { contact in
-                        Button { sheet = .edit(contact) } label: { ContactRow(contact: contact) }
-                            .buttonStyle(.plain)
-                    }
-                    Button("Add a sender") { sheet = .addSender }
-                        .font(.system(size: 15, weight: .medium))
-                } header: {
-                    Text("Trusted senders")
-                } footer: {
-                    Text("Who this mailbox admits, and how far it trusts them. /namespace/* covers a whole fleet. Autonomy *auto* plus a verb lets that sender's request be acted on without asking you first.")
+                    destination(.handles, icon: "at", detail: handle == nil ? "Loading your handles…" : "Your names and subscriptions")
+                        .disabled(handle == nil)
+                    destination(.inbox, icon: "tray", detail: "Storage and archived conversations")
+                    destination(.contacts, icon: "person.2", detail: "Senders you know and trust")
                 }
-
-                // Signing another machine in by pointing a camera at it. Offered only where there
-                // is a camera to point: on a Mac the code and the machine are usually the same
-                // screen, which makes this a row that cannot do anything.
-                #if os(iOS)
                 Section {
-                    Button {
-                        sheet = .scan
-                    } label: {
-                        Label("Scan a sign-in code", systemImage: "qrcode.viewfinder")
-                    }
-                } footer: {
-                    Text("Signs a machine in by looking at it: run `pigeonpost login` there, and point this at the code it prints.")
+                    destination(.help, icon: "questionmark.circle", detail: "Support, privacy and app information")
                 }
-                #endif
-
-                Section("Account") {
-                    LabeledContent("Signed in as", value: session.username ?? "—")
-                    LabeledContent("Mailbox", value: account.me?.key ?? "—")
-                    LabeledContent("Postbox", value: Config.postbox.host ?? "—")
-                    Link("Delete account", destination: URL(string: "https://pigeonpost.dev/account#delete-account")!)
-                        .accessibilityIdentifier("deleteAccount")
-                    Link("Privacy policy", destination: URL(string: "https://pigeonpost.dev/app-privacy.html")!)
-                    Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
-                    Button("Sign out", role: .destructive) {
-                        dismiss()
-                        inbox.reset()
-                        Task { await account.signOut() }
-                    }
-                }
-                .font(.system(size: 14))
             }
             .navigationTitle("Settings")
             .inlineTitle()
-            // On the NavigationStack, whose identity does not change while this sheet is open, so
-            // this runs once per visit rather than once per re-render.
-            .task {
-                #if DEBUG
-                if Fixtures.enabled {
-                    if handle == nil { handle = HandleFixtures.make(Fixtures.handleState ?? "unavailable", account: account) }
-                    await handle?.refresh()
-                    return
-                }
-                #endif
-                if handle == nil { handle = account.handles }
-                await handle?.refresh()
-            }
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .sheet(item: $sheet) { which in
-                switch which {
-                case .addSender: ContactSheet(existing: nil)
-                case let .edit(contact): ContactSheet(existing: contact)
-                case .scan:
-                    // A camera pointed at somebody else's screen. There is no Mac equivalent worth
-                    // having, and the row that offers it is hidden there too.
-                    #if os(iOS)
-                    ScanView()
-                    #else
-                    EmptyView()
-                    #endif
+            .navigationDestination(for: Page.self) { page in
+                List { pageContent(page) }
+                    .navigationTitle(page.rawValue)
+                    .inlineTitle()
+                    .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+            }
+        }
+        // Keep one store alive while moving between pages, including an unfinished purchase.
+        .task {
+            #if DEBUG
+            if Fixtures.enabled {
+                if handle == nil { handle = HandleFixtures.make(Fixtures.handleState ?? "unavailable", account: account) }
+                await handle?.refresh()
+                return
+            }
+            #endif
+            if handle == nil { handle = account.handles }
+            await handle?.refresh()
+        }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .addSender: ContactSheet(existing: nil)
+            case let .edit(contact): ContactSheet(existing: contact)
+            case .scan:
+                #if os(iOS)
+                ScanView()
+                #else
+                EmptyView()
+                #endif
+            }
+        }
+        .confirmationDialog("Sign out of Pigeonpost?", isPresented: $confirmSignOut, titleVisibility: .visible) {
+            Button("Sign out", role: .destructive) {
+                dismiss()
+                inbox.reset()
+                Task { await account.signOut() }
+            }
+        } message: { Text("You can sign in again to return to your inboxes and handles.") }
+    }
+
+    private func destination(_ page: Page, icon: String, detail: String) -> some View {
+        NavigationLink(value: page) {
+            HStack(spacing: 14) {
+                Image(systemName: icon)
+                    .font(.system(size: 22)).foregroundStyle(.tint)
+                    .frame(width: 30).accessibilityHidden(true)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(page.rawValue).font(.body.weight(.medium))
+                    Text(detail).font(.subheadline).foregroundStyle(.secondary)
                 }
+                .padding(.vertical, 6)
+            }
+        }
+        .accessibilityIdentifier("settings-" + String(describing: page))
+    }
+
+    @ViewBuilder private func pageContent(_ page: Page) -> some View {
+        switch page {
+        case .account:
+            Section("Your account") {
+                LabeledContent("Signed in as", value: session.username ?? "—")
+                LabeledContent("Current inbox", value: account.me?.key ?? "—")
+                    .textSelection(.enabled)
+            }
+            #if os(iOS)
+            Section {
+                Button { sheet = .scan } label: { Label("Scan a sign-in code", systemImage: "qrcode.viewfinder") }
+            } footer: { Text("Scan a Pigeonpost code to sign in on another device.") }
+            #endif
+            Section {
+                Button("Sign out", role: .destructive) { confirmSignOut = true }
+                Link("Delete account", destination: URL(string: "https://pigeonpost.dev/account#delete-account")!)
+                    .foregroundStyle(.red).accessibilityIdentifier("deleteAccount")
+            }
+        case .handles:
+            Section {
+                destination(.purchases, icon: "plus.circle", detail: "Register a name or restore purchases")
+            }
+            if let handle { AccountHandlesSection(store: handle, closeSettings: { dismiss() }) }
+        case .purchases:
+            if let handle { BuyHandleSection(store: handle, closeSettings: { dismiss() }).id("handle-section") }
+        case .inbox:
+            if let quota = inbox.quota { MailboxUsageSection(quota: quota) }
+            else { Section("Storage") { Text("Storage information is unavailable.").foregroundStyle(.secondary) } }
+            Section {
+                Button { inbox.viewingArchive = true; dismiss() } label: {
+                    HStack {
+                        Label("Archived conversations", systemImage: "archivebox")
+                        Spacer()
+                        Text("\(inbox.archivedCount)").foregroundStyle(.secondary)
+                    }
+                }
+            } footer: { Text("Archived conversations stay saved. New messages still arrive.") }
+        case .contacts:
+            Section {
+                ForEach(inbox.contacts, id: \.peer) { contact in
+                    Button { sheet = .edit(contact) } label: { ContactRow(contact: contact) }.buttonStyle(.plain)
+                }
+                Button { sheet = .addSender } label: { Label("Add a sender", systemImage: "person.badge.plus") }
+            } footer: {
+                Text("Choose who can send you messages and which requests need your approval. Adding a sender does not grant automatic permissions.")
+            }
+        case .help:
+            Section {
+                Link("Contact support", destination: URL(string: "https://pigeonpost.dev/app-support.html")!)
+                Link("Privacy policy", destination: URL(string: "https://pigeonpost.dev/app-privacy.html")!)
+                Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
+            }
+            Section("About Pigeonpost") {
+                LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                LabeledContent("Postbox", value: Config.postbox.host ?? "—")
+                Text("Wodo Teknoloji A.Ş.").foregroundStyle(.secondary)
             }
         }
     }
