@@ -1760,16 +1760,17 @@ jobs:
         run: |
           set -euo pipefail
           mkdir published-npm
-          for attempt in 1 2 3 4 5 6; do
+          # npm pack can lag publication too; give it the same window as npm view below.
+          for attempt in $(seq 1 18); do
             if npm pack "$PACKAGE@$VERSION" --pack-destination published-npm --json \
                 > published-npm/pack.json 2>published-npm/error.txt; then
               break
             fi
-            if [ "$attempt" -eq 6 ]; then
+            if [ "$attempt" -eq 18 ]; then
               cat published-npm/error.txt >&2
               exit 1
             fi
-            sleep 5
+            sleep 10
           done
           PACK_FILE=$(node -p "require('./published-npm/pack.json')[0].filename")
           cmp "$NPM_TARBALL" "published-npm/$PACK_FILE"
