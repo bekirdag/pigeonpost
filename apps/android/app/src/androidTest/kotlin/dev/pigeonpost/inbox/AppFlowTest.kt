@@ -122,8 +122,10 @@ class AppFlowTest {
         launch("handles").use {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
-            shown("Handle name")
-            ui.onNodeWithText("Handle name").performScrollTo().performTextInput("support")
+            val registrationField = hasSetTextAction() and hasAnyAncestor(isDialog())
+            ui.waitUntil(10000) { ui.onAllNodes(registrationField).fetchSemanticsNodes().isNotEmpty() }
+            // Material does not lay out an offscreen text-field label on every device size.
+            ui.onNode(registrationField).performScrollTo().performTextInput("support")
             ui.onNodeWithText("Check availability").performScrollTo().performClick()
             shown("That name is reserved")
             ui.onNodeWithText("Handle name").performTextReplacement("alex")
