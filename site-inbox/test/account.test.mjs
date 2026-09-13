@@ -8,12 +8,13 @@ const source = readFileSync(new URL("../../site/account.js", import.meta.url), "
 const config = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
-async function deletionPage(t, { signedIn = true, existing = null, status = 200, deferPost = false } = {}) {
+async function deletionPage(t, { signedIn = true, existing = null, status = 200, deferPost = false, pendingCard = false } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#delete-account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
   window.eval(config);
   if (signedIn) window.sessionStorage.setItem("pp_session", "member-token");
+  if (pendingCard) window.localStorage.setItem("pp_card_session", "unfinished-card-setup");
   const calls = [];
   let finishPost;
   const receipt = {request_id: "del_example", requested_at: 10, complete_by: 2592010, completed_at: null};
@@ -34,6 +35,14 @@ test("account deletion requires sign-in before any request is sent", async t => 
   const p = await deletionPage(t, {signedIn: false});
   assert.ok(p.window.document.querySelector("#ac-deletion-signin"));
   assert.equal(p.calls.length, 0);
+});
+
+test("deletion never resumes an unrelated unfinished payment-method setup", async t => {
+  const p = await deletionPage(t, {pendingCard: true});
+  assert.equal(p.window.location.hash, "#delete-account");
+  assert.ok(p.window.document.querySelector("#ac-deletion-confirm"));
+  assert.equal(p.calls.length, 1);
+  assert.equal(p.window.localStorage.getItem("pp_card_session"), "unfinished-card-setup");
 });
 
 test("deletion identifies the account, requires exact confirmation, and sends only one request", async t => {

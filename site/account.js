@@ -1078,8 +1078,10 @@
 
   document.addEventListener("DOMContentLoaded", async () => {
     await completeLoginIfReturning();
-    await completeCheckoutIfReturning();
-    await completeCardSetupIfReturning();
+    if (window.location.hash !== "#delete-account") {
+      await completeCheckoutIfReturning();
+      await completeCardSetupIfReturning();
+    }
     render();
   });
   window.addEventListener("hashchange", render);
