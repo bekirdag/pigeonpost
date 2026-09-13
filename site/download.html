@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Download Pigeonpost for Mac</title>
-<meta name="description" content="Download Pigeonpost Desktop for Apple silicon and Intel Macs. Developer ID signed and notarized by Apple. Requires macOS 14 or newer.">
+<title>Download Pigeonpost</title>
+<meta name="description" content="Find Pigeonpost for your device. Download the native Mac app, check Windows and Linux availability, or open your inbox in a browser.">
 <meta name="color-scheme" content="light dark">
 <link rel="canonical" href="https://pigeonpost.dev/download">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -13,10 +13,21 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/brand.css">
-<link rel="stylesheet" href="/download.css">
-<script src="/download.js" defer></script>
+<link rel="stylesheet" href="/download.css?v=20260913">
+<script src="/download.js?v=20260913" defer></script>
 </head>
 <body>
+<svg class="platform-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
+  <symbol id="icon-mac" viewBox="0 0 24 24">
+    <path d="M16.4 1.3c.2 1.4-.4 2.8-1.2 3.8-.9 1-2.2 1.6-3.5 1.5-.2-1.3.5-2.7 1.3-3.6.9-1 2.3-1.7 3.4-1.7zM20.9 17.5c-.5 1.2-.8 1.8-1.5 2.9-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1s-2.5 1-4 1c-1.7 0-3-1.6-4-3.1C.5 16.4.1 10.9 1.9 8.4c1.3-1.8 3.3-2.7 5.2-2.7 1.6 0 2.7 1 4 1 1.2 0 3.2-1.2 5.4-1 1.9.1 3.4 1 4.4 2.3-3.9 2.2-3.3 7.6 0 9.5z" transform="translate(2 0) scale(.88)"/>
+  </symbol>
+  <symbol id="icon-windows" viewBox="0 0 24 24"><path d="M2 2h9v9H2zm11 0h9v9h-9zM2 13h9v9H2zm11 0h9v9h-9z"/></symbol>
+  <symbol id="icon-linux" viewBox="0 0 24 24">
+    <path fill-rule="evenodd" d="M12 1c-3 0-4.5 2.3-4.5 5.3 0 1.5-.5 3.1-1.7 4.8-1.4 2-2.4 4.2-1.9 5.8.2.7.8.8 1.5.1C5.5 20 8.3 22 12 22s6.5-2 6.6-5c.7.7 1.3.6 1.5-.1.5-1.6-.5-3.8-1.9-5.8-1.2-1.7-1.7-3.3-1.7-4.8C16.5 3.3 15 1 12 1zm-1.6 4c-.5 0-.9.6-.9 1.3s.4 1.3.9 1.3.9-.6.9-1.3-.4-1.3-.9-1.3zm3.2 0c-.5 0-.9.6-.9 1.3s.4 1.3.9 1.3.9-.6.9-1.3-.4-1.3-.9-1.3zM12 8l-2.2 1L12 10.5 14.2 9 12 8zm0 3c-2.6 0-4.5 3-4.5 5.7 0 2 1.8 3.3 4.5 3.3s4.5-1.3 4.5-3.3C16.5 14 14.6 11 12 11z"/>
+    <path d="m5.5 18-3 3 .5 1.5 6 .5 1-2.5zm13 0 3 3-.5 1.5-6 .5-1-2.5z"/>
+  </symbol>
+  <symbol id="icon-web" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zM4.3 11h3.8c.1-2.3.5-4.3 1.2-6A8 8 0 0 0 4.3 11zm0 2a8 8 0 0 0 5 6c-.7-1.7-1.1-3.7-1.2-6H4.3zm5.8-2h3.8C13.7 6.6 12.6 4 12 4s-1.7 2.6-1.9 7zm0 2c.2 4.4 1.3 7 1.9 7s1.7-2.6 1.9-7h-3.8zm5.8-2h3.8a8 8 0 0 0-5-6c.7 1.7 1.1 3.7 1.2 6zm0 2c-.1 2.3-.5 4.3-1.2 6a8 8 0 0 0 5-6h-3.8z"/></symbol>
+</svg>
 <div class="wrap">
   <header>
     <a href="/" aria-label="Pigeonpost home"><picture class="brand-logo">
@@ -28,42 +39,50 @@
   <main>
     <div class="hero download-hero">
       <p class="download-eyebrow">Pigeonpost Desktop</p>
-      <h1>Your inbox, at home on your Mac.</h1>
-      <p class="lede">Keep up with your agents in a native Mac app. Sign in with Apple, Google or GitHub and pick up your conversations.</p>
+      <h1>Download Pigeonpost.</h1>
+      <p class="lede">Keep up with your agents, wherever you work. Find the app for your desktop or pick up your conversations in the browser.</p>
     </div>
 
     <section class="download-feature" aria-labelledby="recommended-title">
-      <p class="download-badge" id="device-recommendation" aria-live="polite">For Apple silicon and Intel Macs</p>
-      <h2 id="recommended-title">Download for Mac</h2>
-      <p id="recommended-description">One universal app. Your Mac automatically runs the version for its chip.</p>
+      <p class="download-badge" id="device-recommendation" aria-live="polite">Choose your platform</p>
+      <h2 id="recommended-title">Make yourself at home.</h2>
+      <p id="recommended-description">Choose a desktop release below, or use the web inbox on any device.</p>
       <div class="cta">
-        <a class="btn btn-primary" id="recommended-download" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/Pigeonpost-Desktop-1.0-30.zip">Download for Mac</a>
-        <a class="btn btn-secondary" href="#all-downloads">All download options</a>
+        <a class="btn btn-primary" id="recommended-download" href="#all-downloads">Browse downloads</a>
+        <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev" id="web-inbox"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
       </div>
+      <a class="download-other-link" id="other-downloads" href="#all-downloads" hidden>See all desktop releases</a>
     </section>
 
     <section aria-labelledby="all-downloads">
-      <h2 id="all-downloads">Choose your Mac</h2>
-      <p>Both options contain the same universal app. You can also download it for another Mac.</p>
-      <p class="download-meta">Version 1.0 (30) · macOS 14 Sonoma or newer · 1.8 MB ZIP</p>
-      <p class="download-trust">Developer ID signed · Notarized by Apple</p>
+      <h2 id="all-downloads">Desktop releases</h2>
+      <p>Choose another platform or download for another computer.</p>
       <div class="download-options">
-        <article class="download-option" id="apple-silicon-download">
-          <h3>Apple silicon</h3>
-          <p>For Macs with an Apple M-series chip. Runs natively.</p>
-          <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/Pigeonpost-Desktop-1.0-30.zip">Download for Apple silicon</a>
+        <article class="download-option" data-platform="mac" data-recommendation-title="Download for Mac">
+          <h3>Mac</h3>
+          <span class="release-status">Available now</span>
+          <p class="platform-description">One universal app for Apple silicon and Intel. Requires macOS 14 Sonoma or newer.</p>
+          <p class="download-meta">Version 1.0 (30) · 1.8 MB ZIP<br>Developer ID signed and notarized by Apple.</p>
+          <a class="btn btn-secondary platform-action" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/Pigeonpost-Desktop-1.0-30.zip"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download for Mac</span></a>
+          <p class="download-links"><a href="https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.0-30">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/SHA256SUMS">Checksum</a></p>
         </article>
-        <article class="download-option" id="intel-download">
-          <h3>Intel Mac</h3>
-          <p>For Intel-based Macs running macOS 14 or newer.</p>
-          <a class="btn btn-secondary" href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/Pigeonpost-Desktop-1.0-30.zip">Download for Intel</a>
+        <article class="download-option" data-platform="windows" data-recommendation-title="Pigeonpost on Windows">
+          <h3>Windows</h3>
+          <span class="release-status release-pending">In development</span>
+          <p class="platform-description">The native Windows app is in development. Use your inbox in the browser for now.</p>
+          <a class="btn btn-secondary platform-action" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-windows"/></svg><span>Open web inbox</span></a>
+        </article>
+        <article class="download-option" data-platform="linux" data-recommendation-title="Pigeonpost on Linux">
+          <h3>Linux</h3>
+          <span class="release-status release-pending">Not yet available</span>
+          <p class="platform-description">A Linux desktop app is not available yet. Use your inbox in the browser for now.</p>
+          <a class="btn btn-secondary platform-action" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-linux"/></svg><span>Open web inbox</span></a>
         </article>
       </div>
-      <p class="download-meta"><a href="https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.0-30">Release notes</a> · <a href="https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-30/SHA256SUMS">Download checksum</a></p>
     </section>
 
     <section aria-labelledby="install-title">
-      <h2 id="install-title">Make yourself at home</h2>
+      <h2 id="install-title">Install on your Mac</h2>
       <ol class="download-install">
         <li>Open the downloaded ZIP file.</li>
         <li>Drag <strong>Pigeonpost Desktop</strong> into your <strong>Applications</strong> folder.</li>
@@ -75,7 +94,7 @@
     <section aria-labelledby="web-title">
       <h2 id="web-title">On another device?</h2>
       <p>Use your inbox in a browser on Windows, Linux, iPhone, iPad or Android.</p>
-      <a class="btn btn-secondary" id="web-inbox" href="https://inbox.pigeonpost.dev">Open the web inbox</a>
+      <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
       <p class="download-meta">Building with agents? <a href="https://developers.pigeonpost.dev/quickstart">Get the command-line tools</a>.</p>
     </section>
   </main>

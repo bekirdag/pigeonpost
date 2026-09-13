@@ -68,13 +68,20 @@ shasum -a256 site-inbox/app.js
 ssh wodomini 'shasum -a256 /var/www/pigeonpost-inbox/app.js'
 ```
 
-## Public Mac download
+## Desktop downloads
 
-`site/download.html` serves `/download` and offers a universal Mac app for both Apple silicon and
-Intel. Its links point to a versioned GitHub release, so the archive is independent of static-site
-deployment and cannot be removed by the `rsync --delete` above. Both chip choices stay visible;
-the script recommends the universal app on Macs and the web inbox on other recognized devices.
-It does not infer a Mac's chip from an `Intel` browser user agent.
+The homepage has one platform-neutral Download link. `site/download.html` serves `/download`,
+recommends the released package for the visitor's OS, and lists every desktop platform below.
+The Mac package is universal for Apple silicon and Intel. Windows is an unreleased preview;
+Linux has no desktop release. Both offer the web inbox until a native app is ready. CLI binaries
+must never be presented as desktop installers. Platform actions carry Mac, Windows or Linux icons.
+
+The script reads each platform's description and action from its HTML card, keeping package URLs
+in one place. Unknown devices and visitors without JavaScript get manual choices. Mobile devices,
+including iPad desktop mode, and ChromeOS get the web inbox. It does not infer a Mac's chip from an
+`Intel` browser user agent. Update a platform card only after its real installer passes validation.
+Versioned GitHub release links keep archives independent of static-site deployment and safe from
+the `rsync --delete` above.
 
 The direct download must use **Developer ID Application** signing, hardened runtime, both
 `arm64` and `x86_64`, and an Apple notarization ticket. App Store signing and ad-hoc signatures
