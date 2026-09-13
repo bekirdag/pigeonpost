@@ -8,11 +8,37 @@ struct BuyHandleSection: View {
     var body: some View {
         @Bindable var store = store
         Section {
+            if !store.ownershipLoaded && store.ownershipError == nil { progress("Loading account handles…") }
+            ForEach(store.accountHandles) { handle in
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(handle.name).font(.system(.body, design: .monospaced).weight(.semibold))
+                        .textSelection(.enabled).accessibilityIdentifier("account-handle-" + handle.namespace)
+                    Text("\(handle.active ? "Active" : "Expired") · \(handle.provider)")
+                        .font(.caption).foregroundStyle(Theme.muted)
+                    if let date = handle.paidThrough {
+                        Text("\(handle.active ? "Paid through" : "Expired on") \(date.formatted(date: .abbreviated, time: .omitted))")
+                            .font(.caption).foregroundStyle(Theme.muted)
+                    }
+                    if handle.active, let mailbox = account.mailbox(inNamespace: handle.name) {
+                        Button("Open \(handle.name)") { account.act(as: mailbox); dismiss() }
+                    } else if handle.active {
+                        Button("Load or create inbox") { Task { await store.repairMailbox(handle.name) } }.disabled(store.busy)
+                    }
+                }.padding(.vertical, 4)
+            }
+            if store.ownershipLoaded && store.accountHandles.isEmpty && store.ownershipError == nil {
+                Text("No handles on this Pigeonpost account yet.").foregroundStyle(Theme.muted)
+            }
+            if let error = store.ownershipError { Text(error).font(.subheadline) }
+            Button("Refresh account handles") { Task { await account.loadIdentities(); await store.refresh() } }.disabled(store.busy)
+        } header: { Text("Your handles") }
+        footer: { Text("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.") }
+        Section {
             if !store.loaded && store.activity == .loading {
                 progress("Checking your handles…")
             }
             if store.loaded {
-                LabeledContent("Active handles", value: "\(store.activeCount) of \(store.maximum)")
+                LabeledContent("Active App Store subscriptions", value: "\(store.activeCount) of \(store.maximum)")
             }
             ForEach(store.handles) { handle in
                 VStack(alignment: .leading, spacing: 8) {
@@ -107,7 +133,7 @@ struct BuyHandleSection: View {
             Link("Privacy policy", destination: URL(string: "https://pigeonpost.dev/app-privacy.html")!)
             Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
         } header: {
-            Text("Your handles")
+            Text("App Store subscriptions")
         } footer: {
             Text("Each name has its own yearly subscription and stays associated with that subscription. Apple charges your account after you confirm. Subscriptions renew automatically unless cancelled at least 24 hours before renewal. Manage or cancel each one in the App Store.")
         }

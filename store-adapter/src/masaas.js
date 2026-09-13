@@ -195,18 +195,18 @@ export async function handleAvailable(name, memberToken) {
 /// token is accepted for the same account the phone signs in as — which is the point, since one of
 /// those handles was bought in the App Store and the billing system has never heard of it.
 export async function accountHandles(token) {
-  const url = `${config.postboxUrl}/v1/me/handles`;
-  try {
-    const res = await fetch(url, {
-      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return null;
-    const body = await res.json();
-    return Array.isArray(body?.handles) ? body.handles : [];
-  } catch {
-    return null;
+  const url = `${config.postboxUrl}/v1/me/handles?include_inactive=true`;
+  const res = await fetch(url, {
+    headers: { authorization: `Bearer ${token}`, accept: "application/json" },
+    signal: AbortSignal.timeout(6000),
+  });
+  if (!res.ok) {
+    throw Object.assign(new Error(res.status === 401 ? "session expired" : "Could not load your handles. Please try again."),
+      { status: res.status === 401 ? 401 : 502 });
   }
+  const body = await res.json();
+  if (!Array.isArray(body?.handles)) throw Object.assign(new Error("Could not load your handles. Please try again."), { status: 502 });
+  return body.handles;
 }
 
 /// Bind a handle to an account in the postbox, using this service's own credential.

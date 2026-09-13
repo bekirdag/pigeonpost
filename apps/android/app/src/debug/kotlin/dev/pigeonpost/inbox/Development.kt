@@ -31,7 +31,7 @@ private class FixtureSession(signedIn: Boolean, accepted: Boolean) : UserSession
     override suspend fun token(rejected: String?) = "fixture-only"
 }
 
-private class FixturePostbox(private val mode: String) : PostboxApi {
+private class FixturePostbox(private val mode: String) : PostboxApi, AccountHandleApi {
     private var created = mode != "empty"
     private val now = System.currentTimeMillis() / 1000
     private val boxes = mutableListOf(IdentityRow("/k/demo-main", "Main"), IdentityRow("/k/demo-agent", "Build agent"))
@@ -52,6 +52,11 @@ private class FixturePostbox(private val mode: String) : PostboxApi {
         if (mode == "long") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
     }
     override suspend fun identities() = if (created) boxes else emptyList()
+    override suspend fun accountHandles() = listOf(
+        AccountHandle("demo", "apple", now + 86400, true),
+        AccountHandle("studio", "google", now + 86400, true),
+        AccountHandle("previous", "google", now - 86400, false),
+    )
     override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == "/k/preview") preview.mailbox else if (identity == boxes.first().address) "/demo/main" else "/demo/builder")
     override suspend fun createIdentity(handle: String?): String { created = true; return boxes.first().address }
     override suspend fun inbox(identity: String, wait: Int?): InboxResponse {

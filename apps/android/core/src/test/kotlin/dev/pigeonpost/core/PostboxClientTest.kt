@@ -22,6 +22,15 @@ class PostboxClientTest {
     private val tokens = object : TokenProvider { override suspend fun token(rejected: String?) = if (rejected == null) "first" else "renewed" }
     @Before fun setup() { server = MockWebServer(); server.start(); client = PostboxClient(tokens, server.url("/"), allowLoopbackForTests = true) }
     @After fun teardown() { server.shutdown() }
+    @Test fun accountHandlesUseMemberScopeAndKeepExpiredCrossStoreNames() = runBlocking {
+        server.enqueue(MockResponse().setBody("""{"handles":[{"namespace":"apple","source":"apple","expires_at":300,"active":true},{"namespace":"google","source":"google","expires_at":200,"active":false}]}"""))
+        val rows = client.accountHandles()
+        assertEquals(2, rows.size); assertFalse(rows[1].active); assertEquals("/google", rows[1].name)
+        val request = server.takeRequest()
+        assertEquals("/v1/me/handles?include_inactive=true", request.path)
+        assertEquals("Bearer first", request.getHeader("Authorization"))
+        assertNull(request.requestUrl!!.queryParameter("identity"))
+    }
     @Test fun testerRegistrationUsesAuthenticatedPreviewRoutesAndOnlySendsTheName() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"eligible":true,"namespace":null}"""))
         server.enqueue(MockResponse().setBody("""{"name":"alex","available":true}"""))

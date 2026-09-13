@@ -75,6 +75,19 @@ class AppFlowTest {
             shown("A direct line to your agents.")
         }
     }
+    @Test fun accountHandlesShowAppleAndGoogleOwnershipWithExpiredStatus() {
+        launch().use {
+            shown("Inbox")
+            ui.onNodeWithContentDescription("Settings").performClick()
+            shown("Your handles")
+            ui.onNodeWithText("Active · App Store").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Active · Google Play").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Expired · Google Play").performScrollTo().assertIsDisplayed()
+            ui.onNodeWithText("Open /previous").assertDoesNotExist()
+            ui.onNodeWithText("Refresh account handles").performScrollTo().performClick()
+            shown("Expired · Google Play")
+        }
+    }
     @Test fun firstInboxAndOfflineStatesRemainUsable() {
         launch("empty").use {
             shown("Your first inbox")
@@ -110,7 +123,7 @@ class AppFlowTest {
             shown("Inbox")
             ui.onNodeWithContentDescription("Settings").performClick()
             shown("Handle name")
-            ui.onNodeWithText("Handle name").performTextInput("support")
+            ui.onNodeWithText("Handle name").performScrollTo().performTextInput("support")
             ui.onNodeWithText("Check availability").performScrollTo().performClick()
             shown("That name is reserved")
             ui.onNodeWithText("Handle name").performTextReplacement("alex")

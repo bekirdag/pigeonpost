@@ -18,7 +18,11 @@ extension HandleStore {
                 return try await account.client.claimHandle(transactionId: transaction, namespace: name)
             },
             ensureMailbox: { [weak account] name in await account?.ensureMailbox(inNamespace: name) != nil },
-            purchases: AppleHandlePurchases()
+            purchases: AppleHandlePurchases(),
+            accountHandles: { [weak account] in
+                guard let account else { throw AuthError.sessionExpired }
+                return try await account.client.accountHandles()
+            }
         ))
     }
 }

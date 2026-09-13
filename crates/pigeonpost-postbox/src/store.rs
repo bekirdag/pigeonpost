@@ -703,6 +703,8 @@ pub struct NamespaceHolding {
     pub verified_at: u64,
     /// `None` means it does not lapse. Everything bought so far does.
     pub expires_at: Option<u64>,
+    /// Display state only; namespace access is independently enforced by the store.
+    pub active: bool,
 }
 
 /// The namespace-wide contact that would cover `peer`, e.g. `/bekir/*` for `/bekir/agent1`.
@@ -1593,22 +1595,35 @@ impl Store {
         account_id: String,
         now: u64,
     ) -> Result<Vec<NamespaceHolding>, StoreError> {
+        self.account_namespaces(account_id, now, false).await
+    }
+
+    /// Include retained, expired names for account management without granting access to them.
+    /// A transferred namespace belongs only to its current account, never a previous subscriber.
+    pub async fn account_namespaces(
+        &self,
+        account_id: String,
+        now: u64,
+        include_inactive: bool,
+    ) -> Result<Vec<NamespaceHolding>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<NamespaceHolding>, StoreError> {
             let c = conn.lock().expect("store lock");
             let mut stmt = c.prepare(
-                "SELECT namespace, source, verified_at, expires_at
+                "SELECT namespace, source, verified_at, expires_at,
+                        (expires_at IS NULL OR expires_at > ?2)
                    FROM namespaces
-                  WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)
-                  ORDER BY verified_at DESC",
+                  WHERE account_id = ?1 AND (?3 OR expires_at IS NULL OR expires_at > ?2)
+                  ORDER BY verified_at DESC, namespace ASC",
             )?;
             let rows = stmt
-                .query_map(params![account_id, now as i64], |r| {
+                .query_map(params![account_id, now as i64, include_inactive], |r| {
                     Ok(NamespaceHolding {
                         namespace: r.get(0)?,
                         source: r.get(1)?,
                         verified_at: r.get::<_, i64>(2)? as u64,
                         expires_at: r.get::<_, Option<i64>>(3)?.map(|v| v as u64),
+                        active: r.get(4)?,
                     })
                 })?
                 .collect::<Result<Vec<_>, _>>()?;
@@ -3637,6 +3652,131 @@ mod tests {
                 .unwrap()
                 .is_none());
         }
+    }
+
+    #[tokio::test]
+    async fn account_handle_listing_includes_all_purchase_sources_without_crossing_ownership() {
+        let s = Store::open(":memory:").unwrap();
+        let account = s
+            .account_for_sub("same-member".into(), "account-a".into(), 100)
+            .await
+            .unwrap();
+        for candidate in [
+            "web-account",
+            "ios-account",
+            "android-account",
+            "desktop-account",
+        ] {
+            assert_eq!(
+                s.account_for_sub("same-member".into(), candidate.into(), 100)
+                    .await
+                    .unwrap(),
+                account
+            );
+        }
+        let apple = ApplePurchase {
+            original_transaction_id: "apple-fixture".into(),
+            product_id: "handle-1".into(),
+            environment: "Sandbox".into(),
+            expires_at: 300,
+        };
+        assert!(matches!(
+            s.bind_apple_subscription(apple, account.clone(), "apple-name".into(), 100)
+                .await
+                .unwrap(),
+            AppleClaim::Granted
+        ));
+        let google = crate::googleplay::VerifiedPurchase {
+            product_id: crate::googleplay::products()[0].clone(),
+            linked_token: None,
+            expires_at: 200,
+            state: "SUBSCRIPTION_STATE_ACTIVE".into(),
+            active: true,
+            auto_renewing: true,
+            acknowledged: true,
+            test_purchase: true,
+        };
+        assert!(matches!(
+            s.record_google_purchase(
+                account.clone(),
+                "google-fixture".into(),
+                google,
+                Some("google-name".into()),
+                100
+            )
+            .await
+            .unwrap(),
+            GoogleBinding::Saved(_)
+        ));
+        s.set_namespace_owner("web-name".into(), account.clone(), "entitlement", 100, None)
+            .await
+            .unwrap();
+        s.set_namespace_owner(
+            "other-name".into(),
+            "account-b".into(),
+            "entitlement",
+            100,
+            None,
+        )
+        .await
+        .unwrap();
+        let active = s
+            .namespaces_for_account(account.clone(), 201)
+            .await
+            .unwrap();
+        assert_eq!(
+            active
+                .iter()
+                .map(|h| h.namespace.as_str())
+                .collect::<Vec<_>>(),
+            ["apple-name", "web-name"]
+        );
+        assert!(active.iter().all(|h| h.active));
+        let all = s
+            .account_namespaces(account.clone(), 201, true)
+            .await
+            .unwrap();
+        assert_eq!(all.len(), 3);
+        let expired = all.iter().find(|h| h.source == "google").unwrap();
+        assert_eq!(expired.namespace, "google-name");
+        assert!(!expired.active);
+        assert!(s
+            .namespace_owner("google-name".into(), 201)
+            .await
+            .unwrap()
+            .is_none());
+        assert!(!s
+            .namespace_available("google-name".into(), 201)
+            .await
+            .unwrap());
+        assert_eq!(
+            s.account_namespaces("account-b".into(), 201, true)
+                .await
+                .unwrap()
+                .len(),
+            1
+        );
+        assert!(s
+            .account_namespaces("unrelated".into(), 201, true)
+            .await
+            .unwrap()
+            .is_empty());
+        // Even historical display follows the current owner after a permitted transfer.
+        s.conn
+            .lock()
+            .unwrap()
+            .execute(
+                "UPDATE namespaces SET account_id='account-b' WHERE namespace='google-name'",
+                [],
+            )
+            .unwrap();
+        assert_eq!(
+            s.account_namespaces(account, 201, true)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
     }
 
     mod tester_handles {

@@ -2398,6 +2398,31 @@
 
   // ---- settings --------------------------------------------------------------------------------
 
+  let handlesRequest = 0;
+  async function loadAccountHandles() {
+    const list = $("acct-handles"), refresh = $("acct-handles-refresh");
+    if (!list) return;
+    const owner = state, request = ++handlesRequest;
+    list.textContent = "Loading account handles…";
+    refresh.disabled = true;
+    try {
+      const result = await api("/v1/me/handles?include_inactive=true");
+      if (owner !== state || request !== handlesRequest) return;
+      if (!Array.isArray(result.handles)) throw new Error("Invalid handle response");
+      list.textContent = result.handles.length ? "" : "No handles on this Pigeonpost account yet.";
+      for (const handle of result.handles) {
+        const row = document.createElement("p");
+        row.className = "field-note";
+        const name = "/" + String(handle.namespace).replace(/^\/+/, "");
+        const provider = handle.source === "apple" ? "App Store" : handle.source === "google" ? "Google Play" : "Pigeonpost";
+        row.textContent = name + " · " + (handle.active ? "Active" : "Expired") + " · " + provider;
+        list.append(row);
+      }
+    } catch (_) {
+      if (owner === state && request === handlesRequest) list.textContent = "Could not refresh your account handles. Your registrations are saved. Try Refresh again.";
+    } finally { if (owner === state && request === handlesRequest) refresh.disabled = false; }
+  }
+
   function openSettings() {
     applyMessageScale(messageScale());
     // An unnamed mailbox has no handle, and saying "—" is more honest than repeating its address
@@ -2409,6 +2434,8 @@
       state.archived.size === 1 ? "1 conversation" : state.archived.size + " conversations";
     $("archive-link").textContent = location.origin + "/#archive";
     renderContactList();
+    $("acct-handles-refresh").onclick = () => { loadAccountHandles(); loadIdentities(); };
+    loadAccountHandles();
     openSheet("settings-sheet");
   }
 

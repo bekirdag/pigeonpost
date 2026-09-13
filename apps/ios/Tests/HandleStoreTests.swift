@@ -41,6 +41,9 @@ private final class Backend {
     var failures = 0
     var probe: ((String) async -> HandleAvailability)?
     var offerHook: (() async -> Void)?
+    var accountRows: [AccountHandle] = []
+    var ownershipHook: (() async throws -> Void)?
+    var storeUnavailable = false
     func offer() -> HandleOffer {
         var value = HandleOffer(productId: ids[0], namespace: handles.first?.namespace, expiresAt: handles.first?.expiresAt)
         value.productIds = ids; value.maxHandles = 10; value.appAccountToken = token.uuidString
@@ -65,12 +68,13 @@ private final class Backend {
     func store() -> HandleStore {
         HandleStore(services: HandleServices(subject: { self.subject }, offer: {
             await self.offerHook?()
+            if self.storeUnavailable { throw APIError(status: 404, code: "not_found", detail: nil) }
             return self.offer()
         }, availability: { name in
             if let probe = self.probe { return await probe(name) }
             return HandleAvailability(name: name, available: name != "taken", reason: name == "taken" ? "taken" : nil)
         }, claim: { try self.claim($0, $1) }, ensureMailbox: { self.mailboxes.insert($0); return true },
-            purchases: purchases, defaults: defaults, timeout: 0.3))
+            purchases: purchases, accountHandles: { try await self.ownershipHook?(); return self.accountRows }, defaults: defaults, timeout: 0.3))
     }
 }
 
@@ -87,6 +91,26 @@ struct HandleStoreTests {
         await store.checkAvailability()
     }
     static func main() async throws {
+        do {
+            let api = Backend(), store = api.store()
+            api.accountRows = [AccountHandle(namespace: "apple", source: "apple", expiresAt: 300, active: true),
+                AccountHandle(namespace: "google", source: "google", expiresAt: 200, active: false),
+                AccountHandle(namespace: "web", source: "entitlement", expiresAt: nil, active: true)]
+            api.storeUnavailable = true
+            await store.refresh()
+            expect(store.accountHandles == api.accountRows, "all sources load even while Apple store is unavailable")
+            expect(!store.accountHandles[1].active, "expired Google registration stays inactive")
+            expect(store.activeCount == 0, "cross-store names never occupy Apple product slots")
+            api.ownershipHook = { throw APIError(status: 503, code: "unavailable", detail: nil) }
+            await store.refresh()
+            expect(store.ownershipError != nil && store.accountHandles.count == 3, "ownership failure preserves prior data and shows an error")
+            api.ownershipHook = { try? await Task.sleep(nanoseconds: 40_000_000) }
+            let task = Task { await store.refresh() }
+            try await Task.sleep(nanoseconds: 5_000_000)
+            store.reset(); api.subject = "account-b"
+            await task.value
+            expect(store.accountHandles.isEmpty && !store.ownershipLoaded, "late old-account ownership cannot survive sign-out")
+        }
         for invalid in ["bad/name", "-alice", "alice-", "álice", "k", "gh", String(repeating: "a", count: 33)] {
             expect(!HandleStore.valid(invalid), "invalid name: \(invalid)")
         }

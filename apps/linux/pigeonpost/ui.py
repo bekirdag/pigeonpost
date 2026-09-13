@@ -935,6 +935,36 @@ class Window(Adw.ApplicationWindow):
 
     def handles(self):
         window, content = self.dialog("Handles")
+        content.append(label("Your handles", "title-2"))
+        content.append(label("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.", wrap=True))
+        holdings = box()
+        content.append(holdings)
+        ownership_status = label("Loading account handles…", wrap=True)
+        content.append(ownership_status)
+        def owned_rows():
+            result = self.api.call("GET", "/v1/me/handles", query={"include_inactive": "true"})
+            rows = result.get("handles")
+            if not isinstance(rows, list):
+                raise APIError(0, "invalid_response")
+            return rows
+        def show_holdings(rows):
+            clear(holdings)
+            for row in rows:
+                name = "/" + row["namespace"].lstrip("/")
+                provider = {"apple": "App Store", "google": "Google Play"}.get(row.get("source"), "Pigeonpost")
+                active = row.get("active") is True
+                holdings.append(label(name, "heading", wrap=True))
+                holdings.append(label(f"{'Active' if active else 'Expired'} · {provider}", "dim-label", wrap=True))
+                if row.get("expires_at"):
+                    date = GLib.DateTime.new_from_unix_local(row["expires_at"]).format("%x")
+                    holdings.append(label(f"{'Paid through' if active else 'Expired on'} {date}", "dim-label"))
+            ownership_status.set_text("" if rows else "No handles on this Pigeonpost account yet.")
+        def refresh_ownership():
+            ownership_status.set_text("Loading account handles…")
+            self._work(owned_rows, show_holdings,
+                       lambda error: ownership_status.set_text("Could not refresh your account handles. Your registrations are saved. Try Refresh again."))
+        content.append(button("Refresh account handles", refresh_ownership))
+        refresh_ownership()
         content.append(label("A name for every inbox", "title-2"))
         content.append(label("Check a name, then register it securely on the Pigeonpost website. Your browser shows the price and payment confirmation.", wrap=True))
         entry = Gtk.Entry(placeholder_text="Choose a handle")
@@ -967,6 +997,7 @@ class Window(Adw.ApplicationWindow):
         show(self.mailboxes)
         def refreshed(rows):
             show(rows)
+            refresh_ownership()
             # Refresh the selector without changing the active mailbox or clearing drafts.
             current = self.identity
             self.mailboxes = rows

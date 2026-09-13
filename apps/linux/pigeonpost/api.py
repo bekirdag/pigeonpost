@@ -4,6 +4,7 @@ import json
 import urllib.error
 import urllib.parse
 import urllib.request
+from . import VERSION
 
 POSTBOX = "https://postbox.pigeonpost.dev"
 ISSUER = "https://auth.pigeonpost.dev/realms/pigeonpost-prod"
@@ -39,7 +40,7 @@ class Transport:
                 raw=None, binary=False, timeout=35):
         if urllib.parse.urlsplit(url).scheme != "https":
             raise APIError(0, "invalid_response", "HTTPS is required.")
-        hdr = {"Accept": "application/json", "User-Agent": "Pigeonpost-Linux/1.0.0"}
+        hdr = {"Accept": "application/json", "User-Agent": "Pigeonpost-Linux/" + VERSION}
         if token:
             hdr["Authorization"] = "Bearer " + token
         if data is not None:

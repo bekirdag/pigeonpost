@@ -34,6 +34,12 @@ class FakeAPI:
         return copy.deepcopy(self.rows) if identity == "/k/one" else []
     def call(self, method, path, identity=None, data=None, **kwargs):
         self.calls.append((method, path, identity, data))
+        if path == "/v1/me/handles":
+            return {"handles": [
+                {"namespace": "apple-name", "source": "apple", "active": True, "expires_at": 1999999999},
+                {"namespace": "google-name", "source": "google", "active": False, "expires_at": 100},
+                {"namespace": "web-name", "source": "entitlement", "active": True},
+            ]}
         if path == "/v1/threads":
             return {"threads": [{"thread_id": "release", "peer": "/alex/main", "title": "Linux release"}, {"thread_id": "design", "peer": "/alex/main", "title": "Design notes"}]}
         if path == "/v1/contacts":
@@ -137,6 +143,22 @@ class NativeTests(unittest.TestCase):
             show()
             pump(timeout=0.05)
             self.window.dialogs[-1].close()
+
+    def test_handles_show_account_ownership_from_every_provider(self):
+        self.window.handles()
+        dialog = self.window.dialogs[-1]
+        def texts(widget):
+            found = [widget.get_text()] if isinstance(widget, Gtk.Label) else []
+            child = widget.get_first_child()
+            while child:
+                found.extend(texts(child))
+                child = child.get_next_sibling()
+            return found
+        pump(lambda: "/google-name" in texts(dialog))
+        content = "\n".join(texts(dialog))
+        for expected in ["/apple-name", "Active · App Store", "/google-name", "Expired · Google Play", "/web-name", "Active · Pigeonpost"]:
+            self.assertIn(expected, content)
+        self.assertIsNone(next(c for c in self.api.calls if c[1] == "/v1/me/handles")[2], "ownership never uses the selected mailbox")
 
     def test_visual_evidence(self):
         if not os.environ.get("PIGEONPOST_SCREENSHOT_DIR"):

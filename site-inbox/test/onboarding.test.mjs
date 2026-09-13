@@ -89,6 +89,27 @@ test("existing accounts open their mailbox without creating another", async (t) 
   assert.equal(a.creates().length, 0);
 });
 
+test("inbox settings read the same handles across providers and distinguish lookup failures", async t => {
+  let failure = false;
+  const a = app(t, { existing: true, intercept: call => {
+    if (call.path !== "/v1/me/handles") return;
+    return failure ? response({ error: "unavailable" }, 503) : response({ handles: [
+      { namespace: "apple-name", source: "apple", active: true },
+      { namespace: "google-name", source: "google", active: false },
+      { namespace: "web-name", source: "entitlement", active: true },
+    ] });
+  } });
+  await until(() => a.$("me-sub").textContent === identity.address);
+  a.$("settings-btn").click();
+  await until(() => a.$("acct-handles").textContent.includes("/google-name"));
+  assert.match(a.$("acct-handles").textContent, /apple-name · Active · App Store/);
+  assert.match(a.$("acct-handles").textContent, /google-name · Expired · Google Play/);
+  assert.match(a.$("acct-handles").textContent, /web-name · Active · Pigeonpost/);
+  failure = true; a.$("acct-handles-refresh").click();
+  await until(() => a.$("acct-handles").textContent.includes("Could not refresh"));
+  assert.doesNotMatch(a.$("acct-handles").textContent, /No handles/);
+});
+
 test("signed-out visitors see only sign-in and make no account requests", async (t) => {
   const a = app(t, { signedIn: false });
   await until(() => a.visible("signin-btn"));

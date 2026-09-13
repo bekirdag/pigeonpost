@@ -99,6 +99,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
             "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
                 paidHandles = model.paidHandles,
+                accountHandles = model.accountHandles, refreshMailboxes = { store.loadAccount() },
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink)
