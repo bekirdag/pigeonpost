@@ -117,3 +117,20 @@ expected contents, and the page's CSP permits `script-src 'self'`. Confirm `/` s
 `script-src 'none'`, `/account` still responds, and the public ZIP matches its approved SHA-256.
 To roll back, restore the backed-up site files, active Nginx configuration and prior snippet (or
 remove the new include), validate the configuration again, then reload Nginx.
+
+### Linux desktop releases
+
+The native Linux client lives in `apps/linux`; its build plan and progress ledger are tracked there.
+Release `linux-desktop-1.0.0` contains x86_64 and ARM64 Flatpak bundles plus an architecture-independent
+Debian package. The Actions workflow verifies native GTK, the installed sandbox, Secret Service and
+document-portal access, then publishes checksums and GitHub build attestations. Keep its release
+separate from the CLI's latest release.
+
+The downloads page selects ARM64 from an explicit Linux platform or supported browser architecture
+hints, with the x86_64 Flatpak as the default and every package listed below. Debian/Ubuntu installation
+uses `apt install ./<package>.deb` to resolve system dependencies. Flatpak bundles require the GNOME
+runtime and manual installation of subsequent releases; do not describe them as a Flathub listing or
+automatic update channel. Only update links after public assets and their checksums are verified.
+
+The 2026-09-13 Linux website rollout backed up `download.html`, `download.css` and `download.js` in
+`/var/backups/pigeonpost/linux-downloads-20260913`. Existing homepage routing and CSP remain in place.
