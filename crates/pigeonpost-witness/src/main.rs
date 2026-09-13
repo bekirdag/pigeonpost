@@ -28,7 +28,7 @@ use axum::routing::{get, post};
 use axum::Router;
 use ed25519_dalek::{SigningKey, VerifyingKey};
 use pigeonpost_registry::checkpoint::Checkpoint;
-use pigeonpost_registry::log::{verify_consistency, Hash};
+use pigeonpost_registry::log::{empty_root, verify_consistency, Hash};
 use sha2::{Digest, Sha256};
 
 /// The protocol caps a submission; anything larger is a client bug or an attack.
@@ -191,6 +191,12 @@ async fn add_checkpoint(State(w): State<Witness>, body: Bytes) -> Response {
     if checkpoint.origin != w.log_origin {
         return text(StatusCode::FORBIDDEN, "checkpoint is for another log\n");
     }
+    if checkpoint.size == 0 && checkpoint.root != empty_root() {
+        return text(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "empty checkpoint has an invalid root\n",
+        );
+    }
 
     let mut guard = w.state.lock().expect("witness state");
     let line = {
@@ -220,6 +226,13 @@ async fn add_checkpoint(State(w): State<Witness>, body: Bytes) -> Response {
                             StatusCode::FORBIDDEN,
                             "tree size unchanged but root differs — the log was rewritten\n",
                         );
+                    }
+                } else if stored.size == 0 {
+                    // C2SP: the canonical empty tree is consistent with every later tree.
+                    // parse_submission already requires its proof to be empty. The shared
+                    // verifier intentionally handles only nonempty starting trees.
+                    if stored.root != empty_root() {
+                        return text(StatusCode::FORBIDDEN, "stored empty root is invalid\n");
                     }
                 } else if !verify_consistency(
                     stored.size,
@@ -383,6 +396,83 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn an_empty_checkpoint_can_grow_without_losing_its_history() {
+        let dir = tempfile::tempdir().unwrap();
+        let log_key = SigningKey::from_bytes(&[41; 32]);
+        let mut witness = Witness {
+            name: "witness.test".into(),
+            signing_key: SigningKey::from_bytes(&[42; 32]),
+            log_origin: "registry.test/log".into(),
+            log_key: log_key.verifying_key(),
+            state_path: dir.path().join("state.json"),
+            state: Arc::new(Mutex::new(None)),
+        };
+        let empty = Checkpoint {
+            origin: witness.log_origin.clone(),
+            size: 0,
+            root: pigeonpost_registry::log::empty_root(),
+        };
+        let first = Checkpoint {
+            origin: witness.log_origin.clone(),
+            size: 1,
+            root: pigeonpost_registry::log::leaf_hash(b"first entry"),
+        };
+        let submit = |old, checkpoint: &Checkpoint| {
+            Bytes::from(format!("old {old}\n\n{}", checkpoint.sign(&log_key)))
+        };
+        let invalid_empty = Checkpoint {
+            root: [9; 32],
+            ..empty.clone()
+        };
+        assert_eq!(
+            add_checkpoint(State(witness.clone()), submit(0, &invalid_empty))
+                .await
+                .status(),
+            StatusCode::UNPROCESSABLE_ENTITY
+        );
+        assert!(load_state(&witness.state_path).is_none());
+        assert_eq!(
+            add_checkpoint(State(witness.clone()), submit(0, &empty))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let mut invalid_stored = load_state(&witness.state_path).unwrap();
+        invalid_stored.root = [9; 32];
+        witness.state = Arc::new(Mutex::new(Some(invalid_stored)));
+        assert_eq!(
+            add_checkpoint(State(witness.clone()), submit(0, &first))
+                .await
+                .status(),
+            StatusCode::FORBIDDEN
+        );
+        assert_eq!(load_state(&witness.state_path).unwrap().root, empty.root);
+        witness.state = Arc::new(Mutex::new(load_state(&witness.state_path)));
+        assert_eq!(
+            add_checkpoint(State(witness.clone()), submit(0, &first))
+                .await
+                .status(),
+            StatusCode::OK
+        );
+        let restored = load_state(&witness.state_path).unwrap();
+        assert_eq!((restored.size, restored.root), (1, first.root));
+        witness.state = Arc::new(Mutex::new(Some(restored)));
+        let rewritten = Checkpoint {
+            root: [9; 32],
+            ..first.clone()
+        };
+        for rejected in [&empty, &rewritten] {
+            assert_eq!(
+                add_checkpoint(State(witness.clone()), submit(1, rejected))
+                    .await
+                    .status(),
+                StatusCode::FORBIDDEN
+            );
+            assert_eq!(load_state(&witness.state_path).unwrap().root, first.root);
+        }
+    }
 
     #[test]
     fn a_submission_round_trips_the_shape_the_registry_sends() {

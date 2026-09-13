@@ -93,6 +93,71 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
       - run: cargo fmt --all --check
       - run: cargo clippy --locked --all-targets --all-features -- -D warnings
+      - name: Keep the image's health probe building and correct
+        shell: bash
+        run: |
+          set -euo pipefail
+          # deploy/healthcheck.rs is outside the workspace: the Dockerfile compiles it with a bare
+          # rustc, so cargo fmt, cargo clippy and cargo test above all step straight past it and a
+          # break in it would surface as a failed production image build. Every Compose file's
+          # healthcheck now runs this probe, because the distroless runtime has no curl and no
+          # shell to fall back on, so it is load-bearing rather than convenience tooling.
+          rustfmt --edition 2021 --check deploy/healthcheck.rs
+          rustc --edition 2021 -C opt-level=s -C strip=symbols \
+            deploy/healthcheck.rs -o "$RUNNER_TEMP/pigeonpost-healthcheck"
+          rustc --edition 2021 --test deploy/healthcheck.rs -o "$RUNNER_TEMP/healthcheck-tests"
+          "$RUNNER_TEMP/healthcheck-tests"
+          # An unknown service name must fail rather than probe something arbitrary.
+          if "$RUNNER_TEMP/pigeonpost-healthcheck" not-a-service; then
+            echo '::error::the health probe accepted an unknown service name'
+            exit 1
+          fi
+          # ...and the probe's source must be inside the image build context. .dockerignore
+          # denies everything and allowlists, so a COPY of a path nobody allowlisted fails at
+          # `docker build` and nowhere earlier — which is exactly how it shipped: the stage that
+          # compiles this probe was added without `deploy/` being allowed in, and the release that
+          # first tried to build it is the one that found out.
+          python3 - <<'CONTEXT'
+          import re, sys
+          allow = [l.strip()[1:] for l in open(".dockerignore")
+                   if l.strip().startswith("!")]
+          exact = {a.rstrip("/") for a in allow if not a.endswith("**")}
+          globs = {a[:-3] for a in allow if a.endswith("/**")}
+          def covered(src):
+              src = src.rstrip("/")
+              return src in exact or any(src == g or src.startswith(g + "/") for g in globs)
+          missing = []
+          for line in open("deploy/Dockerfile"):
+              match = re.match(r"^COPY\s+(.*)$", line.rstrip())
+              if not match or "--from=" in match.group(1):
+                  continue
+              for src in match.group(1).split()[:-1]:
+                  if not covered(src):
+                      missing.append(src)
+          if missing:
+              print("::error::deploy/Dockerfile copies paths .dockerignore excludes: "
+                    + ", ".join(missing))
+              sys.exit(1)
+          CONTEXT
+          # Every Compose healthcheck must name this probe and a service the probe knows.
+          python3 - <<'CHECK'
+          import json, re, sys
+          services = {"registry", "directory", "loft"}
+          probe = "/usr/local/bin/pigeonpost-healthcheck"
+          bad = []
+          for path in ("deploy/compose.prod.yml", "deploy/compose.core.yml", "deploy/compose.loft.yml"):
+              for line in open(path):
+                  match = re.search(r"^\s*test:\s*(\[.*\])\s*$", line)
+                  if not match:
+                      continue
+                  test = json.loads(match.group(1))
+                  if test[:2] != ["CMD", probe] or len(test) != 3 or test[2] not in services:
+                      bad.append(f"{path}: {line.strip()}")
+          if bad:
+              print("::error::Compose healthchecks must call the static probe with a known service")
+              print("\n".join(bad))
+              sys.exit(1)
+          CHECK
       - name: Keep generated developer documentation and Pigeonpost vocabulary exact
         shell: bash
         run: |

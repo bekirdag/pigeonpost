@@ -87,6 +87,14 @@ RUN chmod 0755 /out/pigeonpost \
 # Indirection so the runtime copies from one place regardless of which route produced it.
 FROM ${BINARY_STAGE} AS binary
 
+# ---- health probe ---------------------------------------------------------------------------
+# A small static probe keeps Compose healthchecks usable without adding curl or a shell.
+FROM ${BUILD_BASE} AS healthcheck
+ARG MUSL_VERSION
+RUN apk add --no-cache musl=${MUSL_VERSION} musl-dev=${MUSL_VERSION}
+COPY deploy/healthcheck.rs /healthcheck.rs
+RUN rustc --edition 2021 -C opt-level=s -C strip=symbols /healthcheck.rs -o /pigeonpost-healthcheck
+
 # ---- init ------------------------------------------------------------------------------------
 # Fetched rather than packaged, because the runtime has no package manager. Verified against a
 # pinned digest, so a compromised or swapped release fails the build instead of shipping.
@@ -136,6 +144,7 @@ COPY --from=rootfs /group /etc/group
 COPY --from=rootfs --chown=10001:10001 /rootfs/var /var
 COPY --from=init /tini /usr/bin/tini
 COPY --from=binary --chown=0:0 /out/pigeonpost /usr/local/bin/pigeonpost
+COPY --from=healthcheck --chown=0:0 /pigeonpost-healthcheck /usr/local/bin/pigeonpost-healthcheck
 
 # `USER` takes a numeric id because there is no shell to resolve a name against, and a numeric id
 # is what the kernel and the host's bind mounts agree on anyway.

@@ -2,8 +2,8 @@
 //
 // Mirrors the theneuralledger adapter's env contract so an operator who has wired one can wire this
 // the same way. No payment-gateway secrets appear here: MASAAS holds the Stripe keys and hosts the
-// card capture. The only privileged value is the MASAAS runtime token, used for catalog and
-// entitlement reads; member billing operations travel on the customer's own token.
+// card capture. Member billing operations travel on the customer's own token; the postbox grant
+// credential delivers paid handles. The optional MASAAS runtime token is for entitlement reads.
 
 const trimSlash = (s) => String(s || "").replace(/\/+$/, "");
 
@@ -31,7 +31,7 @@ export const config = {
   // The price plan a purchase subscribes to. Stable slug — never the regenerated price_plan UUID.
   planSlug: process.env.MASAAS_PLAN_SLUG || "handle-yearly-annual-usd",
 
-  // Runtime/service token — catalog + entitlement reads only. Never sent to the browser.
+  // Optional runtime/service token for entitlement reads. The public catalog needs no token.
   masaasRuntimeToken: process.env.MASAAS_RUNTIME_TOKEN || "",
 
   // sealunit OIDC for the product realm — the adapter exchanges the auth code here.
@@ -63,6 +63,19 @@ export const config = {
   requestTimeoutMs: Number(process.env.MASAAS_TIMEOUT_MS || 15000),
 };
 
+const httpUrl = (value) => {
+  try {
+    return ["http:", "https:"].includes(new URL(value).protocol);
+  } catch {
+    return false;
+  }
+};
+
+// Configuration completeness only; this does not probe upstream availability or validate keys.
 export function configured() {
-  return Boolean(config.masaasRuntimeToken && config.masaasProductSlug);
+  return [config.masaasProductSlug, config.planSlug, config.oidc.clientId, config.namespaceGrantToken]
+    .every((value) => typeof value === "string" && value.trim().length > 0)
+    && config.allowedOrigins.length > 0
+    && [config.masaasApiBaseUrl, config.masaasSaasApiBase, config.oidc.issuer, config.postboxUrl,
+      ...config.allowedOrigins].every(httpUrl);
 }

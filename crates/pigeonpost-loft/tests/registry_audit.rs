@@ -34,6 +34,7 @@ fn private_tempdir() -> tempfile::TempDir {
 struct Fixture {
     projection: Value,
     entries: Value,
+    checkpoint: Checkpoint,
     registry_key: SigningKey,
     witness_key: SigningKey,
     revoked_id: ComplianceKeyId,
@@ -146,6 +147,7 @@ fn fixture(now_secs: u64) -> Fixture {
     Fixture {
         projection,
         entries,
+        checkpoint,
         registry_key,
         witness_key,
         revoked_id,
@@ -256,6 +258,66 @@ async fn full_log_audit_catches_omitted_revocation_and_survives_restart() {
     std::fs::write(&state_path, serde_json::to_vec(&tampered).unwrap()).unwrap();
     drop(reopened);
     assert!(WitnessedRegistryKeyCache::new(cache_config).is_err());
+}
+
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "macos")),
+    ignore = "persistent witnessed Registry audit cache is supported only on Linux and macOS"
+)]
+#[tokio::test]
+async fn stale_witnessed_cache_restarts_without_serving_stale_keys_or_losing_its_pin() {
+    let observed_secs = now_secs().saturating_sub(120);
+    let mut fixture = fixture(observed_secs);
+    let (url, server) = serve(&fixture).await;
+    let directory = private_tempdir();
+    let state_path = directory.path().join("registry-audit.json");
+    let cache_config = config(&fixture, url, state_path.clone());
+    let mut initial_config = cache_config.clone();
+    initial_config.max_staleness_ms = 600_000;
+    let cache = WitnessedRegistryKeyCache::new(initial_config).unwrap();
+    cache.refresh_once().await.unwrap();
+    let pin = cache.checkpoint();
+    drop(cache);
+
+    // Simulate a snapshot durably accepted when its authentic cosignature was fresh.
+    let mut snapshot: Value = serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+    snapshot["observed_at_ms"] = json!(observed_secs * 1_000);
+    std::fs::write(&state_path, serde_json::to_vec(&snapshot).unwrap()).unwrap();
+
+    let reopened = WitnessedRegistryKeyCache::new(cache_config).unwrap();
+    assert_eq!(
+        reopened.checkpoint(),
+        pin,
+        "restart must retain the accepted checkpoint"
+    );
+    assert!(reopened.readiness(now_secs() * 1_000).is_err());
+    assert!(reopened.resolve(&fixture.active_id).is_err());
+    assert!(reopened.resolve(&fixture.revoked_id).is_err());
+    assert!(
+        reopened.refresh_once().await.is_err(),
+        "a stale upstream cannot restore readiness"
+    );
+    assert_eq!(reopened.checkpoint(), pin);
+    drop(reopened);
+    server.abort();
+
+    let mut note = fixture.checkpoint.sign(&fixture.registry_key);
+    note.push_str(
+        &fixture
+            .checkpoint
+            .cosignature_line("independent.test", &fixture.witness_key, now_secs())
+            .unwrap(),
+    );
+    fixture.projection["checkpoint"] = json!(note);
+    fixture.entries["checkpoint"] = fixture.projection["checkpoint"].clone();
+    let (url, server) = serve(&fixture).await;
+    let recovered = WitnessedRegistryKeyCache::new(config(&fixture, url, state_path)).unwrap();
+    recovered.refresh_once().await.unwrap();
+    assert!(recovered.readiness(now_secs() * 1_000).is_ok());
+    assert!(recovered.resolve(&fixture.revoked_id).unwrap().is_none());
+    assert!(recovered.resolve(&fixture.active_id).unwrap().is_some());
+    assert_eq!(recovered.checkpoint(), pin);
+    server.abort();
 }
 
 #[cfg_attr(

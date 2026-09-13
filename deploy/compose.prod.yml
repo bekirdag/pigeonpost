@@ -73,7 +73,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7718/health"]
+      test: ["CMD", "/usr/local/bin/pigeonpost-healthcheck", "registry"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -97,7 +97,7 @@ services:
     mem_limit: 256m
     cpus: 0.5
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7719/ready"]
+      test: ["CMD", "/usr/local/bin/pigeonpost-healthcheck", "directory"]
       interval: 30s
       timeout: 5s
       retries: 3
@@ -128,7 +128,7 @@ services:
     mem_limit: 512m
     cpus: 1.0
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "--show-error", "--max-time", "3", "--noproxy", "*", "http://127.0.0.1:7717/ready"]
+      test: ["CMD", "/usr/local/bin/pigeonpost-healthcheck", "loft"]
       interval: 30s
       timeout: 5s
       retries: 3

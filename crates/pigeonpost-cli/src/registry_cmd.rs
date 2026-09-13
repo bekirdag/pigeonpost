@@ -2284,7 +2284,31 @@ retention_days = 730
         assert!(error.to_string().contains("already running"));
 
         drop(first);
-        assert!(RegistryProcessLock::acquire(dir.path()).is_ok());
+        // An flock is released only once every descriptor for that open file
+        // description is closed, and any other thread in this process that forks
+        // while the lock is held holds a copy of it until its exec — the
+        // descriptor is CLOEXEC, so the copy closes there and not before. Retry
+        // across that window instead of asserting an instantaneous release: a
+        // lock that genuinely leaks still fails here, and any error other than
+        // contention fails immediately.
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        let reacquired = loop {
+            match RegistryProcessLock::acquire(dir.path()) {
+                Ok(lock) => break lock,
+                Err(error) => {
+                    assert!(
+                        error.to_string().contains("already running"),
+                        "reacquiring a released registry.lock failed for an unrelated reason: {error}"
+                    );
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "registry.lock was never released after its holder was dropped"
+                    );
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            }
+        };
+        drop(reacquired);
 
         #[cfg(unix)]
         {
