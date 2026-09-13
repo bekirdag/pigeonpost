@@ -24,8 +24,8 @@ android {
         applicationId = "dev.pigeonpost.inbox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.1.1"
+        versionCode = 3
+        versionName = "0.2.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "dev.pigeonpost.inbox"
     }
@@ -70,6 +70,7 @@ dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("net.openid:appauth:0.11.1")
+    implementation("com.android.billingclient:billing:9.1.0")
     implementation("androidx.browser:browser:1.9.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.commonmark:commonmark:0.24.0")

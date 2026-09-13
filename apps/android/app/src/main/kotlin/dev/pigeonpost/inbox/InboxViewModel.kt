@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import dev.pigeonpost.inbox.billing.GooglePlayBilling
 
 data class AppGraph(val session: UserSession, val api: PostboxApi, val fixtures: Boolean = false) {
     companion object {
@@ -36,18 +37,23 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
         onSessionExpired = { signOut() })
     val handles = HandleStore(graph.api, viewModelScope,
         onRegistered = { inbox.loadAccount() }, onSessionExpired = { signOut() })
+    val billing = if (graph.fixtures) null else GooglePlayBilling(app)
+    val paidHandles = (graph.api as? PaidHandleApi)?.let { api -> billing?.let {
+        PaidHandleStore(api, it, viewModelScope, onRegistered = { inbox.loadAccount() }, onSessionExpired = { signOut() })
+    } }
     var attachmentTarget: DraftKey? = null
     var pendingSave: File? = null
     init {
         viewModelScope.launch {
             session.state.filter { !it.loading }.map { it.signedIn }.distinctUntilChanged().collect { signedIn ->
-                if (signedIn) inbox.loadAccount(preferences.getString("mailbox", null))
-                else { inbox.reset(); handles.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
+                if (signedIn) { inbox.loadAccount(preferences.getString("mailbox", null)); paidHandles?.restore() }
+                else { inbox.reset(); handles.reset(); paidHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
             }
         }
     }
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
-    fun signOut() { handles.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
+    fun signOut() { handles.reset(); paidHandles?.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
+    override fun onCleared() { billing?.close(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey }
     fun attach(uris: List<Uri>) {
         val target = attachmentTarget ?: return

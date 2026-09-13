@@ -12,6 +12,9 @@ use crate::vault::Wrapped;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
+mod googleplay;
+pub use googleplay::GoogleBinding;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
     address       TEXT PRIMARY KEY,
@@ -796,6 +799,7 @@ impl Store {
         };
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(googleplay::SCHEMA)?;
         for stmt in MIGRATIONS {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.

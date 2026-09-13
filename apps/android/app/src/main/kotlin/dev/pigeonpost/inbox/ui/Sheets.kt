@@ -80,6 +80,7 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 
 @Composable
 fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, handleState: HandleState, handles: HandleStore,
+    paidHandles: PaidHandleStore? = null,
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit) {
     PageDialog("Settings", dismiss) {
@@ -87,6 +88,10 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
         HorizontalDivider()
         HandleSection(handleState, handles, state.mailboxes, openInbox)
+        paidHandles?.let {
+            HorizontalDivider()
+            PaidHandleSection(it, state.mailboxes, openInbox, openLink)
+        }
         HorizontalDivider()
         Text("Storage", style = MaterialTheme.typography.titleSmall)
         state.quota?.let { quota ->
@@ -99,7 +104,9 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         HorizontalDivider()
         Text("Notifications", style = MaterialTheme.typography.titleSmall)
         Text("Conversations update while the app is open. Background notifications are coming soon.", style = MaterialTheme.typography.bodyMedium)
-        TextButton({ openLink("https://pigeonpost.dev/privacy") }) { Text("Privacy policy") }
+        TextButton({ openLink("https://pigeonpost.dev/app-privacy.html") }) { Text("Privacy policy") }
+        TextButton({ openLink("https://pigeonpost.dev/app-terms.html") }) { Text("Terms of service") }
+        TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
         TextButton(signOut) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
         Text("Pigeonpost ${BuildConfig.VERSION_NAME}\nWodo Teknoloji A.Ş." + if (fixtures) "\nDevelopment fixtures" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
     }

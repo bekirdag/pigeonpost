@@ -76,7 +76,7 @@ class PostboxClient(
     private val tokens: TokenProvider,
     private val base: HttpUrl = "https://postbox.pigeonpost.dev/".toHttpUrl(),
     allowLoopbackForTests: Boolean = false,
-) : PostboxApi {
+) : PostboxApi, PaidHandleApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -87,6 +87,13 @@ class PostboxClient(
         .callTimeout(180, TimeUnit.SECONDS).build()
 
     override suspend fun identities() = decode<IdentitiesResponse>(request("identities")).identities.orEmpty()
+    override suspend fun playCatalog() = decode<PlayCatalog>(request("claims/google"))
+    override suspend fun redeemPlayPurchase(token: String, name: String?) = decode<PlayClaim>(request("claims/google", "POST", json = buildJsonObject {
+        put("purchase_token", token); name?.let { put("namespace", tidyHandle(it)) }
+    }))
+    override suspend fun assignPlayHandle(productId: String, name: String) = decode<PlayClaim>(request("claims/google/assign", "POST", json = buildJsonObject {
+        put("product_id", productId); put("namespace", tidyHandle(name))
+    }))
     override suspend fun whoami(identity: String) = decode<WhoAmI>(request("whoami", identity = identity))
     override suspend fun createIdentity(handle: String?) = decode<CreatedIdentity>(request("identities", "POST", json = buildJsonObject { handle?.let { put("handle", it) } })).address
     override suspend fun inbox(identity: String, wait: Int?): InboxResponse {

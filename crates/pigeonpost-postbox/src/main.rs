@@ -54,6 +54,8 @@ use zeroize::Zeroize;
 mod appstore;
 mod blobs;
 mod github;
+mod googleplay;
+mod googleplay_routes;
 mod mcp;
 mod oidc;
 mod pow;
@@ -115,6 +117,7 @@ struct AppState {
     /// The App Store, when this deployment can verify purchases. `None` closes the claim endpoint
     /// the same way an unconfigured namespace grant closes itself.
     appstore: Option<Arc<appstore::AppStore>>,
+    googleplay: Option<Arc<googleplay::GooglePlay>>,
     /// Verified sign-in addresses explicitly approved for one complimentary preview handle.
     test_handle_testers: Arc<std::collections::HashSet<String>>,
     /// GitHub device login, when this postbox is configured for it. `None` closes the endpoints
@@ -319,6 +322,7 @@ async fn serve(cfg: Config) {
         "pigeonpost-postbox listening (/v1 REST + /mcp connector live)"
     );
 
+    googleplay_routes::start_reconciliation(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -383,6 +387,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
+        googleplay: googleplay::GooglePlay::from_env(),
         test_handle_testers: tester_handles::configured_testers(),
         blobs: blobs::Blobs::from_env().map(Arc::new),
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
@@ -516,6 +521,11 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/claims/address", post(claim_address))
         .route("/v1/claims/apple", post(claim_apple).get(apple_claim_state))
+        .route(
+            "/v1/claims/google",
+            get(googleplay_routes::catalog).post(googleplay_routes::claim),
+        )
+        .route("/v1/claims/google/assign", post(googleplay_routes::assign))
         .route("/v1/devices", post(register_device))
         .route("/v1/devices/{token}", delete(unregister_device))
         .route("/v1/policy", axum::routing::put(put_policy))
@@ -5369,6 +5379,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            googleplay: None,
             test_handle_testers: Arc::new(std::collections::HashSet::new()),
             blobs: None,
             public_url: "https://postbox.example".into(),
@@ -7913,6 +7924,7 @@ mod tests {
             apns: None,
             reserved_names: None,
             appstore: None,
+            googleplay: None,
             test_handle_testers: Arc::new(std::collections::HashSet::new()),
             blobs: None,
             public_url: "https://postbox.example".into(),

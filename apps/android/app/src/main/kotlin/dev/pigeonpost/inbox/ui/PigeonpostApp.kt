@@ -72,7 +72,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                     session.loading -> Loading("Opening Pigeonpost…")
                     !session.signedIn -> SignIn(session, signIn)
                     state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
-                    state.acting == null -> FirstInbox(state, store, model::signOut)
+                    state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
                     else -> BoxWithConstraints(Modifier.fillMaxSize()) {
                         val wide = maxWidth >= 840.dp
                         Row(Modifier.fillMaxSize()) {
@@ -96,6 +96,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "new" -> NewConversationDialog(state, { store.selectPeer(it); sheet = null }, { sheet = null })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
             "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
+                paidHandles = model.paidHandles,
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink)
@@ -130,7 +131,7 @@ private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit) {
 }
 
 @Composable
-private fun FirstInbox(state: InboxState, store: InboxStore, signOut: () -> Unit) {
+private fun FirstInbox(state: InboxState, store: InboxStore, signOut: () -> Unit, openLink: (String) -> Unit) {
     Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
         Image(painterResource(R.drawable.ic_pigeonpost), null, Modifier.size(96.dp))
         Text(if (state.accountLoaded) "Your first inbox" else "Couldn’t open your inboxes", style = MaterialTheme.typography.headlineSmall)
@@ -139,6 +140,7 @@ private fun FirstInbox(state: InboxState, store: InboxStore, signOut: () -> Unit
             Text(if (state.creating) "Creating…" else if (state.accountLoaded) "Create inbox" else "Try again")
         }
         TextButton(signOut) { Text("Sign out") }
+        TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account") }
     }
 }
 

@@ -58,8 +58,9 @@ class MainActivity : ComponentActivity() {
             attachment = ::attachment,
             openLink = ::openLink) }
     }
-    override fun onStart() { super.onStart(); model.inbox.setActive(true) }
-    override fun onStop() { model.inbox.setActive(false); super.onStop() }
+    override fun onStart() { super.onStart(); model.inbox.setActive(true); model.billing?.attach(this) }
+    override fun onResume() { super.onResume(); if (model.session.state.value.signedIn) model.paidHandles?.restore() }
+    override fun onStop() { model.billing?.detach(this); model.inbox.setActive(false); super.onStop() }
     private fun attachment(value: Attachment, action: String) {
         val identity = model.inbox.state.value.acting?.address ?: return
         lifecycleScope.launch {

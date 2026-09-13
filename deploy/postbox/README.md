@@ -88,6 +88,18 @@ Back up SQLite before deployment as usual. The schema change only adds a table; 
 can still read existing namespace bindings during rollback. Never restore an old database over
 messages received since deployment.
 
+## Google Play handle subscriptions
+
+Android uses ten annual Google Play products, verified and acknowledged by the postbox service.
+Mount a private service-account credential read-only and configure
+`GOOGLE_PLAY_SERVICE_ACCOUNT_FILE`. The additive `google_subscriptions` table binds verified
+purchases to accounts and handles. The reconciliation worker refreshes confirmed expiries and
+payment states without requiring the app to stay open. Apple subscriptions and complimentary
+tester grants retain their existing authorization paths.
+
+See the [Android billing runbook](../../apps/android/BILLING.md) for product IDs, exact pricing,
+required app-scoped permissions, rollback precautions, and real Play test-purchase acceptance.
+
 ## Push notifications (APNs)
 
 Off unless configured, and configured only from the environment — no key is ever committed, and
