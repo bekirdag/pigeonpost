@@ -52,6 +52,7 @@ use std::sync::Arc;
 use zeroize::Zeroize;
 
 mod appstore;
+mod appstore_routes;
 mod blobs;
 mod github;
 mod googleplay;
@@ -323,6 +324,7 @@ async fn serve(cfg: Config) {
     );
 
     googleplay_routes::start_reconciliation(state.clone());
+    appstore_routes::start_reconciliation(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -1031,6 +1033,13 @@ async fn do_create_identity(
                     tracing::error!(error = %e, "store insert failed");
                     ApiError::server("store_error")
                 })?;
+            if outcome == store::QuotaOutcome::NotYours {
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "namespace_not_yours",
+                    "the namespace is no longer held by this account",
+                ));
+            }
             if outcome == store::QuotaOutcome::Full {
                 return Err(ApiError::new(
                     StatusCode::FORBIDDEN,
@@ -2338,7 +2347,9 @@ async fn resolve_recipient(
     // delivering it to whichever GitHub user happened to sign up first would be the worst possible
     // answer. Only `/github/<login>` means something there.
     if let Some(namespace) = pigeonpost_core::namespace_root(to) {
-        if !PROVIDER_NAMESPACES.contains(&namespace.as_str()) {
+        if !PROVIDER_NAMESPACES.contains(&namespace.as_str())
+            && !OPEN_NAMESPACES.contains(&namespace.as_str())
+        {
             return state
                 .store
                 .namespace_inbox(namespace)
@@ -4259,7 +4270,7 @@ async fn grant_namespace(
         )
         .await
     {
-        Ok(()) => {
+        Ok(true) => {
             tracing::info!(%namespace, account = %req.account_id, expires_at = ?req.expires_at, "namespace granted");
             let mailbox = ensure_namespace_mailbox(&state, &req.account_id, &namespace).await;
             Json(json!({
@@ -4269,6 +4280,12 @@ async fn grant_namespace(
             }))
             .into_response()
         }
+        Ok(false) => ApiError::new(
+            StatusCode::CONFLICT,
+            "namespace_taken",
+            "this namespace belongs to another account or is in recovery",
+        )
+        .into_response(),
         Err(e) => {
             tracing::error!(error = %e, "namespace grant failed");
             ApiError::server("store_error").into_response()
@@ -4397,7 +4414,11 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
 ///
 /// Canonicalised the same way `claim_apple` canonicalises, so "Alp", "/alp" and "alp" are one name
 /// and the reserved list cannot be walked past with a different spelling.
-async fn handle_availability(State(state): State<AppState>, Path(name): Path<String>) -> Response {
+async fn handle_availability(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Path(name): Path<String>,
+) -> Response {
     let normalized = format!("/{}", name.trim().trim_matches('/'));
     let namespace = pigeonpost_core::address::namespace_root(&normalized)
         .map(|name| name.trim_start_matches('/').to_owned())
@@ -4420,14 +4441,34 @@ async fn handle_availability(State(state): State<AppState>, Path(name): Path<Str
             .into_response();
     }
 
+    // An expired name is reserved from strangers, but its authenticated owner can renew it.
+    // The existing app's renewal preflight uses this same endpoint. Never cache its private answer.
+    if let Ok(account) = require_account(&state, &headers).await {
+        match state
+            .store
+            .namespace_recoverable_by(namespace.clone(), account, now_unix())
+            .await
+        {
+            Ok(true) => {
+                return (
+                    [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+                    Json(json!({"name": namespace, "available": true, "reason": "renewal"})),
+                )
+                    .into_response()
+            }
+            Ok(false) => {}
+            Err(_) => return ApiError::server("store_error").into_response(),
+        }
+    }
+
     match state
         .store
-        .namespace_owner(namespace.clone(), now_unix())
+        .namespace_available(namespace.clone(), now_unix())
         .await
     {
-        Ok(Some(_)) => Json(json!({ "name": namespace, "available": false, "reason": "taken" }))
+        Ok(false) => Json(json!({ "name": namespace, "available": false, "reason": "taken" }))
             .into_response(),
-        Ok(None) => Json(json!({ "name": namespace, "available": true })).into_response(),
+        Ok(true) => Json(json!({ "name": namespace, "available": true })).into_response(),
         Err(_) => ApiError::server("store_error").into_response(),
     }
 }
@@ -4508,6 +4549,7 @@ async fn claim_apple(
         }
     };
 
+    let _verification = appstore.verification.lock().await;
     let entitlement = match appstore.entitlement(&req.transaction_id).await {
         Ok(entitlement) => entitlement,
         Err(appstore::AppStoreError::NotFound) => {
@@ -4581,7 +4623,7 @@ async fn claim_apple(
         .apple_subscription_owner(entitlement.original_transaction_id.clone())
         .await
     {
-        Ok(Some((owner, _))) if owner != account => {
+        Ok(Some((owner, _, _))) if owner != account => {
             return ApiError::new(
                 StatusCode::CONFLICT,
                 "purchase_already_used",
@@ -4589,8 +4631,8 @@ async fn claim_apple(
             )
             .into_response()
         }
-        Ok(Some((_, namespace))) => namespace,
-        Ok(None) => {
+        Ok(Some((_, namespace, true))) => namespace,
+        Ok(None) | Ok(Some((_, _, false))) => {
             let Some(raw) = req
                 .namespace
                 .as_deref()
@@ -5396,6 +5438,7 @@ mod tests {
             window_secs: 3600,
             lifetime: 1000,
         });
+        own_namespace(&state, "bekir", "acct_fixture").await;
         let identity = |address: &str, handle: &str, created_at: u64| store::StoredIdentity {
             address: address.into(),
             wrapped_seed: vault::Wrapped {
@@ -5407,7 +5450,7 @@ mod tests {
             cap_hash: [0; 32],
             label: None,
             created_at,
-            account_id: None,
+            account_id: Some("acct_fixture".into()),
             handle: Some(handle.into()),
         };
         state
@@ -5581,6 +5624,7 @@ mod tests {
     /// A mailbox that answers to a readable name, which is how peers refer to each other
     /// everywhere except in the store.
     async fn mint_with_handle(state: &AppState, handle: &str) -> store::StoredIdentity {
+        own_namespace(state, handle.split('/').nth(1).unwrap(), "test-account").await;
         let minted = mint(state).await;
         // An anonymous mailbox belongs to no account, so naming it needs proof of control — the
         // same rule the real endpoint enforces. Asserting the outcome keeps a silently unbound
@@ -6500,11 +6544,74 @@ mod tests {
     }
 
     async fn availability(state: &AppState, name: &str) -> serde_json::Value {
-        let response = handle_availability(State(state.clone()), Path(name.to_string())).await;
+        let response = handle_availability(
+            State(state.clone()),
+            HeaderMap::new(),
+            Path(name.to_string()),
+        )
+        .await;
         let body = axum::body::to_bytes(response.into_body(), 64 * 1024)
             .await
             .unwrap();
         serde_json::from_slice(&body).unwrap()
+    }
+
+    #[tokio::test]
+    async fn lifecycle_only_the_authenticated_owner_can_preflight_an_expired_name_for_renewal() {
+        let state = state_with_reserved(&[]);
+        let now = now_unix();
+        let (token, key) = new_api_key();
+        state
+            .store
+            .create_account("owner".into(), key, now)
+            .await
+            .unwrap();
+        state
+            .store
+            .set_namespace_owner(
+                "alex".into(),
+                "owner".into(),
+                "entitlement",
+                now - 200,
+                Some(now - 100),
+            )
+            .await
+            .unwrap();
+        assert_eq!(availability(&state, "alex").await["available"], false);
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        let response =
+            handle_availability(State(state.clone()), headers, Path("alex".into())).await;
+        assert_eq!(
+            response.headers()[axum::http::header::CACHE_CONTROL],
+            "private, no-store"
+        );
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let answer: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(answer["available"], true);
+        assert_eq!(answer["reason"], "renewal");
+        let (other, key) = new_api_key();
+        state
+            .store
+            .create_account("stranger".into(), key, now)
+            .await
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::AUTHORIZATION,
+            format!("Bearer {other}").parse().unwrap(),
+        );
+        let response = handle_availability(State(state), headers, Path("alex".into())).await;
+        let body = axum::body::to_bytes(response.into_body(), 4096)
+            .await
+            .unwrap();
+        let answer: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(answer["available"], false);
     }
 
     /// The bug this endpoint exists for: the website asked the registry over a path it does not
@@ -6583,9 +6690,9 @@ mod tests {
             .unwrap();
         assert!(lapsed.is_none(), "past its expiry it is not held");
 
-        // And the name is buyable again, by them or by anybody.
+        // A local lapse does not prove provider termination and cannot open resale.
         let answer = availability(&state, "alp").await;
-        assert_eq!(answer["available"], true);
+        assert_eq!(answer["available"], false);
     }
 
     /// A deployment that cannot say what is protected must not say "yes, sell it".
@@ -6596,7 +6703,8 @@ mod tests {
             window_secs: 3600,
             lifetime: 1000,
         });
-        let response = handle_availability(State(state), Path("anything".into())).await;
+        let response =
+            handle_availability(State(state), HeaderMap::new(), Path("anything".into())).await;
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 
@@ -6647,7 +6755,7 @@ mod tests {
     /// A lapsed binding is not a holding. Reporting it as one would show a handle the account can
     /// no longer use, next to an offer to buy the one it just lost.
     #[tokio::test]
-    async fn an_expired_handle_is_not_held_and_is_available_again() {
+    async fn an_expired_handle_is_not_active_but_stays_reserved() {
         let state = state_with_reserved(&[]);
         state
             .store
@@ -6663,7 +6771,7 @@ mod tests {
         assert!(held.is_empty(), "past its expiry it is not held");
 
         let answer = availability(&state, "lapsed").await;
-        assert_eq!(answer["available"], true, "and it is for sale again");
+        assert_eq!(answer["available"], false, "unverified expiry stays reserved");
     }
 
     #[test]

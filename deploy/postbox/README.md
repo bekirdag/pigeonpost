@@ -100,6 +100,34 @@ tester grants retain their existing authorization paths.
 See the [Android billing runbook](../../apps/android/BILLING.md) for product IDs, exact pricing,
 required app-scoped permissions, rollback precautions, and real Play test-purchase acceptance.
 
+## Paid handle expiry and recovery
+
+Paid namespaces stop routing mail and granting name-based sender trust when their confirmed term
+expires. The original account keeps its permanent `/k/` mailbox, keys, contacts, and message
+history. Its aliases become usable again if the same owner renews before the name is reassigned.
+The signed-in owner's availability preflight allows renewal; public availability remains closed.
+
+A name can be resold only after a 30-day recovery period and a terminal provider status verified
+within the last ten minutes. Missing refreshes, provider outages, and billing retry never prove
+termination. Apple and Google reconcile approximately every five minutes, including while the
+phone is closed; Apple billing grace extends access to Apple's confirmed grace deadline.
+
+Resale checks, old-alias detachment, and the new owner binding share one SQLite transaction.
+Old messages and keys never transfer. Quotas count the current owner's mailboxes. Contact grants
+addressed to the transferred namespace have their automation permissions cleared, while explicit
+key-address grants remain unchanged. A late renewed subscription whose old name was reassigned can
+register another available name without another payment.
+
+Web grants use the same ownership and recovery rules. The authenticated grant service can confirm
+termination by refreshing the original owner's grant with its expired paid-through timestamp.
+An expired cached web grant alone leaves the name reserved: the web adapter currently has no
+background provider termination feed. Do not clear reservations based on database age alone.
+
+The additive `namespaces.release_at` and `provider_ref` columns protect recovery and bind background
+updates to the correct subscription. Back up SQLite before upgrading and retain the old runtime
+image. Never roll back by replacing the live database with an older snapshot after new mail or a
+name transfer has occurred; older binaries do not enforce the new lifecycle rules.
+
 ## Push notifications (APNs)
 
 Off unless configured, and configured only from the environment — no key is ever committed, and

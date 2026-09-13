@@ -13,7 +13,10 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
 mod googleplay;
+mod lifecycle;
 pub use googleplay::GoogleBinding;
+#[cfg(test)]
+use lifecycle::AppleRefresh;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
@@ -295,6 +298,14 @@ CREATE TABLE IF NOT EXISTS inbox_policy (
 // afterwards, once their columns are guaranteed to exist. (SQLite unique indexes treat NULLs as
 // distinct, so many API-key accounts can share a NULL oidc_sub.)
 const MIGRATIONS: &[&str] = &[
+    "ALTER TABLE namespaces ADD COLUMN release_at INTEGER",
+    "ALTER TABLE namespaces ADD COLUMN provider_ref TEXT",
+    "UPDATE namespaces SET provider_ref=(SELECT original_transaction_id FROM apple_subscriptions s
+        WHERE s.namespace=namespaces.namespace AND s.account_id=namespaces.account_id
+        ORDER BY s.updated_at DESC, s.expires_at DESC LIMIT 1) WHERE source='apple' AND provider_ref IS NULL",
+    "UPDATE namespaces SET provider_ref=(SELECT purchase_token FROM google_subscriptions s
+        WHERE s.namespace=namespaces.namespace AND s.account_id=namespaces.account_id AND s.replaced_by IS NULL
+        ORDER BY s.verified_at DESC LIMIT 1) WHERE source='google' AND provider_ref IS NULL",
     "ALTER TABLE apple_subscriptions ADD COLUMN product_id TEXT NOT NULL DEFAULT ''",
     "ALTER TABLE identities ADD COLUMN account_id TEXT",
     "CREATE INDEX IF NOT EXISTS identities_by_account ON identities(account_id)",
@@ -700,6 +711,7 @@ pub struct NamespaceHolding {
 /// Whether a namespace had room for one more mailbox at the moment of the write.
 #[derive(Debug, PartialEq, Eq)]
 pub enum QuotaOutcome {
+    NotYours,
     Inserted,
     Full,
 }
@@ -1543,8 +1555,8 @@ impl Store {
 
     /// Which account owns a purchased namespace, if the cached binding is still fresh.
     ///
-    /// Returns `None` both for "nobody owns it" and for "the cache has expired", because the
-    /// caller's next move is the same either way: ask the registry rather than assume.
+    /// This answers active entitlement only. Purchase availability must use
+    /// `namespace_available`, which also protects recovery and unverified provider state.
     pub async fn namespace_owner(
         &self,
         namespace: String,
@@ -1566,12 +1578,6 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// Record or refresh a namespace binding.
-    ///
-    /// Only tests call this today: nothing yet syncs ownership from the registry, which is the
-    /// remaining piece of Phase 1. Left public and unused rather than deleted because the mint
-    /// path already reads what it writes, and the read half is worthless without it.
-    #[allow(dead_code)]
     /// Every handle this account holds, newest binding first.
     ///
     /// The account page has to show all of them whatever bought them — a name paid for on a phone
@@ -1656,6 +1662,8 @@ impl Store {
         }).await.map_err(|_| StoreError::Join)?
     }
 
+    /// A trusted web grant can refresh its owner's binding, but cannot overwrite another owner.
+    /// An authenticated expired grant confirms termination; missing refreshes do not.
     pub async fn set_namespace_owner(
         &self,
         namespace: String,
@@ -1663,27 +1671,21 @@ impl Store {
         source: &'static str,
         now: u64,
         expires_at: Option<u64>,
-    ) -> Result<(), StoreError> {
+    ) -> Result<bool, StoreError> {
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
-            let c = conn.lock().expect("store lock");
-            c.execute(
-                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(namespace) DO UPDATE SET
-                     account_id = ?2, source = ?3, verified_at = ?4, expires_at = ?5",
-                params![
-                    namespace,
-                    account_id,
-                    source,
-                    now as i64,
-                    expires_at.map(|v| v as i64)
-                ],
-            )?;
-            Ok(())
-        })
-        .await
-        .map_err(|_| StoreError::Join)?
+        tokio::task::spawn_blocking(move || {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            if !lifecycle::available_to(&tx, &namespace, Some(&account_id), now)? { return Ok(false); }
+            lifecycle::detach_previous_aliases(&tx, &namespace, &account_id)?;
+            let release = expires_at.filter(|v| *v <= now).map(|v| v as i64 + lifecycle::RECOVERY_SECONDS);
+            tx.execute("INSERT INTO namespaces(namespace,account_id,source,verified_at,expires_at,release_at)
+                VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(namespace) DO UPDATE SET
+                account_id=?2,source=?3,verified_at=?4,expires_at=?5,release_at=?6,provider_ref=NULL",
+                params![namespace, account_id, source, now as i64, expires_at.map(|v| v as i64), release])?;
+            tx.commit()?;
+            Ok(true)
+        }).await.map_err(|_| StoreError::Join)?
     }
 
     /// Bind an App Store subscription to a namespace, or say why not.
@@ -1728,7 +1730,11 @@ impl Store {
                 // One subscription, one name. Without this the same $8 could walk a fleet through
                 // every good name in turn, releasing each as it went.
                 if held_namespace != &namespace {
-                    return Ok(AppleClaim::AlreadyNamed(held_namespace.clone()));
+                    let retained: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM namespaces WHERE namespace=?1
+                        AND account_id=?2 AND source='apple' AND provider_ref=?3)",
+                        params![held_namespace, account_id, original_transaction_id], |r| r.get(0))?;
+                    if retained { return Ok(AppleClaim::AlreadyNamed(held_namespace.clone())); }
+                    // A renewed paid slot whose old name was resold can register another name.
                 }
             }
 
@@ -1743,21 +1749,10 @@ impl Store {
                 params![account_id, namespace, now as i64], |r| r.get(0))?;
             if live_count >= crate::appstore::MAX_HANDLES as i64 { return Ok(AppleClaim::LimitReached); }
 
-            // Somebody else's live namespace is never taken, even by a valid purchase. `namespaces`
-            // upserts on conflict, so without this check a paid claim would silently hijack it.
-            let occupant: Option<String> = tx
-                .query_row(
-                    "SELECT account_id FROM namespaces
-                      WHERE namespace = ?1 AND (expires_at IS NULL OR expires_at > ?2)",
-                    params![namespace, now as i64],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            if let Some(occupant) = occupant {
-                if occupant != account_id {
-                    return Ok(AppleClaim::NamespaceTaken);
-                }
+            if !lifecycle::available_to(&tx, &namespace, Some(&account_id), now)? {
+                return Ok(AppleClaim::NamespaceTaken);
             }
+            lifecycle::detach_previous_aliases(&tx, &namespace, &account_id)?;
 
             tx.execute(
                 "INSERT INTO apple_subscriptions
@@ -1766,7 +1761,7 @@ impl Store {
                  VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?6, ?7)
                  ON CONFLICT(original_transaction_id) DO UPDATE SET
                      expires_at = MAX(apple_subscriptions.expires_at, ?5), environment = ?4, updated_at = ?6,
-                     product_id = ?7",
+                     namespace = ?3, product_id = ?7",
                 params![
                     original_transaction_id,
                     account_id,
@@ -1778,10 +1773,10 @@ impl Store {
                 ],
             )?;
             tx.execute(
-                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at)
-                 VALUES (?1, ?2, 'apple', ?3, ?4)
+                "INSERT INTO namespaces (namespace, account_id, source, verified_at, expires_at, provider_ref, release_at)
+                 VALUES (?1, ?2, 'apple', ?3, ?4, ?5, NULL)
                  ON CONFLICT(namespace) DO UPDATE SET
-                     account_id = ?2, source = 'apple', verified_at = ?3,
+                     account_id = ?2, source = 'apple', verified_at = ?3, provider_ref = ?5, release_at = NULL,
                      expires_at = (SELECT expires_at FROM apple_subscriptions WHERE original_transaction_id = ?5)",
                 params![namespace, account_id, now as i64, expires_at, original_transaction_id],
             )?;
@@ -1808,9 +1803,10 @@ impl Store {
             let mut statement = c.prepare(
                 "SELECT s.original_transaction_id, s.namespace, s.product_id, s.environment, s.expires_at,
                     COALESCE(n.account_id = s.account_id AND n.source = 'apple'
-                        AND s.expires_at > ?2 AND (n.expires_at IS NULL OR n.expires_at > ?2), 0)
+                        AND n.provider_ref = s.original_transaction_id AND s.expires_at > ?2 AND (n.expires_at IS NULL OR n.expires_at > ?2), 0)
                  FROM apple_subscriptions s LEFT JOIN namespaces n ON n.namespace = s.namespace
-                 WHERE s.account_id = ?1 ORDER BY s.created_at, s.namespace")?;
+                 WHERE s.account_id = ?1 AND n.account_id=s.account_id AND n.source='apple'
+                    AND n.provider_ref=s.original_transaction_id ORDER BY s.created_at, s.namespace")?;
             let records = statement.query_map(params![account_id, now as i64], |r| Ok(AppleSubscription {
                 original_transaction_id: r.get(0)?, namespace: r.get(1)?, product_id: r.get(2)?,
                 environment: r.get(3)?, expires_at: r.get(4)?, active: r.get(5)?,
@@ -1823,14 +1819,23 @@ impl Store {
     pub async fn apple_subscription_owner(
         &self,
         original_transaction_id: String,
-    ) -> Result<Option<(String, String)>, StoreError> {
+    ) -> Result<Option<(String, String, bool)>, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().expect("store lock");
-            c.query_row("SELECT account_id, namespace FROM apple_subscriptions WHERE original_transaction_id = ?1",
-                params![original_transaction_id], |r| Ok((r.get(0)?, r.get(1)?)))
-                .optional().map_err(Into::into)
-        }).await.map_err(|_| StoreError::Join)?
+            c.query_row(
+                "SELECT s.account_id, s.namespace, EXISTS(SELECT 1 FROM namespaces n
+                    WHERE n.namespace=s.namespace AND n.account_id=s.account_id AND n.source='apple'
+                    AND n.provider_ref=s.original_transaction_id)
+                FROM apple_subscriptions s WHERE s.original_transaction_id = ?1",
+                params![original_transaction_id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+            )
+            .optional()
+            .map_err(Into::into)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
     }
 
     /// What this account has already bought, so the app can show it instead of offering to sell it
@@ -1880,10 +1885,13 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<QuotaOutcome, StoreError> {
             let mut c = conn.lock().expect("store lock");
             let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
-            let prefix = format!("{namespace}/");
+            if !lifecycle::may_mint(&tx, &namespace, id.account_id.as_deref(), crate::now_unix())? {
+                return Ok(QuotaOutcome::NotYours);
+            }
+            let prefix = format!("/{}/", namespace.trim_start_matches('/'));
             let held: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
-                params![prefix],
+                "SELECT COUNT(*) FROM identities WHERE handle GLOB ?1 || '*' AND account_id IS ?2",
+                params![prefix, id.account_id],
                 |r| r.get(0),
             )?;
             if held as usize >= max {
@@ -1982,10 +1990,13 @@ impl Store {
                 return Ok(BindOutcome::AlreadyNamed(current));
             }
 
-            let prefix = format!("{namespace}/");
+            if !lifecycle::may_mint(&tx, &namespace, Some(&account), crate::now_unix())? {
+                return Ok(BindOutcome::NotYours);
+            }
+            let prefix = format!("/{}/", namespace.trim_start_matches('/'));
             let held: i64 = tx.query_row(
-                "SELECT COUNT(*) FROM identities WHERE handle LIKE ?1 || '%'",
-                params![prefix],
+                "SELECT COUNT(*) FROM identities WHERE handle GLOB ?1 || '*' AND account_id IS ?2",
+                params![prefix, account],
                 |r| r.get(0),
             )?;
             if held as usize >= max {
@@ -2031,7 +2042,12 @@ impl Store {
                     map_id_row,
                 )
                 .optional()?;
-            row.map(id_from_row).transpose()
+            let id = row
+                .map(id_from_row)
+                .transpose()?
+                .map(|id| lifecycle::visible_identity(&c, id))
+                .transpose()?;
+            Ok(id.filter(|id| id.handle.is_some()))
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -2164,29 +2180,22 @@ impl Store {
         namespace: String,
     ) -> Result<Option<StoredIdentity>, StoreError> {
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<Option<StoredIdentity>, StoreError> {
+        tokio::task::spawn_blocking(move || {
             let c = conn.lock().expect("store lock");
-            let main = format!("/{namespace}/main");
-            if let Some(row) = c
-                .query_row(
-                    &format!("SELECT {ID_COLS} FROM identities WHERE handle = ?1"),
-                    params![main],
-                    map_id_row,
-                )
-                .optional()?
-            {
-                return id_from_row(row).map(Some);
-            }
-            // `handle GLOB` rather than LIKE: the namespace can contain `_`, which LIKE treats as a
-            // wildcard, and `/bekir_ops/x` must not answer for `/bekir`.
-            let pattern = format!("/{namespace}/*");
             let row = c
                 .query_row(
                     &format!(
-                        "SELECT {ID_COLS} FROM identities WHERE handle GLOB ?1 \
-                         ORDER BY created_at ASC, address ASC LIMIT 1"
+                        "SELECT {ID_COLS} FROM identities
+                WHERE handle GLOB ?1 AND account_id=(SELECT account_id FROM namespaces
+                    WHERE namespace=?2 AND (expires_at IS NULL OR expires_at>?3))
+                ORDER BY (handle=?4) DESC, created_at ASC, address ASC LIMIT 1"
                     ),
-                    params![pattern],
+                    params![
+                        format!("/{namespace}/*"),
+                        namespace,
+                        crate::now_unix() as i64,
+                        format!("/{namespace}/main")
+                    ],
                     map_id_row,
                 )
                 .optional()?;
@@ -2927,7 +2936,9 @@ impl Store {
             })?;
             let mut out = Vec::new();
             for r in rows {
-                out.push(r?);
+                let mut id = r?;
+                id.handle = lifecycle::visible_handle(&c, id.handle, Some(&account_id), crate::now_unix())?;
+                out.push(id);
             }
             Ok(out)
         })
@@ -2981,13 +2992,16 @@ impl Store {
         F: FnOnce(&Connection, &str) -> rusqlite::Result<Option<IdRow>> + Send + 'static,
     {
         let conn = self.conn.clone();
-        let row = tokio::task::spawn_blocking(move || -> Result<Option<IdRow>, StoreError> {
+        tokio::task::spawn_blocking(move || {
             let c = conn.lock().expect("store lock");
-            Ok(run(&c, &sql)?)
+            run(&c, &sql)?
+                .map(id_from_row)
+                .transpose()?
+                .map(|id| lifecycle::visible_identity(&c, id))
+                .transpose()
         })
         .await
-        .map_err(|_| StoreError::Join)??;
-        row.map(id_from_row).transpose()
+        .map_err(|_| StoreError::Join)?
     }
 
     pub async fn enqueue(&self, m: Message) -> Result<(), StoreError> {
@@ -3882,7 +3896,7 @@ mod tests {
             assert_eq!(rows[0].product_id, "handle-1");
             assert_eq!(
                 s.apple_subscription_owner("tx-1".into()).await.unwrap(),
-                Some(("acct_a".into(), "alex".into()))
+                Some(("acct_a".into(), "alex".into(), true))
             );
         }
 
@@ -3898,7 +3912,7 @@ mod tests {
             ));
             {
                 let c = Connection::open(&path).unwrap();
-                c.execute_batch("CREATE TABLE apple_subscriptions (original_transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, namespace TEXT NOT NULL, environment TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO apple_subscriptions VALUES ('legacy-tx','acct_old','alex','Production',300,100,100);").unwrap();
+                c.execute_batch("CREATE TABLE apple_subscriptions (original_transaction_id TEXT PRIMARY KEY, account_id TEXT NOT NULL, namespace TEXT NOT NULL, environment TEXT NOT NULL, expires_at INTEGER NOT NULL, created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL); INSERT INTO apple_subscriptions VALUES ('legacy-tx','acct_old','alex','Production',300,100,100); CREATE TABLE namespaces(namespace TEXT PRIMARY KEY, account_id TEXT NOT NULL, source TEXT NOT NULL, verified_at INTEGER NOT NULL, expires_at INTEGER); INSERT INTO namespaces VALUES ('alex','acct_old','apple',100,300);").unwrap();
             }
             {
                 let s = Store::open(path.to_str().unwrap()).unwrap();
@@ -3906,7 +3920,7 @@ mod tests {
                     s.apple_subscription_owner("legacy-tx".into())
                         .await
                         .unwrap(),
-                    Some(("acct_old".into(), "alex".into()))
+                    Some(("acct_old".into(), "alex".into(), true))
                 );
                 let rows = s
                     .apple_subscriptions_for("acct_old".into(), 100)
@@ -4107,9 +4121,9 @@ mod tests {
             );
         }
 
-        /// A name whose previous owner let it lapse is free again, and a new purchase may have it.
+        /// Local expiry alone cannot authorize resale of a possibly renewed subscription.
         #[tokio::test]
-        async fn a_lapsed_namespace_can_be_bought_by_someone_else() {
+        async fn an_unverified_lapse_remains_reserved() {
             let s = store();
             s.set_namespace_owner(
                 "alex".into(),
@@ -4134,13 +4148,13 @@ mod tests {
                 )
                 .await
                 .unwrap();
-            assert_eq!(out, AppleClaim::Granted);
+            assert_eq!(out, AppleClaim::NamespaceTaken);
             assert_eq!(
                 s.namespace_owner("alex".into(), 600)
                     .await
                     .unwrap()
                     .as_deref(),
-                Some("acct_b")
+                None
             );
         }
 
@@ -4246,15 +4260,390 @@ mod tests {
     fn named(addr: &str, handle: &str, created_at: u64) -> StoredIdentity {
         StoredIdentity {
             handle: Some(handle.to_string()),
+            account_id: Some("acct_fixture".into()),
             created_at,
             ..sample(addr)
         }
+    }
+
+    #[tokio::test]
+    async fn lifecycle_namespace_delivery_uses_only_the_current_account() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("alex".into(), "new".into(), "entitlement", 100, None)
+            .await
+            .unwrap();
+        let mut old = named("/k/old", "/alex/main", 1);
+        old.account_id = Some("old".into());
+        store.insert(old).await.unwrap();
+        let mut current = named("/k/new", "/alex/desk", 2);
+        current.account_id = Some("new".into());
+        store.insert(current).await.unwrap();
+
+        let recipient = store.namespace_inbox("alex".into()).await.unwrap().unwrap();
+        assert_eq!(recipient.address, "/k/new");
+        assert!(store
+            .get_in_account("new".into(), "/k/old".into())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(store
+            .get_in_account("old".into(), "/k/old".into())
+            .await
+            .unwrap()
+            .is_some());
+    }
+
+    #[tokio::test]
+    async fn lifecycle_previous_owners_mailboxes_do_not_use_the_current_quota() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("alex".into(), "new".into(), "entitlement", 100, None)
+            .await
+            .unwrap();
+        let mut old = named("/k/old", "/alex/legacy", 1);
+        old.account_id = Some("old".into());
+        store.insert(old).await.unwrap();
+        let mut current = named("/k/new", "/alex/desk", 2);
+        current.account_id = Some("new".into());
+
+        assert_eq!(
+            store
+                .insert_under_namespace(current, "/alex".into(), 1)
+                .await
+                .unwrap(),
+            QuotaOutcome::Inserted
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_expiry_stops_named_delivery_and_attribution_but_preserves_keys() {
+        let s = Store::open(":memory:").unwrap();
+        let now = crate::now_unix();
+        s.set_namespace_owner(
+            "alex".into(),
+            "old".into(),
+            "entitlement",
+            now - 200,
+            Some(now - 100),
+        )
+        .await
+        .unwrap();
+        let mut id = named("/k/old", "/alex/main", 1);
+        id.account_id = Some("old".into());
+        id.cap_hash = [9; 32];
+        s.insert(id).await.unwrap();
+        assert!(s
+            .get_by_handle("/alex/main".into())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(s.namespace_inbox("alex".into()).await.unwrap().is_none());
+        let original = s.get_by_cap([9; 32]).await.unwrap().unwrap();
+        assert_eq!(original.account_id.as_deref(), Some("old"));
+        assert!(
+            original.handle.is_none(),
+            "expired aliases cannot confer name-based trust"
+        );
+        assert!(s.list_by_account("old".into()).await.unwrap()[0]
+            .handle
+            .is_none());
+        assert!(!s.namespace_available("alex".into(), now).await.unwrap());
+        assert!(s
+            .set_namespace_owner(
+                "alex".into(),
+                "old".into(),
+                "entitlement",
+                now,
+                Some(now + 500)
+            )
+            .await
+            .unwrap());
+        assert_eq!(
+            s.get_by_handle("/alex/main".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .address,
+            "/k/old"
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_recovery_and_resale_are_atomic_and_keep_history_private() {
+        let s = Store::open(":memory:").unwrap();
+        let now = crate::now_unix();
+        let expired = now - lifecycle::RECOVERY_SECONDS as u64;
+        s.set_namespace_owner(
+            "alex".into(),
+            "old".into(),
+            "entitlement",
+            expired - 1,
+            Some(expired),
+        )
+        .await
+        .unwrap();
+        let mut old = named("/k/old", "/alex/main", 1);
+        old.account_id = Some("old".into());
+        old.cap_hash = [8; 32];
+        s.insert(old).await.unwrap();
+        s.enqueue(msg("private-old-mail", "/k/old", 1))
+            .await
+            .unwrap();
+        {
+            let c = s.conn.lock().unwrap();
+            for peer in ["/alex/*", "/alex/main", "/k/old", "/alexander/*"] {
+                c.execute("INSERT INTO contacts(owner,peer,admission,autonomy,allowed_verbs,created_at,updated_at)
+                    VALUES ('/k/recipient',?1,'allow','auto','[\"run_tests\"]',1,1)", [peer]).unwrap();
+            }
+        }
+        assert!(
+            !s.namespace_available("alex".into(), now + 86400)
+                .await
+                .unwrap(),
+            "unverified expiry stays reserved indefinitely"
+        );
+        // The provider now confirms expiry; the original term, not poll time, starts recovery.
+        s.set_namespace_owner(
+            "alex".into(),
+            "old".into(),
+            "entitlement",
+            now - 1,
+            Some(expired),
+        )
+        .await
+        .unwrap();
+        assert!(!s.namespace_available("alex".into(), now - 1).await.unwrap());
+        assert!(s.namespace_available("alex".into(), now).await.unwrap());
+        assert!(
+            !s.namespace_available("alex".into(), now + 601)
+                .await
+                .unwrap(),
+            "stale terminal status cannot authorize resale"
+        );
+        let (a, b) = tokio::join!(
+            s.set_namespace_owner(
+                "alex".into(),
+                "new-a".into(),
+                "entitlement",
+                now,
+                Some(now + 1000)
+            ),
+            s.set_namespace_owner(
+                "alex".into(),
+                "new-b".into(),
+                "entitlement",
+                now,
+                Some(now + 1000)
+            )
+        );
+        assert_eq!(usize::from(a.unwrap()) + usize::from(b.unwrap()), 1);
+        let owner = s
+            .namespace_owner("alex".into(), now)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(s
+            .get_by_cap([8; 32])
+            .await
+            .unwrap()
+            .unwrap()
+            .handle
+            .is_none());
+        {
+            let c = s.conn.lock().unwrap();
+            for peer in ["/alex/*", "/alex/main"] {
+                let verbs: String = c
+                    .query_row(
+                        "SELECT allowed_verbs FROM contacts WHERE peer=?1",
+                        [peer],
+                        |r| r.get(0),
+                    )
+                    .unwrap();
+                assert_eq!(verbs, "[]", "a new owner must not inherit old grants");
+            }
+            for peer in ["/k/old", "/alexander/*"] {
+                let mode: String = c
+                    .query_row("SELECT autonomy FROM contacts WHERE peer=?1", [peer], |r| {
+                        r.get(0)
+                    })
+                    .unwrap();
+                assert_eq!(
+                    mode, "auto",
+                    "key-address and neighboring namespace grants stay intact"
+                );
+            }
+        }
+        assert!(s
+            .get_in_account(owner.clone(), "/k/old".into())
+            .await
+            .unwrap()
+            .is_none());
+        assert_eq!(s.list_for("/k/old".into()).await.unwrap().len(), 1);
+        let mut new = named("/k/new", "/alex/main", 2);
+        new.account_id = Some(owner.clone());
+        assert_eq!(
+            s.insert_under_namespace(new, "/alex".into(), 1)
+                .await
+                .unwrap(),
+            QuotaOutcome::Inserted
+        );
+        assert_eq!(
+            s.namespace_inbox("alex".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .address,
+            "/k/new"
+        );
+        assert!(!s
+            .set_namespace_owner("alex".into(), "old".into(), "entitlement", now, None)
+            .await
+            .unwrap());
+        let mut stale = named("/k/stale", "/alex/late", 3);
+        stale.account_id = Some("old".into());
+        assert_eq!(
+            s.insert_under_namespace(stale, "/alex".into(), 100)
+                .await
+                .unwrap(),
+            QuotaOutcome::NotYours
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_quota_treats_underscores_as_literal_characters() {
+        let s = Store::open(":memory:").unwrap();
+        s.set_namespace_owner("my_name".into(), "acct_fixture".into(), "test", 1, None)
+            .await
+            .unwrap();
+        s.insert(named("/k/neighbor", "/myxname/main", 1))
+            .await
+            .unwrap();
+        assert_eq!(
+            s.insert_under_namespace(named("/k/mine", "/my_name/main", 2), "/my_name".into(), 1)
+                .await
+                .unwrap(),
+            QuotaOutcome::Inserted
+        );
+    }
+
+    #[tokio::test]
+    async fn lifecycle_apple_refresh_recovers_renewals_and_cannot_revoke_a_new_owner() {
+        let s = Store::open(":memory:").unwrap();
+        let now = crate::now_unix();
+        let expiry = now - lifecycle::RECOVERY_SECONDS as u64;
+        let purchase = ApplePurchase {
+            original_transaction_id: "old-transaction".into(),
+            product_id: "product".into(),
+            environment: "Sandbox".into(),
+            expires_at: expiry as i64,
+        };
+        s.bind_apple_subscription(purchase, "old".into(), "alex".into(), expiry - 1)
+            .await
+            .unwrap();
+        let row = || AppleRefresh {
+            original: "old-transaction".into(),
+            account: "old".into(),
+            namespace: "alex".into(),
+            environment: "Sandbox".into(),
+        };
+        let status = |end: i64, active: bool| crate::appstore::SubscriptionStatus {
+            entitlement: crate::appstore::Entitlement {
+                original_transaction_id: "old-transaction".into(),
+                product_id: "product".into(),
+                environment: "Sandbox".into(),
+                expires_at: end,
+                app_account_token: None,
+            },
+            active,
+            terminal: !active,
+            revoked: false,
+        };
+        assert_eq!(s.apple_due(now).await.unwrap().len(), 1);
+        s.refresh_apple(row(), status(now as i64 + 100, true), now)
+            .await
+            .unwrap();
+        assert_eq!(
+            s.namespace_owner("alex".into(), now)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("old")
+        );
+        assert!(!s.namespace_available("alex".into(), now).await.unwrap());
+        s.refresh_apple(row(), status(expiry as i64, false), now)
+            .await
+            .unwrap();
+        assert!(s.namespace_available("alex".into(), now).await.unwrap());
+        assert!(s
+            .set_namespace_owner(
+                "alex".into(),
+                "new".into(),
+                "entitlement",
+                now,
+                Some(now + 500)
+            )
+            .await
+            .unwrap());
+        s.refresh_apple(row(), status(expiry as i64, false), now + 1)
+            .await
+            .unwrap();
+        assert_eq!(
+            s.namespace_owner("alex".into(), now + 1)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("new")
+        );
+        assert!(s.apple_due(now + 1000).await.unwrap().is_empty());
+        assert!(s
+            .apple_subscriptions_for("old".into(), now + 1)
+            .await
+            .unwrap()
+            .is_empty());
+        assert!(
+            !s.apple_subscription_owner("old-transaction".into())
+                .await
+                .unwrap()
+                .unwrap()
+                .2
+        );
+        let renewed = ApplePurchase {
+            original_transaction_id: "old-transaction".into(),
+            product_id: "product".into(),
+            environment: "Sandbox".into(),
+            expires_at: now as i64 + 1000,
+        };
+        assert_eq!(
+            s.bind_apple_subscription(renewed, "old".into(), "another-name".into(), now + 2)
+                .await
+                .unwrap(),
+            AppleClaim::Renewed
+        );
+        assert_eq!(
+            s.namespace_owner("another-name".into(), now + 2)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("old")
+        );
+        assert_eq!(
+            s.namespace_owner("alex".into(), now + 2)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("new")
+        );
     }
 
     /// `/<namespace>/main` is the convention, so it wins outright once it exists.
     #[tokio::test]
     async fn a_namespace_prefers_its_main_mailbox() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_fixture".into(), "test", 1, None)
+            .await
+            .unwrap();
         store
             .insert(named("/k/first", "/bekir/agent1", 10))
             .await
@@ -4280,6 +4669,10 @@ mod tests {
     #[tokio::test]
     async fn a_namespace_without_a_main_falls_back_to_its_first_mailbox() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_fixture".into(), "test", 1, None)
+            .await
+            .unwrap();
         store
             .insert(named("/k/second", "/bekir/agent2", 20))
             .await
@@ -4930,6 +5323,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn binding_keeps_the_address() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         store.insert(owned("/k/aaa", "acct_1", None)).await.unwrap();
 
         let outcome = store
@@ -4954,6 +5351,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn an_unowned_mailbox_is_adopted_only_on_proof() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         let mut id = owned("/k/orphan", "unused", None);
         id.account_id = None;
         id.cap_hash = [7; 32];
@@ -4987,6 +5388,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn another_accounts_mailbox_is_refused() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         store.insert(owned("/k/aaa", "acct_1", None)).await.unwrap();
         let outcome = store
             .bind_handle(
@@ -5006,6 +5411,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn a_named_mailbox_will_not_be_renamed() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         store
             .insert(owned("/k/aaa", "acct_1", Some("/bekir/first")))
             .await
@@ -5028,6 +5437,10 @@ mod handle_binding_tests {
     async fn a_taken_handle_is_refused() {
         let store = Store::open(":memory:").unwrap();
         store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
+        store
             .insert(owned("/k/aaa", "acct_1", Some("/bekir/agent1")))
             .await
             .unwrap();
@@ -5049,6 +5462,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn the_ceiling_is_enforced_on_both_paths() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         store
             .insert(owned("/k/held", "acct_1", Some("/bekir/held")))
             .await
@@ -5087,6 +5504,10 @@ mod handle_binding_tests {
     #[tokio::test]
     async fn concurrent_mints_at_the_boundary_yield_one_winner() {
         let store = Store::open(":memory:").unwrap();
+        store
+            .set_namespace_owner("bekir".into(), "acct_1".into(), "test", 1, None)
+            .await
+            .unwrap();
         // One slot left out of two.
         store
             .insert(owned("/k/held", "acct_1", Some("/bekir/held")))

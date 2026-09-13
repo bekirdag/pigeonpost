@@ -135,21 +135,14 @@ impl Store {
             let mut namespace = old_name.clone().or(requested_name);
             if purchase.active {
                 if let Some(name) = &namespace {
-                    let occupant: Option<(String, String, Option<i64>)> = tx.query_row(
-                        "SELECT account_id,source,expires_at FROM namespaces WHERE namespace=?1", [name],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).optional()?;
-                    let occupied = occupant.is_some_and(|(owner, source, expiry)| {
-                        let ours = owner == account && source == "google" && old_name.as_ref() == Some(name);
-                        !ours && expiry.is_none_or(|expiry| expiry > now as i64)
-                    });
-                    // An expired namespace with somebody else's old mailbox must not expose that
-                    // mailbox through a new sale. Namespace recycling is a separate lifecycle.
-                    let other_mailbox: bool = tx.query_row(
-                        "SELECT EXISTS(SELECT 1 FROM identities WHERE (handle=?1 OR handle LIKE ?2 ESCAPE '\\') AND (account_id IS NULL OR account_id!=?3))",
-                        params![format!("/{name}"), format!("/{}/%", name.replace('_', "\\_")), account], |r| r.get(0))?;
+                    let occupied = !super::lifecycle::available_to(&tx, name, Some(&account), now)?;
+                    let other_binding: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM namespaces WHERE namespace=?1
+                        AND account_id=?2 AND (expires_at IS NULL OR expires_at>?3)
+                        AND (source!='google' OR ?4 IS NULL OR ?4!=namespace))",
+                        params![name, account, now as i64, old_name], |r| r.get(0))?;
                     let other_purchase: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM google_subscriptions WHERE namespace=?1 AND purchase_token!=?2 AND purchase_token!=?3 AND replaced_by IS NULL AND expires_at>?4)",
                         params![name, token, purchase.linked_token.as_deref().unwrap_or(""), now as i64], |r| r.get(0))?;
-                    if occupied || other_mailbox || other_purchase { namespace = None; }
+                    if occupied || other_binding || other_purchase { namespace = None; }
                 }
             }
             let expiry = if purchase.active { purchase.expires_at } else { purchase.expires_at.min(now) };
@@ -165,17 +158,21 @@ impl Store {
                         params![token, now as i64, linked.purchase_token])?;
                 }
                 if let Some(name) = &namespace {
-                    tx.execute("INSERT INTO namespaces(namespace,account_id,source,verified_at,expires_at) VALUES (?1,?2,'google',?3,?4)
-                        ON CONFLICT(namespace) DO UPDATE SET account_id=excluded.account_id,source=excluded.source,verified_at=excluded.verified_at,expires_at=excluded.expires_at",
-                        params![name, account, now as i64, expiry as i64])?;
+                    super::lifecycle::detach_previous_aliases(&tx, name, &account)?;
+                    tx.execute("INSERT INTO namespaces(namespace,account_id,source,verified_at,expires_at,provider_ref) VALUES (?1,?2,'google',?3,?4,?5)
+                        ON CONFLICT(namespace) DO UPDATE SET account_id=excluded.account_id,source=excluded.source,verified_at=excluded.verified_at,expires_at=excluded.expires_at,provider_ref=?5,release_at=NULL",
+                        params![name, account, now as i64, expiry as i64, token])?;
                 }
             } else if let Some(name) = &old_name {
                 // A stale token must never revoke a namespace backed by its replacement.
                 let another: bool = tx.query_row("SELECT EXISTS(SELECT 1 FROM google_subscriptions WHERE namespace=?1 AND account_id=?2 AND purchase_token!=?3 AND replaced_by IS NULL AND expires_at>?4)",
                     params![name, account, token, now as i64], |r| r.get(0))?;
                 if !another {
-                    tx.execute("UPDATE namespaces SET expires_at=?1,verified_at=?1 WHERE namespace=?2 AND account_id=?3 AND source='google'",
-                        params![now as i64, name, account])?;
+                    let terminal = purchase.state == "SUBSCRIPTION_STATE_EXPIRED";
+                    tx.execute("UPDATE namespaces SET expires_at=MIN(expires_at,?1),verified_at=?2,
+                        release_at=CASE WHEN ?3 THEN MIN(expires_at,?1)+?4 ELSE NULL END
+                        WHERE namespace=?5 AND account_id=?6 AND source='google' AND provider_ref=?7",
+                        params![expiry as i64, now as i64, terminal, super::lifecycle::RECOVERY_SECONDS, name, account, token])?;
                 }
             }
             let saved = lookup(&tx, &token, now)?.ok_or(StoreError::Corrupt("Google purchase disappeared"))?;
@@ -201,7 +198,7 @@ impl Store {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || {
             let c = conn.lock().expect("store lock");
-            let mut stmt = c.prepare(&format!("SELECT {COLUMNS} FROM google_subscriptions WHERE replaced_by IS NULL AND verified_at<?1 AND expires_at>?2 ORDER BY verified_at LIMIT 100"))?;
+            let mut stmt = c.prepare(&format!("SELECT {COLUMNS} FROM google_subscriptions WHERE replaced_by IS NULL AND verified_at<?1 AND (expires_at>?2 OR EXISTS(SELECT 1 FROM namespaces n WHERE n.source='google' AND n.provider_ref=google_subscriptions.purchase_token)) ORDER BY verified_at LIMIT 100"))?;
             let rows = stmt.query_map(params![now.saturating_sub(300) as i64, now.saturating_sub(60 * 86400) as i64], |r| row(r, now))?
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(rows)
@@ -449,5 +446,102 @@ mod tests {
             )
             .unwrap();
         assert_eq!(source, "test");
+    }
+
+    #[tokio::test]
+    async fn lifecycle_google_terminal_checks_do_not_restart_recovery_or_revoke_a_new_owner() {
+        let store = Store::open(":memory:").unwrap();
+        let end = 1000;
+        saved(
+            store
+                .record_google_purchase(
+                    "old".into(),
+                    "old-token".into(),
+                    purchase(1, end),
+                    Some("alex".into()),
+                    end - 1,
+                )
+                .await
+                .unwrap(),
+        );
+        let mut expired = purchase(1, end);
+        expired.active = false;
+        expired.state = "SUBSCRIPTION_STATE_EXPIRED".into();
+        expired.auto_renewing = false;
+        saved(
+            store
+                .record_google_purchase(
+                    "old".into(),
+                    "old-token".into(),
+                    expired.clone(),
+                    None,
+                    end + 1,
+                )
+                .await
+                .unwrap(),
+        );
+        let resale = end + super::super::lifecycle::RECOVERY_SECONDS as u64;
+        saved(
+            store
+                .record_google_purchase(
+                    "old".into(),
+                    "old-token".into(),
+                    expired.clone(),
+                    None,
+                    resale,
+                )
+                .await
+                .unwrap(),
+        );
+        assert!(
+            store
+                .namespace_available("alex".into(), resale)
+                .await
+                .unwrap(),
+            "polling must not move the recovery deadline"
+        );
+        let current = saved(
+            store
+                .record_google_purchase(
+                    "new".into(),
+                    "new-token".into(),
+                    purchase(1, resale + 1000),
+                    Some("alex".into()),
+                    resale,
+                )
+                .await
+                .unwrap(),
+        );
+        assert_eq!(current.namespace.as_deref(), Some("alex"));
+        saved(
+            store
+                .record_google_purchase("old".into(), "old-token".into(), expired, None, resale + 1)
+                .await
+                .unwrap(),
+        );
+        assert_eq!(
+            store
+                .namespace_owner("alex".into(), resale + 1)
+                .await
+                .unwrap()
+                .as_deref(),
+            Some("new")
+        );
+        let renewed = saved(
+            store
+                .record_google_purchase(
+                    "old".into(),
+                    "old-token".into(),
+                    purchase(1, resale + 1000),
+                    None,
+                    resale + 2,
+                )
+                .await
+                .unwrap(),
+        );
+        assert!(
+            renewed.active && renewed.namespace.is_none(),
+            "a late renewal keeps paid credit without taking the new owner's name"
+        );
     }
 }

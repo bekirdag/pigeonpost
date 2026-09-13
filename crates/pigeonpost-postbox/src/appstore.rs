@@ -28,8 +28,8 @@ const TOKEN_CACHE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const TOKEN_VALIDITY_SECONDS: u64 = 20 * 60;
 pub const MAX_HANDLES: usize = 10;
 
-const PRODUCTION: &str = "https://api.storekit.itunes.apple.com";
-const SANDBOX: &str = "https://api.storekit-sandbox.itunes.apple.com";
+const PRODUCTION: &str = "https://api.storekit.apple.com";
+const SANDBOX: &str = "https://api.storekit-sandbox.apple.com";
 
 /// What Apple says about one purchase, reduced to the part that decides anything.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +80,8 @@ pub struct AppStore {
     product_ids: Vec<String>,
     http: reqwest::Client,
     bearer: Mutex<Option<(String, Instant)>>,
+    /// Serialize provider reads through durable writes, including background renewal checks.
+    pub verification: Mutex<()>,
 }
 
 impl AppStore {
@@ -135,6 +137,7 @@ impl AppStore {
         };
 
         let http = match reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .timeout(Duration::from_secs(20))
             .build()
         {
@@ -154,6 +157,7 @@ impl AppStore {
             product_ids,
             http,
             bearer: Mutex::new(None),
+            verification: Mutex::new(()),
         }))
     }
 
@@ -221,7 +225,23 @@ impl AppStore {
                             "that product does not buy a handle".into(),
                         ));
                     }
-                    return judge(&payload, &self.bundle_id, product);
+                    let original = payload
+                        .get("originalTransactionId")
+                        .and_then(|v| v.as_str())
+                        .ok_or(AppStoreError::Malformed)?;
+                    let environment = if host == SANDBOX {
+                        "Sandbox"
+                    } else {
+                        "Production"
+                    };
+                    let status = self.subscription_status(original, environment).await?;
+                    return if status.active {
+                        Ok(status.entitlement)
+                    } else if status.revoked {
+                        Err(AppStoreError::Revoked)
+                    } else {
+                        Err(AppStoreError::Expired)
+                    };
                 }
                 Err(AppStoreError::NotFound) => continue,
                 Err(AppStoreError::Unauthorized) => {
@@ -243,44 +263,70 @@ impl AppStore {
         Err(AppStoreError::NotFound)
     }
 
-    /// One environment's answer, decoded but not yet judged.
+    /// Reads current renewal state, including billing grace, without a receipt from an open app.
+    pub async fn subscription_status(
+        &self,
+        original: &str,
+        environment: &str,
+    ) -> Result<SubscriptionStatus, AppStoreError> {
+        if original.is_empty()
+            || original.len() > 64
+            || !original.bytes().all(|b| b.is_ascii_alphanumeric())
+        {
+            return Err(AppStoreError::NotFound);
+        }
+        let host = match environment {
+            "Production" => PRODUCTION,
+            "Sandbox" => SANDBOX,
+            _ => return Err(AppStoreError::Malformed),
+        };
+        let body = self
+            .fetch_json(host, &format!("/inApps/v1/subscriptions/{original}"))
+            .await?;
+        judge_status(
+            &body,
+            original,
+            environment,
+            &self.bundle_id,
+            &self.product_ids,
+            now_unix() as i64,
+        )
+    }
+
     async fn fetch(
         &self,
         host: &str,
         transaction_id: &str,
     ) -> Result<serde_json::Value, AppStoreError> {
-        let token = self
-            .bearer()
-            .await
-            .map_err(|e| AppStoreError::Unreachable(e.to_string()))?;
-        let url = format!("{host}/inApps/v1/transactions/{transaction_id}");
-        let response = self
-            .http
-            .get(&url)
-            .bearer_auth(token)
-            .send()
-            .await
-            .map_err(|e| AppStoreError::Unreachable(e.to_string()))?;
-
-        match response.status().as_u16() {
-            200 => {}
-            401 => return Err(AppStoreError::Unauthorized),
-            404 => return Err(AppStoreError::NotFound),
-            status => {
-                tracing::warn!(%status, %host, "unexpected status from the App Store Server API");
-                return Err(AppStoreError::Unreachable(format!("HTTP {status}")));
-            }
-        }
-
-        let body: serde_json::Value = response
-            .json()
-            .await
-            .map_err(|e| AppStoreError::Unreachable(e.to_string()))?;
+        let body = self
+            .fetch_json(host, &format!("/inApps/v1/transactions/{transaction_id}"))
+            .await?;
         let jws = body
             .get("signedTransactionInfo")
             .and_then(|v| v.as_str())
             .ok_or(AppStoreError::Malformed)?;
         decode_jws_payload(jws)
+    }
+
+    async fn fetch_json(&self, host: &str, path: &str) -> Result<serde_json::Value, AppStoreError> {
+        let token = self
+            .bearer()
+            .await
+            .map_err(|e| AppStoreError::Unreachable(e.to_string()))?;
+        let response = self
+            .http
+            .get(format!("{host}{path}"))
+            .bearer_auth(token)
+            .send()
+            .await
+            .map_err(|e| AppStoreError::Unreachable(e.to_string()))?;
+        match response.status().as_u16() {
+            200 => {}
+            401 => return Err(AppStoreError::Unauthorized),
+            404 => return Err(AppStoreError::NotFound),
+            status => return Err(AppStoreError::Unreachable(format!("HTTP {status}"))),
+        }
+        response.json().await.map_err(|_| AppStoreError::Malformed)
     }
 }
 
@@ -288,7 +334,7 @@ impl AppStore {
 ///
 /// Free rather than a method so it can be tested without a signing key: what it decides has nothing
 /// to do with how the request was authenticated.
-fn judge(
+fn parse_entitlement(
     claims: &serde_json::Value,
     bundle_id: &str,
     product_id: &str,
@@ -311,18 +357,11 @@ fn judge(
         )));
     }
 
-    if claims.get("revocationDate").is_some_and(|v| !v.is_null()) {
-        return Err(AppStoreError::Revoked);
-    }
-
     let expires_ms = claims
         .get("expiresDate")
         .and_then(|v| v.as_i64())
         .ok_or(AppStoreError::Malformed)?;
     let expires_at = expires_ms / 1000;
-    if expires_at <= now_unix() as i64 {
-        return Err(AppStoreError::Expired);
-    }
 
     let original = string("originalTransactionId");
     if original.is_empty() {
@@ -344,6 +383,142 @@ fn judge(
             other => other.to_string(),
         },
     })
+}
+
+#[derive(Debug)]
+pub struct SubscriptionStatus {
+    pub entitlement: Entitlement,
+    pub active: bool,
+    pub terminal: bool,
+    pub revoked: bool,
+}
+
+/// These JWS payloads are accepted only from the authenticated, fixed-host status API above.
+fn judge_status(
+    body: &serde_json::Value,
+    original: &str,
+    environment: &str,
+    bundle: &str,
+    products: &[String],
+    now: i64,
+) -> Result<SubscriptionStatus, AppStoreError> {
+    if body.get("bundleId").and_then(|v| v.as_str()) != Some(bundle)
+        || body.get("environment").and_then(|v| v.as_str()) != Some(environment)
+    {
+        return Err(AppStoreError::NotOurs(
+            "subscription response app or environment mismatch".into(),
+        ));
+    }
+    let groups = body
+        .get("data")
+        .and_then(|v| v.as_array())
+        .ok_or(AppStoreError::Malformed)?;
+    let mut found = None;
+    for group in groups {
+        for item in group
+            .get("lastTransactions")
+            .and_then(|v| v.as_array())
+            .ok_or(AppStoreError::Malformed)?
+        {
+            if item.get("originalTransactionId").and_then(|v| v.as_str()) != Some(original) {
+                continue;
+            }
+            if found.is_some() {
+                return Err(AppStoreError::Malformed);
+            }
+            let claims = decode_jws_payload(
+                item.get("signedTransactionInfo")
+                    .and_then(|v| v.as_str())
+                    .ok_or(AppStoreError::Malformed)?,
+            )?;
+            let product = claims
+                .get("productId")
+                .and_then(|v| v.as_str())
+                .ok_or(AppStoreError::Malformed)?;
+            if !products.iter().any(|p| p == product) {
+                return Err(AppStoreError::NotOurs(
+                    "that product does not buy a handle".into(),
+                ));
+            }
+            let mut entitlement = parse_entitlement(&claims, bundle, product)?;
+            if entitlement.original_transaction_id != original
+                || entitlement.environment != environment
+                || entitlement.expires_at < 0
+            {
+                return Err(AppStoreError::Malformed);
+            }
+            let status = item
+                .get("status")
+                .and_then(|v| v.as_u64())
+                .ok_or(AppStoreError::Malformed)?;
+            if !(1..=5).contains(&status) {
+                return Err(AppStoreError::Malformed);
+            }
+            let revoked_at = claims
+                .get("revocationDate")
+                .filter(|v| !v.is_null())
+                .map(|v| {
+                    v.as_i64()
+                        .map(|ms| ms / 1000)
+                        .ok_or(AppStoreError::Malformed)
+                })
+                .transpose()?;
+            let revoked = status == 5 || revoked_at.is_some();
+            if status == 4 && !revoked {
+                let renewal = decode_jws_payload(
+                    item.get("signedRenewalInfo")
+                        .and_then(|v| v.as_str())
+                        .ok_or(AppStoreError::Malformed)?,
+                )?;
+                if renewal
+                    .get("originalTransactionId")
+                    .and_then(|v| v.as_str())
+                    != Some(original)
+                    || renewal.get("environment").and_then(|v| v.as_str()) != Some(environment)
+                {
+                    return Err(AppStoreError::Malformed);
+                }
+                entitlement.expires_at = renewal
+                    .get("gracePeriodExpiresDate")
+                    .and_then(|v| v.as_i64())
+                    .ok_or(AppStoreError::Malformed)?
+                    / 1000;
+            }
+            let active = !revoked && matches!(status, 1 | 4) && entitlement.expires_at > now;
+            // Retry is recoverable and never opens resale, even after the local recovery window.
+            let terminal = revoked || (status == 2 && entitlement.expires_at <= now);
+            if !active {
+                entitlement.expires_at = entitlement
+                    .expires_at
+                    .min(revoked_at.unwrap_or(now))
+                    .min(now)
+                    .max(0);
+            }
+            found = Some(SubscriptionStatus {
+                entitlement,
+                active,
+                terminal,
+                revoked,
+            });
+        }
+    }
+    found.ok_or(AppStoreError::NotFound)
+}
+
+#[cfg(test)]
+fn judge(
+    claims: &serde_json::Value,
+    bundle: &str,
+    product: &str,
+) -> Result<Entitlement, AppStoreError> {
+    let entitlement = parse_entitlement(claims, bundle, product)?;
+    if claims.get("revocationDate").is_some_and(|v| !v.is_null()) {
+        return Err(AppStoreError::Revoked);
+    }
+    if entitlement.expires_at <= now_unix() as i64 {
+        return Err(AppStoreError::Expired);
+    }
+    Ok(entitlement)
 }
 
 fn product_catalog(primary: &str, configured: Option<&str>) -> Option<Vec<String>> {
@@ -507,6 +682,93 @@ mod tests {
             "expiresDate": future_ms(),
             "environment": "Sandbox",
         })
+    }
+
+    fn status_body(
+        status: u64,
+        claims: serde_json::Value,
+        renewal: serde_json::Value,
+    ) -> serde_json::Value {
+        let jws = |payload: serde_json::Value| {
+            let encoded = crate::b64_encode(&serde_json::to_vec(&payload).unwrap())
+                .trim_end_matches('=')
+                .replace('+', "-")
+                .replace('/', "_");
+            format!("header.{encoded}.signature")
+        };
+        json!({"bundleId": BUNDLE, "environment": "Sandbox", "data": [{"lastTransactions": [{
+            "originalTransactionId": "2000000900000001", "status": status,
+            "signedTransactionInfo": jws(claims), "signedRenewalInfo": jws(renewal)
+        }]}]})
+    }
+
+    fn current_status(body: &serde_json::Value) -> Result<SubscriptionStatus, AppStoreError> {
+        judge_status(
+            body,
+            "2000000900000001",
+            "Sandbox",
+            BUNDLE,
+            &[PRODUCT.into()],
+            now_unix() as i64,
+        )
+    }
+
+    #[test]
+    fn lifecycle_apple_current_status_honors_renewal_grace_and_terminal_expiry() {
+        let active = current_status(&status_body(1, good(), json!({}))).unwrap();
+        assert!(active.active && !active.terminal);
+        let mut expired = good();
+        expired["expiresDate"] = json!((now_unix() as i64 - 60) * 1000);
+        let ended = current_status(&status_body(2, expired.clone(), json!({}))).unwrap();
+        assert!(!ended.active && ended.terminal);
+        let retry = current_status(&status_body(3, expired.clone(), json!({}))).unwrap();
+        assert!(
+            !retry.active && !retry.terminal,
+            "billing retry cannot authorize resale"
+        );
+        let renewal = json!({"originalTransactionId": "2000000900000001", "environment": "Sandbox", "gracePeriodExpiresDate": future_ms()});
+        let grace = current_status(&status_body(4, expired, renewal)).unwrap();
+        assert!(grace.active && !grace.terminal);
+        assert!(grace.entitlement.expires_at > now_unix() as i64);
+        let mut refunded = good();
+        refunded["revocationDate"] = json!((now_unix() as i64 - 30) * 1000);
+        let revoked = current_status(&status_body(5, refunded, json!({}))).unwrap();
+        assert!(!revoked.active && revoked.terminal && revoked.revoked);
+        assert!(revoked.entitlement.expires_at < now_unix() as i64);
+    }
+
+    #[test]
+    fn lifecycle_apple_status_rejects_cross_app_environment_and_subscription_data() {
+        for field in [
+            "bundleId",
+            "environment",
+            "originalTransactionId",
+            "productId",
+        ] {
+            let mut wrong = good();
+            wrong[field] = json!("other");
+            assert!(
+                current_status(&status_body(1, wrong, json!({}))).is_err(),
+                "{field}"
+            );
+        }
+        let mut wrong = status_body(1, good(), json!({}));
+        wrong["environment"] = json!("Production");
+        assert!(current_status(&wrong).is_err());
+        assert!(
+            current_status(&status_body(4, good(), json!({}))).is_err(),
+            "grace needs verified renewal data"
+        );
+        assert!(
+            current_status(&status_body(99, good(), json!({}))).is_err(),
+            "unknown states fail closed"
+        );
+        let mut absent = status_body(1, good(), json!({}));
+        absent["data"] = json!([]);
+        assert!(matches!(
+            current_status(&absent),
+            Err(AppStoreError::NotFound)
+        ));
     }
 
     #[test]
