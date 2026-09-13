@@ -6771,7 +6771,10 @@ mod tests {
         assert!(held.is_empty(), "past its expiry it is not held");
 
         let answer = availability(&state, "lapsed").await;
-        assert_eq!(answer["available"], false, "unverified expiry stays reserved");
+        assert_eq!(
+            answer["available"], false,
+            "unverified expiry stays reserved"
+        );
     }
 
     #[test]
