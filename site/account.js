@@ -76,6 +76,7 @@
     // Default to remembering unless the caller explicitly opted out, so the pending-purchase resume
     // path (which calls login() with no arg) keeps whatever the sign-in card already recorded.
     const keep = remember === undefined ? wantsRemember() : !!remember;
+    if (window.location.hash === "#delete-account") SS.setItem("pp_deletion_return", "1");
     SS.setItem("pp_remember", keep ? "1" : "0");
     const verifier = randomString(48);
     const state = randomString(12);
@@ -107,7 +108,11 @@
     const params = new URLSearchParams(window.location.search);
     const code = params.get("code");
     const state = params.get("state");
-    const strip = () => history.replaceState({}, "", cfg.oidc.redirectPath || "/account");
+    const strip = () => {
+      const deletion = SS.getItem("pp_deletion_return") === "1";
+      SS.removeItem("pp_deletion_return");
+      history.replaceState({}, "", (cfg.oidc.redirectPath || "/account") + (deletion ? "#delete-account" : ""));
+    };
     if (params.get("error")) {
       toast("Sign-in did not complete: " + params.get("error"));
       strip();
@@ -243,6 +248,7 @@
   function render() {
     const el = root();
     if (!el) return;
+    if (window.location.hash === "#delete-account") return renderDeletion(el);
     if (!getToken()) return renderSignedOut(el);
     renderMember(el);
   }
@@ -296,7 +302,8 @@
         <button class="btn btn-secondary" id="ac-2fa">Set up two-factor authentication</button>
         <p class="ac-note ac-mt">Opens a single screen with a QR code to scan, then brings you back here.</p>
       </div>
-      <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>`;
+      <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>
+      <div class="ac-card"><h3>Account deletion</h3><a href="#delete-account">Delete your account and associated data</a></div>`;
     $("#ac-logout").onclick = logout;
     $("#ac-2fa").onclick = setupTotp;
     $("#ac-pb-create").onclick = pbCreateInbox;
@@ -305,6 +312,70 @@
     loadOverview();
     loadPostbox();
     loadKeys();
+  }
+
+  function renderDeletion(el) {
+    el.innerHTML = `
+      <div class="ac-card">
+        <h2>Delete your Pigeonpost account</h2>
+        <p id="ac-deletion-account"></p>
+        <p>This requests deletion of your hosted sign-in account, mailboxes, keys, your copies of messages and attachments, contacts and account settings. You will lose access to your handles.</p>
+        <p>We complete requests within 30 days and confirm completion using your verified account contact. Limited payment and security records may be retained where required. Copies already delivered to other accounts are separate.</p>
+        <p><strong>Store subscriptions continue until you cancel them.</strong> Please cancel active subscriptions before continuing: <a href="https://apps.apple.com/account/subscriptions">Apple subscriptions</a> or <a href="https://play.google.com/store/account/subscriptions?package=dev.pigeonpost.inbox">Google Play subscriptions</a>.</p>
+        <div id="ac-deletion-body"><p>Checking your request…</p></div>
+        <p role="status" id="ac-deletion-status"></p>
+        <p><a href="/app-privacy.html">Privacy policy</a> · <a href="/app-terms.html">Terms of use</a></p>
+      </div>`;
+    const body = $("#ac-deletion-body");
+    if (!getToken()) {
+      body.innerHTML = '<p>Sign in to confirm which account you want deleted. You do not need to contact support to submit this request.</p><button class="btn btn-primary" id="ac-deletion-signin">Sign in to continue</button>';
+      $("#ac-deletion-signin").onclick = () => login(false);
+      return;
+    }
+    const token = getToken();
+    const current = () => token === getToken() && $("#ac-deletion-body") === body;
+    const signInAgain = () => {
+      body.innerHTML = '<p>Your session expired. Sign in again before requesting deletion.</p><button class="btn btn-primary" id="ac-deletion-signin">Sign in again</button>';
+      $("#ac-deletion-signin").onclick = () => { signOut(); login(false); };
+    };
+    const showReceipt = (request) => {
+      body.innerHTML = '<h3>Deletion request received</h3><p id="ac-deletion-receipt"></p><p>You can keep this reference. No further request is needed.</p>';
+      const date = new Date(request.complete_by * 1000).toLocaleDateString();
+      $("#ac-deletion-receipt").textContent = `Reference: ${request.request_id}. Complete by ${date}.`;
+    };
+    const showForm = () => {
+      body.innerHTML = '<p>Type DELETE to confirm that you want this account and its associated data deleted.</p><label for="ac-deletion-confirm">Confirmation</label><input id="ac-deletion-confirm" type="text" autocomplete="off" spellcheck="false"><button class="btn btn-primary" id="ac-deletion-submit" disabled>Request account deletion</button><button class="btn btn-secondary" id="ac-deletion-logout">Use a different account</button>';
+      const confirm = $("#ac-deletion-confirm");
+      const submit = $("#ac-deletion-submit");
+      confirm.oninput = () => { submit.disabled = confirm.value !== "DELETE"; };
+      $("#ac-deletion-logout").onclick = () => { signOut(); render(); };
+      submit.onclick = async () => {
+        if (submit.disabled || confirm.value !== "DELETE") return;
+        submit.disabled = true;
+        confirm.disabled = true;
+        try {
+          const result = await pbFetch("/v1/account/deletion-request", {method: "POST", body: JSON.stringify({confirm: true})});
+          if (current()) showReceipt(result.request);
+        } catch (error) {
+          if (!current()) return;
+          if (error.status === 401) { signInAgain(); return; }
+          $("#ac-deletion-status").textContent = "Your request was not confirmed. " + error.message + " You can safely try again.";
+          submit.disabled = false;
+          confirm.disabled = false;
+        }
+      };
+    };
+    pbFetch("/v1/account/deletion-request").then((result) => {
+      if (!current()) return;
+      $("#ac-deletion-account").textContent = result.account?.label ? "Account: " + result.account.label : "";
+      if (result.request) showReceipt(result.request); else showForm();
+    }).catch((error) => {
+      if (!current()) return;
+      if (error.status === 401) { signInAgain(); return; }
+      body.innerHTML = '<button class="btn btn-secondary" id="ac-deletion-retry">Try again</button>';
+      $("#ac-deletion-status").textContent = "Could not check your request. " + error.message;
+      $("#ac-deletion-retry").onclick = render;
+    });
   }
 
   // ---- hosted postbox (MCP connector) --------------------------------------------------------
@@ -1011,4 +1082,5 @@
     await completeCardSetupIfReturning();
     render();
   });
+  window.addEventListener("hashchange", render);
 })();

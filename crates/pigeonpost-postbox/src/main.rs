@@ -51,6 +51,7 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
+mod account_deletion;
 mod appstore;
 mod appstore_routes;
 mod blobs;
@@ -62,6 +63,7 @@ mod oidc;
 mod pow;
 mod push;
 mod reputation;
+mod review_access;
 mod store;
 mod tester_handles;
 mod vault;
@@ -475,10 +477,18 @@ fn build_router(state: AppState) -> Router {
     Router::new()
         .route("/", get(onboard))
         .route("/health", get(health))
+        .route(
+            "/review-sign-in",
+            get(review_access::page).post(review_access::generate),
+        )
         .route("/metrics", get(metrics))
         .route("/mcp", post(mcp_handler))
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/accounts", post(create_account))
+        .route(
+            "/v1/account/deletion-request",
+            post(account_deletion::request).get(account_deletion::status),
+        )
         .route("/v1/api-keys", post(create_api_key).get(list_api_keys))
         .route("/v1/api-keys/{id}", delete(revoke_api_key))
         .route(
@@ -5324,6 +5334,53 @@ async fn shutdown_signal() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn account_deletion_requires_member_sign_in_not_an_agent_key() {
+        let state = state_with_limits(MintLimits {
+            per_window: 10,
+            window_secs: 3600,
+            lifetime: 1000,
+        });
+        let (token, key) = new_api_key();
+        state
+            .store
+            .create_account("deletion-agent".into(), key, 1)
+            .await
+            .unwrap();
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            HeaderValue::from_str(&format!("Bearer {token}")).unwrap(),
+        );
+        assert!(matches!(
+            principal_for_token(&state, Some(&token)).await.unwrap(),
+            Principal::Account(_)
+        ));
+        for headers in [HeaderMap::new(), headers] {
+            let consent = serde_json::from_value(json!({"confirm": true})).unwrap();
+            let result =
+                account_deletion::request(State(state.clone()), headers.clone(), Json(consent))
+                    .await;
+            assert_eq!(result.status(), StatusCode::UNAUTHORIZED);
+            assert_eq!(
+                account_deletion::status(State(state.clone()), headers)
+                    .await
+                    .status(),
+                StatusCode::UNAUTHORIZED
+            );
+        }
+        assert!(state
+            .store
+            .account_deletion_request("deletion-agent".into())
+            .await
+            .unwrap()
+            .is_none());
+        assert!(serde_json::from_value::<account_deletion::Consent>(
+            json!({"confirm": true, "account_id": "someone-else"})
+        )
+        .is_err());
+    }
 
     /// The bug this is here to stop coming back: attachments were unreachable from the web inbox
     /// for a whole release because `Access-Control-Allow-Headers` named only `authorization` and
