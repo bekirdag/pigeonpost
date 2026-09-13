@@ -214,17 +214,13 @@
 <div class="sheet-wrap" id="settings-sheet" hidden>
   <div class="sheet sheet-wide" role="dialog" aria-modal="true" aria-labelledby="settings-title">
     <header class="sheet-head">
-      <h2 id="settings-title">Settings</h2>
-      <button class="icon-btn" id="settings-close" type="button" aria-label="Close">
-        <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
-      </button>
+      <button class="icon-btn" id="settings-back" type="button" aria-label="Back to Settings" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
+      <h2 id="settings-title" tabindex="-1">Settings</h2>
+      <button class="icon-btn" id="settings-close" type="button" aria-label="Close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
     </header>
     <div class="sheet-body">
-
-      <!-- The phone has had this since it shipped, and needs it more — it has no header showing
-           the mailbox. The browser does, but not the two facts underneath it: the /k/ address the
-           handle resolves to, and which postbox this app is talking to at all. -->
-      <section class="setting">
+      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
+      <div data-settings-page="account" hidden><section class="setting">
         <h3>Account</h3>
         <dl class="account-facts">
           <dt>Mailbox</dt><dd id="acct-mailbox" class="mono">…</dd>
@@ -232,34 +228,28 @@
           <dt>Postbox</dt><dd id="acct-postbox" class="mono">…</dd>
         </dl>
         <p class="field-note">
-          The address is what a handle resolves to, and it is what to give somebody whose client
-          cannot look a handle up.
+          Share your address with someone whose app cannot look up handles.
         </p>
-      </section>
-
-      <section class="setting">
-        <h3>Your handles</h3>
+      </section><section class="setting settings-links"><a href="https://pigeonpost.dev/account" target="_blank" rel="noopener noreferrer">Manage account</a><button class="btn-ghost" id="settings-signout" type="button">Sign out</button><a href="https://pigeonpost.dev/account#delete-account" target="_blank" rel="noopener noreferrer">Delete account</a></section></div>
+      <div data-settings-page="handles" hidden><section class="setting">
+        <h3>Your handles</h3><p><a href="https://pigeonpost.dev/account" target="_blank" rel="noopener noreferrer">Register or manage handles</a></p>
         <p class="field-note">Names belong to your Pigeonpost account across mobile, desktop and web.</p>
         <div id="acct-handles" aria-live="polite"></div>
         <button class="btn-ghost" id="acct-handles-refresh" type="button">Refresh account handles</button>
         <p class="field-note">Expired names need renewal through their original provider. <a href="https://pigeonpost.dev/account" target="_blank" rel="noopener noreferrer">Manage account</a></p>
-      </section>
-
-      <section class="setting">
+      </section></div>
+      <div data-settings-page="inbox" hidden><section class="setting">
         <h3>Message size</h3>
-        <p class="field-note">Changes the conversation text only. The rest of the layout stays put.</p>
+        <p class="field-note">Choose a comfortable size for conversation text.</p>
         <div class="size-row">
           <button class="btn-ghost" id="size-down" type="button" aria-label="Smaller text">A−</button>
           <span class="size-value" id="size-value">100%</span>
           <button class="btn-ghost" id="size-up" type="button" aria-label="Larger text">A+</button>
         </div>
-      </section>
-
-      <section class="setting">
+      </section><section class="setting">
         <h3>Archived conversations</h3>
         <p class="field-note">
-          Archiving hides a conversation from your inbox. Nothing is deleted, the other side is
-          never told, and new mail from them still arrives and still counts as unread.
+          Archived conversations stay saved. New messages still arrive.
         </p>
         <div class="size-row">
           <button class="btn-ghost" id="open-archive" type="button">Open archive</button>
@@ -269,23 +259,18 @@
           Reachable from any of your devices at
           <code id="archive-link">…</code> — it is your archive, so it still asks you to sign in.
         </p>
-      </section>
-
-      <section class="setting">
-        <h3>Trusted senders</h3>
+      </section></div>
+      <div data-settings-page="contacts" hidden><section class="setting">
+        <h3>Your senders</h3>
         <p class="field-note">
-          Who this mailbox admits, and how far it trusts them. <code>/namespace/*</code> covers a
-          whole fleet. Autonomy <em>auto</em> plus a verb lets that sender's request be acted on
-          without asking you first.
+          Choose who can send you messages and which requests need your approval. Adding a sender does not grant automatic permissions.
         </p>
         <ul class="contact-list" id="contact-list"></ul>
         <button class="btn-ghost" id="contact-add" type="button">Add a sender</button>
-      </section>
-
+      </section></div>
+      <div data-settings-page="help" hidden><section class="setting settings-links"><a href="https://pigeonpost.dev/app-support.html" target="_blank" rel="noopener noreferrer">Contact support</a><a href="https://pigeonpost.dev/app-privacy.html" target="_blank" rel="noopener noreferrer">Privacy policy</a><a href="https://pigeonpost.dev/app-terms.html" target="_blank" rel="noopener noreferrer">Terms of service</a></section><section class="setting"><h3>Pigeonpost</h3><p class="field-note">Wodo Teknoloji A.Ş.</p></section></div>
     </div>
-    <footer class="sheet-foot">
-      <button class="btn-primary" id="settings-done" type="button">Done</button>
-    </footer>
+    <footer class="sheet-foot"><button class="btn-primary" id="settings-done" type="button">Done</button></footer>
   </div>
 </div>
 

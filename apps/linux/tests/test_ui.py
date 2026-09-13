@@ -160,6 +160,35 @@ class NativeTests(unittest.TestCase):
             self.assertIn(expected, content)
         self.assertIsNone(next(c for c in self.api.calls if c[1] == "/v1/me/handles")[2], "ownership never uses the selected mailbox")
 
+    def test_settings_pages_back_and_purchase_separation(self):
+        self.window.settings()
+        navigation = self.window.dialogs[-1].settings_navigation
+        def rows(widget):
+            found = [widget] if isinstance(widget, Adw.ActionRow) else []
+            child = widget.get_first_child()
+            while child:
+                found.extend(rows(child))
+                child = child.get_next_sibling()
+            return found
+        root = navigation.stack.get_visible_child()
+        self.assertEqual([row.get_title() for row in rows(root)],
+                         ["Account", "Handles", "Inbox and storage", "Contacts and permissions", "Help and about"])
+        self.assertFalse(navigation.back_button.get_visible())
+        rows(root)[1].emit("activated")
+        self.assertEqual(navigation.window.get_title(), "Handles")
+        rows(navigation.stack.get_visible_child())[0].emit("activated")
+        self.assertEqual(navigation.window.get_title(), "Get a handle")
+        navigation.back_button.emit("clicked")
+        self.assertEqual(navigation.window.get_title(), "Handles")
+        navigation.back()
+        self.assertIs(navigation.stack.get_visible_child(), root)
+        for row in rows(root):
+            row.emit("activated")
+            self.assertTrue(navigation.back_button.get_visible())
+            navigation.back()
+        self.assertEqual(len(self.window.dialogs), 1, "Settings pages use one window")
+        self.assertFalse(navigation.back_button.get_visible())
+
     def test_visual_evidence(self):
         if not os.environ.get("PIGEONPOST_SCREENSHOT_DIR"):
             self.skipTest("Screenshot capture requested only in GUI CI")
@@ -171,6 +200,16 @@ class NativeTests(unittest.TestCase):
             Adw.StyleManager.get_default().set_color_scheme(Adw.ColorScheme.FORCE_LIGHT if theme == "light" else Adw.ColorScheme.FORCE_DARK)
             pump(timeout=0.35)
             subprocess.run(["import", "-window", "root", f"{directory}/inbox-{theme}.png"], check=True)
+        self.window.settings()
+        navigation = self.window.dialogs[-1].settings_navigation
+        for title, show in (("settings", lambda: None), ("settings-account", lambda: self.window.account_settings(navigation)),
+                            ("settings-handles", lambda: self.window.handles(navigation))):
+            show()
+            pump(timeout=0.35)
+            subprocess.run(["import", "-window", "root", f"{directory}/{title}.png"], check=True)
+            if len(navigation.pages) > 1:
+                navigation.back()
+        navigation.window.close()
         self.window.set_default_size(850, 620)
         pump(timeout=0.35)
         subprocess.run(["import", "-window", "root", f"{directory}/inbox-narrow.png"], check=True)

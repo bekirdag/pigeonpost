@@ -60,6 +60,84 @@ def scroll(child):
     return widget
 
 
+def settings_row(title, detail, icon, callback):
+    row = Adw.ActionRow(title=title, subtitle=detail, activatable=True)
+    row.set_title_lines(0)
+    row.set_subtitle_lines(0)
+    row.add_prefix(Gtk.Image(icon_name=icon))
+    row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
+    row.connect("activated", lambda _: callback())
+    return row
+
+
+def settings_group(content, *rows):
+    group = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+    group.add_css_class("boxed-list")
+    for row in rows:
+        group.append(row)
+    content.append(group)
+
+
+class SettingsNavigation:
+    """One native window with a back stack, compatible with libadwaita 1.2."""
+    def __init__(self, owner, title="Settings"):
+        self.window = Adw.Window(title=title, transient_for=owner, modal=True,
+                                 default_width=560, default_height=600)
+        self.window.settings_navigation = self
+        self.pages = []
+        root = box(0)
+        header = Adw.HeaderBar()
+        self.heading = Adw.WindowTitle(title=title)
+        header.set_title_widget(self.heading)
+        self.back_button = button("Back", self.back, "go-previous-symbolic")
+        header.pack_start(self.back_button)
+        root.append(header)
+        self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
+        root.append(self.stack)
+        self.window.set_content(root)
+        keys = Gtk.EventControllerKey()
+        keys.connect("key-pressed", self.key_pressed)
+        self.window.add_controller(keys)
+        owner.dialogs.append(self.window)
+        self.window.connect("close-request", lambda w: owner.dialogs.remove(w) if w in owner.dialogs else None)
+        self.content = self.push(title)
+
+    def push(self, title):
+        focus = self.window.get_focus()
+        content = box(18, margin=24)
+        view = scroll(content)
+        self.pages.append((title, view, focus))
+        self.stack.add_child(view)
+        self.stack.set_visible_child(view)
+        self.heading.set_title(title)
+        self.window.set_title(title)
+        self.back_button.set_visible(len(self.pages) > 1)
+        GLib.idle_add(lambda: (content.child_focus(Gtk.DirectionType.TAB_FORWARD), False)[1])
+        return content
+
+    def back(self):
+        if len(self.pages) < 2:
+            return
+        _, old, focus = self.pages.pop()
+        title, view, _ = self.pages[-1]
+        self.stack.set_visible_child(view)
+        self.stack.remove(old)
+        self.heading.set_title(title)
+        self.window.set_title(title)
+        self.back_button.set_visible(len(self.pages) > 1)
+        if focus:
+            focus.grab_focus()
+
+    def key_pressed(self, _, key, _code, _state):
+        if key != Gdk.KEY_Escape:
+            return False
+        if len(self.pages) > 1:
+            self.back()
+        else:
+            self.window.close()
+        return True
+
+
 class Window(Adw.ApplicationWindow):
     def __init__(self, app, session=None, api=None, restore=True):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
@@ -842,29 +920,54 @@ class Window(Adw.ApplicationWindow):
         self._work(lambda: self.api.call("PUT", "/v1/archive", identity, data={"peer": peer, "archived": archived}), done)
 
     def settings(self):
-        window, content = self.dialog("Settings and account")
-        content.append(label("Pigeonpost Desktop", "title-2"))
-        content.append(label(f"Version {VERSION} · Wodo Teknoloji A.Ş.", "dim-label"))
+        navigation = SettingsNavigation(self)
+        content = navigation.content
+        settings_group(content, settings_row("Account", self.title.get_subtitle() or "Your profile and devices",
+                       "avatar-default-symbolic", lambda: self.account_settings(navigation)))
+        settings_group(content,
+            settings_row("Handles", "Your names and subscriptions", "insert-link-symbolic", lambda: self.handles(navigation)),
+            settings_row("Inbox and storage", "Storage and archived conversations", "mail-unread-symbolic", lambda: self.inbox_settings(navigation)),
+            settings_row("Contacts and permissions", "Senders you know and trust", "system-users-symbolic", lambda: self.contact_list(navigation)))
+        settings_group(content, settings_row("Help and about", "Support, privacy and app information",
+                       "help-about-symbolic", lambda: self.help_settings(navigation)))
+        navigation.window.present()
+
+    def account_settings(self, navigation):
+        content = navigation.push("Account")
+        content.append(label("Current inbox", "heading"))
         content.append(label(self.title.get_subtitle(), wrap=True))
+        settings_group(content, settings_row("Manage account", "Profile and account details", "avatar-default-symbolic",
+                       lambda: self.open_url("https://pigeonpost.dev/account")))
+        content.append(button("Sign out", self.sign_out))
+        content.append(button("Delete account…", lambda: self.open_url("https://pigeonpost.dev/account#delete-account"), style="destructive-action"))
+
+    def inbox_settings(self, navigation):
+        content = navigation.push("Inbox and storage")
+        content.append(label("Storage", "title-2"))
         if self.quota:
             used, limit = self.quota.get("used_bytes", 0), self.quota.get("limit_bytes", 0)
-            content.append(label(f"Storage: {size_text(used)} of {size_text(limit)}", "heading"))
+            content.append(label(f"{size_text(used)} of {size_text(limit)}", "heading"))
             content.append(Gtk.ProgressBar(fraction=min(1, used / limit) if limit else 0))
             if used >= self.quota.get("warn_at_bytes", float("inf")):
                 content.append(label("Your mailbox is nearly full. Remove unneeded messages or manage your plan.", wrap=True))
-        content.append(button("Handles and purchases", self.handles))
-        content.append(button("Contacts and permissions", self.contact_list))
-        content.append(button("Archived conversations", self.archives))
-        content.append(button("Manage account", lambda: self.open_url("https://pigeonpost.dev/account")))
-        content.append(button("Privacy policy", lambda: self.open_url("https://pigeonpost.dev/privacy")))
-        content.append(button("Terms of service", lambda: self.open_url("https://pigeonpost.dev/terms")))
-        content.append(button("Delete account…", lambda: self.open_url("https://pigeonpost.dev/account#delete-account")))
-        content.append(label("Enter: send · Shift+Enter: new line\nCtrl+N: new conversation · Ctrl+F: find · Ctrl+R: refresh · Ctrl+Q: quit", "dim-label", wrap=True))
-        content.append(button("Sign out", self.sign_out, style="destructive-action"))
-        window.present()
+        else:
+            content.append(label("Storage information is unavailable.", wrap=True))
+        settings_group(content, settings_row("Archived conversations", "Saved conversations, out of the way", "user-trash-symbolic", lambda: self.archives(navigation)))
+        content.append(label("Notifications", "heading"))
+        content.append(label("Keep Pigeonpost open to receive desktop notifications. Closing the app stops checking for messages.", wrap=True))
 
-    def archives(self):
-        window, content = self.dialog("Archived conversations")
+    def help_settings(self, navigation):
+        content = navigation.push("Help and about")
+        settings_group(content,
+            settings_row("Contact support", "Get help with Pigeonpost", "help-browser-symbolic", lambda: self.open_url("https://pigeonpost.dev/app-support.html")),
+            settings_row("Privacy policy", "How your information is handled", "changes-prevent-symbolic", lambda: self.open_url("https://pigeonpost.dev/app-privacy.html")),
+            settings_row("Terms of service", "Using Pigeonpost", "text-x-generic-symbolic", lambda: self.open_url("https://pigeonpost.dev/app-terms.html")))
+        content.append(label("Keyboard shortcuts", "heading"))
+        content.append(label("Enter: send · Shift+Enter: new line\nCtrl+N: new conversation · Ctrl+F: find\nCtrl+R: refresh · Ctrl+Q: quit", wrap=True))
+        content.append(label(f"Pigeonpost Desktop {VERSION}\nWodo Teknoloji A.Ş.", "dim-label", wrap=True))
+
+    def archives(self, navigation=None):
+        window, content = (navigation.window, navigation.push("Archived conversations")) if navigation else self.dialog("Archived conversations")
         content.append(label("Archiving hides a conversation and keeps its messages.", wrap=True))
         for peer in self.archived:
             content.append(button("Restore " + peer, lambda p=peer: (self.archive_peer(p, False), window.close())))
@@ -872,8 +975,8 @@ class Window(Adw.ApplicationWindow):
             content.append(label("No archived conversations.", "dim-label"))
         window.present()
 
-    def contact_list(self):
-        window, content = self.dialog("Contacts and permissions")
+    def contact_list(self, navigation=None):
+        window, content = (navigation.window, navigation.push("Contacts and permissions")) if navigation else self.dialog("Contacts and permissions")
         content.append(label("A contact name does not grant permission to act. Pigeonpost enforces the permissions below.", wrap=True))
         content.append(button("Add contact", lambda: self.contact_editor("")))
         for contact in self.contacts:
@@ -933,8 +1036,13 @@ class Window(Adw.ApplicationWindow):
             content.append(button("Remove contact", lambda: self.confirm("Remove this contact?", "The sender will use your mailbox's default policy.", lambda: save(True), "Remove"), style="destructive-action"))
         window.present()
 
-    def handles(self):
-        window, content = self.dialog("Handles")
+    def handles(self, navigation=None):
+        if navigation:
+            window, content = navigation.window, navigation.push("Handles")
+        else:
+            navigation = SettingsNavigation(self, "Handles")
+            window, content = navigation.window, navigation.content
+        settings_group(content, settings_row("Get a handle", "Register a name or manage purchases", "list-add-symbolic", lambda: self.handle_registration(navigation, refresh_ownership)))
         content.append(label("Your handles", "title-2"))
         content.append(label("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.", wrap=True))
         holdings = box()
@@ -965,6 +1073,10 @@ class Window(Adw.ApplicationWindow):
                        lambda error: ownership_status.set_text("Could not refresh your account handles. Your registrations are saved. Try Refresh again."))
         content.append(button("Refresh account handles", refresh_ownership))
         refresh_ownership()
+        window.present()
+
+    def handle_registration(self, navigation, refresh_ownership):
+        window, content = navigation.window, navigation.push("Get a handle")
         content.append(label("A name for every inbox", "title-2"))
         content.append(label("Check a name, then register it securely on the Pigeonpost website. Your browser shows the price and payment confirmation.", wrap=True))
         entry = Gtk.Entry(placeholder_text="Choose a handle")

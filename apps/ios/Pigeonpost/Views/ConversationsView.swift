@@ -21,6 +21,7 @@ struct ConversationsView: View {
     /// flipped, and nothing appeared. One `.sheet(item:)` has one presentation to resolve, so there
     /// is nothing left to race.
     @State private var sheet: Sheet?
+    @State private var didStageFixtures = false
 
     private enum Sheet: String, Identifiable {
         case identities, settings, new, scanner
@@ -59,8 +60,12 @@ struct ConversationsView: View {
         // open by a suspended app is a socket the system kills anyway, and one this app would then
         // believe in.
         .task(id: TaskKey(mailbox: account.me?.address, phase: scenePhase)) {
-            if let peer = Fixtures.openPeer, selection == nil { selection = peer }
-            if let staged = Fixtures.sheet { sheet = Sheet(rawValue: staged) }
+            // Stage the launch destination once; switching inboxes must not reopen Settings.
+            if !didStageFixtures {
+                didStageFixtures = true
+                if let peer = Fixtures.openPeer, selection == nil { selection = peer }
+                if let staged = Fixtures.sheet { sheet = Sheet(rawValue: staged) }
+            }
             guard !Fixtures.enabled else { return }
             guard scenePhase == .active, account.me != nil else { return }
             // The badge counts what has not been looked at, so looking at the app clears it. And

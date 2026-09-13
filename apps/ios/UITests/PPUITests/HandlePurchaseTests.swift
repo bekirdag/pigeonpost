@@ -10,6 +10,8 @@ final class HandlePurchaseTests: XCTestCase {
     private func open(_ state: String) {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=\(state)"]
         app.launch()
+        app.buttons["settings-handles"].tap()
+        app.buttons["settings-purchases"].tap()
     }
 
     private func screenshot(_ name: String) {
@@ -17,6 +19,38 @@ final class HandlePurchaseTests: XCTestCase {
         attachment.name = name
         attachment.lifetime = .keepAlways
         add(attachment)
+    }
+
+    func testSettingsMenuHasFocusedPagesAndAccountActions() {
+        app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=owned"]
+        app.launch()
+        XCTAssertTrue(app.buttons["settings-account"].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.textFields["yourname"].exists)
+        XCTAssertFalse(app.buttons["Restore purchases"].exists)
+        screenshot("settings-menu")
+        app.buttons["settings-account"].tap()
+        XCTAssertTrue(app.links["deleteAccount"].exists || app.buttons["deleteAccount"].exists)
+        XCTAssertTrue(app.buttons["Sign out"].exists)
+        app.navigationBars["Account"].buttons.element(boundBy: 0).tap()
+        app.buttons["settings-handles"].tap()
+        XCTAssertTrue(app.staticTexts["account-handle-previous"].waitForExistence(timeout: 8))
+        screenshot("settings-handles")
+        app.navigationBars["Handles"].buttons.element(boundBy: 0).tap()
+        app.buttons["settings-contacts"].tap()
+        XCTAssertTrue(app.buttons["Add a sender"].waitForExistence(timeout: 8))
+        app.navigationBars["Contacts and permissions"].buttons.element(boundBy: 0).tap()
+        app.buttons["settings-help"].tap()
+        screenshot("settings-help")
+        app.buttons["Done"].tap()
+        XCTAssertFalse(app.navigationBars["Help and about"].exists)
+    }
+
+    func testBackNavigationPreservesUnfinishedHandleName() {
+        open("sale")
+        enter("cosmos")
+        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.buttons["settings-purchases"].tap()
+        XCTAssertEqual(app.textFields["yourname"].value as? String, "cosmos")
     }
 
     func testInvalidNameCannotBePurchased() {
@@ -68,7 +102,8 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertTrue(inbox.waitForExistence(timeout: 8))
         screenshot("registered-handle")
         inbox.tap()
-        XCTAssertFalse(app.navigationBars["Settings"].waitForExistence(timeout: 2))
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Get a handle"])
+        waitForExpectations(timeout: 5)
     }
 
     func testTakenNameNeverEnablesPayment() {

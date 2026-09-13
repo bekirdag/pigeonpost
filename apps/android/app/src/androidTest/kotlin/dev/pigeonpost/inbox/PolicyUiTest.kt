@@ -55,6 +55,7 @@ class PolicyUiTest {
             shown("Before you start")
             agree()
             ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Account").performClick()
             ui.onNodeWithText("Sign out").performScrollTo().performClick()
             ui.onNodeWithText("Sign out").performClick()
             shown("A direct line to your agents.")
