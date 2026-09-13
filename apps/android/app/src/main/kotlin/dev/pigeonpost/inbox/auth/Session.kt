@@ -7,6 +7,7 @@ import android.util.Base64
 import dev.pigeonpost.core.SessionExpired
 import dev.pigeonpost.core.TokenProvider
 import dev.pigeonpost.core.await
+import dev.pigeonpost.inbox.AppPolicy
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -47,12 +48,13 @@ object AuthConfig {
     const val TOKEN = "$ISSUER/protocol/openid-connect/token"
     const val LOGOUT = "$ISSUER/protocol/openid-connect/logout"
 }
-data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null)
+data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null, val termsAccepted: Boolean = false)
 interface UserSession : TokenProvider {
     val state: StateFlow<SessionState>
     suspend fun begin(provider: String? = null, otherAccount: Boolean = false): Intent?
     suspend fun complete(result: Intent?)
     suspend fun cancel()
+    suspend fun acceptTerms()
     suspend fun signOut()
 }
 
@@ -63,6 +65,7 @@ class Session(context: Context) : UserSession {
     private val generation = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var auth: AuthState? = null
+    private var acceptedTerms: String? = null
     private var pending: AuthorizationRequest? = null
     private var pendingAt = 0L
     private val mutable = MutableStateFlow(SessionState())
@@ -73,13 +76,14 @@ class Session(context: Context) : UserSession {
                 store.read()?.let { text ->
                     val saved = JSONObject(text)
                     saved.optString("auth").takeIf { it.isNotEmpty() }?.let { auth = AuthState.jsonDeserialize(it) }
+                    acceptedTerms = saved.optString("accepted_terms").takeIf { it == AppPolicy.TERMS_VERSION }
                     saved.optString("pending").takeIf { it.isNotEmpty() }?.let { pending = AuthorizationRequest.jsonDeserialize(it) }
                     pendingAt = saved.optLong("pending_at")
                     auth?.authorizationServiceConfiguration?.let { require(trusted(it)) }
                 }
                 publish()
             } catch (_: Exception) {
-                auth = null; pending = null; store.write(null)
+                auth = null; acceptedTerms = null; pending = null; store.write(null)
                 mutable.value = SessionState(loading = false, error = "Your saved session could not be opened. Please sign in again.")
             }
         }
@@ -139,7 +143,7 @@ class Session(context: Context) : UserSession {
             mutex.withLock {
                 if (generation.get() != epoch) throw CancellationException()
                 require(candidate.isAuthorized && candidate.accessToken != null) { "Sign-in returned no session." }
-                auth = candidate; persist(); publish()
+                auth = candidate; acceptedTerms = null; persist(); publish()
             }
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
@@ -177,6 +181,26 @@ class Session(context: Context) : UserSession {
         generation.incrementAndGet()
         mutex.withLock { pending = null; pendingAt = 0; persist(); publish() }
     }
+    override suspend fun acceptTerms() {
+        initialized.join()
+        mutex.withLock {
+            if (auth?.isAuthorized != true) return
+            val previous = acceptedTerms
+            mutable.value = mutable.value.copy(busy = true, error = null)
+            try {
+                acceptedTerms = AppPolicy.TERMS_VERSION
+                persist()
+                publish()
+            } catch (cancelled: CancellationException) {
+                acceptedTerms = previous
+                publish()
+                throw cancelled
+            } catch (_: Exception) {
+                acceptedTerms = previous
+                mutable.value = mutable.value.copy(busy = false, error = "Could not save your acceptance. Please try again.")
+            }
+        }
+    }
     override suspend fun signOut() {
         generation.incrementAndGet()
         initialized.join()
@@ -192,16 +216,20 @@ class Session(context: Context) : UserSession {
 
     private suspend fun persist() = withContext(Dispatchers.IO) {
         val json = JSONObject().apply {
-            auth?.let { put("auth", it.jsonSerializeString()) }
+            auth?.let {
+                put("auth", it.jsonSerializeString())
+                acceptedTerms?.let { version -> put("accepted_terms", version) }
+            }
             pending?.let { put("pending", it.jsonSerializeString()); put("pending_at", pendingAt) }
         }
         store.write(if (auth == null && pending == null) null else json.toString())
     }
     private suspend fun clearLocked() {
-        auth = null; pending = null; pendingAt = 0; persist(); publish()
+        auth = null; acceptedTerms = null; pending = null; pendingAt = 0; persist(); publish()
     }
     private fun publish() {
-        mutable.value = SessionState(loading = false, signedIn = auth?.isAuthorized == true, username = username(auth?.accessToken))
+        mutable.value = SessionState(loading = false, signedIn = auth?.isAuthorized == true, username = username(auth?.accessToken),
+            termsAccepted = auth?.isAuthorized == true && acceptedTerms == AppPolicy.TERMS_VERSION)
     }
     private fun trusted(config: AuthorizationServiceConfiguration) =
         config.authorizationEndpoint.toString() == AuthConfig.AUTH && config.tokenEndpoint.toString() == AuthConfig.TOKEN

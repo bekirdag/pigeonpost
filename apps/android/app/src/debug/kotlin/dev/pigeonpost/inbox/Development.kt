@@ -17,16 +17,17 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "handles")) return null
-        return AppGraph(FixtureSession(mode != "signin"), FixturePostbox(mode), fixtures = true)
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "handles", "policy")) return null
+        return AppGraph(FixtureSession(mode != "signin", mode != "policy" && mode != "signin"), FixturePostbox(mode), fixtures = true)
     }
 }
-private class FixtureSession(signedIn: Boolean) : UserSession {
-    override val state = MutableStateFlow(SessionState(loading = false, signedIn = signedIn, username = "demo"))
-    override suspend fun begin(provider: String?, otherAccount: Boolean): Intent? { state.value = state.value.copy(signedIn = true); return null }
+private class FixtureSession(signedIn: Boolean, accepted: Boolean) : UserSession {
+    override val state = MutableStateFlow(SessionState(loading = false, signedIn = signedIn, username = "demo", termsAccepted = signedIn && accepted))
+    override suspend fun begin(provider: String?, otherAccount: Boolean): Intent? { state.value = state.value.copy(signedIn = true, termsAccepted = false); return null }
     override suspend fun complete(result: Intent?) {}
     override suspend fun cancel() {}
-    override suspend fun signOut() { state.value = state.value.copy(signedIn = false) }
+    override suspend fun acceptTerms() { state.value = state.value.copy(termsAccepted = state.value.signedIn) }
+    override suspend fun signOut() { state.value = state.value.copy(signedIn = false, termsAccepted = false) }
     override suspend fun token(rejected: String?) = "fixture-only"
 }
 

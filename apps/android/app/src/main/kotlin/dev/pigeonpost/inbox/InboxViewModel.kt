@@ -45,13 +45,14 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
     var pendingSave: File? = null
     init {
         viewModelScope.launch {
-            session.state.filter { !it.loading }.map { it.signedIn }.distinctUntilChanged().collect { signedIn ->
-                if (signedIn) { inbox.loadAccount(preferences.getString("mailbox", null)); paidHandles?.restore() }
+            session.state.filter { !it.loading }.map { it.signedIn && it.termsAccepted }.distinctUntilChanged().collect { ready ->
+                if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); paidHandles?.restore() }
                 else { inbox.reset(); handles.reset(); paidHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
             }
         }
     }
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
+    fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() { handles.reset(); paidHandles?.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
     override fun onCleared() { billing?.close(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey }

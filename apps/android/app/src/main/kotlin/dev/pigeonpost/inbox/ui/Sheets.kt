@@ -103,9 +103,10 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         OutlinedButton(scan, Modifier.fillMaxWidth()) { Icon(Icons.Outlined.QrCodeScanner, null); Spacer(Modifier.width(8.dp)); Text("Scan sign-in code") }
         HorizontalDivider()
         Text("Notifications", style = MaterialTheme.typography.titleSmall)
-        Text("Conversations update while the app is open. Background notifications are coming soon.", style = MaterialTheme.typography.bodyMedium)
+        Text("Conversations update while the app is open. This version does not deliver background notifications.", style = MaterialTheme.typography.bodyMedium)
         TextButton({ openLink("https://pigeonpost.dev/app-privacy.html") }) { Text("Privacy policy") }
         TextButton({ openLink("https://pigeonpost.dev/app-terms.html") }) { Text("Terms of service") }
+        TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Support") }
         TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
         TextButton(signOut) { Text("Sign out", color = MaterialTheme.colorScheme.error) }
         Text("Pigeonpost ${BuildConfig.VERSION_NAME}\nWodo Teknoloji A.Ş." + if (fixtures) "\nDevelopment fixtures" else "", style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
