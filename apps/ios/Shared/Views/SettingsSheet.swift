@@ -106,7 +106,7 @@ struct SettingsSheet: View {
         NavigationLink(value: page) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.title3).foregroundStyle(.tint)
+                    .font(.system(size: 22)).foregroundStyle(.tint)
                     .frame(width: 30).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(page.rawValue).font(.body.weight(.medium))
