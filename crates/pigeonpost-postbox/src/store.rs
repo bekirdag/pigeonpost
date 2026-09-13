@@ -12,6 +12,7 @@ use crate::vault::Wrapped;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
+mod deletion;
 mod googleplay;
 mod lifecycle;
 pub use googleplay::GoogleBinding;
@@ -811,6 +812,7 @@ impl Store {
         };
         conn.pragma_update(None, "busy_timeout", 5000)?;
         conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(deletion::SCHEMA)?;
         conn.execute_batch(googleplay::SCHEMA)?;
         for stmt in MIGRATIONS {
             if let Err(e) = conn.execute(stmt, []) {
@@ -2734,6 +2736,14 @@ impl Store {
         tokio::task::spawn_blocking(move || -> Result<String, StoreError> {
             let mut c = conn.lock().expect("store lock");
             let tx = c.transaction()?;
+            use sha2::{Digest, Sha256};
+            if tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM erased_member_subjects WHERE subject_hash = ?1)",
+                params![Sha256::digest(sub.as_bytes()).as_slice()],
+                |r| r.get::<_, bool>(0),
+            )? {
+                return Err(StoreError::Corrupt("account deleted"));
+            }
             let existing: Option<String> = tx
                 .query_row(
                     "SELECT id FROM accounts WHERE oidc_sub = ?1",

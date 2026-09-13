@@ -104,6 +104,8 @@ struct BuyHandleSection: View {
             }
             .disabled(store.busy)
             Link("Manage subscriptions", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+            Link("Privacy policy", destination: URL(string: "https://pigeonpost.dev/app-privacy.html")!)
+            Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
         } header: {
             Text("Your handles")
         } footer: {

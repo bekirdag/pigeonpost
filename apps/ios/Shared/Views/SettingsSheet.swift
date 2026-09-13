@@ -95,6 +95,10 @@ struct SettingsSheet: View {
                     LabeledContent("Signed in as", value: session.username ?? "—")
                     LabeledContent("Mailbox", value: account.me?.key ?? "—")
                     LabeledContent("Postbox", value: Config.postbox.host ?? "—")
+                    Link("Delete account", destination: URL(string: "https://pigeonpost.dev/account#delete-account")!)
+                        .accessibilityIdentifier("deleteAccount")
+                    Link("Privacy policy", destination: URL(string: "https://pigeonpost.dev/app-privacy.html")!)
+                    Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
                     Button("Sign out", role: .destructive) {
                         dismiss()
                         inbox.reset()

@@ -181,6 +181,7 @@ jobs:
           # App Store Connect invitation tooling also uses Apple's fixed transport enum.
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
+          # The private deletion-queue notifier imports Python's standard transport module.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
@@ -188,6 +189,7 @@ jobs:
               ':(exclude)site/reserved.js' \
               ':(exclude)site/app-privacy.html' \
               ':(exclude)site/delete-account.html' \
+              ':(exclude)deploy/account-deletions.py' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \

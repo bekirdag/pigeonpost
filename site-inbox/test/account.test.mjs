@@ -8,6 +8,89 @@ const source = readFileSync(new URL("../../site/account.js", import.meta.url), "
 const config = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+async function deletionPage(t, { signedIn = true, existing = null, status = 200, deferPost = false, pendingCard = false } = {}) {
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#delete-account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  if (signedIn) window.sessionStorage.setItem("pp_session", "member-token");
+  if (pendingCard) window.localStorage.setItem("pp_card_session", "unfinished-card-setup");
+  const calls = [];
+  let finishPost;
+  const receipt = {request_id: "del_example", requested_at: 10, complete_by: 2592010, completed_at: null};
+  window.fetch = async (url, init = {}) => {
+    const path = new URL(url).pathname;
+    calls.push({path, method: init.method || "GET", body: init.body, authorization: init.headers?.authorization});
+    assert.equal(path, "/v1/account/deletion-request", "deletion does not initiate billing or unrelated member calls");
+    assert.equal(init.headers.authorization, "Bearer member-token");
+    if (init.method === "POST" && deferPost) await new Promise(resolve => { finishPost = resolve; });
+    return {ok: status < 400, status, json: async () => status === 401 ? {error: "unauthorized"} : {request: init.method === "POST" ? receipt : existing, account: {label: "review@example.test"}}};
+  };
+  window.eval(source);
+  for (let i = 0; i < 20; i++) await tick();
+  return {window, calls, receipt, finish: () => finishPost(), async flush() {for(let i = 0; i < 10; i++) await tick();}};
+}
+
+test("account deletion requires sign-in before any request is sent", async t => {
+  const p = await deletionPage(t, {signedIn: false});
+  assert.ok(p.window.document.querySelector("#ac-deletion-signin"));
+  assert.equal(p.calls.length, 0);
+});
+
+test("deletion never resumes an unrelated unfinished payment-method setup", async t => {
+  const p = await deletionPage(t, {pendingCard: true});
+  assert.equal(p.window.location.hash, "#delete-account");
+  assert.ok(p.window.document.querySelector("#ac-deletion-confirm"));
+  assert.equal(p.calls.length, 1);
+  assert.equal(p.window.localStorage.getItem("pp_card_session"), "unfinished-card-setup");
+});
+
+test("deletion identifies the account, requires exact confirmation, and sends only one request", async t => {
+  const p = await deletionPage(t, {deferPost: true});
+  const $ = s => p.window.document.querySelector(s);
+  assert.match($("#ac-deletion-account").textContent, /review@example.test/);
+  const input = $("#ac-deletion-confirm"), button = $("#ac-deletion-submit");
+  for (const value of ["", "delete", "DELETE "]) {
+    input.value = value; input.dispatchEvent(new p.window.Event("input"));
+    assert.equal(button.disabled, true);
+  }
+  input.value = "DELETE"; input.dispatchEvent(new p.window.Event("input"));
+  button.click(); button.click();
+  assert.equal(button.disabled, true);
+  assert.equal(input.disabled, true);
+  const posts = p.calls.filter(c => c.method === "POST");
+  assert.equal(posts.length, 1);
+  assert.deepEqual(JSON.parse(posts[0].body), {confirm: true});
+  p.finish(); await p.flush();
+  assert.match($("#ac-deletion-receipt").textContent, /del_example/);
+  assert.equal($("#ac-deletion-submit"), null);
+});
+
+test("a prior deletion receipt does not create a second request", async t => {
+  const p = await deletionPage(t, {existing: {request_id: "del_prior", complete_by: 2592010}});
+  assert.match(p.window.document.querySelector("#ac-deletion-receipt").textContent, /del_prior/);
+  assert.equal(p.window.document.querySelector("#ac-deletion-submit"), null);
+  assert.equal(p.calls.filter(c => c.method === "POST").length, 0);
+});
+
+test("expired sessions ask for a new sign-in without submitting deletion", async t => {
+  const p = await deletionPage(t, {status: 401});
+  assert.match(p.window.document.querySelector("#ac-deletion-signin").textContent, /Sign in again/);
+  assert.equal(p.calls.length, 1);
+});
+
+test("a deletion response cannot overwrite a subsequent sign-out", async t => {
+  const p = await deletionPage(t, {deferPost: true});
+  const $ = s => p.window.document.querySelector(s);
+  $("#ac-deletion-confirm").value = "DELETE";
+  $("#ac-deletion-confirm").dispatchEvent(new p.window.Event("input"));
+  $("#ac-deletion-submit").click();
+  $("#ac-deletion-logout").click();
+  p.finish(); await p.flush();
+  assert.ok($("#ac-deletion-signin"));
+  assert.equal($("#ac-deletion-receipt"), null);
+});
+
 async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "https://pigeonpost.dev/account", completeStatus = 200, recovery = false } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
