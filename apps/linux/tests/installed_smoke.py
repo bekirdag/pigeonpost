@@ -14,6 +14,11 @@ subprocess.run(["flatpak", "run", "--command=python3", "dev.pigeonpost.Desktop",
 # Document portal must actually be mounted, not just an app window that tolerates a failed portal.
 result = subprocess.check_output(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Documents", "--object-path", "/org/freedesktop/portal/documents", "--method", "org.freedesktop.portal.Documents.GetMountPoint"], text=True)
 assert "/doc" in result or "0x2f" in result, "Document portal mount is unavailable"
+forwarded = pathlib.Path(os.environ["XDG_RUNTIME_DIR"]) / "pigeonpost-portal-probe.txt"
+forwarded.write_text("Pigeonpost file portal probe")
+subprocess.run(["flatpak", "run", "--file-forwarding", "--command=python3", "dev.pigeonpost.Desktop", "-c",
+                "import sys; assert open(sys.argv[1]).read() == 'Pigeonpost file portal probe'; print('Sandbox portal file read passed')",
+                "@@", str(forwarded), "@@"], check=True, timeout=30)
 with open("dist/flatpak-launch.log", "w") as log:
     process = subprocess.Popen(["flatpak", "run", "dev.pigeonpost.Desktop"], env=environment, stdout=log, stderr=log)
     try:

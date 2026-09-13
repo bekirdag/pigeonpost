@@ -84,6 +84,10 @@ class Postbox:
 
     def call(self, method, path, identity=None, data=None, query=None, **kwargs):
         params = dict(query or {})
+        if identity:
+            # Send both supported selectors. Attachments use headers; other mailbox endpoints
+            # parse query/body scoping. This also supports quota's explicit selector fallback.
+            kwargs["headers"] = {**kwargs.get("headers", {}), "x-pigeonpost-identity": identity}
         if identity and method in ("GET", "DELETE"):
             params["identity"] = identity
         elif identity and data is not None:

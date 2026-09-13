@@ -138,10 +138,16 @@ class TransportTests(unittest.TestCase):
         api = Postbox(self.session(), transport)
         api.inbox("/k/test")
         api.inbox("/k/test", 25)
-        for _, url, _ in transport.calls:
+        for _, url, options in transport.calls:
             self.assertIn("include_read=true", url)
             self.assertIn("include_sent=true", url)
             self.assertIn("identity=%2Fk%2Ftest", url)
+            self.assertEqual(options["headers"]["x-pigeonpost-identity"], "/k/test")
+
+    def test_quota_carries_explicit_mailbox_selector(self):
+        transport = StubTransport([{"used_bytes": 0}])
+        Postbox(self.session(), transport).call("GET", "/v1/quota", "/k/second")
+        self.assertEqual(transport.calls[0][2]["headers"]["x-pigeonpost-identity"], "/k/second")
 
     def test_only_401_retries_write(self):
         transport = StubTransport([APIError(401), {"message_id": "sent"}])

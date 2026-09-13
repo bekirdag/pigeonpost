@@ -21,7 +21,8 @@
   if (!detected) return;
   const card = document.querySelector(`[data-platform="${detected}"]`);
   const web = document.getElementById("web-inbox");
-  const action = card ? card.querySelector(".platform-action") : web;
+  const linuxArm = detected === "linux" && /aarch64|arm64/i.test(fallback);
+  const action = card ? card.querySelector(linuxArm ? ".platform-action-arm" : ".platform-action") : web;
   document.getElementById("device-recommendation").textContent = card
     ? `Recommended for ${card.querySelector("h3").textContent}`
     : "Recommended for this device";
@@ -35,4 +36,14 @@
   primary.replaceChildren(...Array.from(action.childNodes, node => node.cloneNode(true)));
   web.hidden = primary.href === web.href;
   document.getElementById("other-downloads").hidden = false;
+  // Chrome reduces its Linux user agent. Refine the package only when the browser
+  // supplies an explicit 64-bit ARM hint; otherwise keep the visible manual choices.
+  if (detected === "linux" && navigator.userAgentData?.getHighEntropyValues) {
+    navigator.userAgentData.getHighEntropyValues(["architecture", "bitness"]).then(info => {
+      if (info.architecture !== "arm" || info.bitness !== "64") return;
+      const arm = card.querySelector(".platform-action-arm");
+      primary.href = arm.href;
+      primary.replaceChildren(...Array.from(arm.childNodes, node => node.cloneNode(true)));
+    }).catch(() => {});
+  }
 })();

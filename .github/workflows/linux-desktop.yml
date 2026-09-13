@@ -60,6 +60,7 @@ jobs:
       - name: Launch installed Flatpak sandbox
         env:
           GSK_RENDERER: cairo
+          GTK_A11Y: none
         run: |
           # Each desktop test session needs its own portal mount; a prior FUSE mount is tied to its old bus.
           export XDG_RUNTIME_DIR="$(mktemp -d)"
