@@ -236,6 +236,20 @@ struct HandleOffer: Decodable, Sendable {
     var renewsOn: Date? { expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
 }
 
+/// Canonical Pigeonpost ownership, independent of the device's payment provider.
+struct AccountHandle: Decodable, Equatable, Identifiable, Sendable {
+    let namespace: String
+    let source: String
+    let expiresAt: Int?
+    let active: Bool
+    var id: String { namespace }
+    var name: String { "/" + namespace.trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+    var provider: String { source == "apple" ? "App Store" : source == "google" ? "Google Play" : "Pigeonpost" }
+    var paidThrough: Date? { expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+}
+
+struct AccountHandlesResponse: Decodable { let handles: [AccountHandle] }
+
 struct PurchasedHandle: Decodable, Equatable, Identifiable, Sendable {
     var originalTransactionId: String
     var namespace: String

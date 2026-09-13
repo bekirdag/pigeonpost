@@ -11,6 +11,7 @@ import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
@@ -81,12 +82,37 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 @Composable
 fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, handleState: HandleState, handles: HandleStore,
     paidHandles: PaidHandleStore? = null,
+    accountHandles: AccountHandleStore? = null, refreshMailboxes: () -> Unit = {},
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit) {
     PageDialog("Settings", dismiss) {
         Text(session.username ?: "Your account", style = MaterialTheme.typography.titleMedium)
         SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyMedium) }
         HorizontalDivider()
+        accountHandles?.let { owned ->
+            val holdings by owned.state.collectAsStateWithLifecycle()
+            LaunchedEffect(owned) { owned.refresh() }
+            Text("Your handles", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            Text("Names belong to your Pigeonpost account across mobile, desktop and web.", style = MaterialTheme.typography.bodySmall)
+            if (holdings.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
+            holdings.handles.forEach { handle ->
+                Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                    SelectionContainer { Text(handle.name, fontWeight = FontWeight.Medium) }
+                    Text("${if (handle.active) "Active" else "Expired"} · ${handle.provider}", style = MaterialTheme.typography.bodySmall)
+                    handle.expiresAt?.let { expires ->
+                        Text("${if (handle.active) "Paid through" else "Expired on"} ${java.text.DateFormat.getDateInstance().format(java.util.Date(expires * 1000))}", style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (handle.active) state.mailboxes.firstOrNull { it.handle?.startsWith(handle.name + "/") == true }?.let { mailbox ->
+                        TextButton({ openInbox(mailbox) }) { Text("Open ${handle.name}") }
+                    }
+                }
+            }
+            if (holdings.loaded && holdings.handles.isEmpty() && holdings.error == null) Text("No handles on this Pigeonpost account yet.")
+            holdings.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+            Text("Expired names need renewal through their original provider.", style = MaterialTheme.typography.bodySmall)
+            OutlinedButton({ owned.refresh(); refreshMailboxes() }, Modifier.fillMaxWidth(), enabled = !holdings.loading) { Text("Refresh account handles") }
+            HorizontalDivider()
+        }
         HandleSection(handleState, handles, state.mailboxes, openInbox)
         paidHandles?.let {
             HorizontalDivider()

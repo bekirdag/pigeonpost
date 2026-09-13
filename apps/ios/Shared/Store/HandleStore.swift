@@ -9,6 +9,7 @@ struct HandleServices {
     var claim: (String, String?) async throws -> HandleOffer
     var ensureMailbox: (String) async -> Bool
     var purchases: HandlePurchasing
+    var accountHandles: (() async throws -> [AccountHandle])? = nil
     var defaults: UserDefaults = .standard
     var timeout: Double = 20
 }
@@ -27,6 +28,9 @@ final class HandleStore {
     private(set) var loaded = false
     private(set) var enabled = true
     private(set) var handles: [PurchasedHandle] = []
+    private(set) var accountHandles: [AccountHandle] = []
+    private(set) var ownershipLoaded = false
+    private(set) var ownershipError: String?
     private(set) var products: [HandleProduct] = []
     private(set) var maximum = 10
     private(set) var availability: HandleAvailability?
@@ -112,6 +116,8 @@ final class HandleStore {
         activity = restoring ? .restoring : .loading
         message = nil
         defer { finishOperation(stamp, subject) }
+        await reloadOwnership(stamp, subject)
+        guard current(stamp, subject) else { return }
         do {
             if let key = pendingKey, let data = services.defaults.data(forKey: key) {
                 pending = (try? JSONDecoder().decode([PendingHandle].self, from: data)) ?? []
@@ -160,6 +166,19 @@ final class HandleStore {
     private func withHandleTransactions() async throws -> [HandleTransaction] {
         try await withHandleDeadline(seconds: services.timeout) { [purchases = services.purchases] in
             await purchases.transactions()
+        }
+    }
+
+    private func reloadOwnership(_ stamp: Int, _ subject: String) async {
+        guard let fetch = services.accountHandles else { return }
+        do {
+            let rows = try await withHandleDeadline(seconds: services.timeout, fetch)
+            guard current(stamp, subject) else { return }
+            accountHandles = rows
+            ownershipLoaded = true
+            ownershipError = nil
+        } catch {
+            if current(stamp, subject) { ownershipError = "Could not refresh your account handles. Your registrations are saved. Try Refresh again." }
         }
     }
 
@@ -263,6 +282,7 @@ final class HandleStore {
             if exists { missingMailboxes.remove(namespace) }
             else { missingMailboxes.insert(namespace) }
             if current(stamp, subject), desiredName != nil { message = "\(namespace) is ready." }
+            await reloadOwnership(stamp, subject)
         } catch {
             guard current(stamp, subject) else { return }
             if let failure = error as? APIError, ["purchase_already_used", "purchase_expired", "purchase_refunded"].contains(failure.code ?? "") {
@@ -291,6 +311,7 @@ final class HandleStore {
         activity = .none; loaded = false; offer = nil; handles = []; products = []
         pending = []; unassigned = []; wantedName = ""; availability = nil; message = nil
         pendingRefresh = false; missingMailboxes = []
+        accountHandles = []; ownershipLoaded = false; ownershipError = nil
     }
 
     static func tidy(_ raw: String) -> String {

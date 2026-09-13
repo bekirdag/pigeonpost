@@ -294,6 +294,11 @@ struct PostboxClient {
         try await send("/v1/handles/\(name)/availability", as: HandleAvailability.self)
     }
 
+    func accountHandles() async throws -> [AccountHandle] {
+        try await send("/v1/me/handles", query: [URLQueryItem(name: "include_inactive", value: "true")],
+                       as: AccountHandlesResponse.self).handles
+    }
+
     // ---- the wire ------------------------------------------------------------------------------
 
     private func send<T: Decodable>(

@@ -125,11 +125,11 @@ const server = http.createServer(async (req, res) => {
         // What the account actually owns, which the billing system is not the record of. A handle
         // bought in the App Store has no subscription here, and listing only subscriptions is what
         // made the account page say "No handles yet" to somebody holding two.
-        masaas.accountHandles(token).catch(() => null),
+        masaas.accountHandles(token),
       ]);
       return send(res, 200, {
         subscriptions: normalizeSubs(subs),
-        handles: handles || [],
+        handles,
         billingProfiles: list(profiles),
         invoices: list(invoices),
         paymentMethods: list(methods),

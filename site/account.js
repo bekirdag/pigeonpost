@@ -279,7 +279,7 @@
         <button class="btn btn-small" id="ac-logout">Sign out</button>
       </div>
       ${searchBlock()}
-      <div class="ac-card"><h3>Your handles</h3><div id="ac-subs"><p class="muted">Loading…</p></div></div>
+      <div class="ac-card"><h3>Your handles</h3><p class="muted">Names belong to your Pigeonpost account across mobile, desktop and web.</p><button class="btn btn-small" id="ac-handles-refresh">Refresh handles</button><div id="ac-subs"><p class="muted">Loading…</p></div></div>
       <div class="ac-card">
         <h3>Connect an AI agent</h3>
         <p class="muted">Give a Claude or ChatGPT agent a hosted Pigeonpost inbox — it sends and
@@ -305,6 +305,7 @@
       <div class="ac-card"><h3>Invoices</h3><div id="ac-invoices"><p class="muted">Loading…</p></div></div>
       <div class="ac-card"><h3>Account deletion</h3><a href="#delete-account">Delete your account and associated data</a></div>`;
     $("#ac-logout").onclick = logout;
+    $("#ac-handles-refresh").onclick = () => { loadOverview(); loadPostbox(); };
     $("#ac-2fa").onclick = setupTotp;
     $("#ac-pb-create").onclick = pbCreateInbox;
     $("#ac-pb-key").onclick = pbRevealKey;
@@ -383,7 +384,7 @@
   // and resolves it to an account. CORS on the postbox allows pigeonpost.dev.
 
   const POSTBOX = "https://postbox.pigeonpost.dev";
-  async function pbFetch(path, opts) {
+  async function pbFetch(path, opts, retried = false) {
     const o = opts || {};
     const res = await fetch(POSTBOX + path, {
       method: o.method || "GET",
@@ -393,6 +394,7 @@
       ),
       body: o.body,
     });
+    if (res.status === 401 && !retried && await refreshSession()) return pbFetch(path, opts, true);
     const body = await res.json().catch(() => ({}));
     if (!res.ok) {
       const e = new Error(body.detail || body.error || `postbox ${res.status}`);
@@ -820,9 +822,29 @@
     }
   }
 
+  let overviewRequest = 0;
+  let lastOverviewAt = 0;
+  window.addEventListener("focus", () => {
+    if (getToken() && $("#ac-subs") && Date.now() - lastOverviewAt > 5000) {
+      loadOverview(); loadPostbox();
+    }
+  });
   async function loadOverview() {
+    const box = $("#ac-subs");
+    const refresh = $("#ac-handles-refresh");
+    if (!box) return;
+    const request = ++overviewRequest;
+    lastOverviewAt = Date.now();
+    if (refresh) refresh.disabled = true;
     let data;
-    try { data = await apiGet("/v1/me/overview"); } catch { return; }
+    try { data = await apiGet("/v1/me/overview"); }
+    catch (error) {
+      if ($("#ac-subs") === box && request === overviewRequest) {
+        box.innerHTML = `<p class="muted" role="status">Could not refresh your handles. Your registrations are saved on your account. Try Refresh handles again.</p>`;
+      }
+      return;
+    } finally { if ($("#ac-handles-refresh") === refresh && refresh && request === overviewRequest) refresh.disabled = false; }
+    if ($("#ac-subs") !== box || request !== overviewRequest) return;
     const profiles = data.billingProfiles || [];
     const methods = data.paymentMethods || [];
     overview = { hasBilling: profiles.length > 0, hasCard: methods.length > 0 };
@@ -854,14 +876,8 @@
     focusStep(".ac-search-card", "#ac-buy");
   }
 
-  // Two sources, one list. Subscriptions are what this billing system sold; `handles` is what the
-  // postbox says the account actually holds — and those differ, because a handle bought in the iOS
-  // app is a purchase Apple took and this system never saw. Listing only subscriptions is what told
-  // somebody holding two handles that they had none, directly above an offer to buy one of them
-  // back.
-  //
-  // Keyed on the name so a handle that appears in both is one row. The subscription is the richer
-  // record where there is one — it can be cancelled here — so it wins.
+  // The postbox owns names; billing supplies management details only. An old web subscription must
+  // not override a name's current Apple/Google ownership or make an expired name look active.
   function renderSubs(subs, handles) {
     const el = $("#ac-subs"); if (!el) return;
 
@@ -869,18 +885,25 @@
     for (const h of handles) {
       const name = String(h.namespace || "").replace(/^\/+/, "");
       if (!name) continue;
+      const active = h.active ?? (!h.expires_at || h.expires_at * 1000 > Date.now());
+      const source = h.source === "apple" ? "App Store" : h.source === "google" ? "Google Play" : "Pigeonpost";
+      const subscription = ["apple", "google"].includes(h.source) ? null
+        : subs.find((s) => String(s.handle || "").replace(/^\/+/, "") === name);
       rows.set(name, {
         name,
-        detail: h.source === "apple" ? "App Store" : "active",
-        renewsAt: h.expires_at ? new Date(h.expires_at * 1000).toISOString() : "",
-        cancelId: "",
+        detail: `${active ? "Active" : "Expired"} · ${source}`,
+        date: h.expires_at ? `${active ? "Paid through" : "Expired on"} ${fmtDate(h.expires_at)}` : "",
+        cancelId: subscription?.id || "",
+        manageUrl: h.source === "apple" ? "https://apps.apple.com/account/subscriptions"
+          : h.source === "google" ? "https://play.google.com/store/account/subscriptions?package=dev.pigeonpost.inbox" : "",
+        source,
       });
     }
     for (const s of subs) {
       const name = String(s.handle || "").replace(/^\/+/, "");
-      if (!name) continue;
-      rows.set(name, { name, detail: s.status === "past_due" ? "Payment pending" : s.status || "unknown",
-        renewsAt: s.renewsAt || "", cancelId: s.id || "", pending: s.status === "past_due" });
+      if (!name || rows.has(name)) continue;
+      rows.set(name, { name, detail: s.status === "past_due" ? "Payment pending" : "No active handle · " + (s.status || "unknown"),
+        date: "", cancelId: s.id || "", pending: s.status === "past_due", source: "Pigeonpost" });
     }
 
     const list = [...rows.values()];
@@ -888,11 +911,12 @@
     el.innerHTML = list.map((r) => `
       <div class="ac-row">
         <div><span class="k">/${esc(r.name)}</span>
-          <span class="muted">${esc(r.detail)}${r.renewsAt ? " · renews " + esc(String(r.renewsAt).slice(0, 10)) : ""}</span></div>
+          <span class="muted">${esc(r.detail)}${r.date ? " · " + esc(r.date) : ""}</span></div>
         ${r.pending ? `<button class="btn btn-small" data-continue="${esc(r.name)}">Continue payment</button>` : ""}
         ${r.cancelId
           ? `<button class="btn btn-small" data-cancel="${esc(r.cancelId)}">Cancel</button>`
-          : `<span class="muted">Managed in the App Store</span>`}
+          : r.manageUrl ? `<a class="btn btn-small" href="${esc(r.manageUrl)}" target="_blank" rel="noopener noreferrer">Manage in ${esc(r.source)}</a>`
+          : `<span class="muted">Managed by Pigeonpost</span>`}
       </div>`).join("");
     el.querySelectorAll("[data-continue]").forEach((b) => b.onclick = () => startPurchase(b.getAttribute("data-continue")));
     el.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = () => cancelSub(b.getAttribute("data-cancel")));

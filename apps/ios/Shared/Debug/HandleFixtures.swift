@@ -10,7 +10,11 @@ enum HandleFixtures {
         let store = HandleStore(services: HandleServices(subject: { "fixture" },
             offer: { try backend.offer() }, availability: { backend.check($0) },
             claim: { try backend.claim($0, $1, purchases: purchases) },
-            ensureMailbox: { backend.ensure($0) }, purchases: purchases, defaults: defaults))
+            ensureMailbox: { backend.ensure($0) }, purchases: purchases, accountHandles: {
+                backend.handles.map { AccountHandle(namespace: $0.namespace, source: "apple", expiresAt: $0.expiresAt, active: $0.active) }
+                    + (state == "owned" ? [AccountHandle(namespace: "studio", source: "google", expiresAt: Int(Date().addingTimeInterval(86400).timeIntervalSince1970), active: true),
+                        AccountHandle(namespace: "previous", source: "google", expiresAt: Int(Date().addingTimeInterval(-86400).timeIntervalSince1970), active: false)] : [])
+            }, defaults: defaults))
         store.wantedName = state == "owned" || state == "ten" ? "" : "alex"
         return store
     }

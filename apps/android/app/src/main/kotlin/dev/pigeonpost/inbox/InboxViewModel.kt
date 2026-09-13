@@ -36,24 +36,25 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
         rememberMailbox = { preferences.edit().putString("mailbox", it).apply() },
         onSessionExpired = { signOut() })
     val handles = HandleStore(graph.api, viewModelScope,
-        onRegistered = { inbox.loadAccount() }, onSessionExpired = { signOut() })
+        onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
+    val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, viewModelScope, onSessionExpired = { signOut() }) }
     val billing = if (graph.fixtures) null else GooglePlayBilling(app)
     val paidHandles = (graph.api as? PaidHandleApi)?.let { api -> billing?.let {
-        PaidHandleStore(api, it, viewModelScope, onRegistered = { inbox.loadAccount() }, onSessionExpired = { signOut() })
+        PaidHandleStore(api, it, viewModelScope, onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     } }
     var attachmentTarget: DraftKey? = null
     var pendingSave: File? = null
     init {
         viewModelScope.launch {
             session.state.filter { !it.loading }.map { it.signedIn && it.termsAccepted }.distinctUntilChanged().collect { ready ->
-                if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); paidHandles?.restore() }
-                else { inbox.reset(); handles.reset(); paidHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
+                if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore() }
+                else { inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
             }
         }
     }
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
-    fun signOut() { handles.reset(); paidHandles?.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
+    fun signOut() { handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
     override fun onCleared() { billing?.close(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey }
     fun attach(uris: List<Uri>) {

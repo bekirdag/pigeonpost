@@ -8,6 +8,44 @@ const source = readFileSync(new URL("../../site/account.js", import.meta.url), "
 const config = readFileSync(new URL("../../site/account-config.js", import.meta.url), "utf8");
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 
+test("all providers appear with canonical status and correct management actions", async t => {
+  const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config); window.sessionStorage.setItem("pp_session", "member-fixture");
+  let fail = false, reads = 0;
+  const handles = [
+    { namespace: "apple-name", source: "apple", active: true, expires_at: 1999999999 },
+    { namespace: "google-name", source: "google", active: false, expires_at: 100 },
+    { namespace: "web-name", source: "entitlement", active: true, expires_at: null },
+  ];
+  window.fetch = async url => {
+    const overview = String(url).endsWith("/me/overview");
+    if (overview) reads++;
+    return { ok: !overview || !fail, status: overview && fail ? 502 : 200, json: async () => overview
+      ? { handles, subscriptions: [{ handle: "apple-name", id: "obsolete-card", status: "active" }], billingProfiles: [], paymentMethods: [], invoices: [] }
+      : { identities: [], keys: [] } };
+  };
+  window.eval(source);
+  for (let n = 0; n < 20; n++) await tick();
+  const list = () => window.document.querySelector("#ac-subs");
+  assert.match(list().textContent, /apple-name.*Active · App Store/s);
+  assert.match(list().textContent, /google-name.*Expired · Google Play/s);
+  assert.match(list().textContent, /web-name.*Active · Pigeonpost/s);
+  assert.equal(list().querySelectorAll(".ac-row").length, 3, "old web subscription cannot duplicate an Apple handle");
+  assert.equal(list().querySelector("[data-cancel]"), null, "old billing row cannot manage another provider");
+  assert.ok(list().querySelector('a[href^="https://play.google.com/"]'));
+  fail = true; window.document.querySelector("#ac-handles-refresh").click();
+  for (let n = 0; n < 20; n++) await tick();
+  assert.match(list().textContent, /Could not refresh/);
+  assert.doesNotMatch(list().textContent, /No handles yet/);
+  fail = false; handles.push({ namespace: "new-mobile", source: "google", active: true });
+  window.document.querySelector("#ac-handles-refresh").click();
+  for (let n = 0; n < 20; n++) await tick();
+  assert.match(list().textContent, /new-mobile/);
+  assert.equal(reads, 3);
+});
+
 async function deletionPage(t, { signedIn = true, existing = null, status = 200, deferPost = false, pendingCard = false } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url: "https://pigeonpost.dev/account#delete-account", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());

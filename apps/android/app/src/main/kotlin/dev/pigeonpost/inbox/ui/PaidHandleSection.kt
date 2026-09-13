@@ -17,7 +17,7 @@ import java.util.Date
 fun PaidHandleSection(store: PaidHandleStore, mailboxes: List<Mailbox>, openInbox: (Mailbox) -> Unit, openLink: (String) -> Unit) {
     val state by store.state.collectAsStateWithLifecycle()
     LaunchedEffect(Unit) { store.restore() }
-    Text("Handle subscriptions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+    Text("Google Play subscriptions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     Text("Register up to 10 handles. Each handle has its own yearly subscription, managed through Google Play.", style = MaterialTheme.typography.bodyMedium)
     Text("${state.active.size} of 10 subscriptions active", style = MaterialTheme.typography.labelLarge)
     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())

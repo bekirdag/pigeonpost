@@ -4488,7 +4488,17 @@ async fn handle_availability(
 /// The account page on the website listed subscriptions from the billing system and called that
 /// "your handles", so a name bought through the App Store appeared nowhere and the same account was
 /// invited to buy it again. This is the one answer both clients can ask for.
-async fn my_handles(State(state): State<AppState>, headers: HeaderMap) -> Response {
+#[derive(Default, serde::Deserialize)]
+struct MyHandlesQuery {
+    #[serde(default)]
+    include_inactive: bool,
+}
+
+async fn my_handles(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<MyHandlesQuery>,
+) -> Response {
     let Some(token) = bearer(&headers) else {
         return ApiError::unauthorized("this endpoint needs a member token").into_response();
     };
@@ -4516,16 +4526,27 @@ async fn my_handles(State(state): State<AppState>, headers: HeaderMap) -> Respon
         Err(_) => return ApiError::server("store_error").into_response(),
     };
 
-    match state
-        .store
-        .namespaces_for_account(account.clone(), now_unix())
-        .await
-    {
+    let holdings = if query.include_inactive {
+        state
+            .store
+            .account_namespaces(account.clone(), now_unix(), true)
+            .await
+    } else {
+        state
+            .store
+            .namespaces_for_account(account.clone(), now_unix())
+            .await
+    };
+    match holdings {
         // The account id travels with the list because the thing that binds a *web* purchase — the
         // namespace grant — is addressed by account id, and the only caller holding the member's
         // token is the one that needs it. It is this postbox's own identifier for the account and
         // means nothing anywhere else.
-        Ok(holdings) => Json(json!({ "account": account, "handles": holdings })).into_response(),
+        Ok(holdings) => (
+            [(axum::http::header::CACHE_CONTROL, "private, no-store")],
+            Json(json!({ "account": account, "handles": holdings })),
+        )
+            .into_response(),
         Err(_) => ApiError::server("store_error").into_response(),
     }
 }
