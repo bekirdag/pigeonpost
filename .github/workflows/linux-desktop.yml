@@ -1,0 +1,97 @@
+name: Linux desktop
+
+on:
+  push:
+    branches: [main, 'codex/linux-desktop-*']
+    tags: ['linux-desktop-*']
+    paths: ['apps/linux/**', '.github/workflows/linux-desktop.yml']
+  pull_request:
+    paths: ['apps/linux/**', '.github/workflows/linux-desktop.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: linux-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/linux
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Install native build and test dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gnome-keyring dbus-x11 xvfb xdotool imagemagick desktop-file-utils appstream flatpak flatpak-builder xdg-desktop-portal-gtk
+      - name: Domain and authentication regressions
+        run: python3 -m unittest discover -s tests -p test_core.py -v
+      - name: Native GTK integration and screenshots
+        env:
+          GSK_RENDERER: cairo
+          GTK_A11Y: none
+          PIGEONPOST_SCREENSHOT_DIR: ${{ github.workspace }}/apps/linux/dist/screenshots
+        run: xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- python3 -m unittest discover -s tests -p test_ui.py -v
+      - name: Build and install Debian package
+        run: |
+          desktop-file-validate data/dev.pigeonpost.Desktop.desktop
+          appstreamcli validate --no-net data/dev.pigeonpost.Desktop.metainfo.xml
+          python3 package-deb.py
+          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.0_all.deb
+          pigeonpost-desktop --version
+      - name: Build Flatpak
+        run: |
+          flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo --install build-dir dev.pigeonpost.Desktop.json
+          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.0-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak run --command=pigeonpost-desktop dev.pigeonpost.Desktop --version
+      - name: Launch installed Flatpak sandbox
+        env:
+          GSK_RENDERER: cairo
+        run: xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- python3 tests/installed_smoke.py
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.deb *.flatpak > SHA256SUMS
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: always()
+        with:
+          name: pigeonpost-linux-desktop
+          path: apps/linux/dist/
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/linux-desktop-')
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: pigeonpost-linux-desktop
+          path: dist
+      - name: Publish desktop release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'EOF'
+          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management.
+
+          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.0_all.deb` on Debian 12+ or Ubuntu 24.04+. For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.0-x86_64.flatpak`. The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
+
+          Handle purchases open the Pigeonpost website. Messages and drafts remain in memory; closing the app stops notifications. See the build plan and validation ledger in apps/linux.
+          EOF
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.0' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/*.deb
+            dist/*.flatpak
