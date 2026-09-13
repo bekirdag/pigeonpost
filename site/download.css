@@ -1,4 +1,6 @@
 .download-hero { padding-bottom: 24px; }
+.platform-symbols { position: absolute; width: 0; height: 0; overflow: hidden; }
+[hidden] { display: none !important; }
 .download-eyebrow { margin: 0 0 10px; color: var(--navy); font-size: 14px; font-weight: 650; }
 .download-feature {
   padding: 28px;
@@ -19,6 +21,7 @@
 }
 .download-meta { font-size: 14px; color: var(--muted); }
 .download-trust { margin-bottom: 0; font-size: 14px; color: var(--free-text); }
+.download-other-link { display: inline-block; margin-top: 10px; font-size: 14px; }
 .download-options { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
 .download-option {
   display: flex;
@@ -29,7 +32,12 @@
   border-radius: 12px;
 }
 .download-option h3 { margin: 0; color: var(--ink); }
-.download-option p { flex-grow: 1; }
+.download-option[data-platform="mac"] { grid-column: 1 / -1; }
+.download-option .platform-description { flex-grow: 1; }
+.download-option .download-meta { margin-top: 0; }
+.download-links { font-size: 14px; margin: 14px 0 0; }
+.release-status { margin-top: 6px; font-size: 13px; font-weight: 600; color: var(--free-text); }
+.release-pending { color: var(--muted); }
 .download-option .btn { font-size: 14px; padding: 10px 14px; }
 .download-install { padding-left: 24px; }
 .download-install li { padding-left: 6px; margin: 10px 0; }
