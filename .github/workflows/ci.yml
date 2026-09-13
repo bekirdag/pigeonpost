@@ -114,13 +114,18 @@ jobs:
           # with and be given a handle named after it. The claim's key is the spec's spelling, and
           # a serde field cannot be renamed around a word.
           # App Store Connect invitation tooling also uses Apple's fixed transport enum.
+          # Hosted-app privacy/deletion pages and the Google Play service identity likewise
+          # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \
               ':(exclude)site/reserved.js' \
+              ':(exclude)site/app-privacy.html' \
+              ':(exclude)site/delete-account.html' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)CLA.md'; then
