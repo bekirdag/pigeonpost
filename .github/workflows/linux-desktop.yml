@@ -18,7 +18,14 @@ concurrency:
 
 jobs:
   build:
-    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-24.04
+            arch: x86_64
+          - runner: ubuntu-24.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
     timeout-minutes: 35
     defaults:
       run:
@@ -48,12 +55,16 @@ jobs:
         run: |
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo --install build-dir dev.pigeonpost.Desktop.json
-          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.0-x86_64.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.0-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak run --command=pigeonpost-desktop dev.pigeonpost.Desktop --version
       - name: Launch installed Flatpak sandbox
         env:
           GSK_RENDERER: cairo
-        run: xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- python3 tests/installed_smoke.py
+        run: |
+          # Each desktop test session needs its own portal mount; a prior FUSE mount is tied to its old bus.
+          export XDG_RUNTIME_DIR="$(mktemp -d)"
+          chmod 700 "$XDG_RUNTIME_DIR"
+          xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- python3 tests/installed_smoke.py
       - name: Checksums
         run: |
           cd dist
@@ -61,7 +72,7 @@ jobs:
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         if: always()
         with:
-          name: pigeonpost-linux-desktop
+          name: pigeonpost-linux-desktop-${{ matrix.arch }}
           path: apps/linux/dist/
           if-no-files-found: error
 
@@ -76,8 +87,16 @@ jobs:
     steps:
       - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
         with:
-          name: pigeonpost-linux-desktop
+          pattern: pigeonpost-linux-desktop-*
+          merge-multiple: true
           path: dist
+      - name: Release checksums
+        run: cd dist && sha256sum *.deb *.flatpak > SHA256SUMS
+      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
+        with:
+          subject-path: |
+            dist/*.deb
+            dist/*.flatpak
       - name: Publish desktop release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -90,8 +109,3 @@ jobs:
           Handle purchases open the Pigeonpost website. Messages and drafts remain in memory; closing the app stops notifications. See the build plan and validation ledger in apps/linux.
           EOF
           gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.0' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
-      - uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be
-        with:
-          subject-path: |
-            dist/*.deb
-            dist/*.flatpak

@@ -20,6 +20,7 @@ launcher.write_text('#!/usr/bin/env python3\nimport sys\nsys.path.insert(0, ' + 
 launcher.chmod(0o755)
 for name, directory in [("dev.pigeonpost.Desktop.desktop", "applications"),
                         ("dev.pigeonpost.Desktop.metainfo.xml", "metainfo"),
+                        ("LICENSE", "licenses/pigeonpost-desktop"),
                         ("dev.pigeonpost.Desktop.png", "icons/hicolor/512x512/apps")]:
     destination = prefix / "share" / directory / name
     destination.parent.mkdir(parents=True, exist_ok=True)
