@@ -29,6 +29,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -43,8 +46,42 @@ import dev.pigeonpost.inbox.AppPolicy
 import dev.pigeonpost.inbox.R
 import dev.pigeonpost.inbox.auth.SessionState
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
+
+@Composable
+fun CopyAddressButton(address: String, modifier: Modifier = Modifier) {
+    val clipboard = LocalClipboardManager.current
+    val context = LocalContext.current
+    var copied by remember(address) { mutableStateOf(false) }
+    var revision by remember(address) { mutableIntStateOf(0) }
+    LaunchedEffect(address, revision) {
+        if (copied) { delay(2000); copied = false }
+    }
+    IconButton(onClick = {
+        try {
+            clipboard.setText(AnnotatedString(address))
+            copied = true
+            revision++
+        } catch (_: SecurityException) {
+            android.widget.Toast.makeText(context, "Couldn’t copy the address. Select it and copy manually.", android.widget.Toast.LENGTH_LONG).show()
+        }
+    }, enabled = address.isNotEmpty(), modifier = modifier.size(48.dp).semantics { stateDescription = if (copied) "Copied" else "" }) {
+        Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy address $address")
+    }
+}
+
+@Composable
+fun PostAddressRow(address: String, modifier: Modifier = Modifier) {
+    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+        SelectionContainer(Modifier.weight(1f)) {
+            Text(address, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        CopyAddressButton(address)
+    }
+}
 
 @Composable
 fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, chooseFile: () -> Unit,
@@ -169,11 +206,11 @@ private fun InboxList(state: InboxState, store: InboxStore, modifier: Modifier, 
                     Text(if (state.viewingArchive) "Archive" else "Inbox", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                     Icon(Icons.Outlined.ExpandMore, null, Modifier.size(20.dp))
                 }
-                Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
             }
             ActionIcon("New conversation", Icons.Outlined.Edit, new)
             ActionIcon("Settings", Icons.Outlined.Settings, settings)
         }
+        state.acting?.let { PostAddressRow(it.key, Modifier.padding(start = 16.dp, end = 4.dp)) }
         OutlinedTextField(state.filter, store::filter, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             placeholder = { Text("Search conversations") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp))
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())

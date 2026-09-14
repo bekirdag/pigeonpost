@@ -31,7 +31,7 @@ function app(t, { signedIn = true, existing = false, intercept } = {}) {
   w.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w.fetch = async (url, opts = {}) => {
     const parsed = new URL(url);
-    const call = { path: parsed.pathname, method: opts.method || "GET", opts };
+    const call = { path: parsed.pathname, search: parsed.searchParams, method: opts.method || "GET", opts };
     server.calls.push(call);
     const intercepted = await intercept?.(call, server);
     if (intercepted) return intercepted;
@@ -237,4 +237,44 @@ test("settings has focused pages, restores focus on back and keeps controls usab
   assert.equal(a.w.document.activeElement.id, "settings-btn");
   a.$("settings-btn").click();
   assert.ok(a.visible("settings-nav-account"));
+});
+
+test("copy buttons use complete addresses and never select another mailbox", async (t) => {
+  const raw = "/k/" + "b".repeat(128);
+  const boxes = [{ address: "/k/main", handle: "/demo/main" }, { address: raw, label: "A friendly label" }];
+  const a = app(t, { existing: true, intercept(call) {
+    if (call.path === "/v1/identities") return response({ identities: boxes });
+    if (call.path === "/v1/whoami") return response(boxes.find((b) => b.address === call.search.get("identity")));
+  } });
+  const copied = [];
+  Object.defineProperty(a.w.navigator, "clipboard", { value: { writeText: async (text) => copied.push(text) } });
+  await until(() => a.$("me-sub").textContent === "/demo/main");
+  a.$("copy-my-address").click();
+  await until(() => a.$("toast").textContent === "Address copied");
+  assert.deepEqual(copied, ["/demo/main"]);
+  a.$("identity-btn").click();
+  const button = [...a.$("identity-menu").querySelectorAll(".copy-address")].find((b) => b.dataset.address === raw);
+  button.click();
+  assert.deepEqual(copied, ["/demo/main", raw]);
+  assert.equal(a.$("identity-menu").hidden, false);
+  assert.equal(a.$("me-sub").textContent, "/demo/main");
+  assert.notEqual(a.w.localStorage.getItem("ppi_identity"), raw);
+  a.$("settings-btn").click();
+  a.$("copy-acct-mailbox").click();
+  a.$("copy-acct-address").click();
+  assert.deepEqual(copied.slice(-2), ["/demo/main", "/k/main"]);
+});
+
+test("unnamed inbox copy stays available while clipboard denial reports failure", async (t) => {
+  const a = app(t, { existing: true });
+  await until(() => a.$("me-sub").textContent === identity.address);
+  assert.equal(a.$("identity-btn").disabled, true);
+  assert.equal(a.$("copy-my-address").disabled, false);
+  Object.defineProperty(a.w.navigator, "clipboard", { value: { writeText: async () => { throw new Error("denied"); } } });
+  a.$("copy-my-address").click();
+  await until(() => a.$("toast").textContent.includes("Couldn’t copy"));
+  assert.notEqual(a.$("copy-my-address").title, "Address copied");
+  a.$("settings-btn").click();
+  assert.equal(a.$("copy-acct-mailbox").disabled, true, "Never copy the 'not named' placeholder");
+  assert.equal(a.$("copy-acct-address").disabled, false);
 });

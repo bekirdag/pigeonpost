@@ -52,7 +52,12 @@ fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> U
     PageDialog("Your inboxes", dismiss) {
         state.mailboxes.forEach { mailbox ->
             ListItem(headlineContent = { Text(mailbox.name) }, supportingContent = { Text(mailbox.key) }, leadingContent = { Avatar(mailbox.name) },
-                trailingContent = { if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected") }, modifier = Modifier.clickable { select(mailbox) })
+                trailingContent = {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp))
+                        CopyAddressButton(mailbox.key)
+                    }
+                }, modifier = Modifier.clickable { select(mailbox) })
         }
     }
 }
@@ -125,7 +130,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 Text("Signed in as", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text(session.username ?: "Your account", style = MaterialTheme.typography.titleLarge)
                 Text("Current inbox", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                SelectionContainer { Text(state.acting?.key.orEmpty(), style = MaterialTheme.typography.bodyLarge) }
+                state.acting?.let { PostAddressRow(it.key) }
                 HorizontalDivider()
                 SettingsRow("Scan sign-in code", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
                 HorizontalDivider()

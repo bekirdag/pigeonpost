@@ -185,6 +185,10 @@ struct MacInboxView: View {
         @Bindable var inbox = inbox
         return VStack(spacing: 0) {
             mailboxBar
+            if let me = account.me {
+                PostAddressRow(address: me.key)
+                    .padding(.horizontal, 12)
+            }
             if switchingMailbox { mailboxList }
             // Its own row rather than a second line inside the bar. Everything about this column's
             // width has been fragile, and a flat stack of rows is the shape with the fewest
@@ -408,30 +412,34 @@ struct MacInboxView: View {
             VStack(spacing: 0) {
                 ForEach(account.mailboxes, id: \.address) { mailbox in
                     let isCurrent = mailbox.address == account.me?.address
-                    HStack(spacing: 8) {
-                        Avatar(peer: mailbox.handle ?? mailbox.address, size: 20)
-                        Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
-                            .font(.system(size: 12))
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1)
-                        Spacer(minLength: 0)
-                        if isCurrent {
-                            Image(systemName: "checkmark")
-                                .font(.system(size: 10, weight: .semibold))
-                                .foregroundStyle(Theme.navy)
-                                .fixedSize()
+                    HStack(spacing: 4) {
+                        HStack(spacing: 8) {
+                            Avatar(peer: mailbox.handle ?? mailbox.address, size: 20)
+                            Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
+                                .font(.system(size: 12))
+                                .foregroundStyle(Theme.ink)
+                                .lineLimit(1)
+                            Spacer(minLength: 0)
+                            if isCurrent {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 10, weight: .semibold))
+                                    .foregroundStyle(Theme.navy)
+                                    .fixedSize()
+                            }
                         }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 5)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            switchingMailbox = false
+                            guard !isCurrent else { return }
+                            peer = nil
+                            inbox.reset()
+                            account.act(as: mailbox)
+                        }
+                        CopyAddressButton(address: mailbox.key)
                     }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 5)
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        switchingMailbox = false
-                        guard !isCurrent else { return }
-                        peer = nil
-                        inbox.reset()
-                        account.act(as: mailbox)
-                    }
+                    .padding(.trailing, 8)
                 }
             }
         }

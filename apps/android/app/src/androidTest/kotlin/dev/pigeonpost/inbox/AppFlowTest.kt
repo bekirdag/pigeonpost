@@ -121,6 +121,28 @@ class AppFlowTest {
             shown("No conversations yet")
         }
     }
+    @Test fun copyAddressesInInboxPickerAndAccountWithoutSwitching() {
+        launch().use { scenario ->
+            fun copy(address: String, inDialog: Boolean = false) {
+                val target = hasContentDescription("Copy address $address")
+                ui.onNode(if (inDialog) target and hasAnyAncestor(isDialog()) else target).performClick()
+                scenario.onActivity {
+                    val clipboard = it.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                    assertEquals(address, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+                }
+            }
+            shown("Inbox")
+            copy("/demo/main")
+            ui.onNodeWithText("Inbox").performClick()
+            copy("/demo/builder", inDialog = true)
+            ui.onNodeWithText("Your inboxes").assertIsDisplayed()
+            ui.onNodeWithContentDescription("Close Your inboxes").performClick()
+            ui.onNodeWithText("/demo/main").assertIsDisplayed()
+            ui.onNodeWithContentDescription("Settings").performClick()
+            ui.onNodeWithText("Account").performClick()
+            copy("/demo/main", inDialog = true)
+        }
+    }
     @Test fun approvedTesterRegistersAFreeHandleAndOpensItsInbox() {
         launch("handles").use {
             shown("Inbox")
@@ -205,5 +227,24 @@ class AppFlowTest {
             source.delete(); source.parentFile!!.delete()
             assertEquals("evil_file.txt", safeFilename("../../evil:file.txt"))
         } finally { root.deleteRecursively() }
+    }
+}
+
+@RunWith(AndroidJUnit4::class)
+class AddressCopyTest {
+    @get:Rule val ui = androidx.compose.ui.test.junit4.createComposeRule()
+
+    @Test fun unnamedInboxCopiesItsFullKeyAndResetsAfterAddressChange() {
+        val address = androidx.compose.runtime.mutableStateOf("/k/" + "a".repeat(128))
+        ui.setContent { androidx.compose.material3.MaterialTheme { dev.pigeonpost.inbox.ui.PostAddressRow(address.value) } }
+        ui.onNodeWithContentDescription("Copy address ${address.value}").performClick()
+        ui.runOnIdle {
+            val context = ApplicationProvider.getApplicationContext<Context>()
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            assertEquals(address.value, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
+            address.value = "/next/main"
+        }
+        ui.onNodeWithContentDescription("Copy address /next/main")
+            .assert(SemanticsMatcher.expectValue(androidx.compose.ui.semantics.SemanticsProperties.StateDescription, ""))
     }
 }

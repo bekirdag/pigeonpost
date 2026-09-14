@@ -24,6 +24,54 @@ final class HandlePurchaseTests: XCTestCase {
         add(attachment)
     }
 
+    private func expectPastedAddress(_ address: String) {
+        app.buttons["New conversation"].tap()
+        let field = app.textFields["/bekir/agent1 or /k/…"]
+        XCTAssertTrue(field.waitForExistence(timeout: 5))
+        field.tap()
+        field.press(forDuration: 1)
+        let paste = app.menuItems["Paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 5))
+        paste.tap()
+        XCTAssertEqual(field.value as? String, address)
+        app.buttons["Cancel"].tap()
+    }
+
+    func testCopyAddressFromInboxAndAccount() {
+        app.launchArguments = ["-fixtures", "-handle=owned"]
+        app.launch()
+        let copy = app.buttons["copy-address:/bekir/main"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 8))
+        copy.tap()
+        XCTAssertEqual(copy.value as? String, "Copied")
+        screenshot("inbox-address-copied")
+        expectPastedAddress("/bekir/main")
+        app.buttons["Settings"].tap()
+        app.buttons["settings-account"].tap()
+        app.buttons["copy-address:/bekir/main"].tap()
+        screenshot("account-copy-address")
+        app.buttons["Done"].tap()
+        expectPastedAddress("/bekir/main")
+    }
+
+    func testCopyOtherMailboxAndUnnamedAddressKeepsCurrentInbox() {
+        app.launchArguments = ["-fixtures", "-sheet=identities"]
+        app.launch()
+        let named = app.buttons["copy-address:/bekir/docdex"]
+        XCTAssertTrue(named.waitForExistence(timeout: 8))
+        named.tap()
+        XCTAssertTrue(app.navigationBars["Mailboxes"].exists)
+        app.buttons["Done"].tap()
+        expectPastedAddress("/bekir/docdex")
+        app.buttons["Acting as main. Change mailbox"].tap()
+        let address = "/k/qq2222v2h90vnwefj7g7ezvbh7"
+        app.buttons["copy-address:\(address)"].tap()
+        screenshot("mailbox-copy-address")
+        app.buttons["Done"].tap()
+        XCTAssertTrue(app.buttons["copy-address:/bekir/main"].exists)
+        expectPastedAddress(address)
+    }
+
     func testSettingsMenuHasFocusedPagesAndAccountActions() {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=owned"]
         app.launch()
