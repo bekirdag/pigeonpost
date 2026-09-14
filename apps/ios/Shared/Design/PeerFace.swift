@@ -6,13 +6,31 @@
 import SwiftUI
 
 enum PeerFace {
-    /// A handle reads as a name; a key address does not. Show the last meaningful segment either
-    /// way, and truncate a `/k/` address rather than pretending it is a word.
+    /// Default inboxes keep their namespace so /bekir/main and /alp/main remain distinguishable.
     static func displayName(_ peer: String?) -> String {
         guard let peer, !peer.isEmpty else { return "unknown" }
         if peer.hasPrefix("/k/") { return String(peer.prefix(12)) + "…" }
         let parts = peer.split(separator: "/").filter { !$0.isEmpty }
+        if peer.hasPrefix("/"), parts.count > 1, parts.last == "main" {
+            return "/" + parts.dropLast().joined(separator: "/")
+        }
         return parts.count > 1 ? String(parts[parts.count - 1]) : peer
+    }
+
+    static func conversationAddressInput(_ input: String) -> String {
+        let value = input.trimmingCharacters(in: .whitespacesAndNewlines)
+        return value.hasPrefix("/") ? value : "/" + value
+    }
+
+    static func validConversationAddress(_ value: String) -> Bool {
+        guard (2...512).contains(value.utf8.count), value.hasPrefix("/"),
+              value.utf8.allSatisfy({ $0 < 128 }) else { return false }
+        // A typing guard, including email-style handles. Complete grammar/routing stays on the server.
+        return value.dropFirst().split(separator: "/", omittingEmptySubsequences: false).allSatisfy { part in
+            !part.isEmpty && part != "." && part != ".." && part != "*"
+                && (!part.contains("*") || part.contains("@"))
+                && part.allSatisfy { $0.isLetter || $0.isNumber || "!$&'*+-=^_`{|}~.@".contains($0) }
+        }
     }
 
     static func initials(_ peer: String?) -> String {

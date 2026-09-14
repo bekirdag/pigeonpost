@@ -1,7 +1,6 @@
 //  Start a conversation with an address.
 //
-//  The grammar check is the shared one, so a name this refuses is a name the postbox would refuse
-//  too — showing a green tick and then an error after the send is the failure worth avoiding.
+//  The shared typing guard catches incomplete addresses; the postbox resolves the destination.
 
 import SwiftUI
 
@@ -10,13 +9,13 @@ struct MacNewConversationSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @Environment(Inbox.self) private var inbox
-    @State private var peer = ""
+    @State private var peer = "/"
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("New conversation")
                 .font(.system(size: 15, weight: .semibold))
-            TextField("/bekir/agent1 or /k/…", text: $peer)
+            TextField("/bekir/agent1 or /k/…", text: Binding(get: { peer }, set: { peer = PeerFace.conversationAddressInput($0) }))
                 .textFieldStyle(.roundedBorder)
                 .font(.system(size: 13, design: .monospaced))
                 .frame(width: 340)
@@ -30,7 +29,7 @@ struct MacNewConversationSheet: View {
                     .keyboardShortcut(.cancelAction)
                 Button("Open") { open() }
                     .keyboardShortcut(.defaultAction)
-                    .disabled(peer.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .disabled(!PeerFace.validConversationAddress(peer))
             }
         }
         .padding(20)
@@ -38,7 +37,7 @@ struct MacNewConversationSheet: View {
 
     private func open() {
         let trimmed = peer.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard PeerFace.validConversationAddress(trimmed) else { return }
         opened(trimmed)
         dismiss()
     }

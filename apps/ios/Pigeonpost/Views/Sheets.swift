@@ -91,7 +91,7 @@ struct NewConversationSheet: View {
     @Environment(\.dismiss) private var dismiss
     let onStarted: (String) -> Void
 
-    @State private var peer = ""
+    @State private var peer = "/"
     @State private var body_ = ""
     @State private var error: String?
     @State private var sending = false
@@ -100,7 +100,7 @@ struct NewConversationSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("/bekir/agent1 or /k/…", text: $peer)
+                    TextField("/bekir/agent1 or /k/…", text: Binding(get: { peer }, set: { peer = PeerFace.conversationAddressInput($0) }))
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(size: 15, design: .monospaced))
@@ -127,13 +127,14 @@ struct NewConversationSheet: View {
                 ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
                 ToolbarItem(placement: .topBarTrailing) {
                     Button("Send") { send() }
-                        .disabled(sending || peer.trimmed.isEmpty || body_.trimmed.isEmpty)
+                        .disabled(sending || !PeerFace.validConversationAddress(peer) || body_.trimmed.isEmpty)
                 }
             }
         }
     }
 
     private func send() {
+        guard PeerFace.validConversationAddress(peer), !body_.trimmed.isEmpty, !sending else { return }
         sending = true
         error = nil
         Task {

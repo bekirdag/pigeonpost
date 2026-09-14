@@ -89,6 +89,27 @@ class NativeTests(unittest.TestCase):
         self.assertIsNotNone(self.window.message_list.get_first_child())
         self.assertEqual(self.window.subject_list.get_first_child().subject, None)
 
+    def test_new_conversation_supplies_prefix_and_keeps_the_full_destination(self):
+        self.assertEqual(self.window.mailbox_model.get_string(0), "/demo")
+        self.window.new_conversation()
+        content = self.window.dialogs[-1].get_content()
+        def entries(widget):
+            if isinstance(widget, Gtk.Entry):
+                yield widget
+            child = widget.get_first_child()
+            while child:
+                yield from entries(child)
+                child = child.get_next_sibling()
+        entry = next(entries(content))
+        self.assertEqual(entry.get_text(), "/")
+        entry.set_text("bekir/main")
+        self.assertEqual(entry.get_text(), "/bekir/main")
+        entry.set_text("/alp")
+        self.assertEqual(entry.get_text(), "/alp")
+        entry.emit("activate")
+        pump(timeout=0.05)
+        self.assertEqual(self.window.peer, "/alp")
+
     def test_drafts_are_isolated_by_mailbox_peer_and_subject(self):
         self.select()
         self.window.composer.get_buffer().set_text("Draft for Alex")

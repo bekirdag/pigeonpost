@@ -14,7 +14,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from . import APP_ID, VERSION
 from .api import APIError, MAX_FILE, Postbox
 from .auth import Session
-from .model import (contact_for, conversations, message_text, normalize, safe_filename,
+from .model import (contact_for, conversation_address_input, conversations, display_name, message_text, normalize, safe_filename,
                     size_text, subjects, target_thread, timestamp, valid_peer)
 from .vault import Vault
 
@@ -332,7 +332,7 @@ class Window(Adw.ApplicationWindow):
         self.stack.set_visible_child_name("inbox")
         self.rendering = True
         self.mailbox_model.splice(0, self.mailbox_model.get_n_items(),
-                                 [r.get("handle") or r.get("label") or r["address"] for r in rows])
+                                 [display_name(r["handle"]) if r.get("handle") else r.get("label") or display_name(r["address"]) for r in rows])
         self.rendering = False
         self.create_button.set_visible(not rows)
         self.mailbox_picker.set_visible(bool(rows))
@@ -532,7 +532,7 @@ class Window(Adw.ApplicationWindow):
             rows.setdefault(self.peer, [])
         for peer, messages in list(rows.items())[:1000]:
             contact = contact_for(peer, self.contacts)
-            name = contact.get("alias") or peer
+            name = contact.get("alias") or display_name(peer)
             if peer in self.archived or search not in (name + " " + peer).casefold():
                 continue
             row = Gtk.ListBoxRow()
@@ -596,7 +596,7 @@ class Window(Adw.ApplicationWindow):
             self.peer_title.set_text("Your inbox")
             self.empty_thread("Choose a conversation, or start a new one.")
             return
-        self.peer_title.set_text(contact_for(self.peer, self.contacts).get("alias") or self.peer)
+        self.peer_title.set_text(contact_for(self.peer, self.contacts).get("alias") or display_name(self.peer))
         adj = self.message_scroll.get_vadjustment()
         bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 80
         clear(self.message_list)
@@ -857,9 +857,17 @@ class Window(Adw.ApplicationWindow):
         dialog.connect("response", lambda _, response: action() if response == "confirm" and generation == self.generation else None)
         dialog.present()
 
-    def form_dialog(self, title, placeholder, submitted, initial=""):
+    def form_dialog(self, title, placeholder, submitted, initial="", address=False):
         window, content = self.dialog(title)
         entry = Gtk.Entry(placeholder_text=placeholder, text=initial)
+        if address:
+            def prefix_address(widget):
+                value = conversation_address_input(widget.get_text())
+                if value != widget.get_text():
+                    position = widget.get_position()
+                    widget.set_text(value)
+                    widget.set_position(max(1, position + 1))
+            entry.connect("changed", prefix_address)
         content.append(entry)
         error_label = label("", "error", wrap=True)
         content.append(error_label)
@@ -881,12 +889,12 @@ class Window(Adw.ApplicationWindow):
             return
         def start(peer):
             if not valid_peer(peer):
-                raise ValueError("Use a mailbox address such as /name/main or /k/your-address.")
+                raise ValueError("Use an address such as /bekir, /bekir/main or /k/your-address.")
             self.peer, self.subject = normalize(peer, self.messages), None
             self.render_all()
             self.restore_draft()
             self.composer.grab_focus()
-        self.form_dialog("New conversation", "/name/main", start)
+        self.form_dialog("New conversation", "/bekir", start, initial="/", address=True)
 
     def new_subject(self):
         if not self.peer:
@@ -1152,7 +1160,7 @@ class Window(Adw.ApplicationWindow):
             current = self.identity
             self.mailboxes = rows
             self.rendering = True
-            self.mailbox_model.splice(0, self.mailbox_model.get_n_items(), [r.get("handle") or r.get("label") or r["address"] for r in rows])
+            self.mailbox_model.splice(0, self.mailbox_model.get_n_items(), [display_name(r["handle"]) if r.get("handle") else r.get("label") or display_name(r["address"]) for r in rows])
             index = next((i for i, row in enumerate(rows) if row["address"] == current), 0)
             self.mailbox_picker.set_selected(index)
             self.rendering = False

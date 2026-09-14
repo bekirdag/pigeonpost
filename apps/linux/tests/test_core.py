@@ -220,6 +220,17 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(message["autonomy"], "review")
 
     def test_peer_validation(self):
+        from pigeonpost.model import conversation_address_input, display_name
+        self.assertEqual(display_name("/bekir/main"), "/bekir")
+        self.assertEqual(display_name("/alp/main"), "/alp")
+        self.assertEqual(display_name("/k/main"), "/k/main")
+        self.assertEqual(conversation_address_input("bekir"), "/bekir")
+        self.assertEqual(conversation_address_input(" /bekir/main "), "/bekir/main")
+        self.assertTrue(valid_peer("/bekir"))
+        self.assertTrue(valid_peer("/alex+tag@gmail.com"))
+        self.assertTrue(valid_peer("/alex*tag@gmail.com/main"))
+        self.assertFalse(valid_peer(conversation_address_input("")))
+        self.assertFalse(valid_peer("/bekir/../alp"))
         self.assertTrue(valid_peer("/alice/main"))
         self.assertTrue(valid_peer("/k/abc123"))
         self.assertFalse(valid_peer("/alice/*"))

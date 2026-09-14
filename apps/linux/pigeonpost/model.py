@@ -6,7 +6,22 @@ from pathlib import PurePosixPath
 
 
 def valid_peer(value, wildcard=False):
-    return bool(re.fullmatch(r"/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+" + (r"|/[A-Za-z0-9_.-]+/\*" if wildcard else ""), value))
+    if not 2 <= len(value) <= 512 or not value.startswith("/") or not value.isascii():
+        return False
+    parts = value[1:].split("/")
+    return all((wildcard and i == len(parts) - 1 and len(parts) > 1) if part == "*" else
+               bool(part) and part not in (".", "..") and ("*" not in part or "@" in part)
+               and all(c.isalnum() or c in "!$&'*+-=^_`{|}~.@" for c in part)
+               for i, part in enumerate(parts))
+
+
+def conversation_address_input(value):
+    value = value.strip()
+    return value if value.startswith("/") else "/" + value
+
+
+def display_name(value):
+    return value[:-5] if value.startswith("/") and not value.startswith("/k/") and value.endswith("/main") and value.count("/") > 1 else value
 
 
 def peer_of(message):

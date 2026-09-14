@@ -48,6 +48,9 @@ struct SettingsSheet: View {
             List {
                 Section {
                     destination(.account, icon: "person.crop.circle", detail: session.username ?? "Your profile and devices")
+                    #if os(iOS)
+                    Button { sheet = .scan } label: { Label("Scan for login", systemImage: "qrcode.viewfinder") }
+                    #endif
                 }
                 Section {
                     destination(.handles, icon: "at", detail: handle == nil ? "Loading your handles…" : "Your names and subscriptions")
@@ -130,11 +133,6 @@ struct SettingsSheet: View {
                     }
                 }
             }
-            #if os(iOS)
-            Section {
-                Button { sheet = .scan } label: { Label("Scan a sign-in code", systemImage: "qrcode.viewfinder") }
-            } footer: { Text("Scan a Pigeonpost code to sign in on another device.") }
-            #endif
             Section {
                 Button("Sign out", role: .destructive) { confirmSignOut = true }
                 Link("Delete account", destination: URL(string: "https://pigeonpost.dev/account#delete-account")!)
