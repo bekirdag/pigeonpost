@@ -19,3 +19,6 @@
 - Linux GTK/Flatpak tests will run on both CI architectures. Releases/deployment are still pending. Baseline: 945709cdcf9d002aa5a80a3911426d47dc8d8f5d.
 
 - iOS native UI validation completed: 11 tests passed in the full run; the Account copy test needed modal scoping and passed on its focused rerun. Both named and unnamed addresses were pasted into the native compose address field and compared exactly. Shared runtime unchanged by test-harness corrections.
+
+- Browser interaction found and fixed a real edge case: replacing the clicked copy SVG detached the outside-click target and closed the mailbox picker. Copy clicks now stop propagation; the regression clicks the SVG itself. All 66 web tests pass again.
+- Both iOS address copy tests passed at the largest accessibility text size; normal size restored. Linux GTK/Flatpak CI passed on x86_64 and ARM64. macOS notarization accepted.

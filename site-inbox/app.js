@@ -803,7 +803,10 @@
     button.innerHTML = addressCopyIcon;
     button.title = "Copy address";
     button.setAttribute("aria-label", address ? `Copy address ${address}` : "Copy address");
-    button.onclick = async () => {
+    button.onclick = async (event) => {
+      // Replacing the clicked SVG detaches the event target before document's outside-click
+      // handler runs. Keep a copy click inside the mailbox picker even while its icon changes.
+      event.stopPropagation();
       if (!address) return;
       clearTimeout(addressCopyTimers.get(button));
       button.innerHTML = addressCopyIcon;

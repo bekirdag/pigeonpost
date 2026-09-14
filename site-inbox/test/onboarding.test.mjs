@@ -254,7 +254,7 @@ test("copy buttons use complete addresses and never select another mailbox", asy
   assert.deepEqual(copied, ["/demo/main"]);
   a.$("identity-btn").click();
   const button = [...a.$("identity-menu").querySelectorAll(".copy-address")].find((b) => b.dataset.address === raw);
-  button.click();
+  button.querySelector("svg").dispatchEvent(new a.w.MouseEvent("click", { bubbles: true }));
   assert.deepEqual(copied, ["/demo/main", raw]);
   assert.equal(a.$("identity-menu").hidden, false);
   assert.equal(a.$("me-sub").textContent, "/demo/main");
