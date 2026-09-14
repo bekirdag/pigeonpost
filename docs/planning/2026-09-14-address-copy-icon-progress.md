@@ -35,5 +35,15 @@
 ## Final integration checks
 
 - PR #16 contains the changes. Full CI at `81993e3` passed Rust on macOS/Linux/Windows, lint/audit, delivery/privacy, web inbox, npm launchers and Linux packaging. Android CI exposed immediate clipboard reads and a hardware-Back transition race; local tests had passed.
-- Android tests now wait for the real app window to receive focus, wait for the exact clipboard value after a single native tap, and await the settings destination after hardware Back. No clipboard permissions are bypassed and the clipboard is never written by test code. Local delegation drafted a helper, then its thread handling and type were corrected. All 18 Android workflow tests pass locally after these test-only changes; CI rerun and final main/server synchronization remain to be recorded in the private audit.
+- Android tests now wait for the real app window to receive focus, wait for the exact clipboard value after a single native tap, and await the settings destination after hardware Back. No clipboard permissions are bypassed and the clipboard is never written by test code. Local delegation drafted a helper, then its thread handling and type were corrected. All 18 Android workflow tests pass locally after these test-only changes; the final CI run subsequently passed as recorded below.
 - The native Windows application remains an unpublished preview outside this release branch. The production web inbox used on Windows includes the new copy controls.
+
+## Final result
+
+- PR #16 merged as `ad0dbe715b58781be6f9fb4855792066b9fdf275` after all 16 checks succeeded or were correctly skipped. Android run `34820447235` passed all 18 native workflows; CI `34820447243` passed the final Windows tests and lifecycle checks; Linux run `34820447284` passed both architectures.
+- Local main and all four production Git checkouts were clean and synchronized to the merge. Wodomini verification found 61/61 runtime files matching merged main and the adapter active; the four changed public files returned HTTP 200 with matching hashes. This documentation-only follow-up is included in the final push and checkout synchronization.
+- Public releases: macOS 1.0 (37), signed/notarized, and Linux 1.0.3. Both are linked at https://pigeonpost.dev/download. The web inbox update is live.
+- iOS 1.0 (37) is in internal/external TestFlight and WAITING_FOR_REVIEW for public App Store release. Ten purchase products and their review items remain attached.
+- Android 0.2.4 (7) is available internally. Its 100% production promotion and corrected Play icon are saved, but **not submitted for public review**: the Playwright MCP transport disconnected, and the user was asked to reconnect. Remaining action: inspect the saved production review/Publishing overview and submit the app plus default en-US icon changes, then verify both are under review. Existing countries, screenshots and purchase products are preserved.
+- Temporary HTTP servers are stopped, the task iOS simulator is shut down, and Android font scale is restored. The user's Android production app/emulator and original macOS app remain available.
+- Final machine-readable evidence: `/private/tmp/pigeonpost-address-icon-audit-20260914/release-summary.json`, `final-ci-checks.json`, `merge-result.json`, `server-sync.json`, `public-files-final.json` and `wodomini-final-verification.json`.
