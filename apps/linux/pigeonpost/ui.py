@@ -861,18 +861,31 @@ class Window(Adw.ApplicationWindow):
         window, content = self.dialog(title)
         entry = Gtk.Entry(placeholder_text=placeholder, text=initial)
         if address:
+            prefix_pending = False
             def prefix_address(widget):
+                nonlocal prefix_pending
                 value = conversation_address_input(widget.get_text())
                 if value != widget.get_text():
                     position = widget.get_position()
                     widget.set_text(value)
                     widget.set_position(max(1, position + 1))
-            entry.connect("changed", prefix_address)
+                prefix_pending = False
+                return GLib.SOURCE_REMOVE
+            def schedule_prefix(widget):
+                nonlocal prefix_pending
+                # Replacing text emits delete and insert changes. Wait until GTK
+                # completes both before changing the buffer again.
+                if not prefix_pending:
+                    prefix_pending = True
+                    GLib.idle_add(prefix_address, widget)
+            entry.connect("changed", schedule_prefix)
         content.append(entry)
         error_label = label("", "error", wrap=True)
         content.append(error_label)
         def submit():
             value = entry.get_text().strip()
+            if address:
+                value = conversation_address_input(value)
             try:
                 submitted(value)
             except ValueError as error:

@@ -17,7 +17,7 @@
   <url type="vcs-browser">https://github.com/bekirdag/pigeonpost</url>
   <content_rating type="oars-1.1"><content_attribute id="social-chat">intense</content_attribute><content_attribute id="social-info">mild</content_attribute></content_rating>
   <releases>
-    <release version="1.0.4" date="2026-09-14"><description><p>Default inboxes show their namespace, and new conversations automatically include the opening address slash.</p></description></release>
+    <release version="1.0.5" date="2026-09-14"><description><p>Default inboxes show their namespace, and new conversations automatically include the opening address slash.</p></description></release>
     <release version="1.0.3" date="2026-09-14"><description><p>Copy your full post address directly from the inbox and account settings.</p></description></release>
     <release version="1.0.2" date="2026-09-13"><description><p>Simpler Settings with focused pages for your account, handles, inbox, contacts and help.</p></description></release>
     <release version="1.0.1" date="2026-09-13"><description><p>View all account handles, including App Store and Google Play registrations, with active and expired status.</p></description></release>
