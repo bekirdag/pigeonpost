@@ -55,6 +55,7 @@ mod account_deletion;
 mod appstore;
 mod appstore_routes;
 mod blobs;
+mod fcm;
 mod github;
 mod googleplay;
 mod googleplay_routes;
@@ -100,6 +101,7 @@ struct AppState {
     /// APNs, when the deployment has a key. `None` everywhere else, and everything else behaves
     /// exactly as it did before push existed.
     apns: Option<Arc<push::Apns>>,
+    fcm: Option<Arc<fcm::Fcm>>,
     /// Raised whenever any message is enqueued, to release long-polling `GET /v1/inbox?wait=N`
     /// callers the moment their mail lands instead of on their next timer.
     ///
@@ -388,6 +390,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         metrics_hash: cfg.metrics_token.as_deref().map(|t| sha256(t.as_bytes())),
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
         apns: push::Apns::from_env(),
+        fcm: fcm::Fcm::from_env(),
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
@@ -2733,7 +2736,7 @@ pub(crate) async fn do_send(
     // And wake the phones. Spawned, never awaited: a message is delivered once it is in the
     // recipient's inbox, and whether Apple was reachable afterwards must not decide whether this
     // call succeeded.
-    if let Some(apns) = state.apns.clone() {
+    if state.apns.is_some() || state.fcm.is_some() {
         let unread = state
             .store
             .unread_count(recipient.address.clone())
@@ -2755,7 +2758,8 @@ pub(crate) async fn do_send(
             unread: unread as i64,
         };
         tokio::spawn(push::fan_out(
-            apns,
+            state.apns.clone(),
+            state.fcm.clone(),
             state.store.clone(),
             recipient.address.clone(),
             note,
@@ -3541,7 +3545,7 @@ async fn patch_thread(
 /// archived peer still arrives and still counts as unread.
 #[derive(serde::Deserialize)]
 struct DeviceReq {
-    /// The APNs device token, hex, as the system handed it to the app.
+    /// The opaque token as the notification provider handed it to the app.
     token: String,
     #[serde(default)]
     platform: Option<String>,
@@ -3566,15 +3570,7 @@ async fn register_device(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    let token = req.token.trim().to_string();
-    // A device token is hex and short. Anything else is a client bug or somebody filling the table.
-    if token.is_empty() || token.len() > 200 || !token.chars().all(|c| c.is_ascii_hexdigit()) {
-        return err_response(
-            StatusCode::BAD_REQUEST,
-            "invalid_device_token",
-            Some("expected the hex device token APNs issued"),
-        );
-    }
+    let token = req.token;
     let platform = match req.platform.as_deref().unwrap_or("apns") {
         "apns" => "apns".to_string(),
         "fcm" => "fcm".to_string(),
@@ -3586,6 +3582,13 @@ async fn register_device(
             )
         }
     };
+    if !push::valid_device_token(&platform, &token) {
+        return err_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_device_token",
+            Some("expected the device token issued by the selected notification provider"),
+        );
+    }
     let environment = match req.environment.as_deref().unwrap_or("production") {
         "sandbox" => "sandbox".to_string(),
         _ => "production".to_string(),
@@ -3617,10 +3620,16 @@ async fn unregister_device(
     headers: HeaderMap,
     Path(token): Path<String>,
 ) -> Response {
-    if let Err(e) = acting_identity(&state, &headers, None).await {
-        return e.into_response();
-    }
-    match state.store.delete_device(token).await {
+    let (account, mailbox) = match principal_for_token(&state, bearer(&headers)).await {
+        Ok(Principal::Account(account)) => (Some(account), None),
+        Ok(Principal::Identity(identity)) => (None, Some(identity.address)),
+        Err(error) => return error.into_response(),
+    };
+    match state
+        .store
+        .delete_device_owned(token, account, mailbox)
+        .await
+    {
         Ok(removed) => Json(json!({ "ok": true, "removed": removed })).into_response(),
         Err(e) => {
             tracing::error!(error = %e, "device removal failed");
@@ -5505,6 +5514,7 @@ mod tests {
             metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
+            fcm: None,
             reserved_names: None,
             appstore: None,
             googleplay: None,
@@ -8203,6 +8213,7 @@ mod tests {
             metrics_hash: None,
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
+            fcm: None,
             reserved_names: None,
             appstore: None,
             googleplay: None,

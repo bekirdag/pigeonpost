@@ -27,6 +27,22 @@ const PREVIEW_CHARS: usize = 180;
 /// every 45 minutes sits inside both rules.
 const TOKEN_LIFETIME: Duration = Duration::from_secs(45 * 60);
 
+pub fn valid_device_token(platform: &str, token: &str) -> bool {
+    match platform {
+        "apns" => {
+            !token.is_empty() && token.len() <= 200 && token.bytes().all(|c| c.is_ascii_hexdigit())
+        }
+        "fcm" => {
+            !token.is_empty()
+                && token.len() <= 4096
+                && token
+                    .bytes()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, b':' | b'_' | b'-'))
+        }
+        _ => false,
+    }
+}
+
 pub struct Apns {
     key: EncodingKey,
     key_id: String,
@@ -251,7 +267,13 @@ impl Apns {
 /// Spawned rather than awaited by the sender: a message is delivered when it is in the recipient's
 /// inbox, and whether Apple was reachable afterwards must not decide whether `POST /v1/send`
 /// succeeds.
-pub async fn fan_out(apns: Arc<Apns>, store: Arc<Store>, mailbox: String, note: Notification) {
+pub async fn fan_out(
+    apns: Option<Arc<Apns>>,
+    fcm: Option<Arc<crate::fcm::Fcm>>,
+    store: Arc<Store>,
+    mailbox: String,
+    note: Notification,
+) {
     let devices = match store.devices_for(mailbox.clone()).await {
         Ok(devices) => devices,
         Err(e) => {
@@ -260,12 +282,24 @@ pub async fn fan_out(apns: Arc<Apns>, store: Arc<Store>, mailbox: String, note: 
         }
     };
     for device in devices {
-        // Android will register against this same table, and an FCM token means nothing to Apple.
-        // Skipping by platform here is what keeps that from being a bug the day it lands.
-        if device.platform != "apns" {
-            continue;
-        }
-        if apns.deliver(&device, &note).await {
+        let retired = match device.platform.as_str() {
+            "apns" => {
+                if let Some(apns) = &apns {
+                    apns.deliver(&device, &note).await
+                } else {
+                    false
+                }
+            }
+            "fcm" => {
+                if let Some(fcm) = &fcm {
+                    fcm.deliver(&device, &note).await
+                } else {
+                    false
+                }
+            }
+            _ => false,
+        };
+        if retired {
             if let Err(e) = store.delete_device(device.token.clone()).await {
                 tracing::warn!(error = %e, mailbox = %device.mailbox, "stale device row could not be removed");
             }
@@ -378,6 +412,62 @@ fn non_empty(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn device_tokens_follow_their_provider_format() {
+        assert!(valid_device_token("fcm", "fcm_token-123:opaqueABC"));
+        assert!(!valid_device_token("apns", "fcm_token-123:opaqueABC"));
+        assert!(valid_device_token("apns", &"a1".repeat(32)));
+        for token in ["", "abc def", "abc\n", "../device", "ü"] {
+            assert!(!valid_device_token("fcm", token));
+        }
+        assert!(!valid_device_token("fcm", &"a".repeat(4097)));
+        assert!(!valid_device_token("unknown", "abc123"));
+    }
+
+    #[tokio::test]
+    async fn device_removal_is_scoped_to_the_account_or_mailbox() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .upsert_device(
+                "device-token".into(),
+                "/k/one".into(),
+                Some("owner".into()),
+                "fcm".into(),
+                "production".into(),
+                1,
+            )
+            .await
+            .unwrap();
+        assert!(!store
+            .delete_device_owned("device-token".into(), Some("stranger".into()), None)
+            .await
+            .unwrap());
+        assert!(!store
+            .delete_device_owned("device-token".into(), None, Some("/k/two".into()))
+            .await
+            .unwrap());
+        assert_eq!(store.devices_for("/k/one".into()).await.unwrap().len(), 1);
+        assert!(store
+            .delete_device_owned("device-token".into(), Some("owner".into()), None)
+            .await
+            .unwrap());
+        store
+            .upsert_device(
+                "device-token".into(),
+                "/k/one".into(),
+                None,
+                "fcm".into(),
+                "production".into(),
+                2,
+            )
+            .await
+            .unwrap();
+        assert!(store
+            .delete_device_owned("device-token".into(), None, Some("/k/one".into()))
+            .await
+            .unwrap());
+    }
 
     #[test]
     fn a_request_previews_as_what_it_asks_for() {

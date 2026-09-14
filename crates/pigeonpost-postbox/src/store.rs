@@ -2632,6 +2632,26 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    /// A signed-in account may remove its own token even when it owns several inboxes.
+    /// A mailbox capability remains limited to that mailbox, never its owner's other devices.
+    pub async fn delete_device_owned(
+        &self,
+        token: String,
+        account: Option<String>,
+        mailbox: Option<String>,
+    ) -> Result<bool, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<bool, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            Ok(conn.execute(
+                "DELETE FROM devices WHERE token = ?1 AND (account = ?2 OR mailbox = ?3)",
+                params![token, account, mailbox],
+            )? > 0)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// Remove a contact, returning whether one was there. The peer reverts to stranger terms.
     pub async fn delete_contact(&self, owner: String, peer: String) -> Result<bool, StoreError> {
         let conn = self.conn.clone();
