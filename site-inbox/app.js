@@ -792,11 +792,43 @@
     }
   }
 
+  const addressCopyIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="6" y="6" width="11" height="11" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 6V4a1 1 0 00-1-1H4a1 1 0 00-1 1v8a1 1 0 001 1h2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>';
+  const addressCopiedIcon = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M4 10l4 4 8-8" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  const addressCopyTimers = new WeakMap();
+
+  function configureAddressCopy(button, address) {
+    clearTimeout(addressCopyTimers.get(button));
+    button.dataset.address = address || "";
+    button.disabled = !address;
+    button.innerHTML = addressCopyIcon;
+    button.title = "Copy address";
+    button.setAttribute("aria-label", address ? `Copy address ${address}` : "Copy address");
+    button.onclick = async (event) => {
+      // Replacing the clicked SVG detaches the event target before document's outside-click
+      // handler runs. Keep a copy click inside the mailbox picker even while its icon changes.
+      event.stopPropagation();
+      if (!address) return;
+      clearTimeout(addressCopyTimers.get(button));
+      button.innerHTML = addressCopyIcon;
+      try {
+        await navigator.clipboard.writeText(address);
+        if (button.dataset.address !== address) return;
+        button.innerHTML = addressCopiedIcon;
+        button.title = "Address copied";
+        toast("Address copied");
+        addressCopyTimers.set(button, setTimeout(() => configureAddressCopy(button, address), 2000));
+      } catch {
+        toast("Couldn’t copy. Select the address and copy it manually.");
+      }
+    };
+  }
+
   function renderMe() {
     if (!state.me) return;
     const name = state.me.handle || state.me.address;
     $("me-name").textContent = displayName(name);
     $("me-sub").textContent = state.me.handle || state.me.address;
+    configureAddressCopy($("copy-my-address"), identityKey(state.me));
     paintAvatar($("me-avatar"), name);
     $("identity-btn").disabled = state.identities.length < 2;
     $("identity-btn").querySelector(".chev").style.visibility =
@@ -810,8 +842,8 @@
       const li = document.createElement("li");
       const btn = document.createElement("button");
       btn.type = "button";
-      btn.setAttribute("role", "option");
-      btn.setAttribute("aria-selected", String(state.me && id.address === state.me.address));
+      btn.className = "identity-option";
+      btn.setAttribute("aria-pressed", String(state.me && id.address === state.me.address));
 
       const av = document.createElement("span");
       av.className = "avatar";
@@ -835,7 +867,11 @@
         $("identity-btn").setAttribute("aria-expanded", "false");
         if (!state.me || id.address !== state.me.address) switchIdentity(id);
       };
-      li.append(btn);
+      const copy = document.createElement("button");
+      copy.type = "button";
+      copy.className = "icon-btn copy-address";
+      configureAddressCopy(copy, identityKey(id));
+      li.append(btn, copy);
       menu.append(li);
     }
   }
@@ -2447,6 +2483,8 @@
     // on the line above the one that already shows it.
     $("acct-mailbox").textContent = state.me ? (state.me.handle || "not named") : "—";
     $("acct-address").textContent = state.me ? state.me.address : "—";
+    configureAddressCopy($("copy-acct-mailbox"), state.me?.handle);
+    configureAddressCopy($("copy-acct-address"), state.me?.address);
     $("acct-postbox").textContent = cfg.postbox;
     $("archive-count").textContent =
       state.archived.size === 1 ? "1 conversation" : state.archived.size + " conversations";

@@ -53,6 +53,37 @@ def clear(widget):
         widget.remove(widget.get_first_child())
 
 
+def address_row(address):
+    row = box(4, horizontal=True)
+    text = label(address, "dim-label", wrap=True)
+    text.set_selectable(True)
+    text.set_hexpand(True)
+    row.append(text)
+
+    def copied():
+        copy.get_clipboard().set(address)
+        copy.set_icon_name("emblem-ok-symbolic")
+        copy.set_tooltip_text("Address copied")
+        copy.update_property([Gtk.AccessibleProperty.LABEL], ["Address copied"])
+        if copy.reset_source:
+            GLib.source_remove(copy.reset_source)
+        copy.reset_source = GLib.timeout_add_seconds(2, reset)
+
+    def reset():
+        copy.set_icon_name("edit-copy-symbolic")
+        copy.set_tooltip_text("Copy address " + address)
+        copy.update_property([Gtk.AccessibleProperty.LABEL], ["Copy address " + address])
+        copy.reset_source = None
+        return False
+
+    copy = button("Copy address " + address, copied, "edit-copy-symbolic", "flat")
+    copy.reset_source = None
+    copy.set_sensitive(bool(address))
+    copy.set_valign(Gtk.Align.CENTER)
+    row.append(copy)
+    return row
+
+
 def scroll(child):
     widget = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
     widget.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
@@ -305,6 +336,7 @@ class Window(Adw.ApplicationWindow):
         self.rendering = False
         self.create_button.set_visible(not rows)
         self.mailbox_picker.set_visible(bool(rows))
+        self.post_address.set_visible(bool(rows))
         if rows:
             self.mailbox_picker.set_selected(0)
             self.select_mailbox()
@@ -331,6 +363,8 @@ class Window(Adw.ApplicationWindow):
         self.mailbox_picker.set_tooltip_text("Active mailbox")
         self.mailbox_picker.connect("notify::selected", lambda *_: self.select_mailbox())
         sidebar.append(self.mailbox_picker)
+        self.post_address = box(0)
+        sidebar.append(self.post_address)
         self.create_button = button("Create my inbox", self.create_inbox, style="suggested-action")
         sidebar.append(self.create_button)
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
@@ -420,6 +454,8 @@ class Window(Adw.ApplicationWindow):
         if index >= len(self.mailboxes):
             return
         row = self.mailboxes[index]
+        clear(self.post_address)
+        self.post_address.append(address_row(row.get("handle") or row["address"]))
         if row["address"] == self.identity:
             return
         self.generation += 1
@@ -935,7 +971,9 @@ class Window(Adw.ApplicationWindow):
     def account_settings(self, navigation):
         content = navigation.push("Account")
         content.append(label("Current inbox", "heading"))
-        content.append(label(self.title.get_subtitle(), wrap=True))
+        current = next((row for row in self.mailboxes if row["address"] == self.identity), None)
+        if current:
+            content.append(address_row(current.get("handle") or current["address"]))
         settings_group(content, settings_row("Manage account", "Profile and account details", "avatar-default-symbolic",
                        lambda: self.open_url("https://pigeonpost.dev/account")))
         content.append(button("Sign out", self.sign_out))

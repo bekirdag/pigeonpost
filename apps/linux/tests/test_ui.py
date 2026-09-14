@@ -118,6 +118,31 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.window.identity, "/k/two")
         self.assertEqual(self.window.messages, [])
 
+    def test_copy_full_address_and_labelled_unnamed_mailbox(self):
+        def copy_row(row, expected):
+            row.get_last_child().emit("clicked")
+            copied = []
+            clipboard = self.window.get_clipboard()
+            clipboard.read_text_async(None, lambda board, result: copied.append(board.read_text_finish(result)))
+            pump(lambda: bool(copied))
+            self.assertEqual(copied, [expected])
+
+        copy_row(self.window.post_address.get_first_child(), "/demo/main")
+        self.assertEqual(self.window.identity, "/k/one")
+        self.window.mailboxes[0].pop("handle")
+        self.window.mailboxes[0]["label"] = "My friendly label"
+        self.window.select_mailbox()
+        copy_row(self.window.post_address.get_first_child(), "/k/one")
+        self.window.settings()
+        navigation = self.window.dialogs[-1].settings_navigation
+        self.window.account_settings(navigation)
+        content = navigation.stack.get_visible_child().get_child()
+        if isinstance(content, Gtk.Viewport):
+            content = content.get_child()
+        row = content.get_first_child().get_next_sibling()
+        copy_row(row, "/k/one")
+        self.assertEqual(self.window.identity, "/k/one")
+
     def test_late_worker_callback_is_discarded(self):
         gate = threading.Event()
         result = []

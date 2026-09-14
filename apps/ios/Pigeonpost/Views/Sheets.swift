@@ -13,18 +13,28 @@ struct IdentityPickerSheet: View {
         NavigationStack {
             List {
                 if let me = account.me {
-                    Section("Acting as") { MailboxRow(mailbox: me) }
+                    Section("Acting as") {
+                        HStack {
+                            MailboxRow(mailbox: me).frame(maxWidth: .infinity, alignment: .leading)
+                            CopyAddressButton(address: me.key)
+                        }
+                    }
                 }
                 if !account.ownAgents.isEmpty {
                     Section("Your other mailboxes") {
                         ForEach(account.ownAgents) { mailbox in
-                            Button {
-                                onPick(mailbox)
-                                dismiss()
-                            } label: {
-                                MailboxRow(mailbox: mailbox)
+                            HStack {
+                                Button {
+                                    onPick(mailbox)
+                                    dismiss()
+                                } label: {
+                                    MailboxRow(mailbox: mailbox)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                        .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.borderless)
+                                CopyAddressButton(address: mailbox.key)
                             }
-                            .buttonStyle(.plain)
                         }
                     }
                 }
@@ -200,4 +210,3 @@ struct NewThreadSheet: View {
         }
     }
 }
-

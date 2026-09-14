@@ -123,8 +123,12 @@ struct SettingsSheet: View {
         case .account:
             Section("Your account") {
                 LabeledContent("Signed in as", value: session.username ?? "—")
-                LabeledContent("Current inbox", value: account.me?.key ?? "—")
-                    .textSelection(.enabled)
+                if let me = account.me {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Current inbox")
+                        PostAddressRow(address: me.key)
+                    }
+                }
             }
             #if os(iOS)
             Section {

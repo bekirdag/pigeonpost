@@ -33,6 +33,13 @@ struct ConversationsView: View {
 
         NavigationSplitView {
             list
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let me = account.me {
+                        PostAddressRow(address: me.key)
+                            .padding(.horizontal, 16)
+                            .background(.bar)
+                    }
+                }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
