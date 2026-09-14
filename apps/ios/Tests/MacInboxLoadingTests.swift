@@ -222,7 +222,12 @@ extension Notification.Name {
             InboxLoadingTests.finish(target.address, marker: marker, inboxBody: body)
             await InboxLoadingTests.wait("visited mailbox loaded") { inbox.hasLoaded && !inbox.loading }
             await settle()
+            snapshot(host, name: "mac-inbox-details-\(index)-before-click")
+            print("Details visit \(index): visible=\(inbox.visible.map(\.peer)), expected=\(nextPeer.key), host=\(host.bounds)")
             await click(x: 90, y: 54, window: window, host: host)
+            await settle()
+            snapshot(host, name: "mac-inbox-details-\(index)-after-click")
+            print("Details visit \(index): reading=\(inbox.reading ?? "nil"), sheet=\(window.attachedSheet != nil)")
             await InboxLoadingTests.wait("parent accepts conversation clicks after visit") { inbox.reading == nextPeer.key }
             InboxLoadingTests.check(window.attachedSheet == nil, "visit \(index) leaves no modal sheet blocking clicks")
         }
