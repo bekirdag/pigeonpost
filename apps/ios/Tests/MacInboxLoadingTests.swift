@@ -224,7 +224,10 @@ extension Notification.Name {
             await settle()
             snapshot(host, name: "mac-inbox-details-\(index)-before-click")
             print("Details visit \(index): visible=\(inbox.visible.map(\.peer)), expected=\(nextPeer.key), host=\(host.bounds)")
-            await click(x: 90, y: 54, window: window, host: host)
+            InboxLoadingTests.check(inbox.visible.first?.peer == nextPeer.key, "visited conversation is the first sidebar row")
+            await InboxLoadingTests.wait("visited conversation has a native row") { firstConversationCenter(in: host) != nil }
+            let point = firstConversationCenter(in: host)!
+            await click(x: point.x, y: host.isFlipped ? point.y : host.bounds.height - point.y, window: window, host: host)
             await settle()
             snapshot(host, name: "mac-inbox-details-\(index)-after-click")
             print("Details visit \(index): reading=\(inbox.reading ?? "nil"), sheet=\(window.attachedSheet != nil)")
@@ -232,6 +235,25 @@ extension Notification.Name {
             InboxLoadingTests.check(window.attachedSheet == nil, "visit \(index) leaves no modal sheet blocking clicks")
         }
         snapshot(host, name: "mac-inbox-details-visits")
+    }
+
+    static func firstConversationCenter(in host: NSView) -> NSPoint? {
+        var tables: [NSTableView] = []
+        func visit(_ view: NSView) {
+            if let table = view as? NSTableView, !table.isHiddenOrHasHiddenAncestor,
+               table.numberOfRows > 0, table.convert(table.bounds, to: host).minX < 200 {
+                tables.append(table)
+            }
+            for child in view.subviews { visit(child) }
+        }
+        visit(host)
+        guard let table = tables.min(by: {
+            $0.convert($0.bounds, to: host).minX < $1.convert($1.bounds, to: host).minX
+        }) else { return nil }
+        // Presenting a sheet can change the window's toolbar and safe area on Sonoma. Click
+        // the actual native row rather than reusing a point from before that transition.
+        let row = table.convert(table.rect(ofRow: 0), to: host)
+        return NSPoint(x: row.midX, y: row.midY)
     }
 
     static func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags, in window: NSWindow) {
