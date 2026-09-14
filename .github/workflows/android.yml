@@ -19,6 +19,8 @@ jobs:
   build-and-test:
     runs-on: ubuntu-latest
     timeout-minutes: 35
+    env:
+      PIGEONPOST_FIREBASE_API_KEY: ${{ secrets.PIGEONPOST_FIREBASE_API_KEY }}
     defaults:
       run:
         working-directory: apps/android

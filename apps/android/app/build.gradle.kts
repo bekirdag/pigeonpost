@@ -6,10 +6,12 @@ plugins {
 }
 
 android {
+    val firebaseApiKey = providers.environmentVariable("PIGEONPOST_FIREBASE_API_KEY").orNull
     val uploadNames = listOf("ANDROID_UPLOAD_KEYSTORE", "ANDROID_UPLOAD_STORE_PASSWORD", "ANDROID_UPLOAD_KEY_ALIAS", "ANDROID_UPLOAD_KEY_PASSWORD")
     val upload = uploadNames.associateWith { providers.environmentVariable(it).orNull }
     if (upload.values.any { it != null }) {
         require(upload.values.all { !it.isNullOrBlank() }) { "Provide all four ANDROID_UPLOAD signing variables, or leave all unset for an unsigned release build." }
+        require(!firebaseApiKey.isNullOrBlank()) { "A signed release requires PIGEONPOST_FIREBASE_API_KEY from the secret store." }
         signingConfigs.create("upload") {
             storeFile = file(upload.getValue("ANDROID_UPLOAD_KEYSTORE")!!)
             storePassword = upload.getValue("ANDROID_UPLOAD_STORE_PASSWORD")
@@ -26,6 +28,9 @@ android {
         targetSdk = 36
         versionCode = 8
         versionName = "0.2.5"
+        // Firebase project identifiers are public. Inject the restricted API key at build time.
+        // Forked PRs without secrets can still run fixtures and produce development artifacts.
+        resValue("string", "google_api_key", firebaseApiKey ?: "not-configured")
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         manifestPlaceholders["appAuthRedirectScheme"] = "dev.pigeonpost.inbox"
     }
@@ -45,6 +50,7 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        resValues = true
     }
     packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
     testOptions { unitTests.isReturnDefaultValues = true }
