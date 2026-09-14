@@ -20,3 +20,9 @@ swiftc -O -o "$out/handles" \
   Tests/HandleStoreTests.swift Shared/API/Models.swift Shared/API/APIError.swift \
   Shared/Store/HandlePurchases.swift Shared/Store/HandleStore.swift
 "$out/handles"
+swiftc -O -parse-as-library -o "$out/inbox-loading" \
+  Tests/InboxLoadingTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Model/Inbox.swift Shared/Model/Conversation.swift \
+  Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Views/Markdown.swift
+"$out/inbox-loading"

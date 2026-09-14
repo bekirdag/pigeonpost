@@ -65,6 +65,7 @@ struct MacInboxView: View {
             subthread = nil
         }
         .task {
+            guard !Fixtures.enabled else { return }
             push.attach(to: account)
             push.attach(to: inbox)
             account.push = push
@@ -79,8 +80,8 @@ struct MacInboxView: View {
             // Only reached when the app is *behind* something — `Inbox` shows a line in the window
             // instead when it is in front. A desktop notification about a message you can already
             // see, in a window you are already looking at, is a thing to dismiss and nothing else.
-            let mailbox = account.me.map { $0.handle ?? $0.label ?? $0.address } ?? ""
             inbox.onArrival = { arrivals in
+                let mailbox = account.me?.key ?? ""
                 for message in arrivals {
                     LocalNotifier.announce(
                         title: PeerFace.displayName(message.peerKey),
@@ -91,7 +92,17 @@ struct MacInboxView: View {
                     )
                 }
             }
+        }
+        // A visit to another mailbox is a new load and a new poll. Keeping the previous task
+        // alive leaves the window empty until that mailbox's long poll finally answers.
+        .task(id: account.me?.address) {
+            guard !Fixtures.enabled, let identity = account.me?.address else { return }
+            peer = nil
+            subthread = nil
+            openingThread = nil
+            deletingThread = nil
             await inbox.loadAll()
+            guard !Task.isCancelled, account.me?.address == identity else { return }
             await inbox.live()
         }
         // What is on screen is not news. Told to the inbox rather than checked in the closure
@@ -168,9 +179,7 @@ struct MacInboxView: View {
             case .peer:
                 if let peer, let conversation = inbox.conversation(with: peer) {
                     PeerInfoSheet(conversation: conversation) { mailbox in
-                        account.act(as: mailbox)
-                        self.peer = nil
-                        inbox.reset()
+                        visit(mailbox)
                     }
                     .frame(width: 520, height: 620)
                 }
@@ -190,6 +199,19 @@ struct MacInboxView: View {
                     .padding(.horizontal, 12)
             }
             if switchingMailbox { mailboxList }
+            if inbox.loading {
+                HStack(spacing: 8) {
+                    ProgressView().controlSize(.small)
+                    Text(inbox.hasLoaded ? "Updating inbox…" : "Loading inbox…")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.muted)
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                .accessibilityElement(children: .combine)
+                .accessibilityIdentifier("inboxLoadingStatus")
+            }
             // Its own row rather than a second line inside the bar. Everything about this column's
             // width has been fragile, and a flat stack of rows is the shape with the fewest
             // opinions in it.
@@ -208,10 +230,14 @@ struct MacInboxView: View {
             }
             Divider()
             List(selection: $peer) {
-                if inbox.offline {
-                    Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.muted)
+                if inbox.offline, inbox.hasLoaded {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(Theme.muted)
+                        Button("Try again") { Task { await inbox.loadAll() } }
+                            .disabled(inbox.loading)
+                    }
                 }
                 ForEach(inbox.visible) { conversation in
                     MacConversationRow(conversation: conversation, isSelected: conversation.peer == peer)
@@ -220,6 +246,17 @@ struct MacInboxView: View {
             }
             .listStyle(.sidebar)
             .scrollContentBackground(.hidden)
+            .overlay {
+                if inbox.hasLoaded, inbox.visible.isEmpty {
+                    ContentUnavailableView(
+                        inbox.filter.isEmpty ? "No conversations yet" : "No matching conversations",
+                        systemImage: "tray",
+                        description: Text(inbox.filter.isEmpty
+                            ? "Messages for this inbox will appear here."
+                            : "Try a different sender or search term.")
+                    )
+                }
+            }
         }
         // Opaque, rather than the sidebar's usual vibrancy.
         //
@@ -332,7 +369,38 @@ struct MacInboxView: View {
     /// The conversation itself, with who it is with drawn over it.
     @ViewBuilder
     private var detailColumn: some View {
-        if let peer, let conversation = inbox.conversation(with: peer) {
+        if !inbox.hasLoaded {
+            VStack(spacing: 14) {
+                if inbox.offline, !inbox.loading {
+                    Image(systemName: "wifi.exclamationmark")
+                        .font(.system(size: 30))
+                        .foregroundStyle(Theme.muted)
+                    Text("Couldn't load this inbox")
+                        .font(.headline)
+                    Text("Check your connection and try again. You can also open another inbox.")
+                        .foregroundStyle(Theme.muted)
+                        .multilineTextAlignment(.center)
+                    Button("Try again") { Task { await inbox.loadAll() } }
+                        .buttonStyle(.borderedProminent)
+                        .tint(Theme.navy)
+                        .accessibilityIdentifier("retryInboxLoad")
+                } else {
+                    ProgressView("Loading inbox…")
+                        .controlSize(.large)
+                        .accessibilityIdentifier("inboxLoading")
+                    Text("Fetching conversations and inbox details.")
+                        .foregroundStyle(Theme.muted)
+                }
+                if let address = account.me?.key {
+                    Text(address)
+                        .font(.callout)
+                        .foregroundStyle(Theme.muted)
+                        .textSelection(.enabled)
+                }
+            }
+            .padding(30)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let peer, let conversation = inbox.conversation(with: peer) {
             // Keyed on the peer alone. Changing subject inside one conversation is not a different
             // screen, and rebuilding it would throw away the scroll position along with the draft.
             MacThreadView(peer: peer, subthread: subthread)
@@ -355,6 +423,9 @@ struct MacInboxView: View {
                         .help("About this sender")
                     }
                 }
+        } else if inbox.conversations.isEmpty {
+            ContentUnavailableView("Inbox is up to date", systemImage: "checkmark.circle",
+                                   description: Text("Start a conversation or open another inbox."))
         } else {
             ContentUnavailableView("Pick a conversation", systemImage: "tray")
         }
@@ -431,11 +502,7 @@ struct MacInboxView: View {
                         .padding(.vertical, 5)
                         .contentShape(Rectangle())
                         .onTapGesture {
-                            switchingMailbox = false
-                            guard !isCurrent else { return }
-                            peer = nil
-                            inbox.reset()
-                            account.act(as: mailbox)
+                            visit(mailbox)
                         }
                         CopyAddressButton(address: mailbox.key)
                     }
@@ -445,6 +512,17 @@ struct MacInboxView: View {
         }
         .frame(maxHeight: 260)
         .padding(.bottom, 4)
+    }
+
+    private func visit(_ mailbox: Mailbox) {
+        switchingMailbox = false
+        guard mailbox.address != account.me?.address else { return }
+        peer = nil
+        subthread = nil
+        openingThread = nil
+        deletingThread = nil
+        inbox.reset()
+        account.act(as: mailbox)
     }
 }
 
