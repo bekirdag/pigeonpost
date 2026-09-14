@@ -86,6 +86,5 @@ public static class ConversationBuilder
         return aliases;
     }
 
-    private static string DisplayName(string peer) => peer.StartsWith("/k/", StringComparison.Ordinal)
-        ? peer : peer.Split('/', StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? peer;
+    private static string DisplayName(string peer) => PostAddress.DisplayName(peer);
 }

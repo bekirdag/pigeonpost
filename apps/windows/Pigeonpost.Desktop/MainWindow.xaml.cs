@@ -85,7 +85,7 @@ public sealed partial class MainWindow : Window
         dialogOpen = true;
         try
         {
-            var peer = new TextBox { Header = "Pigeonpost address", PlaceholderText = "/namespace/agent" };
+            var peer = new TextBox { Header = "Pigeonpost address", PlaceholderText = "/bekir", Text = "/", MaxLength = 512 };
             var message = new TextBox { Header = "First message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxLength = 20000 };
             var panel = new StackPanel { Spacing = 16 };
             panel.Children.Add(peer);
@@ -95,7 +95,15 @@ public sealed partial class MainWindow : Window
                 XamlRoot = Root.XamlRoot, Title = "New conversation", Content = panel,
                 PrimaryButtonText = "Start conversation", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false
             };
-            void Validate(object _, TextChangedEventArgs __) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(peer.Text) && !string.IsNullOrWhiteSpace(message.Text);
+            void Validate(object _, TextChangedEventArgs __) => dialog.IsPrimaryButtonEnabled = PostAddress.IsValid(peer.Text) && !string.IsNullOrWhiteSpace(message.Text);
+            peer.TextChanged += (_, _) =>
+            {
+                var value = PostAddress.Input(peer.Text);
+                if (value == peer.Text) return;
+                var position = peer.SelectionStart;
+                peer.Text = value;
+                peer.SelectionStart = Math.Clamp(position + 1, 1, value.Length);
+            };
             peer.TextChanged += Validate;
             message.TextChanged += Validate;
             if (await dialog.ShowAsync() == ContentDialogResult.Primary) await ViewModel.StartConversationAsync(peer.Text, message.Text);

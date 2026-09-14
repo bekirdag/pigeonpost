@@ -22,6 +22,25 @@ var acting = new Mailbox("/k/cz6900v2h90vnwefj7g7ezvbh4", "/bekir/su_iam", "su_i
 Mailbox[] own = [acting, new("/k/zz1111v2h90vnwefj7g7ezvbh9", "/bekir/docdex", "docdex box"), new("/k/qq2222v2h90vnwefj7g7ezvbh7", Label: "scratch")];
 IReadOnlyList<Conversation> Build(InboxSnapshot? value = null, IReadOnlyList<PendingMessage>? pending = null) => ConversationBuilder.Build(value ?? fixture, pending ?? [], own, acting);
 
+Test("Default inbox labels distinguish namespaces and preserve routing keys", () =>
+{
+    Equal(new Mailbox("/k/one", "/bekir/main", "main").DisplayName, "/bekir");
+    Equal(new Mailbox("/k/two", "/alp/main", "main").DisplayName, "/alp");
+    Equal(new Mailbox("/k/one", "/bekir/main").Key, "/bekir/main");
+    Equal(PostAddress.DisplayName("/github/alex/main"), "/github/alex");
+    Equal(PostAddress.DisplayName("/bekir/agent1"), "agent1");
+    Equal(PostAddress.DisplayName("/k/abc"), "/k/abc");
+});
+Test("Conversation entry supplies one slash and accepts namespace and email addresses", () =>
+{
+    Equal(PostAddress.Input(""), "/");
+    Equal(PostAddress.Input(" bekir/main "), "/bekir/main");
+    Equal(PostAddress.Input("/alp"), "/alp");
+    foreach (var address in new[] { "/bekir", "/bekir/main", "/github/alex/main", "/alex+tag@gmail.com", "/alex*tag@gmail.com/main" })
+        Check(PostAddress.IsValid(address), "Valid address rejected: " + address);
+    foreach (var address in new[] { "/", "/bekir//main", "/bekir/..", "/bekir/*", "/bekir/ma\nin" })
+        Check(!PostAddress.IsValid(address), "Invalid address accepted: " + address);
+});
 Test("Apple fixture: received/sent grouping, order and own mailboxes", () =>
 {
     Equal(fixtureMessages.Count, 5);

@@ -198,10 +198,10 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     public async Task StartConversationAsync(string peer, string firstMessage)
     {
         if (SelectedMailbox is not { } mailbox || string.IsNullOrWhiteSpace(firstMessage)) return;
-        peer = peer.Trim();
-        if (!peer.StartsWith('/') || peer.Contains('*') || peer.Any(char.IsWhiteSpace) || peer.Split('/', StringSplitOptions.RemoveEmptyEntries).Length != 2)
+        peer = PostAddress.Input(peer);
+        if (!PostAddress.IsValid(peer))
         {
-            Error = "Use a Pigeonpost address such as /namespace/agent.";
+            Error = "Use an address such as /bekir, /bekir/main or /k/your-address.";
             return;
         }
         var generation = mailboxVersion;

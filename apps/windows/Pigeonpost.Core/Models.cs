@@ -16,7 +16,35 @@ public static class PostboxJson
 public sealed record Mailbox(string Address, string? Handle = null, string? Label = null)
 {
     public string Key => Handle ?? Address;
-    public string DisplayName => Label ?? Handle ?? Address;
+    public string DisplayName => Handle is { } handle && handle.EndsWith("/main", StringComparison.Ordinal)
+        ? PostAddress.DisplayName(handle) : Label ?? Handle ?? Address;
+}
+
+public static class PostAddress
+{
+    public static string DisplayName(string peer)
+    {
+        if (peer.StartsWith("/k/", StringComparison.Ordinal)) return peer;
+        var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length > 1 && parts[^1] == "main") return "/" + string.Join('/', parts[..^1]);
+        return parts.LastOrDefault() ?? peer;
+    }
+
+    public static string Input(string value)
+    {
+        value = value.Trim();
+        return value.StartsWith('/') ? value : "/" + value;
+    }
+
+    // Typing guard; the server applies the full address grammar and routing rules.
+    public static bool IsValid(string peer)
+    {
+        if (peer.Length is < 2 or > 512 || !peer.StartsWith('/')) return false;
+        var parts = peer[1..].Split('/');
+        return parts.All(part => part.Length > 0 && part is not "." and not ".."
+            && (!part.Contains('*') || part.Contains('@'))
+            && part.All(c => char.IsAsciiLetterOrDigit(c) || "!$&'*+-=^_`{|}~.@".Contains(c)));
+    }
 }
 
 // Optional fields preserve compatibility with older postboxes. Only server fields describe trust.
