@@ -1,5 +1,5 @@
 Default inboxes now show their namespace: /bekir/main appears as /bekir, so different people's inboxes are easy to tell apart.
 
-New conversations automatically include the opening slash. Typing and pasting full addresses, including email-style handles, remains supported.
+New conversations automatically include the opening slash. Typing and pasting full addresses, including handles containing @, remains supported.
 
 Scan for login is directly on the Settings page. Handle purchases and existing registrations remain attached to your account.
