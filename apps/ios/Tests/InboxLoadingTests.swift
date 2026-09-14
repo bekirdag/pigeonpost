@@ -27,8 +27,8 @@ enum Fixtures {
 }
 #if !MAC_INBOX_UI_TESTS
 enum AppLife { static let isActive = true }
-#endif
 struct StagedFile { let data: Data; let name: String; let mediaType: String }
+#endif
 
 final class ControlledURLProtocol: URLProtocol {
     private static let lock = NSLock()
@@ -120,9 +120,9 @@ final class ControlledURLProtocol: URLProtocol {
         {"messages":[{"message_id":"\(marker)","from":"/k/peer","peer":"/test/peer","body":"\(marker)","direction":"in","read":true,"received_at":1}],"policy":{"accept_all":true,"auto_accept_known":false}}
         """
     }
-    static func finish(_ identity: String, marker: String, inboxStatus: Int = 200, empty: Bool = false) {
+    static func finish(_ identity: String, marker: String, inboxStatus: Int = 200, empty: Bool = false, inboxBody: String? = nil) {
         let bodies = [
-            "/v1/inbox": inboxStatus == 200 ? (empty ? "{\"messages\":[]}" : messages(marker)) : "{\"error\":\"unavailable\"}",
+            "/v1/inbox": inboxStatus == 200 ? (empty ? "{\"messages\":[]}" : inboxBody ?? messages(marker)) : "{\"error\":\"unavailable\"}",
             "/v1/contacts": empty ? "{\"contacts\":[]}" : "{\"contacts\":[{\"peer\":\"/test/peer\",\"alias\":\"\(marker)\",\"admission\":\"allow\",\"autonomy\":\"review\",\"allowed_verbs\":[]}],\"vocabulary\":{\"grantable\":[\"\(marker)\"]}}",
             "/v1/threads": empty ? "{\"threads\":[]}" : "{\"threads\":[{\"thread_id\":\"\(marker)\",\"peer\":\"/test/peer\",\"title\":\"\(marker)\",\"is_default\":true}]}",
             "/v1/archive": "{\"archived\":[\"/test/\(marker)\"]}",

@@ -1,6 +1,7 @@
 // Native NSHostingView integration test of the actual MacInboxView and shared Inbox.
 // Unrelated sheets/notifications are inert test doubles; no Keychain or real server is used.
 import AppKit
+import ApplicationServices
 import SwiftUI
 import Observation
 
@@ -19,27 +20,11 @@ enum DockBadge { static func show(_ count: Int) {} }
     static let shared = MenuBarItem()
     func show(unread: Int) {}
 }
-struct PillView: View {
-    enum Kind { case held }
-    let text: String
-    let kind: Kind
-    var body: some View { Text(text) }
-}
-struct UnreadBadge: View {
-    let count: Int
-    let inverted: Bool
-    var body: some View { Text(String(count)) }
-}
 struct SettingsSheet: View { var body: some View { Text("Settings") } }
 struct PeerInfoSheet: View {
     let conversation: Conversation
     let visit: (Mailbox) -> Void
     var body: some View { Text(conversation.name) }
-}
-struct MacThreadView: View {
-    let peer: String
-    let subthread: String?
-    var body: some View { Text(peer) }
 }
 struct MacNewConversationSheet: View {
     let started: (String) -> Void
@@ -50,9 +35,6 @@ struct MacNewThreadSheet: View {
     let started: (String) -> Void
     var body: some View { Text("New thread") }
 }
-extension View {
-    func announcements(_ value: Binding<Inbox.Announcement?>, open: @escaping (String) -> Void) -> some View { self }
-}
 extension Notification.Name {
     static let newConversation = Notification.Name("pigeonpost.newConversation")
     static let refreshInbox = Notification.Name("pigeonpost.refreshInbox")
@@ -60,8 +42,21 @@ extension Notification.Name {
 
 @main @MainActor struct MacInboxLoadingTests {
     static func main() {
+        setbuf(stdout, nil)
+        let desktopSession = CGSessionCopyCurrentDictionary() as? [String: Any]
+        guard desktopSession?["CGSSessionScreenIsLocked"] as? Bool != true else {
+            FileHandle.standardError.write(Data("Native inbox tests require an unlocked macOS desktop session\n".utf8))
+            exit(69)
+        }
+        let watchdog = DispatchSource.makeTimerSource(queue: .global(qos: .userInitiated))
+        watchdog.schedule(deadline: .now() + 90)
+        watchdog.setEventHandler {
+            FileHandle.standardError.write(Data("Native inbox UI watchdog timed out\n".utf8))
+            exit(124)
+        }
+        watchdog.resume()
         let app = NSApplication.shared
-        app.setActivationPolicy(.accessory)
+        app.setActivationPolicy(.regular)
         URLProtocol.registerClass(ControlledURLProtocol.self)
         let (account, inbox) = InboxLoadingTests.make()
         let push = PushService()
@@ -71,6 +66,7 @@ extension Notification.Name {
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
         window.contentView = host
         window.makeKeyAndOrderFront(nil)
+        app.activate(ignoringOtherApps: true)
         Task {
             let a = InboxLoadingTests.a
             let b = InboxLoadingTests.b
@@ -111,7 +107,9 @@ extension Notification.Name {
             InboxLoadingTests.check(!inbox.offline && inbox.visible.isEmpty, "successful empty inbox is distinguished from failure")
             await settle()
             snapshot(host, name: "mac-inbox-empty")
+            await repeatedPickerSwitches(window: window, host: host, account: account, inbox: inbox)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
+            watchdog.cancel()
             window.orderOut(nil)
             exit(InboxLoadingTests.failures == 0 ? 0 : 1)
         }
@@ -123,8 +121,61 @@ extension Notification.Name {
         for _ in 0..<10 { try? await Task.sleep(for: .milliseconds(30)) }
     }
 
+    static func repeatedPickerSwitches(window: NSWindow, host: NSView, account: Account, inbox: Inbox) async {
+        for index in 0..<12 {
+            let target = index.isMultiple(of: 2) ? InboxLoadingTests.b : InboxLoadingTests.a
+            let currentLabel = PeerFace.displayName(account.me!.key)
+            print("Picker cycle \(index): opening \(currentLabel)")
+            await click(x: 40, y: 14, window: window, host: host)
+            await settle()
+            snapshot(host, name: "mac-inbox-picker-open")
+            await click(x: 70, y: target.address == InboxLoadingTests.a.address ? 44 : 74, window: window, host: host)
+            await InboxLoadingTests.wait("picker selects \(target.key)") { account.me?.address == target.address }
+            await InboxLoadingTests.pending(target.address, count: 5)
+            InboxLoadingTests.check(inbox.loading && !inbox.hasLoaded, "picker switch shows loading without stale data")
+            let marker = "picker-\(index)"
+            InboxLoadingTests.finish(target.address, marker: marker, inboxBody: stressMessages(marker))
+            await InboxLoadingTests.wait("picker data ready") { inbox.hasLoaded && !inbox.loading }
+            await settle()
+            await click(x: 90, y: 54, window: window, host: host)
+            if index.isMultiple(of: 2) { await settle() }
+            InboxLoadingTests.check(inbox.reading == "/test/peer", "conversation opens through the native List")
+            await click(x: 350, y: 73, window: window, host: host)
+            InboxLoadingTests.check(account.me?.address == target.address && inbox.messages.first?.messageId == marker,
+                                    "native picker cycle \(index) remains responsive on the selected mailbox")
+        }
+        snapshot(host, name: "mac-inbox-picker-stress")
+    }
+
+    static func stressMessages(_ marker: String) -> String {
+        let rows: [[String: Any]] = (0..<360).map { index in
+            ["message_id": index == 0 ? marker : "\(marker)-\(index)", "from": "/k/peer", "peer": "/test/peer",
+             "body": String(repeating: "Regression message \(index), with a longer paragraph to exercise text wrapping and scrolling.\n", count: 30),
+             "direction": "in", "read": true, "received_at": index + 1,
+             "thread_id": index.isMultiple(of: 2) ? "topic-one" : "topic-two"]
+        }
+        return String(data: try! JSONSerialization.data(withJSONObject: ["messages": rows]), encoding: .utf8)!
+    }
+
+    static func click(x: CGFloat, y: CGFloat, window: NSWindow, host: NSView) async {
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        await InboxLoadingTests.wait("native test window is active") { NSApplication.shared.isActive && window.isKeyWindow }
+        // Dispatch through AppKit's event queue and yield between down/up, just as its normal
+        // event loop does; sending both synchronously skips SwiftUI gesture recognition.
+        let point = host.convert(NSPoint(x: x, y: host.isFlipped ? y : host.bounds.height - y), to: nil)
+        for type in [NSEvent.EventType.leftMouseDown, .leftMouseUp] {
+            let event = NSEvent.mouseEvent(with: type, location: point, modifierFlags: [],
+                                          timestamp: ProcessInfo.processInfo.systemUptime,
+                                          windowNumber: window.windowNumber, context: nil,
+                                          eventNumber: 0, clickCount: 1, pressure: 1)!
+            NSApplication.shared.postEvent(event, atStart: false)
+            try? await Task.sleep(for: .milliseconds(40))
+        }
+    }
+
     static func snapshot(_ view: NSView, name: String) {
-        guard let directory = ProcessInfo.processInfo.environment["PIGEONPOST_UI_TEST_OUTPUT"] else { return }
+        guard let directory = ProcessInfo.processInfo.environment["PIGEONPOST_UI_TEST_OUTPUT"], !directory.isEmpty else { return }
         if let number = view.window?.windowNumber {
             let capture = Process()
             capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
