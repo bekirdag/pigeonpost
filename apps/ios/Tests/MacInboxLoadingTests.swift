@@ -141,10 +141,44 @@ extension Notification.Name {
             if index.isMultiple(of: 2) { await settle() }
             InboxLoadingTests.check(inbox.reading == "/test/peer", "conversation opens through the native List")
             await click(x: 350, y: 73, window: window, host: host)
+            if index.isMultiple(of: 2) {
+                await settle()
+                InboxLoadingTests.check(hasVisibleMessage(in: host), "long subject renders message bubbles instead of a blank viewport")
+            }
             InboxLoadingTests.check(account.me?.address == target.address && inbox.messages.first?.messageId == marker,
                                     "native picker cycle \(index) remains responsive on the selected mailbox")
         }
+        await settle()
+        InboxLoadingTests.check(hasVisibleMessage(in: host), "last switched subject has visible messages")
         snapshot(host, name: "mac-inbox-picker-stress")
+    }
+
+    static func hasVisibleMessage(in host: NSView) -> Bool {
+        host.layoutSubtreeIfNeeded()
+        guard let bitmap = host.bitmapImageRepForCachingDisplay(in: host.bounds) else { return false }
+        host.cacheDisplay(in: host.bounds, to: bitmap)
+        var ground: NSColor?
+        host.effectiveAppearance.performAsCurrentDrawingAppearance {
+            ground = NSColor(Theme.ground).usingColorSpace(.deviceRGB)
+        }
+        guard let ground else { return false }
+        // Inspect only the conversation viewport, excluding the toolbar, composer and scrollbar.
+        // Its raised bubble surface is distinct from the recessed empty conversation background.
+        let scaleX = CGFloat(bitmap.pixelsWide) / host.bounds.width
+        let scaleY = CGFloat(bitmap.pixelsHigh) / host.bounds.height
+        var bubblePixels = 0
+        for y in stride(from: Int(90 * scaleY), to: bitmap.pixelsHigh - Int(90 * scaleY), by: 8) {
+            for x in stride(from: Int(540 * scaleX), to: bitmap.pixelsWide - Int(60 * scaleX), by: 8) {
+                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                if pixel.alphaComponent > 0.9,
+                   abs(pixel.redComponent - ground.redComponent) < 0.01,
+                   abs(pixel.greenComponent - ground.greenComponent) < 0.01,
+                   abs(pixel.blueComponent - ground.blueComponent) < 0.01 {
+                    bubblePixels += 1
+                }
+            }
+        }
+        return bubblePixels > 100
     }
 
     static func stressMessages(_ marker: String) -> String {
