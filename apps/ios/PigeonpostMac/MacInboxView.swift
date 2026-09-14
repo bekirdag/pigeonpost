@@ -194,10 +194,6 @@ struct MacInboxView: View {
         @Bindable var inbox = inbox
         return VStack(spacing: 0) {
             mailboxBar
-            if let me = account.me {
-                PostAddressRow(address: me.key)
-                    .padding(.horizontal, 12)
-            }
             if switchingMailbox { mailboxList }
             if inbox.loading {
                 HStack(spacing: 8) {

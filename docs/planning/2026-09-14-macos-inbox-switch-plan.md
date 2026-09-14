@@ -14,4 +14,6 @@ Switching from the mailbox picker or a peer's "Visit inbox" action immediately o
 
 ## Scope
 
+Follow-up: remove the extra current-address and copy row from the Mac messaging front page. Keep copying in the mailbox dropdown and Settings. Validate with the existing native window checks and publish the simplified header together with the inbox-switch repair as macOS build 39.
+
 Worktree: `/private/tmp/pigeonpost-mac-inbox-switch-20260914`; baseline `880d245104b3a034930155eb77c0e567dba0ea36`. Private evidence: `/private/tmp/pigeonpost-mac-inbox-audit-20260914`. Linux reply inspection does not authorize resending or bypassing the existing held deployment request.

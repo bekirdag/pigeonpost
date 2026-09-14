@@ -1,5 +1,10 @@
 # macOS inbox switch repair progress — 2026-09-14
 
+## Header simplification follow-up
+
+- Removed the permanent current-address/copy row from the Mac inbox sidebar as requested; the mailbox dropdown and Settings retain their copy controls. Loading, retry and mailbox-switch behavior are unchanged. Docdex symbols and impact were inspected; this change removes one isolated view expression.
+- Existing native window integration passes all 21 checks after the change; inspected its captured window to confirm the compact sidebar header. Universal Developer ID Release archive 39 succeeded, with both architectures, hardened runtime and no debugger entitlement verified. Publication and notarization are next. Evidence: `/private/tmp/pigeonpost-mac-header-audit-20260914`.
+
 - Main was clean at `880d245104b3a034930155eb77c0e567dba0ea36`; created isolated branch `codex/mac-inbox-switch-20260914`.
 - Read Pigeonpost messaging and planning skills, both Docdex lobes and wakeup; saved preference for responsive inbox switching with visible loading feedback. Existing user release/push/deployment authorization satisfies inferred operator-routine gates.
 - Linux test thread `fb00d423f05941d2a42a2d42f2be89bc` contains only the original outgoing installation request. The peer's other threads have no newer activity. No reply observed; no repeat request or permission changes made.
