@@ -20,11 +20,30 @@ import org.junit.runner.RunWith
 import java.io.File
 import java.io.RandomAccessFile
 
+private fun assertClipboard(ui: androidx.compose.ui.test.junit4.ComposeTestRule, context: Context, expected: String) {
+    var actual: String? = null
+    ui.waitUntil(10_000) {
+        ui.runOnIdle {
+            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+            actual = clipboard.primaryClip?.getItemAt(0)?.text?.toString()
+        }
+        actual == expected
+    }
+    assertEquals(expected, actual)
+}
+
 @RunWith(AndroidJUnit4::class)
 class AppFlowTest {
     @get:Rule val ui = createEmptyComposeRule()
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
-    private fun launch(mode: String = "inbox") = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode))
+    private fun launch(mode: String = "inbox") = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode)).also { scenario ->
+        // A rendered Compose tree can precede Android granting this window input/clipboard access.
+        ui.waitUntil(10_000) {
+            var focused = false
+            scenario.onActivity { focused = it.hasWindowFocus() }
+            focused
+        }
+    }
     private fun shown(text: String) {
         ui.waitUntil(10000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
     }
@@ -126,10 +145,7 @@ class AppFlowTest {
             fun copy(address: String, inDialog: Boolean = false) {
                 val target = hasContentDescription("Copy address $address")
                 ui.onNode(if (inDialog) target and hasAnyAncestor(isDialog()) else target).performClick()
-                scenario.onActivity {
-                    val clipboard = it.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                    assertEquals(address, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
-                }
+                assertClipboard(ui, context, address)
             }
             shown("Inbox")
             copy("/demo/main")
@@ -191,6 +207,7 @@ class AppFlowTest {
             ui.onNodeWithText("Inbox and storage").performClick()
             ui.onNodeWithText("Notifications").assertExists()
             androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().sendKeyDownUpSync(android.view.KeyEvent.KEYCODE_BACK)
+            shown("Handles")
             ui.onNodeWithText("Handles").performClick()
             ui.onNodeWithText("Tester registration").performClick()
             scenario.recreate()
@@ -232,16 +249,15 @@ class AppFlowTest {
 
 @RunWith(AndroidJUnit4::class)
 class AddressCopyTest {
-    @get:Rule val ui = androidx.compose.ui.test.junit4.createComposeRule()
+    @get:Rule val ui = androidx.compose.ui.test.junit4.createAndroidComposeRule<androidx.activity.ComponentActivity>()
 
     @Test fun unnamedInboxCopiesItsFullKeyAndResetsAfterAddressChange() {
         val address = androidx.compose.runtime.mutableStateOf("/k/" + "a".repeat(128))
         ui.setContent { androidx.compose.material3.MaterialTheme { dev.pigeonpost.inbox.ui.PostAddressRow(address.value) } }
+        ui.waitUntil(10_000) { ui.runOnIdle { ui.activity.hasWindowFocus() } }
         ui.onNodeWithContentDescription("Copy address ${address.value}").performClick()
+        assertClipboard(ui, ui.activity, address.value)
         ui.runOnIdle {
-            val context = ApplicationProvider.getApplicationContext<Context>()
-            val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-            assertEquals(address.value, clipboard.primaryClip?.getItemAt(0)?.text?.toString())
             address.value = "/next/main"
         }
         ui.onNodeWithContentDescription("Copy address /next/main")
