@@ -6,10 +6,32 @@ import org.junit.Assert.*
 class AddressTest {
 
     @Test
+    fun defaultInboxesShowTheirNamespace() {
+        assertEquals("/bekir", displayName("/bekir/main"))
+        assertEquals("/alp", displayName("/alp/main"))
+        assertEquals("main", displayName("/main"))
+        assertEquals("bekir/agent", displayName("/bekir/agent"))
+        assertEquals("Team inbox", displayName("Team inbox"))
+    }
+
+    @Test
+    fun conversationInputSuppliesTheSlashWithoutChangingTheDestination() {
+        assertEquals("/", conversationAddressInput(""))
+        assertFalse(validAddress(conversationAddressInput("")))
+        assertEquals("/bekir", conversationAddressInput("bekir"))
+        assertEquals("/bekir/main", conversationAddressInput(" /bekir/main "))
+        assertEquals("/k/ABC123", conversationAddressInput("k/ABC123"))
+        assertFalse(validAddress(conversationAddressInput("https://example.com")))
+        assertFalse(validAddress(conversationAddressInput("//bekir")))
+    }
+
+    @Test
     fun validSlashAddresses() {
         assertTrue(validAddress("/demo/builder"))
         assertTrue(validAddress("/k/abcdef"))
         assertTrue(validAddress("/demo/main"))
+        assertTrue(validAddress("/alex+tag@gmail.com"))
+        assertTrue(validAddress("/alex*tag@gmail.com/main"))
         assertFalse(validAddress("/demo/*"))
     }
 

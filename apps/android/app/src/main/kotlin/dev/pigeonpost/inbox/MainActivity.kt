@@ -5,6 +5,9 @@ import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.os.Build
+import android.Manifest
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -22,6 +25,9 @@ import dev.pigeonpost.core.verifiedSignInUrl
 import dev.pigeonpost.inbox.ui.PigeonpostApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
+import dev.pigeonpost.inbox.push.PushNotifications
 
 class MainActivity : ComponentActivity() {
     private val model: InboxViewModel by lazy {
@@ -32,6 +38,7 @@ class MainActivity : ComponentActivity() {
         })[InboxViewModel::class.java]
     }
     private val authorization = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.completeSignIn(it.data) }
+    private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration() }
     private val documents = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { model.attach(it) }
     private val photos = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { model.attach(it) }
     private val save = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -56,11 +63,31 @@ class MainActivity : ComponentActivity() {
             choosePhoto = { model.chooseAttachments(); photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             scan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan a Pigeonpost sign-in code").setBeepEnabled(false).setOrientationLocked(false)) },
             attachment = ::attachment,
-            openLink = ::openLink) }
+            openLink = ::openLink, notificationSettings = ::notificationSettings) }
+        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        lifecycleScope.launch {
+            combine(model.session.state, model.inbox.state) { session, state -> session.signedIn && session.termsAccepted && state.acting != null }
+                .distinctUntilChanged().collect { ready ->
+                    if (ready && !model.graph.fixtures && Build.VERSION.SDK_INT >= 33) {
+                        val preferences = getSharedPreferences("push", MODE_PRIVATE)
+                        if (!preferences.getBoolean("asked_permission", false) && !PushNotifications.allowed(this@MainActivity)) {
+                            preferences.edit().putBoolean("asked_permission", true).apply()
+                            notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
+                        }
+                    }
+                }
+        }
     }
-    override fun onStart() { super.onStart(); model.inbox.setActive(true); model.billing?.attach(this) }
-    override fun onResume() { super.onResume(); if (model.session.state.value.signedIn) model.paidHandles?.restore() }
-    override fun onStop() { model.billing?.detach(this); model.inbox.setActive(false); super.onStop() }
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent); setIntent(intent)
+        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+    }
+    override fun onStart() { super.onStart(); PushNotifications.foreground = true; model.inbox.setActive(true); model.billing?.attach(this) }
+    override fun onResume() { super.onResume(); model.refreshPushRegistration(); if (model.session.state.value.signedIn) model.paidHandles?.restore() }
+    override fun onStop() { PushNotifications.foreground = false; model.billing?.detach(this); model.inbox.setActive(false); super.onStop() }
+    private fun notificationSettings() {
+        startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
+    }
     private fun attachment(value: Attachment, action: String) {
         val identity = model.inbox.state.value.acting?.address ?: return
         lifecycleScope.launch {

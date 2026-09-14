@@ -173,15 +173,20 @@ fun displayBody(body: String, outgoing: Boolean = false): DisplayBody {
 
 fun displayName(peer: String): String {
     if (peer.startsWith("/k/")) return peer.removePrefix("/k/").let { if (it.length > 12) it.take(7) + "…" + it.takeLast(4) else it }
-    val parts = peer.trim('/').split('/')
-    return if (parts.lastOrNull() == "main") parts.dropLast(1).joinToString("/") else parts.joinToString("/")
+    return if (peer.startsWith('/') && peer.endsWith("/main") && peer.count { it == '/' } > 1) peer.removeSuffix("/main") else peer.trim('/')
 }
 
+/** Supply the address prefix without changing the destination's spelling or internal segments. */
+fun conversationAddressInput(input: String): String = input.trim().let { if (it.startsWith('/')) it else "/$it" }
+
 fun validAddress(input: String, wildcard: Boolean = false): Boolean {
-    if (input.length !in 2..512 || input != input.trim()) return false
-    val expression = if (wildcard) Regex("/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+|/\\*)*") else Regex("/[A-Za-z0-9._~-]+(?:/[A-Za-z0-9._~-]+)*")
-    return expression.matches(input) && input.split('/').none { it == "." || it == ".." }
-        && (!input.contains('*') || input.endsWith("/*") && input.count { it == '*' } == 1)
+    if (input.length !in 2..512 || !input.startsWith('/') || input.any { it.code > 127 }) return false
+    val parts = input.drop(1).split('/')
+    return parts.withIndex().all { (index, part) ->
+        if (part == "*") wildcard && index == parts.lastIndex && parts.size > 1
+        else part.isNotEmpty() && part != "." && part != ".." && (!part.contains('*') || part.contains('@')) &&
+            part.all { it.isLetterOrDigit() || it in "!\$&'*+-=^_`{|}~.@" }
+    }
 }
 
 /** A scanned code is allowed to open only the issuer's HTTPS origin, never an arbitrary site. */

@@ -85,7 +85,8 @@ fun PostAddressRow(address: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, chooseFile: () -> Unit,
-    choosePhoto: () -> Unit, scan: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
+    choosePhoto: () -> Unit, scan: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
+    notificationSettings: () -> Unit = {}) {
     val session by model.session.state.collectAsStateWithLifecycle()
     val state by model.inbox.state.collectAsStateWithLifecycle()
     val handleState by model.handles.state.collectAsStateWithLifecycle()
@@ -148,7 +149,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 accountHandles = model.accountHandles, refreshMailboxes = { store.loadAccount() },
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
-                signOut = { sheet = "signout" }, openLink = openLink)
+                signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })

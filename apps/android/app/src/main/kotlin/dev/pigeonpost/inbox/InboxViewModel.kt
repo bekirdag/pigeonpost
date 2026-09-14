@@ -12,11 +12,14 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.filter
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
 import dev.pigeonpost.inbox.billing.GooglePlayBilling
+import dev.pigeonpost.inbox.push.PushNotifications
 
 data class AppGraph(val session: UserSession, val api: PostboxApi, val fixtures: Boolean = false) {
     companion object {
@@ -30,6 +33,7 @@ class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(
 
 class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(app) {
     val session = graph.session
+    val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
     val inbox = InboxStore(graph.api, viewModelScope,
@@ -46,6 +50,11 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
     var pendingSave: File? = null
     init {
         viewModelScope.launch {
+            combine(session.state, inbox.state) { session, state ->
+                if (!session.loading && session.signedIn && session.termsAccepted) state.acting?.address else null
+            }.distinctUntilChanged().collect { push?.update(it) }
+        }
+        viewModelScope.launch {
             session.state.filter { !it.loading }.map { it.signedIn && it.termsAccepted }.distinctUntilChanged().collect { ready ->
                 if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore() }
                 else { inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
@@ -54,7 +63,26 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
     }
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
-    fun signOut() { handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset(); viewModelScope.launch { session.signOut() } }
+    fun signOut() {
+        val token = push?.clear()
+        handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset()
+        viewModelScope.launch { push?.unregister(graph.api as? DevicePushApi, token); session.signOut() }
+    }
+    fun refreshPushRegistration() {
+        push?.update(inbox.state.value.acting?.address?.takeIf { session.state.value.signedIn && session.state.value.termsAccepted })
+    }
+    fun openNotification(identity: String?, peer: String?) {
+        if (identity == null || peer == null || !validAddress(identity) || !validAddress(peer)) return
+        viewModelScope.launch {
+            val signedIn = session.state.first { !it.loading }
+            if (!signedIn.signedIn || !signedIn.termsAccepted) return@launch
+            val ready = inbox.state.first { it.accountLoaded || !session.state.value.signedIn }
+            if (!session.state.value.signedIn) return@launch
+            val mailbox = ready.mailboxes.firstOrNull { it.address == identity } ?: return@launch
+            if (ready.acting?.address != identity) inbox.switchMailbox(mailbox)
+            inbox.selectPeer(peer)
+        }
+    }
     override fun onCleared() { billing?.close(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey }
     fun attach(uris: List<Uri>) {

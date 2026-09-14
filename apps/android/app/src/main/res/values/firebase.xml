@@ -1,0 +1,7 @@
+<resources>
+  <!-- Public Firebase Android app configuration. No service account credentials belong here. -->
+  <string name="google_app_id" translatable="false">1:88600489260:android:729f6b64b88f3cffefd089</string>
+  <string name="gcm_defaultSenderId" translatable="false">88600489260</string>
+  <string name="project_id" translatable="false">wodo-network</string>
+  <string name="google_api_key" translatable="false">AIzaSyAaad0VQIAQjEBxWa240nOpVWpN4BDH8FA</string>
+</resources>

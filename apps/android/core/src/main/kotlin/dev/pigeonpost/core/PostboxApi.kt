@@ -2,6 +2,7 @@ package dev.pigeonpost.core
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -14,6 +15,7 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import okhttp3.Call
 import okhttp3.Callback
+import okhttp3.ConnectionPool
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.MediaType.Companion.toMediaType
@@ -27,6 +29,7 @@ import java.io.File
 import java.io.IOException
 import java.io.OutputStream
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.SSLException
 import kotlin.coroutines.resumeWithException
 
 interface TokenProvider {
@@ -36,6 +39,7 @@ interface TokenProvider {
 }
 
 class SessionExpired : IOException("Your session expired. Sign in again.")
+class PostboxConnectionInterrupted(cause: IOException) : IOException("The connection was interrupted. Please try again.", cause)
 class ApiException(val status: Int, val code: String?, detail: String? = null) : IOException(detail ?: when (code) {
     "not_admitted" -> "They are not accepting messages from this inbox."
     "recipient_unresolved" -> "No inbox at that address."
@@ -72,11 +76,16 @@ interface PostboxApi {
 const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024
 const val MAX_ATTACHMENTS = 8
 
+interface DevicePushApi {
+    suspend fun registerPushDevice(identity: String, token: String)
+    suspend fun unregisterPushDevice(token: String)
+}
+
 class PostboxClient(
     private val tokens: TokenProvider,
     private val base: HttpUrl = "https://postbox.pigeonpost.dev/".toHttpUrl(),
     allowLoopbackForTests: Boolean = false,
-) : PostboxApi, PaidHandleApi, AccountHandleApi {
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -85,13 +94,26 @@ class PostboxClient(
         .followRedirects(false).followSslRedirects(false).retryOnConnectionFailure(false)
         .connectTimeout(20, TimeUnit.SECONDS).readTimeout(60, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS)
         .callTimeout(180, TimeUnit.SECONDS).build()
+    // A read or a receipt verification can safely recover from a dropped connection. Use a fresh
+    // connection for that one retry; never evict connections belonging to other in-flight calls.
+    private val recoveryHttp = http.newBuilder().retryOnConnectionFailure(true)
+        .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
 
     override suspend fun identities() = decode<IdentitiesResponse>(request("identities")).identities.orEmpty()
+    override suspend fun registerPushDevice(identity: String, token: String) {
+        request("devices", "POST", json = buildJsonObject {
+            put("identity", identity); put("token", token); put("platform", "fcm"); put("environment", "production")
+        }, retryable = true)
+    }
+    override suspend fun unregisterPushDevice(token: String) {
+        require(token.isNotBlank() && token.length <= 4096 && token.all { it.isLetterOrDigit() || it in ":_-" })
+        request("devices/$token", "DELETE", retryable = true)
+    }
     override suspend fun accountHandles() = decode<AccountHandlesResponse>(request("me/handles", query = mapOf("include_inactive" to "true"))).handles
     override suspend fun playCatalog() = decode<PlayCatalog>(request("claims/google"))
     override suspend fun redeemPlayPurchase(token: String, name: String?) = decode<PlayClaim>(request("claims/google", "POST", json = buildJsonObject {
         put("purchase_token", token); name?.let { put("namespace", tidyHandle(it)) }
-    }))
+    }, retryable = true)) // The server durably binds this same receipt to this account before acknowledging it.
     override suspend fun assignPlayHandle(productId: String, name: String) = decode<PlayClaim>(request("claims/google/assign", "POST", json = buildJsonObject {
         put("product_id", productId); put("namespace", tidyHandle(name))
     }))
@@ -183,18 +205,31 @@ class PostboxClient(
         id?.let { addPathSegment(it) }; identity?.let { addQueryParameter("identity", it) }
         query.forEach { (key, value) -> addQueryParameter(key, value) }
     }.build()
-    private suspend fun request(path: String, method: String = "GET", identity: String? = null, query: Map<String, String> = emptyMap(), json: JsonObject? = null, id: String? = null): String = withContext(Dispatchers.IO) {
+    private suspend fun request(path: String, method: String = "GET", identity: String? = null, query: Map<String, String> = emptyMap(), json: JsonObject? = null, id: String? = null, retryable: Boolean = method == "GET"): String = withContext(Dispatchers.IO) {
         val body: RequestBody? = json?.toString()?.toRequestBody("application/json".toMediaType())
         val request = Request.Builder().url(url(path, identity, query, id)).method(method, body).build()
-        authenticated(request).use { readJson(it) }
+        try {
+            authenticated(request).use { readJson(it) }
+        } catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            if (!retryable || failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
+            delay(200)
+            try {
+                authenticated(request, recoveryHttp).use { readJson(it) }
+            } catch (retryFailure: IOException) {
+                currentCoroutineContext().ensureActive()
+                if (retryFailure is ApiException || retryFailure is SessionExpired || retryFailure is SSLException) throw retryFailure
+                throw PostboxConnectionInterrupted(retryFailure)
+            }
+        }
     }
-    private suspend fun authenticated(request: Request): Response {
+    private suspend fun authenticated(request: Request, transport: OkHttpClient = http): Response {
         val first = tokens.token()
-        var response = http.newCall(request.newBuilder().header("Authorization", "Bearer $first").header("Accept", "application/json").build()).await()
+        var response = transport.newCall(request.newBuilder().header("Authorization", "Bearer $first").header("Accept", "application/json").build()).await()
         if (response.code == 401) {
             response.close()
             val renewed = tokens.token(rejected = first)
-            response = http.newCall(request.newBuilder().header("Authorization", "Bearer $renewed").header("Accept", "application/json").build()).await()
+            response = transport.newCall(request.newBuilder().header("Authorization", "Bearer $renewed").header("Accept", "application/json").build()).await()
             if (response.code == 401) {
                 response.close(); tokens.invalidate(renewed); throw SessionExpired()
             }
@@ -208,9 +243,9 @@ class PostboxClient(
     private fun readJson(response: Response): String {
         val body = response.body ?: return ""
         val max = 16L * 1024 * 1024
-        if (body.contentLength() > max) throw IOException("The postbox response is too large.")
+        if (body.contentLength() > max) throw ApiException(response.code, "response_too_large", "The postbox response is too large.")
         val source = body.source()
-        if (source.request(max + 1) && source.buffer.size > max) throw IOException("The postbox response is too large.")
+        if (source.request(max + 1) && source.buffer.size > max) throw ApiException(response.code, "response_too_large", "The postbox response is too large.")
         return source.readUtf8()
     }
     private suspend inline fun <reified T> decode(text: String): T = withContext(Dispatchers.Default) {

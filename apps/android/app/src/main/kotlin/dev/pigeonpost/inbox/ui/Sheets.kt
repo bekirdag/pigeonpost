@@ -63,10 +63,10 @@ fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> U
 }
 @Composable
 fun NewConversationDialog(state: InboxState, select: (String) -> Unit, dismiss: () -> Unit) {
-    var address by rememberSaveable { mutableStateOf("") }
+    var address by rememberSaveable { mutableStateOf("/") }
     PageDialog("New conversation", dismiss) {
-        OutlinedTextField(address, { address = it.take(512) }, Modifier.fillMaxWidth(), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
-            isError = address.isNotEmpty() && !validAddress(address), supportingText = { Text("Enter a handle or an inbox address beginning with /.") })
+        OutlinedTextField(address, { address = conversationAddressInput(it).take(512) }, Modifier.fillMaxWidth(), label = { Text("Pigeonpost address") }, placeholder = { Text("/your-team/agent") }, singleLine = true,
+            isError = address.length > 1 && !validAddress(address), supportingText = { Text("Enter a handle or an inbox address, such as /bekir.") })
         Button({ select(address) }, enabled = validAddress(address), modifier = Modifier.fillMaxWidth()) { Text("Open conversation") }
         val own = state.mailboxes.filter { it.address != state.acting?.address }
         if (own.isNotEmpty()) {
@@ -110,7 +110,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     paidHandles: PaidHandleStore? = null,
     accountHandles: AccountHandleStore? = null, refreshMailboxes: () -> Unit = {},
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
-    archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit) {
+    archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit,
+    notificationSettings: () -> Unit = {}) {
     var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
     val page = SettingsPage.valueOf(pageName)
     fun navigate(next: SettingsPage) { pageName = next.name }
@@ -121,6 +122,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
         when (page) {
             SettingsPage.ROOT -> {
                 SettingsRow("Account", session.username ?: "Your profile and devices", Icons.Outlined.AccountCircle) { navigate(SettingsPage.ACCOUNT) }
+                SettingsRow("Scan for login", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
                 SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
@@ -131,8 +133,6 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 Text(session.username ?: "Your account", style = MaterialTheme.typography.titleLarge)
                 Text("Current inbox", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 state.acting?.let { PostAddressRow(it.key) }
-                HorizontalDivider()
-                SettingsRow("Scan sign-in code", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
                 HorizontalDivider()
                 OutlinedButton(signOut, Modifier.fillMaxWidth()) { Text("Sign out") }
                 TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = MaterialTheme.colorScheme.error) }
@@ -175,7 +175,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Archived conversations", "Saved conversations, out of the way", Icons.Outlined.Archive, archive)
                 HorizontalDivider()
                 Text("Notifications", style = MaterialTheme.typography.titleMedium)
-                Text("Conversations update while the app is open. Background notifications are not available yet.", style = MaterialTheme.typography.bodyMedium)
+                Text("Get notified about new messages in your selected inbox, even when Pigeonpost is closed. Allow notifications in Android settings.", style = MaterialTheme.typography.bodyMedium)
+                OutlinedButton(notificationSettings, Modifier.fillMaxWidth()) { Text("Notification settings") }
             }
             SettingsPage.HELP -> {
                 TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Contact support") }

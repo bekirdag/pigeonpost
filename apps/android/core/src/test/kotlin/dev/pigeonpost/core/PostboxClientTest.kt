@@ -22,6 +22,40 @@ class PostboxClientTest {
     private val tokens = object : TokenProvider { override suspend fun token(rejected: String?) = if (rejected == null) "first" else "renewed" }
     @Before fun setup() { server = MockWebServer(); server.start(); client = PostboxClient(tokens, server.url("/"), allowLoopbackForTests = true) }
     @After fun teardown() { server.shutdown() }
+    @Test fun accountHandlesRecoverAfterTheServerClosesTheConnection() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("""{"handles":[{"namespace":"alper","source":"google","active":true}]}"""))
+        assertEquals("alper", withTimeout(5_000) { client.accountHandles() }.single().namespace)
+        repeat(2) {
+            val request = server.takeRequest()
+            assertEquals("GET", request.method)
+            assertEquals("/v1/me/handles?include_inactive=true", request.path)
+        }
+        assertEquals(2, server.requestCount)
+    }
+    @Test fun accountHandlesRecoverFromAnInterruptedResponseBody() = runBlocking {
+        val body = """{"handles":[{"namespace":"alper","source":"google","active":true}]}"""
+        server.enqueue(MockResponse().setBody(body).setSocketPolicy(SocketPolicy.DISCONNECT_DURING_RESPONSE_BODY))
+        server.enqueue(MockResponse().setBody(body))
+        assertEquals("alper", withTimeout(5_000) { client.accountHandles() }.single().namespace)
+        assertEquals(2, server.requestCount)
+    }
+    @Test fun repeatedTransportFailureStopsAfterOneRetry() = runBlocking {
+        repeat(2) { server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)) }
+        try { withTimeout(5_000) { client.accountHandles() }; fail("Expected connection failure") }
+        catch (failure: IOException) { assertFalse(failure.message.orEmpty().contains("http://")) }
+        assertEquals(2, server.requestCount)
+    }
+    @Test fun aLostPurchaseClaimResponseRetriesTheSameReceiptAndName() = runBlocking {
+        server.enqueue(MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST))
+        server.enqueue(MockResponse().setBody("""{"purchase":{"product_id":"pigeonpost.handle.01","namespace":"alper","expires_at":200,"state":"SUBSCRIPTION_STATE_ACTIVE","active":true,"auto_renewing":true,"acknowledged":true},"mailbox":"/alper/main"}"""))
+        val claim = withTimeout(5_000) { client.redeemPlayPurchase("test-purchase-token", "alper") }
+        assertEquals("/alper/main", claim.mailbox)
+        val requests = List(2) { server.takeRequest() }
+        requests.forEach { assertEquals("POST", it.method); assertEquals("/v1/claims/google", it.path) }
+        assertEquals(requests[0].body.readUtf8(), requests[1].body.readUtf8())
+        assertEquals(2, server.requestCount)
+    }
     @Test fun accountHandlesUseMemberScopeAndKeepExpiredCrossStoreNames() = runBlocking {
         server.enqueue(MockResponse().setBody("""{"handles":[{"namespace":"apple","source":"apple","expires_at":300,"active":true},{"namespace":"google","source":"google","expires_at":200,"active":false}]}"""))
         val rows = client.accountHandles()
