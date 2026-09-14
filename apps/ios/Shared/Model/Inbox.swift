@@ -68,6 +68,9 @@ final class Inbox {
 
     private(set) var loading = false
     private(set) var hasLoaded = false
+    @ObservationIgnored private var mailboxGeneration = UUID()
+    @ObservationIgnored private var activeLoad: UUID?
+    @ObservationIgnored private var mailboxIdentity: String?
     /// Set when the last attempt to reach the postbox failed. What is on screen stays on screen;
     /// this is what says why nothing new has arrived.
     private(set) var offline = false
@@ -80,58 +83,95 @@ final class Inbox {
 
     init(account: Account) {
         self.account = account
+        mailboxIdentity = account.me?.address
     }
 
     private var client: PostboxClient { account.client }
     private var me: Mailbox? { account.me }
 
+    /// The generation also distinguishes A → B → A from an earlier visit to A.
+    private struct MailboxRequest: Equatable {
+        let identity: String
+        let generation: UUID
+    }
+
+    private var mailboxRequest: MailboxRequest? {
+        me.map { MailboxRequest(identity: $0.address, generation: mailboxGeneration) }
+    }
+
+    private func isCurrent(_ request: MailboxRequest) -> Bool {
+        !Task.isCancelled && request == mailboxRequest
+    }
+
+    private func isCancellation(_ error: Error) -> Bool {
+        error is CancellationError || (error as? URLError)?.code == .cancelled
+    }
+
     // ---- loading ---------------------------------------------------------------------------
 
     func loadAll() async {
-        guard let me else { return }
-        loading = !hasLoaded
-        async let inbox: Void = loadInbox()
-        async let contacts: Void = loadContacts()
-        async let archive: Void = loadArchive()
-        async let threads: Void = loadThreads()
-        async let usage: Void = refreshQuota()
+        guard !Task.isCancelled else { return }
+        // Account changes can also come from Settings or another window, not only the picker.
+        // A second window on the same inbox must not invalidate the first window's live task.
+        if mailboxIdentity != me?.address { reset() }
+        guard let request = mailboxRequest, isCurrent(request) else { return }
+        let load = UUID()
+        activeLoad = load
+        loading = true
+        defer {
+            // A cancelled/older load must never dismiss a newer load's progress indicator.
+            if activeLoad == load, request == mailboxRequest {
+                loading = false
+                activeLoad = nil
+            }
+        }
+        async let inbox: Void = loadInbox(for: request)
+        async let contacts: Void = loadContacts(for: request)
+        async let archive: Void = loadArchive(for: request)
+        async let threads: Void = loadThreads(for: request)
+        async let usage: Void = loadQuota(for: request)
         _ = await (inbox, contacts, archive, threads, usage)
-        _ = me
-        loading = false
-        hasLoaded = true
+        guard isCurrent(request), activeLoad == load else { return }
         rebuild()
     }
 
-    private func loadInbox() async {
-        guard let me else { return }
+    private func loadInbox(for captured: MailboxRequest? = nil) async {
+        guard let request = captured ?? mailboxRequest, isCurrent(request) else { return }
         do {
-            adopt(try await client.inbox(identity: me.address))
+            let body = try await client.inbox(identity: request.identity)
+            guard isCurrent(request) else { return }
+            adopt(body)
+            hasLoaded = true
             offline = false
-        } catch let error as APIError {
-            offline = true
-            if !hasLoaded { toast = error.errorDescription }
         } catch {
+            guard isCurrent(request), !isCancellation(error) else { return }
             offline = true
+            if !hasLoaded { toast = (error as? APIError)?.errorDescription ?? "Could not load this inbox. Try again." }
         }
     }
 
-    private func loadContacts() async {
-        guard let me else { return }
+    private func loadContacts(for captured: MailboxRequest? = nil) async {
+        guard let request = captured ?? mailboxRequest, isCurrent(request) else { return }
         do {
-            let body = try await client.contacts(identity: me.address)
+            let body = try await client.contacts(identity: request.identity)
+            guard isCurrent(request) else { return }
             contacts = body.contacts ?? []
             vocabulary = body.vocabulary
             policy = body.policy ?? policy
         } catch {
+            guard isCurrent(request), !isCancellation(error) else { return }
             contacts = []
         }
     }
 
-    private func loadThreads() async {
-        guard let me else { return }
+    private func loadThreads(for captured: MailboxRequest? = nil) async {
+        guard let request = captured ?? mailboxRequest, isCurrent(request) else { return }
         do {
-            serverThreads = try await client.threads(identity: me.address)
+            let threads = try await client.threads(identity: request.identity)
+            guard isCurrent(request) else { return }
+            serverThreads = threads
         } catch {
+            guard isCurrent(request), !isCancellation(error) else { return }
             // A postbox that does not know about threads yet answers 404/501 here. Everything still
             // works: threads are then whatever the messages themselves say, and a peer with one
             // conversation — all such a postbox can produce — shows no thread list at all.
@@ -139,11 +179,14 @@ final class Inbox {
         }
     }
 
-    private func loadArchive() async {
-        guard let me else { return }
+    private func loadArchive(for captured: MailboxRequest? = nil) async {
+        guard let request = captured ?? mailboxRequest, isCurrent(request) else { return }
         do {
-            archived = try await client.archive(identity: me.address)
+            let archive = try await client.archive(identity: request.identity)
+            guard isCurrent(request) else { return }
+            archived = archive
         } catch {
+            guard isCurrent(request), !isCancellation(error) else { return }
             // An archive we could not read must not hide anything. Failing open shows a
             // conversation that should have been filed; failing closed hides one that should not
             // be. Only one of those loses mail.
@@ -237,6 +280,16 @@ final class Inbox {
     /// Reset to nothing. Called when the acting mailbox changes: the previous mailbox's mail must
     /// not be on screen for even one frame while the new one loads.
     func reset() {
+        mailboxGeneration = UUID()
+        mailboxIdentity = me?.address
+        activeLoad = nil
+        loading = false
+        offline = false
+        toast = nil
+        reading = nil
+        quota = nil
+        policy = nil
+        vocabulary = nil
         // Another mailbox's acknowledgements say nothing about this one's mail.
         acked = []
         // And nothing it was about to say about them.
@@ -312,13 +365,14 @@ final class Inbox {
     /// the caller's task lives — which is while the conversation list is on screen and the app is
     /// in front of the person.
     func live() async {
+        guard let request = mailboxRequest, isCurrent(request) else { return }
         var backoff: UInt64 = 1
-        while !Task.isCancelled {
-            guard let me else { return }
+        while isCurrent(request) {
             do {
-                let body = try await client.inbox(identity: me.address, wait: Config.waitSeconds)
-                if Task.isCancelled { return }
+                let body = try await client.inbox(identity: request.identity, wait: Config.waitSeconds)
+                guard isCurrent(request) else { return }
                 adopt(body)
+                hasLoaded = true
                 offline = false
                 backoff = 1
             } catch is CancellationError {
@@ -326,11 +380,12 @@ final class Inbox {
             } catch let error as URLError where error.code == .cancelled {
                 return
             } catch let error as APIError where error.status == 401 {
+                guard isCurrent(request) else { return }
                 // The client already spent a refresh token on this and the realm still says no.
                 account.sessionExpired()
                 return
             } catch {
-                if Task.isCancelled { return }
+                guard isCurrent(request) else { return }
                 // Offline, proxy hiccup, a postbox restarting. Temporary — back off rather than
                 // spin, and leave what is on screen where it is.
                 offline = true
@@ -452,8 +507,15 @@ final class Inbox {
         #if DEBUG
         if stageQuota() { return }
         #endif
-        guard let me, !Fixtures.enabled else { return }
-        quota = try? await client.quota(identity: me.address)
+        guard let request = mailboxRequest, !Fixtures.enabled else { return }
+        await loadQuota(for: request)
+    }
+
+    private func loadQuota(for request: MailboxRequest) async {
+        guard isCurrent(request) else { return }
+        let loaded = try? await client.quota(identity: request.identity)
+        guard isCurrent(request) else { return }
+        quota = loaded
     }
 
     #if DEBUG
