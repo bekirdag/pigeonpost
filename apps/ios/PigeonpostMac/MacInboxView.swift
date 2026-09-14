@@ -30,14 +30,22 @@ struct MacInboxView: View {
     /// Whether the mailbox list is open under the bar.
     @State private var switchingMailbox = false
     @State private var sheet: Sheet?
+    @State private var pendingMailbox: Mailbox?
 
     /// A peer, wrapped so `.sheet(item:)` will take it. A bare `String?` is the natural shape and
     /// the one SwiftUI will not accept.
     private struct ThreadTarget: Identifiable { let id: String }
 
-    private enum Sheet: String, Identifiable {
-        case settings, peer
-        var id: String { rawValue }
+    private enum Sheet: Identifiable {
+        case settings
+        case peer(Conversation)
+
+        var id: String {
+            switch self {
+            case .settings: return "settings"
+            case .peer(let conversation): return "peer:\(conversation.peer)"
+            }
+        }
     }
 
     // The three columns are properties rather than one expression. Written inline, the type checker
@@ -169,20 +177,21 @@ struct MacInboxView: View {
         }
         // One sheet at a time. Two `.sheet(isPresented:)` on one view are not reliably both
         // honoured — the phone lost Settings entirely to that shape once.
-        .sheet(item: $sheet) { which in
+        .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
             case .settings:
                 // The phone's, now shared. A Mac sheet takes its size from its content, and a Form
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
-            case .peer:
-                if let peer, let conversation = inbox.conversation(with: peer) {
-                    PeerInfoSheet(conversation: conversation) { mailbox in
-                        visit(mailbox)
-                    }
-                    .frame(width: 520, height: 620)
+            case .peer(let conversation):
+                // Keep the presented content alive independently of inbox selection. Removing
+                // its conversation while the sheet is open must not leave an empty modal panel.
+                PeerInfoSheet(conversation: conversation) { mailbox in
+                    pendingMailbox = mailbox
+                    sheet = nil
                 }
+                .frame(width: 520, height: 620)
             }
         }
     }
@@ -406,7 +415,7 @@ struct MacInboxView: View {
                 // to ask "who is this".
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
-                        Button { sheet = .peer } label: {
+                        Button { sheet = .peer(conversation) } label: {
                             HStack(spacing: 6) {
                                 Avatar(peer: conversation.peer, size: 18)
                                 Text(conversation.name)
@@ -417,6 +426,7 @@ struct MacInboxView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("About \(conversation.name)")
                         .help("About this sender")
+                        .keyboardShortcut("i", modifiers: .command)
                     }
                 }
         } else if inbox.conversations.isEmpty {
@@ -508,6 +518,14 @@ struct MacInboxView: View {
         }
         .frame(maxHeight: 260)
         .padding(.bottom, 4)
+    }
+
+    private func finishMailboxVisit() {
+        guard let mailbox = pendingMailbox else { return }
+        pendingMailbox = nil
+        // Wait for AppKit to remove the modal sheet before replacing its underlying inbox.
+        guard account.mailboxes.contains(where: { $0.address == mailbox.address }) else { return }
+        visit(mailbox)
     }
 
     private func visit(_ mailbox: Mailbox) {
