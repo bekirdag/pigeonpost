@@ -182,6 +182,8 @@ jobs:
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           # The private deletion-queue notifier imports Python's standard transport module.
+          # Google service-account claims and login-name parser fixtures use external
+          # address terminology as well; neither names Pigeonpost message delivery.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
@@ -193,6 +195,8 @@ jobs:
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \
+              ':(exclude)crates/pigeonpost-postbox/src/fcm.rs' \
+              ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)CLA.md'; then
