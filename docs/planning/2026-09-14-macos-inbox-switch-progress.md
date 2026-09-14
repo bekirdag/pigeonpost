@@ -20,3 +20,9 @@
 - General CI `34832614974` has passed macOS/Linux tests, lint, audit, delivery/privacy, custody, web and npm checks. The unchanged Windows Rust test job was still running at merge; no required branch protection was bypassed. Final status is retained in the private audit.
 - Linux request rechecked after Mac notarization: the thread still contains only the original outgoing request, with no reply. No repeat message or permission changes were sent.
 - Private evidence: `/private/tmp/pigeonpost-mac-inbox-audit-20260914`, including baseline/final model logs, native integration log and window screenshots, signed/public package verification, notarization report and deployment/synchronization evidence.
+
+## Final verification
+
+- All 12 PR checks finished successfully, including Windows. The deployed `/download` and `/download.html` both return build 38 with identical verified HTML hashes; CSP and platform selection are preserved. Four production Git checkouts and local main/release worktree were clean and synchronized after deployment.
+- Found two installed app copies: `/Applications` had build 37, while the running personal Applications copy was an older debug build 1. Sampling the latter showed an idle AppKit event loop rather than a CPU-bound deadlock; its visible compose field was empty. Quit it normally, verified persistent ZIP backups of both original applications, installed the notarized build 38 into both locations, revalidated Gatekeeper, and reopened the personal copy. Account data and Keychain entries were not modified by the installer.
+- Local backups: `~/Library/Application Support/PigeonpostDesktop/UpdateBackups/20260914-build38/`. Installation and running-process evidence are in `local-app-updates.json` and `running-updated-app.json` in the private audit folder.
