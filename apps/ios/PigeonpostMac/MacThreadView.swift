@@ -57,23 +57,35 @@ struct MacThreadView: View {
     }
 
     var body: some View {
+        // Keep one snapshot for this render. Filtering again from inside every lazy row makes
+        // changing a subject quadratic and can mix two mailbox snapshots during a transition.
+        let messages = shown
+        let foundMessage = currentMatch
+        let scrollContext = ScrollContext(mailbox: account.me?.address, peer: peer, subject: subthread)
+        let scrollRequest = ScrollRequest(context: scrollContext, last: messages.last?.id, count: messages.count)
+
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
                     LazyVStack(spacing: 2) {
-                        ForEach(Array(shown.enumerated()), id: \.element.id) { index, message in
-                            if index == 0 || !Time.sameDay(shown[index - 1].at, message.at) {
-                                Text(Time.dayLabel(message.at))
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(Theme.muted)
-                                    .padding(.vertical, 6)
+                        ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
+                            // A lazy row has one stable child, including its optional day label.
+                            // Flattening the label and bubble makes row counts change during a
+                            // scroll and forces the stack to measure off-screen message bodies.
+                            VStack(spacing: 2) {
+                                if index == 0 || !Time.sameDay(messages[index - 1].at, message.at) {
+                                    Text(Time.dayLabel(message.at))
+                                        .font(.system(size: 11, weight: .medium))
+                                        .foregroundStyle(Theme.muted)
+                                        .padding(.vertical, 6)
+                                }
+                                MessageBubble(
+                                    message: message,
+                                    highlight: find,
+                                    isFound: message.id == foundMessage
+                                )
                             }
-                            MessageBubble(
-                                message: message,
-                                highlight: find,
-                                isFound: message.id == currentMatch
-                            )
-                                .id(message.id)
+                            .id(message.id)
                         }
                         Color.clear.frame(height: 1).id(Self.floor)
                     }
@@ -84,24 +96,14 @@ struct MacThreadView: View {
                 // too. The pattern is the paper a conversation is written on; the composer is a
                 // control sitting on top of the paper, not part of it.
                 .background { DoodleBackground() }
-                // Stated as a property of the scroll view, not as an event. `onAppear` fires
-                // before the scroll view has measured its content, which is why a long
-                // conversation kept opening somewhere in the middle.
-                // Explicitly, after the first layout. `onAppear` runs before the scroll view has
-                // measured its content, which is what made this unreliable rather than wrong, and
-                // the declarative anchor that replaces it on the phone is unusable here — see
-                // `AnchoredToBottom`.
-                .task(id: peer) {
+                // Coalesce initial, subject and message scrolls into one cancellable task. The
+                // old onChange callbacks could scroll a stack while its rows were being removed
+                // for another mailbox. A cancelled task must not touch its old scroll proxy.
+                .task(id: scrollRequest) {
                     await Task.yield()
-                    scroller.scrollTo(Self.floor, anchor: .bottom)
-                }
-                // A message arriving, or being sent, belongs on screen.
-                .onChange(of: shown.count) { _, _ in
-                    scroller.scrollTo(Self.floor, anchor: .bottom)
-                }
-                // Changing subject is a different conversation as far as the reader is concerned,
-                // and it should open where that one left off.
-                .onChange(of: subthread) { _, _ in
+                    guard !Task.isCancelled, !messages.isEmpty,
+                          account.me?.address == scrollContext.mailbox,
+                          inbox.reading == peer else { return }
                     scroller.scrollTo(Self.floor, anchor: .bottom)
                 }
                 // Typing restarts the walk. Keeping the old index would land you in the middle of
@@ -123,6 +125,9 @@ struct MacThreadView: View {
                     }
                 }
             }
+            // A different subject needs fresh lazy layout measurements. The composer and its
+            // draft stay outside this identity boundary.
+            .id(scrollContext)
             Divider()
             composer
         }
@@ -265,6 +270,18 @@ struct MacThreadView: View {
     }
 
     private static let floor = "thread-floor"
+
+    private struct ScrollContext: Hashable {
+        let mailbox: String?
+        let peer: String
+        let subject: String?
+    }
+
+    private struct ScrollRequest: Hashable {
+        let context: ScrollContext
+        let last: String?
+        let count: Int
+    }
 
     private func pick() {
         let panel = NSOpenPanel()

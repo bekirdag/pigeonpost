@@ -1,0 +1,55 @@
+name: Mac desktop tests
+
+on:
+  push:
+    paths:
+      - 'apps/ios/PigeonpostMac/**'
+      - 'apps/ios/Shared/**'
+      - 'apps/ios/Tests/**'
+      - '.github/workflows/mac-desktop-tests.yml'
+  pull_request:
+    paths:
+      - 'apps/ios/PigeonpostMac/**'
+      - 'apps/ios/Shared/**'
+      - 'apps/ios/Tests/**'
+      - '.github/workflows/mac-desktop-tests.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mac-desktop-tests-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  native:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, macos-26]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Select Swift 6 on Sonoma
+        if: matrix.os == 'macos-14'
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Shared model regressions
+        run: sh apps/ios/Tests/run.sh
+      - name: Native mailbox and conversation regressions
+        env:
+          PIGEONPOST_UI_TEST_OUTPUT: ${{ runner.temp }}/mac-inbox-ui
+        run: |
+          mkdir -p "$PIGEONPOST_UI_TEST_OUTPUT"
+          sh apps/ios/Tests/mac-inbox.sh
+      - name: Keep native window snapshots
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: mac-inbox-ui-${{ matrix.os }}
+          path: ${{ runner.temp }}/mac-inbox-ui
+          if-no-files-found: warn
+          retention-days: 14

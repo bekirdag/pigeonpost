@@ -25,7 +25,7 @@ enum PeerFace {
     static func validConversationAddress(_ value: String) -> Bool {
         guard (2...512).contains(value.utf8.count), value.hasPrefix("/"),
               value.utf8.allSatisfy({ $0 < 128 }) else { return false }
-        // A typing guard, including email-style handles. Complete grammar/routing stays on the server.
+        // A typing guard, including handles containing @. Complete grammar/routing stays on the server.
         return value.dropFirst().split(separator: "/", omittingEmptySubsequences: false).allSatisfy { part in
             !part.isEmpty && part != "." && part != ".." && part != "*"
                 && (!part.contains("*") || part.contains("@"))

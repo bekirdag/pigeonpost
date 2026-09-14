@@ -209,12 +209,13 @@ struct HandleStoreTests {
         do {
             let _: Int = try await withHandleDeadline(seconds: 0.03) {
                 await withCheckedContinuation { continuation in
-                    DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { continuation.resume(returning: 1) }
+                    DispatchQueue.global().asyncAfter(deadline: .now() + 2) { continuation.resume(returning: 1) }
                 }
             }
             fatalError("deadline should fail")
         } catch HandlePurchaseError.timedOut { }
-        expect(Date().timeIntervalSince(started) < 0.15, "deadline returns even if work ignores cancellation")
+        // Allow runner scheduling jitter while still returning well before the two-second work.
+        expect(Date().timeIntervalSince(started) < 1, "deadline returns even if work ignores cancellation")
         print("Handle purchase controller: \(checks) checks passed")
     }
 }
