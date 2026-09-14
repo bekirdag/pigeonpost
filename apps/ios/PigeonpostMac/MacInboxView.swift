@@ -417,6 +417,7 @@ struct MacInboxView: View {
                         .buttonStyle(.plain)
                         .accessibilityLabel("About \(conversation.name)")
                         .help("About this sender")
+                        .keyboardShortcut("i", modifiers: .command)
                     }
                 }
         } else if inbox.conversations.isEmpty {

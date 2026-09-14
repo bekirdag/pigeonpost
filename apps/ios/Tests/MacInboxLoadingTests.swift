@@ -24,7 +24,16 @@ struct SettingsSheet: View { var body: some View { Text("Settings") } }
 struct PeerInfoSheet: View {
     let conversation: Conversation
     let visit: (Mailbox) -> Void
-    var body: some View { Text(conversation.name) }
+    var body: some View {
+        VStack {
+            Text(conversation.name)
+            if let identity = conversation.identity {
+                // The production sheet invokes this same callback without dismissing itself.
+                Button("Open this mailbox") { visit(identity) }
+                    .keyboardShortcut(.defaultAction)
+            }
+        }
+    }
 }
 struct MacNewConversationSheet: View {
     let started: (String) -> Void
@@ -59,6 +68,7 @@ extension Notification.Name {
         app.setActivationPolicy(.regular)
         URLProtocol.registerClass(ControlledURLProtocol.self)
         let (account, inbox) = InboxLoadingTests.make()
+        account.mailboxes.append(Mailbox(address: "/k/peer", handle: "/test/peer", label: "Peer"))
         let push = PushService()
         let view = MacInboxView().environment(account).environment(inbox).environment(push)
         let host = NSHostingView(rootView: view)
@@ -108,6 +118,7 @@ extension Notification.Name {
             await settle()
             snapshot(host, name: "mac-inbox-empty")
             await repeatedPickerSwitches(window: window, host: host, account: account, inbox: inbox)
+            await visitsFromDetails(window: window, host: host, account: account, inbox: inbox)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
             window.orderOut(nil)
@@ -189,6 +200,42 @@ extension Notification.Name {
              "thread_id": index.isMultiple(of: 2) ? "topic-one" : "topic-two"]
         }
         return String(data: try! JSONSerialization.data(withJSONObject: ["messages": rows]), encoding: .utf8)!
+    }
+
+    static func visitsFromDetails(window: NSWindow, host: NSView, account: Account, inbox: Inbox) async {
+        let peerMailbox = account.mailboxes.first { $0.key == "/test/peer" }!
+        for index in 0..<2 {
+            let target = index == 0 ? peerMailbox : InboxLoadingTests.a
+            let nextPeer = index == 0 ? InboxLoadingTests.a : peerMailbox
+            press("i", keyCode: 34, modifiers: .command, in: window)
+            await InboxLoadingTests.wait("peer details is a native sheet") { window.attachedSheet != nil }
+            await settle()
+            press("\r", keyCode: 36, modifiers: [], in: window.attachedSheet!)
+            await InboxLoadingTests.wait("details sheet releases the parent window") { window.attachedSheet == nil }
+            await InboxLoadingTests.wait("details visit changes mailbox") { account.me?.address == target.address }
+            await InboxLoadingTests.pending(target.address, count: 5)
+            let marker = "details-\(index)"
+            let body = String(data: try! JSONSerialization.data(withJSONObject: ["messages": [[
+                "message_id": marker, "from": nextPeer.address, "peer": nextPeer.key,
+                "body": "Mailbox visit regression", "direction": "in", "read": true, "received_at": 10
+            ]]]), encoding: .utf8)!
+            InboxLoadingTests.finish(target.address, marker: marker, inboxBody: body)
+            await InboxLoadingTests.wait("visited mailbox loaded") { inbox.hasLoaded && !inbox.loading }
+            await settle()
+            await click(x: 90, y: 54, window: window, host: host)
+            await InboxLoadingTests.wait("parent accepts conversation clicks after visit") { inbox.reading == nextPeer.key }
+            InboxLoadingTests.check(window.attachedSheet == nil, "visit \(index) leaves no modal sheet blocking clicks")
+        }
+        snapshot(host, name: "mac-inbox-details-visits")
+    }
+
+    static func press(_ characters: String, keyCode: UInt16, modifiers: NSEvent.ModifierFlags, in window: NSWindow) {
+        let event = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: modifiers,
+                                    timestamp: ProcessInfo.processInfo.systemUptime,
+                                    windowNumber: window.windowNumber, context: nil,
+                                    characters: characters, charactersIgnoringModifiers: characters,
+                                    isARepeat: false, keyCode: keyCode)!
+        InboxLoadingTests.check(window.performKeyEquivalent(with: event), "native keyboard action is handled")
     }
 
     static func click(x: CGFloat, y: CGFloat, window: NSWindow, host: NSView) async {
