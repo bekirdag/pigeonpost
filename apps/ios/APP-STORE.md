@@ -1,23 +1,23 @@
 # Pigeonpost iOS public release
 
-Verified 13 September 2026 against the submitted build, App Store Connect and production.
+Verified 14 September 2026 against the submitted build, App Store Connect and production.
 
 ## Submission and purchases
 
 - App: **Pigeonpost Inbox**, App Store Connect ID `6803521541`.
 - Bundle: `dev.pigeonpost.inbox`; team: `AH277897AV`. Preserve both identifiers.
-- Public version **1.0, build 33**, submission `555733e7-a3bc-4242-bd52-aee58b57a7ec`: **Waiting for Review**, with release after approval. This is the public App Store submission.
+- Public version **1.0, build 40**, submission `4cb9aa78-b600-42be-bd7a-e83322a131f2`: **Waiting for Review**, with release after approval. This is the public App Store submission.
 - All ten annual handle subscriptions and their groups are included in that submission. The first product is `dev.pigeonpost.inbox.handle.yearly`; the others are `dev.pigeonpost.inbox.handle2.yearly` through `dev.pigeonpost.inbox.handle10.yearly`. Each purchases a separate name, at USD 8/year in the US, USD 80/year for ten. Local storefront prices apply.
-- The purchase screen is **Settings → Your handles**. It displays the local price, annual term, automatic renewal and cancellation information, plus Restore purchases, Manage subscriptions, privacy and terms. An owned, unassigned purchase uses **Finish registration** without another charge.
+- The purchase screen is **Settings → Handles → Get a handle**. It displays the local price, annual term, automatic renewal and cancellation information, plus Restore purchases, Manage subscriptions, privacy and terms. An owned, unassigned purchase uses **Finish registration** without another charge.
 - The basic cryptographic mailbox remains available without buying a readable handle.
 
-The SDK 26 signed build completed in [GitHub Actions run 34756073310](https://github.com/bekirdag/pigeonpost/actions/runs/34756073310). Native model and purchase-controller checks passed. The later support-text and review-note corrections do not change this binary.
+The SDK 26 signed build completed in [GitHub Actions run 34841034053](https://github.com/bekirdag/pigeonpost/actions/runs/34841034053). Native model and purchase-controller checks passed. The optional scanner is directly in Settings. Default inbox labels distinguish namespaces, and new conversations supply the leading slash.
 
 ## Reviewer access
 
 Maintain working credentials in App Store Connect's sign-in fields; never copy credentials into this document. Normal sign-in requires neither an OTP nor a QR code. The review account has sample conversations and separately owns the complimentary, non-expiring `/ppappreview/main` mailbox, available from the mailbox picker.
 
-For the optional scanner, open [the review sign-in page](https://postbox.pigeonpost.dev/review-sign-in) on another screen and generate a fresh QR. In the app choose **Settings → Scan a sign-in code**, scan, sign in and approve. Tap Done on the success page. Codes last ten minutes; generating a fresh code avoids expired attachments. The demonstration discards its device credential and never retrieves an account token. A live generated QR was decoded and successfully approved using the reviewer account.
+For the optional scanner, open [the review sign-in page](https://postbox.pigeonpost.dev/review-sign-in) on another screen and generate a fresh QR. In the app choose **Settings → Scan for login**, scan, sign in and approve. Tap Done on the success page. Codes last ten minutes; generating a fresh code avoids expired attachments. The demonstration discards its device credential and never retrieves an account token. A live generated QR was decoded and successfully approved using the reviewer account.
 
 Sign-in uses `ASWebAuthenticationSession` with PKCE. Sign in with Apple is offered alongside the other social providers.
 
@@ -41,7 +41,7 @@ The audit used [Apple's current App Review Guidelines](https://developer.apple.c
 - **Reporting and blocking:** press and hold an incoming message for Report spam (`Shared/Views/MessageBubble.swift`). Sender details offer admission Block (`ContactSheet` in `Shared/Views/SettingsSheet.swift`). Abuse can also be reported through support.
 - **Access and metadata:** the reviewer has working access, sample content and the fresh QR flow. Purchase instructions name the actual screen. The public description explains which features require subscriptions.
 - **Privacy:** `PrivacyInfo.xcprivacy` declares no tracking and the UserDefaults required reason `CA92.1`. The App Store privacy declaration covers thirteen collected data types, linked to identity for the declared service purposes, with no tracking. Keep declarations aligned with the implementation and service.
-- **Deletion:** Settings → Delete account opens the authenticated [deletion page](https://pigeonpost.dev/account#delete-account). It shows the account, requires DELETE confirmation, records a durable request and supplies a reference and 30-day deadline.
+- **Deletion:** Settings → Account → Delete account opens the authenticated [deletion page](https://pigeonpost.dev/account#delete-account). It shows the account, requires DELETE confirmation, records a durable request and supplies a reference and 30-day deadline.
 - **Fulfillment:** deletion is manual, following `deploy/account-deletions.md`, including identity-provider and applicable Apple-token revocation, owned-data removal and completion notification. The operator timer monitors pending requests. It does not perform automatic erasure. Cancel App Store subscriptions separately. This follows [Apple's account-deletion guidance](https://developer.apple.com/support/offering-account-deletion-in-your-app/).
 - **Support and policies:** the listing's [support page](https://pigeonpost.dev/app-support.html), [privacy policy](https://pigeonpost.dev/app-privacy.html) and [terms](https://pigeonpost.dev/app-terms.html) are live. Settings and the purchase screen link privacy and terms; the terms include Apple's standard EULA.
 

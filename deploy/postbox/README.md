@@ -152,6 +152,12 @@ With none of it set the postbox logs nothing, sends nothing, and behaves exactly
 push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
 being woken the moment a key is added — no app update needed.
 
+## Android push notifications (FCM)
+
+Set `PIGEONPOST_FCM_SERVICE_ACCOUNT_FILE` to a service-account JSON file mounted read-only in the postbox container. Keep it outside Git, owned/readable by UID 65532, and enable FCM HTTP v1 for its Firebase project. Use the Firebase Cloud Messaging API Admin role for a dedicated sender service account. The Android client key is separate and must be injected through `PIGEONPOST_FIREBASE_API_KEY` at build time; it is not a server credential.
+
+The postbox accepts opaque FCM registration tokens, sends high-priority data notifications with generic text and routing identifiers, and retires only tokens explicitly reported UNREGISTERED by Google. Account tokens revoke only their own devices; mailbox capabilities revoke only devices of that mailbox. On startup, verify `FCM configured`, then validate actual receipt on a test device. HTTP health alone does not prove provider delivery.
+
 ## Attachments
 
 Off unless configured. With no volume set, both attachment endpoints answer 404 — a postbox with

@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    val firebaseApiKey = providers.environmentVariable("PIGEONPOST_FIREBASE_API_KEY").orNull
+    val firebaseApiKey = providers.environmentVariable("PIGEONPOST_FIREBASE_API_KEY").orNull?.takeIf { it.isNotBlank() }
     val uploadNames = listOf("ANDROID_UPLOAD_KEYSTORE", "ANDROID_UPLOAD_STORE_PASSWORD", "ANDROID_UPLOAD_KEY_ALIAS", "ANDROID_UPLOAD_KEY_PASSWORD")
     val upload = uploadNames.associateWith { providers.environmentVariable(it).orNull }
     if (upload.values.any { it != null }) {
