@@ -48,7 +48,7 @@ final class HandlePurchaseTests: XCTestCase {
         expectPastedAddress("/bekir/main")
         app.buttons["Settings"].tap()
         app.buttons["settings-account"].tap()
-        app.buttons["copy-address:/bekir/main"].tap()
+        app.buttons.matching(identifier: "copy-address:/bekir/main").allElementsBoundByIndex.last!.tap()
         screenshot("account-copy-address")
         app.buttons["Done"].tap()
         expectPastedAddress("/bekir/main")

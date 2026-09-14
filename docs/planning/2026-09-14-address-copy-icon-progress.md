@@ -17,3 +17,5 @@
 - Passed: 66 web tests, shared Swift auth/model tests and 66 handle controller checks, Android core tests/lint/debug builds, all 18 native Android workflow tests, 25 Linux core tests, iOS simulator build, universal Developer ID macOS archive.
 - Native tests caught test-harness issues: dialog copy buttons need explicit dialog scoping; iOS pasteboard reads from the test runner cause a system paste prompt, so validation now uses user-initiated Paste in the app. Android rerun passed; iOS rerun in progress.
 - Linux GTK/Flatpak tests will run on both CI architectures. Releases/deployment are still pending. Baseline: 945709cdcf9d002aa5a80a3911426d47dc8d8f5d.
+
+- iOS native UI validation completed: 11 tests passed in the full run; the Account copy test needed modal scoping and passed on its focused rerun. Both named and unnamed addresses were pasted into the native compose address field and compared exactly. Shared runtime unchanged by test-harness corrections.
