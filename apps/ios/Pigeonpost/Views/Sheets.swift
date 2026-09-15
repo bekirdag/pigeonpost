@@ -97,11 +97,14 @@ struct NewConversationSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("/bekir/agent1 or /k/…", text: Binding(get: { peer }, set: {
-                        // Pasting a full address after the supplied slash still leaves one slash.
-                        let value = PeerFace.conversationAddressInput($0)
-                        peer = "/" + value.drop(while: { $0 == "/" })
-                    }))
+                    TextField("/bekir/agent1 or /k/…", text: $peer)
+                        .onChange(of: peer) { _, input in
+                            // Normalize the committed field value so UIKit displays the correction
+                            // too; sanitizing only a Binding setter can leave the raw paste visible.
+                            let value = PeerFace.conversationAddressInput(input)
+                            let normalized = "/" + value.drop(while: { $0 == "/" })
+                            if peer != normalized { peer = normalized }
+                        }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(size: 15, design: .monospaced))
