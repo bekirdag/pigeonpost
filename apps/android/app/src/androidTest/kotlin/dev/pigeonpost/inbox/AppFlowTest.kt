@@ -36,12 +36,16 @@ private fun assertClipboard(ui: androidx.compose.ui.test.junit4.ComposeTestRule,
 class AppFlowTest {
     @get:Rule val ui = createEmptyComposeRule()
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
-    private fun launch(mode: String = "inbox") = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode)).also { scenario ->
-        // A rendered Compose tree can precede Android granting this window input/clipboard access.
-        ui.waitUntil(10_000) {
-            var focused = false
-            scenario.onActivity { focused = it.hasWindowFocus() }
-            focused
+    private fun launch(mode: String = "inbox"): ActivityScenario<MainActivity> {
+        // Tests may switch mailboxes; each new fixture session starts independently.
+        context.getSharedPreferences("fixture-settings", Context.MODE_PRIVATE).edit().clear().commit()
+        return ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode)).also { scenario ->
+            // A rendered Compose tree can precede Android granting this window input/clipboard access.
+            ui.waitUntil(10_000) {
+                var focused = false
+                scenario.onActivity { focused = it.hasWindowFocus() }
+                focused
+            }
         }
     }
     private fun shown(text: String) {
@@ -96,6 +100,31 @@ class AppFlowTest {
             shown("A direct line to your agents.")
         }
     }
+    @Test fun longMarkdownHistoryOpensAtTheFooterAndSearchesOlderMessages() {
+        launch("long-tall").use {
+            shown("demo/builder")
+            ui.onNodeWithText("demo/builder").performClick()
+            shown("Newest report footer")
+            ui.onNodeWithText("Newest report footer").assertIsDisplayed()
+            ui.onNodeWithTag("conversation-history").assert(SemanticsMatcher.expectValue(dev.pigeonpost.inbox.ui.LoadedMessageCount, 10))
+            ui.onNodeWithContentDescription("Find in conversation").performClick()
+            ui.onNodeWithText("Find in this subject").performTextInput("History message 123")
+            ui.waitUntil(10_000) { ui.onAllNodesWithTag("message:history_123").fetchSemanticsNodes().isNotEmpty() }
+            ui.onNode(hasText("History message 123") and hasAnyAncestor(hasTestTag("message:history_123"))).assertIsDisplayed()
+            ui.onNodeWithContentDescription("Find in conversation").performClick()
+            ui.onNodeWithText("Message").performTextInput("A reply after searching history")
+            ui.onNodeWithContentDescription("Send message").performClick()
+            shown("A reply after searching history")
+            ui.waitUntil(10_000) { ui.onAllNodesWithText("A reply after searching history").fetchSemanticsNodes().size == 1 }
+            ui.onNodeWithText("A reply after searching history").assertIsDisplayed()
+            ui.onNodeWithTag("conversation-history").assert(SemanticsMatcher.expectValue(dev.pigeonpost.inbox.ui.LoadedMessageCount, 10))
+            ui.onNodeWithText("Design").performScrollTo().performClick()
+            shown("The inbox layout follows iOS, with native Android navigation.")
+            ui.onNodeWithText("The inbox layout follows iOS, with native Android navigation.").assertIsDisplayed()
+            ui.onNodeWithText("Android build").performScrollTo().performClick()
+            ui.onNodeWithText("A reply after searching history").assertIsDisplayed()
+        }
+    }
     @Test fun accountHandlesShowAppleAndGoogleOwnershipWithExpiredStatus() {
         launch().use {
             shown("Inbox")
@@ -140,7 +169,7 @@ class AppFlowTest {
             shown("No conversations yet")
         }
     }
-    @Test fun copyAddressesInInboxPickerAndAccountWithoutSwitching() {
+    @Test fun copyAddressesInPickerAndAccountWithoutSwitching() {
         launch().use { scenario ->
             fun copy(address: String, inDialog: Boolean = false) {
                 val target = hasContentDescription("Copy address $address")
@@ -148,12 +177,12 @@ class AppFlowTest {
                 assertClipboard(ui, context, address)
             }
             shown("Inbox")
-            copy("/demo/main")
+            ui.onNodeWithContentDescription("Copy address /demo/main").assertDoesNotExist()
             ui.onNodeWithText("Inbox").performClick()
             copy("/demo/builder", inDialog = true)
             ui.onNodeWithText("Your inboxes").assertIsDisplayed()
             ui.onNodeWithContentDescription("Close Your inboxes").performClick()
-            ui.onNodeWithText("/demo/main").assertIsDisplayed()
+            ui.onNodeWithText("Inbox").assertIsDisplayed()
             ui.onNodeWithContentDescription("Settings").performClick()
             ui.onNodeWithText("Account").performClick()
             copy("/demo/main", inDialog = true)
