@@ -12,29 +12,26 @@ struct IdentityPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if let me = account.me {
-                    Section("Acting as") {
+                Section("Your mailboxes") {
+                    ForEach(MailboxOrder.sorted(account.mailboxes, primaryNamespace: Config.primaryNamespace,
+                                               username: account.session.username)) { mailbox in
                         HStack {
-                            MailboxRow(mailbox: me).frame(maxWidth: .infinity, alignment: .leading)
-                            CopyAddressButton(address: me.key)
-                        }
-                    }
-                }
-                if !account.ownAgents.isEmpty {
-                    Section("Your other mailboxes") {
-                        ForEach(account.ownAgents) { mailbox in
-                            HStack {
-                                Button {
-                                    onPick(mailbox)
-                                    dismiss()
-                                } label: {
-                                    MailboxRow(mailbox: mailbox)
-                                        .frame(maxWidth: .infinity, alignment: .leading)
-                                        .contentShape(Rectangle())
-                                }
-                                .buttonStyle(.borderless)
-                                CopyAddressButton(address: mailbox.key)
+                            Button {
+                                onPick(mailbox)
+                                dismiss()
+                            } label: {
+                                MailboxRow(mailbox: mailbox)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
                             }
+                            .buttonStyle(.borderless)
+                            .accessibilityIdentifier("mailbox:" + mailbox.key)
+                            .accessibilityValue(mailbox.address == account.me?.address ? "Selected" : "")
+                            if mailbox.address == account.me?.address {
+                                Image(systemName: "checkmark").foregroundStyle(Theme.ink)
+                                    .accessibilityHidden(true)
+                            }
+                            CopyAddressButton(address: mailbox.key)
                         }
                     }
                 }
@@ -100,7 +97,14 @@ struct NewConversationSheet: View {
         NavigationStack {
             Form {
                 Section {
-                    TextField("/bekir/agent1 or /k/…", text: Binding(get: { peer }, set: { peer = PeerFace.conversationAddressInput($0) }))
+                    TextField("/bekir/agent1 or /k/…", text: $peer)
+                        .onChange(of: peer) { _, input in
+                            // Normalize the committed field value so UIKit displays the correction
+                            // too; sanitizing only a Binding setter can leave the raw paste visible.
+                            let value = PeerFace.conversationAddressInput(input)
+                            let normalized = "/" + value.drop(while: { $0 == "/" })
+                            if peer != normalized { peer = normalized }
+                        }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                         .font(.system(size: 15, design: .monospaced))

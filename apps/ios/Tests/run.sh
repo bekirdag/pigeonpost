@@ -26,3 +26,6 @@ swiftc -O -parse-as-library -o "$out/inbox-loading" \
   Shared/Model/Inbox.swift Shared/Model/Conversation.swift \
   Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Views/Markdown.swift
 "$out/inbox-loading"
+swiftc -O -o "$out/ios-navigation" Tests/IOSNavigationTests.swift Shared/API/Models.swift \
+  Pigeonpost/Views/MailboxOrder.swift Pigeonpost/Views/HistoryWindow.swift
+"$out/ios-navigation"
