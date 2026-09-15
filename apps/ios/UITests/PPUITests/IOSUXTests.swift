@@ -106,8 +106,17 @@ final class IOSUXTests: XCTestCase {
         newest.staticTexts["History message 44"].press(forDuration: 1)
         XCTAssertTrue(app.buttons["Delete"].waitForExistence(timeout: 5))
         app.buttons["Delete"].tap()
-        XCTAssertTrue(app.buttons["Cancel"].waitForExistence(timeout: 5))
-        app.buttons["Cancel"].tap()
+        let confirmation = app.staticTexts["Delete this message?"]
+        XCTAssertTrue(confirmation.waitForExistence(timeout: 5))
+        if app.buttons["Cancel"].exists {
+            app.buttons["Cancel"].tap()
+        } else {
+            // Native popovers omit Cancel; a tap outside is their cancellation action.
+            // iOS 26.5 uses this presentation on the iPhone as well as regular-size layouts.
+            XCTAssertTrue(app.popovers.firstMatch.exists)
+            history.coordinate(withNormalizedOffset: CGVector(dx: 0.05, dy: 0.05)).tap()
+        }
+        XCTAssertFalse(confirmation.exists)
         XCTAssertTrue(newest.exists)
     }
 
