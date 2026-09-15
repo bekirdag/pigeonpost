@@ -37,14 +37,17 @@ final class HandlePurchaseTests: XCTestCase {
         app.buttons["Cancel"].tap()
     }
 
-    func testCopyAddressFromInboxAndAccount() {
+    func testCopyAddressFromPickerAndAccount() {
         app.launchArguments = ["-fixtures", "-handle=owned"]
         app.launch()
+        XCTAssertFalse(app.buttons["copy-address:/bekir/main"].exists)
+        app.buttons["Acting as /bekir. Change mailbox"].tap()
         let copy = app.buttons["copy-address:/bekir/main"]
         XCTAssertTrue(copy.waitForExistence(timeout: 8))
         copy.tap()
         XCTAssertEqual(copy.value as? String, "Copied")
-        screenshot("inbox-address-copied")
+        screenshot("mailbox-address-copied")
+        app.buttons["Done"].tap()
         expectPastedAddress("/bekir/main")
         app.buttons["Settings"].tap()
         app.buttons["settings-account"].tap()
@@ -63,12 +66,12 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Mailboxes"].exists)
         app.buttons["Done"].tap()
         expectPastedAddress("/bekir/docdex")
-        app.buttons["Acting as main. Change mailbox"].tap()
+        app.buttons["Acting as /bekir. Change mailbox"].tap()
         let address = "/k/qq2222v2h90vnwefj7g7ezvbh7"
         app.buttons["copy-address:\(address)"].tap()
         screenshot("mailbox-copy-address")
         app.buttons["Done"].tap()
-        XCTAssertTrue(app.buttons["copy-address:/bekir/main"].exists)
+        XCTAssertFalse(app.buttons["copy-address:/bekir/main"].exists)
         expectPastedAddress(address)
     }
 
@@ -121,6 +124,8 @@ final class HandlePurchaseTests: XCTestCase {
     func testOwnedHandleCanAddAnother() {
         open("owned")
         screenshot("existing-owner")
+        XCTAssertFalse(app.staticTexts["/alex"].exists, "Owned names belong under Handles")
+        XCTAssertFalse(app.staticTexts["Active App Store subscriptions"].exists)
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8),
                       "An existing owner needs a way to add another handle")
     }
@@ -149,7 +154,9 @@ final class HandlePurchaseTests: XCTestCase {
         enter("cosmos")
         waitForEnabledBuy()
         buy.tap()
-        let inbox = app.buttons["handle-inbox-/cosmos"]
+        XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
+        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        let inbox = app.buttons["Open /cosmos"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 8))
         screenshot("registered-handle")
         inbox.tap()
@@ -183,7 +190,9 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertEqual(app.textFields["yourname"].value as? String, "cosmos")
         screenshot("recover-purchase")
         finish.tap()
-        XCTAssertTrue(app.buttons["handle-inbox-/cosmos"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
+        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        XCTAssertTrue(app.buttons["Open /cosmos"].waitForExistence(timeout: 8))
     }
 
     func testPendingApprovalKeepsNameAndDisablesPayment() {
@@ -197,7 +206,7 @@ final class HandlePurchaseTests: XCTestCase {
 
     func testTenHandlesHaveNoEleventhPurchase() {
         open("ten")
-        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS '10 of 10'")).firstMatch.waitForExistence(timeout: 8))
+        XCTAssertTrue(app.staticTexts["You have all ten handle subscriptions."].waitForExistence(timeout: 8))
         XCTAssertFalse(app.textFields["yourname"].exists)
         XCTAssertFalse(buy.exists)
         screenshot("ten-handles")

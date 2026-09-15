@@ -71,13 +71,7 @@ struct ThreadView: View {
     }
     @FocusState private var composing: Bool
 
-    /// Set the moment somebody scrolls this conversation themselves, which is the moment the app
-    /// stops having an opinion about where it should be. See `landOnFloor`.
-    @State private var touched = false
-
-    /// Counts the times this screen has asked to be at the end of the conversation. Nothing reads
-    /// the number; `AsksForTheBottomEdge` watches it change. See `scrollToFloor`.
-    @State private var asked = 0
+    @State private var latestRequest = 0
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
@@ -89,89 +83,20 @@ struct ThreadView: View {
     }
 
     var body: some View {
-        ScrollViewReader { scroller in
-            ScrollView {
-                LazyVStack(spacing: 2) {
-                    ForEach(Array(shown.enumerated()), id: \.element.id) { index, message in
-                        if index == 0 || !Time.sameDay(shown[index - 1].at, message.at) {
-                            DayBreak(label: Time.dayLabel(message.at))
-                        }
-                        MessageBubble(message: message)
-                            .id(message.id)
-                    }
-                    // The floor of the conversation, and a target that exists before the messages
-                    // do. Scrolling to the last message means naming the thing that is moving;
-                    // this stays put.
-                    Color.clear
-                        .frame(height: 1)
-                        .id(Self.floor)
-                        .modifier(ReportsItsPlace(measure: \.maxY, report: LandingReport.floor))
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 10)
-            }
+        ConversationHistoryView(messages: shown, latestRequest: latestRequest, account: account, inbox: inbox)
+            .id(HistoryKey(mailbox: account.me?.address, peer: peer, subthread: subthread))
             .background { DoodleBackground() }
-            // Tap the conversation to put the keyboard away. Scrolling does it too: a drag towards
-            // what you are trying to read should not be fighting the thing covering it.
-            .scrollDismissesKeyboard(.interactively)
-            .contentShape(Rectangle())
-            .onTapGesture { composing = false }
-            // Open on the newest message, and stay there. Doing this in `onAppear` was a guess at
-            // the timing — it runs before the scroll view has laid its content out, so a long
-            // conversation opened at the top often enough to be a complaint. This is the same
-            // intent stated as a property of the scroll view rather than as an event.
-            .modifier(AnchoredToBottom())
-            // And the way back to the end once the first paint is over. See `scrollToFloor`.
-            .modifier(AsksForTheBottomEdge(asked: asked))
-            // What the anchor does not cover, measured rather than assumed.
-            //
-            // `.sizeChanges` is the *content* size changing, and the two moments that matter here
-            // are not that. Driven through the accessibility interface on an iPhone 16 Pro, with
-            // the conversation opened at its newest message: tapping the field moved the composer
-            // from y=805 to y=503 and left the last message at y=597 — behind the composer, under
-            // the keyboard — and a message sent from there landed at y=797, off the screen, and was
-            // never brought back. A message you have just sent that you cannot see is the whole
-            // complaint.
-            //
-            // So the thread follows the end at the two moments the person put it there — they
-            // tapped the field, or they sent — and at no other. Mail arriving on its own still
-            // moves nothing, which is what stops a peer's reply throwing somebody who is reading
-            // history to the bottom of it.
-            //
-            // Unanimated, which is what makes these safe beside the anchor instead of a race with
-            // it: both are scrolling to the same place, so whichever of them wins, the conversation
-            // ends up where it belongs. The version that bounced used `withAnimation` and started
-            // from a stale offset — an animation is the only way a race here becomes visible.
-            .task(id: composing) {
-                guard composing else { return }
-                scrollToFloor(scroller)
-                // And again once the keyboard has finished arriving. The safe area it takes lands
-                // after the focus does, so the first scroll is to where the bottom used to be —
-                // with only that one, the last message stayed at y=597 behind a composer that had
-                // moved to y=503, which is the state this was supposed to fix.
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                guard !Task.isCancelled else { return }
-                scrollToFloor(scroller)
+            .onChange(of: composing) { _, focused in
+                if focused { latestRequest += 1 }
             }
-            .onChange(of: shown.count) { _, _ in
-                // Only what this person sent. A send changes the count three times in a second —
-                // the optimistic row goes in, the listing comes back, the row it accounts for is
-                // retired — and all three land on the same floor.
-                guard shown.last?.kind == .outgoing else { return }
-                scrollToFloor(scroller)
+            .overlay(alignment: .topTrailing) {
+                #if DEBUG
+                if Fixtures.enabled && CommandLine.arguments.contains("-ios-history") {
+                    Button("Receive fixture message") { IOSUXFixtures.receive(into: inbox) }
+                        .accessibilityIdentifier("history-arrival")
+                }
+                #endif
             }
-            // The subject filter and the peer are the other two, and both are somebody putting a
-            // different conversation in front of themselves — a moment where a jump to the bottom
-            // is the answer rather than an interruption. One `.task` for the pair, because they
-            // are the same event, and because changing either has to cancel the landing already in
-            // flight rather than race it.
-            .task(id: ScrollKey(peer: peer, subthread: subthread)) {
-                await landOnFloor(scroller)
-            }
-            // And the person always wins: their first scroll ends the landing.
-            .modifier(EndsTheLanding { touched = true })
-
-        }
         // Always, even for a peer with one conversation. The strip is where a second subject is
         // started, so hiding it until a second subject exists means there is no way to make one —
         // and the layout no longer changes shape underneath somebody the moment they do.
@@ -443,87 +368,10 @@ struct ThreadView: View {
             || loadingPhotos > 0
     }
 
-    /// The bottom, named once.
-    private static let floor = "thread-floor"
-
-    /// What "a different set of messages is on screen" is, said once. Either half changing means
-    /// the landing in flight is landing the wrong conversation.
-    private struct ScrollKey: Equatable {
+    private struct HistoryKey: Hashable {
+        let mailbox: String?
         let peer: String
         let subthread: String?
-    }
-
-    /// Unanimated on purpose. Every remaining caller is putting a different conversation on screen,
-    /// where there is nothing to animate *from*, and an animation here is what put this in a race
-    /// with the bottom anchor.
-    ///
-    /// Two asks, and it takes both. This is the fix for a long conversation opening in its middle,
-    /// and what it corrects is an assumption rather than a timing: that asking a scroll view for a
-    /// row is a thing that can be relied on to do anything at all.
-    ///
-    /// `ScrollViewProxy.scrollTo` needs the view it names to exist, and a `LazyVStack` does not keep
-    /// the rows it is not drawing. So a scroll that stops short of the end has destroyed its own way
-    /// back to it: the floor is gone, and every retry afterwards is a call that returns having moved
-    /// nothing. That is not a slow convergence, it is a stall, and it is why last week's fix — ask
-    /// again, every 50ms for a second — did not hold. Measured on the `-long` fixture: the offset
-    /// settles at 18459 in a content 19228 tall and never moves again, while `scrollTo(floor)` is
-    /// called two hundred times over ten seconds.
-    ///
-    /// `scrollTo(edge: .bottom)` names no row, so there is nothing for the stack to have discarded,
-    /// and it is what gets a thread of any length back to where its last rows are being drawn. But
-    /// it goes to the end of the content the scroll view currently *believes* in, and on a lazy
-    /// stack that is an estimate — on four hundred messages it stops short and, the estimate being
-    /// what it is, thinks it has arrived. So the second ask names the newest message, which the
-    /// first ask has just brought within reach, and lands on it exactly. Neither alone is enough:
-    /// with the edge on its own the four-hundred-message thread never draws its last row, and with
-    /// the row on its own the ninety-message thread stalls in the middle as before.
-    ///
-    /// The floor stays as the fallback it has always been, for the moment before the first message
-    /// exists. iOS 17 has no `scrollTo(edge:)`, so it gets the row ask alone and is not fixed by
-    /// this — a long thread stalls there as it did. What did change for it is the row named: the
-    /// newest message rather than the floor anchor, both of which a lazy stack discards alike, so
-    /// this is the same behaviour aimed at a better target and not a behaviour that was measured.
-    /// Everything below was measured on 18.3.
-    private func scrollToFloor(_ scroller: ScrollViewProxy) {
-        guard !shown.isEmpty else { return }
-        if #available(iOS 18.0, *) { asked += 1 }
-        scroller.scrollTo(shown.last?.id ?? Self.floor, anchor: .bottom)
-    }
-
-    /// Put the newest message on screen, and keep it there while the conversation is still
-    /// measuring itself.
-    ///
-    /// What this replaces was `await Task.yield()` and a single scroll: a bet that the scroll view
-    /// had finished measuring its content by the next turn of the main actor. On a real
-    /// conversation it has not. These rows are a `LazyVStack`'s, so the first scroll to the end is
-    /// made against *estimated* heights, and every row afterwards measured for real moves the end
-    /// further down. Nothing went back for it — the anchor covers the first paint, `.onChange(of:
-    /// shown.count)` is for this person's own sends, and the focus scroll waits for a keyboard
-    /// nobody asked for — so the placement made against the estimate was the one somebody was left
-    /// with: a screen or more short of the end, the newest message arriving cut off mid-sentence.
-    ///
-    /// There is no signal to wait for instead, and it was looked for. A `GeometryReader` over the
-    /// stack reports the estimate once and is never heard from again when the rows correct it, and
-    /// a `PreferenceKey` raised inside a lazy container does not arrive at all — both measured
-    /// against a build whose rows deliberately finished growing after their first layout, where the
-    /// reported height stayed at the estimate to the point.
-    ///
-    /// So this asks for the end again, for as long as the conversation is plausibly still arriving.
-    /// It costs nothing once the end is where it belongs: an unanimated scroll to where you already
-    /// are moves nothing and draws nothing. That is only true with `.sizeChanges` gone from
-    /// `AnchoredToBottom` — while it was there a repeat did not land on the same place but a screen
-    /// past it, and the two halves of this fix are one fix.
-    ///
-    /// To be bothered by the window somebody would have to scroll away from the newest message
-    /// inside the first second of opening a conversation, and doing that is what ends it.
-    private func landOnFloor(_ scroller: ScrollViewProxy) async {
-        touched = false
-        for _ in 0..<20 {
-            guard !touched else { return }
-            scrollToFloor(scroller)
-            try? await Task.sleep(nanoseconds: 50_000_000)
-            guard !Task.isCancelled else { return }
-        }
     }
 
     /// Send what is in the composer, once all of it is actually there.
@@ -580,95 +428,12 @@ struct ThreadView: View {
     /// front of the field that replaced it. If the keyboard was already down — a file sent with
     /// nothing typed — it stays down.
     private func clearComposer() {
+        latestRequest += 1
         let keyboardWasUp = composing
         draft = ""
         composing = false
         composerLife &+= 1
         guard keyboardWasUp else { return }
         Task { @MainActor in composing = true }
-    }
-}
-
-/// Take the scroll view to its own end, without naming anything in it.
-///
-/// `ScrollPosition` is iOS 18's, and `scrollTo(edge: .bottom)` is the only way to ask a scroll view
-/// for its end rather than for a view that happens to be at it. That distinction is the whole of the
-/// long-thread fix — a `LazyVStack` discards the rows it is not drawing, and a row that has been
-/// discarded cannot be scrolled to — so where the call does not exist, `ThreadView` is left with the
-/// row ask alone, and a long thread still opens in its middle there.
-///
-/// The count is the message. Nothing reads its value; each change is one request to go to the end,
-/// which is what lets the ask live in `ThreadView` beside the reasons for it while the position
-/// itself lives here, where it is allowed to exist.
-private struct AsksForTheBottomEdge: ViewModifier {
-    let asked: Int
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            Bottom(asked: asked, content: content)
-        } else {
-            content
-        }
-    }
-
-    @available(iOS 18.0, *)
-    private struct Bottom: View {
-        let asked: Int
-        let content: Content
-
-        @State private var position = ScrollPosition(idType: String.self)
-
-        var body: some View {
-            content
-                .scrollPosition($position)
-                .onChange(of: asked) { _, _ in position.scrollTo(edge: .bottom) }
-        }
-    }
-}
-
-/// Notice somebody scrolling, without getting in the way of their doing it.
-///
-/// `onScrollPhaseChange` is iOS 18's, and it is the reason this is a modifier rather than a line:
-/// it reports `.interacting` while a finger is on the scroll view and says nothing otherwise, which
-/// is exactly the question. The iOS 17 way to ask would be a `DragGesture` hung off the scroll
-/// view, and a gesture that fails to be simultaneous does not fail quietly — it takes scrolling
-/// down with it. So iOS 17 keeps the bounded window on its own, and the worst that costs there is a
-/// second of a conversation insisting on its own newest message. That is much the smaller of the
-/// two mistakes, and it is why this is shaped the way it is: where the phase never arrives, what is
-/// left still behaves.
-private struct EndsTheLanding: ViewModifier {
-    let scrolled: () -> Void
-
-    @ViewBuilder
-    func body(content: Content) -> some View {
-        if #available(iOS 18.0, *) {
-            content.onScrollPhaseChange { _, phase in
-                if phase == .interacting { scrolled() }
-            }
-        } else {
-            content
-        }
-    }
-}
-
-/// The date, between the last message of one day and the first of the next.
-///
-/// What stood here was `AnchoredToBottom`'s documentation, left behind when that modifier moved to
-/// `Components.swift` in d833e57 — including its account of naming all three scroll anchors, which
-/// the move had already stopped being true.
-private struct DayBreak: View {
-    let label: String
-
-    var body: some View {
-        Text(label)
-            .font(.system(size: 11.5))
-            .foregroundStyle(Theme.muted)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .background(.thinMaterial, in: Capsule())
-            .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
-            .frame(maxWidth: .infinity)
-            .padding(.vertical, 8)
     }
 }

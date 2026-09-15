@@ -12,6 +12,7 @@
 		AA0000000000000000000030 /* NativeHandleStoreKitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000031; };
 		AA0000000000000000000032 /* HandlePurchases.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000033; };
 		AA0000000000000000000034 /* HandleSubscriptions.storekit in Resources */ = {isa = PBXBuildFile; fileRef = AA0000000000000000000035; };
+		AA0000000000000000000040 = {isa = PBXBuildFile; fileRef = AA0000000000000000000041; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -22,6 +23,7 @@
 		AA0000000000000000000031 /* NativeHandleStoreKitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "NativeHandleStoreKitTests.swift"; sourceTree = "<group>"; };
 		AA0000000000000000000033 /* HandlePurchases.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "../../Shared/Store/HandlePurchases.swift"; sourceTree = "<group>"; };
 		AA0000000000000000000035 /* HandleSubscriptions.storekit */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = "HandleSubscriptions.storekit"; sourceTree = "<group>"; };
+		AA0000000000000000000041 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSUXTests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -30,7 +32,7 @@
 
 /* Begin PBXGroup section */
 		AA0000000000000000000005 = {isa = PBXGroup; children = (AA0000000000000000000006 /* PPUITests */, AA0000000000000000000007 /* Products */); sourceTree = "<group>"; };
-		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA0000000000000000000002 /* ComposerTests.swift */, AA0000000000000000000011 /* AttachmentTests.swift */, AA0000000000000000000021 /* HandlePurchaseTests.swift */, AA0000000000000000000031, AA0000000000000000000033, AA0000000000000000000035); path = PPUITests; sourceTree = "<group>"; };
+		AA0000000000000000000006 /* PPUITests */ = {isa = PBXGroup; children = (AA0000000000000000000002 /* ComposerTests.swift */, AA0000000000000000000011 /* AttachmentTests.swift */, AA0000000000000000000021 /* HandlePurchaseTests.swift */, AA0000000000000000000031, AA0000000000000000000033, AA0000000000000000000035, AA0000000000000000000041); path = PPUITests; sourceTree = "<group>"; };
 		AA0000000000000000000007 /* Products */ = {isa = PBXGroup; children = (AA0000000000000000000003 /* PPUITests.xctest */); name = Products; sourceTree = "<group>"; };
 /* End PBXGroup section */
 
@@ -70,7 +72,7 @@ AA0000000000000000000036 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147
 /* End PBXProject section */
 
 /* Begin PBXSourcesBuildPhase section */
-		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000000000000000000001 /* ComposerTests.swift in Sources */, AA0000000000000000000010 /* AttachmentTests.swift in Sources */, AA0000000000000000000020 /* HandlePurchaseTests.swift in Sources */, AA0000000000000000000030, AA0000000000000000000032); runOnlyForDeploymentPostprocessing = 0; };
+		AA000000000000000000000A /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (AA0000000000000000000001 /* ComposerTests.swift in Sources */, AA0000000000000000000010 /* AttachmentTests.swift in Sources */, AA0000000000000000000020 /* HandlePurchaseTests.swift in Sources */, AA0000000000000000000030, AA0000000000000000000032, AA0000000000000000000040); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */

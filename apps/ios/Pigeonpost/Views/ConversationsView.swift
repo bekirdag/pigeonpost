@@ -33,13 +33,6 @@ struct ConversationsView: View {
 
         NavigationSplitView {
             list
-                .safeAreaInset(edge: .top, spacing: 0) {
-                    if let me = account.me {
-                        PostAddressRow(address: me.key)
-                            .padding(.horizontal, 16)
-                            .background(.bar)
-                    }
-                }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
@@ -70,6 +63,9 @@ struct ConversationsView: View {
             // Stage the launch destination once; switching inboxes must not reopen Settings.
             if !didStageFixtures {
                 didStageFixtures = true
+                #if DEBUG
+                IOSUXFixtures.apply(account: account, inbox: inbox)
+                #endif
                 if let peer = Fixtures.openPeer, selection == nil { selection = peer }
                 if let staged = Fixtures.sheet { sheet = Sheet(rawValue: staged) }
             }

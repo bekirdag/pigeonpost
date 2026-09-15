@@ -1,0 +1,79 @@
+name: iOS native UX regressions
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/ios/Pigeonpost/**'
+      - 'apps/ios/Shared/**'
+      - 'apps/ios/Tests/**'
+      - 'apps/ios/UITests/**'
+      - '.github/workflows/ios-ux-tests.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-ux-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  native-ios:
+    runs-on: macos-26
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select Xcode and an available iPhone
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, subprocess
+          candidates = []
+          for app in glob.glob('/Applications/Xcode*.app'):
+              developer = app + '/Contents/Developer'
+              version = subprocess.check_output(['xcodebuild', '-version'], env={**os.environ, 'DEVELOPER_DIR': developer}, text=True)
+              match = re.search(r'Xcode ([\d.]+)', version)
+              if match:
+                  candidates.append((tuple(map(int, match[1].split('.'))), developer))
+          selected = max(candidates)[1]
+          subprocess.run(['sudo', 'xcode-select', '-s', selected], check=True)
+          PY
+          xcodebuild -version
+          python3 - <<'PY'
+          import json, os, subprocess
+          runtimes = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json']))['runtimes']
+          runtimes = sorted([r for r in runtimes if r.get('isAvailable') and '.iOS-' in r['identifier']],
+                            key=lambda r: tuple(map(int, r['version'].split('.'))), reverse=True)
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          phones = [d for r in runtimes for d in devices.get(r['identifier'], []) if 'iPhone' in d['name']]
+          assert phones, 'No available iPhone simulator'
+          device = phones[0]
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('IOS_SIM=' + device['udid'] + '\n')
+          print(device['name'], device['udid'])
+          PY
+      - name: Swift model regressions
+        run: ./Tests/run.sh
+      - name: Build and install the fixture app
+        run: |
+          xcrun simctl boot "$IOS_SIM" || true
+          xcrun simctl bootstatus "$IOS_SIM" -b
+          xcodebuild -project Pigeonpost.xcodeproj -scheme Pigeonpost -configuration Debug \
+            -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-app" CODE_SIGNING_ALLOWED=NO build
+          xcrun simctl install "$IOS_SIM" "$RUNNER_TEMP/ios-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
+      - name: Native history, mailbox, purchase and composer regressions
+        run: |
+          xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
+            -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-tests" \
+            -resultBundlePath "$RUNNER_TEMP/ios-ux.xcresult" \
+            -only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests \
+            -only-testing:PPUITests/ComposerTests
+      - name: Preserve native test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-native-ux-results
+          path: ${{ runner.temp }}/ios-ux.xcresult
+          retention-days: 14

@@ -11,6 +11,7 @@ struct BuyHandleSection: View {
             if !store.loaded && store.activity == .loading {
                 progress("Checking your handles…")
             }
+            #if !os(iOS)
             if store.loaded {
                 LabeledContent("Active App Store subscriptions", value: "\(store.activeCount) of \(store.maximum)")
             }
@@ -49,6 +50,7 @@ struct BuyHandleSection: View {
                 }
                 .padding(.vertical, 4)
             }
+            #endif
 
             if store.enabled && (store.activeCount < store.maximum || !store.unassigned.isEmpty) {
                 HStack(spacing: 3) {
@@ -146,6 +148,18 @@ struct AccountHandlesSection: View {
                         Text("\(handle.active ? "Paid through" : "Expired on") \(date.formatted(date: .abbreviated, time: .omitted))")
                             .font(.caption).foregroundStyle(Theme.muted)
                     }
+                    #if os(iOS)
+                    if let subscription = store.handles.first(where: { $0.namespace == handle.name }),
+                       let product = store.products.first(where: { $0.id == subscription.productId }) {
+                        if let title = product.displayName {
+                            Text("App Store: \(title)").font(.caption).foregroundStyle(Theme.muted)
+                        }
+                        if !subscription.active {
+                            Button("Renew for \(product.displayPrice) a year") { Task { await store.renew(subscription) } }
+                                .disabled(store.busy)
+                        }
+                    }
+                    #endif
                     if handle.active, let mailbox = account.mailbox(inNamespace: handle.name) {
                         Button("Open \(handle.name)") { account.act(as: mailbox); closeSettings() }
                     } else if handle.active {
@@ -158,6 +172,10 @@ struct AccountHandlesSection: View {
             }
             if let error = store.ownershipError { Text(error).font(.subheadline) }
             Button("Refresh account handles") { Task { await account.loadIdentities(); await store.refresh() } }.disabled(store.busy)
+            #if os(iOS)
+            if let message = store.message { Text(message).font(.subheadline) }
+            Link("Manage subscriptions", destination: URL(string: "https://apps.apple.com/account/subscriptions")!)
+            #endif
         } header: { Text("Your handles") }
         footer: { Text("Names belong to your Pigeonpost account across mobile, desktop and web. Expired names need renewal through their original provider.") }
     }

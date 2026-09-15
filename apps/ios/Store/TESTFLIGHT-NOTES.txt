@@ -1,5 +1,5 @@
-Default inboxes now show their namespace: /bekir/main appears as /bekir, so different people's inboxes are easy to tell apart.
+Conversations open at the newest message and initially display the latest ten messages. Scroll up to read older messages in batches, or use the down-arrow button to return to the latest. Incoming mail leaves your reading position alone.
 
-New conversations automatically include the opening slash. Typing and pasting full addresses, including handles containing @, remains supported.
+The mailbox picker keeps your main address first, followed by other handle roots, named subaddresses, and key addresses. The selected mailbox has a checkmark. The duplicate address bar below inbox search is removed; copying remains available in the picker and Settings.
 
-Scan for login is directly on the Settings page. Handle purchases and existing registrations remain attached to your account.
+Get a handle focuses on registering a new name. Existing handles and renewal controls are in Settings > Handles. Up to ten yearly handle subscriptions, restoring purchases, and account ownership across devices remain supported.
