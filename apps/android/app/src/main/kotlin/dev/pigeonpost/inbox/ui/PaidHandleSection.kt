@@ -8,33 +8,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pigeonpost.core.*
+import dev.pigeonpost.inbox.AppPolicy
 import java.text.DateFormat
 import java.text.NumberFormat
 import java.util.Currency
 import java.util.Date
 
 @Composable
-fun PaidHandleSection(store: PaidHandleStore, mailboxes: List<Mailbox>, openInbox: (Mailbox) -> Unit, openLink: (String) -> Unit) {
+fun PaidHandleSection(store: PaidHandleStore, openLink: (String) -> Unit) {
     val state by store.state.collectAsStateWithLifecycle()
-    LaunchedEffect(Unit) { store.restore() }
+    LaunchedEffect(store) { store.restore() }
     Text("Google Play subscriptions", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
     Text("Register up to 10 handles. Each handle has its own yearly subscription, managed through Google Play.", style = MaterialTheme.typography.bodyMedium)
-    Text("${state.active.size} of 10 subscriptions active", style = MaterialTheme.typography.labelLarge)
     if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
     if (state.catalog?.available == false) Text("Handle purchases are not available yet. Please check again later.")
-    state.catalog?.handles.orEmpty().filter { it.active || it.namespace != null }.forEach { handle ->
-        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-            Text(handle.namespace?.let { "/$it" } ?: "Paid handle · choose a name below", fontWeight = FontWeight.Medium)
-            Text(when {
-                !handle.active -> "Inactive · manage in Google Play"
-                handle.autoRenewing -> "Renews ${DateFormat.getDateInstance().format(Date(handle.expiresAt * 1000))}"
-                else -> "Access until ${DateFormat.getDateInstance().format(Date(handle.expiresAt * 1000))} · renewal cancelled"
-            }, style = MaterialTheme.typography.bodySmall)
-            if (handle.active) mailboxes.firstOrNull { it.handle?.startsWith("/${handle.namespace}/") == true }?.let { mailbox ->
-                TextButton({ openInbox(mailbox) }) { Text("Open /${handle.namespace}") }
-            }
-        }
-    }
     if (state.catalog?.available == true && (state.active.size < 10 || state.unassigned != null)) {
         OutlinedTextField(state.name, store::editName, Modifier.fillMaxWidth(), singleLine = true,
             label = { Text("New handle") }, placeholder = { Text("your-name") }, prefix = { Text("/") },
@@ -64,6 +51,34 @@ fun PaidHandleSection(store: PaidHandleStore, mailboxes: List<Mailbox>, openInbo
     }
     state.notice?.let { Text(it, style = MaterialTheme.typography.bodyMedium) }
     state.error?.let { Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium) }
+    OutlinedButton(store::restore, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Restore purchases") }
+    if (state.active.size == 10 && state.unassigned == null) Text("All ten subscriptions are in use. Manage your names under Handles.")
+    TextButton({ openLink(AppPolicy.TERMS_URL) }) { Text("Terms of service") }
+    TextButton({ openLink(AppPolicy.PRIVACY_URL) }) { Text("Privacy policy") }
+}
+
+@Composable
+fun PaidHandleManagement(store: PaidHandleStore, mailboxes: List<Mailbox>, openInbox: (Mailbox) -> Unit, openLink: (String) -> Unit) {
+    val state by store.state.collectAsStateWithLifecycle()
+    LaunchedEffect(store) { store.restore() }
+    Text("${state.active.size} of 10 subscriptions active", style = MaterialTheme.typography.labelLarge)
+    if (state.busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    state.catalog?.handles.orEmpty().filter { it.active || it.namespace != null }.forEach { handle ->
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(handle.namespace?.let { "/$it" } ?: "Paid handle · choose its name in Get a handle", fontWeight = FontWeight.Medium)
+            Text(when {
+                !handle.active -> "Inactive · manage in Google Play"
+                handle.autoRenewing -> "Renews ${DateFormat.getDateInstance().format(Date(handle.expiresAt * 1000))}"
+                else -> "Access until ${DateFormat.getDateInstance().format(Date(handle.expiresAt * 1000))} · renewal cancelled"
+            }, style = MaterialTheme.typography.bodySmall)
+            if (handle.active) mailboxes.firstOrNull { it.handle == "/${handle.namespace}" || it.handle == "/${handle.namespace}/main" }?.let { mailbox ->
+                TextButton({ openInbox(mailbox) }) { Text("Open /${handle.namespace}") }
+            }
+        }
+    }
+    if (state.catalog != null && state.catalog?.handles.orEmpty().none { it.active || it.namespace != null }) Text("No Google Play subscriptions linked yet.")
+    state.notice?.let { Text(it) }
+    state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
     OutlinedButton(store::restore, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Restore purchases") }
     TextButton({ openLink("https://play.google.com/store/account/subscriptions?package=dev.pigeonpost.inbox") }) { Text("Manage Google Play subscriptions") }
 }

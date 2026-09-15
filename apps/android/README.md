@@ -27,6 +27,10 @@ Settings follows the iOS handle flow: enter a name, check availability, confirm 
 
 `core` owns wire models, conversation/subject assembly, the API client and coroutine state. `app` owns Compose, Android lifecycle, AppAuth, Keystore, file pickers/FileProvider and QR capture. HTTP, response decoding and Markdown parsing run off the UI thread. History always requests both sent and read messages. Drafts are isolated by mailbox, peer and subject and live for the view model's lifetime; they are cleared by sign-out and are not restored after process death. A failed or uncertain send is never automatically repeated.
 
+Conversation rendering starts with the latest ten messages in a native reverse-layout lazy list. Scrolling toward older history adds ten at a time; search can reveal matches outside that window. The REST response remains a complete snapshot. Stable message IDs preserve a reader's position when messages arrive, and saved window boundaries and a viewport anchor preserve it through screen recreation. The latest message stays bottom-aligned even when taller than the screen or resized by delayed content and the keyboard.
+
+The inbox front page has no duplicate address strip. Copy controls remain in the mailbox picker and Settings. The picker keeps the account's main readable root first, followed by other purchased roots, named children and raw key addresses. Get a handle contains new-registration and paid-but-unassigned recovery controls; existing names remain under Handles, with Google Play renewals, restore and management in their own subpage.
+
 The app uses the existing public client `pigeonpost-mobile`, issuer `https://auth.pigeonpost.dev/realms/pigeonpost-prod`, and callback `dev.pigeonpost.inbox://oauth2redirect`. It has no client secret. AppAuth request state/PKCE are persisted with the session in app-private, no-backup storage encrypted by an Android Keystore AES-GCM key. Do not install debug and release builds together when testing authentication: both deliberately use the existing registered native callback scheme.
 
 Message bodies are presentation data. Server `autonomy`, `verb` and `held_because` decide the displayed state. Opening a subject marks its incoming messages read; it does not authorize agent execution. Contact permission options come from the server vocabulary and exclude `never_auto`. Adding a known sender grants no new automatic permissions.
@@ -40,7 +44,7 @@ adb shell am start -S -n dev.pigeonpost.inbox.debug/dev.pigeonpost.inbox.MainAct
   --es pigeonpost.fixtures inbox
 ```
 
-Modes: `policy` (terms acceptance), `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages), `handles` (approved tester registration). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, registration or notification was delivered.
+Modes: `policy` (terms acceptance), `inbox`, `empty`, `offline`, `signin`, `long` (1,000 historical messages), `long-tall` (also an oversized latest Markdown message), `handles` (approved tester registration). Fixture classes live only in `src/debug`; the release source set contains a no-op hook. Fixture tests do not prove a real authenticated send, registration or notification was delivered.
 
 ## Release signing and service work
 
@@ -49,6 +53,8 @@ Modes: `policy` (terms acceptance), `inbox`, `empty`, `offline`, `signin`, `long
 The release build accepts these environment variables together: `ANDROID_UPLOAD_KEYSTORE` (absolute file path), `ANDROID_UPLOAD_STORE_PASSWORD`, `ANDROID_UPLOAD_KEY_ALIAS`, and `ANDROID_UPLOAD_KEY_PASSWORD`. Keep the upload key and passwords in an appropriate secret store. A signed release additionally requires `PIGEONPOST_FIREBASE_API_KEY`. Store the restricted Firebase client key outside Git and supply it through the local build environment or GitHub Actions secret of that name. Only non-secret Firebase project identifiers are tracked. Providing incomplete signing settings or omitting the Firebase key fails a signed build; unsigned development artifacts can use fixtures without a key. The dedicated upload key is stored outside the repository and its password is in macOS Keychain. No signing key is committed, and CI does not publish to Google Play.
 
 ## Release validation and limits
+
+Android 0.2.6 (9) brings the iOS build 41 inbox, mailbox-ordering, handle-acquisition and history fixes to Android. Release submission and signature evidence are recorded separately after the signed bundle is verified. On 15 September, Play showed the preceding 0.2.5 (8) publicly available at 100%, all 177 selectable territories targeted (including France), and one active base plan for each of the ten handle products.
 
 Android 0.2.5 (8) adds recovery for interrupted handle requests, namespace labels for default inboxes, an automatic address slash, root Settings scanning and background notifications. The signed release was submitted for public Google Play review on 14 September 2026 with updated notification disclosures, store text and reviewer instructions. The console confirms all three publishing changes are in review, with no unsent changes; managed publishing is disabled, so approval releases the update at 100 percent in all selected countries. The app also requires a terms acceptance screen before messaging. The current terms revision is saved with the encrypted session; a fresh sign-in, a changed terms revision or sign-out requires acceptance again. Policy, support and account deletion links remain available before acceptance. Received messages can be reported from their actions menu, and senders can be blocked from Conversation info.
 

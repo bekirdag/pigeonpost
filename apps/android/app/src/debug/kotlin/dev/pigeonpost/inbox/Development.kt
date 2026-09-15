@@ -17,7 +17,7 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "handles", "policy")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy")) return null
         return AppGraph(FixtureSession(mode != "signin", mode != "policy" && mode != "signin"), FixturePostbox(mode), fixtures = true)
     }
 }
@@ -49,7 +49,9 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
     private val archived = mutableSetOf("/demo/archived")
     private val attachments = mutableMapOf("a_notes" to "Pigeonpost Android development build".toByteArray())
     init {
-        if (mode == "long") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
+        if (mode == "long" || mode == "long-tall") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
+        if (mode == "long-tall") messages[0] = messages[0].copy(body =
+            "# A long build report\n\n" + (1..60).joinToString("\n\n") { "Section $it: verifying native message layout and scrolling." } + "\n\nNewest report footer")
     }
     override suspend fun identities() = if (created) boxes else emptyList()
     override suspend fun accountHandles() = listOf(

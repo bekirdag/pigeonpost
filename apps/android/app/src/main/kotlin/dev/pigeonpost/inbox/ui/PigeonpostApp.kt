@@ -10,7 +10,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
@@ -26,6 +25,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalClipboardManager
@@ -141,7 +141,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             }
         }
         when (sheet) {
-            "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null })
+            "mailbox" -> MailboxDialog(state, { store.switchMailbox(it); sheet = null }, { sheet = null }, session.username)
             "new" -> NewConversationDialog(state, { store.selectPeer(it); sheet = null }, { sheet = null })
             "subject" -> SubjectDialog(state.actionBusy, { store.openThread(it) { sheet = null } }, { sheet = null })
             "settings" -> SettingsDialog(state, session, model.graph.fixtures, handleState, model.handles,
@@ -211,7 +211,6 @@ private fun InboxList(state: InboxState, store: InboxStore, modifier: Modifier, 
             ActionIcon("New conversation", Icons.Outlined.Edit, new)
             ActionIcon("Settings", Icons.Outlined.Settings, settings)
         }
-        state.acting?.let { PostAddressRow(it.key, Modifier.padding(start = 16.dp, end = 4.dp)) }
         OutlinedTextField(state.filter, store::filter, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
             placeholder = { Text("Search conversations") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp))
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -267,17 +266,8 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
     var match by rememberSaveable(peer) { mutableIntStateOf(0) }
     var deleteSubject by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
-    val list = rememberLazyListState()
-    val scope = rememberCoroutineScope()
-    val hits = remember(messages, query) { if (query.isBlank()) emptyList() else messages.indices.filter { messages[it].display.text.contains(query, true) } }
-    var previousSize by remember(peer, subject?.id) { mutableIntStateOf(0) }
-    LaunchedEffect(peer, subject?.id, messages.lastOrNull()?.id) {
-        val atEnd = previousSize == 0 || (list.layoutInfo.visibleItemsInfo.lastOrNull()?.index ?: 0) >= previousSize - 2
-        // Schedule the jump for the next measure pass; this pane is itself subcomposed.
-        if (messages.isNotEmpty() && (atEnd || messages.last().status == Delivery.SENDING)) list.requestScrollToItem(messages.lastIndex)
-        previousSize = messages.size
-    }
-    LaunchedEffect(query, match) { if (hits.isNotEmpty()) { withFrameNanos { }; list.animateScrollToItem(hits[match.mod(hits.size)]) } }
+    val hits = remember(messages, query) { if (query.isBlank()) emptyList() else messages.filter { it.display.text.contains(query, true) }.map { it.id } }
+    var latestRequest by remember(state.acting?.address, peer, subject?.id) { mutableIntStateOf(0) }
     Column(modifier.fillMaxHeight()) {
         Row(Modifier.fillMaxWidth().padding(end = 4.dp, start = if (wide) 12.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
             if (!wide) ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack) { store.selectPeer(null) }
@@ -302,11 +292,11 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
         }
         HorizontalDivider(color = MaterialTheme.colorScheme.outline)
         if (messages.isEmpty()) EmptyPane("Start a conversation", "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
-        else Box(Modifier.weight(1f)) {
-            LazyColumn(state = list, modifier = Modifier.fillMaxSize(), contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-                items(messages, key = { it.id }) { message -> MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true), store, attachment, openLink) }
+        else key(state.acting?.address, peer, subject?.id) {
+            ConversationHistory(messages, Modifier.weight(1f),
+                searchTarget = if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
+                MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true), store, attachment, openLink)
             }
-            if (list.canScrollForward) SmallFloatingActionButton({ scope.launch { list.animateScrollToItem(messages.lastIndex) } }, Modifier.align(Alignment.BottomEnd).padding(12.dp)) { Icon(Icons.Outlined.ArrowDownward, "Latest messages") }
         }
         if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
@@ -321,9 +311,9 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
                     DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; choosePhoto() })
                 }
             }
-            OutlinedTextField(state.draft, store::draft, Modifier.weight(1f), placeholder = { Text("Message") }, maxLines = 5,
+            OutlinedTextField(state.draft, store::draft, Modifier.weight(1f).onFocusChanged { if (it.isFocused) latestRequest++ }, placeholder = { Text("Message") }, maxLines = 5,
                 enabled = !state.isSending, shape = RoundedCornerShape(20.dp))
-            IconButton({ store.send() }, enabled = !state.isSending && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
+            IconButton({ latestRequest++; store.send() }, enabled = !state.isSending && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
                 if (state.isSending) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = MaterialTheme.colorScheme.primary)
             }

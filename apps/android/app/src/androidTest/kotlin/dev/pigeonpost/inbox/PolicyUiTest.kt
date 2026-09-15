@@ -15,8 +15,10 @@ import org.junit.runner.RunWith
 class PolicyUiTest {
     @get:Rule val ui = createEmptyComposeRule()
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
-    private fun launch(mode: String) = ActivityScenario.launch<MainActivity>(
-        Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode))
+    private fun launch(mode: String): ActivityScenario<MainActivity> {
+        context.getSharedPreferences("fixture-settings", Context.MODE_PRIVATE).edit().clear().commit()
+        return ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode))
+    }
     private fun shown(text: String) {
         ui.waitUntil(10000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
     }
@@ -70,12 +72,12 @@ class PolicyUiTest {
             shown("Inbox")
             ui.onNodeWithText("demo/builder").performClick()
             shown("The Android build is ready for review.")
-            ui.onAllNodesWithContentDescription("Message actions").onLast().performClick()
+            ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:m_1"))).performClick()
             ui.onNodeWithText("Report message").performClick()
             shown("Report this message?")
             ui.onNodeWithText("Cancel").performClick()
             shown("The Android build is ready for review.")
-            ui.onAllNodesWithContentDescription("Message actions").onLast().performClick()
+            ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:m_1"))).performClick()
             ui.onNodeWithText("Report message").performClick()
             ui.onNodeWithText("Report", substring = false).performClick()
             shown("The Android build is ready for review.")

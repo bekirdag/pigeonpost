@@ -16,6 +16,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -48,16 +51,16 @@ fun Confirm(title: String, detail: String, action: String, confirm: () -> Unit, 
 }
 
 @Composable
-fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> Unit) {
+fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> Unit, username: String? = null) {
     PageDialog("Your inboxes", dismiss) {
-        state.mailboxes.forEach { mailbox ->
+        orderedMailboxes(state.mailboxes, username).forEach { mailbox ->
             ListItem(headlineContent = { Text(mailbox.name) }, supportingContent = { Text(mailbox.key) }, leadingContent = { Avatar(mailbox.name) },
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp))
                         CopyAddressButton(mailbox.key)
                     }
-                }, modifier = Modifier.clickable { select(mailbox) })
+                }, modifier = Modifier.testTag("mailbox:" + mailbox.address).semantics { selected = mailbox.address == state.acting?.address }.clickable { select(mailbox) })
         }
     }
 }
@@ -91,7 +94,7 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 
 private enum class SettingsPage(val title: String) {
     ROOT("Settings"), ACCOUNT("Account"), HANDLES("Handles"), PURCHASES("Get a handle"),
-    PREVIEW("Tester registration"), INBOX("Inbox and storage"), HELP("Help and about")
+    SUBSCRIPTIONS("Google Play subscriptions"), PREVIEW("Tester registration"), INBOX("Inbox and storage"), HELP("Help and about")
 }
 
 @Composable
@@ -116,7 +119,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     val page = SettingsPage.valueOf(pageName)
     fun navigate(next: SettingsPage) { pageName = next.name }
     val back: (() -> Unit)? = if (page == SettingsPage.ROOT) null else ({
-        navigate(if (page == SettingsPage.PURCHASES || page == SettingsPage.PREVIEW) SettingsPage.HANDLES else SettingsPage.ROOT)
+        navigate(if (page in setOf(SettingsPage.PURCHASES, SettingsPage.PREVIEW, SettingsPage.SUBSCRIPTIONS)) SettingsPage.HANDLES else SettingsPage.ROOT)
     })
     PageDialog(page.title, dismiss, back = back) {
         when (page) {
@@ -139,6 +142,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             }
             SettingsPage.HANDLES -> {
                 if (paidHandles != null) SettingsRow("Get a handle", "Register a name or restore purchases", Icons.Outlined.AddCircleOutline) { navigate(SettingsPage.PURCHASES) }
+                if (paidHandles != null) SettingsRow("Google Play subscriptions", "Renewals and subscription settings", Icons.Outlined.Subscriptions) { navigate(SettingsPage.SUBSCRIPTIONS) }
                 SettingsRow("Tester registration", "Complimentary names for approved testers", Icons.Outlined.CardGiftcard) { navigate(SettingsPage.PREVIEW) }
         accountHandles?.let { owned ->
             val holdings by owned.state.collectAsStateWithLifecycle()
@@ -153,7 +157,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                     handle.expiresAt?.let { expires ->
                         Text("${if (handle.active) "Paid through" else "Expired on"} ${java.text.DateFormat.getDateInstance().format(java.util.Date(expires * 1000))}", style = MaterialTheme.typography.bodySmall)
                     }
-                    if (handle.active) state.mailboxes.firstOrNull { it.handle?.startsWith(handle.name + "/") == true }?.let { mailbox ->
+                    if (handle.active) state.mailboxes.firstOrNull { it.handle == handle.name || it.handle == handle.name + "/main" }?.let { mailbox ->
                         TextButton({ openInbox(mailbox) }) { Text("Open ${handle.name}") }
                     }
                 }
@@ -164,7 +168,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             OutlinedButton({ owned.refresh(); refreshMailboxes() }, Modifier.fillMaxWidth(), enabled = !holdings.loading) { Text("Refresh account handles") }
         }
             }
-            SettingsPage.PURCHASES -> paidHandles?.let { PaidHandleSection(it, state.mailboxes, openInbox, openLink) }
+            SettingsPage.PURCHASES -> paidHandles?.let { PaidHandleSection(it, openLink) }
+            SettingsPage.SUBSCRIPTIONS -> paidHandles?.let { PaidHandleManagement(it, state.mailboxes, openInbox, openLink) }
             SettingsPage.PREVIEW -> HandleSection(handleState, handles, state.mailboxes, openInbox)
             SettingsPage.INBOX -> {
                 Text("Storage", style = MaterialTheme.typography.titleMedium)
