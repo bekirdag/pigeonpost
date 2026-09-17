@@ -69,6 +69,9 @@
      faint pattern you notice only if you look for it. */
   --doodle-veil: rgba(240, 244, 249, 0.80);
 
+  --find-text: #31205f;
+  --find-fill: #eadfff;
+  --find-edge: #9563d7;
   --list-w: 360px;
   --subs-w: 260px;
   --head-h: 60px;
@@ -83,6 +86,9 @@
    is a rule that will be wrong in one of the two appearances. */
 @media (prefers-color-scheme: dark) {
   :root {
+    --find-text: #f5edff;
+    --find-fill: #5c3a81;
+    --find-edge: #b795e5;
     --navy: #4a73d6;
     --navy-hover: #5f85e0;
     --blue: #6c9bff;
@@ -226,6 +232,7 @@ button { font: inherit; color: inherit; }
    min-content width — and a nowrap message preview has a very wide one. Without this the pane grows
    past the viewport and the timestamp and unread badge are pushed off the right edge. */
 .pane-list {
+  position: relative;
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
@@ -239,6 +246,7 @@ button { font: inherit; color: inherit; }
 }
 
 .pane-subs {
+  position: relative;
   border-right: 1px solid var(--rule);
   display: flex;
   flex-direction: column;
@@ -1284,3 +1292,40 @@ button { font: inherit; color: inherit; }
 #settings-sheet .account-facts dd { overflow-wrap: anywhere; }
 .settings-links { display: flex; align-items: flex-start; flex-direction: column; gap: 12px; }
 .settings-links a { padding: 8px 0; }
+
+/* Desktop conversation controls, with the same focus and touch targets as the rest of the inbox. */
+.inbox-status { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--rule); border-top-color: var(--navy); border-radius: 50%; animation: inbox-spin 1s linear infinite; flex: none; }
+@keyframes inbox-spin { to { transform: rotate(360deg); } }
+.column-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; }
+.column-resizer:hover, .column-resizer:focus-visible { background: var(--navy); opacity: .45; outline: 0; }
+.find-bar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--ground); flex: none; }
+.find-bar input { min-width: 0; flex: 1; border: 1px solid var(--rule); border-radius: 7px; padding: 7px 9px; background: var(--wash); color: var(--ink); font: inherit; font-size: 13px; }
+#find-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
+.messages mark { color: var(--find-text); background: var(--find-fill); border-radius: 2px; }
+.found-message .bubble { outline: 2px solid var(--find-edge); outline-offset: 2px; }
+.history-button { display: block; margin: 12px auto 0; }
+.jump-latest { align-self: center; flex: none; margin: 6px; background: var(--ground); box-shadow: 0 2px 8px var(--shadow-btn); }
+.thread-scroll { overflow-anchor: none; scroll-behavior: auto; }
+.icon-btn:focus-visible, .identity-option:focus-visible, .sub-row:focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+.icon-btn:disabled { opacity: .45; cursor: default; }
+@media (min-width: 781px) {
+  .app { grid-template-columns: var(--list-w) minmax(0, 1fr); }
+  .app[data-subs="true"] { grid-template-columns: var(--list-w) var(--subs-w) minmax(0, 1fr); }
+}
+@media (min-width: 781px) and (max-width: 1100px) {
+  .app { grid-template-columns: 260px minmax(0, 1fr); }
+  .app[data-subs="true"] { grid-template-columns: 260px 180px minmax(0, 1fr); }
+}
+@media (max-width: 1100px) {
+  .column-resizer { display: none; }
+}
+@media (max-width: 780px) {
+  .thread-head { gap: 4px; padding-inline: 8px; }
+  .thread-head > .avatar { display: none; }
+  .find-bar { padding-inline: 8px; }
+  .find-bar .icon-btn { width: 32px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spinner { animation: none; }
+}

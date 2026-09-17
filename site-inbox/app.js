@@ -52,12 +52,27 @@
 
   const sameDay = (a, b) => new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
 
-  // A handle reads as a name; a key address does not. Show the last meaningful segment either way.
+  // Default inboxes must identify their owner: /alp and /bekir are different people.
   function displayName(peer) {
     if (!peer) return "unknown";
     if (peer.startsWith("/k/")) return peer.slice(0, 12) + "…";
     const parts = peer.split("/").filter(Boolean);
+    if (parts.length === 2 && parts[1] === "main") return "/" + parts[0];
     return parts.length > 1 ? parts[parts.length - 1] : peer;
+  }
+
+  function normaliseAddressInput(input) {
+    const before = input.value;
+    const rest = before.replace(/^[\s/]+/, "");
+    const after = rest ? "/" + rest : (before.includes("/") ? "/" : "");
+    if (after === before) return;
+    const start = input.selectionStart, end = input.selectionEnd;
+    input.value = after;
+    if (start !== null && end !== null) {
+      const shift = after.length - before.length;
+      const clamp = (n) => Math.max(0, Math.min(after.length, n + shift));
+      input.setSelectionRange(clamp(start), clamp(end));
+    }
   }
 
   function initials(peer) {
@@ -99,6 +114,17 @@
     // a row number that means nothing in its mailbox, and one postbox's buffering proxy has
     // condemned another to long-polling.
     resetLive();
+    mailboxController.abort();
+    mailboxController = new AbortController();
+    sessionVersion += 1;
+    closeMailboxSheets();
+    drafts.clear();
+    resetComposer();
+    Pending.clear();
+    acked.clear();
+    resetConversationView();
+    $("messages").textContent = "";
+    $("threads").textContent = "";
     state = freshState();
     const banner = $("offline-banner");
     if (banner) banner.hidden = true;
@@ -238,6 +264,7 @@
 
   async function renewSession() {
     const refresh = getRefresh();
+    const version = sessionVersion;
     if (!refresh) return false;
     if (!refreshInFlight) {
       refreshInFlight = (async () => {
@@ -252,6 +279,7 @@
             }),
           });
           const body = await res.json().catch(() => ({}));
+          if (version !== sessionVersion) return false;
           if (res.ok && body.access_token) {
             setToken(body.access_token);
             if (body.refresh_token) setRefresh(body.refresh_token); // the realm rotates these
@@ -420,18 +448,19 @@
 
   // The bytes are the whole body; the metadata rides in headers. Not `api()` — that one sends and
   // expects JSON, and a file is neither.
-  async function uploadFile(file) {
+  async function uploadFile(file, context) {
     const res = await fetch(cfg.postbox + "/v1/attachments", {
       method: "POST",
       headers: {
         authorization: "Bearer " + getToken(),
         accept: "application/json",
         "content-type": "application/octet-stream",
-        "x-pigeonpost-identity": state.me.address,
+        "x-pigeonpost-identity": context.address,
         "x-pigeonpost-filename": headerSafe(file.name),
         "x-pigeonpost-media-type": headerSafe(file.type || "application/octet-stream"),
       },
       body: file,
+      signal: context.signal,
     });
     const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new ApiError(res.status, body.error, body.detail);
@@ -449,6 +478,8 @@
 
   async function api(path, opts) {
     const o = opts || {};
+    const version = sessionVersion;
+    const signal = o.signal || mailboxController.signal;
     const call = async () => {
       const res = await fetch(cfg.postbox + path, {
         method: o.method || "GET",
@@ -457,7 +488,7 @@
           o.body ? { "content-type": "application/json" } : {},
         ),
         body: o.body ? JSON.stringify(o.body) : undefined,
-        signal: o.signal,
+        signal,
       });
       const body = await res.json().catch(() => ({}));
       if (!res.ok) throw new ApiError(res.status, body.error, body.detail);
@@ -466,7 +497,7 @@
     try {
       return await call();
     } catch (e) {
-      if (e instanceof ApiError && e.status === 401 && (await renewSession())) return call();
+      if (version === sessionVersion && !signal.aborted && e instanceof ApiError && e.status === 401 && (await renewSession()) && version === sessionVersion && !signal.aborted) return call();
       throw e;
     }
   }
@@ -474,8 +505,7 @@
   // `?identity=` picks which mailbox an account acts as. Always sent once one is chosen: an account
   // with several mailboxes is refused rather than guessed at, which is the right call server-side
   // and a confusing error here if we let it happen.
-  const withIdentity = (path) => {
-    const address = state.me && state.me.address;
+  const withIdentity = (path, address = state.me && state.me.address) => {
     if (!address) return path;
     return path + (path.includes("?") ? "&" : "?") + "identity=" + encodeURIComponent(address);
   };
@@ -534,6 +564,12 @@
       viewingArchive: false,
       vocabulary: null,  // which verbs may be granted, per the server
       offline: false,    // the last attempt to reach the postbox did not arrive
+      loading: false,
+      hasLoaded: false,
+      loadError: null,
+      inboxRequest: 0,
+      acceptedInboxRequest: 0,
+      sectionRequests: {},
     };
   }
 
@@ -551,6 +587,25 @@
     if (label) label.textContent = Math.round(scale * 100) + "%";
   }
   let state = freshState();
+  let sessionVersion = 0;
+  let identitiesRequest = 0;
+  let mailboxController = new AbortController();
+
+  function mailboxContext() {
+    const owner = state, address = owner.me?.address, signal = mailboxController.signal;
+    return { owner, address, signal, current: () => state === owner && state.me?.address === address && !signal.aborted };
+  }
+
+  function renderLoading() {
+    $("inbox-status").hidden = !state.loading;
+    $("inbox-status-text").textContent = state.hasLoaded ? "Updating inbox…" : "Loading inbox…";
+    $("threads").setAttribute("aria-busy", String(state.loading));
+    $("retry-inbox").hidden = !(state.offline || state.loadError);
+    $("retry-inbox").disabled = state.loading;
+    $("offline-banner").hidden = !(state.offline || state.loadError);
+    $("offline-banner").textContent = state.loadError || (state.hasLoaded
+      ? "Offline — showing what was last loaded." : "Could not reach your inbox. Try again when you’re connected.");
+  }
 
   // Who a message is a conversation *with* — the other end, whichever way it went. The server says
   // so directly now; `sender_handle`/`from` are the pre-conversation shape, kept as a fallback so a
@@ -624,6 +679,7 @@
           body: m.body,
           status: "sent",
           thread_id: m.thread_id,
+          attachments: m.attachments,
         });
         continue;
       }
@@ -643,6 +699,7 @@
         known: m.sender_known,
         matched: m.matched_contact,
         address: m.from,
+        attachments: m.attachments,
       });
       if (!m.read) t.unread += 1;
       if (m.autonomy === "review" && m.verb) t.held += 1;
@@ -658,6 +715,7 @@
         body: m.body,
         status: m.status,
         thread_id: m.thread_id,
+        attachments: m.attachments,
       });
     }
 
@@ -734,6 +792,7 @@
     }
     if (!ready) return;
     renderMe();
+    renderLoading();
     renderThreadList();
     renderSubs();
     renderThread();
@@ -750,7 +809,7 @@
     // been picked yet. On a wide screen both are on show at once, so "open" only tracks the phone.
     pane.setAttribute(
       "data-open",
-      String(visible && onPhone() && !state.openThread),
+      String(visible && onPhone() && state.openThread === null),
     );
     if (!visible) return;
 
@@ -827,18 +886,33 @@
     if (!state.me) return;
     const name = state.me.handle || state.me.address;
     $("me-name").textContent = displayName(name);
-    $("me-sub").textContent = state.me.handle || state.me.address;
-    configureAddressCopy($("copy-my-address"), identityKey(state.me));
+    $("identity-btn").title = "Change mailbox · " + name;
+    $("identity-btn").dataset.address = name;
+    $("identity-btn").setAttribute("aria-label", "Acting as " + displayName(name) + ". Change mailbox");
     paintAvatar($("me-avatar"), name);
-    $("identity-btn").disabled = state.identities.length < 2;
-    $("identity-btn").querySelector(".chev").style.visibility =
-      state.identities.length < 2 ? "hidden" : "visible";
+    $("identity-btn").disabled = false;
+  }
+
+  function orderedIdentities() {
+    const primary = state.identities.find(id => id.handle === cfg.primaryNamespace + "/main")
+      || state.identities.find(id => id.handle?.startsWith("/github/"))
+      || state.identities.find(id => /^\/[^/]+\/main$/.test(id.handle || ""));
+    const parts = (id) => (id.handle || "").split("/").filter(Boolean);
+    return [...state.identities].sort((a, b) => {
+      if (a === primary || b === primary) return a === b ? 0 : a === primary ? -1 : 1;
+      if (Boolean(a.handle) !== Boolean(b.handle)) return a.handle ? -1 : 1;
+      const aa = parts(a), bb = parts(b);
+      const root = (aa[0] || "").localeCompare(bb[0] || "");
+      if (root) return root;
+      const rank = (p) => p.length === 1 || (p.length === 2 && p[1] === "main") ? 0 : 1;
+      return rank(aa) - rank(bb) || identityKey(a).localeCompare(identityKey(b));
+    });
   }
 
   function renderIdentityMenu() {
     const menu = $("identity-menu");
     menu.textContent = "";
-    for (const id of state.identities) {
+    for (const id of orderedIdentities()) {
       const li = document.createElement("li");
       const btn = document.createElement("button");
       btn.type = "button";
@@ -900,7 +974,8 @@
       : threads;
 
     list.textContent = "";
-    $("threads-empty").hidden = threads.length > 0;
+    $("threads-empty").hidden = shown.length > 0 || state.loading || Boolean(state.loadError) || state.offline;
+    if (needle && !shown.length) $("threads-empty").textContent = "No matching conversations. Try another name or address.";
 
     // Your own agents sit at the top under their own heading — the ones you have actually
     // corresponded with. A namespace owner's own fleet is who they most want to find, and burying
@@ -1014,8 +1089,8 @@
   function renderThread() {
     // With several threads on a peer the phone stops at the list of them, so "a peer is selected"
     // is no longer the same question as "there are messages to show".
-    const open = Boolean(state.openPeer) && Boolean(currentSubthread(state.openPeer) || !subsVisible());
-    $("pane-thread").dataset.open = String(open && (!onPhone() || Boolean(state.openThread) || !subsVisible()));
+    const open = Boolean(state.openPeer);
+    $("pane-thread").dataset.open = String(open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length));
     $("thread-head").hidden = !open;
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
@@ -1029,9 +1104,14 @@
     archiveBtn.title = filed ? "Move back to your inbox" : "Archive this conversation";
     archiveBtn.setAttribute("aria-label", archiveBtn.title);
 
-    const list = $("messages");
-    list.textContent = "";
-    if (!open) return;
+    if (!open) {
+      resetConversationView();
+      $("messages").textContent = "";
+      $("load-older").hidden = true;
+      $("jump-latest").hidden = true;
+      $("find-bar").hidden = true;
+      return;
+    }
 
     const conversation = buildThreads().find((t) => t.peer === state.openPeer)
       || { peer: state.openPeer, messages: [], contact: contactFor(state.openPeer) };
@@ -1045,31 +1125,285 @@
     $("peer-name").textContent = threadName(thread);
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
     paintAvatar($("peer-avatar"), thread.peer);
-
-    let previous = null;
-    for (const m of thread.messages) {
-      if (!previous || !sameDay(previous.at, m.at)) {
-        const sep = document.createElement("li");
-        sep.className = "sep";
-        const label = document.createElement("span");
-        label.className = "daybreak";
-        label.textContent = dayLabel(m.at);
-        sep.append(label);
-        list.append(sep);
-      }
-      list.append(messageNode(m));
-      previous = m;
-    }
+    $("delete-thread-btn").hidden = !showing?.id;
+    renderMessages(thread.messages, showing?.id || "");
 
     if (state.showInfo) renderPeerInfo(thread);
 
-    // Jump to the newest, the way a messenger does.
+  }
+
+  // A small DOM window, with an explicit reading position. Refreshing mail never grants permission
+  // to move that position. Search reads the snapshot but renders only the area around its hit.
+  const PAGE_SIZE = 10;
+  let conversationView = null;
+  let findTimer = null;
+  let layoutFrame = null;
+
+  function resetConversationView() {
+    clearTimeout(findTimer);
+    if (layoutFrame !== null) cancelAnimationFrame(layoutFrame);
+    layoutFrame = null;
+    conversationView = null;
+    $("find-input").value = "";
+    $("find-bar").hidden = true;
+    $("find-btn").setAttribute("aria-expanded", "false");
+  }
+
+  function readingAnchor() {
+    const top = $("thread-scroll").getBoundingClientRect().top;
+    for (const row of $("messages").querySelectorAll("[data-message-id]")) {
+      const box = row.getBoundingClientRect();
+      if (box.bottom > top) return { id: row.dataset.messageId, offset: box.top - top };
+    }
+    return null;
+  }
+
+  function messageRow(id) {
+    return [...$("messages").querySelectorAll("[data-message-id]")].find(row => row.dataset.messageId === id);
+  }
+
+  function positionMessages(view, anchor, target) {
+    if (conversationView !== view) return;
     const scroll = $("thread-scroll");
-    requestAnimationFrame(() => { scroll.scrollTop = scroll.scrollHeight; });
+    const row = target ? messageRow(target) : anchor && messageRow(anchor.id);
+    if (target && row) {
+      scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top
+        - (scroll.clientHeight - row.getBoundingClientRect().height) / 2;
+    } else if (view.follow) {
+      scroll.scrollTop = scroll.scrollHeight;
+    } else if (row) {
+      scroll.scrollTop += row.getBoundingClientRect().top - scroll.getBoundingClientRect().top - anchor.offset;
+    }
+    view.lastTop = scroll.scrollTop;
+    view.anchor = readingAnchor();
+    $("jump-latest").hidden = view.follow && !view.endId;
+  }
+
+  function scheduleMessageLayout() {
+    if (!conversationView || layoutFrame !== null) return;
+    const view = conversationView;
+    layoutFrame = requestAnimationFrame(() => {
+      layoutFrame = null;
+      if (conversationView !== view) return;
+      positionMessages(view, view.anchor);
+    });
+  }
+
+  function highlightMessage(row, query, current) {
+    row.classList.toggle("found-message", current);
+    if (!query) return;
+    // Build marks from text nodes, never HTML from the query or message. Inline markup stays inert.
+    const walker = document.createTreeWalker(row.querySelector(".bubble"), NodeFilter.SHOW_TEXT);
+    const nodes = [];
+    while (walker.nextNode()) {
+      if (!walker.currentNode.parentElement.closest(".meta, .decision")) nodes.push(walker.currentNode);
+    }
+    for (const node of nodes) {
+      const value = node.textContent, lower = value.toLocaleLowerCase(), needle = query.toLocaleLowerCase();
+      let at = lower.indexOf(needle), from = 0;
+      if (at < 0) continue;
+      const fragment = document.createDocumentFragment();
+      while (at >= 0) {
+        fragment.append(document.createTextNode(value.slice(from, at)));
+        const mark = document.createElement("mark");
+        mark.textContent = value.slice(at, at + needle.length);
+        fragment.append(mark);
+        from = at + needle.length;
+        at = lower.indexOf(needle, from);
+      }
+      fragment.append(document.createTextNode(value.slice(from)));
+      node.replaceWith(fragment);
+    }
+  }
+
+  function renderMessages(messages, subject) {
+    const key = JSON.stringify([state.me.address, state.openPeer, subject]);
+    if (conversationView?.key !== key) {
+      resetConversationView();
+      conversationView = { key, limit: PAGE_SIZE, follow: true, endId: null, query: "", hits: [],
+        hit: 0, count: messages.length, cache: new Map(), signature: "", anchor: null, lastTop: 0 };
+    }
+    const view = conversationView;
+    view.messages = messages;
+    if (!view.follow && !view.endId) view.limit += Math.max(0, messages.length - view.count);
+    view.count = messages.length;
+    view.hits = view.query ? messages.filter(m => plainText(copyTextOf(m)).toLocaleLowerCase().includes(view.query.toLocaleLowerCase())) : [];
+    view.hit = Math.min(view.hit, Math.max(0, view.hits.length - 1));
+    const found = view.hits[view.hit]?.id;
+    if (view.seek && found) {
+      const index = messages.findIndex(m => m.id === found);
+      view.endId = messages[Math.min(messages.length - 1, index + 5)].id;
+      view.limit = PAGE_SIZE;
+      view.follow = false;
+      view.target = found;
+    }
+    view.seek = false;
+    const endIndex = view.endId ? messages.findIndex(m => m.id === view.endId) : -1;
+    const end = endIndex < 0 ? messages.length : endIndex + 1;
+    const start = Math.max(0, end - view.limit);
+    const visible = messages.slice(start, end);
+    view.start = start;
+    $("load-older").hidden = start === 0;
+    $("find-count").textContent = view.query ? (view.hits.length ? `${view.hit + 1} of ${view.hits.length}` : "No matches") : "";
+    $("find-prev").disabled = $("find-next").disabled = !view.hits.length;
+    const signature = JSON.stringify([visible, view.query, found]);
+    if (signature !== view.signature) {
+      const anchor = view.anchor || readingAnchor(), list = $("messages"), rows = [], cache = new Map();
+      let previous = null;
+      for (const m of visible) {
+        if (!previous || !sameDay(previous.at, m.at)) {
+          const sep = document.createElement("li"), label = document.createElement("span");
+          sep.className = "sep";
+          label.className = "daybreak";
+          label.textContent = dayLabel(m.at);
+          sep.append(label);
+          rows.push(sep);
+        }
+        const fingerprint = JSON.stringify([m, view.query, m.id === found]);
+        let entry = view.cache.get(m.id);
+        if (entry?.fingerprint !== fingerprint) {
+          const row = messageNode(m);
+          highlightMessage(row, view.query, m.id === found);
+          entry = { row, fingerprint };
+        }
+        rows.push(entry.row);
+        cache.set(m.id, entry);
+        previous = m;
+      }
+      // Reuse unchanged bubbles so a refresh preserves selection and attachment/copy controls.
+      rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
+      while (list.children.length > rows.length) list.lastElementChild.remove();
+      view.cache = cache;
+      view.signature = signature;
+      positionMessages(view, anchor, view.target);
+      view.target = null;
+      scheduleMessageLayout();
+      const context = mailboxContext();
+      queueMicrotask(() => { if (context.current() && conversationView === view) ackVisible(); });
+    }
+    $("jump-latest").hidden = view.follow && !view.endId;
+  }
+
+  function loadOlderMessages() {
+    const view = conversationView;
+    if (!view || !view.start) return;
+    view.anchor = readingAnchor();
+    view.follow = false;
+    view.limit += PAGE_SIZE;
+    renderThread();
+    ackVisible();
+  }
+
+  function jumpToLatest() {
+    const view = conversationView;
+    if (!view) return;
+    view.follow = true;
+    view.endId = null;
+    view.limit = PAGE_SIZE;
+    view.query = "";
+    $("find-input").value = "";
+    renderThread();
+    positionMessages(view);
+    ackVisible();
+  }
+
+  function openFind() {
+    if (!conversationView) return;
+    $("find-bar").hidden = false;
+    $("find-btn").setAttribute("aria-expanded", "true");
+    $("find-input").focus();
+  }
+
+  function closeFind() {
+    clearTimeout(findTimer);
+    if (conversationView) conversationView.query = "";
+    $("find-input").value = "";
+    $("find-bar").hidden = true;
+    $("find-btn").setAttribute("aria-expanded", "false");
+    renderThread();
+    $("find-btn").focus();
+  }
+
+  function findStep(delta) {
+    const view = conversationView;
+    if (!view?.hits.length) return;
+    view.hit = (view.hit + delta + view.hits.length) % view.hits.length;
+    view.seek = true;
+    renderThread();
+    ackVisible();
+  }
+
+  const drafts = new Map();
+  const sendingDrafts = new Set();
+  function composerKey() {
+    return state.openPeer ? JSON.stringify([state.me?.address, state.openPeer, currentSubthread(state.openPeer)?.id || ""]) : null;
+  }
+  function stashDraft() {
+    const key = composerKey();
+    if (!key) return;
+    if ($("compose").value || staged.length) drafts.set(key, { text: $("compose").value, files: [...staged] });
+    else drafts.delete(key);
+  }
+  function resetComposer() {
+    $("compose").value = "";
+    $("compose").style.height = "auto";
+    $("compose").disabled = false;
+    $("send-btn").disabled = true;
+    staged.length = 0;
+    renderStaged();
+  }
+  function restoreDraft() {
+    resetComposer();
+    const key = composerKey(), draft = drafts.get(key);
+    if (draft) { $("compose").value = draft.text; staged.push(...draft.files); renderStaged(); }
+    $("compose").disabled = sendingDrafts.has(key);
+    $("compose").dispatchEvent(new Event("input"));
+  }
+
+  let deletingThread = null;
+  function askDeleteThread() {
+    const thread = currentSubthread(state.openPeer);
+    if (!thread?.id) return;
+    deletingThread = { context: mailboxContext(), peer: state.openPeer, thread };
+    $("delete-thread-detail").textContent = `Delete “${subthreadName(thread)}” and its ${thread.messages.length} message${thread.messages.length === 1 ? "" : "s"} from this mailbox? The other person keeps their copy.`;
+    $("delete-thread-error").hidden = true;
+    $("delete-thread-confirm").disabled = false;
+    openSheet("delete-thread-sheet");
+    $("delete-thread-cancel").focus();
+  }
+  async function deleteThread() {
+    const target = deletingThread, button = $("delete-thread-confirm");
+    if (!target?.context.current() || button.disabled) return;
+    button.disabled = true;
+    try {
+      await api(withIdentity("/v1/threads/" + encodeURIComponent(target.thread.id), target.context.address), { method: "DELETE" });
+      if (!target.context.current()) return;
+      drafts.delete(JSON.stringify([target.context.address, target.peer, target.thread.id]));
+      Pending.rows = Pending.rows.filter(row => row.mailbox !== target.context.address || row.thread_id !== target.thread.id);
+      state.serverThreads = state.serverThreads.filter(t => t.thread_id !== target.thread.id);
+      state.inbound = state.inbound.filter(m => m.thread_id !== target.thread.id);
+      state.acceptedInboxRequest = ++state.inboxRequest;
+      if (deletingThread === target) closeSheet("delete-thread-sheet");
+      const selected = state.openPeer === target.peer && state.openThread === target.thread.id;
+      if (selected) {
+        state.openThread = subthreadsFor(target.peer)[0]?.id ?? null;
+        resetConversationView();
+      }
+      render();
+      if (selected) restoreDraft();
+      await loadAll();
+    } catch (e) {
+      if (!target.context.current() || deletingThread !== target) return;
+      $("delete-thread-error").textContent = "Could not delete this thread. Please try again.";
+      $("delete-thread-error").hidden = false;
+    } finally {
+      if (target.context.current() && deletingThread === target) button.disabled = false;
+    }
   }
 
   function messageNode(m) {
     const li = document.createElement("li");
+    li.dataset.messageId = m.id;
     if (m.kind === "out") li.className = "mine";
 
     const bubble = document.createElement("div");
@@ -1127,7 +1461,7 @@
           decision.append(reason);
         }
       }
-      req.append(decision);
+      if (m.kind === "in") req.append(decision);
       bubble.append(req);
     } else {
       // Bodies are other agents' text — rendered as markdown, and still never as markup: see
@@ -1166,17 +1500,20 @@
         // The token cannot ride in a plain link, so this fetches with it and hands the browser a
         // blob. Same reason the download endpoint is authenticated at all: a file is not public
         // because its id is known.
-        link.addEventListener("click", async (event) => {
+          link.addEventListener("click", async (event) => {
           event.preventDefault();
+          const context = mailboxContext();
           try {
             const res = await fetch(link.href, {
               headers: {
                 authorization: "Bearer " + getToken(),
-                "x-pigeonpost-identity": state.me.address,
+                "x-pigeonpost-identity": context.address,
               },
+              signal: context.signal,
             });
             if (!res.ok) throw new Error(String(res.status));
             const blob = await res.blob();
+            if (!context.current()) return;
             const url = URL.createObjectURL(blob);
             const save = document.createElement("a");
             save.href = url;
@@ -1184,7 +1521,7 @@
             save.click();
             URL.revokeObjectURL(url);
           } catch (_) {
-            toast("Could not download that file.");
+            if (context.current()) toast("Could not download that file.");
           }
         });
         const size = document.createElement("span");
@@ -1687,23 +2024,28 @@
   // Back, one step. On a phone that is messages → threads → names, because skipping the middle
   // screen on the way out of a peer with several conversations loses your place in it.
   function closeThread() {
-    if (onPhone() && state.openThread && subsVisible()) {
+    stashDraft();
+    if (onPhone() && state.openThread !== null && subsVisible()) {
       state.openThread = null;
       state.showInfo = false;
       render();
+      resetComposer();
       return;
     }
     state.openPeer = null;
     state.openThread = null;
     state.showInfo = false;
     render();
+    resetComposer();
   }
 
   function openSubthread(id) {
+    stashDraft();
     state.openThread = id;
     state.showInfo = false;
     if (onPhone()) history.replaceState({ thread: state.openPeer, sub: id }, "");
     render();
+    restoreDraft();
     if (!onPhone()) $("compose").focus({ preventScroll: true });
     ackVisible();
   }
@@ -1722,9 +2064,10 @@
   }
 
   async function createSubthread() {
+    const context = mailboxContext();
     const peer = state.openPeer;
     const title = $("thread-title-input").value.trim();
-    if (!peer) return;
+    if (!peer || $("thread-create").disabled) return;
     if (!title) {
       // Said in the dialog rather than as a toast that appears somewhere else: the thing to fix
       // is right here.
@@ -1738,25 +2081,31 @@
     try {
       const made = await api("/v1/threads", {
         method: "POST",
-        body: { peer, title, identity: state.me.address },
+        body: { peer, title, identity: context.address },
       });
+      if (!context.current()) return;
       await loadThreads();
+      if (!context.current() || state.openPeer !== peer) return;
       // Selected straight away, and the pane it belongs in appears with it: opening a thread and
       // then having to find it in a list that just appeared is two steps for one intention.
+      stashDraft();
       state.openThread = made.thread_id;
       closeSheet("thread-sheet");
       render();
+      restoreDraft();
       if (!onPhone()) $("compose").focus({ preventScroll: true });
     } catch (e) {
+      if (!context.current()) return;
       $("thread-error").textContent =
         e instanceof ApiError ? e.message : "Could not open the thread.";
       $("thread-error").hidden = false;
     } finally {
-      button.disabled = false;
+      if (context.current()) button.disabled = false;
     }
   }
 
   async function openThread(peer) {
+    stashDraft();
     const wasClosed = !state.openPeer;
     state.openPeer = peer;
     state.showInfo = false;
@@ -1776,6 +2125,7 @@
       else history.replaceState({ thread: peer }, "");
     }
     render();
+    restoreDraft();
     // Desktop only. On a phone, focusing the composer raises the keyboard over the thread you just
     // opened — you came to read it, and typing is a second decision you make by tapping the box.
     if (!onPhone()) $("compose").focus({ preventScroll: true });
@@ -1790,12 +2140,15 @@
   // Scoped to what is actually on screen: with several threads open on a peer, marking the other
   // threads read because one of them was looked at would clear a mark nobody has seen.
   async function ackVisible() {
+    const context = mailboxContext();
     const peer = state.openPeer;
-    if (!peer) return;
+    if (!peer || document.visibilityState === "hidden" || (onPhone() && $("pane-thread").dataset.open !== "true")) return;
+    const displayed = new Set([...$("messages").querySelectorAll("[data-message-id]")].map(row => row.dataset.messageId));
     const showing = subsVisible() ? currentSubthread(peer) : null;
     const unread = state.inbound.filter(
       (m) =>
         peerKeyOf(m) === peer &&
+        m.direction !== "out" && displayed.has(m.message_id) &&
         !m.read &&
         (!showing || (m.thread_id || "") === showing.id),
     );
@@ -1807,9 +2160,12 @@
     renderThreadList();
     renderSubs();
     for (const m of unread) {
+      if (!context.current()) return;
       try {
-        await api(withIdentity("/v1/ack"), { method: "POST", body: { message_id: m.message_id, identity: state.me.address } });
-      } catch (_) { /* it will still be there next poll; nothing is lost by a failed ack */ }
+        await api(withIdentity("/v1/ack", context.address), { method: "POST", body: { message_id: m.message_id, identity: context.address } });
+      } catch (_) {
+        if (context.current()) { acked.delete(m.message_id); m.read = false; }
+      }
     }
   }
 
@@ -1837,7 +2193,11 @@
   }
 
   async function sendMessage(text) {
+    const context = mailboxContext();
     const to = state.openPeer;
+    const draftKey = composerKey();
+    const originalText = text;
+    const files = [...staged];
     // Whichever thread is on screen. Sending into the conversation you are reading is the only
     // behaviour that does not surprise: the alternative is a reply that leaves the thread it
     // answers.
@@ -1847,28 +2207,34 @@
     // it without the files it was about: half a message is worse than none, because the sender has
     // no way to know which half arrived.
     let attachments = [];
-    if (staged.length) {
+    if (files.length) {
       try {
-        attachments = await Promise.all(staged.map(uploadFile));
+        attachments = await Promise.all(files.map(file => uploadFile(file, context)));
       } catch (e) {
+        if (!context.current()) return;
+        if (composerKey() === draftKey && !$("compose").value) $("compose").value = originalText;
         // `ApiError`'s message is the postbox's own detail — "this mailbox holds 96 MB of 100 MB"
         // says what to do about it, and `e.detail` (which this read, and which the class never
         // sets) said nothing at all.
         toast(e instanceof ApiError ? e.message || "Could not upload that file." : "Could not upload that file.");
         return;
       }
+      if (!context.current()) return;
+      if (composerKey() === draftKey) {
       staged.length = 0;
       renderStaged();
+      }
     }
     text = composeBody(text);
     const record = Pending.add({
       local_id: "local_" + randomString(8),
-      mailbox: state.me.address,
+      mailbox: context.address,
       to,
       body: text,
       at: Math.floor(Date.now() / 1000),
       status: "sending",
       thread_id: threadId,
+      attachments: files.map((file, i) => ({ id: attachments[i], filename: file.name, bytes: file.size })),
     });
     render();
 
@@ -1876,22 +2242,27 @@
       const sent = await api("/v1/send", {
         method: "POST",
         body: threadId
-          ? { to, body: text, from: state.me.address, thread_id: threadId, attachments }
-          : { to, body: text, from: state.me.address, attachments },
+          ? { to, body: text, from: context.address, thread_id: threadId, attachments }
+          : { to, body: text, from: context.address, attachments },
       });
       // The id of the server's own copy. Holding it is what lets the optimistic row retire the
       // moment that copy comes back, instead of the message appearing twice for a poll.
       record.sent_copy_id = sent.sent_copy_id || null;
       record.status = "sent";
+      drafts.delete(draftKey);
+      if (context.current() && composerKey() === draftKey) {
+        if ($("compose").value.trim() === originalText) $("compose").value = "";
+        jumpToLatest();
+      }
       // Nothing to reconcile against if the postbox did not keep a copy; drop the optimistic row
       // and let the next poll be the truth.
       if (!record.sent_copy_id) Pending.reconcile(new Set());
-      loadInbox().then(render).catch(() => {});
+      if (context.current()) loadInbox().then(render).catch(() => {});
     } catch (e) {
       record.status = "failed";
-      toast(sendFailure(e));
+      if (context.current()) toast(sendFailure(e));
     }
-    render();
+    if (context.current()) render();
   }
 
   function sendFailure(e) {
@@ -1907,24 +2278,32 @@
   }
 
   async function switchIdentity(identity) {
+    if (identity.address === state.me?.address) return;
+    stashDraft();
     stopLive();
+    mailboxController.abort();
+    mailboxController = new AbortController();
+    closeMailboxSheets();
     LS.setItem(K.identity, identity.address);
-    state.me = { address: identity.address, handle: identity.handle };
-    state.openPeer = null;
-    state.showInfo = false;
-    state.inbound = [];
+    state = { ...freshState(), identities: state.identities, me: identity };
+    const context = mailboxContext();
     acked.clear();
-    Pending.clear();
+    resetComposer();
+    $("search").value = "";
+    resetConversationView();
     renderIdentityMenu();
     render();
     // The stream regardless: an opening that did not arrive is exactly when the mailbox most needs
     // something retrying behind it.
-    try { await loadAll(); } finally { startLive(); }
+    try { await loadAll(); }
+    catch (e) { if (context.current() && e instanceof ApiError && e.status === 401) signOut(); }
+    finally { if (context.current()) startLive(); }
   }
 
   // ---- loading -------------------------------------------------------------------------------
 
   async function loadIdentities() {
+    const version = sessionVersion, request = ++identitiesRequest;
     const { identities } = await api("/v1/identities");
     // `/v1/identities` reports the address and the operator's own label. The handle — the thing
     // trust actually matches on — is only knowable from the server, per mailbox.
@@ -1936,13 +2315,14 @@
         return { address: id.address, label: id.label, handle: null };
       }
     }));
+    if (version !== sessionVersion || request !== identitiesRequest) return;
     state.identities = resolved;
 
     // Default to the operator's own named mailbox rather than whichever address the server
     // happened to list first. A handle is a mailbox somebody deliberately named — usually the one
     // they think of as "my inbox" — while an anonymous /k/ address is typically an agent's. An
     // explicit earlier choice still wins over both.
-    const remembered = LS.getItem(K.identity);
+    const remembered = state.me?.address || LS.getItem(K.identity);
     const named = resolved.filter((i) => i.handle);
 
     // Within the operator's own namespace, `main` is the one that answers for the namespace itself
@@ -1968,7 +2348,8 @@
       resolved[0] ||
       null;
     if (chosen) {
-      state.me = { address: chosen.address, handle: chosen.handle };
+      if (state.me && state.me.address !== chosen.address) await switchIdentity(chosen);
+      else state.me = chosen;
     }
     renderIdentityMenu();
   }
@@ -1984,13 +2365,14 @@
   // `/v1/inbox` had just raised, and the page went back to claiming it was current over a listing
   // it had not managed to load.
   async function loadAll() {
+    const context = mailboxContext();
     const results = await Promise.allSettled([loadInbox(), loadContacts(), loadArchive(), loadThreads()]);
+    if (!context.current()) return;
     render();
     // The last word, so the answer no longer depends on which call finished first. The other three
     // absorb their own failures — one route being unavailable is not the account being offline —
     // so what is left to settle is whether the inbox itself arrived, which is what the banner is
     // about. Refused is not the same as did not arrive: a postbox that answered is reachable.
-    setOffline(!results.every((r) => r.status === "fulfilled" || r.reason instanceof ApiError));
     // Only `loadInbox` rethrows, and only an answer — a 401 above all — is something the caller
     // has to act on. A request that never arrived is weather, and the live loop is what retries it.
     const refused = results.find((r) => r.status === "rejected" && r.reason instanceof ApiError);
@@ -2005,20 +2387,38 @@
     // polling agent wants only what is new, so acknowledged mail leaves its listing. A person
     // reading a thread wants the thread — hiding a message the moment it was acknowledged would
     // make conversations lose their own history as they are read.
+    const context = mailboxContext();
+    if (!context.address) return;
+    const request = ++state.inboxRequest;
+    state.loadingRequest = request;
+    state.loading = true;
+    renderLoading();
     let body;
     try {
       body = await api(
-        withIdentity("/v1/inbox") + "&include_sent=true&include_read=true",
+        withIdentity("/v1/inbox", context.address) + "&include_sent=true&include_read=true",
         { signal },
       );
     } catch (e) {
+      if (!context.current() || signal?.aborted || request !== state.loadingRequest) return;
       // Still thrown — a caller that wants to sign out on a 401 needs to see it. This only records
       // that the postbox was not reached, which every caller of this would otherwise swallow.
       if (!(e instanceof ApiError)) setOffline(true);
+      else state.loadError = e.status === 401 ? "Your session expired. Sign in again." : "Could not load your inbox. Please try again.";
       throw e;
+    } finally {
+      if (context.current() && request === state.loadingRequest) {
+        state.loading = false;
+        renderLoading();
+      }
     }
+    if (!context.current() || signal?.aborted || request < state.acceptedInboxRequest) return;
+    state.acceptedInboxRequest = request;
+    state.hasLoaded = true;
+    state.loadError = null;
     setOffline(false);
     adopt(body);
+    renderLoading();
   }
 
   // Messages this browser has acknowledged but has not yet seen the server report as read.
@@ -2053,45 +2453,37 @@
   // when the server answered; anything else is the network.
   const answered = (e) => e instanceof ApiError;
 
-  async function loadThreads() {
+  async function loadSection(key, path, accept) {
+    const context = mailboxContext();
+    if (!context.address) return;
+    const request = (state.sectionRequests[key] || 0) + 1;
+    state.sectionRequests[key] = request;
+    const current = () => context.current() && state.sectionRequests[key] === request;
     try {
-      const body = await api(withIdentity("/v1/threads"));
-      state.serverThreads = body.threads || [];
-      setOffline(false);
+      const body = await api(withIdentity(path, context.address));
+      if (current()) accept(body);
     } catch (e) {
-      // A postbox that does not know about threads yet answers 404/501 here. Everything still
-      // works: threads are then whatever the messages themselves say, and a peer with one
-      // conversation — which is all such a postbox can produce — shows no thread list at all.
-      if (answered(e)) state.serverThreads = [];
-      else setOffline(true);
+      // Keep the last good snapshot on a temporary failure. Only an unsupported route means empty.
+      if (current() && answered(e) && [404, 501].includes(e.status)) accept({});
     }
+  }
+
+  async function loadThreads() {
+    return loadSection("threads", "/v1/threads", body => { state.serverThreads = body.threads || []; });
   }
 
   async function loadContacts() {
-    try {
-      const body = await api(withIdentity("/v1/contacts"));
+    return loadSection("contacts", "/v1/contacts", body => {
       state.contacts = body.contacts || [];
       state.vocabulary = body.vocabulary || null;
       state.policy = body.policy || state.policy;
-      setOffline(false);
-    } catch (e) {
-      if (answered(e)) state.contacts = [];
-      else setOffline(true);
-    }
+    });
   }
 
   async function loadArchive() {
-    try {
-      const body = await api(withIdentity("/v1/archive"));
+    return loadSection("archive", "/v1/archive", body => {
       state.archived = new Set(body.archived || []);
-      setOffline(false);
-    } catch (e) {
-      // An archive we could not read must not hide anything: failing open shows a conversation
-      // that should have been filed, failing closed hides one that should not be. Only one of
-      // those loses mail.
-      if (answered(e)) state.archived = new Set();
-      else setOffline(true);
-    }
+    });
   }
 
   // The banner, not a dialog and not an empty screen: what is loaded stays readable and stays
@@ -2102,8 +2494,7 @@
     const next = Boolean(off);
     if (state.offline === next) return;
     state.offline = next;
-    const el = $("offline-banner");
-    if (el) el.hidden = !next;
+    renderLoading();
   }
 
   // ---- archive --------------------------------------------------------------------------------
@@ -2122,6 +2513,7 @@
   }
 
   async function setArchived(peer, archived) {
+    const context = mailboxContext();
     // Move it in the UI first: filing something is a gesture that should feel instant, and the
     // server call is a formality that either confirms it or is undone below.
     if (archived) state.archived.add(peer);
@@ -2131,10 +2523,12 @@
     try {
       await api("/v1/archive", {
         method: "PUT",
-        body: { peer, archived, identity: state.me.address },
+        body: { peer, archived, identity: context.address },
       });
+      if (!context.current()) return;
       toast(archived ? "Archived." : "Moved back to your inbox.");
     } catch (e) {
+      if (!context.current()) return;
       if (archived) state.archived.delete(peer);
       else state.archived.add(peer);
       render();
@@ -2211,6 +2605,7 @@
           ),
           signal: live.signal,
         });
+        if (!liveWanted || gen !== liveGen) return;
         // One renewal per expiry, not one per answer. A token the server keeps refusing after a
         // successful refresh is a disagreement no amount of refreshing settles, and retrying it in
         // a tight loop is how a client turns its own bug into the server's outage.
@@ -2228,7 +2623,6 @@
         }
         if (!res.ok || !res.body) throw new Error("events " + res.status);
 
-        setOffline(false);
         // Mail can land between the listing that drew the screen and the stream opening, and the
         // server starts a cursor-less stream at *now*. One refresh on connect closes that gap.
         loadInbox().then(render).catch(() => {});
@@ -2245,6 +2639,7 @@
         rearm();
         try {
           await readEventStream(res.body, rearm, (event, id, data) => {
+            if (!liveWanted || gen !== liveGen) return;
             if (id !== null) liveCursor = id;
             if (event !== "mail") return;
             // The stream is per account and the screen shows one mailbox. Refreshing for a sibling
@@ -2319,9 +2714,11 @@
   // this is a live inbox without a socket and without hammering the server.
   let polling = false;
   let pollController = null;
+  let pollGeneration = 0;
 
   function stopPolling() {
     polling = false;
+    pollGeneration += 1;
     if (pollController) pollController.abort();
     pollController = null;
   }
@@ -2329,9 +2726,12 @@
   async function startPolling() {
     if (polling || !state.me) return;
     polling = true;
+    const gen = ++pollGeneration;
+    const context = mailboxContext();
     let backoff = 1000;
-    while (polling) {
+    while (polling && gen === pollGeneration && context.current()) {
       pollController = new AbortController();
+      const request = ++state.inboxRequest;
       try {
         // `include_read=true` is not optional here, even though this is the *polling* call.
         //
@@ -2344,15 +2744,17 @@
         const path = withIdentity("/v1/inbox") + "&include_sent=true&include_read=true"
           + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
-        if (!polling) break;
+        if (!polling || gen !== pollGeneration || !context.current()) break;
+        if (request < state.acceptedInboxRequest) continue;
+        state.acceptedInboxRequest = request;
+        state.hasLoaded = true;
+        state.loadError = null;
         setOffline(false);
-        const before = state.inbound.length;
         adopt(body);
-        if (state.inbound.length !== before) render();
-        else renderThreadList();
+        render();
         backoff = 1000;
       } catch (e) {
-        if (!polling) break;
+        if (!polling || gen !== pollGeneration || !context.current()) break;
         if (e instanceof ApiError && e.status === 401) { signOut(); return; }
         // Anything else — offline, proxy hiccup — is temporary. Back off rather than spin.
         if (!(e instanceof ApiError)) setOffline(true);
@@ -2371,6 +2773,14 @@
   // Most recently opened last, so Escape closes what is actually on top. A fixed list closes
   // whichever happens to be first in it, which is only the topmost by luck.
   const sheetStack = [];
+  function closeMailboxSheets() {
+    for (const id of [...sheetStack]) closeSheet(id);
+    deletingThread = null;
+    $("identity-menu").hidden = true;
+    $("identity-btn").setAttribute("aria-expanded", "false");
+    $("thread-create").disabled = false;
+    $("contact-save").disabled = false;
+  }
   function openSheet(id) {
     $(id).hidden = false;
     const at = sheetStack.indexOf(id);
@@ -2393,14 +2803,18 @@
   // ---- new conversation -------------------------------------------------------------------------
 
   function openNewConversation() {
-    $("new-peer").value = "";
+    $("new-peer").value = "/";
     $("new-body").value = "";
     $("new-error").hidden = true;
+    $("new-send").disabled = false;
     openSheet("new-sheet");
     $("new-peer").focus();
   }
 
   async function sendNewConversation() {
+    if ($("new-send").disabled) return;
+    const context = mailboxContext();
+    normaliseAddressInput($("new-peer"));
     const to = $("new-peer").value.trim();
     const body = $("new-body").value.trim();
     const fail = (message) => {
@@ -2408,7 +2822,8 @@
       el.textContent = message;
       el.hidden = false;
     };
-    if (!to) return fail("Who is it for?");
+    if (to === "/" || !to) return fail("Who is it for?");
+    if (!/^\/[^\s/]+(?:\/[^\s/]+)*$/.test(to)) return fail("Enter a post address such as /bekir or /bekir/agent1.");
     if (!body) return fail("Write something to send.");
 
     $("new-send").disabled = true;
@@ -2418,18 +2833,22 @@
       // `not_a_request` and parked for a human. That the *opening* message was the one going out
       // bare is what made this look like the recipient was broken rather than the sender — every
       // reply after it was already an envelope, so nothing further in the thread showed it.
-      await api("/v1/send", { method: "POST", body: { to, body: composeBody(body), from: state.me.address } });
+      const sent = await api("/v1/send", { method: "POST", body: { to, body: composeBody(body), from: context.address } });
+      if (!context.current()) return;
       closeSheet("new-sheet");
       await loadAll();
+      if (!context.current()) return;
       // A conversation started with a namespace or a `/k/` address is filed by the server under
       // whatever peer it resolved to, so open by what came back rather than by what was typed.
-      const started = buildThreads().find((t) => t.peer === normalisePeer(to) || t.peer === to);
+      const copy = state.inbound.find(m => m.message_id === sent.sent_copy_id);
+      const resolved = copy ? peerKeyOf(copy) : normalisePeer(to);
+      const started = buildThreads().find((t) => t.peer === resolved || t.peer === to);
       if (started) openThread(started.peer);
       else render();
     } catch (e) {
-      fail(sendFailure(e));
+      if (context.current()) fail(sendFailure(e));
     } finally {
-      $("new-send").disabled = false;
+      if (context.current()) $("new-send").disabled = false;
     }
   }
 
@@ -2490,7 +2909,13 @@
       state.archived.size === 1 ? "1 conversation" : state.archived.size + " conversations";
     $("archive-link").textContent = location.origin + "/#archive";
     renderContactList();
-    $("acct-handles-refresh").onclick = () => { loadAccountHandles(); loadIdentities(); };
+    $("acct-handles-refresh").onclick = () => {
+      const context = mailboxContext();
+      loadAccountHandles();
+      loadIdentities().then(() => { if (context.current()) renderMe(); }).catch(() => {
+        if (context.current()) toast("Could not refresh your mailboxes. Please try again.");
+      });
+    };
     loadAccountHandles();
     showSettingsPage("root", false);
     openSheet("settings-sheet");
@@ -2593,6 +3018,7 @@
   }
 
   async function saveContact() {
+    const context = mailboxContext();
     const peer = $("contact-peer").value.trim();
     const fail = (message) => {
       const el = $("contact-error");
@@ -2613,35 +3039,91 @@
           admission: $("contact-admission").value,
           autonomy: $("contact-autonomy").value,
           allowed_verbs: verbs,
-          identity: state.me.address,
+          identity: context.address,
         },
       });
+      if (!context.current()) return;
       closeSheet("contact-sheet");
       await loadContacts();
+      if (!context.current()) return;
       renderContactList();
       render();
     } catch (e) {
-      fail(e && e.message ? e.message : "Could not save.");
+      if (context.current()) fail(e && e.message ? e.message : "Could not save.");
     } finally {
-      $("contact-save").disabled = false;
+      if (context.current()) $("contact-save").disabled = false;
     }
   }
 
   async function removeContact() {
     if (!editingContact) return;
+    const context = mailboxContext();
     try {
       await api("/v1/contacts", {
         method: "DELETE",
-        body: { peer: editingContact.peer, identity: state.me.address },
+        body: { peer: editingContact.peer, identity: context.address },
       });
+      if (!context.current()) return;
       closeSheet("contact-sheet");
       await loadContacts();
+      if (!context.current()) return;
       renderContactList();
       render();
       toast("Removed. They get whatever strangers get.");
     } catch (e) {
-      toast("Could not remove them.");
+      if (context.current()) toast("Could not remove them.");
     }
+  }
+
+  function wireColumns() {
+    let saved = {};
+    try { saved = JSON.parse(LS.getItem("ppi_columns") || "{}"); } catch (_) { /* use defaults */ }
+    const columns = [
+      { id: "list-resizer", name: "list", initial: 320, min: 240, max: 480 },
+      { id: "subs-resizer", name: "subs", initial: 240, min: 180, max: 360 },
+    ];
+    const widths = {};
+    const apply = (column, value, persist = false) => {
+      const other = column.name === "list" ? (widths.subs || 240) : (widths.list || 320);
+      const max = Math.max(column.min, Math.min(column.max, window.innerWidth - other - 340));
+      const width = Math.min(max, Math.max(column.min, Number(value) || column.initial));
+      widths[column.name] = width;
+      document.documentElement.style.setProperty(`--${column.name}-w`, width + "px");
+      const divider = $(column.id);
+      divider.setAttribute("aria-valuemin", column.min);
+      divider.setAttribute("aria-valuemax", max);
+      divider.setAttribute("aria-valuenow", width);
+      if (persist) { saved = { ...widths }; LS.setItem("ppi_columns", JSON.stringify(saved)); }
+    };
+    for (const column of columns) {
+      apply(column, saved?.[column.name]);
+      const divider = $(column.id);
+      let drag = null;
+      divider.addEventListener("pointerdown", e => {
+        if (e.button !== 0) return;
+        e.preventDefault();
+        drag = { x: e.clientX, width: widths[column.name] };
+        divider.setPointerCapture(e.pointerId);
+      });
+      divider.addEventListener("pointermove", e => {
+        if (!drag) return;
+        apply(column, drag.width + e.clientX - drag.x, true);
+      });
+      const end = () => { drag = null; };
+      divider.addEventListener("pointerup", end);
+      divider.addEventListener("pointercancel", end);
+      divider.addEventListener("lostpointercapture", end);
+      divider.addEventListener("dblclick", () => apply(column, column.initial, true));
+      divider.addEventListener("keydown", e => {
+        const amount = e.shiftKey ? 40 : 10;
+        const value = { ArrowLeft: widths[column.name] - amount, ArrowRight: widths[column.name] + amount,
+          Home: column.min, End: column.max }[e.key];
+        if (value === undefined) return;
+        e.preventDefault();
+        apply(column, value, true);
+      });
+    }
+    window.addEventListener("resize", () => { for (const column of columns) apply(column, saved?.[column.name]); });
   }
 
   function wire() {
@@ -2652,6 +3134,8 @@
     $("new-close").onclick = () => closeSheet("new-sheet");
     $("new-cancel").onclick = () => closeSheet("new-sheet");
     $("new-send").onclick = () => sendNewConversation();
+    $("new-peer").addEventListener("input", e => { if (!e.isComposing) normaliseAddressInput(e.target); });
+    $("new-peer").addEventListener("compositionend", e => normaliseAddressInput(e.target));
     wireSheet("new-sheet");
 
     $("settings-btn").onclick = () => openSettings();
@@ -2661,6 +3145,55 @@
     $("settings-close").onclick = () => closeSheet("settings-sheet");
     $("settings-done").onclick = () => closeSheet("settings-sheet");
     wireSheet("settings-sheet");
+
+    $("retry-inbox").onclick = () => loadAll().catch(e => {
+      if (e instanceof ApiError && e.status === 401) signOut();
+    });
+    $("load-older").onclick = loadOlderMessages;
+    $("jump-latest").onclick = jumpToLatest;
+    $("find-btn").onclick = openFind;
+    $("find-close").onclick = closeFind;
+    $("find-prev").onclick = () => findStep(-1);
+    $("find-next").onclick = () => findStep(1);
+    $("find-input").addEventListener("input", e => {
+      clearTimeout(findTimer);
+      const view = conversationView, query = e.target.value.trim();
+      findTimer = setTimeout(() => {
+        if (conversationView !== view || !view) return;
+        view.query = query;
+        view.hit = 0;
+        view.seek = true;
+        renderThread();
+        ackVisible();
+      }, 160);
+    });
+    $("find-input").addEventListener("keydown", e => {
+      if (e.key === "Enter") { e.preventDefault(); findStep(e.shiftKey ? -1 : 1); }
+    });
+    $("thread-scroll").addEventListener("scroll", () => {
+      const view = conversationView, scroll = $("thread-scroll");
+      if (!view) return;
+      const movedUp = scroll.scrollTop < view.lastTop - 1;
+      const moved = Math.abs(scroll.scrollTop - view.lastTop) > 1;
+      if (!moved) return;
+      view.follow = !view.endId && scroll.scrollHeight - scroll.clientHeight - scroll.scrollTop <= 2;
+      view.lastTop = scroll.scrollTop;
+      view.anchor = readingAnchor();
+      $("jump-latest").hidden = view.follow;
+      if (movedUp && scroll.scrollTop < 80) loadOlderMessages();
+    }, { passive: true });
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(scheduleMessageLayout);
+      observer.observe($("messages"));
+      observer.observe($("thread-scroll"));
+    }
+    document.fonts?.ready.then(scheduleMessageLayout);
+    $("messages").addEventListener("load", scheduleMessageLayout, true);
+    $("delete-thread-btn").onclick = askDeleteThread;
+    $("delete-thread-confirm").onclick = deleteThread;
+    $("delete-thread-cancel").onclick = () => closeSheet("delete-thread-sheet");
+    wireSheet("delete-thread-sheet");
+    wireColumns();
 
     $("size-down").onclick = () =>
       applyMessageScale(Math.max(0.8, Math.round((messageScale() - 0.1) * 10) / 10));
@@ -2685,8 +3218,8 @@
     wireSheet("contact-sheet");
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Tab" && sheetStack.at(-1) === "settings-sheet") {
-        const items = [...$("settings-sheet").querySelectorAll("button:not(:disabled), a[href], input:not(:disabled)")]
+      if (e.key === "Tab" && sheetStack.length) {
+        const items = [...$(sheetStack.at(-1)).querySelectorAll("button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")]
           .filter(el => !el.closest("[hidden]"));
         const first = items[0], last = items.at(-1);
         if (first && e.shiftKey && (document.activeElement === first || document.activeElement === $("settings-title"))) { e.preventDefault(); last.focus(); }
@@ -2698,6 +3231,7 @@
         if (!$(id).hidden) {
           if (id === "settings-sheet" && settingsPage !== "root") { e.preventDefault(); showSettingsPage("root"); return; }
           closeSheet(id);
+          e.preventDefault();
           return;
         }
         // A sheet hidden without going through closeSheet leaves a stale entry; drop it rather
@@ -2759,14 +3293,16 @@
     const compose = $("compose");
     const autosize = () => {
       compose.style.height = "auto";
-      compose.style.height = Math.min(compose.scrollHeight, window.innerHeight * 0.4) + "px";
-      $("send-btn").disabled = !compose.value.trim();
+      const style = getComputedStyle(compose);
+      const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
+      compose.style.height = Math.min(compose.scrollHeight + border, window.innerHeight * 0.4) + "px";
+      $("send-btn").disabled = !compose.value.trim() || sendingDrafts.has(composerKey());
     };
     compose.addEventListener("input", autosize);
 
     // Enter sends, Shift+Enter breaks the line — but only where there is a keyboard to do it with.
     compose.addEventListener("keydown", (e) => {
-      if (e.key === "Enter" && !e.shiftKey && window.matchMedia("(min-width: 781px)").matches) {
+      if (e.key === "Enter" && !e.shiftKey && !e.isComposing && window.matchMedia("(min-width: 781px)").matches) {
         e.preventDefault();
         $("composer").requestSubmit();
       }
@@ -2777,10 +3313,15 @@
     $("composer").addEventListener("submit", (e) => {
       e.preventDefault();
       const text = compose.value.trim();
-      if (!text || !state.openPeer) return;
-      compose.value = "";
+      const key = composerKey();
+      if (!text || !state.openPeer || sendingDrafts.has(key)) return;
+      sendingDrafts.add(key);
+      compose.disabled = true;
       autosize();
-      sendMessage(text);
+      sendMessage(text).finally(() => {
+        sendingDrafts.delete(key);
+        if (composerKey() === key) { compose.disabled = false; autosize(); }
+      });
     });
 
     // One history entry covers a peer, and closeThread walks out of it a screen at a time. Pushing
@@ -2788,13 +3329,23 @@
     // the on-screen back button.
     window.addEventListener("popstate", () => {
       if (!state.openPeer) return;
-      const stillInside = onPhone() && state.openThread && subsVisible();
+      const stillInside = onPhone() && state.openThread !== null && subsVisible();
       closeThread();
       if (stillInside) history.pushState({ thread: state.openPeer }, "");
     });
 
     document.addEventListener("keydown", (e) => {
-      if (e.key === "Escape" && state.openPeer) closeThread();
+      if (e.defaultPrevented) return;
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f" && state.openPeer && !sheetStack.length) {
+        e.preventDefault(); openFind(); return;
+      }
+      if (e.key !== "Escape") return;
+      if (!$("identity-menu").hidden) {
+        $("identity-menu").hidden = true;
+        $("identity-btn").setAttribute("aria-expanded", "false");
+        $("identity-btn").focus();
+      } else if (!$("find-bar").hidden) closeFind();
+      else if (state.openPeer) closeThread();
     });
 
     // A hidden tab holds nothing open. A stream a phone has backgrounded is a socket the browser

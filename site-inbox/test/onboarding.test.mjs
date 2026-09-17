@@ -78,12 +78,12 @@ test("a signed-in newcomer can reach Create my inbox and open it with one reques
   assert.ok(!a.visible("signin"));
   assert.equal(a.creates().length, 1);
   assert.equal(a.server.identities.length, 1);
-  assert.equal(a.$("me-sub").textContent, identity.address);
+  assert.equal(a.$("identity-btn").dataset.address, identity.address);
 });
 
 test("existing accounts open their mailbox without creating another", async (t) => {
   const a = app(t, { existing: true });
-  await until(() => a.$("me-sub").textContent === identity.address);
+  await until(() => a.$("identity-btn").dataset.address === identity.address);
   assert.ok(a.visible("app"));
   assert.ok(!a.visible("create-inbox-btn"));
   assert.equal(a.creates().length, 0);
@@ -99,7 +99,7 @@ test("inbox settings read the same handles across providers and distinguish look
       { namespace: "web-name", source: "entitlement", active: true },
     ] });
   } });
-  await until(() => a.$("me-sub").textContent === identity.address);
+  await until(() => a.$("identity-btn").dataset.address === identity.address);
   a.$("settings-btn").click();
   a.$("settings-nav-handles").click();
   assert.ok(a.visible("acct-handles"));
@@ -210,7 +210,7 @@ test("an expired session during setup returns to sign-in", async (t) => {
 
 test("settings has focused pages, restores focus on back and keeps controls usable", async t => {
   const a = app(t, { existing: true });
-  await until(() => a.$("me-sub").textContent === identity.address);
+  await until(() => a.$("identity-btn").dataset.address === identity.address);
   a.$("settings-btn").click();
   assert.ok(!a.visible("acct-handles"));
   assert.ok(!a.visible("size-up"));
@@ -248,16 +248,17 @@ test("copy buttons use complete addresses and never select another mailbox", asy
   } });
   const copied = [];
   Object.defineProperty(a.w.navigator, "clipboard", { value: { writeText: async (text) => copied.push(text) } });
-  await until(() => a.$("me-sub").textContent === "/demo/main");
-  a.$("copy-my-address").click();
+  await until(() => a.$("identity-btn").dataset.address === "/demo/main");
+  assert.equal(a.$("copy-my-address"), null, "No duplicate address bar");
+  a.$("identity-btn").click();
+  a.$("identity-menu").querySelector('.copy-address[data-address="/demo/main"]').click();
   await until(() => a.$("toast").textContent === "Address copied");
   assert.deepEqual(copied, ["/demo/main"]);
-  a.$("identity-btn").click();
   const button = [...a.$("identity-menu").querySelectorAll(".copy-address")].find((b) => b.dataset.address === raw);
   button.querySelector("svg").dispatchEvent(new a.w.MouseEvent("click", { bubbles: true }));
   assert.deepEqual(copied, ["/demo/main", raw]);
   assert.equal(a.$("identity-menu").hidden, false);
-  assert.equal(a.$("me-sub").textContent, "/demo/main");
+  assert.equal(a.$("identity-btn").dataset.address, "/demo/main");
   assert.notEqual(a.w.localStorage.getItem("ppi_identity"), raw);
   a.$("settings-btn").click();
   a.$("copy-acct-mailbox").click();
@@ -267,13 +268,15 @@ test("copy buttons use complete addresses and never select another mailbox", asy
 
 test("unnamed inbox copy stays available while clipboard denial reports failure", async (t) => {
   const a = app(t, { existing: true });
-  await until(() => a.$("me-sub").textContent === identity.address);
-  assert.equal(a.$("identity-btn").disabled, true);
-  assert.equal(a.$("copy-my-address").disabled, false);
+  await until(() => a.$("identity-btn").dataset.address === identity.address);
+  assert.equal(a.$("identity-btn").disabled, false);
+  a.$("identity-btn").click();
+  const copy = a.$("identity-menu").querySelector(".copy-address");
+  assert.equal(copy.disabled, false);
   Object.defineProperty(a.w.navigator, "clipboard", { value: { writeText: async () => { throw new Error("denied"); } } });
-  a.$("copy-my-address").click();
+  copy.click();
   await until(() => a.$("toast").textContent.includes("Couldn’t copy"));
-  assert.notEqual(a.$("copy-my-address").title, "Address copied");
+  assert.notEqual(copy.title, "Address copied");
   a.$("settings-btn").click();
   assert.equal(a.$("copy-acct-mailbox").disabled, true, "Never copy the 'not named' placeholder");
   assert.equal(a.$("copy-acct-address").disabled, false);

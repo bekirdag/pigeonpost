@@ -256,7 +256,7 @@ console.log("\n— signed in —");
 check("signin hidden", $("signin").hidden, true);
 check("app shown", $("app").hidden, false);
 check("mailbox name", text($("me-name")), "su_iam");
-check("mailbox handle", text($("me-sub")), "/bekir/su_iam");
+check("mailbox handle", $("identity-btn").dataset.address, "/bekir/su_iam");
 check("identity switcher enabled (2 mailboxes)", $("identity-btn").disabled, false);
 
 console.log("\n— the list is correspondence, not a directory —");
@@ -542,7 +542,7 @@ console.log("\n— the sender panel decides, it does not describe —");
 console.log("\n— switching to that mailbox —");
 $("peer-info").querySelector(".open-mailbox").click();
 await settle(150);
-check("now acting as the agent", text($("me-sub")), "/bekir/docdex");
+check("now acting as the agent", $("identity-btn").dataset.address, "/bekir/docdex");
 check("its own row is gone from the agent list", [...$("threads").querySelectorAll(".tr-name")].every((n) => text(n) !== "docdex"), true);
 // It is not promoted into the list just for being an own mailbox — the list stays correspondence.
 // Switching back to it is the picker's job, and the picker still offers it.
