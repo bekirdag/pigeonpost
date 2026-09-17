@@ -55,6 +55,7 @@ mod account_deletion;
 mod appstore;
 mod appstore_routes;
 mod blobs;
+mod chatgpt;
 mod fcm;
 mod github;
 mod googleplay;
@@ -486,6 +487,18 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/metrics", get(metrics))
         .route("/mcp", post(mcp_handler))
+        .route(
+            "/chatgpt",
+            post(chatgpt::handle).layer(axum::extract::DefaultBodyLimit::max(128 * 1024)),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource",
+            get(chatgpt::metadata),
+        )
+        .route(
+            "/.well-known/oauth-protected-resource/chatgpt",
+            get(chatgpt::metadata),
+        )
         .route("/v1/pow/challenge", get(pow_challenge))
         .route("/v1/accounts", post(create_account))
         .route(
@@ -5744,7 +5757,7 @@ mod tests {
         state.store.get(minted.address).await.unwrap().unwrap()
     }
 
-    fn test_state() -> AppState {
+    pub(super) fn test_state() -> AppState {
         state_with_limits(MintLimits {
             per_window: 100,
             window_secs: 3600,
