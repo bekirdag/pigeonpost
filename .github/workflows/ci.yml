@@ -87,6 +87,8 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the fail-closed Cubemeld App Store broker
         run: python3 .github/scripts/test_cubemeld_iap.py
+      - name: Validate the dedicated ChatGPT OAuth provisioning boundaries
+        run: python3 deploy/identity/test-chatgpt.py
       - uses: dtolnay/rust-toolchain@2eae45db285e407f22119950686d47e1101e071b # 1.88.0
         with:
           components: rustfmt, clippy
@@ -192,6 +194,7 @@ jobs:
               ':(exclude)site/app-privacy.html' \
               ':(exclude)site/delete-account.html' \
               ':(exclude)deploy/account-deletions.py' \
+              ':(exclude)deploy/identity/provision-chatgpt.py' \
               ':(exclude)crates/pigeonpost-cli/src/login_cmd.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/oidc.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \

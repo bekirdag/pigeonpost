@@ -28,6 +28,8 @@ pub enum OidcError {
 #[derive(serde::Deserialize)]
 pub struct Claims {
     pub sub: String,
+    #[serde(default)]
+    pub azp: Option<String>,
     /// The address this account signs in with, when the realm sends one. Its key is the spec's
     /// spelling, which is why this file is excluded from the vocabulary guard in CI.
     #[serde(default)]
@@ -41,6 +43,26 @@ pub struct Claims {
     /// general. Providers without `trustEmail` are verified by the realm itself.
     #[serde(default)]
     pub email_verified: Option<bool>,
+}
+
+/// Resource-bound OAuth access-token claims. Kept separate from native-client claims so stricter
+/// connector validation cannot silently change the authentication contract of shipped apps.
+#[derive(serde::Deserialize)]
+pub struct ResourceClaims {
+    pub sub: String,
+    pub azp: String,
+    pub scope: String,
+    pub typ: String,
+}
+
+pub const CHATGPT_CLIENT_ID: &str = "pigeonpost-chatgpt";
+
+impl ResourceClaims {
+    pub fn has_scope(&self, required: &str) -> bool {
+        self.scope
+            .split_ascii_whitespace()
+            .any(|scope| scope == required)
+    }
 }
 
 impl Claims {
@@ -107,6 +129,24 @@ impl Oidc {
         validate_token(token, &key, &self.issuer)
     }
 
+    pub fn issuer(&self) -> &str {
+        &self.issuer
+    }
+
+    pub async fn validate_resource(
+        &self,
+        token: &str,
+        resource: &str,
+        client: &str,
+    ) -> Result<ResourceClaims, OidcError> {
+        let kid = decode_header(token)
+            .map_err(|_| OidcError::Malformed)?
+            .kid
+            .ok_or(OidcError::Malformed)?;
+        let key = self.key_for_kid(&kid).await?;
+        validate_resource_token(token, &key, &self.issuer, resource, client)
+    }
+
     async fn key_for_kid(&self, kid: &str) -> Result<DecodingKey, OidcError> {
         if let Some((n, e)) = self.keys.read().await.get(kid).cloned() {
             return DecodingKey::from_rsa_components(&n, &e).map_err(|_| OidcError::Key);
@@ -145,9 +185,37 @@ fn validate_token(token: &str, key: &DecodingKey, issuer: &str) -> Result<Claims
     let mut v = Validation::new(Algorithm::RS256);
     v.set_issuer(&[issuer]);
     v.validate_aud = false;
-    decode::<Claims>(token, key, &v)
+    let claims = decode::<Claims>(token, key, &v)
         .map(|d| d.claims)
-        .map_err(|_| OidcError::Invalid)
+        .map_err(|_| OidcError::Invalid)?;
+    // A limited connector token must not bypass its scopes through the general REST/MCP routes.
+    // Every other shipped client retains the existing realm-token validation behavior.
+    if claims.azp.as_deref() == Some(CHATGPT_CLIENT_ID) {
+        return Err(OidcError::Invalid);
+    }
+    Ok(claims)
+}
+
+fn validate_resource_token(
+    token: &str,
+    key: &DecodingKey,
+    issuer: &str,
+    resource: &str,
+    client: &str,
+) -> Result<ResourceClaims, OidcError> {
+    let mut validation = Validation::new(Algorithm::RS256);
+    validation.set_issuer(&[issuer]);
+    validation.set_audience(&[resource]);
+    validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
+    validation.validate_nbf = true;
+    let claims = decode::<ResourceClaims>(token, key, &validation)
+        .map_err(|_| OidcError::Invalid)?
+        .claims;
+    // Keycloak access tokens use typ=Bearer; an ID token must never authorize mailbox tools.
+    if claims.sub.trim().is_empty() || claims.azp != client || claims.typ != "Bearer" {
+        return Err(OidcError::Invalid);
+    }
+    Ok(claims)
 }
 
 #[cfg(test)]
@@ -155,6 +223,7 @@ impl Claims {
     pub(crate) fn fixture(sub: &str, address: &str, verified: bool) -> Self {
         Self {
             sub: sub.into(),
+            azp: None,
             email: Some(address.into()),
             email_verified: Some(verified),
         }
@@ -257,5 +326,84 @@ swIDAQAB
         chars[i] = if chars[i] == 'A' { 'B' } else { 'A' };
         let tampered: String = chars.into_iter().collect();
         assert!(validate_token(&tampered, &key, iss).is_err());
+    }
+
+    #[test]
+    fn chatgpt_tokens_are_resource_client_and_time_bound() {
+        let key = DecodingKey::from_rsa_pem(PUB.as_bytes()).unwrap();
+        let signing = EncodingKey::from_rsa_pem(PRIV.as_bytes()).unwrap();
+        let issuer = "https://auth.example/realms/test";
+        let resource = crate::chatgpt::RESOURCE;
+        let base = serde_json::json!({
+            "sub": "member-one", "iss": issuer, "exp": now() + 3600,
+            "aud": [resource], "azp": CHATGPT_CLIENT_ID,
+            "scope": "openid pigeonpost:read", "typ": "Bearer",
+        });
+        let sign_value = |value: &serde_json::Value| {
+            encode(&Header::new(Algorithm::RS256), value, &signing).unwrap()
+        };
+        let valid = sign_value(&base);
+        let claims =
+            validate_resource_token(&valid, &key, issuer, resource, CHATGPT_CLIENT_ID).unwrap();
+        assert_eq!(claims.sub, "member-one");
+        assert!(claims.has_scope("pigeonpost:read"));
+        assert!(!claims.has_scope("pigeonpost:write"));
+        assert!(!claims.has_scope("read"));
+        assert!(
+            validate_token(&valid, &key, issuer).is_err(),
+            "scoped tokens cannot enter generic APIs"
+        );
+
+        for (field, value) in [
+            ("aud", serde_json::json!("another-resource")),
+            ("azp", serde_json::json!("pigeonpost-web")),
+            ("iss", serde_json::json!("https://wrong-issuer.example")),
+            ("exp", serde_json::json!(now() - 120)),
+            ("nbf", serde_json::json!(now() + 3600)),
+            ("sub", serde_json::json!("")),
+            ("typ", serde_json::json!("ID")),
+        ] {
+            let mut value_to_sign = base.clone();
+            value_to_sign[field] = value;
+            assert!(
+                validate_resource_token(
+                    &sign_value(&value_to_sign),
+                    &key,
+                    issuer,
+                    resource,
+                    CHATGPT_CLIENT_ID
+                )
+                .is_err(),
+                "accepted invalid {field}"
+            );
+        }
+        for field in ["exp", "iss", "aud", "sub", "azp", "scope", "typ"] {
+            let mut missing = base.clone();
+            missing.as_object_mut().unwrap().remove(field);
+            assert!(
+                validate_resource_token(
+                    &sign_value(&missing),
+                    &key,
+                    issuer,
+                    resource,
+                    CHATGPT_CLIENT_ID
+                )
+                .is_err(),
+                "accepted missing {field}"
+            );
+        }
+        let hs = encode(
+            &Header::new(Algorithm::HS256),
+            &base,
+            &EncodingKey::from_secret(b"fixture-only"),
+        )
+        .unwrap();
+        assert!(validate_resource_token(&hs, &key, issuer, resource, CHATGPT_CLIENT_ID).is_err());
+        let mut normal = base.clone();
+        normal["azp"] = serde_json::json!("pigeonpost-web");
+        assert!(
+            validate_token(&sign_value(&normal), &key, issuer).is_ok(),
+            "native/web token behavior stays unchanged"
+        );
     }
 }

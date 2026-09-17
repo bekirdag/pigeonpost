@@ -54,7 +54,7 @@ fn initialize_result() -> Value {
     })
 }
 
-fn tools_list_result() -> Value {
+pub(crate) fn tools_list_result() -> Value {
     // `identity` selects which of an account's inboxes to act as (API-key connections with more than
     // one). Capability-token connections control a single identity and can omit it.
     let identity_prop = json!({ "identity": { "type": "string", "description": "Which of your identities to act as (API-key accounts with more than one)." } });
@@ -229,13 +229,22 @@ fn tools_list_result() -> Value {
 }
 
 async fn call_tool(state: &AppState, token: Option<String>, params: Value) -> Result<Value, Value> {
-    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
-    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
-
     let principal = match principal_for_token(state, token.as_deref()).await {
         Ok(p) => p,
         Err(e) => return Ok(tool_error(&e.message)),
     };
+    call_tool_as(state, principal, params).await
+}
+
+/// Shared operations after the transport has authenticated the caller. Ownership checks still
+/// happen below; a transport must never construct an identity from untrusted tool arguments.
+pub(crate) async fn call_tool_as(
+    state: &AppState,
+    principal: Principal,
+    params: Value,
+) -> Result<Value, Value> {
+    let name = params.get("name").and_then(Value::as_str).unwrap_or("");
+    let args = params.get("arguments").cloned().unwrap_or(Value::Null);
     let arg_str = |k: &str| args.get(k).and_then(Value::as_str).map(String::from);
     let arg_bool = |k: &str| args.get(k).and_then(Value::as_bool).unwrap_or(false);
 
