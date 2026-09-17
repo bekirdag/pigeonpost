@@ -284,3 +284,168 @@ test("offline opening provides a usable retry and clears loading after recovery"
   assert.equal(a.$("retry-inbox").hidden, true);
   assert.ok(a.$("threads").querySelector(".thread-row"));
 });
+
+test("sender name and information button open desktop options with nested-dialog focus and dismissal", async t => {
+  const a = await app(t);
+  await a.clickPeer();
+  a.$("peer-name-btn").click();
+  assert.equal(a.$("peer-info-sheet").hidden, false);
+  assert.equal(a.$("peer-name-btn").getAttribute("aria-expanded"), "true");
+  assert.equal(a.$("peer-info-title").textContent, "/alp");
+  assert.equal(a.$("peer-known").checked, true);
+  assert.equal(a.$("peer-full").checked, false);
+  assert.equal(a.$("peer-requests").disabled, false);
+  assert.equal(a.$("peer-own-mailbox").hidden, true);
+  assert.equal(a.w.document.activeElement.id, "peer-info-close");
+  assert.equal(a.$("app").inert, true);
+  a.$("peer-requests").click();
+  assert.equal(a.$("contact-sheet").hidden, false);
+  assert.equal(a.$("contact-peer").value, PEER);
+  assert.equal(a.$("contact-peer").disabled, true);
+  assert.equal(a.$("peer-info-sheet").inert, true);
+  a.w.document.dispatchEvent(new a.w.KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));
+  assert.equal(a.$("contact-sheet").hidden, true);
+  assert.equal(a.$("peer-info-sheet").hidden, false);
+  assert.equal(a.w.document.activeElement.id, "peer-requests");
+  a.$("peer-info-done").click();
+  assert.equal(a.w.document.activeElement.id, "peer-name-btn");
+  assert.equal(a.$("app").inert, false);
+  assert.equal(a.$("peer-name-btn").getAttribute("aria-expanded"), "false");
+  a.$("peer-info-btn").click();
+  a.$("peer-info-sheet").dispatchEvent(new a.w.MouseEvent("mousedown", { bubbles: true }));
+  assert.equal(a.$("peer-info-sheet").hidden, true);
+  assert.equal(a.w.document.activeElement.id, "peer-info-btn");
+});
+
+test("Full permissions uses the server vocabulary, then revocation returns to review with no grants", async t => {
+  const a = await app(t);
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  a.$("peer-full").click();
+  await until(() => a.$("peer-full").checked && !a.$("peer-full").disabled);
+  const put = a.server.calls.find(c => c.method === "PUT" && c.path === "/v1/contacts");
+  assert.deepEqual(put.body, { peer: PEER, alias: null, admission: "allow", autonomy: "auto",
+    allowed_verbs: a.server.vocabulary.grantable, identity: OWNER });
+  assert.ok(put.body.allowed_verbs.every(v => !a.server.vocabulary.never_auto.includes(v)));
+  a.$("peer-full").click();
+  await until(() => !a.$("peer-full").disabled);
+  const row = a.server.mailboxes[OWNER].contacts[0];
+  assert.equal(row.autonomy, "review"); assert.deepEqual(row.allowed_verbs, []);
+  assert.equal(a.$("peer-full").checked, false);
+});
+
+test("Known sender and full grants apply to one sender without rewriting their namespace rule", async t => {
+  const rule = { peer: "/alp/*", alias: "Alp's fleet", admission: "allow", autonomy: "auto", allowed_verbs: ["read_file"] };
+  const a = await app(t, s => { s.mailboxes[OWNER].contacts = [{ ...rule }]; });
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  assert.equal(a.$("peer-known").checked, false);
+  assert.equal(a.$("peer-requests").disabled, true);
+  assert.equal(a.$("peer-full").disabled, false);
+  assert.match(a.$("peer-trust-note").textContent, /Covered by \/alp\/\*/);
+  a.$("peer-known").click();
+  await until(() => !a.$("peer-known").disabled && a.$("peer-known").checked);
+  assert.deepEqual(a.server.mailboxes[OWNER].contacts.find(c => c.peer === PEER), { ...rule, peer: PEER });
+  a.$("peer-known").click();
+  await until(() => !a.$("peer-known").disabled);
+  assert.equal(a.$("peer-known").checked, false);
+  assert.deepEqual(a.server.mailboxes[OWNER].contacts, [rule]);
+  a.$("peer-full").click();
+  await until(() => !a.$("peer-full").disabled);
+  assert.equal(a.$("peer-known").checked, true);
+  assert.deepEqual(a.server.mailboxes[OWNER].contacts.find(c => c.peer === "/alp/*"), rule);
+  assert.ok(a.server.calls.filter(c => c.method !== "GET" && c.path === "/v1/contacts").every(c => c.body.peer === PEER));
+});
+
+test("block requires confirmation, reports failures, retries and unblocks without restoring automatic grants", async t => {
+  const a = await app(t);
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  a.$("peer-block").click(); a.$("peer-block-cancel").click();
+  assert.equal(a.server.calls.filter(c => c.method === "PUT").length, 0);
+  let fail = true;
+  a.server.intercept = c => c.path === "/v1/contacts" && c.method === "PUT" && fail ? response({ error: "unavailable" }, 503) : undefined;
+  a.$("peer-block").click(); a.$("peer-block-confirm").click();
+  await until(() => !a.$("peer-block-error").hidden);
+  assert.equal(a.$("peer-block-sheet").hidden, false);
+  assert.equal(a.$("peer-block-confirm").disabled, false);
+  assert.equal(a.server.mailboxes[OWNER].contacts[0].admission, "allow");
+  fail = false; a.$("peer-block-confirm").click();
+  await until(() => a.$("peer-block-sheet").hidden);
+  assert.equal(a.w.document.activeElement.id, "peer-block");
+  assert.equal(a.$("peer-block").textContent, "Unblock this sender");
+  assert.equal(a.$("peer-full").disabled, true);
+  assert.equal(a.server.mailboxes[OWNER].contacts[0].admission, "block");
+  a.$("peer-block").click();
+  await until(() => a.$("peer-block").textContent === "Block this sender");
+  assert.deepEqual(a.server.mailboxes[OWNER].contacts[0], { peer: PEER, alias: null, admission: "allow", autonomy: "review", allowed_verbs: [] });
+});
+
+test("failed permission save preserves the previous policy and can be retried", async t => {
+  const a = await app(t);
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  a.server.intercept = c => c.path === "/v1/contacts" && c.method === "PUT" ? response({ error: "unavailable" }, 503) : undefined;
+  a.$("peer-full").click();
+  await until(() => !a.$("peer-action-error").hidden);
+  assert.equal(a.$("peer-full").checked, false);
+  assert.equal(a.$("peer-full").disabled, false);
+  a.server.intercept = null; a.$("peer-full").click();
+  await until(() => a.$("peer-full").checked && !a.$("peer-full").disabled);
+  assert.equal(a.$("peer-action-error").hidden, true);
+});
+
+test("sender edits cannot adopt an old mailbox's pending response after switching away and back", async t => {
+  const a = await app(t), late = deferred();
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  a.server.intercept = c => c.path === "/v1/contacts" && c.method === "PUT" ? late.promise : undefined;
+  a.$("peer-full").click(); a.$("peer-full").click();
+  assert.equal(a.$("peer-action-status").hidden, false);
+  assert.equal(a.server.calls.filter(c => c.method === "PUT").length, 1);
+  a.$("peer-info-done").click();
+  await a.switchTo("/garden/main");
+  await a.switchTo("/bekir/main");
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  late.resolve(response({ ok: true })); await tick();
+  assert.equal(a.$("peer-full").checked, false);
+  assert.equal(a.$("peer-full").disabled, false);
+  assert.equal(a.$("peer-action-status").hidden, true);
+});
+
+test("own mailboxes retain trust actions and can be opened from sender options", async t => {
+  const a = await app(t, s => {
+    s.mailboxes[OWNER].messages.forEach(m => { m.peer = SECOND; m.peer_handle = "/garden/main"; });
+    s.mailboxes[OWNER].threads.forEach(thread => { thread.peer = "/garden/main"; });
+  });
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  assert.equal(a.$("peer-own-mailbox").hidden, false);
+  assert.equal(a.$("peer-known").disabled, false);
+  assert.match(a.$("peer-actions-note").textContent, /Blocking one of your own agents/);
+  a.$("peer-known").click(); await until(() => !a.$("peer-known").disabled);
+  assert.equal(a.server.mailboxes[OWNER].contacts.find(c => c.peer === "/garden/main").autonomy, "review");
+  a.$("peer-open-mailbox").click();
+  await until(() => a.$("identity-btn").dataset.address === "/garden/main");
+  assert.equal(a.$("peer-info-sheet").hidden, true);
+  assert.equal(a.$("app").inert, false);
+});
+
+test("archive and restore from sender options keep messages and close the dialog", async t => {
+  const a = await app(t);
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  a.$("peer-archive").click(); await tick();
+  assert.deepEqual(a.server.mailboxes[OWNER].archived, [PEER]);
+  assert.equal(a.$("peer-info-sheet").hidden, true);
+  a.$("settings-btn").click(); a.$("open-archive").click();
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  assert.equal(a.$("peer-archive").textContent, "Move back to the inbox");
+  a.$("peer-archive").click(); await tick();
+  assert.deepEqual(a.server.mailboxes[OWNER].archived, []);
+  assert.equal(a.server.mailboxes[OWNER].messages.length, 35);
+});
+
+test("unavailable sender settings can be retried before any permission change", async t => {
+  const a = await app(t, s => { s.intercept = c => c.path === "/v1/contacts" ? response({ error: "unavailable" }, 503) : undefined; });
+  await a.clickPeer(); a.$("peer-name-btn").click();
+  assert.equal(a.$("peer-known").disabled, true);
+  assert.equal(a.$("peer-retry").hidden, false);
+  a.server.intercept = null; a.$("peer-retry").click();
+  await until(() => a.$("peer-retry").hidden);
+  assert.equal(a.$("peer-known").disabled, false);
+  assert.equal(a.$("peer-known").checked, true);
+});
