@@ -1,7 +1,7 @@
 # Pigeonpost inbox
 
 A messenger for the hosted postbox: conversations on the left, the thread on the right, one pane at
-a time on a phone. Four static files, no build step, no dependencies, no framework.
+a time on a phone. Static HTML, CSS and JavaScript, with no build step, runtime dependencies or framework.
 
 Intended home: `inbox.pigeonpost.dev`.
 
@@ -18,7 +18,7 @@ Both halves come from the postbox. A delivered message is sealed to the recipien
 sealed a second time to the sender and stored in the sender's own mailbox, so a thread reads the
 same on every device and includes messages sent from the CLI or over MCP.
 
-`GET /v1/inbox?include_sent=1` returns the conversation. **Without that flag the endpoint is
+`GET /v1/inbox?include_sent=true&include_read=true` returns the conversation. **Without that flag the endpoint is
 unchanged** — received mail only — because every other caller reads it as "mail addressed to me",
 and an agent draining its inbox must not find its own replies in there and treat them as somebody's
 request.
@@ -28,16 +28,15 @@ whichever way it went — so the client groups threads without inferring anythin
 happen to be set. A sent copy carries no autonomy verdict at all: your own words were never subject
 to an admission decision, and a plausible-looking `review` on them would be a lie.
 
-The only state this app keeps is `Pending`: the seconds between pressing send and the next poll. It
-is in memory, not `localStorage` — a failed send is worth showing until reload and worth forgetting
-after.
+Pending sends, per-conversation drafts, staged files and reading positions stay in memory.
+Authentication, the selected mailbox and appearance preferences persist in `localStorage`.
 
 ## Your agents
 
 A namespace owner's mailboxes — `/bekir/su_iam`, `/bekir/docdex` — are the people they most want to
 write to, so they are pinned at the top of the list under **Your agents**, above every conversation,
-whether or not that agent has ever sent anything. The rest of the list is everyone who has written
-in or been added as a contact.
+when they have corresponded with this mailbox. Silent mailboxes stay in the identity picker. The
+rest of the list is everyone who has written in or been added as a contact.
 
 There is no entitlement check here, and there should not be one. An account holds the mailboxes it
 holds: a free account has one anonymous mailbox and this group comes out empty on its own, while a
@@ -123,7 +122,7 @@ lost response does not mint another. Existing account holders open their current
 
 ## Decisions worth knowing
 
-**Opening a thread acknowledges its mail.** That is what a messenger does, but here `ack` is not
+**Displaying a page of a thread acknowledges that page’s received mail.** That is what a messenger does, but here `ack` is not
 only a read receipt: it is also how an agent sharing the mailbox learns a message has been dealt
 with. A human reading ahead in this app marks mail handled for everyone on that mailbox.
 
@@ -151,15 +150,45 @@ where it fails as unreadable bytes.
 **Sign-in is `offline_access`.** A mail app that signs you out every half hour is one nobody opens.
 The refresh token lives in `localStorage` and is dropped on sign out.
 
-## Not done
+## Remaining backend limitations
 
-- **Starting a conversation with someone new.** You can write to any of your own agents, to anyone
-  who has written in, and to any contact — but there is no "new message" composer for an arbitrary
-  address yet.
 - **Unread counts across the fleet.** An agent row shows unread only for mail that agent sent *this*
   mailbox. Whether `/bekir/docdex` has unread mail of its own is not visible until you open it,
   because that would mean polling every mailbox on every cycle.
-- **Trust controls.** Admission and autonomy are shown, read-only. Granting stays in the CLI, where
-  it is a deliberate act by the mailbox holder rather than one tap in a mail app.
 - **Pagination.** `/v1/inbox` returns the whole mailbox on every poll, so a large mailbox is a large
   response. Fine at current volumes, not free forever.
+
+
+## Desktop parity (September 2026)
+
+The browser inbox has focused Settings pages, account-wide handles, mailbox address copying in
+Settings and the picker, and short default-inbox labels such as `/bekir` and `/alp`. The main
+readable mailbox leads the picker; other named roots and their children follow, with raw keys last.
+New conversation addresses gain their leading slash automatically and require a first message.
+
+Mailbox changes cancel old requests and discard late responses, including A→B→A switches. Loading
+and retry status stay visible without blocking the picker. Drafts and staged files stay with their
+mailbox, peer and subject in memory; signing out clears them. Uploads, sends and read acknowledgements
+use the mailbox captured when the operation started.
+
+A conversation initially renders its latest ten messages. Scrolling upward or selecting **Load
+earlier messages** expands history while preserving a message anchor. Refreshes reuse unchanged
+bubbles and keep the reading position; only a reader at the bottom follows new arrivals or layout
+changes. **Latest messages** returns to the newest page. The existing postbox API still supplies a
+full snapshot: this is display paging, not server pagination.
+
+**Find in conversation** (Ctrl/Cmd+F while a conversation is open) searches the full loaded history,
+shows highlighted matches and previous/next navigation, and renders a small area around an older
+match. Escape closes the find bar or current dialog before leaving the conversation. A selected
+thread can be deleted after confirmation; deletion affects only this mailbox's copy.
+
+On wider desktop screens, column dividers can be dragged or focused and adjusted with Left/Right
+(Shift for a larger step). Double-click restores the default width. Widths persist on this browser;
+phone and narrow desktop layouts adapt independently. File attachments remain authenticated downloads.
+
+Run `npm test --prefix site-inbox` from the repository root. `test/desktop-parity.test.mjs` covers
+mailbox races, page boundaries, older-history search, draft/upload ownership, deletion, input/IME,
+keyboard navigation and retry. `test/fixtures.mjs` contains only synthetic wire-shaped data and can
+also back a local browser acceptance server; neither file is deployed. Browser validation must
+check real scrolling, delayed layout, resizing and responsive/dark layouts because jsdom cannot
+measure their geometry.
