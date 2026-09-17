@@ -2,7 +2,7 @@
 
 ## Current state
 
-Implementation in progress on `codex/chatgpt-plugin-20260917`, starting from `c96f2e903c2c55f79033f4299eda03536654a4a3`. The separate OAuth client is being provisioned disabled pending the portal callback. Backend deployment and plugin submission have not occurred yet.
+Backend implemented and deployed from `a0f9cba63b825b090534e7ce9d12964d8d2b5248`. PR23 merged to main as `cbbdf7b9e8db8ca7e762bf16d9e0324000bc6861`. Real OAuth and messaging tests passed. The OAuth client is disabled with no callbacks pending OpenAI portal setup. No OpenAI plugin record, submission, approval or public listing exists yet: the portal requires the user to add a default payment method and finish identity verification before creation.
 
 ## Verified findings
 
@@ -37,8 +37,23 @@ Implementation in progress on `codex/chatgpt-plugin-20260917`, starting from `c9
 - Docdex symbols and backend impact graphs confirmed main → mcp/oidc dependencies before edits. DAG export was truncated and not useful for full dependency coverage. Afterward the daemon's MCP/HTTP impact and health endpoints stopped responding; the static disclosure and CI edits used direct local caller/config inspection. CLI `run-tests --target crates/pigeonpost-postbox` does not support workspace crate targets, so Cargo ran the exact suite directly.
 - Two local-model refactor attempts invented a nonexistent `Principal.token`; both were rejected. The small refactor was performed locally and covered by the postbox suite.
 
-## Validation and next steps
+## Production and acceptance
 
-Next: complete staged validation, commit/push, deploy the tested backend and privacy disclosure, and verify public discovery/challenges. Once the user completes OpenAI prerequisites, create the plugin record, get its exact OAuth callback/domain challenge, enable the client and validate real account linking before review submission.
+- PR: https://github.com/bekirdag/pigeonpost/pull/23
+- GitHub run `35216287594`: **all 12 checks passed**, including Linux/macOS/Windows suites, Windows lifecycle, delivery/proxy privacy, custody boundaries, lint and audit.
+- Image: `pigeonpost-postbox:chatgpt-a0f9cba63b82`; postbox and reaper both use the tested image with original environment, mounts, loopback binding and 10m × 3 log rotation.
+- Backend backup: `web:/opt/pigeonpost-postbox/backups/chatgpt-20260917T114912Z` contains private container settings, credentials, message/key data and attachment snapshot. Previous containers remain stopped under timestamped rollback names.
+- Hosted privacy disclosure deployed atomically on wodomini. Backup: `/var/backups/pigeonpost-chatgpt/20260917-site`; public SHA256 `962fb3d7a4552361b6d5c4906b37ef87a4f545a50efaa70c862e9b502ac55bae` matches the tested source.
+- Public health, protected-resource discovery, eight-tool manifest and generic MCP initialization: **passed**. Missing/invalid credentials return 401 with OAuth challenges; a foreign browser origin returns 403.
+- Real Keycloak authorization-code login with PKCE S256: **passed** using two dedicated fixture accounts and a temporary exact localhost callback. Create/list/send/reply/read/ack passed against production. Cross-account inbox access was denied, a read-only token could not create an inbox (403), and a limited connector token could not enter the general REST API (401).
+- Review fixture addresses and their conversation are recorded privately on wodomini in `/var/backups/pigeonpost-chatgpt/live-oauth-test-20260917.json`. They contain only synthetic review messages, including an explicitly untrusted instruction fixture. Credentials remain private on the identity host.
+- Temporary callback removed after testing; client verified disabled/no callbacks again. No real-user conversations were used by the acceptance test.
+
+## Remaining portal steps
+
+1. User adds the required default payment method and completes OpenAI Individual identity verification for the temporarily authorized Personal organization. Neither Personal nor Piyote was renamed; the separate Wodo organization request is still only a draft and was not sent.
+2. Create the Pigeonpost plugin record, obtain the exact production OAuth callback and domain challenge, configure the client, then scan tools and complete listing metadata from `deploy/chatgpt/listing.md`.
+3. Test linking and prompts inside ChatGPT itself. The live PKCE acceptance test validates Pigeonpost's side, not the still-unavailable OpenAI plugin connection.
+4. Submit the completed review package, track the decision, and publish after approval. Wodo business publisher verification remains a separate company setup step; do not claim it is completed.
 
 Private operational evidence is stored outside the repository. Do not add passwords, access tokens, client secrets, company documents, or reviewer credentials to this file.
