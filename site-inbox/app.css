@@ -549,6 +549,10 @@ button { font: inherit; color: inherit; }
 }
 .thread-head .back { display: none; }
 .thread-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.thread-who { border: 0; border-radius: 6px; padding: 5px 6px; margin: -5px -6px; background: none; text-align: left; cursor: pointer; }
+.thread-who:hover { background: var(--wash); }
+.thread-who:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+.thread-who > span { max-width: 100%; }
 .thread-name {
   color: var(--ink); font-weight: 600; font-size: 15px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -930,16 +934,12 @@ button { font: inherit; color: inherit; }
 /* ---- sender info -------------------------------------------------------------------------- */
 
 .peer-info {
-  flex: none;
-  background: var(--ground);
-  border-top: 1px solid var(--rule);
-  padding: 12px 16px 14px;
   font-size: 13px;
 }
 .peer-info dl {
   margin: 0;
   display: grid;
-  grid-template-columns: max-content 1fr;
+  grid-template-columns: max-content minmax(0, 1fr);
   gap: 4px 14px;
   max-width: 760px;
 }
@@ -948,6 +948,14 @@ button { font: inherit; color: inherit; }
 .peer-info .mono { font-family: var(--mono); font-size: 12px; }
 .peer-info .note { color: var(--muted); margin: 10px 0 0; max-width: 70ch; }
 .peer-info .open-mailbox { margin-top: 12px; padding: 8px 15px; font-size: 14px; }
+.peer-section { border-top: 1px solid var(--rule); margin-top: 18px; padding-top: 14px; }
+.peer-section h3 { margin: 0 0 8px; color: var(--ink); font-size: 14px; }
+.peer-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; cursor: pointer; }
+.peer-toggle input { width: 20px; height: 20px; margin: 0; accent-color: var(--blue); flex: none; }
+.peer-toggle:has(input:disabled) { color: var(--muted); cursor: default; }
+.peer-action { display: block; width: 100%; min-height: 44px; text-align: left; margin-top: 4px; }
+#peer-info-title, #peer-block-title { overflow-wrap: anywhere; min-width: 0; }
+#peer-info-sheet .sheet, #peer-block-sheet .sheet { max-height: min(88dvh, 760px); }
 
 /* ---- composer ----------------------------------------------------------------------------- */
 

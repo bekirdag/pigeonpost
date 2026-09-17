@@ -1,0 +1,11 @@
+# Web sender options progress
+
+- Baseline: main/origin/main 05df1cf, clean. Isolated worktree `codex/web-sender-options-20260917`.
+- Compared current desktop `PeerInfoSheet` and Inbox policy methods to web `renderPeerInfo`: name not interactive; Known/Full toggles, archive/block controls and own-mailbox trust actions missing.
+- Read both Docdex memory lobes and wake-up history. Symbols, impact and DAG checked; static DOM dependencies checked directly because graphs have no edges. Clone directive failed with the existing database-lock bug; profile read/save succeeded.
+- Implemented the clickable name and an accessible sender dialog with the desktop options, including trust controls for own mailboxes. Nested request/block dialogs keep focus within the active dialog; Done/Escape/backdrop return to the trigger.
+- Mutations preserve namespace rows, apply only confirmed writes, invalidate older contact snapshots, and remain tied to the initiating mailbox. Failed loads and saves are retryable; Full permissions stays unavailable until the server vocabulary is known.
+- A local model fixture draft was attempted and rejected because it changed the wire contract and returned invalid JavaScript. The validated fixture implementation models exact contact CRUD and archive mutations.
+- Validation: final `npm test --prefix site-inbox` passes all 91 tests, including nine new sender-option behavioral regressions. `docdexd test run-node` passes the focused 25-test parity suite. `node --check` and `git diff --check` pass.
+- Browser acceptance with synthetic local data passed name activation (pointer/Enter/Space), permission changes, request editing, confirmed block/unblock, nested focus, Escape/Tab/Shift-Tab and dismissal. Fixed a real-browser focus loss after saving/blocking and repeated the full suite. Desktop/light/dark and 1440×1000, 820×850, 390×844, 320×568 layouts have no horizontal overflow; Done remains visible. No uncaught browser errors; fixture `/v1/events` intentionally returns 404 to exercise long-poll fallback.
+- Evidence: `/private/tmp/pigeonpost-web-sender-options-audit-20260917`. Production baseline hashes match main 05df1cf for the three static assets. Publication and deployment pending.

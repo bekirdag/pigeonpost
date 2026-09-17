@@ -19,7 +19,7 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
-<link rel="stylesheet" href="app.css?v=20260917-desktop-parity">
+<link rel="stylesheet" href="app.css?v=20260917-sender-options">
 </head>
 <body>
 
@@ -107,16 +107,16 @@
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4L6 10l6.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <span class="avatar" id="peer-avatar" aria-hidden="true"></span>
-      <div class="thread-who">
+      <button class="thread-who" id="peer-name-btn" type="button" title="About this sender" aria-haspopup="dialog" aria-controls="peer-info-sheet" aria-expanded="false">
         <span class="thread-name" id="peer-name"></span>
         <span class="thread-sub" id="peer-sub"></span>
-      </div>
+      </button>
       <button id="find-btn" class="icon-btn" type="button" title="Find in conversation" aria-label="Find in conversation" aria-expanded="false" aria-controls="find-bar"><svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M13 13l4 4" stroke="currentColor" stroke-width="1.5"/></svg></button>
       <button id="delete-thread-btn" class="icon-btn" type="button" title="Delete thread" aria-label="Delete thread"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 5h14M7 5V3h6v2M5 5l1 12h8l1-12M8 8v6M12 8v6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg></button>
       <button id="archive-btn" class="icon-btn" type="button" title="Archive this conversation" aria-label="Archive this conversation">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 6.5h14M4.5 6.5V16h11V6.5M3 3.5h14v3H3zM8 10h4" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
-      <button id="peer-info-btn" class="icon-btn" type="button" title="About this sender" aria-label="About this sender">
+      <button id="peer-info-btn" class="icon-btn" type="button" title="About this sender" aria-label="About this sender" aria-haspopup="dialog" aria-controls="peer-info-sheet" aria-expanded="false">
         <svg viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="7.2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M10 9v4.5M10 6.4v.1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
       </button>
     </header>
@@ -137,8 +137,6 @@
       <ol class="messages" id="messages" role="list"></ol>
     </div>
     <button id="jump-latest" class="jump-latest btn-ghost" type="button" hidden>↓ Latest messages</button>
-
-    <div class="peer-info" id="peer-info" hidden></div>
 
     <form class="composer" id="composer" hidden>
       <!-- Chosen files, before they are sent. Listed rather than hidden behind a paperclip count,
@@ -289,6 +287,43 @@
   </div>
 </div>
 
+<!-- Sender options, shared with the desktop conversation header ------------------------------- -->
+<div class="sheet-wrap" id="peer-info-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="peer-info-title">
+    <header class="sheet-head">
+      <h2 id="peer-info-title">About this sender</h2>
+      <button class="icon-btn" id="peer-info-close" type="button" aria-label="Close sender options">×</button>
+    </header>
+    <div class="sheet-body peer-info" id="peer-info">
+      <dl id="peer-addresses"></dl>
+      <section class="peer-section" aria-labelledby="peer-trust-title">
+        <h3 id="peer-trust-title">Trust</h3>
+        <label class="peer-toggle" for="peer-known"><span>Known sender</span><input id="peer-known" type="checkbox" role="switch" aria-describedby="peer-trust-note"></label>
+        <label class="peer-toggle" for="peer-full"><span>Full permissions</span><input id="peer-full" type="checkbox" role="switch" aria-describedby="peer-trust-note"></label>
+        <button class="btn-ghost peer-action" id="peer-requests" type="button">Choose which requests run…</button>
+        <p class="note" id="peer-trust-note"></p>
+        <button class="btn-ghost peer-action" id="peer-retry" type="button" hidden>Retry loading sender settings</button>
+      </section>
+      <section class="peer-section" aria-label="Conversation actions">
+        <button class="btn-ghost peer-action" id="peer-archive" type="button">Archive this conversation</button>
+        <button class="btn-danger peer-action" id="peer-block" type="button">Block this sender</button>
+        <p class="note" id="peer-actions-note"></p>
+      </section>
+      <section class="peer-section" id="peer-own-mailbox" hidden>
+        <button class="btn-primary open-mailbox" id="peer-open-mailbox" type="button">Open this mailbox</button>
+        <p class="note" id="peer-mailbox-note"></p>
+      </section>
+      <section class="peer-section" aria-labelledby="peer-facts-title">
+        <h3 id="peer-facts-title">What the postbox knows</h3>
+        <dl id="peer-facts"></dl>
+      </section>
+      <p class="note" id="peer-action-status" role="status" hidden>Saving…</p>
+      <p class="sheet-error" id="peer-action-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot"><button class="btn-primary" id="peer-info-done" type="button">Done</button></footer>
+  </div>
+</div>
+
 <!-- Add / edit a trusted sender --------------------------------------------------------------- -->
 <div class="sheet-wrap" id="contact-sheet" hidden>
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="contact-title">
@@ -336,6 +371,20 @@
   </div>
 </div>
 
+<div class="sheet-wrap" id="peer-block-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="peer-block-title" aria-describedby="peer-block-detail">
+    <header class="sheet-head"><h2 id="peer-block-title">Block this sender?</h2></header>
+    <div class="sheet-body">
+      <p id="peer-block-detail">Their new messages will be refused. Existing messages stay. They will not be notified.</p>
+      <p class="sheet-error" id="peer-block-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-ghost" id="peer-block-cancel" type="button">Cancel</button>
+      <button class="btn-danger" id="peer-block-confirm" type="button">Block</button>
+    </footer>
+  </div>
+</div>
+
 <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
 
 <div class="sheet-wrap" id="delete-thread-sheet" hidden>
@@ -348,6 +397,6 @@
 
 <script src="config.js"></script>
 <script src="handle.js"></script>
-<script src="app.js?v=20260917-desktop-parity"></script>
+<script src="app.js?v=20260917-sender-options"></script>
 </body>
 </html>

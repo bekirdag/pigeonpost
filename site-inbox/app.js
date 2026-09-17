@@ -560,6 +560,9 @@
       serverThreads: [], // /v1/threads, so a thread opened with nothing said in it still shows
       filter: "",
       showInfo: false,
+      senderAction: null,
+      contactsReady: false,
+      contactsRetrying: false,
       archived: new Set(), // peers filed out of sight, from the server so it holds across devices
       viewingArchive: false,
       vocabulary: null,  // which verbs may be granted, per the server
@@ -1094,7 +1097,8 @@
     $("thread-head").hidden = !open;
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
-    $("peer-info").hidden = !(open && state.showInfo);
+    if (!(open && state.showInfo) && !$("peer-info-sheet").hidden) closeSheet("peer-info-sheet");
+    for (const id of ["peer-name-btn", "peer-info-btn"]) $(id).setAttribute("aria-expanded", String(open && state.showInfo));
 
     // The same control both ways: in the archive it is the way back out, which is where somebody
     // looking at a filed conversation would go looking for it.
@@ -1123,12 +1127,13 @@
       : conversation;
 
     $("peer-name").textContent = threadName(thread);
+    $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
     paintAvatar($("peer-avatar"), thread.peer);
     $("delete-thread-btn").hidden = !showing?.id;
     renderMessages(thread.messages, showing?.id || "");
 
-    if (state.showInfo) renderPeerInfo(thread);
+    if (state.showInfo) renderPeerInfo(conversation);
 
   }
 
@@ -1881,75 +1886,125 @@
     return reasons[code] || code.replace(/_/g, " ");
   }
 
-  function renderPeerInfo(thread) {
-    const box = $("peer-info");
-    box.textContent = "";
-    const c = thread.contact;
-    const lastIn = [...thread.messages].reverse().find((m) => m.kind === "in");
+  let peerInfoTrigger = null;
+  let blockingPeer = null;
 
-    const dl = document.createElement("dl");
-    const add = (term, value, mono) => {
-      const dt = document.createElement("dt");
+  function grantableVerbs() {
+    const vocab = state.vocabulary;
+    return (vocab?.grantable || []).filter(verb => !(vocab.never_auto || []).includes(verb));
+  }
+
+  function renderPeerInfo(thread) {
+    const c = thread.contact;
+    const exact = state.contacts.find(row => row.peer === thread.peer);
+    const blocked = c?.admission === "block";
+    const verbs = grantableVerbs();
+    const full = c?.admission === "allow" && c.autonomy === "auto" && verbs.length > 0
+      && verbs.every(verb => (c.allowed_verbs || []).includes(verb));
+    const busy = Boolean(state.senderAction?.pending);
+    const unavailable = busy || !state.contactsReady;
+    const lastIn = [...thread.messages].reverse().find(m => m.kind === "in");
+    const addresses = $("peer-addresses"), facts = $("peer-facts");
+    addresses.textContent = facts.textContent = "";
+    const add = (dl, term, value, mono) => {
+      const dt = document.createElement("dt"), dd = document.createElement("dd");
       dt.textContent = term;
-      const dd = document.createElement("dd");
       dd.textContent = value;
       if (mono) dd.className = "mono";
       dl.append(dt, dd);
     };
+    $("peer-info-title").textContent = threadName(thread);
+    add(addresses, "Address", thread.identity?.address || lastIn?.address || thread.peer, true);
+    if (thread.peer.startsWith("/") && !thread.peer.startsWith("/k/")) add(addresses, "Handle", thread.peer, true);
+    if (thread.mine) add(addresses, "Mailbox", "yours — on this account");
+    add(facts, "Contact", c ? (c.peer === thread.peer ? "yes" : "via " + c.peer) : "not a contact");
+    add(facts, "Granted verbs", c?.allowed_verbs?.length ? c.allowed_verbs.join(", ") : "none");
+    if (lastIn?.standing) add(facts, "Standing", lastIn.standing + (lastIn.tier ? " · " + lastIn.tier : ""));
 
-    add("Address", (thread.identity && thread.identity.address) || (lastIn && lastIn.address) || thread.peer, true);
-    if (thread.peer.startsWith("/") && !thread.peer.startsWith("/k/")) add("Handle", thread.peer, true);
-    if (thread.mine) add("Mailbox", "yours — on this account");
-    add("Contact", c ? (c.peer === thread.peer ? "yes" : "via " + c.peer) : "not a contact");
-    add("Admission", c ? c.admission : "default policy");
-    add("Autonomy", c ? c.autonomy : "review");
-    add("Granted verbs", c && c.allowed_verbs && c.allowed_verbs.length ? c.allowed_verbs.join(", ") : "none");
-    if (lastIn && lastIn.standing) add("Standing", lastIn.standing + (lastIn.tier ? " · " + lastIn.tier : ""));
-
-    box.append(dl);
-
-    // Writing *to* your agent and reading *as* your agent are different things, and the difference
-    // is not obvious from a row that looks like every other conversation. Say which one you are in
-    // and offer the other.
-    if (thread.mine && thread.identity) {
-      const open = document.createElement("button");
-      open.type = "button";
-      open.className = "btn btn-primary open-mailbox";
-      open.textContent = "Open this mailbox";
-      open.onclick = () => switchIdentity(thread.identity);
-      box.append(open);
+    $("peer-known").checked = Boolean(exact);
+    $("peer-known").disabled = unavailable;
+    $("peer-retry").hidden = state.contactsReady;
+    $("peer-retry").disabled = state.contactsRetrying;
+    $("peer-full").checked = Boolean(full);
+    $("peer-full").disabled = unavailable || !c || blocked || !verbs.length;
+    $("peer-requests").disabled = unavailable || !exact;
+    $("peer-trust-note").textContent = blocked
+      ? "Blocked. Their mail is refused, so trust does not apply until you unblock them."
+      : c && !exact
+        ? "Covered by " + c.peer + ". Marking this sender known gives them a row of their own, which outranks that rule."
+        : full
+          ? "Their requests are acted on without asking you. The postbox still refuses what it never auto-accepts for anyone, and the receiving machine's own permission tier and limits still apply on top."
+          : "A known sender is admitted by name. Full permissions lets their requests be acted on without waiting for you; everything else is held.";
+    $("peer-archive").textContent = state.archived.has(thread.peer) ? "Move back to the inbox" : "Archive this conversation";
+    $("peer-archive").disabled = busy;
+    $("peer-block").textContent = blocked ? "Unblock this sender" : "Block this sender";
+    $("peer-block").className = (blocked ? "btn-ghost" : "btn-danger") + " peer-action";
+    $("peer-block").disabled = unavailable;
+    $("peer-actions-note").textContent = thread.mine
+      ? "Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking one of your own agents refuses its mail from here on — the way to stop one talking to you is usually to stop running it."
+      : "Archiving hides a conversation; nothing is deleted and their mail still arrives. Blocking refuses it from here on. Neither is announced to them.";
+    $("peer-own-mailbox").hidden = !(thread.mine && thread.identity);
+    $("peer-open-mailbox").onclick = () => switchIdentity(thread.identity);
+    $("peer-mailbox-note").textContent = "You are writing to this agent from " + (state.me.handle || state.me.address)
+      + ". Opening the mailbox instead shows the mail it has received.";
+    $("peer-action-status").hidden = !busy;
+    const error = state.senderAction?.peer === thread.peer ? state.senderAction.error : null;
+    for (const id of ["peer-action-error", "peer-block-error"]) {
+      $(id).hidden = !error;
+      $(id).textContent = error || "";
     }
+    $("peer-block-confirm").disabled = busy;
+    $("peer-block-confirm").textContent = busy ? "Blocking…" : "Block";
+  }
 
-    // The panel decides rather than describes. It used to list this sender's admission, autonomy
-    // and granted verbs as read-only text and then tell you to go and run `pigeonpost postbox
-    // allow` — sending someone who is looking straight at the sender, in a browser, to install a
-    // command line tool to change the thing on screen. The editor already existed one sheet away
-    // in Settings; this is the same editor, opened on this sender.
-    if (!thread.mine) {
-      const edit = document.createElement("button");
-      edit.type = "button";
-      edit.className = "btn btn-primary open-mailbox";
-      edit.textContent = c && c.peer === thread.peer ? "Edit this sender" : "Trust this sender";
-      edit.onclick = () => openContact(c && c.peer === thread.peer ? c : null, thread.peer);
-      box.append(edit);
-    }
+  function openPeerInfo(trigger) {
+    if (!state.openPeer) return;
+    peerInfoTrigger = trigger;
+    state.showInfo = true;
+    renderThread();
+    openSheet("peer-info-sheet");
+    $("peer-info-close").focus();
+  }
 
-    const note = document.createElement("p");
-    note.className = "note";
-    if (thread.mine) {
-      note.textContent = "You are writing to this agent from " + (state.me.handle || state.me.address)
-        + ". Opening the mailbox instead shows the mail it has received.";
-    } else if (c && c.autonomy === "auto") {
-      note.textContent = "Requests naming a granted verb are acted on without you. Everything else is held.";
-    } else if (c && c.peer !== thread.peer) {
-      // A wildcard row is a rule about a fleet. Editing it here would quietly change what every
-      // other member of that fleet may do, which is not what "this sender" means.
-      note.textContent = "Nothing from this sender is acted on automatically. They are covered by "
-        + c.peer + "; trusting them on their own gives them settings of their own.";
-    } else {
-      note.textContent = "Nothing from this sender is acted on automatically.";
+  // These shortcuts write an exact sender row, never the namespace rule that may cover them.
+  // Apply only a confirmed write and invalidate contact snapshots requested before it completed.
+  async function updateSender(peer, action) {
+    if (!peer || !state.contactsReady || state.senderAction?.pending) return;
+    const context = mailboxContext(), existing = contactFor(peer), focused = document.activeElement;
+    const verbs = grantableVerbs();
+    if (action === "full" && (!existing || existing.admission === "block" || !verbs.length)) return;
+    const row = { peer, alias: existing?.alias || null, admission: "allow",
+      autonomy: existing?.autonomy || "review", allowed_verbs: existing?.allowed_verbs || [] };
+    if (action === "full") { row.autonomy = "auto"; row.allowed_verbs = verbs; }
+    if (action === "review" || action === "block") { row.autonomy = "review"; row.allowed_verbs = []; }
+    if (action === "block") row.admission = "block";
+    state.senderAction = { peer, pending: true, error: null };
+    renderThread();
+    try {
+      await api("/v1/contacts", { method: action === "forget" ? "DELETE" : "PUT",
+        body: { ...(action === "forget" ? { peer } : row), identity: context.address }, signal: context.signal });
+      if (!context.current()) return;
+      state.sectionRequests.contacts = (state.sectionRequests.contacts || 0) + 1;
+      state.contacts = state.contacts.filter(contact => contact.peer !== peer);
+      if (action !== "forget") state.contacts.push(row);
+      toast(action === "forget" ? "Sender removed. Their namespace rule or default policy now applies."
+        : action === "block" ? "Blocked. Their new messages will be refused."
+          : action === "full" ? "Full permissions saved."
+            : action === "review" ? "Back to review. Their requests wait for you." : "Marked as known.");
+    } catch (e) {
+      if (context.current()) state.senderAction.error = "Could not save this sender. " + (e?.message || "Please try again.");
+    } finally {
+      if (context.current()) {
+        state.senderAction.pending = false;
+        renderContactList();
+        render();
+        if (!state.senderAction.error && action === "block" && blockingPeer === peer) closeSheet("peer-block-sheet");
+        // Disabling a control during its save can move browser focus to the document body.
+        // Restore it only if the person is still in this panel and has not focused elsewhere.
+        if (state.showInfo && state.openPeer === peer && document.activeElement === document.body
+            && focused?.closest("#" + sheetStack.at(-1)) && !focused.closest("[hidden]") && !focused.disabled) focused.focus();
+      }
     }
-    box.append(note);
   }
 
   // ---- threads within one peer ----------------------------------------------------------------
@@ -2475,6 +2530,7 @@
   async function loadContacts() {
     return loadSection("contacts", "/v1/contacts", body => {
       state.contacts = body.contacts || [];
+      state.contactsReady = true;
       state.vocabulary = body.vocabulary || null;
       state.policy = body.policy || state.policy;
     });
@@ -2786,12 +2842,31 @@
     const at = sheetStack.indexOf(id);
     if (at !== -1) sheetStack.splice(at, 1);
     sheetStack.push(id);
+    syncSheetFocus();
+  }
+  function syncSheetFocus() {
+    $("app").inert = sheetStack.length > 0;
+    for (const id of sheetStack) {
+      $(id).inert = id !== sheetStack.at(-1);
+      $(id).style.zIndex = String(40 + sheetStack.indexOf(id));
+    }
   }
   function closeSheet(id) {
     $(id).hidden = true;
-    if (id === "settings-sheet") $("settings-btn").focus();
     const at = sheetStack.indexOf(id);
     if (at !== -1) sheetStack.splice(at, 1);
+    syncSheetFocus();
+    if (id === "settings-sheet") $("settings-btn").focus();
+    if (id === "peer-info-sheet") {
+      if (!$("peer-block-sheet").hidden) closeSheet("peer-block-sheet");
+      if (!$("contact-sheet").hidden) closeSheet("contact-sheet");
+      state.showInfo = false;
+      for (const button of ["peer-name-btn", "peer-info-btn"]) $(button).setAttribute("aria-expanded", "false");
+      if (!$("thread-head").hidden) peerInfoTrigger?.focus({ preventScroll: true });
+    } else if (id === "peer-block-sheet") {
+      blockingPeer = null;
+      if (state.showInfo) $("peer-block").focus();
+    } else if (id === "contact-sheet" && state.showInfo) $("peer-requests").focus();
   }
   function wireSheet(id, onBackdrop) {
     const wrap = $(id);
@@ -3280,10 +3355,34 @@
       if (e.key === "Enter") { e.preventDefault(); createSubthread(); }
     });
 
-    $("peer-info-btn").onclick = () => {
-      state.showInfo = !state.showInfo;
+    for (const id of ["peer-name-btn", "peer-info-btn"]) $(id).onclick = () => openPeerInfo($(id));
+    for (const id of ["peer-info-close", "peer-info-done"]) $(id).onclick = () => closeSheet("peer-info-sheet");
+    wireSheet("peer-info-sheet");
+    wireSheet("peer-block-sheet");
+    $("peer-known").onchange = () => updateSender(state.openPeer, $("peer-known").checked ? "known" : "forget");
+    $("peer-full").onchange = () => updateSender(state.openPeer, $("peer-full").checked ? "full" : "review");
+    $("peer-retry").onclick = async () => {
+      const context = mailboxContext();
+      state.contactsRetrying = true;
       renderThread();
+      await loadContacts();
+      if (context.current()) { state.contactsRetrying = false; render(); }
     };
+    $("peer-requests").onclick = () => {
+      const exact = state.contacts.find(row => row.peer === state.openPeer);
+      if (exact) { openContact(exact); $("contact-alias").focus(); }
+    };
+    $("peer-archive").onclick = () => setArchived(state.openPeer, !state.archived.has(state.openPeer));
+    $("peer-block").onclick = () => {
+      if (contactFor(state.openPeer)?.admission === "block") { updateSender(state.openPeer, "known"); return; }
+      blockingPeer = state.openPeer;
+      $("peer-block-title").textContent = "Block " + $("peer-info-title").textContent + "?";
+      $("peer-block-error").hidden = true;
+      openSheet("peer-block-sheet");
+      $("peer-block-cancel").focus();
+    };
+    $("peer-block-cancel").onclick = () => closeSheet("peer-block-sheet");
+    $("peer-block-confirm").onclick = () => updateSender(blockingPeer, "block");
 
     $("search").oninput = (e) => {
       state.filter = e.target.value;

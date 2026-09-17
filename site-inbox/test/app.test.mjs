@@ -487,7 +487,8 @@ check("header says it is yours", text($("peer-sub")), "/bekir/docdex · your mai
 $("peer-info-btn").click();
 await settle(30);
 check("offers to open that mailbox", text($("peer-info").querySelector(".open-mailbox")), "Open this mailbox");
-check("explains which direction you are in", $("peer-info").querySelector(".note").textContent.includes("writing to this agent from /bekir/su_iam"), true);
+check("explains which direction you are in", $("peer-mailbox-note").textContent.includes("writing to this agent from /bekir/su_iam"), true);
+$("peer-info-done").click();
 
 compose.value = "status?";
 compose.dispatchEvent(new window.Event("input"));
@@ -508,16 +509,19 @@ console.log("\n— the sender panel decides, it does not describe —");
   await settle(60);
   $("peer-info-btn").click();
   await settle(30);
-  const act = $("peer-info").querySelector(".open-mailbox");
-  check("a stranger can be trusted from here", text(act), "Trust this sender");
+  const act = $("peer-known");
+  check("a stranger can be marked known from here", act.checked, false);
   check("and is not told to go and find a terminal",
     /postbox allow|command line/.test($("peer-info").textContent), false);
   act.click();
   await settle(60);
+  $("peer-requests").click();
+  await settle(30);
   check("the editor opens", $("contact-sheet").hidden, false);
   check("on this sender", $("contact-peer").value, "/k/eeee5555ffff6666gggg7777hh");
-  check("as an addition, so the address is still editable", $("contact-peer").disabled, false);
+  check("as an exact sender, so the address stays fixed", $("contact-peer").disabled, true);
   $("contact-close").click();
+  $("peer-info-done").click();
   await settle(40);
 
   // A peer already covered by a wildcard is a rule about a fleet, not about them. Editing that row
@@ -529,9 +533,10 @@ console.log("\n— the sender panel decides, it does not describe —");
   $("peer-info-btn").click();
   await settle(30);
   check("a peer covered by a wildcard is trusted on their own",
-    text($("peer-info").querySelector(".open-mailbox")), "Trust this sender");
+    $("peer-known").checked, false);
   check("and the panel says which rule covers them now",
-    $("peer-info").querySelector(".note").textContent.includes("/bekir/*"), true);
+    $("peer-trust-note").textContent.includes("/bekir/*"), true);
+  $("peer-info-done").click();
 
   docdexRow.click();
   await settle(60);

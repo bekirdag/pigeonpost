@@ -12,6 +12,8 @@ export function fixtureServer() {
   const server = {
     identities: [{ address: OWNER, handle: "/bekir/main" }, { address: SECOND, handle: "/garden/main" }],
     calls: [], mailboxes: {}, intercept: null,
+    vocabulary: { grantable: ["report_status", "answer_question", "read_file", "run_tests"],
+      never_auto: ["git_push", "deploy", "read_credentials", "spend", "delete_files", "run_shell"] },
   };
   for (const address of [OWNER, SECOND]) {
     server.mailboxes[address] = {
@@ -43,8 +45,25 @@ export function fixtureServer() {
       if (call.query.has("wait")) return new Promise(() => {});
       return response({ messages: mailbox.messages });
     }
-    if (call.path === "/v1/contacts") return response({ contacts: mailbox.contacts });
-    if (call.path === "/v1/archive") return response({ archived: mailbox.archived });
+    if (call.path === "/v1/contacts") {
+      if (call.method === "PUT" || call.method === "DELETE") {
+        mailbox.contacts = mailbox.contacts.filter(c => c.peer !== body.peer);
+        if (call.method === "PUT") {
+          const { peer, alias, admission, autonomy, allowed_verbs } = body;
+          mailbox.contacts.push({ peer, alias, admission, autonomy, allowed_verbs });
+        }
+        return response({ ok: true });
+      }
+      return response({ contacts: mailbox.contacts, vocabulary: server.vocabulary });
+    }
+    if (call.path === "/v1/archive") {
+      if (call.method === "PUT") {
+        mailbox.archived = mailbox.archived.filter(peer => peer !== body.peer);
+        if (body.archived) mailbox.archived.push(body.peer);
+        return response({ ok: true });
+      }
+      return response({ archived: mailbox.archived });
+    }
     if (call.path === "/v1/threads") return response({ threads: mailbox.threads });
     if (call.path.startsWith("/v1/threads/") && call.method === "DELETE") {
       const id = decodeURIComponent(call.path.slice("/v1/threads/".length));
