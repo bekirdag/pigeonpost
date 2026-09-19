@@ -353,16 +353,14 @@ jobs:
           case "$sdk" in iphoneos2[6-9]*|iphoneos[3-9][0-9]*) ;; *)
             echo "::error::Built against $sdk. App Store Connect refuses anything older than the iOS 26 SDK." ; exit 1 ;;
           esac
+          # iPhone only (TARGETED_DEVICE_FAMILY = 1), so there is no ~ipad icon dictionary.
           [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
-          [ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIcons~ipad:CFBundlePrimaryIcon:CFBundleIconName' "$plist")" = "AppIcon" ]
-          for icon_spec in "AppIcon60x60@2x.png:120:120" "AppIcon76x76@2x~ipad.png:152:152"; do
-            IFS=: read -r filename width height <<< "$icon_spec"
-            icon="$app/$filename"
-            [ -f "$icon" ] || { echo "::error::Archive is missing $filename."; exit 1; }
-            [ "$(sips -g pixelWidth "$icon" | tail -1 | awk '{print $2}')" = "$width" ]
-            [ "$(sips -g pixelHeight "$icon" | tail -1 | awk '{print $2}')" = "$height" ]
-            [ "$(sips -g hasAlpha "$icon" | tail -1 | awk '{print $2}')" = "no" ]
-          done
+          icon="$app/AppIcon60x60@2x.png"
+          [ -f "$icon" ] || { echo "::error::Archive is missing AppIcon60x60@2x.png."; exit 1; }
+          [ "$(sips -g pixelWidth "$icon" | tail -1 | awk '{print $2}')" = "120" ]
+          [ "$(sips -g pixelHeight "$icon" | tail -1 | awk '{print $2}')" = "120" ]
+          # An alpha channel in the icon is rejected at upload, so catch it here.
+          [ "$(sips -g hasAlpha "$icon" | tail -1 | awk '{print $2}')" = "no" ]
           codesign --verify --deep --strict "$app"
 
       - name: Export and optionally upload
