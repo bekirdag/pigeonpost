@@ -255,7 +255,7 @@ jobs:
           raw_profile="$RUNNER_TEMP/tnl.mobileprovision"
           profile_plist="$RUNNER_TEMP/tnl-profile.plist"
           printf '%s' "$PROFILE" | base64 --decode > "$raw_profile"
-          echo "ff9540a754919e98d2ae100b1e65ee274abde125e693f5cce5fa07b47ed70fe3  $raw_profile" |
+          echo "d7779771a6a26d8b705819867855c490fa4ad261fd593a00dd9ecf91d9e5e6b4  $raw_profile" |
             shasum -a 256 -c -
           security cms -D -i "$raw_profile" > "$profile_plist"
 
