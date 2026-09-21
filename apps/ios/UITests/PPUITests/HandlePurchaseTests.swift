@@ -71,7 +71,9 @@ final class HandlePurchaseTests: XCTestCase {
         let copy = app.buttons["copy-address:/bekir/main"]
         XCTAssertTrue(copy.waitForExistence(timeout: 8))
         copy.tap()
-        XCTAssertEqual(copy.value as? String, "Copied")
+        // XCTest can wait longer for UI idle than the two-second confirmation lasts.
+        // Verify the lasting clipboard result below and that copying keeps the picker open.
+        XCTAssertTrue(app.navigationBars["Mailboxes"].exists)
         screenshot("mailbox-address-copied")
         app.buttons["Done"].tap()
         expectPastedAddress("/bekir/main")
