@@ -53,6 +53,10 @@ struct SettingsSheet: View {
                     #endif
                 }
                 Section {
+                    #if os(iOS)
+                    destination(.purchases, icon: "plus.circle", detail: "Choose a name · yearly App Store subscription")
+                        .disabled(handle == nil)
+                    #endif
                     destination(.handles, icon: "at", detail: handle == nil ? "Loading your handles…" : "Your names and subscriptions")
                         .disabled(handle == nil)
                     destination(.inbox, icon: "tray", detail: "Storage and archived conversations")

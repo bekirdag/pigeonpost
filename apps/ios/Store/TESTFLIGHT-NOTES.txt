@@ -1,5 +1,5 @@
-Conversations open at the newest message and initially display the latest ten messages. Scroll up to read older messages in batches, or use the down-arrow button to return to the latest. Incoming mail leaves your reading position alone.
+Get a handle is now directly in Settings. The purchase page shows the next App Store subscription by name, its local yearly price, and a clear retry action if subscriptions cannot load.
 
-The mailbox picker keeps your main address first, followed by other handle roots, named subaddresses, and key addresses. The selected mailbox has a checkmark. The duplicate address bar below inbox search is removed; copying remains available in the picker and Settings.
+To test: sign in, open Settings > Get a handle, enter an available name, tap Check availability, then Buy for the displayed yearly price. TestFlight purchases use Apple's sandbox. After registration, Settings > Handles lists the name and opens its inbox. Return to Get a handle to register another name, up to ten independent subscriptions. Restore purchases recovers existing purchases; an unfinished registration does not require another payment.
 
-Get a handle focuses on registering a new name. Existing handles and renewal controls are in Settings > Handles. Up to ten yearly handle subscriptions, restoring purchases, and account ownership across devices remain supported.
+Existing handles remain on Settings > Handles. The mailbox ordering, latest-message scrolling, and copy-address improvements from the previous build are included.

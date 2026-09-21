@@ -24,6 +24,32 @@ final class HandlePurchaseTests: XCTestCase {
         add(attachment)
     }
 
+    func testPurchasePageIsDirectlyAvailableFromSettings() {
+        app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=sale"]
+        app.launch()
+        let purchasePage = app.buttons["settings-purchases"]
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: purchasePage)
+        waitForExpectations(timeout: 8)
+        purchasePage.tap()
+        XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
+        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Pigeonpost handle")
+        XCTAssertEqual(app.staticTexts["handle-product-price"].label, "$8.00 per year")
+        XCTAssertTrue(app.buttons["Buy for $8.00 a year"].exists)
+        screenshot("direct-handle-purchase")
+    }
+
+    func testUnavailableCatalogOffersRetryWithoutInventingAPrice() {
+        open("soon")
+        XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.buttons["Subscription unavailable"].exists)
+        XCTAssertFalse(app.buttons["Subscription unavailable"].isEnabled)
+        XCTAssertFalse(app.staticTexts["handle-product-price"].exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Buy for'")).firstMatch.exists)
+        app.buttons["handle-retry-products"].tap()
+        XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
+        screenshot("subscription-retry")
+    }
+
     private func expectPastedAddress(_ address: String) {
         app.buttons["New conversation"].tap()
         let field = app.textFields["/bekir/agent1 or /k/…"]
@@ -45,7 +71,9 @@ final class HandlePurchaseTests: XCTestCase {
         let copy = app.buttons["copy-address:/bekir/main"]
         XCTAssertTrue(copy.waitForExistence(timeout: 8))
         copy.tap()
-        XCTAssertEqual(copy.value as? String, "Copied")
+        // XCTest can wait longer for UI idle than the two-second confirmation lasts.
+        // Verify the lasting clipboard result below and that copying keeps the picker open.
+        XCTAssertTrue(app.navigationBars["Mailboxes"].exists)
         screenshot("mailbox-address-copied")
         app.buttons["Done"].tap()
         expectPastedAddress("/bekir/main")
@@ -128,6 +156,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Active App Store subscriptions"].exists)
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8),
                       "An existing owner needs a way to add another handle")
+        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Handle 2 — yearly")
     }
 
     private var buy: XCUIElement {

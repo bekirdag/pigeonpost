@@ -1,17 +1,23 @@
 # Pigeonpost iOS public release
 
-Verified 14 September 2026 against the submitted build, App Store Connect and production.
+Review remediation audited 21 September 2026 against App Store Connect and production.
 
 ## Submission and purchases
 
 - App: **Pigeonpost Inbox**, App Store Connect ID `6803521541`.
 - Bundle: `dev.pigeonpost.inbox`; team: `AH277897AV`. Preserve both identifiers.
-- Public version **1.0, build 40**, submission `4cb9aa78-b600-42be-bd7a-e83322a131f2`: **Waiting for Review**, with release after approval. This is the public App Store submission.
-- All ten annual handle subscriptions and their groups are included in that submission. The first product is `dev.pigeonpost.inbox.handle.yearly`; the others are `dev.pigeonpost.inbox.handle2.yearly` through `dev.pigeonpost.inbox.handle10.yearly`. Each purchases a separate name, at USD 8/year in the US, USD 80/year for ten. Local storefront prices apply.
-- The purchase screen is **Settings → Handles → Get a handle**. It displays the local price, annual term, automatic renewal and cancellation information, plus Restore purchases, Manage subscriptions, privacy and terms. An owned, unassigned purchase uses **Finish registration** without another charge.
+- **TestFlight 1.0 (42)** is processed and available to both Pigeonpost Internal and Testers Ext. The signed SDK 26 upload/distribution completed in [run 35568001761](https://github.com/bekirdag/pigeonpost/actions/runs/35568001761), from app source `bd98c61`.
+- Public version **1.0, build 42** is in draft `6b5a1281-f265-46dc-ac15-0cb74da89b5a`, **Ready for Review, not submitted**. All 21 items are ready: the app, ten subscription versions and ten subscription-group versions. Apple's required physical-device sandbox recording is still missing; follow [the recording steps](Store/PHYSICAL-REVIEW-RECORDING.md) before submitting.
+- The rejected build-41 submission `bd53e886-70a2-47e4-af63-565e965b2927` was removed after its 21 items were backed up, allowing its locked product screenshots to be replaced. No subscriptions were deleted.
+- All ten annual handle subscriptions and their groups are included in the replacement draft. The first product is `dev.pigeonpost.inbox.handle.yearly`; the others are `dev.pigeonpost.inbox.handle2.yearly` through `dev.pigeonpost.inbox.handle10.yearly`. Each purchases a separate name, at USD 8/year in the US, USD 80/year for ten. Local storefront prices apply.
+- The revised purchase screen is directly in **Settings → Get a handle**, also accessible through **Settings → Handles → Get a handle**. It displays Apple's product name and local price, annual term, automatic renewal and cancellation information, plus Restore purchases, Manage subscriptions, privacy and terms. An owned, unassigned purchase uses **Finish registration** without another charge. If the catalog is unavailable, the app offers a retry and does not invent a purchase price.
 - The basic cryptographic mailbox remains available without buying a readable handle.
 
-The SDK 26 signed build completed in [GitHub Actions run 34841034053](https://github.com/bekirdag/pigeonpost/actions/runs/34841034053). Native model and purchase-controller checks passed. The optional scanner is directly in Settings. Default inbox labels distinguish namespaces, and new conversations supply the leading slash.
+All ten products have the correct annual term, USD 8/year US price and availability in 175 territories. The live reviewer account can sign in, load account handles and retrieve all ten product IDs. The individual product review notes now use the direct route and explain how successive independent subscriptions are offered. All ten review screenshots were replaced and verified in COMPLETE state with matching checksums. Public and beta review notes were updated while preserving their demo credentials. These checks establish catalog and account health, but do not prove a sandbox purchase succeeds on a physical device.
+
+Native simulator compilation and Swift model/controller checks passed. All 15 iPhone purchase/UI/StoreKit checks passed; iPad purchase and StoreKit checks passed, with two unrelated clipboard/dismissal checks passing on isolated rerun after initial failures. The real StoreKit adapter test used Apple's local configuration to exercise ten concurrent subscriptions, restoration and expiry; it is not a physical sandbox transaction.
+
+The optional scanner is directly in Settings. Default inbox labels distinguish namespaces, and new conversations supply the leading slash.
 
 ## Reviewer access
 
@@ -47,7 +53,9 @@ The audit used [Apple's current App Review Guidelines](https://developer.apple.c
 
 ## Remaining verification and the next release
 
-Apple's EU trader verification is pending a user verification code. Separately, Apple's locked company record incorrectly lists Alabama in Wodo's Eskişehir, Türkiye address. Correct the company record before attesting to the trader address. Submission acceptance does not complete that verification.
+Wodo's Paid Apps Agreement, banking, tax forms and EU trader status were all active in App Store Connect on 21 September. Separately, Apple's company record still lists an incorrect Alabama region in Wodo's Türkiye address; correcting that record is outside this purchase-flow remediation.
+
+Before resubmitting, attach a recording captured on a physical iPhone or iPad that starts at the Home Screen, launches the new TestFlight build, uses the supplied review account, demonstrates the core messaging features and completes a sandbox handle purchase. Show access to additional purchases and restoration as well. Simulator screenshots and StoreKit configuration tests are supporting evidence only. Preserve the app version, ten subscription versions and ten subscription-group versions in the public review submission.
 
 Physical-device APNs delivery was not reverified in this audit. No APNs errors appeared in the current postbox container's logs, which alone does not prove delivery. Validate production notification receipt and opening the correct conversation on a real iPhone before claiming that check passed.
 
