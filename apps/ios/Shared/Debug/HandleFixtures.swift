@@ -82,7 +82,10 @@ private final class FixtureHandlePurchases: HandlePurchasing {
     init(state: String) { self.state = state }
     func products(_ ids: [String]) async throws -> [HandleProduct] {
         if state == "soon" { return [] }
-        return ids.map { HandleProduct(id: $0, displayPrice: "$8.00", price: 8, currencyCode: "USD") }
+        return ids.enumerated().map { index, id in
+            HandleProduct(id: id, displayPrice: "$8.00", price: 8, currencyCode: "USD",
+                          displayName: index == 0 ? "Pigeonpost handle" : "Handle \(index + 1) — yearly")
+        }
     }
     func purchase(_ id: String, accountToken: UUID) async throws -> HandlePurchaseResult {
         if state == "cancelled" { return .cancelled }

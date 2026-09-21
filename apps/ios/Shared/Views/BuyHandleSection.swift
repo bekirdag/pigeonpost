@@ -8,8 +8,12 @@ struct BuyHandleSection: View {
     var body: some View {
         @Bindable var store = store
         Section {
+            #if os(iOS)
+            Text("Choose an available name. Each name has its own yearly subscription; you can register up to ten.")
+                .font(.subheadline).foregroundStyle(Theme.body)
+            #endif
             if !store.loaded && store.activity == .loading {
-                progress("Checking your handles…")
+                progress("Loading handle subscriptions…")
             }
             #if !os(iOS)
             if store.loaded {
@@ -53,6 +57,16 @@ struct BuyHandleSection: View {
             #endif
 
             if store.enabled && (store.activeCount < store.maximum || !store.unassigned.isEmpty) {
+                #if os(iOS)
+                if let product = store.nextProduct, store.unassigned.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(product.displayName ?? "Yearly handle subscription")
+                            .font(.headline).accessibilityIdentifier("handle-product-name")
+                        Text("\(product.displayPrice) per year")
+                            .font(.subheadline).accessibilityIdentifier("handle-product-price")
+                    }
+                }
+                #endif
                 HStack(spacing: 3) {
                     Text("/").font(.system(.body, design: .monospaced)).foregroundStyle(Theme.muted)
                     TextField("yourname", text: $store.wantedName)
@@ -77,13 +91,17 @@ struct BuyHandleSection: View {
                 } label: {
                     if !store.unassigned.isEmpty {
                         Text("Finish registration — no further payment")
+                    } else if let product = store.nextProduct {
+                        Text("Buy for \(product.displayPrice) a year")
+                    } else if store.busy {
+                        Text("Loading subscription price…")
                     } else {
-                        Text("Buy for \(store.nextProduct?.displayPrice ?? store.products.first?.displayPrice ?? "…") a year")
+                        Text("Subscription unavailable")
                     }
                 }
                 .font(.system(.body).weight(.semibold))
                 .disabled(!store.canBuy)
-                if let product = store.nextProduct ?? store.products.first, store.unassigned.isEmpty {
+                if let product = store.nextProduct, store.unassigned.isEmpty {
                     Text("Each handle: \(product.displayPrice)/year. Ten handles: \(product.total(for: 10))/year.")
                         .font(.caption).foregroundStyle(Theme.muted)
                 }
@@ -98,6 +116,10 @@ struct BuyHandleSection: View {
             if let message = store.message {
                 Text(message).font(.subheadline).foregroundStyle(Theme.body)
                     .accessibilityIdentifier("handle-message")
+            }
+            if store.products.isEmpty && !store.busy {
+                Button("Retry loading subscriptions") { Task { await store.refresh() } }
+                    .accessibilityIdentifier("handle-retry-products")
             }
             HStack {
                 Button("Restore purchases") { Task { await store.refresh(restoring: true) } }
