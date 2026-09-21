@@ -2,6 +2,16 @@
 
 Apple requires this evidence for the September 20 guideline 2.1(b) rejection. Use a physical iPhone or iPad with **Pigeonpost Inbox 1.0 (42)** installed from TestFlight. Simulator recordings and local StoreKit fixtures do not satisfy the request.
 
+## Evidence submitted on 21 September 2026
+
+The user captured the physical iPhone through QuickTime and saved `~/Downloads/pp_ss.mov` (4:13.6). The original remains unchanged. `Pigeonpost-1.0-42-iPhone-Sandbox-Purchases.mp4` retains its first continuous 3:41, compressed to 13,821,549 bytes without internal cuts. It ends after the owned-handle list and before the external App Store sign-in screen.
+
+Verified content: Home Screen and app launch; demo-account reading, composing and sending around 0:40–0:50; successful Apple sandbox purchase confirmations at 1:44 and 2:40; both independent registrations and their inboxes. A separate live authenticated API read confirmed the two Apple handles belong to the reviewer demo account.
+
+The review attachment `ca746064-4a0f-4f85-b8ef-f6c4680e79c4` is COMPLETE, with MD5 `7c19986c3048d840950f7db9c58b4d5b` matching the local review copy. Public submission `6b5a1281-f265-46dc-ac15-0cb74da89b5a` was sent at 08:34 UTC and read back **WAITING_FOR_REVIEW**, containing build 42, ten subscription versions and ten subscription-group versions. Review notes include the video filename, timestamps and the demo account's two existing test names. Credentials were preserved.
+
+The video demonstrates **Refresh account handles**, not **Restore purchases**. Physical restoration and completed external subscription management were not captured; no success is claimed for them. The first and additional independent purchase flows are recorded. The steps below remain the checklist for future captures.
+
 ## Before recording
 
 - Sign into Pigeonpost with the demo account in App Store Connect's App Review Information fields. Keep its password out of the recording and out of Git.
@@ -21,4 +31,4 @@ Apple requires this evidence for the September 20 guideline 2.1(b) rejection. Us
 
 ## Before public submission
 
-Verify the original video is from the physical device and shows successful sandbox confirmation and account registration. Verify the purchased names are tied to the same demo account on the live service. Attach the video to App Review Information, update the review notes with its filename and the observed result, then submit draft `6b5a1281-f265-46dc-ac15-0cb74da89b5a` with all 21 items. Do not claim the recording or sandbox purchase is complete until actually verified.
+For future submissions, verify the original video is from the physical device and shows successful sandbox confirmation and account registration. Verify the purchased names are tied to the same demo account on the live service. Attach the video to App Review Information, update the review notes with its filename and the observed result, then submit the current draft with its app and purchase items. Do not claim the recording or sandbox purchase is complete until actually verified. The September 21 submission above is already Waiting for Review; read its current state before making further changes.
