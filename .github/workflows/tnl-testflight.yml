@@ -42,7 +42,7 @@ on:
         default: false
         type: boolean
       reinvite_pending:
-        description: "Resend invitations only to existing email testers still pending. Requires status_only."
+        description: "Resend invitations only for already-invited testers whose invitation is pending. Requires status_only."
         required: true
         default: false
         type: boolean
