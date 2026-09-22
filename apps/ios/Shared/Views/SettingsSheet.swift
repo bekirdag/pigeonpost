@@ -177,7 +177,7 @@ struct SettingsSheet: View {
                 Link("Terms of use", destination: URL(string: "https://pigeonpost.dev/app-terms.html")!)
             }
             Section("About Pigeonpost") {
-                LabeledContent("Version", value: Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0")
+                LabeledContent("Version", value: Config.version)
                 LabeledContent("Postbox", value: Config.postbox.host ?? "—")
                 Text("Wodo Teknoloji A.Ş.").foregroundStyle(.secondary)
             }

@@ -262,6 +262,18 @@ struct MacInboxView: View {
                     )
                 }
             }
+            // Which build this window is. Settings carries it too, but a released app is asked
+            // "is the fix in this one?" far more often than Settings is opened, and the answer was
+            // not visible anywhere in the window.
+            Divider()
+            Text("Pigeonpost \(Config.version)")
+                .font(.system(size: 10.5))
+                .foregroundStyle(Theme.muted)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .textSelection(.enabled)
+                .accessibilityIdentifier("appVersion")
         }
         // Opaque, rather than the sidebar's usual vibrancy.
         //
