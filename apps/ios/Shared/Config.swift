@@ -11,6 +11,18 @@ enum Config {
     /// mailboxes.
     static let postbox = URL(string: "https://postbox.pigeonpost.dev")!
 
+    /// What this build is: "1.0 (42)".
+    ///
+    /// The marketing version on its own could not tell build 41 from 42, which is precisely the
+    /// question somebody asks when a fix does not appear to have arrived. Both numbers, one string,
+    /// in the window and in Settings.
+    static var version: String {
+        let info = Bundle.main.infoDictionary
+        let short = info?["CFBundleShortVersionString"] as? String ?? "1.0"
+        guard let build = info?["CFBundleVersion"] as? String, !build.isEmpty else { return short }
+        return "\(short) (\(build))"
+    }
+
     /// Which namespace is "mine". When several mailboxes are on the account, the one under this
     /// namespace opens by default — the operator's own inbox rather than whichever address the
     /// server happened to list first.
