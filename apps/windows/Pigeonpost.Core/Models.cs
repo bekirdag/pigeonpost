@@ -22,12 +22,20 @@ public sealed record Mailbox(string Address, string? Handle = null, string? Labe
 
 public static class PostAddress
 {
+    // The whole handle, with a trailing "/main" dropped.
+    //
+    // Showing the last segment alone made every namespace's default inbox read as the same word,
+    // "main", so the one name on screen identified nobody. The rest of a handle is not decoration
+    // either: /wodo/home and /bekir/home are different mailboxes, and a row saying only "home" does
+    // not say whose. The namespace always survives; only the "main" that a bare /<namespace>
+    // already resolves to is worth dropping. Matches PeerFace.displayName in the Apple client.
     public static string DisplayName(string peer)
     {
         if (peer.StartsWith("/k/", StringComparison.Ordinal)) return peer;
         var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 0) return peer;
         if (parts.Length > 1 && parts[^1] == "main") return "/" + string.Join('/', parts[..^1]);
-        return parts.LastOrDefault() ?? peer;
+        return "/" + string.Join('/', parts);
     }
 
     public static string Input(string value)

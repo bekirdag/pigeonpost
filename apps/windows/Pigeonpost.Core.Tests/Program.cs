@@ -28,7 +28,9 @@ Test("Default inbox labels distinguish namespaces and preserve routing keys", ()
     Equal(new Mailbox("/k/two", "/alp/main", "main").DisplayName, "/alp");
     Equal(new Mailbox("/k/one", "/bekir/main").Key, "/bekir/main");
     Equal(PostAddress.DisplayName("/github/alex/main"), "/github/alex");
-    Equal(PostAddress.DisplayName("/bekir/agent1"), "agent1");
+    Equal(PostAddress.DisplayName("/ozgur/main"), "/ozgur");
+    Equal(PostAddress.DisplayName("/bekir/agent1"), "/bekir/agent1");
+    Equal(PostAddress.DisplayName("/wodo/home"), "/wodo/home");
     Equal(PostAddress.DisplayName("/k/abc"), "/k/abc");
 });
 Test("Conversation entry supplies one slash and accepts namespace and email addresses", () =>
@@ -49,7 +51,7 @@ Test("Apple fixture: received/sent grouping, order and own mailboxes", () =>
     var agent = rows.Single(c => c.Peer == "/bekir/agent1");
     Equal(string.Join(',', agent.Messages.Select(m => m.Id)), "m1,m_out1,m2");
     Equal(agent.Unread, 1); Equal(agent.Held, 1); Equal(agent.Name, "my fleet");
-    Equal(rows.Single(c => c.IsMine).Name, "docdex");
+    Equal(rows.Single(c => c.IsMine).Name, "/bekir/docdex");
     Check(rows.All(c => c.Peer != own[2].Address), "An untouched owned mailbox must not create a conversation.");
 });
 Test("Repeated server rows do not inflate messages, unread or held counts", () =>
