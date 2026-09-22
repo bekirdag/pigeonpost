@@ -120,7 +120,7 @@ equal(agent1.name, "my fleet", "and its alias is what the row is called")
 
 let mine = conversations.first { $0.peer == "/bekir/docdex" }!
 check(mine.mine, "an own mailbox that has written is marked as yours")
-equal(mine.name, "docdex", "and named from its handle, not from the contact wildcard")
+equal(mine.name, "/bekir/docdex", "and named from its handle, not from the contact wildcard")
 
 print("\na request reads as a request")
 let request = agent1.messages.first { $0.isRequest }!
@@ -210,11 +210,14 @@ equal(foldedThreads.first?.messages.count, 2, "and both halves are in it")
 print("\nfaces")
 // The tone hash is the web app's. These are the values app.js produces for the same strings —
 // regenerate with:  node -e 'let h=0;for(const c of "/bekir/agent1")h=(h*31+c.charCodeAt(0))>>>0;console.log(h%6+1)'
-equal(PeerFace.displayName("/bekir/agent1"), "agent1", "a handle reads as a name")
+equal(PeerFace.displayName("/bekir/agent1"), "/bekir/agent1", "a handle keeps the namespace that says whose agent it is")
+equal(PeerFace.displayName("/wodo/home"), "/wodo/home", "a named mailbox reads in full, not as its last word")
 equal(PeerFace.displayName("/bekir/main"), "/bekir", "a default inbox shows its namespace")
 equal(PeerFace.displayName("/alp/main"), "/alp", "two default inboxes have distinct names")
+equal(PeerFace.displayName("/ozgur/main"), "/ozgur", "a default inbox is never the word 'main'")
 equal(PeerFace.displayName("/main"), "/main", "a namespace named main stays intact")
 equal(PeerFace.initials("/bekir/main"), "BE", "default inbox initials identify the person")
+equal(PeerFace.initials("/wodo/home"), "HO", "initials come from the last segment, so one fleet does not share a face")
 equal(PeerFace.conversationAddressInput("bekir"), "/bekir", "new addresses receive their slash")
 equal(PeerFace.conversationAddressInput(" /bekir/main "), "/bekir/main", "pasted addresses keep one slash")
 equal(PeerFace.conversationAddressInput("k/ABC123"), "/k/ABC123", "input retains key case")

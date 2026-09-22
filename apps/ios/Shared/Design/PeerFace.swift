@@ -6,15 +6,23 @@
 import SwiftUI
 
 enum PeerFace {
-    /// Default inboxes keep their namespace so /bekir/main and /alp/main remain distinguishable.
+    /// The whole handle, with a trailing `/main` dropped.
+    ///
+    /// Showing the last segment alone is what made a conversation with `/ozgur/main` read as
+    /// "main" — and every other namespace's default inbox reads as "main" too, so the one name on
+    /// screen was the one word that identified nobody. The rest of a handle is not decoration
+    /// either: `/wodo/home` and `/bekir/home` are different mailboxes, and a row saying only "home"
+    /// does not say whose. So the namespace always survives; only the `main` that a bare
+    /// `/<namespace>` already resolves to is worth dropping.
     static func displayName(_ peer: String?) -> String {
         guard let peer, !peer.isEmpty else { return "unknown" }
         if peer.hasPrefix("/k/") { return String(peer.prefix(12)) + "…" }
         let parts = peer.split(separator: "/").filter { !$0.isEmpty }
-        if peer.hasPrefix("/"), parts.count > 1, parts.last == "main" {
+        guard !parts.isEmpty else { return peer }
+        if parts.count > 1, parts.last == "main" {
             return "/" + parts.dropLast().joined(separator: "/")
         }
-        return parts.count > 1 ? String(parts[parts.count - 1]) : peer
+        return "/" + parts.joined(separator: "/")
     }
 
     static func conversationAddressInput(_ input: String) -> String {
@@ -33,9 +41,14 @@ enum PeerFace {
         }
     }
 
+    /// Letters come from the last segment of the name, not from the whole of it. The badge is two
+    /// characters wide, and now that the name carries its namespace, taking them off the front
+    /// would give every mailbox in one fleet the same face.
     static func initials(_ peer: String?) -> String {
-        let name = displayName(peer).filter { $0.isLetter || $0.isNumber }
-        return name.isEmpty ? "··" : String(name.prefix(2)).uppercased()
+        let name = displayName(peer)
+        let last = name.split(separator: "/").last.map(String.init) ?? name
+        let letters = last.filter { $0.isLetter || $0.isNumber }
+        return letters.isEmpty ? "··" : String(letters.prefix(2)).uppercased()
     }
 
     /// Which of the six tones a peer keeps, 1...6 — the numbering the web app's `data-tone` uses,
