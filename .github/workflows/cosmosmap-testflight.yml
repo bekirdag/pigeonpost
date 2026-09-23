@@ -210,18 +210,72 @@ jobs:
           plutil -lint CosmosMap/Resources/PrivacyInfo.xcprivacy
           plutil -lint ExportOptions.plist
 
-      - name: Build for an iPad simulator
-        working-directory: cosmosmap/ios
+      - name: Prove WebGPU renders in an iPadOS 26 simulator
+        working-directory: cosmosmap
+        shell: bash
         run: |
           set -euo pipefail
-          device_id=$(xcrun simctl list devices available --json | python3 -c "import json,sys; data=json.load(sys.stdin)['devices']; pads=[d for devices in data.values() for d in devices if d.get('isAvailable') and d.get('name','').startswith('iPad')]; print(pads[0]['udid'] if pads else '')")
-          [ -n "$device_id" ] || { echo "::error::No available iPad simulator was found."; exit 1; }
+          device_id=$(xcrun simctl list devices available --json | python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)['devices']
+          best = None
+          for runtime, devices in data.items():
+              if 'iOS' not in runtime:
+                  continue
+              version = [int(n) for n in runtime.rsplit('iOS-', 1)[-1].split('-') if n.isdigit()]
+              for d in devices:
+                  if d.get('isAvailable') and d.get('name', '').startswith('iPad Pro 13-inch'):
+                      if best is None or version > best[0]:
+                          best = (version, d['udid'])
+          print(best[1] if best else '')
+          ")
+          [ -n "$device_id" ] || { echo "::error::No iPad Pro 13-inch simulator is available."; exit 1; }
+          xcrun simctl list devices | grep "$device_id"
           xcodebuild build \
-            -project CosmosMap.xcodeproj \
+            -project ios/CosmosMap.xcodeproj \
             -scheme CosmosMap \
             -configuration Debug \
             -destination "platform=iOS Simulator,id=$device_id" \
+            -derivedDataPath "$RUNNER_TEMP/sim-dd" \
             CODE_SIGNING_ALLOWED=NO
+          app="$RUNNER_TEMP/sim-dd/Build/Products/Debug-iphonesimulator/CosmosMap.app"
+          xcrun simctl boot "$device_id" || true
+          xcrun simctl bootstatus "$device_id" -b
+          xcrun simctl install "$device_id" "$app"
+          log="$RUNNER_TEMP/selftest.log"
+          ( timeout 240 xcrun simctl launch --console-pty --terminate-running-process "$device_id" com.wodo.cosmosmap > "$log" 2>&1 || true ) &
+          launcher=$!
+          for _ in $(seq 1 240); do
+            grep -q "SELFTEST" "$log" 2>/dev/null && break
+            sleep 1
+          done
+          sleep 5
+          mkdir -p "$RUNNER_TEMP/screens"
+          xcrun simctl io "$device_id" screenshot "$RUNNER_TEMP/screens/ipad13-launch.png" || true
+          kill "$launcher" 2>/dev/null || true
+          grep "\[CosmosMap\]" "$log" || true
+          result=$(grep -m1 -o 'SELFTEST .*' "$log" | cut -d' ' -f2- || true)
+          echo "self-test: ${result:-none}"
+          python3 - "$result" <<'PY'
+          import json, sys
+          raw = sys.argv[1]
+          if not raw:
+              raise SystemExit("::error::The app never reported a WebGPU self-test result.")
+          r = json.loads(raw)
+          ok = r.get("secure") and r.get("gpu") and r.get("adapter") and r.get("device") and r.get("loaded") and not r.get("errorOverlay")
+          if not ok:
+              raise SystemExit(f"::error::WebGPU self-test failed on the iPadOS simulator: {r}")
+          print("WebGPU works in the iPad app:", r)
+          PY
+
+      - name: Keep the simulator screenshot
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: cosmosmap-ipad-simulator-${{ inputs.build_number }}
+          path: ${{ runner.temp }}/screens
+          if-no-files-found: warn
+          retention-days: 30
 
       - name: Write the App Store Connect key
         shell: bash
