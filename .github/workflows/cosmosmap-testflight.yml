@@ -108,6 +108,25 @@ jobs:
           test -f ios/CosmosMap/Web/index.html
           du -sh ios/CosmosMap/Web
 
+      - name: Install the Firebase configuration
+        shell: bash
+        working-directory: cosmosmap
+        env:
+          GOOGLE_SERVICE_INFO: ${{ secrets.COSMOSMAP_GOOGLE_SERVICE_INFO }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GOOGLE_SERVICE_INFO:-}" ]; then
+            echo "::error::COSMOSMAP_GOOGLE_SERVICE_INFO is not set."
+            exit 1
+          fi
+          target=ios/CosmosMap/Resources/GoogleService-Info.plist
+          printf '%s' "$GOOGLE_SERVICE_INFO" | base64 --decode > "$target"
+          plutil -lint "$target"
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :BUNDLE_ID' "$target")" = "com.wodo.cosmosmap" ] ||
+            { echo "::error::GoogleService-Info.plist is for another bundle."; exit 1; }
+          [ "$(/usr/libexec/PlistBuddy -c 'Print :PROJECT_ID' "$target")" = "cosmosmap-b2a74" ] ||
+            { echo "::error::GoogleService-Info.plist is for another Firebase project."; exit 1; }
+
       - name: Select an Xcode that can build for the store
         shell: bash
         run: |
@@ -349,6 +368,8 @@ jobs:
             [ "$(sips -g hasAlpha "$icon" | tail -1 | awk '{print $2}')" = "no" ]
           done
           test -f "$app/Web/index.html" || { echo "::error::Web bundle missing from the app."; exit 1; }
+          test -f "$app/GoogleService-Info.plist" || { echo "::error::Firebase configuration missing from the app."; exit 1; }
+          test -d "$RUNNER_TEMP/CosmosMap.xcarchive/dSYMs/CosmosMap.app.dSYM" || { echo "::error::Archive has no app dSYM for Crashlytics."; exit 1; }
           du -sh "$app" "$app/Web"
           codesign --verify --deep --strict "$app"
 
@@ -406,5 +427,6 @@ jobs:
         run: |
           rm -rf "$RUNNER_TEMP/keys"
           rm -f "$RUNNER_TEMP/cosmosmap-dist.p12" "$RUNNER_TEMP/cosmosmap.mobileprovision" "$RUNNER_TEMP/cosmosmap-profile.plist"
+          rm -f "$GITHUB_WORKSPACE/cosmosmap/ios/CosmosMap/Resources/GoogleService-Info.plist"
           rm -rf "$HOME/Library/MobileDevice/Provisioning Profiles"
           security delete-keychain "$RUNNER_TEMP/cosmosmap-signing.keychain-db" 2>/dev/null || true
