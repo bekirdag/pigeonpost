@@ -196,7 +196,11 @@ final class HandlePurchaseTests: XCTestCase {
     func testEveryHandleSubscriptionIsListedAndCanBeBought() {
         open("sale")
         let ids = ["dev.pigeonpost.inbox.handle.yearly"] + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
-        XCTAssertTrue(app.buttons["handle-product-" + ids[0]].waitForExistence(timeout: 8))
+        XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
+        // A Form only builds rows near the screen; the list sits below the purchase form.
+        let first = app.buttons["handle-product-" + ids[0]]
+        for _ in 0..<6 where !first.exists || !first.isHittable { app.swipeUp() }
+        XCTAssertTrue(first.isHittable)
         screenshot("all-handle-products")
         for id in ids {
             let row = app.buttons["handle-product-" + id]
