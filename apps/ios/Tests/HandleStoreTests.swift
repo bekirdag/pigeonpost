@@ -44,9 +44,10 @@ private final class Backend {
     var accountRows: [AccountHandle] = []
     var ownershipHook: (() async throws -> Void)?
     var storeUnavailable = false
+    var onlyLegacyProduct = false
     func offer() -> HandleOffer {
         var value = HandleOffer(productId: ids[0], namespace: handles.first?.namespace, expiresAt: handles.first?.expiresAt)
-        value.productIds = ids; value.maxHandles = 10; value.appAccountToken = token.uuidString
+        value.productIds = onlyLegacyProduct ? nil : ids; value.maxHandles = 10; value.appAccountToken = token.uuidString
         value.account = subject; value.handles = handles
         return value
     }
@@ -194,6 +195,21 @@ struct HandleStoreTests {
             store.reset(); api.subject = "account-b"
             await refresh.value
             expect(!store.loaded && store.handles.isEmpty && store.products.isEmpty, "sign-out drops stale responses")
+        }
+        do {
+            let api = Backend(), store = api.store()
+            api.onlyLegacyProduct = true
+            await store.refresh()
+            expect(store.products.map(\.id) == HandleCatalog.productIds, "all ten compiled products load without the postbox naming them")
+            expect(HandleCatalog.productIds == api.ids, "compiled catalog matches App Store Connect")
+            store.select(store.products[4])
+            await ready(store, "fifth")
+            await store.buy()
+            expect(api.handles.last?.productId == api.ids[4], "a chosen subscription is the one bought")
+            expect(store.selectedProductId == nil, "selection clears once its purchase is registered")
+            store.select(store.products[4])
+            expect(store.selectedProductId == nil, "an owned subscription cannot be chosen again")
+            expect(store.nextProduct?.id == api.ids[0], "without a choice the first free subscription is offered")
         }
         do {
             let api = Backend(), store = api.store()

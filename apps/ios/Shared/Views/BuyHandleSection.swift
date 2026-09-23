@@ -135,6 +135,44 @@ struct BuyHandleSection: View {
         } footer: {
             Text("Each name has its own yearly subscription and stays associated with that subscription. Apple charges your account after you confirm. Subscriptions renew automatically unless cancelled at least 24 hours before renewal. Manage or cancel each one in the App Store.")
         }
+        if store.enabled && !store.products.isEmpty {
+            Section {
+                ForEach(Array(store.products.enumerated()), id: \.element.id) { index, product in
+                    productRow(product, number: index + 1)
+                }
+            } header: {
+                Text("All handle subscriptions")
+            } footer: {
+                Text("Pick the subscription to buy the name above with. Each one registers one name.")
+            }
+        }
+    }
+
+    /// Every subscription is listed and each unused one can be chosen, so all ten products the app
+    /// sells are visible and purchasable from this screen — not only the next free one.
+    private func productRow(_ product: HandleProduct, number: Int) -> some View {
+        let owner = store.owner(of: product)
+        let chosen = owner == nil && store.unassigned.isEmpty && store.nextProduct?.id == product.id
+        return Button { store.select(product) } label: {
+            HStack(spacing: 12) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(product.displayName ?? "Handle \(number) — yearly").foregroundStyle(Theme.ink)
+                    Text("\(product.displayPrice) per year · renews automatically")
+                        .font(.caption).foregroundStyle(Theme.muted)
+                }
+                Spacer()
+                if let owner {
+                    Text("Owned · \(owner.namespace)").font(.caption.monospaced()).foregroundStyle(Theme.muted)
+                } else if chosen {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(Color.accentColor)
+                        .accessibilityLabel("Selected")
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .disabled(owner != nil || store.busy)
+        .accessibilityIdentifier("handle-product-" + product.id)
     }
 
     private var activityText: String {

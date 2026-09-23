@@ -1,6 +1,19 @@
 import Foundation
 import StoreKit
 
+/// Every handle subscription this app sells, compiled into the binary. App Review looks for each
+/// product the submitted version is associated with; a catalog that only arrived from the postbox
+/// at run time, one product at a time, read to them as nine products missing from the app.
+enum HandleCatalog {
+    static let productIds = ["dev.pigeonpost.inbox.handle.yearly"]
+        + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
+
+    /// The compiled products first, in order, then anything the postbox adds.
+    static func merged(with server: [String]) -> [String] {
+        productIds + server.filter { !productIds.contains($0) }
+    }
+}
+
 struct HandleProduct: Equatable, Identifiable, Sendable {
     let id: String
     let displayPrice: String

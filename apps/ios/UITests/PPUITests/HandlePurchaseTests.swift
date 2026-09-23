@@ -193,6 +193,29 @@ final class HandlePurchaseTests: XCTestCase {
         waitForExpectations(timeout: 5)
     }
 
+    func testEveryHandleSubscriptionIsListedAndCanBeBought() {
+        open("sale")
+        let ids = ["dev.pigeonpost.inbox.handle.yearly"] + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
+        XCTAssertTrue(app.buttons["handle-product-" + ids[0]].waitForExistence(timeout: 8))
+        screenshot("all-handle-products")
+        for id in ids {
+            let row = app.buttons["handle-product-" + id]
+            for _ in 0..<6 where !row.isHittable { app.swipeUp() }
+            XCTAssertTrue(row.isHittable, "\(id) must be visible on the purchase screen")
+        }
+        app.buttons["handle-product-" + ids[4]].tap()
+        for _ in 0..<6 where !app.textFields["yourname"].isHittable { app.swipeDown() }
+        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Handle 5 — yearly")
+        enter("fifth")
+        waitForEnabledBuy()
+        buy.tap()
+        XCTAssertTrue(app.staticTexts["/fifth is ready."].waitForExistence(timeout: 8))
+        let bought = app.buttons["handle-product-" + ids[4]]
+        for _ in 0..<6 where !bought.isHittable { app.swipeUp() }
+        XCTAssertFalse(bought.isEnabled, "A subscription already bought cannot be chosen again")
+        screenshot("fifth-handle-bought")
+    }
+
     func testTakenNameNeverEnablesPayment() {
         open("sale")
         enter("taken")

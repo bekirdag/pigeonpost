@@ -37,6 +37,8 @@ final class HandleStore {
     private(set) var message: String?
     private(set) var unassigned: [HandleTransaction] = []
     private(set) var missingMailboxes: Set<String> = []
+    /// The subscription the person picked from the list. `nil` means the first one not yet used.
+    var selectedProductId: String?
     var wantedName = "" {
         didSet { if Self.tidy(oldValue) != Self.tidy(wantedName) { availability = nil } }
     }
@@ -63,9 +65,19 @@ final class HandleStore {
     var busy: Bool { activity != .none }
     var activeCount: Int { Set(handles.filter(\.active).map(\.namespace)).count }
     var waitingForApproval: Bool { pending.contains(where: \.awaitingApproval) }
+    var occupiedProductIds: Set<String> { Set(handles.map(\.productId)) }
+    func owner(of product: HandleProduct) -> PurchasedHandle? {
+        handles.first { $0.productId == product.id }
+    }
     var nextProduct: HandleProduct? {
-        let occupied = Set(handles.map(\.productId))
+        let occupied = occupiedProductIds
+        if let selectedProductId, !occupied.contains(selectedProductId),
+           let chosen = products.first(where: { $0.id == selectedProductId }) { return chosen }
         return products.first { !occupied.contains($0.id) }
+    }
+    func select(_ product: HandleProduct) {
+        guard !busy, !occupiedProductIds.contains(product.id) else { return }
+        selectedProductId = product.id
     }
     var canBuy: Bool {
         guard !busy, Self.valid(wantedName), !waitingForApproval else { return false }
@@ -127,7 +139,7 @@ final class HandleStore {
             guard current(stamp, subject) else { return }
             enabled = true
             install(value)
-            let ids = value.productIds ?? value.productId.map { [$0] } ?? []
+            let ids = HandleCatalog.merged(with: value.productIds ?? value.productId.map { [$0] } ?? [])
             let loadedProducts = try await withHandleDeadline(seconds: services.timeout) { [purchases = services.purchases] in
                 try await purchases.products(ids)
             }
@@ -277,6 +289,7 @@ final class HandleStore {
             pending.removeAll { $0.productId == transaction.productId }; persist()
             unassigned.removeAll { $0.originalId == transaction.originalId }
             if Self.tidy(wantedName) == selectedName { wantedName = ""; availability = nil }
+            if selectedProductId == transaction.productId { selectedProductId = nil }
             let exists = await services.ensureMailbox(namespace)
             guard current(stamp, subject) else { return }
             if exists { missingMailboxes.remove(namespace) }
@@ -309,7 +322,7 @@ final class HandleStore {
     func reset() {
         epoch += 1; listener?.cancel(); listener = nil
         activity = .none; loaded = false; offer = nil; handles = []; products = []
-        pending = []; unassigned = []; wantedName = ""; availability = nil; message = nil
+        pending = []; unassigned = []; wantedName = ""; availability = nil; message = nil; selectedProductId = nil
         pendingRefresh = false; missingMailboxes = []
         accountHandles = []; ownershipLoaded = false; ownershipError = nil
     }
