@@ -74,6 +74,13 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Limit LFS downloads to bundled public runtime assets
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config --global lfs.fetchinclude 'public/**'
+          git config --global lfs.fetchexclude ''
+
       - name: Check out CosmosMap through its read-only deploy key
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -82,7 +89,7 @@ jobs:
           path: cosmosmap
           ssh-key: ${{ secrets.COSMOSMAP_DEPLOY_KEY }}
           persist-credentials: false
-          lfs: false  # the iPad build doesn't need the LFS ship assets
+          lfs: true  # only public/**; game source archives and streamed ship assets stay excluded
 
       - name: Require an immutable CosmosMap source commit
         shell: bash
@@ -97,6 +104,28 @@ jobs:
           fi
           [ "$(git rev-parse HEAD)" = "$SOURCE_REF" ] ||
             { echo "::error::Checked out the wrong commit."; exit 1; }
+
+      - name: Verify bundled runtime LFS assets are hydrated
+        shell: bash
+        working-directory: cosmosmap
+        run: |
+          set -euo pipefail
+          python3 - <<'PY_RUNTIME_ASSETS'
+          from pathlib import Path
+          import json, subprocess
+          records = json.loads(subprocess.check_output(['git', 'lfs', 'ls-files', '--json']))
+          paths = [record['name'] for record in records['files']]
+          assets = [Path(name) for name in paths if name.startswith('public/')]
+          if not assets:
+              raise SystemExit('::error::No public runtime LFS assets are tracked.')
+          for path in assets:
+              if not path.is_file():
+                  raise SystemExit(f'::error::Missing bundled runtime asset: {path}')
+              with path.open('rb') as stream:
+                  if stream.read(128).startswith(b'version https://git-lfs.github.com/spec/v1'):
+                      raise SystemExit(f'::error::Unhydrated bundled runtime asset: {path}')
+          print(f'Verified {len(assets)} hydrated public runtime LFS assets.')
+          PY_RUNTIME_ASSETS
 
       - name: Build the web bundle and copy it into the iPad app
         shell: bash
@@ -231,7 +260,7 @@ jobs:
           plutil -lint CosmosMap/Resources/PrivacyInfo.xcprivacy
           plutil -lint ExportOptions.plist
 
-      - name: Prove WebGPU renders in an iPadOS 26 simulator
+      - name: Run native tests and check the iPadOS 26 WebGPU host
         working-directory: cosmosmap
         shell: bash
         run: |
@@ -252,7 +281,9 @@ jobs:
           ")
           [ -n "$device_id" ] || { echo "::error::No iPad Pro 13-inch simulator is available."; exit 1; }
           xcrun simctl list devices | grep "$device_id"
-          xcodebuild build \
+          xcodebuild test \
+            -parallel-testing-enabled NO \
+            -resultBundlePath "$RUNNER_TEMP/cosmosmap-native-tests.xcresult" \
             -project ios/CosmosMap.xcodeproj \
             -scheme CosmosMap \
             -configuration Debug \
@@ -296,12 +327,14 @@ jobs:
               print(f"::warning::WebGPU API is enabled but this runner has no GPU adapter (expected in CI VMs): {r}")
           PY
 
-      - name: Keep the simulator screenshot
+      - name: Keep simulator screenshot and native test results
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cosmosmap-ipad-simulator-${{ inputs.build_number }}
-          path: ${{ runner.temp }}/screens
+          path: |
+            ${{ runner.temp }}/screens
+            ${{ runner.temp }}/cosmosmap-native-tests.xcresult
           if-no-files-found: warn
           retention-days: 30
 
