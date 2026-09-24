@@ -1,6 +1,6 @@
 name: CosmosMap iPad TestFlight
 
-# CosmosMap (bekirdag/space_simulation, public) is a WebGPU web app wrapped in a native
+# CosmosMap (wodohq/cosmosmap, private) is a WebGPU web app wrapped in a native
 # iPad shell. This manual broker reuses Wodo's signing credentials already proven by
 # Pigeonpost, builds the web bundle, archives the iPad app and uploads it to TestFlight.
 
@@ -8,7 +8,7 @@ on:
   workflow_dispatch:
     inputs:
       source_ref:
-        description: "Full 40-character commit SHA from bekirdag/space_simulation."
+        description: "Full 40-character commit SHA from wodohq/cosmosmap."
         required: true
         type: string
       build_number:
@@ -74,13 +74,15 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Check out CosmosMap
+      - name: Check out CosmosMap through its read-only deploy key
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          repository: bekirdag/space_simulation
+          repository: wodohq/cosmosmap
           ref: ${{ inputs.source_ref }}
           path: cosmosmap
+          ssh-key: ${{ secrets.COSMOSMAP_DEPLOY_KEY }}
           persist-credentials: false
+          lfs: false  # the iPad build doesn't need the LFS ship assets
 
       - name: Require an immutable CosmosMap source commit
         shell: bash
