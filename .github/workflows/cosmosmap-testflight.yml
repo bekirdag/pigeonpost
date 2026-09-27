@@ -246,7 +246,7 @@ jobs:
           raw_profile="$RUNNER_TEMP/cosmosmap.mobileprovision"
           profile_plist="$RUNNER_TEMP/cosmosmap-profile.plist"
           printf '%s' "$PROFILE" | base64 --decode > "$raw_profile"
-          echo "0af903ac4f425b94787defefbfa7f937a669d0850ccab865e7ae2678f414e9f0  $raw_profile" |
+          echo "777e3ae70ba5a31d846c1c1f1aefa164ea436fd34ecaa3148ea787c26d6bc002  $raw_profile" |
             shasum -a 256 -c -
           security cms -D -i "$raw_profile" > "$profile_plist"
 
@@ -257,6 +257,9 @@ jobs:
           [ "$team" = "AH277897AV" ] || { echo "::error::Unexpected profile team."; exit 1; }
           [ "$app_id" = "AH277897AV.com.wodo.cosmosmap" ] || { echo "::error::Unexpected profile app identifier."; exit 1; }
           [ "$name" = "CosmosMap App Store" ] || { echo "::error::Unexpected profile name."; exit 1; }
+
+          game_center=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:com.apple.developer.game-center" "$profile_plist")
+          [ "$game_center" = "true" ] || { echo "::error::Profile must enable Game Center."; exit 1; }
 
           profiles="$HOME/Library/MobileDevice/Provisioning Profiles"
           mkdir -p "$profiles"
