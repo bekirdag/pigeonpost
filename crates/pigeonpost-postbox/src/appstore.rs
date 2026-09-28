@@ -28,6 +28,18 @@ const TOKEN_CACHE_LIFETIME: Duration = Duration::from_secs(15 * 60);
 const TOKEN_VALIDITY_SECONDS: u64 = 20 * 60;
 pub const MAX_HANDLES: usize = 10;
 
+/// Annual capacity levels sold together in one subscription group. Legacy products remain
+/// verifiable for restoration but are never interpreted as capacity plans.
+pub fn plan_products() -> Vec<String> {
+    (1..=MAX_HANDLES)
+        .map(|n| format!("dev.pigeonpost.inbox.handles.{n}.yearly"))
+        .collect()
+}
+
+pub fn plan_capacity(product: &str) -> Option<usize> {
+    (1..=MAX_HANDLES).find(|n| product == format!("dev.pigeonpost.inbox.handles.{n}.yearly"))
+}
+
 const PRODUCTION: &str = "https://api.storekit.apple.com";
 const SANDBOX: &str = "https://api.storekit-sandbox.apple.com";
 
@@ -107,7 +119,7 @@ impl AppStore {
             .unwrap_or_else(|| "dev.pigeonpost.inbox".to_string());
         let product_id = non_empty("PIGEONPOST_APPSTORE_PRODUCT_ID")
             .unwrap_or_else(|| "dev.pigeonpost.inbox.handle.yearly".to_string());
-        let product_ids = match product_catalog(
+        let mut product_ids = match product_catalog(
             &product_id,
             non_empty("PIGEONPOST_APPSTORE_PRODUCT_IDS").as_deref(),
         ) {
@@ -117,6 +129,11 @@ impl AppStore {
                 return None;
             }
         };
+        for id in plan_products() {
+            if !product_ids.contains(&id) {
+                product_ids.push(id);
+            }
+        }
 
         let pem = match non_empty("PIGEONPOST_APPSTORE_KEY_PATH") {
             Some(path) => match std::fs::read(&path) {
@@ -163,10 +180,6 @@ impl AppStore {
 
     pub fn product_id(&self) -> &str {
         &self.product_ids[0]
-    }
-
-    pub fn product_ids(&self) -> &[String] {
-        &self.product_ids
     }
 
     /// The provider token, refreshed before it expires.

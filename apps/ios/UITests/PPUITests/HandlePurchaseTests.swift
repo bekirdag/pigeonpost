@@ -15,6 +15,12 @@ final class HandlePurchaseTests: XCTestCase {
         waitForExpectations(timeout: 8)
         handles.tap()
         app.buttons["settings-purchases"].tap()
+        scrollTo(app.textFields["yourname"])
+    }
+
+    private func scrollTo(_ element: XCUIElement) {
+        for _ in 0..<8 where !element.isHittable { app.swipeUp() }
+        if !element.isHittable { for _ in 0..<12 where !element.isHittable { app.swipeDown() } }
     }
 
     private func screenshot(_ name: String) {
@@ -31,10 +37,10 @@ final class HandlePurchaseTests: XCTestCase {
         expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: purchasePage)
         waitForExpectations(timeout: 8)
         purchasePage.tap()
+        scrollTo(app.textFields["yourname"])
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
-        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Pigeonpost handle")
-        XCTAssertEqual(app.staticTexts["handle-product-price"].label, "$8.00 per year")
-        XCTAssertTrue(app.buttons["Buy for $8.00 a year"].exists)
+        XCTAssertTrue(app.buttons["handle-register"].exists)
+        XCTAssertTrue(app.buttons["handle-register"].label.contains("$8.00"))
         screenshot("direct-handle-purchase")
     }
 
@@ -44,7 +50,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertTrue(app.buttons["Subscription unavailable"].exists)
         XCTAssertFalse(app.buttons["Subscription unavailable"].isEnabled)
         XCTAssertFalse(app.staticTexts["handle-product-price"].exists)
-        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Buy for'")).firstMatch.exists)
+        XCTAssertFalse(app.buttons["handle-register"].exists)
         app.buttons["handle-retry-products"].tap()
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
         screenshot("subscription-retry")
@@ -132,6 +138,7 @@ final class HandlePurchaseTests: XCTestCase {
         enter("cosmos")
         app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
         app.buttons["settings-purchases"].tap()
+        scrollTo(app.textFields["yourname"])
         XCTAssertEqual(app.textFields["yourname"].value as? String, "cosmos")
     }
 
@@ -144,7 +151,7 @@ final class HandlePurchaseTests: XCTestCase {
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: existing.count))
         field.typeText("bad/name")
         screenshot("invalid-name")
-        let buy = app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Buy for'")).firstMatch
+        let buy = app.buttons["handle-register"]
         XCTAssertTrue(buy.exists)
         XCTAssertFalse(buy.isEnabled, "A malformed name must never open the Apple payment sheet")
     }
@@ -156,20 +163,22 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Active App Store subscriptions"].exists)
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8),
                       "An existing owner needs a way to add another handle")
-        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Handle 2 — yearly")
+        XCTAssertTrue(app.buttons["handle-register"].label.contains("$16.00"))
     }
 
     private var buy: XCUIElement {
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH 'Buy for'")).firstMatch
+        app.buttons["handle-register"]
     }
 
     private func enter(_ name: String) {
         let field = app.textFields["yourname"]
         XCTAssertTrue(field.waitForExistence(timeout: 8))
+        scrollTo(field)
         field.tap()
         field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: (field.value as? String ?? "").count))
         field.typeText(name)
         if app.keyboards.buttons["Done"].exists { app.keyboards.buttons["Done"].tap() }
+        scrollTo(buy)
     }
 
     private func waitForEnabledBuy() {
@@ -195,11 +204,11 @@ final class HandlePurchaseTests: XCTestCase {
 
     func testEveryHandleSubscriptionIsListedAndCanBeBought() {
         open("sale")
-        let ids = ["dev.pigeonpost.inbox.handle.yearly"] + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
+        let ids = (1...10).map { "dev.pigeonpost.inbox.handles.\($0).yearly" }
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
         // A Form only builds rows near the screen; the list sits below the purchase form.
         let first = app.buttons["handle-product-" + ids[0]]
-        for _ in 0..<6 where !first.exists || !first.isHittable { app.swipeUp() }
+        scrollTo(first)
         XCTAssertTrue(first.isHittable)
         screenshot("all-handle-products")
         for id in ids {
@@ -207,16 +216,19 @@ final class HandlePurchaseTests: XCTestCase {
             for _ in 0..<6 where !row.isHittable { app.swipeUp() }
             XCTAssertTrue(row.isHittable, "\(id) must be visible on the purchase screen")
         }
+        scrollTo(app.buttons["handle-product-" + ids[4]])
         app.buttons["handle-product-" + ids[4]].tap()
-        for _ in 0..<6 where !app.textFields["yourname"].isHittable { app.swipeDown() }
-        XCTAssertEqual(app.staticTexts["handle-product-name"].label, "Handle 5 — yearly")
+        scrollTo(app.textFields["yourname"])
+        XCTAssertTrue(buy.label.contains("$40.00"))
         enter("fifth")
         waitForEnabledBuy()
         buy.tap()
         XCTAssertTrue(app.staticTexts["/fifth is ready."].waitForExistence(timeout: 8))
         let bought = app.buttons["handle-product-" + ids[4]]
-        for _ in 0..<6 where !bought.isHittable { app.swipeUp() }
-        XCTAssertFalse(bought.isEnabled, "A subscription already bought cannot be chosen again")
+        scrollTo(bought)
+        bought.tap()
+        scrollTo(app.buttons["handle-change-plan"])
+        XCTAssertFalse(app.buttons["handle-change-plan"].isEnabled, "The current plan cannot be bought again")
         screenshot("fifth-handle-bought")
     }
 
@@ -262,9 +274,8 @@ final class HandlePurchaseTests: XCTestCase {
 
     func testTenHandlesHaveNoEleventhPurchase() {
         open("ten")
-        XCTAssertTrue(app.staticTexts["You have all ten handle subscriptions."].waitForExistence(timeout: 8))
-        XCTAssertFalse(app.textFields["yourname"].exists)
-        XCTAssertFalse(buy.exists)
+        enter("eleventh")
+        XCTAssertFalse(buy.isEnabled)
         screenshot("ten-handles")
     }
 }

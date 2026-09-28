@@ -59,6 +59,11 @@ def erase(conn, request_id, blob_root, evidence):
         # separately; app-store transaction IDs remain necessary for refund/replay handling.
         for table in ("apple_subscriptions", "google_subscriptions", "namespaces", "test_handle_claims"):
             conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+        # Additive plan tables may be absent on an older deployment.
+        for table in ("apple_handle_plans", "apple_plan_names"):
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+                conn.execute("UPDATE " + table + " SET account_id=? WHERE account_id=?", ("erased_" + request_id, account))
+        conn.execute("UPDATE namespaces SET provider_ref=? WHERE provider_ref=?", ("plan:erased_" + request_id, "plan:" + account))
         conn.execute("INSERT OR IGNORE INTO erased_member_subjects VALUES (?,?)", (hashlib.sha256(subject.encode()).digest(), now))
         conn.execute("DELETE FROM accounts WHERE id=?", (account,))
         # Report/evidence records are retained only where the operator identified a security need.

@@ -2,10 +2,10 @@ import XCTest
 import StoreKit
 import StoreKitTest
 
-/// Exercises the shipped Apple adapter with Apple's local StoreKit service. No real charges.
+/// Local StoreKit validation is separate from the required physical sandbox recording.
 @MainActor
 final class NativeHandleStoreKitTests: XCTestCase {
-    func testTenIndependentAnnualPurchasesRestoreWithoutReplacingEachOther() async throws {
+    func testOneGroupUpgradesRestoresAndExpiresAsOnePlan() async throws {
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "HandleSubscriptions", withExtension: "storekit"))
         let session = try SKTestSession(contentsOf: url)
         session.resetToDefaultState()
@@ -13,34 +13,44 @@ final class NativeHandleStoreKitTests: XCTestCase {
         session.timeRate = .realTime
         session.clearTransactions()
         defer { session.clearTransactions() }
-        let ids = ["dev.pigeonpost.inbox.handle.yearly"] + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
+        let ids = HandleCatalog.productIds
         let apple = AppleHandlePurchases()
         let products = try await apple.products(ids)
         XCTAssertEqual(products.map(\.id), ids)
-        XCTAssertEqual(products.map(\.displayName), (1...10).map { "Handle \($0) yearly" })
-        XCTAssertEqual(products.reduce(Decimal(0)) { $0 + $1.price }, 80)
-        XCTAssertTrue(products.allSatisfy { $0.price == 8 && $0.currencyCode == "USD" })
+        XCTAssertEqual(products.map(\.price), (1...10).map { Decimal($0 * 8) })
+        let native = try await Product.products(for: ids)
+        XCTAssertEqual(Set(native.compactMap { $0.subscription?.subscriptionGroupID }).count, 1)
         let token = UUID()
-        var originals: Set<String> = []
-        for id in ids {
-            guard case let .purchased(transaction) = try await apple.purchase(id, accountToken: token) else {
-                return XCTFail("Apple did not complete \(id)")
+        var original: String?
+        for index in [0, 4, 9] {
+            guard case let .purchased(transaction) = try await apple.purchase(ids[index], accountToken: token) else {
+                return XCTFail("Apple did not complete the plan purchase")
             }
-            XCTAssertTrue(transaction.active)
             XCTAssertEqual(transaction.accountToken, token)
-            originals.insert(transaction.originalId)
+            if let original { XCTAssertEqual(transaction.originalId, original) }
+            original = transaction.originalId
             await apple.finish(transaction.id)
+            let current = await apple.transactions()
+            XCTAssertEqual(Set(current.filter(\.active).map(\.productId)), [ids[index]], "An upgrade replaces the previous level")
         }
-        XCTAssertEqual(originals.count, 10)
+        try await apple.restore()
         let restored = await apple.transactions()
-        XCTAssertEqual(Set(restored.filter(\.active).map(\.productId)), Set(ids))
-        XCTAssertEqual(Set(restored.map(\.originalId)), originals)
-        try session.expireSubscription(productIdentifier: ids[0])
+        XCTAssertEqual(Set(restored.filter(\.active).map(\.productId)), [ids[9]])
+        _ = try await apple.purchase(ids[0], accountToken: token)
+        let afterDowngrade = await apple.transactions()
+        XCTAssertEqual(Set(afterDowngrade.filter(\.active).map(\.productId)), [ids[9]])
+        let ten = try XCTUnwrap(native.first { $0.id == ids[9] })
+        let statuses = try await ten.subscription!.status
+        XCTAssertTrue(statuses.contains { status in
+            if case let .verified(renewal) = status.renewalInfo { return renewal.autoRenewPreference == ids[0] }
+            return false
+        })
+        try session.expireSubscription(productIdentifier: ids[9])
         var remaining = await apple.transactions()
-        for _ in 0..<20 where remaining.filter(\.active).count == 10 {
+        for _ in 0..<20 where remaining.contains(where: \.active) {
             try await Task.sleep(nanoseconds: 100_000_000)
             remaining = await apple.transactions()
         }
-        XCTAssertEqual(Set(remaining.filter(\.active).map(\.productId)), Set(ids.dropFirst()), "Expiring one name preserves the other nine")
+        XCTAssertFalse(remaining.contains(where: \.active))
     }
 }

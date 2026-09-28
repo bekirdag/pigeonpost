@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Provision only Pigeonpost's nine additional independent $8/year handle slots.
+"""Audit/provision ten annual capacity levels in one Pigeonpost subscription group.
 
-The original product and existing prices remain read-only. No public review submission.
+Legacy product receipts remain unchanged; retiring them is a separate reviewed operation.
 """
 
 import json
@@ -18,7 +18,13 @@ from cubemeld_iap import Client, ApiError, mint_token, validate_upload_operation
 BUNDLE = "dev.pigeonpost.inbox"
 APP_ID = "6803521541"
 PRIMARY = "dev.pigeonpost.inbox.handle.yearly"
-PRODUCTS = [PRIMARY] + [f"dev.pigeonpost.inbox.handle{n}.yearly" for n in range(2, 11)]
+GROUP_NAME = "Pigeonpost handle plans"
+
+def plan_manifest():
+    return [{"product_id": f"dev.pigeonpost.inbox.handles.{n}.yearly", "capacity": n,
+             "usd_yearly": 8 * n, "group_level": 11 - n} for n in range(1, 11)]
+
+PRODUCTS = [item["product_id"] for item in plan_manifest()]
 APPLY = os.environ.get("APPLY", "false").lower() == "true"
 
 
@@ -72,14 +78,14 @@ def create(client, kind, attributes, relationships):
     }})["data"]
 
 
-def usa_price(client, subscription):
+def usa_price(client, subscription, expected=8):
     result = client.call("GET", f"/v1/subscriptions/{subscription}/prices", params={
         "filter[territory]": "USA", "include": "subscriptionPricePoint", "limit": 200,
     })
     points = {p["id"]: p for p in result.get("included", []) if p["type"] == "subscriptionPricePoints"}
     values = [Decimal(points[p["relationships"]["subscriptionPricePoint"]["data"]["id"]]["attributes"]["customerPrice"]) for p in result["data"]]
-    if any(value != Decimal("8") for value in values):
-        raise RuntimeError(f"Existing US billing differs from $8/year: {subscription}")
+    if any(value != Decimal(expected) for value in values):
+        raise RuntimeError(f"Existing US billing differs from ${expected}/year: {subscription}")
     return values
 
 
@@ -98,24 +104,26 @@ def plan(client, subscription):
 def metadata(client, group, product, slot):
     locales = client.list_all(f"/v1/subscriptionGroups/{group}/subscriptionGroupLocalizations", {"limit": 50})
     if not any(x["attributes"]["locale"] == "en-US" for x in locales):
-        create(client, "subscriptionGroupLocalizations", {"name": f"Pigeonpost handle {slot}", "locale": "en-US"},
+        create(client, "subscriptionGroupLocalizations", {"name": GROUP_NAME, "locale": "en-US"},
                {"subscriptionGroup": rel("subscriptionGroups", group)})
     locales = client.list_all(f"/v1/subscriptions/{product}/subscriptionLocalizations", {"limit": 50})
     if not any(x["attributes"]["locale"] == "en-US" for x in locales):
-        create(client, "subscriptionLocalizations", {"name": f"Handle {slot} — yearly", "locale": "en-US",
-               "description": "One personal name and inbox for one year."},
+        create(client, "subscriptionLocalizations", {"name": f"{slot} {'name' if slot == 1 else 'names'} — yearly", "locale": "en-US",
+               "description": f"One plan for up to {slot} personal names and inboxes."},
                {"subscription": rel("subscriptions", product)})
+    if os.environ.get("SKIP_REVIEW_SCREENSHOT") == "true":
+        return  # Provision pricing first; the normal audit/apply requires the matching new image.
     shot = client.call("GET", f"/v1/subscriptions/{product}/appStoreReviewScreenshot", allow_404=True)
-    content = Path("apps/ios/Store/handle-subscription-review.png").read_bytes()
+    content = Path("apps/ios/Store/handle-plans-review.png").read_bytes()
     if not shot or not shot.get("data"):
         asset = create(client, "subscriptionAppStoreReviewScreenshots",
-            {"fileName": "handle-subscription-review.png", "fileSize": len(content)},
+            {"fileName": "handle-plans-review.png", "fileSize": len(content)},
             {"subscription": rel("subscriptions", product)})
     else:
         asset = shot["data"]
     state = asset["attributes"].get("assetDeliveryState", {}).get("state")
     if state in ("AWAITING_UPLOAD", None):
-        if asset["attributes"]["fileSize"] != len(content) or asset["attributes"]["fileName"] != "handle-subscription-review.png":
+        if asset["attributes"]["fileSize"] != len(content) or asset["attributes"]["fileName"] != "handle-plans-review.png":
             raise RuntimeError("Pending review asset differs from the prepared image")
         operations = asset["attributes"].get("uploadOperations", [])
         if not operations:
@@ -130,16 +138,16 @@ def metadata(client, group, product, slot):
         raise RuntimeError(f"Review image is incomplete for {product}; inspect before retry")
 
 
-def provision_prices(client, product, territories):
+def provision_prices(client, product, territories, expected):
     existing = client.list_all(f"/v1/subscriptions/{product}/prices", {"limit": 200, "include": "territory"})
     present = {p["relationships"]["territory"]["data"]["id"] for p in existing}
-    usa_price(client, product)
+    usa_price(client, product, expected)
     points = client.list_all(f"/v1/subscriptions/{product}/pricePoints", {
         "filter[territory]": "USA", "filter[planType]": "UPFRONT", "limit": 8000,
     })
-    eight = [p for p in points if Decimal(p["attributes"]["customerPrice"]) == Decimal("8")]
+    eight = [p for p in points if Decimal(p["attributes"]["customerPrice"]) == Decimal(expected)]
     if len(eight) != 1:
-        raise RuntimeError(f"Expected one exact $8 price point for {product}")
+        raise RuntimeError(f"Expected one exact ${expected} price point for {product}")
     base = eight[0]
     # The live adjustedEqualizations endpoint accepts MONTHLY only. Annual up-front
     # billing uses ordinary equalizations after declaring its plan availability.
@@ -174,54 +182,57 @@ def run(client):
     primary_plan, territories = plan(client, primary["id"])
     if not primary_plan or "USA" not in territories:
         raise RuntimeError("Existing primary subscription has no US availability")
-    print(json.dumps({"primary": PRIMARY, "usd_yearly": 8, "territories": territories}), flush=True)
-    for slot, identifier in enumerate(PRODUCTS, 1):
-        if identifier not in products:
+    matches = [g for g in groups if g["attributes"]["referenceName"] == GROUP_NAME]
+    if len(matches) > 1:
+        raise RuntimeError("Duplicate plan group reference")
+    group = matches[0] if matches else None
+    if group is None and APPLY:
+        group = create(client, "subscriptionGroups", {"referenceName": GROUP_NAME}, {"app": rel("apps", APP_ID)})
+    for spec in plan_manifest():
+        identifier, capacity, expected = spec["product_id"], spec["capacity"], spec["usd_yearly"]
+        entry = products.get(identifier)
+        if entry is None:
             if not APPLY:
                 print(json.dumps({"product": identifier, "status": "missing"}), flush=True)
                 continue
-            reference = f"Pigeonpost handle {slot}"
-            matches = [g for g in groups if g["attributes"]["referenceName"] == reference]
-            if len(matches) > 1:
-                raise RuntimeError("Duplicate handle group reference")
-            group = matches[0] if matches else create(client, "subscriptionGroups", {"referenceName": reference},
-                {"app": rel("apps", APP_ID)})
-            if client.list_all(f"/v1/subscriptionGroups/{group['id']}/subscriptions", {"limit": 100}):
-                raise RuntimeError("A handle slot group already contains a different subscription")
-            product = create(client, "subscriptions", {"name": reference, "productId": identifier,
-                "subscriptionPeriod": "ONE_YEAR", "familySharable": False, "groupLevel": 1,
-                "reviewNote": "Settings > Your handles. Each subscription registers one name and its inbox. Up to ten independently renewable names; $8/year each in the US. Restore purchases recovers existing names for the signed-in account."},
+            note = (f"Settings > Get a handle > All handle plans. Select {capacity} names — yearly, then Subscribe. "
+                    f"This level includes up to {capacity} names in ONE subscription, USD {expected}/year total in the US. "
+                    "All ten levels are visible on the same screen and share the Pigeonpost handle plans group. "
+                    "After purchasing, scroll to Register a name, check availability and register each included name without another payment. "
+                    "Upgrades replace the current level immediately; downgrades take effect at renewal. "
+                    "Restore purchases is at the bottom of the same page. Use the app review demo account. "
+                    "The complimentary demo mailbox does not consume plan capacity.")
+            product = create(client, "subscriptions", {"name": f"Pigeonpost {capacity} names yearly", "productId": identifier,
+                "subscriptionPeriod": "ONE_YEAR", "familySharable": False, "groupLevel": spec["group_level"], "reviewNote": note},
                 {"group": rel("subscriptionGroups", group["id"])})
-            products[identifier] = (group, product)
-        group, product = products[identifier]
+        else:
+            actual_group, product = entry
+            if not group or actual_group["id"] != group["id"]:
+                raise RuntimeError("Plan product is in the wrong subscription group")
         attrs = product["attributes"]
-        if attrs["subscriptionPeriod"] != "ONE_YEAR" or attrs["familySharable"] or attrs["groupLevel"] != 1:
-            raise RuntimeError(f"Subscription configuration drift: {identifier}")
-        if slot > 1 and APPLY:
-            metadata(client, group["id"], product["id"], slot)
+        if attrs["subscriptionPeriod"] != "ONE_YEAR" or attrs["familySharable"]:
+            raise RuntimeError("Subscription term or sharing differs")
+        if APPLY:
+            if attrs["groupLevel"] != spec["group_level"]:
+                client.call("PATCH", f"/v1/subscriptions/{product['id']}", {"data": {"type": "subscriptions", "id": product["id"], "attributes": {"groupLevel": spec["group_level"]}}})
+            metadata(client, group["id"], product["id"], capacity)
             saved_plan, saved_territories = plan(client, product["id"])
             if saved_plan and saved_territories != territories:
-                raise RuntimeError(f"Availability drift: {identifier}")
+                raise RuntimeError("Availability drift")
             if not saved_plan:
                 create(client, "subscriptionPlanAvailabilities", {
                     "planType": "UPFRONT", "availableInNewTerritories": primary_plan["attributes"]["availableInNewTerritories"],
                 }, {"subscription": rel("subscriptions", product["id"]),
                     "availableTerritories": {"data": [{"type": "territories", "id": t} for t in territories]}})
-            provision_prices(client, product["id"], territories)
+            provision_prices(client, product["id"], territories, expected)
         _, saved_territories = plan(client, product["id"])
-        saved_prices = usa_price(client, product["id"])
+        prices = usa_price(client, product["id"], expected)
         current = client.call("GET", f"/v1/subscriptions/{product['id']}")["data"]
-        shot = client.call("GET", f"/v1/subscriptions/{product['id']}/appStoreReviewScreenshot", allow_404=True)
-        if shot and shot.get("data"):
-            print(json.dumps({"review_asset": product['id'], "state": shot['data']['attributes'].get('assetDeliveryState'),
-                "upload_hosts": [urllib.parse.urlsplit(op['url']).hostname for op in shot['data']['attributes'].get('uploadOperations', [])]}), flush=True)
         print(json.dumps({"product": identifier, "id": product["id"], "group": group["id"],
-            "state": current["attributes"]["state"], "usd_yearly": list(map(str, saved_prices)),
-            "available_territory_count": len(saved_territories)}), flush=True)
-        if APPLY and (not saved_prices or saved_territories != territories):
-            raise RuntimeError(f"Saved catalog is incomplete: {identifier}")
-    if APPLY and len({g["id"] for g, p in products.values() if p["attributes"]["productId"] in PRODUCTS}) != 10:
-        raise RuntimeError("Ten independent subscription groups were not configured")
+            "level": current["attributes"]["groupLevel"], "state": current["attributes"]["state"],
+            "usd_yearly": list(map(str, prices)), "territories": len(saved_territories)}), flush=True)
+        if APPLY and (not prices or saved_territories != territories):
+            raise RuntimeError("Saved catalog is incomplete")
 
 
 if __name__ == "__main__":

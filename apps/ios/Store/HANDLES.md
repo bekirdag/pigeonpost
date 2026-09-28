@@ -1,60 +1,21 @@
-# Annual handle subscriptions
+# Annual handle plans
 
-Each name has its own auto-renewable, one-year subscription. The US price is $8 per
-name per year; ten active subscriptions total $80 per year. Other storefronts use
-Apple's equalized local prices, shown by StoreKit. Each name is managed and cancelled
-separately in Apple's subscription settings. A subscription remains associated with
-the name it registered.
+Pigeonpost sells one auto-renewable yearly subscription with ten capacity levels in the **Pigeonpost handle plans** subscription group. Product IDs are `dev.pigeonpost.inbox.handles.1.yearly` through `dev.pigeonpost.inbox.handles.10.yearly`. The number is total included names, not an additional independent subscription. US annual prices are $8, $16, $24, $32, $40, $48, $56, $64, $72 and $80. StoreKit supplies localized names and prices. Level 1 is the ten-name plan; level 10 is the one-name plan.
 
-The existing product is `dev.pigeonpost.inbox.handle.yearly`. Slots 2 through 10 use
-`dev.pigeonpost.inbox.handle2.yearly` through `dev.pigeonpost.inbox.handle10.yearly`.
-Every slot has a separate subscription group so buying another name does not replace
-the first subscription. `.github/scripts/ios_handle_catalog.py` provisions missing
-slots for App Store Connect app `6803521541`, preserves the original product and
-existing prices, and verifies an exact $8 US annual price. It does not submit an app
-or subscription for public review.
+Settings → Get a handle lists every plan and supports direct selection. Subscribe first and register included names, or enter an available name and subscribe/register in one flow. Included additional names never invoke another Apple payment. Upgrades replace the current plan immediately. Downgrades preserve existing capacity until Apple confirms the lower level at renewal. At that point, the first registered names remain active up to the lower capacity, and excess names enter the existing 30-day recovery period. Mailbox keys and message history remain with their account.
 
-The postbox must list these ten IDs, in order, in `PIGEONPOST_APPSTORE_PRODUCT_IDS`.
-Keep `PIGEONPOST_APPSTORE_PRODUCT_ID=dev.pigeonpost.inbox.handle.yearly` for older
-clients and migrated purchases. Without the list, only the original product is
-accepted. Existing App Store credentials and bundle configuration still apply.
+## Server contract and compatibility
 
-`GET /v1/claims/apple` returns the legacy first-active `namespace`/`expires_at` plus
-the catalog, limit, stable account UUID and all owned subscriptions. The app passes
-that UUID to Apple's `appAccountToken`; the server checks it against the signed-in
-account. New additional products require this association. Older original-product
-purchases remain restorable by their stored account and original transaction ID.
+`GET /v1/claims/apple` returns the sale catalog, stable account UUID, optional `plan` and all retained Apple names. `POST /v1/claims/apple` accepts an Apple transaction ID and optional name. With no name, it restores/synchronizes the plan. With a name, it registers a slot included in the verified capacity. Only Apple's authenticated server response establishes capacity; neither the app's selected level nor a client-supplied receipt can grant it. The `appAccountToken` must match the signed-in Pigeonpost account.
 
-`POST /v1/claims/apple` accepts a transaction ID and an optional namespace. A bound
-transaction always restores its existing name. An unbound purchase with no name
-returns `name_required`; the client asks for a name and completes registration
-without charging again. Names are checked before opening Apple's purchase sheet,
-and checked again transactionally on the server. A race for a name can still occur
-while the Apple sheet is open; the paid transaction remains unfinished until another
-available name is registered. Pending approval stores the intended name per account
-and product on the device. Reinstalling before registration may require choosing the
-name again; restoring never invents a placeholder name.
+`apple_handle_plans` and `apple_plan_names` are additive tables, separate from legacy `apple_subscriptions`. One account has one capacity plan. Serialized verification and SQLite transactions prevent concurrent registration from exceeding the plan. Background reconciliation applies renewals, downgrades, expiry and revocation while the phone is closed. Provider failures retain the last confirmed entitlement and keep names reserved. Restoring a resold name never steals it from its new owner.
 
-The server enforces at most ten active Apple names in one SQLite transaction.
-Renewals do not consume another slot. The schema adds `apple_subscriptions.product_id`;
-legacy rows retain ownership and default to the original product. Older receipts
-cannot shorten the paid-through date. Apple bearer JWTs are cached for 15 minutes,
-shorter than their 20-minute validity.
+The old `dev.pigeonpost.inbox.handle.yearly` and `handle2.yearly` through `handle10.yearly` products are restore-only in the new app and must be removed from the new review submission and sale availability. Existing receipts and namespaces remain supported. Preserve the legacy `PIGEONPOST_APPSTORE_PRODUCT_ID` and `PIGEONPOST_APPSTORE_PRODUCT_IDS` configuration so those receipts remain verifiable. New capacity IDs are an exact compiled allowlist in both server and app; arbitrary server product IDs are not added to the purchase screen.
 
-Validation commands:
+## Catalog and validation
 
-- `sh apps/ios/Tests/run.sh`: existing model/auth tests and purchase controller tests.
-- `xcodebuild test -project apps/ios/UITests/PPUITests.xcodeproj -scheme PPUITests -destination 'id=<dedicated-simulator>'` after installing a Debug app on that simulator.
-- `cargo test -p pigeonpost-postbox` and `cargo clippy -p pigeonpost-postbox --all-targets -- -D warnings`.
+`.github/scripts/ios_handle_catalog.py` audits by default and provisions with `APPLY=true`. It keeps the legacy primary product read-only as the storefront/territory reference, creates all new products in exactly one group, and verifies the expected prices. `SKIP_REVIEW_SCREENSHOT=true` permits preparing pricing before capturing the new screenshot; the final apply must omit it and verify every uploaded review image. Never submit an incomplete catalog or the old independent-slot screenshot.
 
-The UI tests include a local StoreKit configuration and exercise the shipped Apple
-adapter through `StoreKitTest`: ten independent purchases, account token propagation,
-restoration and expiry of one subscription. The local configuration and deterministic
-UI fixtures do not override StoreKit in a Release build. TestFlight uses Apple's
-sandbox purchase environment and does not charge real money.
+Run `sh apps/ios/Tests/run.sh`, the `NativeHandleStoreKitTests` and `HandlePurchaseTests` XCUITest suites, `cargo test -p pigeonpost-postbox`, and `cargo clippy -p pigeonpost-postbox --all-targets -- -D warnings`. The local StoreKit configuration has one group and tests replacement on upgrade, scheduled downgrade, restoration and expiry. It is not physical sandbox evidence.
 
-For rollout, audit/provision the catalog, back up the server database, validate the
-new binary against a database copy, deploy the postbox and preserve its Docker health
-probe, then upload the signed iOS build. Keep the previous containers for rollback;
-the additive migration is compatible with the previous binary. Never replace the
-live database with an older snapshot during a routine binary rollback.
+Deploy the server first using the existing runtime secrets and mounts, backing up the database and keeping the old image for rollback. Upload a fresh signed build through `ios-testflight.yml` only after validation. Do not overwrite a live database with an older snapshot during rollback. Capture the matching real-device sandbox video and submit the app plus all ten new levels and their single group.

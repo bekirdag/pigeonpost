@@ -1,5 +1,13 @@
 # Pigeonpost iOS public release
 
+## September 28 replacement in progress
+
+Apple rejected build 1.0 (43) under 3.1.2(b) and 2.1(b). The live submission `6b5a1281-f265-46dc-ac15-0cb74da89b5a` is **UNRESOLVED_ISSUES**. The replacement changes the ten independent subscriptions to one subscription group with 1–10-name capacity levels. See [the current model](Store/HANDLES.md) and [required physical recording](Store/PHYSICAL-REVIEW-RECORDING.md). Publication and resubmission are not yet complete; the records below describe earlier submissions, not the current state.
+
+The new IDs are `dev.pigeonpost.inbox.handles.1.yearly` through `.10.yearly`. Remove old product/group versions from the replacement submission, retain restore support for existing receipts, and attach the new binary, all ten new levels, their single group and a matching physical-device recording. Keep reviewer credentials private and unchanged unless a login check requires repair.
+
+## Earlier release evidence
+
 Review remediation audited 21 September 2026 against App Store Connect and production.
 
 ## Submission and purchases

@@ -8,19 +8,19 @@ private final class Purchases: HandlePurchasing {
     var finished: [String] = []
     var outcome = "success"
     func products(_ ids: [String]) async throws -> [HandleProduct] {
-        ids.map { HandleProduct(id: $0, displayPrice: "$8.00", price: 8, currencyCode: "USD") }
+        ids.map { let price = (HandleCatalog.capacity($0) ?? 1) * 8; return HandleProduct(id: $0, displayPrice: "$\(price).00", price: Decimal(price), currencyCode: "USD") }
     }
     func purchase(_ id: String, accountToken: UUID) async throws -> HandlePurchaseResult {
         calls += 1
         if outcome == "cancelled" { return .cancelled }
         if outcome == "pending" { return .pending }
         let value = transaction(id, token: accountToken)
-        values.append(value)
+        values = [value]
         return .purchased(value)
     }
     func transaction(_ product: String, token: UUID) -> HandleTransaction {
         let id = UUID().uuidString
-        return HandleTransaction(id: id, originalId: id, productId: product, accountToken: token,
+        return HandleTransaction(id: id, originalId: values.first?.originalId ?? id, productId: product, accountToken: token,
             expiresAt: Date().addingTimeInterval(86400), revoked: false)
     }
     func transactions() async -> [HandleTransaction] { values }
@@ -30,12 +30,13 @@ private final class Purchases: HandlePurchasing {
 
 @MainActor
 private final class Backend {
-    let ids = ["dev.pigeonpost.inbox.handle.yearly"] + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
+    let ids = HandleCatalog.productIds
     let token = UUID()
     let purchases = Purchases()
     let defaults = UserDefaults(suiteName: "handle-tests-" + UUID().uuidString)!
     var subject: String? = "account-a"
     var handles: [PurchasedHandle] = []
+    var plan: HandlePlan?
     var claims: [(String, String?)] = []
     var mailboxes: Set<String> = []
     var failures = 0
@@ -48,24 +49,36 @@ private final class Backend {
     func offer() -> HandleOffer {
         var value = HandleOffer(productId: ids[0], namespace: handles.first?.namespace, expiresAt: handles.first?.expiresAt)
         value.productIds = onlyLegacyProduct ? nil : ids; value.maxHandles = 10; value.appAccountToken = token.uuidString
-        value.account = subject; value.handles = handles
+        value.account = subject; value.handles = handles; value.plan = plan
         return value
     }
     func claim(_ id: String, _ name: String?) throws -> HandleOffer {
         claims.append((id, name))
         if failures > 0 { failures -= 1; throw APIError(status: 503, code: "appstore_unavailable", detail: nil) }
-        let transaction = purchases.values.first { $0.id == id }!
-        let handle: PurchasedHandle
-        if let owned = handles.first(where: { $0.originalTransactionId == transaction.originalId }) {
-            handle = owned
-        } else {
-            guard let name else { throw APIError(status: 400, code: "name_required", detail: nil) }
-            handle = PurchasedHandle(originalTransactionId: transaction.originalId, namespace: "/" + name,
-                productId: transaction.productId, environment: "Sandbox", expiresAt: Int(transaction.expiresAt!.timeIntervalSince1970), active: true)
-            handles.append(handle)
+        guard let transaction = purchases.values.first(where: { $0.id == id || $0.originalId == id }) else { throw HandlePurchaseError.unverified }
+        if let capacity = HandleCatalog.capacity(transaction.productId) {
+            plan = HandlePlan(originalTransactionId: transaction.originalId, productId: transaction.productId, environment: "Sandbox",
+                expiresAt: Int(transaction.expiresAt!.timeIntervalSince1970), capacity: capacity, active: true)
+            for index in handles.indices {
+                handles[index].productId = transaction.productId
+                handles[index].active = index < capacity
+            }
+            if let name, !handles.contains(where: { $0.namespace == "/" + name }) {
+                guard handles.filter(\.active).count < capacity else { throw APIError(status: 409, code: "plan_capacity_reached", detail: nil) }
+                handles.append(PurchasedHandle(originalTransactionId: transaction.originalId, namespace: "/" + name,
+                    productId: transaction.productId, environment: "Sandbox", expiresAt: plan!.expiresAt, active: true))
+            }
+            var result = HandleOffer(productId: nil, namespace: name.map { "/" + $0 }, expiresAt: plan!.expiresAt)
+            result.plan = plan
+            return result
         }
-        return HandleOffer(productId: handle.productId, namespace: handle.namespace, expiresAt: handle.expiresAt)
+        let existing = handles.first { $0.originalTransactionId == transaction.originalId }
+        guard let namespace = existing?.namespace ?? name.map({ "/" + $0 }) else { throw APIError(status: 400, code: "name_required", detail: nil) }
+        if existing == nil { handles.append(PurchasedHandle(originalTransactionId: transaction.originalId, namespace: namespace,
+            productId: transaction.productId, environment: "Sandbox", expiresAt: Int(transaction.expiresAt!.timeIntervalSince1970), active: true)) }
+        return HandleOffer(productId: transaction.productId, namespace: namespace, expiresAt: Int(transaction.expiresAt!.timeIntervalSince1970))
     }
+
     func store() -> HandleStore {
         HandleStore(services: HandleServices(subject: { self.subject }, offer: {
             await self.offerHook?()
@@ -130,13 +143,14 @@ struct HandleStoreTests {
             expect(!store.canBuy, "no eleventh purchase")
             await store.buy()
             expect(api.purchases.calls == 10, "exactly ten Apple confirmations")
-            expect(Set(api.handles.map(\.productId)).count == 10, "independent product per name")
+            expect(Set(api.handles.map(\.originalTransactionId)).count == 1, "one subscription identity covers all ten names")
+            expect(store.plan?.capacity == 10 && store.products.last?.price == 80, "ten-name plan costs USD 80 per year")
             expect(api.mailboxes.count == 10, "all purchased inboxes created")
             expect(store.products[0].price * 10 == 80, "ten handles cost USD 80")
             store.wantedName = "unrelated"
             await store.refresh(restoring: true)
             expect(store.activeCount == 10, "restores all ten")
-            expect(api.claims.suffix(10).allSatisfy { $0.1 == nil }, "restoration uses server binding, never current form")
+            expect(api.claims.last?.1 == nil, "restoration uses server binding, never current form")
         }
         do {
             let api = Backend(), store = api.store()
@@ -208,15 +222,18 @@ struct HandleStoreTests {
             expect(api.handles.last?.productId == api.ids[4], "a chosen subscription is the one bought")
             expect(store.selectedProductId == nil, "selection clears once its purchase is registered")
             store.select(store.products[4])
-            expect(store.selectedProductId == nil, "an owned subscription cannot be chosen again")
-            expect(store.nextProduct?.id == api.ids[0], "without a choice the first free subscription is offered")
+            expect(!store.canChangePlan, "the active plan cannot be bought a second time")
+            await ready(store, "included")
+            let charges = api.purchases.calls
+            await store.buy()
+            expect(api.purchases.calls == charges && store.activeCount == 2, "additional included name never triggers Apple payment")
         }
         do {
             let api = Backend(), store = api.store()
             api.purchases.values = [api.purchases.transaction(api.ids[0], token: api.token)]
             await store.refresh(restoring: true)
             expect(api.claims.first?.1 == nil, "unassigned restore never invents a name")
-            expect(store.unassigned.count == 1, "unassigned payment asks for a name")
+            expect(store.plan?.capacity == 1 && store.availableCapacity == 1, "restoration recovers an unnamed plan as available capacity")
             await ready(store, "chosen")
             await store.buy()
             expect(api.purchases.calls == 0 && store.activeCount == 1, "restored payment assigned without charging")
