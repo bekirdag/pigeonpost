@@ -1,11 +1,18 @@
 import XCTest
 import StoreKit
 import StoreKitTest
+import UIKit
+@testable import Pigeonpost
 
 /// Local StoreKit validation is separate from the required physical sandbox recording.
 @MainActor
 final class NativeHandleStoreKitTests: XCTestCase {
     func testOneGroupUpgradesRestoresAndExpiresAsOnePlan() async throws {
+        // Run inside the app so StoreKit can present purchases in its active scene.
+        for _ in 0..<50 where !UIApplication.shared.connectedScenes.contains(where: { $0.activationState == .foregroundActive }) {
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        XCTAssertTrue(UIApplication.shared.connectedScenes.contains { $0.activationState == .foregroundActive })
         let url = try XCTUnwrap(Bundle(for: Self.self).url(forResource: "HandleSubscriptions", withExtension: "storekit"))
         let session = try SKTestSession(contentsOf: url)
         session.resetToDefaultState()

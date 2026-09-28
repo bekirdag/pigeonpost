@@ -6,6 +6,19 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXTargetDependency section */
+		PP000000000000000000B7 = {isa = PBXTargetDependency; target = PP0000000000000000000F; targetProxy = PP000000000000000000B6; };
+/* End PBXTargetDependency section */
+
+/* Begin PBXContainerItemProxy section */
+		PP000000000000000000B6 = {isa = PBXContainerItemProxy; containerPortal = PP00000000000000000013; proxyType = 1; remoteGlobalIDString = PP0000000000000000000F; remoteInfo = Pigeonpost; };
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXBuildFile section */
+		PP000000000000000000B1 = {isa = PBXBuildFile; fileRef = PP000000000000000000B2; };
+		PP000000000000000000B3 = {isa = PBXBuildFile; fileRef = PP000000000000000000B4; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
 		PP00000000000000000019 /* Exceptions for "Pigeonpost" folder in "Pigeonpost" target */ = {
 			isa = PBXFileSystemSynchronizedBuildFileExceptionSet;
@@ -50,6 +63,9 @@
 /* Begin PBXFileReference section */
 		PP0000000000000000000B /* Pigeonpost.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Pigeonpost.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		PP0000000000000000006B /* Pigeonpost Desktop.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Pigeonpost Desktop.app"; sourceTree = BUILT_PRODUCTS_DIR; };
+		PP000000000000000000B2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/PPUITests/NativeHandleStoreKitTests.swift; sourceTree = SOURCE_ROOT; };
+		PP000000000000000000B4 = {isa = PBXFileReference; lastKnownFileType = text.json; path = UITests/PPUITests/HandleSubscriptions.storekit; sourceTree = SOURCE_ROOT; };
+		PP000000000000000000B5 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HandleStoreKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -67,6 +83,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PP000000000000000000BA = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -76,6 +93,8 @@
 				PP0000000000000000000A /* Pigeonpost */,
 				PP0000000000000000005A /* Shared */,
 				PP0000000000000000006A /* PigeonpostMac */,
+				PP000000000000000000B2 /* NativeHandleStoreKitTests.swift */,
+				PP000000000000000000B4 /* HandleSubscriptions.storekit */,
 				PP0000000000000000000E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -85,6 +104,7 @@
 			children = (
 				PP0000000000000000000B /* Pigeonpost.app */,
 				PP0000000000000000006B /* Pigeonpost Desktop.app */,
+				PP000000000000000000B5 /* HandleStoreKitTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -134,6 +154,17 @@
 			productReference = PP0000000000000000006B /* Pigeonpost Desktop.app */;
 			productType = "com.apple.product-type.application";
 		};
+		PP000000000000000000BB /* HandleStoreKitTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = PP000000000000000000BC;
+			buildPhases = (PP000000000000000000B8, PP000000000000000000BA, PP000000000000000000B9);
+			buildRules = ();
+			dependencies = (PP000000000000000000B7);
+			name = HandleStoreKitTests;
+			productName = HandleStoreKitTests;
+			productReference = PP000000000000000000B5;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -168,6 +199,7 @@
 			targets = (
 				PP0000000000000000000F /* Pigeonpost */,
 				PP0000000000000000006F /* PigeonpostMac */,
+				PP000000000000000000BB /* HandleStoreKitTests */,
 			);
 		};
 /* End PBXProject section */
@@ -187,6 +219,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PP000000000000000000B9 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000000B3); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
@@ -204,6 +237,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		PP000000000000000000B8 = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000000B1); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXSourcesBuildPhase section */
 
 /* Begin XCBuildConfiguration section */
@@ -382,6 +416,22 @@
 			};
 			name = Release;
 		};
+		PP000000000000000000BD /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = AH277897AV;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = ("$(inherited)", "@executable_path/Frameworks", "@loader_path/Frameworks");
+				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.HandleStoreKitTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = 1;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Pigeonpost.app/$(BUNDLE_EXECUTABLE_FOLDER_PATH)/Pigeonpost";
+			};
+			name = Debug;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -412,6 +462,7 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		PP000000000000000000BC = {isa = XCConfigurationList; buildConfigurations = (PP000000000000000000BD); defaultConfigurationIsVisible = 0; defaultConfigurationName = Debug; };
 /* End XCConfigurationList section */
 	};
 	rootObject = PP00000000000000000013 /* Project object */;

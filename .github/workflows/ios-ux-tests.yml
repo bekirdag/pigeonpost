@@ -109,10 +109,10 @@ jobs:
         run: |
           xcrun simctl boot "$IOS_STOREKIT_SIM" || true
           xcrun simctl bootstatus "$IOS_STOREKIT_SIM" -b
-          xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
-            -destination "id=$IOS_STOREKIT_SIM" -derivedDataPath "$RUNNER_TEMP/storekit-tests" \
+          xcodebuild test -project Pigeonpost.xcodeproj -scheme HandleStoreKitTests \
+            CODE_SIGNING_ALLOWED=NO -destination "id=$IOS_STOREKIT_SIM" -derivedDataPath "$RUNNER_TEMP/storekit-tests" \
             -resultBundlePath "$RUNNER_TEMP/storekit.xcresult" \
-            -only-testing:PPUITests/NativeHandleStoreKitTests
+            -only-testing:HandleStoreKitTests/NativeHandleStoreKitTests
       - name: Preserve StoreKit test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
