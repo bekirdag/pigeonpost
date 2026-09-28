@@ -187,8 +187,14 @@ def run(client):
     if primary["id"] != "6803878071" or not usa_price(client, primary["id"]):
         raise RuntimeError("Existing primary subscription identity or price drift")
     primary_plan, territories = plan(client, primary["id"])
+    # After legacy products leave sale, the established first capacity level supplies
+    # the availability baseline. Never use a same-named product from another group.
+    if not primary_plan or not territories:
+        fallback = products.get(PRODUCTS[0])
+        if fallback and fallback[0]["attributes"]["referenceName"] == GROUP_NAME:
+            primary_plan, territories = plan(client, fallback[1]["id"])
     if not primary_plan or "USA" not in territories:
-        raise RuntimeError("Existing primary subscription has no US availability")
+        raise RuntimeError("No valid US availability reference")
     matches = [g for g in groups if g["attributes"]["referenceName"] == GROUP_NAME]
     if len(matches) > 1:
         raise RuntimeError("Duplicate plan group reference")
