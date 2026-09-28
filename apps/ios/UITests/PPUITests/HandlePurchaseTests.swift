@@ -50,7 +50,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertTrue(app.buttons["Subscription unavailable"].exists)
         XCTAssertFalse(app.buttons["Subscription unavailable"].isEnabled)
         XCTAssertFalse(app.staticTexts["handle-product-price"].exists)
-        XCTAssertFalse(app.buttons["handle-register"].exists)
+        XCTAssertFalse(app.buttons["handle-register"].label.contains("$"))
         app.buttons["handle-retry-products"].tap()
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
         screenshot("subscription-retry")

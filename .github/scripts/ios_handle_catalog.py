@@ -13,6 +13,7 @@ import urllib.request
 import urllib.error
 from pathlib import Path
 from decimal import Decimal
+from concurrent.futures import ThreadPoolExecutor
 from cubemeld_iap import Client, ApiError, mint_token, validate_upload_operation
 
 BUNDLE = "dev.pigeonpost.inbox"
@@ -158,13 +159,19 @@ def provision_prices(client, product, territories, expected):
     mapping["USA"] = base
     if set(territories) - mapping.keys():
         raise RuntimeError("Apple has no equalized prices for all required territories")
-    for territory in ["USA"] + [t for t in territories if t != "USA"]:
-        if territory in present:
-            continue
+    def write_price(territory):
         create(client, "subscriptionPrices", {"startDate": None, "planType": "UPFRONT"}, {
             "subscription": rel("subscriptions", product),
             "subscriptionPricePoint": rel("subscriptionPricePoints", mapping[territory]["id"]),
         })
+    # Separate territories are independent records. Bound concurrency; failed/ambiguous writes
+    # stop the run, and a rerun reads existing rows before attempting any remaining territory.
+    if "USA" not in present:
+        write_price("USA")
+    missing = [t for t in territories if t not in present and t != "USA"]
+    print(json.dumps({"pricing": product, "missing_territories": len(missing)}), flush=True)
+    with ThreadPoolExecutor(max_workers=6) as pool:
+        list(pool.map(write_price, missing))
 
 
 def run(client):
@@ -190,6 +197,7 @@ def run(client):
         group = create(client, "subscriptionGroups", {"referenceName": GROUP_NAME}, {"app": rel("apps", APP_ID)})
     for spec in plan_manifest():
         identifier, capacity, expected = spec["product_id"], spec["capacity"], spec["usd_yearly"]
+        print(json.dumps({"preparing": identifier}), flush=True)
         entry = products.get(identifier)
         if entry is None:
             if not APPLY:
