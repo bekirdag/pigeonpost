@@ -376,15 +376,43 @@ mod tests {
     async fn recovery_cannot_take_a_resold_name_back_and_can_fill_the_vacancy() {
         let s = Store::open(":memory:").unwrap();
         apply(&s, 1, Some("first"), 100).await;
-        s.apply_apple_plan("acct-a".into(), status(1,101,false,"acct-a"),None,101).await.unwrap();
+        s.apply_apple_plan("acct-a".into(), status(1, 101, false, "acct-a"), None, 101)
+            .await
+            .unwrap();
         let later = 102 + lifecycle::RECOVERY_SECONDS as u64;
-        s.apply_apple_plan("acct-a".into(), status(1,101,false,"acct-a"),None,later).await.unwrap();
-        assert!(s.set_namespace_owner("first".into(),"new-owner".into(),"grant",later,None).await.unwrap());
-        apply(&s,1,None,later+1).await;
-        assert!(s.apple_plan_handles("acct-a".into(),later+1).await.unwrap().is_empty());
-        assert_eq!(apply(&s,1,Some("first"),later+1).await,AppleClaim::NamespaceTaken);
-        assert_eq!(apply(&s,1,Some("replacement"),later+1).await,AppleClaim::Granted);
-        assert_eq!(s.apple_plan_handles("acct-a".into(),later+1).await.unwrap()[0].namespace,"replacement");
+        s.apply_apple_plan(
+            "acct-a".into(),
+            status(1, 101, false, "acct-a"),
+            None,
+            later,
+        )
+        .await
+        .unwrap();
+        assert!(s
+            .set_namespace_owner("first".into(), "new-owner".into(), "grant", later, None)
+            .await
+            .unwrap());
+        apply(&s, 1, None, later + 1).await;
+        assert!(s
+            .apple_plan_handles("acct-a".into(), later + 1)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            apply(&s, 1, Some("first"), later + 1).await,
+            AppleClaim::NamespaceTaken
+        );
+        assert_eq!(
+            apply(&s, 1, Some("replacement"), later + 1).await,
+            AppleClaim::Granted
+        );
+        assert_eq!(
+            s.apple_plan_handles("acct-a".into(), later + 1)
+                .await
+                .unwrap()[0]
+                .namespace,
+            "replacement"
+        );
     }
 
     #[test]
