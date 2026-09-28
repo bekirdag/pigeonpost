@@ -1,0 +1,51 @@
+name: CosmosMap App Store Preparation
+on:
+  workflow_dispatch:
+    inputs:
+      source_ref:
+        description: Exact CosmosMap source commit
+        required: true
+        type: string
+      operation:
+        description: Scoped App Store operation
+        required: true
+        default: inspect
+        type: choice
+        options: [inspect]
+permissions:
+  contents: read
+concurrency:
+  group: cosmosmap-appstore-preparation
+  cancel-in-progress: false
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Validate immutable source
+        env:
+          SOURCE_REF: ${{ inputs.source_ref }}
+        run: |
+          [[ "$SOURCE_REF" =~ ^[0-9a-f]{40}$ ]] || exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          repository: wodohq/cosmosmap
+          ref: ${{ inputs.source_ref }}
+          ssh-key: ${{ secrets.COSMOSMAP_DEPLOY_KEY }}
+          persist-credentials: false
+          lfs: false
+          sparse-checkout: ios/scripts
+      - name: Inspect CosmosMap release
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          OPERATION: ${{ inputs.operation }}
+        run: python3 ios/scripts/appstore_release.py > appstore-report.json
+      - name: Keep sanitized report
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cosmosmap-appstore-report
+          path: appstore-report.json
+          retention-days: 7
