@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Audit/provision ten annual capacity levels in one Pigeonpost subscription group.
 
-Legacy product receipts remain unchanged; retiring them is a separate reviewed operation.
+Legacy receipt bindings remain unchanged; removing unused products is a separate operation.
 """
 
 import json
@@ -183,11 +183,12 @@ def run(client):
     for group in groups:
         for product in client.list_all(f"/v1/subscriptionGroups/{group['id']}/subscriptions", {"limit": 100}):
             products[product["attributes"]["productId"]] = (group, product)
-    primary = products[PRIMARY][1]
-    if primary["id"] != "6803878071" or not usa_price(client, primary["id"]):
+    primary_entry = products.get(PRIMARY)
+    primary = primary_entry[1] if primary_entry else None
+    if primary and (primary["id"] != "6803878071" or not usa_price(client, primary["id"])):
         raise RuntimeError("Existing primary subscription identity or price drift")
-    primary_plan, territories = plan(client, primary["id"])
-    # After legacy products leave sale, the established first capacity level supplies
+    primary_plan, territories = plan(client, primary["id"]) if primary else (None, [])
+    # After unused legacy products are removed, the established first capacity level supplies
     # the availability baseline. Never use a same-named product from another group.
     if not primary_plan or not territories:
         fallback = products.get(PRODUCTS[0])
@@ -227,6 +228,11 @@ def run(client):
         if attrs["subscriptionPeriod"] != "ONE_YEAR" or attrs["familySharable"]:
             raise RuntimeError("Subscription term or sharing differs")
         if APPLY:
+            if attrs.get("multiSeatStatus") != "DISABLED" or attrs.get("marketSettings") != ["APP_STORE"]:
+                client.call("PATCH", f"/v1/subscriptions/{product['id']}", {"data": {
+                    "type": "subscriptions", "id": product["id"],
+                    "attributes": {"multiSeatStatus": "DISABLED", "marketSettings": ["APP_STORE"]},
+                }})
             if attrs["groupLevel"] != spec["group_level"]:
                 client.call("PATCH", f"/v1/subscriptions/{product['id']}", {"data": {"type": "subscriptions", "id": product["id"], "attributes": {"groupLevel": spec["group_level"]}}})
             metadata(client, group["id"], product["id"], capacity)
