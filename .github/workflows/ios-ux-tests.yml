@@ -77,3 +77,46 @@ jobs:
           name: ios-native-ux-results
           path: ${{ runner.temp }}/ios-ux.xcresult
           retention-days: 14
+
+  native-storekit:
+    # iOS 26.5's CLI StoreKit session cannot save its configuration (FB22237318).
+    # Keep the current-runtime UI suite above, and verify real StoreKit transactions
+    # on iOS 18 until the hosted image includes a fixed runtime.
+    # https://developer.apple.com/forums/thread/826971
+    runs-on: macos-14
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select the StoreKit-compatible simulator
+        run: |
+          sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+          python3 - <<'PY'
+          import json, os, subprocess
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          phones = [d for runtime, entries in devices.items()
+                    if runtime.startswith('com.apple.CoreSimulator.SimRuntime.iOS-18-')
+                    for d in entries if 'iPhone' in d['name']]
+          assert phones, 'No iOS 18 iPhone simulator available for StoreKit testing'
+          device = phones[0]
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('IOS_STOREKIT_SIM=' + device['udid'] + '\n')
+          print(device['name'], device['udid'])
+          PY
+      - name: Native StoreKit capacity, upgrade, downgrade, restore and expiry
+        run: |
+          xcrun simctl boot "$IOS_STOREKIT_SIM" || true
+          xcrun simctl bootstatus "$IOS_STOREKIT_SIM" -b
+          xcodebuild test -project Pigeonpost.xcodeproj -scheme HandleStoreKitTests \
+            CODE_SIGNING_ALLOWED=NO -destination "id=$IOS_STOREKIT_SIM" -derivedDataPath "$RUNNER_TEMP/storekit-tests" \
+            -resultBundlePath "$RUNNER_TEMP/storekit.xcresult" \
+            -only-testing:HandleStoreKitTests/NativeHandleStoreKitTests
+      - name: Preserve StoreKit test evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ios-storekit-results
+          path: ${{ runner.temp }}/storekit.xcresult
+          retention-days: 14

@@ -4376,8 +4376,7 @@ async fn ensure_namespace_mailbox(
 
 /// `GET /v1/claims/apple` — what this account has already bought, and what selling looks like here.
 ///
-/// The product id comes from the server rather than being compiled into the app. Two copies of a
-/// store identifier drift, and the copy that matters is the one the receipt is checked against.
+/// The sale catalog matches the compiled native catalog; legacy receipts remain restorable.
 async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) -> Response {
     let Some(appstore) = state.appstore.clone() else {
         return err_response(StatusCode::NOT_FOUND, "not_found", None);
@@ -4409,6 +4408,18 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
         Ok(held) => held,
         Err(_) => return ApiError::server("store_error").into_response(),
     };
+    match state
+        .store
+        .apple_plan_handles(account.clone(), now_unix())
+        .await
+    {
+        Ok(names) => held.extend(names),
+        Err(_) => return ApiError::server("store_error").into_response(),
+    }
+    let plan = match state.store.apple_plan(account.clone(), now_unix()).await {
+        Ok(plan) => plan,
+        Err(_) => return ApiError::server("store_error").into_response(),
+    };
     for subscription in &mut held {
         subscription.namespace = format!("/{}", subscription.namespace);
         if subscription.product_id.is_empty() {
@@ -4418,7 +4429,8 @@ async fn apple_claim_state(State(state): State<AppState>, headers: HeaderMap) ->
     let first = held.iter().find(|subscription| subscription.active);
     Json(json!({
         "product_id": appstore.product_id(),
-        "product_ids": appstore.product_ids(),
+        "product_ids": appstore::plan_products(),
+        "plan": plan,
         "max_handles": appstore::MAX_HANDLES,
         "account": account,
         "app_account_token": appstore::account_token(&account),
@@ -4667,6 +4679,10 @@ async fn claim_apple(
             "buy this handle from an updated Pigeonpost app",
         )
         .into_response();
+    }
+
+    if appstore::plan_capacity(&entitlement.product_id).is_some() {
+        return appstore_routes::claim_plan(&state, account, entitlement, req.namespace).await;
     }
 
     // The original transaction owns its name. Restores and renewals need no typed placeholder,

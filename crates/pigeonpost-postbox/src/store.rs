@@ -12,6 +12,7 @@ use crate::vault::Wrapped;
 use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
+mod apple_plans;
 mod deletion;
 mod googleplay;
 mod lifecycle;
@@ -816,6 +817,7 @@ impl Store {
         conn.execute_batch(SCHEMA)?;
         conn.execute_batch(deletion::SCHEMA)?;
         conn.execute_batch(googleplay::SCHEMA)?;
+        conn.execute_batch(apple_plans::SCHEMA)?;
         for stmt in MIGRATIONS {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.

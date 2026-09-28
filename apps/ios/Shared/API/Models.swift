@@ -230,10 +230,20 @@ struct HandleOffer: Decodable, Sendable {
     var appAccountToken: String? = nil
     var handles: [PurchasedHandle]? = nil
     var mailbox: String? = nil
+    var plan: HandlePlan? = nil
 
     var owned: Bool { namespace != nil }
 
     var renewsOn: Date? { expiresAt.map { Date(timeIntervalSince1970: TimeInterval($0)) } }
+}
+
+struct HandlePlan: Decodable, Equatable, Sendable {
+    var originalTransactionId: String
+    var productId: String
+    var environment: String
+    var expiresAt: Int
+    var capacity: Int
+    var active: Bool
 }
 
 /// Canonical Pigeonpost ownership, independent of the device's payment provider.
@@ -257,7 +267,7 @@ struct PurchasedHandle: Decodable, Equatable, Identifiable, Sendable {
     var environment: String
     var expiresAt: Int
     var active: Bool
-    var id: String { originalTransactionId }
+    var id: String { originalTransactionId + ":" + namespace }
     var paidThrough: Date { Date(timeIntervalSince1970: TimeInterval(expiresAt)) }
 }
 

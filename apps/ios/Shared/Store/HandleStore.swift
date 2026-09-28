@@ -32,6 +32,7 @@ final class HandleStore {
     private(set) var ownershipLoaded = false
     private(set) var ownershipError: String?
     private(set) var products: [HandleProduct] = []
+    private(set) var plan: HandlePlan?
     private(set) var maximum = 10
     private(set) var availability: HandleAvailability?
     private(set) var message: String?
@@ -64,27 +65,38 @@ final class HandleStore {
 
     var busy: Bool { activity != .none }
     var activeCount: Int { Set(handles.filter(\.active).map(\.namespace)).count }
+    var planNameCount: Int { handles.filter { $0.active && HandleCatalog.capacity($0.productId) != nil }.count }
+    var availableCapacity: Int { plan?.active == true ? max(0, (plan?.capacity ?? 0) - planNameCount) : 0 }
     var waitingForApproval: Bool { pending.contains(where: \.awaitingApproval) }
     var occupiedProductIds: Set<String> { Set(handles.map(\.productId)) }
     func owner(of product: HandleProduct) -> PurchasedHandle? {
         handles.first { $0.productId == product.id }
     }
     var nextProduct: HandleProduct? {
-        let occupied = occupiedProductIds
-        if let selectedProductId, !occupied.contains(selectedProductId),
+        if let selectedProductId,
            let chosen = products.first(where: { $0.id == selectedProductId }) { return chosen }
-        return products.first { !occupied.contains($0.id) }
+        let desired = availableCapacity > 0 ? (plan?.capacity ?? 1) : min(10, max(1, (plan?.capacity ?? 0) + 1))
+        return products.first { HandleCatalog.capacity($0.id) == desired } ?? products.first
     }
     func select(_ product: HandleProduct) {
-        guard !busy, !occupiedProductIds.contains(product.id) else { return }
+        guard !busy else { return }
         selectedProductId = product.id
     }
     var canBuy: Bool {
         guard !busy, Self.valid(wantedName), !waitingForApproval else { return false }
         if !unassigned.isEmpty { return true }
         return enabled && offer?.appAccountToken.flatMap(UUID.init(uuidString:)) != nil
-            && activeCount < maximum && nextProduct != nil && availability?.available == true
+            && (availableCapacity > 0 || (nextProduct.flatMap { HandleCatalog.capacity($0.id) } ?? 0) > planNameCount)
+            && availability?.available == true
             && availability?.name == Self.tidy(wantedName)
+    }
+    var canChangePlan: Bool {
+        !busy && enabled && !waitingForApproval && unassigned.isEmpty && offer?.appAccountToken.flatMap(UUID.init(uuidString:)) != nil
+            && nextProduct != nil && !(plan?.active == true && nextProduct?.id == plan?.productId)
+    }
+    func changePlan() async {
+        guard canChangePlan, let product = nextProduct else { return }
+        await purchase(product, name: nil)
     }
     var checkedMessage: String? {
         guard let availability, availability.name == Self.tidy(wantedName) else { return nil }
@@ -114,6 +126,7 @@ final class HandleStore {
     }
     private func install(_ value: HandleOffer) {
         offer = value
+        plan = value.plan
         maximum = min(10, max(1, value.maxHandles ?? 1))
         handles = value.handles ?? value.namespace.map {
             [PurchasedHandle(originalTransactionId: "legacy", namespace: $0,
@@ -148,7 +161,7 @@ final class HandleStore {
             let transactions = try await withHandleTransactions()
             guard current(stamp, subject) else { return }
             unassigned = []
-            for transaction in transactions where ids.contains(transaction.productId) {
+            for transaction in transactions where (HandleCatalog.productIds + HandleCatalog.legacyIds).contains(transaction.productId) {
                 guard current(stamp, subject) else { return }
                 await settle(transaction, desiredName: nil, stamp: stamp, subject: subject)
             }
@@ -216,6 +229,12 @@ final class HandleStore {
             await finishPurchase(transaction)
             return
         }
+        if let plan, plan.active, availableCapacity > 0 {
+            await finishPurchase(HandleTransaction(id: plan.originalTransactionId, originalId: plan.originalTransactionId,
+                productId: plan.productId, accountToken: offer?.appAccountToken.flatMap(UUID.init(uuidString:)),
+                expiresAt: Date(timeIntervalSince1970: TimeInterval(plan.expiresAt)), revoked: false))
+            return
+        }
         guard let product = nextProduct else { return }
         await purchase(product, name: Self.tidy(wantedName))
     }
@@ -225,18 +244,20 @@ final class HandleStore {
         await purchase(product, name: Self.tidy(handle.namespace))
     }
 
-    private func purchase(_ product: HandleProduct, name: String) async {
+    private func purchase(_ product: HandleProduct, name: String?) async {
         guard !busy, let subject = services.subject(), let token = offer?.appAccountToken.flatMap(UUID.init(uuidString:)),
-              Self.valid(name), activeCount < maximum else { return }
+              name.map(Self.valid) ?? true else { return }
         let stamp = epoch
         activity = .checking; message = nil
         defer { finishOperation(stamp, subject) }
         do {
-            let checked = try await withHandleDeadline(seconds: services.timeout) { [probe = services.availability] in try await probe(name) }
-            guard current(stamp, subject) else { return }
-            guard checked.available, checked.name == name else { availability = checked; message = "That name cannot be bought. Choose an available name."; return }
+            if let name {
+                let checked = try await withHandleDeadline(seconds: services.timeout) { [probe = services.availability] in try await probe(name) }
+                guard current(stamp, subject) else { return }
+                guard checked.available, checked.name == name else { availability = checked; message = "That name cannot be bought. Choose an available name."; return }
+            }
             pending.removeAll { $0.productId == product.id }
-            pending.append(PendingHandle(productId: product.id, name: name))
+            pending.append(PendingHandle(productId: product.id, name: name ?? ""))
             persist()
             activity = .buying
             // The Apple confirmation sheet belongs to the person. It has no artificial deadline.
@@ -250,6 +271,10 @@ final class HandleStore {
                 let updated = try await withHandleDeadline(seconds: services.timeout, services.offer)
                 guard current(stamp, subject) else { return }
                 install(updated)
+                if transaction.productId != product.id && HandleCatalog.capacity(product.id) != nil {
+                    pending.removeAll { $0.productId == product.id }; persist()
+                    message = "Apple scheduled your plan change for renewal. Your current plan remains available until then."
+                }
             case .cancelled:
                 pending.removeAll { $0.productId == product.id }; persist()
                 message = "Purchase cancelled. Your name is still here."
@@ -278,23 +303,30 @@ final class HandleStore {
         guard current(stamp, subject), transaction.active else { return }
         if let token = transaction.accountToken, token.uuidString.lowercased() != offer?.appAccountToken?.lowercased() { return }
         let existing = handles.first { $0.originalTransactionId == transaction.originalId }
-        let selectedName = existing == nil ? (desiredName ?? pending.first { $0.productId == transaction.productId }?.name) : nil
+        let isPlan = HandleCatalog.capacity(transaction.productId) != nil
+        let pendingName = pending.first { $0.productId == transaction.productId }?.name
+        let selectedName = (isPlan || existing == nil) ? (desiredName ?? pendingName).flatMap { $0.isEmpty ? nil : $0 } : nil
         do {
             let claim = services.claim
             let value = try await withHandleDeadline(seconds: services.timeout) { try await claim(transaction.id, selectedName) }
             guard current(stamp, subject) else { return }
-            guard let namespace = value.namespace else { throw APIError(status: 200, code: "bad_response", detail: "The postbox did not confirm a handle. Try again.") }
+            guard value.namespace != nil || (isPlan && value.plan != nil) else { throw APIError(status: 200, code: "bad_response", detail: "The postbox did not confirm the subscription. Try again.") }
+            if let confirmed = value.plan { plan = confirmed }
             await services.purchases.finish(transaction.id)
             guard current(stamp, subject) else { return }
             pending.removeAll { $0.productId == transaction.productId }; persist()
             unassigned.removeAll { $0.originalId == transaction.originalId }
             if Self.tidy(wantedName) == selectedName { wantedName = ""; availability = nil }
             if selectedProductId == transaction.productId { selectedProductId = nil }
-            let exists = await services.ensureMailbox(namespace)
-            guard current(stamp, subject) else { return }
-            if exists { missingMailboxes.remove(namespace) }
-            else { missingMailboxes.insert(namespace) }
-            if current(stamp, subject), desiredName != nil { message = "\(namespace) is ready." }
+            if let namespace = value.namespace {
+                let exists = await services.ensureMailbox(namespace)
+                guard current(stamp, subject) else { return }
+                if exists { missingMailboxes.remove(namespace) }
+                else { missingMailboxes.insert(namespace) }
+                if desiredName != nil { message = "\(namespace) is ready." }
+            } else if isPlan {
+                message = "Your subscription is synced. Register names included in your plan below."
+            }
             await reloadOwnership(stamp, subject)
         } catch {
             guard current(stamp, subject) else { return }
@@ -322,6 +354,7 @@ final class HandleStore {
     func reset() {
         epoch += 1; listener?.cancel(); listener = nil
         activity = .none; loaded = false; offer = nil; handles = []; products = []
+        plan = nil
         pending = []; unassigned = []; wantedName = ""; availability = nil; message = nil; selectedProductId = nil
         pendingRefresh = false; missingMailboxes = []
         accountHandles = []; ownershipLoaded = false; ownershipError = nil
@@ -346,6 +379,7 @@ final class HandleStore {
             case "name_required": return "Choose a name for it."
             case "purchase_already_used": return "This purchase belongs to another Pigeonpost account. Sign in to that account."
             case "handle_limit_reached": return "This account already has ten active Apple handles."
+            case "plan_capacity_reached": return "All names in this plan are registered. Choose a larger plan to add more."
             case "purchase_expired": return "That subscription has expired."
             case "purchase_refunded": return "That purchase was refunded."
             case "appstore_unavailable": return "Apple verification is temporarily unavailable. Try again."

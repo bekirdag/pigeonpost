@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme LastUpgradeVersion="1620" version="1.3">
+  <BuildAction parallelizeBuildables="YES" buildImplicitDependencies="YES">
+    <BuildActionEntries>
+      <BuildActionEntry buildForTesting="YES" buildForRunning="NO" buildForProfiling="NO" buildForArchiving="NO" buildForAnalyzing="YES">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="PP000000000000000000BB" BuildableName="HandleStoreKitTests.xctest" BlueprintName="HandleStoreKitTests" ReferencedContainer="container:Pigeonpost.xcodeproj"/>
+      </BuildActionEntry>
+    </BuildActionEntries>
+  </BuildAction>
+  <TestAction buildConfiguration="Debug" selectedDebuggerIdentifier="Xcode.DebuggerFoundation.Debugger.LLDB" selectedLauncherIdentifier="Xcode.IDEFoundation.Launcher.LLDB" shouldUseLaunchSchemeArgsEnv="NO">
+    <Testables>
+      <TestableReference skipped="NO">
+        <BuildableReference BuildableIdentifier="primary" BlueprintIdentifier="PP000000000000000000BB" BuildableName="HandleStoreKitTests.xctest" BlueprintName="HandleStoreKitTests" ReferencedContainer="container:Pigeonpost.xcodeproj"/>
+      </TestableReference>
+    </Testables>
+    <CommandLineArguments><CommandLineArgument argument="-fixtures" isEnabled="YES"/></CommandLineArguments>
+  </TestAction>
+</Scheme>

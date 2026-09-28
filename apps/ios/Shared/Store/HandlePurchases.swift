@@ -1,16 +1,18 @@
 import Foundation
 import StoreKit
 
-/// Every handle subscription this app sells, compiled into the binary. App Review looks for each
-/// product the submitted version is associated with; a catalog that only arrived from the postbox
-/// at run time, one product at a time, read to them as nine products missing from the app.
+/// All service levels share one group. Capacity is the total number of included names.
+/// Legacy IDs are retained only for restoring existing receipts.
 enum HandleCatalog {
-    static let productIds = ["dev.pigeonpost.inbox.handle.yearly"]
+    static let productIds = (1...10).map { "dev.pigeonpost.inbox.handles.\($0).yearly" }
+    static let legacyIds = ["dev.pigeonpost.inbox.handle.yearly"]
         + (2...10).map { "dev.pigeonpost.inbox.handle\($0).yearly" }
 
-    /// The compiled products first, in order, then anything the postbox adds.
+    static func capacity(_ id: String) -> Int? { productIds.firstIndex(of: id).map { $0 + 1 } }
+
+    /// Only products included in this release are offered for sale.
     static func merged(with server: [String]) -> [String] {
-        productIds + server.filter { !productIds.contains($0) }
+        productIds
     }
 }
 
@@ -88,7 +90,7 @@ final class AppleHandlePurchases: HandlePurchasing {
         known[String(transaction.id)] = transaction
         let value = HandleTransaction(id: String(transaction.id), originalId: String(transaction.originalID),
             productId: transaction.productID, accountToken: transaction.appAccountToken,
-            expiresAt: transaction.expirationDate, revoked: transaction.revocationDate != nil)
+            expiresAt: transaction.expirationDate, revoked: transaction.revocationDate != nil || transaction.isUpgraded)
         if publish { continuation.yield(value) }
         return value
     }

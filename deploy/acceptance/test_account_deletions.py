@@ -37,7 +37,9 @@ class AccountDeletionTests(unittest.TestCase):
             "provider_identities": "provider TEXT, login TEXT, account_id TEXT",
             "apple_subscriptions": "original_transaction_id TEXT, account_id TEXT",
             "google_subscriptions": "purchase_token TEXT, account_id TEXT",
-            "namespaces": "namespace TEXT, account_id TEXT",
+            "namespaces": "namespace TEXT, account_id TEXT, provider_ref TEXT",
+            "apple_handle_plans": "account_id TEXT, original_transaction_id TEXT",
+            "apple_plan_names": "account_id TEXT, slot INTEGER, namespace TEXT",
             "test_handle_claims": "account_id TEXT, namespace TEXT",
             "spam_reports": "reporter TEXT, sender TEXT",
             "reputation": "subject TEXT",
@@ -55,6 +57,9 @@ class AccountDeletionTests(unittest.TestCase):
             self.db.execute("INSERT INTO messages VALUES (?,?,?,?)", ("message-" + who, address, "/k/a", "/k/b"))
             self.db.execute("INSERT INTO contacts VALUES (?,?)", (address, "/k/peer"))
             self.db.execute("INSERT INTO apple_subscriptions VALUES (?,?)", ("purchase-" + who, who))
+            self.db.execute("INSERT INTO apple_handle_plans VALUES (?,?)", (who, "plan-" + who))
+            self.db.execute("INSERT INTO apple_plan_names VALUES (?,1,?)", (who, "name-" + who))
+            self.db.execute("INSERT INTO namespaces VALUES (?,?,?)", ("name-" + who, who, "plan:" + who))
         self.shared = "a" * 64
         self.private = "b" * 64
         for sha in (self.shared, self.private):
@@ -78,6 +83,10 @@ class AccountDeletionTests(unittest.TestCase):
         self.assertTrue((self.root / "aa" / "aa" / self.shared).exists())
         self.assertFalse((self.root / "bb" / "bb" / self.private).exists())
         self.assertEqual(self.db.execute("SELECT account_id FROM apple_subscriptions WHERE original_transaction_id='purchase-a'").fetchone()[0], "erased_" + self.request)
+        self.assertEqual(self.db.execute("SELECT account_id FROM apple_handle_plans WHERE original_transaction_id='plan-a'").fetchone()[0], "erased_" + self.request)
+        self.assertEqual(self.db.execute("SELECT account_id FROM apple_plan_names WHERE namespace='name-a'").fetchone()[0], "erased_" + self.request)
+        self.assertEqual(self.db.execute("SELECT provider_ref FROM namespaces WHERE namespace='name-a'").fetchone()[0], "plan:erased_" + self.request)
+        self.assertEqual(self.db.execute("SELECT account_id FROM apple_handle_plans WHERE original_transaction_id='plan-b'").fetchone()[0], "b")
         self.assertEqual(self.db.execute("SELECT subject_hash FROM erased_member_subjects").fetchone()[0], hashlib.sha256(b"subject-a").digest())
         self.assertEqual(ops.pending(self.db), [])
         row = self.db.execute("SELECT oidc_sub,contact_address FROM account_deletion_requests").fetchone()

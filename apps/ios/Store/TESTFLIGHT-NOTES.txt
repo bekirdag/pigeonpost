@@ -1,5 +1,3 @@
-Get a handle is now directly in Settings. The purchase page shows the next App Store subscription by name, its local yearly price, and a clear retry action if subscriptions cannot load.
+Handle subscriptions now use one plan with 1–10 names. Open Settings > Get a handle to see every yearly plan and its total local price. Change plans through Apple, register additional included names without paying again, and restore the plan on the same Pigeonpost account. Upgrades take effect immediately; downgrades take effect at renewal. Existing handle ownership and mailbox history are preserved.
 
-To test: sign in, open Settings > Get a handle, enter an available name, tap Check availability, then Buy for the displayed yearly price. TestFlight purchases use Apple's sandbox. After registration, Settings > Handles lists the name and opens its inbox. Return to Get a handle to register another name, up to ten independent subscriptions. Restore purchases recovers existing purchases; an unfinished registration does not require another payment.
-
-Existing handles remain on Settings > Handles. The mailbox ordering, latest-message scrolling, and copy-address improvements from the previous build are included.
+Please test purchase, plan upgrade, included-name registration and Restore purchases on a physical iPhone. TestFlight purchases use Apple's sandbox. A new physical-device recording is required for App Review.

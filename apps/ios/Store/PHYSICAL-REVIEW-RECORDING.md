@@ -1,3 +1,20 @@
+# Physical recording for the September 28 replacement
+
+The build-42 recording below is historical evidence for the retired independent-slot model. It does not validate the new capacity plans. The replacement is **1.0 (44)**; record it from TestFlight after the live server and catalog are ready.
+
+1. Use the App Review demo Pigeonpost account and the configured Sandbox Apple Account. Keep passwords outside the recording.
+2. Begin recording on the physical iPhone Home Screen, then launch Pigeonpost.
+3. Show the demo mailbox and reading/composing a message. Send demonstration messages only to the same demo mailbox `/ppappreview/main`.
+4. Open Settings → Get a handle. Show the list of annual plans and the selected total price.
+5. Select the one-name plan, enter an available new name, tap Check availability, then use the purchase-and-register button. Complete Apple's sandbox purchase and open the resulting inbox under Settings → Handles. This demonstrates the combined purchase/registration route.
+6. Return to Get a handle, select the two-name plan, and complete the Apple upgrade. Register a second name using **Register name — included in your plan**, demonstrating no second payment for that included registration. Show both names under Handles.
+7. Use **Restore purchases**, then show the same plan and names. Open **Manage subscriptions** and demonstrate that these levels belong to one subscription; show how a downgrade is scheduled. Return to the app.
+8. Save the continuous original recording on this Mac. Record timestamps for the successful Apple confirmations and resulting names; verify live account ownership before attaching it to App Review Information.
+
+A simulator recording or local StoreKit test is not a substitute. Do not claim successful physical sandbox validation before observing it. Leave capacity available for the reviewer where practical; sandbox renewal/expiry is accelerated.
+
+---
+
 # Physical-device recording for iOS build 42
 
 Apple requires this evidence for the September 20 guideline 2.1(b) rejection. Use a physical iPhone or iPad with **Pigeonpost Inbox 1.0 (42)** installed from TestFlight. Simulator recordings and local StoreKit fixtures do not satisfy the request.
