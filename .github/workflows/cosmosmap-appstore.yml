@@ -11,7 +11,7 @@ on:
         required: true
         default: inspect
         type: choice
-        options: [inspect]
+        options: [inspect, prepare_media, prepare_review]
 permissions:
   contents: read
 concurrency:
@@ -34,8 +34,10 @@ jobs:
           ssh-key: ${{ secrets.COSMOSMAP_DEPLOY_KEY }}
           persist-credentials: false
           lfs: false
-          sparse-checkout: ios/scripts
-      - name: Inspect CosmosMap release
+          sparse-checkout: |
+            ios/scripts
+            ios/release-media/1.11
+      - name: Prepare CosmosMap release
         env:
           KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
           KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
