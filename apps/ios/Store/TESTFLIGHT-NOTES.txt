@@ -1,3 +1,5 @@
 Handle subscriptions now use one plan with 1–10 names. Open Settings > Get a handle to see every yearly plan and its total local price. Change plans through Apple, register additional included names without paying again, and restore the plan on the same Pigeonpost account. Upgrades take effect immediately; downgrades take effect at renewal. Existing handle ownership and mailbox history are preserved.
 
-Please test purchase, plan upgrade, included-name registration and Restore purchases on a physical iPhone. TestFlight purchases use Apple's sandbox. A new physical-device recording is required for App Review.
+Purchases and restores now explain when an Apple subscription belongs to another Pigeonpost account. Failed verification no longer appears as a scheduled plan change.
+
+Please test purchase, plan upgrade, included-name registration and Restore purchases on a physical iPhone. TestFlight purchases use Apple's sandbox. For the App Review demo account, use a fresh sandbox tester that has not purchased a subscription under another Pigeonpost account. A new physical-device recording is required for App Review.

@@ -7,6 +7,7 @@ private final class Purchases: HandlePurchasing {
     var calls = 0
     var finished: [String] = []
     var outcome = "success"
+    var returnedTransaction: HandleTransaction?
     func products(_ ids: [String]) async throws -> [HandleProduct] {
         ids.map { let price = (HandleCatalog.capacity($0) ?? 1) * 8; return HandleProduct(id: $0, displayPrice: "$\(price).00", price: Decimal(price), currencyCode: "USD") }
     }
@@ -14,7 +15,7 @@ private final class Purchases: HandlePurchasing {
         calls += 1
         if outcome == "cancelled" { return .cancelled }
         if outcome == "pending" { return .pending }
-        let value = transaction(id, token: accountToken)
+        let value = returnedTransaction ?? transaction(id, token: accountToken)
         values = [value]
         return .purchased(value)
     }
@@ -203,12 +204,50 @@ struct HandleStoreTests {
             api.purchases.values = [api.purchases.transaction(api.ids[0], token: UUID())]
             await store.refresh(restoring: true)
             expect(api.claims.isEmpty, "another Pigeonpost account's purchase is never claimed")
+            expect(store.message?.contains("another Pigeonpost account") == true, "restore explains a purchase owned by another app account")
             api.offerHook = { try? await Task.sleep(nanoseconds: 50_000_000) }
             let refresh = Task { await store.refresh() }
             try await Task.sleep(nanoseconds: 5_000_000)
             store.reset(); api.subject = "account-b"
             await refresh.value
             expect(!store.loaded && store.handles.isEmpty && store.products.isEmpty, "sign-out drops stale responses")
+        }
+        do {
+            let api = Backend(), store = api.store()
+            await store.refresh(); await ready(store, "newname")
+            api.purchases.returnedTransaction = api.purchases.transaction(api.ids[1], token: UUID())
+            await store.buy()
+            expect(api.claims.isEmpty && api.purchases.finished.isEmpty, "a foreign purchase is neither claimed nor finished")
+            expect(store.plan == nil && store.wantedName == "newname", "foreign purchase leaves registration incomplete")
+            expect(store.message?.contains("another Pigeonpost account") == true, "purchase explains the account mismatch")
+            expect(store.message?.contains("scheduled") != true, "different foreign product is not reported as a scheduled downgrade")
+        }
+        do {
+            let api = Backend(), store = api.store()
+            let current = api.purchases.transaction(api.ids[1], token: api.token)
+            api.purchases.values = [current]
+            await store.refresh()
+            store.select(store.products[0])
+            api.purchases.returnedTransaction = current
+            await store.changePlan()
+            expect(store.plan?.capacity == 2, "a scheduled downgrade retains current capacity")
+            expect(store.message?.contains("scheduled") == true, "a verified same-account downgrade still reports its renewal schedule")
+            api.failures = 1
+            await store.changePlan()
+            expect(store.message?.contains("verification is temporarily unavailable") == true, "failed settlement retains its actionable error")
+            expect(store.message?.contains("scheduled") != true, "failed settlement cannot become downgrade success")
+        }
+        do {
+            let api = Backend(), store = api.store()
+            let foreign = api.purchases.transaction(api.ids[1], token: UUID())
+            let owned = api.purchases.transaction(HandleCatalog.legacyIds[0], token: api.token)
+            api.purchases.values = [foreign, owned]
+            api.handles = [PurchasedHandle(originalTransactionId: owned.originalId, namespace: "/existing",
+                productId: owned.productId, environment: "Sandbox", expiresAt: Int(owned.expiresAt!.timeIntervalSince1970), active: true)]
+            await store.refresh(restoring: true)
+            expect(api.claims.count == 1 && api.claims[0].0 == owned.id, "mixed restore only synchronizes the owned legacy receipt")
+            expect(store.message?.contains("another Pigeonpost account") == true, "existing legacy handles do not hide a foreign plan")
+            expect(!api.purchases.finished.contains(foreign.id), "mixed restore leaves the other account's receipt untouched")
         }
         do {
             let api = Backend(), store = api.store()

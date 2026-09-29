@@ -24,6 +24,7 @@ private struct PendingHandle: Codable {
 @Observable
 final class HandleStore {
     enum Activity: Equatable { case none, loading, checking, buying, claiming, restoring }
+    private enum Settlement { case settled, ignored, failed, otherAccount }
     private(set) var activity: Activity = .none
     private(set) var loaded = false
     private(set) var enabled = true
@@ -161,9 +162,11 @@ final class HandleStore {
             let transactions = try await withHandleTransactions()
             guard current(stamp, subject) else { return }
             unassigned = []
+            var settlementError: String?
             for transaction in transactions where (HandleCatalog.productIds + HandleCatalog.legacyIds).contains(transaction.productId) {
                 guard current(stamp, subject) else { return }
-                await settle(transaction, desiredName: nil, stamp: stamp, subject: subject)
+                let result = await settle(transaction, desiredName: nil, stamp: stamp, subject: subject)
+                if result == .failed || result == .otherAccount { settlementError = settlementError ?? message }
             }
             guard current(stamp, subject) else { return }
             let updated = try await withHandleDeadline(seconds: services.timeout, services.offer)
@@ -175,7 +178,9 @@ final class HandleStore {
                 if exists { missingMailboxes.remove(handle.namespace) }
                 else { missingMailboxes.insert(handle.namespace) }
             }
-            if products.isEmpty && message == nil {
+            if let settlementError {
+                message = settlementError
+            } else if products.isEmpty && message == nil {
                 message = "The App Store did not return these subscriptions. You can still restore purchases or try again."
             } else if restoring && handles.isEmpty && unassigned.isEmpty && message == nil {
                 message = "No active handle purchases were found for this Apple account."
@@ -266,12 +271,15 @@ final class HandleStore {
             switch result {
             case let .purchased(transaction):
                 activity = .claiming
-                await settle(transaction, desiredName: name, stamp: stamp, subject: subject)
+                let settlement = await settle(transaction, desiredName: name, stamp: stamp, subject: subject)
                 guard current(stamp, subject) else { return }
+                if settlement == .otherAccount {
+                    pending.removeAll { $0.productId == product.id }; persist()
+                }
                 let updated = try await withHandleDeadline(seconds: services.timeout, services.offer)
                 guard current(stamp, subject) else { return }
                 install(updated)
-                if transaction.productId != product.id && HandleCatalog.capacity(product.id) != nil {
+                if settlement == .settled && transaction.productId != product.id && HandleCatalog.capacity(product.id) != nil {
                     pending.removeAll { $0.productId == product.id }; persist()
                     message = "Apple scheduled your plan change for renewal. Your current plan remains available until then."
                 }
@@ -299,9 +307,13 @@ final class HandleStore {
         } catch { if current(stamp, subject) { message = Self.explain(error) } }
     }
 
-    private func settle(_ transaction: HandleTransaction, desiredName: String?, stamp: Int, subject: String) async {
-        guard current(stamp, subject), transaction.active else { return }
-        if let token = transaction.accountToken, token.uuidString.lowercased() != offer?.appAccountToken?.lowercased() { return }
+    @discardableResult
+    private func settle(_ transaction: HandleTransaction, desiredName: String?, stamp: Int, subject: String) async -> Settlement {
+        guard current(stamp, subject), transaction.active else { return .ignored }
+        if let token = transaction.accountToken, token.uuidString.lowercased() != offer?.appAccountToken?.lowercased() {
+            message = Self.otherAccountMessage
+            return .otherAccount
+        }
         let existing = handles.first { $0.originalTransactionId == transaction.originalId }
         let isPlan = HandleCatalog.capacity(transaction.productId) != nil
         let pendingName = pending.first { $0.productId == transaction.productId }?.name
@@ -309,18 +321,18 @@ final class HandleStore {
         do {
             let claim = services.claim
             let value = try await withHandleDeadline(seconds: services.timeout) { try await claim(transaction.id, selectedName) }
-            guard current(stamp, subject) else { return }
+            guard current(stamp, subject) else { return .ignored }
             guard value.namespace != nil || (isPlan && value.plan != nil) else { throw APIError(status: 200, code: "bad_response", detail: "The postbox did not confirm the subscription. Try again.") }
             if let confirmed = value.plan { plan = confirmed }
             await services.purchases.finish(transaction.id)
-            guard current(stamp, subject) else { return }
+            guard current(stamp, subject) else { return .ignored }
             pending.removeAll { $0.productId == transaction.productId }; persist()
             unassigned.removeAll { $0.originalId == transaction.originalId }
             if Self.tidy(wantedName) == selectedName { wantedName = ""; availability = nil }
             if selectedProductId == transaction.productId { selectedProductId = nil }
             if let namespace = value.namespace {
                 let exists = await services.ensureMailbox(namespace)
-                guard current(stamp, subject) else { return }
+                guard current(stamp, subject) else { return .ignored }
                 if exists { missingMailboxes.remove(namespace) }
                 else { missingMailboxes.insert(namespace) }
                 if desiredName != nil { message = "\(namespace) is ready." }
@@ -328,15 +340,17 @@ final class HandleStore {
                 message = "Your subscription is synced. Register names included in your plan below."
             }
             await reloadOwnership(stamp, subject)
+            return current(stamp, subject) ? .settled : .ignored
         } catch {
-            guard current(stamp, subject) else { return }
+            guard current(stamp, subject) else { return .ignored }
             if let failure = error as? APIError, ["purchase_already_used", "purchase_expired", "purchase_refunded"].contains(failure.code ?? "") {
                 message = Self.explain(error)
-                return
+                return failure.code == "purchase_already_used" ? .otherAccount : .failed
             }
             if !unassigned.contains(where: { $0.originalId == transaction.originalId }) { unassigned.append(transaction) }
             if wantedName.isEmpty { wantedName = selectedName ?? "" }
             message = "Your purchase is saved. \(Self.explain(error)) Finish registration here without another payment."
+            return .failed
         }
     }
 
@@ -371,13 +385,15 @@ final class HandleStore {
             && bytes.allSatisfy { alnum($0) || $0 == 45 || $0 == 46 || $0 == 95 }
             && !["k", "gh"].contains(name)
     }
+    private static let otherAccountMessage = "This Apple subscription belongs to another Pigeonpost account. Sign in to the Pigeonpost account that bought it, or use a different Apple account for purchases."
+
     private static func explain(_ error: Error) -> String {
         if let failure = error as? APIError {
             switch failure.code {
             case "namespace_taken", "handle_already_subscribed": return "That name is already held. Choose another name or restore its purchase."
             case "name_reserved": return "That name is reserved. Choose another."
             case "name_required": return "Choose a name for it."
-            case "purchase_already_used": return "This purchase belongs to another Pigeonpost account. Sign in to that account."
+            case "purchase_already_used": return otherAccountMessage
             case "handle_limit_reached": return "This account already has ten active Apple handles."
             case "plan_capacity_reached": return "All names in this plan are registered. Choose a larger plan to add more."
             case "purchase_expired": return "That subscription has expired."
