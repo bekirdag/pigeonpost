@@ -1,0 +1,97 @@
+name: Windows desktop
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'apps/windows/**'
+      - '.github/workflows/windows-desktop.yml'
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-desktop-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  core:
+    name: Core behavior
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Run domain, API and state tests
+        working-directory: apps/windows
+        run: dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c Release
+
+  desktop:
+    name: Windows ${{ matrix.architecture }}
+    needs: core
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        architecture: [x64, ARM64]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Compile native app and validate unsigned MSIX
+        shell: pwsh
+        run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package
+      - name: Upload Store packages and test artifacts
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-windows-${{ matrix.architecture }}
+          path: |
+            apps/windows/artifacts/**/*.zip
+            apps/windows/artifacts/**/*.msix
+          if-no-files-found: error
+          retention-days: 14
+      - name: Launch the native release app
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) { Set-DisplayResolution -Width 1920 -Height 1080 -Force }
+          $exe = Get-ChildItem apps/windows/artifacts -Filter Pigeonpost.exe -Recurse | Select-Object -First 1
+          ./apps/windows/smoke-test.ps1 -Executable $exe.FullName -OutputDirectory apps/windows/artifacts/screenshots
+      - name: Compile and exercise a separate UI-test binary
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          dotnet publish apps/windows/Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:DefineConstants=UI_TESTS --self-contained true -o apps/windows/artifacts/ui-tests
+          if ($LASTEXITCODE -ne 0) { throw 'UI-test build failed.' }
+          ./apps/windows/smoke-test.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots -Fixture
+      - name: Install and activate the MSIX on the disposable runner
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          $package = Get-ChildItem apps/windows/artifacts -Filter '*.msix' -Recurse | Select-Object -First 1
+          ./apps/windows/test-install.ps1 -Package $package.FullName -OutputDirectory apps/windows/artifacts/screenshots/installed
+      - name: Upload native UI evidence
+        if: always() && matrix.architecture == 'x64'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pigeonpost-windows-native-ui
+          path: apps/windows/artifacts/screenshots/*.png
+          if-no-files-found: warn
+          retention-days: 30
+      - name: Check public account and privacy pages
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          foreach ($url in @('https://pigeonpost.dev/privacy', 'https://inbox.pigeonpost.dev/', 'https://auth.pigeonpost.dev/realms/pigeonpost-prod/.well-known/openid-configuration')) {
+            $response = Invoke-WebRequest -Uri $url -TimeoutSec 30 -MaximumRetryCount 1 -RetryIntervalSec 2
+            if ($response.StatusCode -ne 200) { throw "Public URL failed: $url" }
+            Write-Host "Public URL passed: $url"
+          }

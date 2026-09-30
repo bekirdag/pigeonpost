@@ -32,7 +32,7 @@ function platformChoices(document) {
     assert.ok(document.getElementById(`icon-${platform}`).querySelector("path"));
     assert.ok(action.textContent.trim(), "icons have accompanying text labels");
   }
-  assert.match(document.querySelector('[data-platform="windows"]').textContent, /In development/);
+  assert.match(document.querySelector('[data-platform="windows"]').textContent, /In Microsoft Store review/);
   assert.match(document.querySelector('[data-platform="linux"]').textContent, /Available now/);
 }
 
