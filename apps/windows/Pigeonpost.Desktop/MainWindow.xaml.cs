@@ -26,6 +26,11 @@ public sealed partial class MainWindow : Window
         ViewModel = new InboxViewModel(postbox);
 #if UI_TESTS
         // Compiled only in the separate UI-test binary; Store packages never enable fixtures.
+        var vaultTest = new WindowsTokenStore();
+        vaultTest.Save("ui-test-only-session");
+        if (vaultTest.Load() != "ui-test-only-session") throw new InvalidOperationException("Native vault round trip failed.");
+        vaultTest.Clear();
+        if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
         ViewModel = new InboxViewModel(new PreviewInboxService());
 #endif

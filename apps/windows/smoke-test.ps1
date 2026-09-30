@@ -8,6 +8,8 @@ using System;
 using System.Runtime.InteropServices;
 public static class NativeWindowBounds {
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+    [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
+    [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out Rect value, int size);
 }
 '@
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
@@ -37,11 +39,12 @@ try {
     }
     function Capture([string]$Name) {
         Start-Sleep -Milliseconds 500
-        $rect = $root.Current.BoundingRectangle
-        $bitmap = [System.Drawing.Bitmap]::new([int]$rect.Width, [int]$rect.Height)
+        $rect = [NativeWindowBounds+Rect]::new()
+        if ([NativeWindowBounds]::DwmGetWindowAttribute($process.MainWindowHandle, 9, [ref]$rect, 16) -ne 0) { throw 'Could not obtain visible native window bounds.' }
+        $bitmap = [System.Drawing.Bitmap]::new($rect.Right - $rect.Left, $rect.Bottom - $rect.Top)
         $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
         try {
-            $graphics.CopyFromScreen([int]$rect.X, [int]$rect.Y, 0, 0, $bitmap.Size)
+            $graphics.CopyFromScreen($rect.Left, $rect.Top, 0, 0, $bitmap.Size)
             $bitmap.Save((Join-Path $OutputDirectory $Name), [System.Drawing.Imaging.ImageFormat]::Png)
         } finally { $graphics.Dispose(); $bitmap.Dispose() }
     }

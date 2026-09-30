@@ -62,6 +62,7 @@ jobs:
         if: matrix.architecture == 'x64'
         shell: pwsh
         run: |
+          if (Get-Command Set-DisplayResolution -ErrorAction SilentlyContinue) { Set-DisplayResolution -Width 1920 -Height 1080 -Force }
           $exe = Get-ChildItem apps/windows/artifacts -Filter Pigeonpost.exe -Recurse | Select-Object -First 1
           ./apps/windows/smoke-test.ps1 -Executable $exe.FullName -OutputDirectory apps/windows/artifacts/screenshots
       - name: Compile and exercise a separate UI-test binary
@@ -79,3 +80,12 @@ jobs:
           path: apps/windows/artifacts/screenshots/*.png
           if-no-files-found: warn
           retention-days: 30
+      - name: Check public account and privacy pages
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          foreach ($url in @('https://pigeonpost.dev/privacy', 'https://inbox.pigeonpost.dev/', 'https://auth.pigeonpost.dev/realms/pigeonpost-prod/.well-known/openid-configuration')) {
+            $response = Invoke-WebRequest -Uri $url -TimeoutSec 30 -MaximumRetryCount 1 -RetryIntervalSec 2
+            if ($response.StatusCode -ne 200) { throw "Public URL failed: $url" }
+            Write-Host "Public URL passed: $url"
+          }
