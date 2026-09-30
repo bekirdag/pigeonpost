@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$OutputDirectory, [switch]$Fixture)
+param([string]$Executable, [string]$PackageFamilyName, [Parameter(Mandatory)][string]$OutputDirectory, [switch]$Fixture)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
@@ -13,7 +13,20 @@ public static class NativeWindowBounds {
 }
 '@
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
-$process = Start-Process -FilePath $Executable -PassThru
+if ($PackageFamilyName) {
+    $before = @(Get-Process Pigeonpost -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
+    Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$PackageFamilyName!App"
+    $process = $null
+    for ($i = 0; $i -lt 40; $i++) {
+        $process = Get-Process Pigeonpost -ErrorAction SilentlyContinue | Where-Object { $_.Id -notin $before } | Select-Object -First 1
+        if ($process) { break }
+        Start-Sleep -Milliseconds 500
+    }
+    if (-not $process) { throw 'Installed MSIX failed to activate.' }
+} else {
+    if (-not $Executable) { throw 'Executable or package family is required.' }
+    $process = Start-Process -FilePath $Executable -PassThru
+}
 try {
     $root = $null
     for ($i = 0; $i -lt 60; $i++) {
@@ -27,7 +40,7 @@ try {
     }
     if (-not $root) { throw 'No native desktop window appeared.' }
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
-    $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, [Math]::Min(1200, $screen.Width - 24), [Math]::Min(820, $screen.Height - 24), 4)
+    $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, [Math]::Min(1440, $screen.Width - 24), [Math]::Min(900, $screen.Height - 24), 4)
     Start-Sleep -Milliseconds 500
     function Element([string]$Name) {
         $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
