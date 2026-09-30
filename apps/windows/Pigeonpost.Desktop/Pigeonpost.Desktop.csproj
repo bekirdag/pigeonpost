@@ -28,4 +28,7 @@
     <Content Include="Assets\Logo.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Pigeonpost.ico" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <ItemGroup Condition="'$(DefineConstants)' == 'UI_TESTS'">
+    <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />
+  </ItemGroup>
 </Project>

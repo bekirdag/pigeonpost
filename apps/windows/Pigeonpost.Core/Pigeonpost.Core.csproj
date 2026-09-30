@@ -5,4 +5,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup>
+    <Compile Remove="PreviewInboxService.cs" />
+  </ItemGroup>
 </Project>

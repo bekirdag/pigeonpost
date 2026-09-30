@@ -307,6 +307,66 @@ Test("Bearer endpoints require HTTPS outside loopback", () =>
     catch (ArgumentException) { }
 });
 
+AsyncTest("Attachments are scoped, bounded, and sent as file identifiers", async () =>
+{
+    var calls = new List<string>();
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        var path = request.RequestUri!.AbsolutePath;
+        calls.Add(path);
+        if (path == "/v1/attachments")
+        {
+            Equal(request.Headers.GetValues("x-pigeonpost-identity").Single(), "/k/main");
+            Check(!request.Headers.GetValues("x-pigeonpost-filename").Single().Contains('\n'), "Unsafe filename header.");
+            Equal((await request.Content!.ReadAsByteArrayAsync(ct)).Length, 3);
+            return Json(HttpStatusCode.Created, "{\"id\":\"file-1\",\"filename\":\"note.txt\",\"media_type\":\"application/octet-stream\",\"bytes\":3}");
+        }
+        if (path == "/v1/send")
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Equal(body.RootElement.GetProperty("attachments")[0].GetString(), "file-1");
+            Equal(body.RootElement.GetProperty("thread_id").GetString(), "subject");
+            return Json(HttpStatusCode.OK, "{\"message_id\":\"m1\",\"sent_copy_id\":\"s1\"}");
+        }
+        Equal(request.Headers.GetValues("x-pigeonpost-identity").Single(), "/k/main");
+        return new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+    }));
+    using var client = new PostboxClient(http, new Tokens());
+    var uploaded = await client.UploadAsync("/k/main", "note\n.txt", [1, 2, 3], default);
+    await client.SendAttachmentAsync("/k/main", "/peer", "hello", "subject", uploaded.Id, default);
+    Equal((await client.DownloadAsync("/k/main", uploaded.Id, default)).Length, 3);
+    await Throws<ArgumentException>(() => client.UploadAsync("/k/main", "empty", [], default));
+    Equal(calls.Count, 3);
+});
+AsyncTest("Blocking a sender preserves their existing permission settings", async () =>
+{
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        Equal(request.Method, HttpMethod.Put);
+        Equal(request.RequestUri!.AbsolutePath, "/v1/contacts");
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+        var root = body.RootElement;
+        Equal(root.GetProperty("identity").GetString(), "/k/main");
+        Equal(root.GetProperty("admission").GetString(), "block");
+        Equal(root.GetProperty("autonomy").GetString(), "review");
+        Equal(root.GetProperty("allowed_verbs").GetArrayLength(), 0);
+        return Json(HttpStatusCode.OK, "{\"ok\":true}");
+    }));
+    using var client = new PostboxClient(http, new Tokens());
+    await client.SetContactAsync("/k/main", new Contact("/peer", "Peer", "block", "review", []), default);
+});
+AsyncTest("A first mailbox is created without local identity secrets", async () =>
+{
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        Equal(request.RequestUri!.AbsolutePath, "/v1/identities");
+        Equal(request.Method, HttpMethod.Post);
+        Equal(await request.Content!.ReadAsStringAsync(ct), "{}");
+        return Json(HttpStatusCode.Created, "{\"address\":\"/k/new\"}");
+    }));
+    using var client = new PostboxClient(http, new Tokens());
+    Equal(await client.CreateMailboxAsync(default), "/k/new");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)

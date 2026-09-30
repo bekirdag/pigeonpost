@@ -24,6 +24,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
 {
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);
+    public const int MaxAttachmentBytes = 25 * 1024 * 1024;
 
     public async Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken)
     {
@@ -73,6 +74,30 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     public Task AcknowledgeAsync(string identity, string messageId, CancellationToken cancellationToken) =>
         WriteWithoutResponseAsync(HttpMethod.Post, "/v1/ack", new { identity, message_id = messageId }, cancellationToken);
 
+    public Task SetContactAsync(string identity, Contact contact, CancellationToken cancellationToken) =>
+        WriteWithoutResponseAsync(HttpMethod.Put, "/v1/contacts", new
+        {
+            identity, contact.Peer, contact.Alias, contact.Admission, contact.Autonomy, contact.AllowedVerbs
+        }, cancellationToken);
+
+    public async Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken cancellationToken)
+    {
+        if (bytes.Length is 0 or > MaxAttachmentBytes) throw new ArgumentException("Choose a file between 1 byte and 25 MB.");
+        var safeName = new string(filename.Select(c => c is >= ' ' and <= '~' && c is not '\r' and not '\n' and not '/' and not '\\' ? c : '_').Take(120).ToArray());
+        using var response = await RequestAsync(HttpMethod.Post, "/v1/attachments", null, cancellationToken, bytes, identity, safeName).ConfigureAwait(false);
+        return await DecodeAsync<MessageAttachment>(response, cancellationToken).ConfigureAwait(false);
+    }
+
+    public async Task<byte[]> DownloadAsync(string identity, string attachmentId, CancellationToken cancellationToken)
+    {
+        using var response = await RequestAsync(HttpMethod.Get, "/v1/attachments/" + Uri.EscapeDataString(attachmentId), null, cancellationToken, identity: identity).ConfigureAwait(false);
+        await response.Content.LoadIntoBufferAsync(MaxAttachmentBytes, cancellationToken).ConfigureAwait(false);
+        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+    }
+
+    public Task<SendReceipt> SendAttachmentAsync(string identity, string peer, string body, string? threadId, string attachmentId, CancellationToken cancellationToken) =>
+        WriteAsync<SendReceipt>(HttpMethod.Post, "/v1/send", new { from = identity, to = peer, body, thread_id = threadId, attachments = new[] { attachmentId } }, cancellationToken);
+
     private async Task<T> ReadAsync<T>(string path, CancellationToken cancellationToken)
     {
         using var response = await RequestAsync(HttpMethod.Get, path, null, cancellationToken).ConfigureAwait(false);
@@ -90,7 +115,8 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
         using var response = await RequestAsync(method, path, JsonSerializer.Serialize(body, PostboxJson.Options), cancellationToken).ConfigureAwait(false);
     }
 
-    private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken)
+    private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken,
+        byte[]? binary = null, string? identity = null, string? filename = null)
     {
         var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         for (var attempt = 0; ; attempt++)
@@ -98,6 +124,14 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
             using var request = new HttpRequestMessage(method, new Uri(endpoint, path));
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            if (identity is not null) request.Headers.Add("x-pigeonpost-identity", identity);
+            if (binary is not null)
+            {
+                request.Content = new ByteArrayContent(binary);
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                request.Headers.Add("x-pigeonpost-filename", filename);
+                request.Headers.Add("x-pigeonpost-media-type", "application/octet-stream");
+            }
             if (json is not null) request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)

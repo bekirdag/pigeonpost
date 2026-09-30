@@ -3,6 +3,13 @@ param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
+Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class NativeWindowBounds {
+    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+}
+'@
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
 $process = Start-Process -FilePath $Executable -PassThru
 try {
@@ -17,6 +24,9 @@ try {
         }
     }
     if (-not $root) { throw 'No native desktop window appeared.' }
+    $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
+    $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, [Math]::Min(1200, $screen.Width - 24), [Math]::Min(820, $screen.Height - 24), 4)
+    Start-Sleep -Milliseconds 500
     function Element([string]$Name) {
         $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
         $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)

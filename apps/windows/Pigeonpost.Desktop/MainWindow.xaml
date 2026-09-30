@@ -19,7 +19,7 @@
                         </StackPanel>
                     </StackPanel>
                     <Border.ContextFlyout>
-                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /></MenuFlyout>
+                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /></MenuFlyout>
                     </Border.ContextFlyout>
                 </Border>
             </DataTemplate>
@@ -35,7 +35,7 @@
                         </StackPanel>
                     </StackPanel>
                     <Border.ContextFlyout>
-                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /></MenuFlyout>
+                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /></MenuFlyout>
                     </Border.ContextFlyout>
                 </Border>
             </DataTemplate>
@@ -135,6 +135,7 @@
                             <MenuFlyout>
                                 <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                                 <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
+                                <MenuFlyoutItem Text="Contact settings" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
@@ -161,7 +162,7 @@
                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" MaxLength="20000"
                              IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" />
                     <Grid>
-                        <TextBlock Text="Ctrl+Enter to send · Enter for a new line" FontSize="11" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <Button Content="Attach file…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                         <Button Content="Send" Click="Send_Click" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                     </Grid>
                 </StackPanel>

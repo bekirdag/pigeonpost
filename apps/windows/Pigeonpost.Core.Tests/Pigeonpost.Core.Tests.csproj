@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../Pigeonpost.Core/Pigeonpost.Core.csproj" />
+    <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />
     <None Update="Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>
