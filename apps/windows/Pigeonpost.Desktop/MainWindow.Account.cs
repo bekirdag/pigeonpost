@@ -98,7 +98,7 @@ public sealed partial class MainWindow
     }
     private void CopyCode_Click(object sender, RoutedEventArgs e) { if (deviceSignIn is { } device) CopyText(device.UserCode); }
     private void CopyAddress_Click(object sender, RoutedEventArgs e) { if (ViewModel.SelectedMailbox is { } mailbox) CopyText(mailbox.Key); }
-    private async void ManageAccount_Click(object sender, RoutedEventArgs e) => await OpenLinkAsync(new Uri("https://pigeonpost.dev/inbox"));
+    private async void ManageAccount_Click(object sender, RoutedEventArgs e) => await OpenLinkAsync(new Uri("https://inbox.pigeonpost.dev"));
     private async void Privacy_Click(object sender, RoutedEventArgs e) => await OpenLinkAsync(new Uri("https://pigeonpost.dev/privacy"));
     private async void ReloadAccount_Click(object sender, RoutedEventArgs e) => await OpenInboxAsync();
 

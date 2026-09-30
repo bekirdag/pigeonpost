@@ -24,6 +24,11 @@ public sealed partial class MainWindow : Window
         session = new AccountSession(http, new WindowsTokenStore());
         postbox = new PostboxClient(http, session);
         ViewModel = new InboxViewModel(postbox);
+#if UI_TESTS
+        // Compiled only in the separate UI-test binary; Store packages never enable fixtures.
+        ViewModel.Dispose();
+        ViewModel = new InboxViewModel(new PreviewInboxService());
+#endif
         InitializeComponent();
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
@@ -43,7 +48,13 @@ public sealed partial class MainWindow : Window
     {
         if (initialized) return;
         initialized = true;
+#if UI_TESTS
+        await OpenInboxAsync();
+        refreshTimer?.Stop();
+        AccountStatus.Text = "Demonstration account";
+#else
         await RestoreAccountAsync();
+#endif
     }
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)
