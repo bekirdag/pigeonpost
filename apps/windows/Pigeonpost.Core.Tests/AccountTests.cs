@@ -88,6 +88,18 @@ internal static class AccountTests
             await Fails<OperationCanceledException>(() => pending);
             Require(vault.Token is null);
         });
+        yield return ("A new sign-in cannot borrow the previous account's refresh token", async () =>
+        {
+            var vault = new Vault { Token = "previous-account" };
+            var calls = 0;
+            using var http = new HttpClient(new Handler((_, _) => Task.FromResult(Json(++calls == 1
+                ? "{\"access_token\":\"previous-access\",\"refresh_token\":\"previous-account\",\"expires_in\":300}"
+                : "{\"access_token\":\"different-account-access\",\"expires_in\":300}"))));
+            var session = new AccountSession(http, vault);
+            Require(await session.RestoreAsync(default));
+            await Fails<SignInException>(() => session.CompleteSignInAsync(new DeviceSignIn("d", "c", new Uri("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"), 60, 1), default));
+            Require(await session.GetTokenAsync(default) == "previous-access" && vault.Token == "previous-account");
+        });
         yield return ("Cancelled device sign-in does not persist credentials", async () =>
         {
             var vault = new Vault();

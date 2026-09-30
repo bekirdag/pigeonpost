@@ -75,7 +75,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
             {
                 cancellationToken.ThrowIfCancellationRequested();
                 if (attempt != generation) throw new OperationCanceledException(cancellationToken);
-                Accept(result.RootElement, cancellationToken);
+                Accept(result.RootElement, cancellationToken, requireRefresh: true);
                 return;
             }
             finally { gate.Release(); }
@@ -132,10 +132,10 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
         Accept(result.RootElement, cancellationToken);
     }
 
-    private void Accept(JsonElement response, CancellationToken cancellationToken)
+    private void Accept(JsonElement response, CancellationToken cancellationToken, bool requireRefresh = false)
     {
         var access = Required(response, "access_token");
-        var refresh = Text(response, "refresh_token") ?? refreshToken;
+        var refresh = Text(response, "refresh_token") ?? (requireRefresh ? null : refreshToken);
         if (string.IsNullOrEmpty(refresh)) throw new SignInException("Sign-in did not provide a renewable session. Please try again.");
         cancellationToken.ThrowIfCancellationRequested();
         store.Save(refresh);
