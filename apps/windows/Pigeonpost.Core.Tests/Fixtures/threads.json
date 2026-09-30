@@ -1,0 +1,31 @@
+{
+  "threads": [
+    {
+      "thread_id": "t-agent1",
+      "peer": "/bekir/agent1",
+      "title": null,
+      "is_default": true,
+      "created_at": 1789104600,
+      "last_at": 1789113000,
+      "archived": false
+    },
+    {
+      "thread_id": "t-agent1-deploy",
+      "peer": "/bekir/agent1",
+      "title": "deploy",
+      "is_default": false,
+      "created_at": 1789105600,
+      "last_at": 1789105600,
+      "archived": false
+    },
+    {
+      "thread_id": "t-stranger",
+      "peer": "/k/eeee5555ffff6666gggg7777hh",
+      "title": null,
+      "is_default": true,
+      "created_at": 1789113540,
+      "last_at": 1789113540,
+      "archived": false
+    }
+  ]
+}
