@@ -45,7 +45,7 @@ Support / website: https://pigeonpost.dev
 
 ## Release gates and current status
 
-The Store entry is a draft; this file does not establish public availability.
+Submitted September 30, 2026. Partner Center confirms **In certification** and automatic publication after approval. This file does not establish public availability.
 
 - 41 core behavior tests pass. Native x64/ARM64 compilation and MakeAppx validation pass.
 - Actions run `36713266647` passed native release launch, test-only UI automation, Credential Locker round-trip, MSIX installation/activation and external public-page checks.
@@ -54,8 +54,8 @@ The Store entry is a draft; this file does not establish public availability.
 - Free worldwide pricing, properties, age ratings and the English listing with three captioned 1426x893 native screenshots are saved.
 - Certification instructions and the existing review-account credential are stored in Partner Center's separate private fields.
 - `runFullTrust` justification and publish-after-certification option are saved. The justification has a 500-character limit.
-- Production `pigeonpost-windows` public OAuth client is provisioned with device authorization, explicit consent and mobile-equivalent scopes/mappers. Real account round-trip validation is in progress.
-- Website download must point to the Store only after the public listing can actually install the app.
+- Production `pigeonpost-windows` public OAuth client is provisioned with device authorization, explicit consent and mobile-equivalent scopes/mappers. Live review-account authorization, mailbox/inbox loading, refresh, restore and sign-out passed.
+- The website Windows card says In Microsoft Store review and retains the working web inbox until the Store listing can install the app. Prepared final Store URL: https://apps.microsoft.com/detail/9N0NWJ9L8XDP.
 
 Store packages are unsigned upload artifacts. Microsoft signs packages after acceptance; do not
 publish these MSIX or ZIP files as end-user installers. Test-only fixture builds are separate from
