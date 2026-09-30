@@ -56,14 +56,14 @@ try {
             ForEach-Object { Join-Path $_.FullName 'x64/makeappx.exe' } |
             Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         if (-not $makeAppx) { throw 'Install the Windows SDK (including MakeAppx) to create an MSIX.' }
-        $packagePath = Join-Path $buildRoot "Pigeonpost-preview-$runtime.msix"
+        $packagePath = Join-Path $buildRoot "Pigeonpost-1.0.0-$runtime.msix"
         & $makeAppx pack /d $publish /p $packagePath /o
         if ($LASTEXITCODE -ne 0) { throw 'MSIX validation/packaging failed.' }
-        Write-Host "Unsigned development package: $packagePath"
+        Write-Host "Store upload package (Microsoft signs after certification): $packagePath"
     }
 
-    $zip = Join-Path $buildRoot "Pigeonpost-preview-$runtime.zip"
+    $zip = Join-Path $buildRoot "Pigeonpost-1.0.0-$runtime.zip"
     Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $zip
-    Write-Host "Preview executable: $(Join-Path $publish 'Pigeonpost.exe')"
-    Write-Host "Preview archive: $zip"
+    Write-Host "Executable: $(Join-Path $publish 'Pigeonpost.exe')"
+    Write-Host "Test archive: $zip"
 } finally { Pop-Location }

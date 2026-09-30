@@ -307,6 +307,7 @@ Test("Bearer endpoints require HTTPS outside loopback", () =>
     catch (ArgumentException) { }
 });
 
+tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)
 {

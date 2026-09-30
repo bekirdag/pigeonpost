@@ -1,4 +1,4 @@
-name: Windows desktop preview
+name: Windows desktop
 
 on:
   workflow_dispatch:
@@ -49,10 +49,10 @@ jobs:
       - name: Compile native app and validate unsigned MSIX
         shell: pwsh
         run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package
-      - name: Upload development artifacts
+      - name: Upload Store packages and test artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
-          name: pigeonpost-windows-preview-${{ matrix.architecture }}
+          name: pigeonpost-windows-${{ matrix.architecture }}
           path: |
             apps/windows/artifacts/**/*.zip
             apps/windows/artifacts/**/*.msix

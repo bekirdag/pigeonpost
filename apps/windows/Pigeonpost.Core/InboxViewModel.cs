@@ -111,16 +111,17 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         await RefreshAsync();
     }
 
-    public async Task RefreshAsync()
+    public async Task RefreshAsync(bool background = false)
     {
         if (SelectedMailbox is not { } mailbox || disposed) return;
+        if (background && (IsBusy || IsSending || loading is not null)) return;
         var generation = mailboxVersion;
         var requestVersion = ++loadVersion;
         loading?.Cancel();
         loading?.Dispose();
         loading = CancellationTokenSource.CreateLinkedTokenSource(mailboxScope.Token);
         var token = loading.Token;
-        IsBusy = true;
+        if (!background) IsBusy = true;
         Error = null;
         try
         {
@@ -138,7 +139,12 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         }
         finally
         {
-            if (!disposed && generation == mailboxVersion && requestVersion == loadVersion) IsBusy = false;
+            if (!disposed && generation == mailboxVersion && requestVersion == loadVersion)
+            {
+                IsBusy = false;
+                loading?.Dispose();
+                loading = null;
+            }
         }
     }
 
@@ -333,7 +339,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         var index = pending.FindIndex(p => p.Id == row.Id);
         if (index >= 0) pending[index] = row;
     }
-    private static string Describe(Exception ex) => ex is PostboxException ? ex.Message : "Could not complete that action. Please try again.";
+    private static string Describe(Exception ex) => ex is PostboxException or SignInException ? ex.Message : "Could not complete that action. Please try again.";
 
     public void Dispose()
     {

@@ -4,7 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Pigeonpost.Desktop"
     xmlns:core="using:Pigeonpost.Core"
-    Title="Pigeonpost — Windows preview">
+    Title="Pigeonpost Desktop">
     <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded">
         <Grid.Resources>
             <DataTemplate x:Key="IncomingMessage" x:DataType="core:ThreadMessage">
@@ -56,7 +56,7 @@
         </Grid.RowDefinitions>
         <InfoBar Grid.Row="0" IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}" IsClosable="False"
                  Severity="Error" Message="{x:Bind ViewModel.Error, Mode=OneWay}" />
-        <Grid Grid.Row="1">
+        <Grid x:Name="InboxLayout" Grid.Row="1" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="SenderColumn" Width="300" MinWidth="240" MaxWidth="420" />
                 <ColumnDefinition Width="6" />
@@ -167,9 +167,39 @@
                 </StackPanel>
             </Grid>
         </Grid>
-        <Border Grid.Row="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="16,8">
-            <TextBlock Text="Sample inbox · Messages stay in this preview and reset when you close it."
-                       FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+        <StackPanel x:Name="Welcome" Grid.RowSpan="3" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" Margin="32">
+            <Image Source="ms-appx:///Assets/Logo.png" Width="80" Height="80" AutomationProperties.Name="Pigeonpost" />
+            <TextBlock Text="Your agents, in one place" FontSize="30" FontWeight="SemiBold" TextAlignment="Center" TextWrapping="Wrap" />
+            <TextBlock Text="Conversations with your people and agents, organized by mailbox and subject." TextWrapping="Wrap" TextAlignment="Center" FontSize="16" />
+            <TextBlock x:Name="AuthStatus" Text="Sign in or create a free Pigeonpost account in your browser." TextWrapping="Wrap" TextAlignment="Center" IsTextSelectionEnabled="True" />
+            <ProgressRing x:Name="SignInProgress" IsActive="False" Width="28" Height="28" />
+            <StackPanel x:Name="CodePanel" Visibility="Collapsed" Spacing="12">
+                <TextBlock x:Name="CodeLabel" FontSize="28" FontWeight="SemiBold" TextAlignment="Center" IsTextSelectionEnabled="True" AutomationProperties.Name="Sign-in code" />
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12">
+                    <Button Content="Copy code" Click="CopyCode_Click" />
+                    <Button Content="Open browser" Click="OpenSignIn_Click" />
+                </StackPanel>
+            </StackPanel>
+            <Button x:Name="SignInButton" Content="Sign in or create account" Click="SignIn_Click" HorizontalAlignment="Center" Style="{StaticResource AccentButtonStyle}" />
+            <Button x:Name="CancelSignIn" Content="Cancel sign-in" Click="CancelSignIn_Click" HorizontalAlignment="Center" Visibility="Collapsed" />
+            <HyperlinkButton Content="Privacy policy" Click="Privacy_Click" HorizontalAlignment="Center" />
+        </StackPanel>
+        <Border x:Name="EmptyAccount" Grid.Row="1" Visibility="Collapsed" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Padding="32">
+            <StackPanel MaxWidth="480" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
+                <TextBlock Text="Connect your first mailbox" FontSize="26" FontWeight="SemiBold" TextWrapping="Wrap" />
+                <TextBlock Text="Create a free mailbox to start conversations with your people and agents. Already have a mailbox? Refresh to load it." TextWrapping="Wrap" />
+                <Button Content="Create free mailbox" Click="CreateMailbox_Click" Style="{StaticResource AccentButtonStyle}" />
+                <Button Content="Refresh mailboxes" Click="ReloadAccount_Click" />
+            </StackPanel>
+        </Border>
+        <Border x:Name="AccountBar" Grid.Row="2" Visibility="Collapsed" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="12,6">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <TextBlock x:Name="AccountStatus" Text="Connected to Pigeonpost" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <Button Grid.Column="1" Content="Copy my address" Click="CopyAddress_Click" />
+                <Button Grid.Column="2" Content="Manage account" Click="ManageAccount_Click" />
+                <Button Grid.Column="3" Content="Sign out" Click="SignOut_Click" />
+            </Grid>
         </Border>
     </Grid>
 </Window>

@@ -13,7 +13,7 @@ namespace Pigeonpost.Desktop;
 
 public sealed partial class MainWindow : Window
 {
-    public InboxViewModel ViewModel { get; } = new(new PreviewInboxService());
+    public InboxViewModel ViewModel { get; private set; }
     public Visibility ToVisibility(bool visible) => visible ? Visibility.Visible : Visibility.Collapsed;
     private bool initialized;
     private bool dialogOpen;
@@ -21,6 +21,9 @@ public sealed partial class MainWindow : Window
 
     public MainWindow()
     {
+        session = new AccountSession(http, new WindowsTokenStore());
+        postbox = new PostboxClient(http, session);
+        ViewModel = new InboxViewModel(postbox);
         InitializeComponent();
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
@@ -28,6 +31,9 @@ public sealed partial class MainWindow : Window
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         Closed += (_, _) =>
         {
+            lifetime.Cancel();
+            signInAttempt?.Cancel();
+            refreshTimer?.Stop();
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
             ViewModel.Dispose();
         };
@@ -37,8 +43,7 @@ public sealed partial class MainWindow : Window
     {
         if (initialized) return;
         initialized = true;
-        await ViewModel.InitializeAsync();
-        await ViewModel.AcknowledgeSelectedAsync();
+        await RestoreAccountAsync();
     }
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)

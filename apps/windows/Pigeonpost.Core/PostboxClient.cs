@@ -31,11 +31,16 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
         var result = new List<Mailbox>();
         foreach (var row in response.Identities ?? [])
         {
-            var who = await ReadAsync<WhoAmI>(WithIdentity("/v1/whoami", row.Address), cancellationToken).ConfigureAwait(false);
-            result.Add(new Mailbox(row.Address, who.Handle, row.Label));
+            string? handle = null;
+            try { handle = (await ReadAsync<WhoAmI>(WithIdentity("/v1/whoami", row.Address), cancellationToken).ConfigureAwait(false)).Handle; }
+            catch (PostboxException ex) when (ex.StatusCode is not 401 and not 403) { }
+            result.Add(new Mailbox(row.Address, handle, row.Label));
         }
         return result;
     }
+
+    public async Task<string> CreateMailboxAsync(CancellationToken cancellationToken) =>
+        (await WriteAsync<CreatedIdentity>(HttpMethod.Post, "/v1/identities", new { }, cancellationToken).ConfigureAwait(false)).Address;
 
     public Task<InboxResponse> GetInboxAsync(string identity, int? wait = null, CancellationToken cancellationToken = default)
     {
@@ -139,6 +144,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
 
     public sealed record InboxResponse(IReadOnlyList<InboxMessage>? Messages);
     private sealed record IdentityRow(string Address, string? Label);
+    private sealed record CreatedIdentity(string Address);
     private sealed record IdentitiesResponse(IReadOnlyList<IdentityRow>? Identities);
     private sealed record WhoAmI(string? Handle);
     private sealed record ThreadsResponse(IReadOnlyList<ServerThread>? Threads);
