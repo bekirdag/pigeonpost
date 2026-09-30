@@ -47,12 +47,14 @@ Support / website: https://pigeonpost.dev
 
 The Store entry is a draft; this file does not establish public availability.
 
-- First native x64/ARM64 compilation and MakeAppx validation passed in Actions run `36710720569`.
-- Native release launch and UI Automation send/subject checks passed in run `36711407189`.
-- Current logo, attachment/contact changes and screenshot framing are being validated in the next run.
-- Production `pigeonpost-windows` OAuth provisioning and a real account round trip remain required.
-- Partner Center currently reports that account verification must complete before certification.
-- Pricing, packages, English listing/screenshots and reviewer instructions must be complete before submission.
+- 41 core behavior tests pass. Native x64/ARM64 compilation and MakeAppx validation pass.
+- Actions run `36713266647` passed native release launch, test-only UI automation, Credential Locker round-trip, MSIX installation/activation and external public-page checks.
+- Both packages from run `36712576890` are uploaded and validated by Partner Center.
+- Legal Info confirms Active / Authorized / DSA Compliant; the earlier verification warning has cleared. Seller ID: `96339540`.
+- Free worldwide pricing, properties, age ratings and the English listing with three captioned 1426x893 native screenshots are saved.
+- Certification instructions and the existing review-account credential are stored in Partner Center's separate private fields.
+- `runFullTrust` justification and publish-after-certification option are saved. The justification has a 500-character limit.
+- Production `pigeonpost-windows` public OAuth client is provisioned with device authorization, explicit consent and mobile-equivalent scopes/mappers. Real account round-trip validation is in progress.
 - Website download must point to the Store only after the public listing can actually install the app.
 
 Store packages are unsigned upload artifacts. Microsoft signs packages after acceptance; do not

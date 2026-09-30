@@ -33,7 +33,7 @@ Test("Default inbox labels distinguish namespaces and preserve routing keys", ()
     Equal(PostAddress.DisplayName("/wodo/home"), "/wodo/home");
     Equal(PostAddress.DisplayName("/k/abc"), "/k/abc");
 });
-Test("Conversation entry supplies one slash and accepts namespace and email addresses", () =>
+Test("Conversation entry supplies one slash and accepts namespace and address formats", () =>
 {
     Equal(PostAddress.Input(""), "/");
     Equal(PostAddress.Input(" bekir/main "), "/bekir/main");
