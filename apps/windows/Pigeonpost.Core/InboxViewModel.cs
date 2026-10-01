@@ -198,6 +198,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         {
             var sent = await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token);
             ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId });
+            var sentDraftKey = (mailbox.Address, conversation.Peer, subject ?? "");
+            if (drafts.GetValueOrDefault(sentDraftKey) == text) drafts[sentDraftKey] = "";
             if (generation != mailboxVersion || disposed) return;
             if (DraftKey() == (mailbox.Address, conversation.Peer, subject ?? "") && Draft == text) Draft = "";
             await RefreshAsync();
@@ -285,14 +287,17 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     {
         if (!CanDeleteSubject || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || SelectedSubject is not { } subject) return;
         var generation = mailboxVersion;
+        var messageIds = subject.Messages.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
+        IsBusy = true;
         try
         {
             await service.DeleteThreadAsync(mailbox.Address, subject.Id, mailboxScope.Token);
             drafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
-            pending.RemoveAll(p => p.Mailbox == mailbox.Address && p.ThreadId == subject.Id);
+            pending.RemoveAll(p => p.Mailbox == mailbox.Address && (p.ThreadId == subject.Id || messageIds.Contains(p.Id)));
             if (!disposed && generation == mailboxVersion) await RefreshAsync();
         }
         catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        finally { if (!disposed && generation == mailboxVersion && loading is null) IsBusy = false; }
     }
 
     public async Task ArchiveSelectedAsync()

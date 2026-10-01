@@ -422,6 +422,8 @@ AsyncTest("Late first-send completion cannot clear or replace another mailbox dr
     release.SetResult(); await sending;
     Equal(vm.SelectedMailbox!.Key, "/preview/team"); Equal(vm.Draft, "team draft");
     Check(vm.Messages.All(m => m.Id.StartsWith("team-")), "Late send appeared in the wrong mailbox.");
+    await vm.SwitchMailboxAsync(vm.Mailboxes[0]);
+    Equal(vm.SelectedConversation!.Peer, "/new/person"); Equal(vm.Draft, "");
 });
 AsyncTest("Repeated switching preserves each selected subject, draft and context generation", async () =>
 {
