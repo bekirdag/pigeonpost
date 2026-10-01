@@ -7,6 +7,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     private readonly List<PendingMessage> pending = [];
     private readonly Dictionary<(string Mailbox, string Peer, string Subject), string> drafts = [];
     private readonly Dictionary<string, (string? Peer, string? Subject)> selections = [];
+    private readonly Dictionary<string, HashSet<string>> opened = [];
     private CancellationTokenSource mailboxScope = new();
     private CancellationTokenSource? loading;
     private int mailboxVersion;
@@ -22,6 +23,14 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     private IReadOnlyList<Conversation> allConversations = [];
     private IReadOnlyList<ThreadMessage> matches = [];
     private int matchIndex;
+    private IReadOnlyList<ThreadMessage> history = [];
+    private string? historyContext;
+    public int ContextVersion { get; private set; }
+    public bool CanDeleteSubject => CanCompose && !string.IsNullOrEmpty(SelectedSubject?.Id);
+    public IReadOnlyList<string> GrantableVerbs => snapshot.Vocabulary?.SafeGrants ?? [];
+    public IReadOnlyList<string> NeverAutoVerbs => snapshot.Vocabulary?.NeverAuto ?? [];
+    public Contact? ExactContact(string peer) => snapshot.Contacts.FirstOrDefault(c => c.Peer == peer);
+    public Mailbox? OwnMailbox(string peer) => Mailboxes.FirstOrDefault(m => m.Address == peer || PostAddress.Canonical(m.Key) == PostAddress.Canonical(peer));
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];
     public Mailbox? SelectedMailbox { get; private set; }
@@ -30,8 +39,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     public IReadOnlyList<Subject> Subjects { get; private set; } = [];
     public Subject? SelectedSubject { get; private set; }
     public IReadOnlyList<ThreadMessage> Messages { get; private set; } = [];
-    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) Changed(nameof(CanCompose)); } }
-    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) Changed(nameof(CanCompose)); } }
+    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
+    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending;
     public bool HasConversation => SelectedConversation is not null;
     public bool HasError => !string.IsNullOrEmpty(Error);
@@ -67,7 +76,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     public string Find
     {
         get => find;
-        set { if (Set(ref find, value)) UpdateMatches(); }
+        set { if (Set(ref find, value)) UpdateMatches(reset: true); }
     }
     public ThreadMessage? CurrentMatch => matches.Count == 0 ? null : matches[matchIndex];
     public string FindSummary => Find.Length == 0 ? "" : matches.Count == 0 ? "No matches" : $"{matchIndex + 1} of {matches.Count}";
@@ -84,7 +93,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         }
         catch (OperationCanceledException) { }
         catch (Exception ex) { Error = Describe(ex); }
-        finally { if (!disposed) IsBusy = false; }
+        finally { if (!disposed && loading is null) IsBusy = false; }
     }
 
     public async Task SwitchMailboxAsync(Mailbox mailbox)
@@ -157,6 +166,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     public void SelectSubject(Subject? subject)
     {
         if (SelectedSubject?.Id == subject?.Id) return;
+        Find = "";
         SelectedSubject = subject;
         UpdateMessages();
         RememberSelection();
@@ -203,39 +213,81 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
 
     public async Task StartConversationAsync(string peer, string firstMessage)
     {
-        if (SelectedMailbox is not { } mailbox || string.IsNullOrWhiteSpace(firstMessage)) return;
-        peer = PostAddress.Input(peer);
+        if (SelectedMailbox is not { } mailbox || IsBusy || IsSending) return;
+        peer = PostAddress.Canonical(PostAddress.Input(peer));
         if (!PostAddress.IsValid(peer))
         {
             Error = "Use an address such as /bekir, /bekir/main or /k/your-address.";
             return;
         }
-        var generation = mailboxVersion;
-        var token = mailboxScope.Token;
-        try
+        // Opening is local. It does not create a contact or grant the sender any permissions.
+        peer = OwnMailbox(peer)?.Key ?? peer;
+        if (!opened.TryGetValue(mailbox.Address, out var peers)) opened[mailbox.Address] = peers = [];
+        peers.Add(peer);
+        ShowArchived = snapshot.Archived.Contains(peer);
+        SenderSearch = "";
+        Rebuild();
+        SelectConversation(Conversations.FirstOrDefault(c => c.Peer == peer));
+        SelectSubject(Subjects.FirstOrDefault(s => s.IsDefault));
+        if (string.IsNullOrWhiteSpace(firstMessage)) return;
+        // Keep an existing draft instead of overwriting it when opening the same peer again.
+        if (!string.IsNullOrEmpty(Draft))
         {
-            await service.SendAsync(mailbox.Address, peer, RequestEnvelope.Work(firstMessage.Trim()), null, token);
-            if (disposed || generation != mailboxVersion) return;
-            ShowArchived = false;
-            SenderSearch = "";
-            await RefreshAsync();
-            if (disposed || generation != mailboxVersion) return;
-            SelectConversation(Conversations.FirstOrDefault(c => c.Peer == peer));
+            Draft += "\n" + firstMessage;
+            Error = "This conversation already had an unsent draft. Review the combined message before sending.";
+            return;
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        Draft = firstMessage;
+        await SendDraftAsync();
     }
 
-    public async Task CreateSubjectAsync(string title)
+    public async Task<bool> CreateSubjectAsync(string title)
     {
-        if (SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(title)) return;
+        if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(title)) return false;
         var generation = mailboxVersion;
         try
         {
             var id = await service.CreateThreadAsync(mailbox.Address, conversation.Peer, title.Trim(), mailboxScope.Token);
-            if (disposed || generation != mailboxVersion) return;
+            if (disposed || generation != mailboxVersion) return false;
             await RefreshAsync();
-            if (disposed || generation != mailboxVersion) return;
+            if (disposed || generation != mailboxVersion) return false;
             if (SelectedConversation?.Peer == conversation.Peer) SelectSubject(Subjects.FirstOrDefault(s => s.Id == id));
+            return true;
+        }
+        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        return false;
+    }
+
+    public async Task<bool> SaveContactAsync(string peer, bool known, string? alias, bool blocked, IEnumerable<string> verbs)
+    {
+        if (SelectedMailbox is not { } mailbox) return false;
+        var generation = mailboxVersion;
+        try
+        {
+            if (!known && !blocked) await service.RemoveContactAsync(mailbox.Address, peer, mailboxScope.Token);
+            else
+            {
+                var grants = blocked ? [] : verbs.Intersect(GrantableVerbs, StringComparer.Ordinal).ToArray();
+                await service.SetContactAsync(mailbox.Address, new(peer, alias?.Trim(), blocked ? "block" : "allow",
+                    grants.Length > 0 ? "auto" : "review", grants), mailboxScope.Token);
+            }
+            if (!disposed && generation == mailboxVersion) await RefreshAsync();
+            return true;
+        }
+        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        return false;
+    }
+
+    public async Task DeleteSubjectAsync()
+    {
+        if (!CanDeleteSubject || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || SelectedSubject is not { } subject) return;
+        var generation = mailboxVersion;
+        try
+        {
+            await service.DeleteThreadAsync(mailbox.Address, subject.Id, mailboxScope.Token);
+            drafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
+            pending.RemoveAll(p => p.Mailbox == mailbox.Address && p.ThreadId == subject.Id);
+            if (!disposed && generation == mailboxVersion) await RefreshAsync();
         }
         catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
     }
@@ -270,7 +322,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     private void Rebuild()
     {
         if (SelectedMailbox is null) return;
-        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox);
+        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address));
         FilterConversations();
         Changed(nameof(InboxSummary));
     }
@@ -292,10 +344,11 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     private void SetSelection(Conversation? conversation, string? subjectId)
     {
         var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
+        var previousSubject = SelectedSubject?.Id;
         SelectedConversation = conversation;
         Subjects = ConversationBuilder.Subjects(conversation, snapshot);
         SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
-        if (peerChanged) Find = "";
+        if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
         Changed(nameof(SelectedConversation));
         Changed(nameof(Subjects));
         Changed(nameof(ConversationTitle));
@@ -309,21 +362,29 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     private void UpdateMessages()
     {
         var next = SelectedSubject?.Messages ?? SelectedConversation?.Messages ?? [];
-        var messagesChanged = !Messages.SequenceEqual(next);
-        if (messagesChanged) Messages = next;
+        var context = $"{SelectedMailbox?.Address}|{SelectedConversation?.Peer}|{SelectedSubject?.Id}";
+        if (historyContext != context)
+        {
+            historyContext = context;
+            ContextVersion++;
+            matches = [];
+        }
+        history = next;
         Changed(nameof(SelectedSubject));
         Changed(nameof(SubjectTitle));
-        if (messagesChanged) Changed(nameof(Messages));
+        Changed(nameof(CanDeleteSubject));
+        if (!Messages.SequenceEqual(next)) { Messages = next; Changed(nameof(Messages)); }
         draft = DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "";
         Changed(nameof(Draft));
         UpdateMatches();
     }
 
-    private void UpdateMatches()
+    private void UpdateMatches(bool reset = false)
     {
-        matches = string.IsNullOrWhiteSpace(Find) ? [] : Messages.Where(m => m.DisplayBody.Contains(Find.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
-        matchIndex = 0;
-        Changed(nameof(CurrentMatch));
+        var previous = reset ? null : CurrentMatch?.Id;
+        matches = string.IsNullOrWhiteSpace(Find) ? [] : history.Where(m => m.DisplayBody.Contains(Find.Trim(), StringComparison.OrdinalIgnoreCase)).ToArray();
+        matchIndex = Math.Max(0, matches.ToList().FindIndex(m => m.Id == previous));
+        if (reset || previous != CurrentMatch?.Id) Changed(nameof(CurrentMatch));
         Changed(nameof(FindSummary));
     }
 

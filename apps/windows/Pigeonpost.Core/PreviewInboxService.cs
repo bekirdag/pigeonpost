@@ -12,7 +12,7 @@ public sealed class PreviewInboxService : IInboxService
         new("/k/preview-team", "/preview/team", "Team inbox")
     ];
 
-    public PreviewInboxService()
+    public PreviewInboxService(bool longHistory = false)
     {
         var messages = new List<InboxMessage>
         {
@@ -28,6 +28,9 @@ public sealed class PreviewInboxService : IInboxService
                 Attachments = [new MessageAttachment("preview-attachment", "desktop-checklist.pdf", "application/pdf", 18432)]
             }
         };
+        if (longHistory)
+            messages.AddRange(Enumerable.Range(1, 35).Select(i => Received("history-" + i, "/preview/design",
+                $"History message {i}: desktop parity check.", "design-general", Epoch - 10000 + i, true)));
         snapshots = new(StringComparer.Ordinal)
         {
             [mailboxes[0].Address] = new(messages,
@@ -38,6 +41,10 @@ public sealed class PreviewInboxService : IInboxService
             [mailboxes[1].Address] = new([Received("team-1", "/preview/operations", "This mailbox has its own messages, selection and drafts. Switching back to Main inbox brings your conversation back.", "team-general", Epoch - 100, false)],
                 [new("team-general", "/preview/operations", IsDefault: true)],
                 [new("/preview/operations", "Operations", "allow", "review")], new HashSet<string>(StringComparer.Ordinal))
+        };
+        foreach (var key in snapshots.Keys.ToArray()) snapshots[key] = snapshots[key] with
+        {
+            Vocabulary = new(["read_file", "run_tests"], ["git_push", "deploy", "read_credentials", "spend", "delete_files", "run_shell"])
         };
     }
 
@@ -111,6 +118,34 @@ public sealed class PreviewInboxService : IInboxService
     {
         if (!snapshot.Contacts.Any(c => c.Peer == peer))
             snapshot = snapshot with { Contacts = [.. snapshot.Contacts, new(peer, null, "allow", "review")] };
+    }
+
+    public Task SetContactAsync(string identity, Contact contact, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = snapshots[identity];
+        snapshots[identity] = snapshot with { Contacts = [.. snapshot.Contacts.Where(c => c.Peer != contact.Peer), contact] };
+        return Task.CompletedTask;
+    }
+
+    public Task RemoveContactAsync(string identity, string peer, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = snapshots[identity];
+        snapshots[identity] = snapshot with { Contacts = snapshot.Contacts.Where(c => c.Peer != peer).ToArray() };
+        return Task.CompletedTask;
+    }
+
+    public Task DeleteThreadAsync(string identity, string threadId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = snapshots[identity];
+        snapshots[identity] = snapshot with
+        {
+            Threads = snapshot.Threads.Where(t => t.ThreadId != threadId).ToArray(),
+            Messages = snapshot.Messages.Where(m => m.ThreadId != threadId).ToArray()
+        };
+        return Task.CompletedTask;
     }
 
     private static InboxMessage Received(string id, string peer, string body, string thread, long at, bool read) => new()

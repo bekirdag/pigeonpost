@@ -338,7 +338,7 @@ AsyncTest("Attachments are scoped, bounded, and sent as file identifiers", async
     await Throws<ArgumentException>(() => client.UploadAsync("/k/main", "empty", [], default));
     Equal(calls.Count, 3);
 });
-AsyncTest("Blocking a sender preserves their existing permission settings", async () =>
+AsyncTest("Contact writes carry mailbox and explicit review permissions", async () =>
 {
     using var http = new HttpClient(new Handler(async (request, ct) =>
     {
@@ -366,6 +366,159 @@ AsyncTest("A first mailbox is created without local identity secrets", async () 
     }));
     using var client = new PostboxClient(http, new Tokens());
     Equal(await client.CreateMailboxAsync(default), "/k/new");
+});
+AsyncTest("Open-only keeps a local conversation without sending or granting trust", async () =>
+{
+    var service = new WrappedService();
+    using var vm = new InboxViewModel(service);
+    await vm.InitializeAsync();
+    await vm.StartConversationAsync("new-person", "");
+    Equal(vm.SelectedConversation!.Peer, "/new-person/main");
+    Equal(service.SendCount, 0); Equal(vm.Messages.Count, 0);
+    Check(vm.SelectedConversation.Contact is null, "Opening granted known-sender status.");
+    await vm.RefreshAsync(); Equal(vm.SelectedConversation.Peer, "/new-person/main");
+    vm.Draft = "local draft";
+    var main = vm.SelectedMailbox!;
+    await vm.SwitchMailboxAsync(vm.Mailboxes[1]);
+    Check(vm.Conversations.All(c => c.Peer != "/new-person/main"), "Local conversation leaked to another mailbox.");
+    await vm.SwitchMailboxAsync(main);
+    Equal(vm.SelectedConversation!.Peer, "/new-person/main"); Equal(vm.Draft, "local draft");
+});
+AsyncTest("A failed first message remains selected with its draft and delivery state", async () =>
+{
+    var service = new WrappedService { FailSend = true };
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    await vm.StartConversationAsync("/new-person/main", "keep my first message");
+    Equal(vm.SelectedConversation!.Peer, "/new-person/main"); Equal(vm.Draft, "keep my first message");
+    Equal(vm.Messages.Single().Status, DeliveryStatus.Failed); Equal(service.SendCount, 1);
+    await vm.RefreshAsync(); Equal(vm.Draft, "keep my first message"); Equal(service.SendCount, 1);
+});
+AsyncTest("Opening an existing draft does not send it without review", async () =>
+{
+    var service = new WrappedService(); using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    var peer = vm.SelectedConversation!.Peer; vm.Draft = "saved draft";
+    await vm.StartConversationAsync(peer, "new text");
+    Equal(service.SendCount, 0); Check(vm.Draft.Contains("saved draft") && vm.Draft.Contains("new text"), "Draft text lost.");
+    Check(vm.HasError, "Combined draft needs review.");
+});
+AsyncTest("Empty subjects and owned addresses remain discoverable", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
+    await vm.StartConversationAsync("/k/preview-team", "");
+    Equal(vm.SelectedConversation!.Peer, "/preview/team"); Check(vm.SelectedConversation.IsMine, "Own mailbox not recognized.");
+    await vm.CreateSubjectAsync("Empty subject");
+    Equal(vm.SubjectTitle, "Empty subject"); Equal(vm.Messages.Count, 0);
+    var rows = ConversationBuilder.Build(new([], [new("empty", "/some/agent", "Empty")], [], new HashSet<string>()), [], [], new("/k/main"));
+    Equal(rows.Single().Peer, "/some/agent");
+});
+AsyncTest("Late first-send completion cannot clear or replace another mailbox draft", async () =>
+{
+    var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var service = new WrappedService { BeforeSend = async () => { started.SetResult(); await release.Task; } };
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    var sending = vm.StartConversationAsync("/new/person", "first body"); await started.Task;
+    await vm.SwitchMailboxAsync(vm.Mailboxes[1]); vm.Draft = "team draft";
+    release.SetResult(); await sending;
+    Equal(vm.SelectedMailbox!.Key, "/preview/team"); Equal(vm.Draft, "team draft");
+    Check(vm.Messages.All(m => m.Id.StartsWith("team-")), "Late send appeared in the wrong mailbox.");
+});
+AsyncTest("Repeated switching preserves each selected subject, draft and context generation", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
+    var main = vm.Mailboxes[0]; var team = vm.Mailboxes[1];
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release")); vm.Draft = "release draft";
+    var version = vm.ContextVersion;
+    for (var i = 0; i < 6; i++)
+    {
+        await vm.SwitchMailboxAsync(team); vm.Draft = "team draft";
+        Check(vm.ContextVersion > version, "Context did not invalidate deferred UI work."); version = vm.ContextVersion;
+        await vm.SwitchMailboxAsync(main); Equal(vm.SelectedSubject!.Id, "design-release"); Equal(vm.Draft, "release draft");
+        Check(vm.Messages.All(m => m.Id == "release-1"), "Subject crossed mailboxes.");
+    }
+});
+AsyncTest("Long-history find retains context and its selected match across refresh", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService(longHistory: true)); await vm.InitializeAsync();
+    Equal(vm.Messages.Count, 38);
+    vm.Find = "History message"; Equal(vm.CurrentMatch!.Id, "history-1");
+    Equal(vm.FindSummary, "1 of 35"); vm.MoveMatch(7); Equal(vm.CurrentMatch!.Id, "history-8");
+    var notifications = 0; vm.PropertyChanged += (_, e) => { if (e.PropertyName == nameof(vm.CurrentMatch)) notifications++; };
+    await vm.RefreshAsync(background: true);
+    Equal(vm.CurrentMatch!.Id, "history-8"); Equal(notifications, 0);
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release")); Equal(vm.Messages.Count, 1);
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-general"));
+    Equal(vm.Find, ""); Equal(vm.Messages.Count, 38);
+});
+AsyncTest("Known sender does not grant requests; full grants exclude forbidden and unknown verbs", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
+    var peer = vm.SelectedConversation!.Peer;
+    await vm.SaveContactAsync(peer, true, "Design", false, []);
+    Equal(vm.SelectedConversation!.Contact!.Autonomy, "review");
+    await vm.SaveContactAsync(peer, true, "Design", false, ["run_tests", "read_file", "deploy", "invented"]);
+    Equal(vm.SelectedConversation!.Contact!.Autonomy, "auto");
+    Check(vm.SelectedConversation.Contact.AllowedVerbs!.SequenceEqual(new[] { "run_tests", "read_file" }), "Unexpected request permission granted.");
+    await vm.SaveContactAsync(peer, true, "Design", true, vm.GrantableVerbs);
+    Equal(vm.SelectedConversation!.Contact!.Admission, "block"); Equal(vm.SelectedConversation.Contact.Autonomy, "review");
+    Equal(vm.SelectedConversation.Contact.AllowedVerbs!.Count, 0);
+    await vm.SaveContactAsync(peer, true, "Design", false, []);
+    Equal(vm.SelectedConversation!.Contact!.Autonomy, "review");
+});
+AsyncTest("Removing an exact contact reverts to namespace policy", async () =>
+{
+    var service = new PreviewInboxService();
+    await service.SetContactAsync("/k/preview-main", new("/preview/*", "Fleet", "allow", "review", []), default);
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    var peer = vm.SelectedConversation!.Peer;
+    await vm.SaveContactAsync(peer, false, null, false, []);
+    Equal(vm.SelectedConversation!.Contact!.Peer, "/preview/*");
+    Check(vm.ExactContact(peer) is null, "Exact contact not removed.");
+});
+AsyncTest("Deleting a subject removes only its messages and draft in the active mailbox", async () =>
+{
+    using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release")); vm.Draft = "discard with subject";
+    await vm.DeleteSubjectAsync();
+    Check(vm.Subjects.All(s => s.Id != "design-release"), "Deleted subject retained.");
+    Check(vm.SelectedConversation!.Messages.All(m => m.Id != "release-1"), "Deleted mail retained.");
+    Equal(vm.Messages.Count, 3); Equal(vm.Draft, "");
+    await vm.SwitchMailboxAsync(vm.Mailboxes[1]); Equal(vm.Messages.Single().Id, "team-1");
+});
+AsyncTest("Contact removal and subject deletion use scoped Apple API contracts", async () =>
+{
+    var calls = 0;
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        calls++;
+        if (request.Method == HttpMethod.Put)
+        {
+            using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Equal(request.RequestUri!.AbsolutePath, "/v1/contacts");
+            Equal(json.RootElement.GetProperty("identity").GetString(), "/k/test");
+            Equal(json.RootElement.GetProperty("peer").GetString(), "/peer/main");
+            Check(json.RootElement.GetProperty("remove").GetBoolean(), "Missing removal flag.");
+        }
+        else
+        {
+            Equal(request.Method, HttpMethod.Delete);
+            Check(request.RequestUri!.AbsolutePath.Contains("thread%2Fid"), "Thread identifier not escaped.");
+            Check(request.RequestUri.Query.Contains("%2Fk%2Ftest"), "Mailbox not scoped.");
+            Check(request.Content is null, "DELETE should not carry a JSON body.");
+        }
+        return Json(HttpStatusCode.OK, "{}");
+    }));
+    using var client = new PostboxClient(http, new Tokens());
+    await client.RemoveContactAsync("/k/test", "/peer/main", default);
+    await client.DeleteThreadAsync("/k/test", "thread/id", default); Equal(calls, 2);
+});
+AsyncTest("Contact vocabulary is decoded and conflicting forbidden verbs cannot be offered", async () =>
+{
+    using var http = new HttpClient(new Handler((request, _) => Task.FromResult(Json(HttpStatusCode.OK,
+        request.RequestUri!.AbsolutePath == "/v1/contacts" ? "{\"contacts\":[],\"vocabulary\":{\"grantable\":[\"read_file\",\"deploy\"],\"never_auto\":[\"deploy\"]}}" : "{}"))));
+    using var client = new PostboxClient(http, new Tokens());
+    var snapshot = await client.LoadAsync("/k/test", default);
+    Equal(snapshot.Vocabulary!.SafeGrants.Single(), "read_file");
 });
 tests.AddRange(AccountTests.All());
 var failed = 0;
@@ -396,6 +549,7 @@ sealed class WrappedService : IInboxService
     private readonly PreviewInboxService inner = new();
     public Func<string, CancellationToken, Task>? BeforeLoad { get; set; }
     public bool FailSend { get; init; }
+    public Func<Task>? BeforeSend { get; init; }
     public int SendCount { get; private set; }
     public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken token) => inner.GetMailboxesAsync(token);
     public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken token)
@@ -404,12 +558,17 @@ sealed class WrappedService : IInboxService
         // Deliberately ignore cancellation: view-state guards must also handle a late response.
         return await inner.LoadAsync(identity, CancellationToken.None);
     }
-    public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? thread, CancellationToken token)
+    public async Task<SendReceipt> SendAsync(string identity, string peer, string body, string? thread, CancellationToken token)
     {
         SendCount++;
-        return FailSend ? Task.FromException<SendReceipt>(new HttpRequestException("uncertain delivery")) : inner.SendAsync(identity, peer, body, thread, token);
+        if (BeforeSend is { } before) await before();
+        if (FailSend) throw new HttpRequestException("uncertain delivery");
+        return await inner.SendAsync(identity, peer, body, thread, CancellationToken.None);
     }
     public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken token) => inner.CreateThreadAsync(identity, peer, title, token);
     public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken token) => inner.SetArchivedAsync(identity, peer, archived, token);
     public Task AcknowledgeAsync(string identity, string id, CancellationToken token) => inner.AcknowledgeAsync(identity, id, token);
+    public Task SetContactAsync(string identity, Contact contact, CancellationToken token) => inner.SetContactAsync(identity, contact, token);
+    public Task RemoveContactAsync(string identity, string peer, CancellationToken token) => inner.RemoveContactAsync(identity, peer, token);
+    public Task DeleteThreadAsync(string identity, string id, CancellationToken token) => inner.DeleteThreadAsync(identity, id, token);
 }

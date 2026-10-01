@@ -10,27 +10,102 @@ public sealed partial class MainWindow
 {
     private async void Contact_Click(object sender, RoutedEventArgs e)
     {
-        if (dialogOpen || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
+        if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedConversation is not { } conversation) return;
         dialogOpen = true;
+        Mailbox? switchTo = null;
         try
         {
-            var original = conversation.Contact ?? new Contact(conversation.Peer, null, "allow", "review", []);
-            var alias = new TextBox { Header = "Display name", Text = original.Alias ?? "", MaxLength = 200 };
-            var blocked = new CheckBox { Content = "Block this sender", IsChecked = original.Admission == "block" };
-            var panel = new StackPanel { Spacing = 16 };
+            var original = conversation.Contact;
+            var own = ViewModel.OwnMailbox(conversation.Peer);
+            var alias = new TextBox { Header = "Display name", Text = original?.Alias ?? "", MaxLength = 200 };
+            var known = new CheckBox { Content = "Known sender", IsChecked = original is not null };
+            var blocked = new CheckBox { Content = "Block this sender", IsChecked = original?.Admission == "block" };
+            var full = new CheckBox { Content = "Full permissions" };
+            var choices = ViewModel.GrantableVerbs.Select(verb => new CheckBox
+            {
+                Content = verb, Tag = verb, IsChecked = original?.Autonomy == "auto" && original.AllowedVerbs?.Contains(verb) == true
+            }).ToArray();
+            var panel = new StackPanel { Spacing = 12, MaxWidth = 480 };
             panel.Children.Add(new TextBlock { Text = conversation.Peer, IsTextSelectionEnabled = true, TextWrapping = TextWrapping.Wrap });
+            var copy = new Button { Content = "Copy address" };
+            copy.Click += (_, _) => CopyText(conversation.Peer);
+            panel.Children.Add(copy);
+            if (own is not null) panel.Children.Add(new TextBlock { Text = "This is one of your mailboxes.", TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(alias);
+            panel.Children.Add(known);
+            panel.Children.Add(full);
+            panel.Children.Add(new TextBlock { Text = "Choose which requests can run automatically:", TextWrapping = TextWrapping.Wrap });
+            foreach (var choice in choices) panel.Children.Add(choice);
+            if (choices.Length == 0) panel.Children.Add(new TextBlock { Text = "No grantable requests were returned by the postbox.", TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(blocked);
-            panel.Children.Add(new TextBlock { Text = "Blocking refuses future mail from this sender. Existing request permissions stay unchanged. Manage detailed permissions in the web inbox.", TextWrapping = TextWrapping.Wrap });
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Contact settings", Content = panel, PrimaryButtonText = "Save", CloseButtonText = "Cancel" };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            await postbox.SetContactAsync(mailbox.Address, original with { Peer = conversation.Peer, Alias = alias.Text.Trim(), Admission = blocked.IsChecked == true ? "block" : "allow" }, lifetime.Token);
-            if (ViewModel.SelectedMailbox?.Address == mailbox.Address) await ViewModel.RefreshAsync();
-            AccountStatus.Text = "Contact updated.";
+            panel.Children.Add(new TextBlock { Text = "Known senders still need permission to run requests. Blocking clears all automatic permissions.", TextWrapping = TextWrapping.Wrap });
+            if (ViewModel.NeverAutoVerbs.Count > 0) panel.Children.Add(new TextBlock
+            {
+                Text = "Always held for approval: " + string.Join(", ", ViewModel.NeverAutoVerbs), TextWrapping = TextWrapping.Wrap
+            });
+            panel.Children.Add(new TextBlock
+            {
+                Text = original is null ? "No contact rule exists for this sender."
+                    : original.IsWildcard ? $"Inherited from {original.Peer}. Saving creates an exact rule for this address. Removing an exact rule falls back to the namespace rule."
+                    : "Exact address rule. Removing it falls back to any namespace rule.", TextWrapping = TextWrapping.Wrap
+            });
+            if (conversation.Messages.LastOrDefault(m => !m.IsOutgoing) is { } incoming)
+                panel.Children.Add(new TextBlock { Text = $"Latest incoming request: {incoming.Autonomy ?? "review"}" +
+                    (incoming.HeldBecause is { } reason ? $" ({reason})" : ""), TextWrapping = TextWrapping.Wrap });
+            var error = new TextBlock { TextWrapping = TextWrapping.Wrap };
+            panel.Children.Add(error);
+            var changing = false;
+            void UpdatePermissions()
+            {
+                if (changing) return;
+                changing = true;
+                var enabled = known.IsChecked == true && blocked.IsChecked != true;
+                full.IsEnabled = enabled && choices.Length > 0;
+                foreach (var choice in choices) choice.IsEnabled = enabled;
+                full.IsChecked = enabled && choices.Length > 0 && choices.All(c => c.IsChecked == true);
+                changing = false;
+            }
+            full.Click += (_, _) =>
+            {
+                changing = true;
+                foreach (var choice in choices) choice.IsChecked = full.IsChecked == true;
+                changing = false;
+                UpdatePermissions();
+            };
+            known.Click += (_, _) => UpdatePermissions();
+            blocked.Click += (_, _) => UpdatePermissions();
+            foreach (var choice in choices) choice.Click += (_, _) => UpdatePermissions();
+            UpdatePermissions();
+            var dialog = new ContentDialog
+            {
+                XamlRoot = Root.XamlRoot, Title = "Sender details", Content = new ScrollViewer { Content = panel, MaxHeight = 440 },
+                PrimaryButtonText = "Save", CloseButtonText = "Cancel",
+                SecondaryButtonText = own is not null && own.Address != ViewModel.SelectedMailbox?.Address ? "Open this mailbox" : ""
+            };
+            while (true)
+            {
+                var result = await dialog.ShowAsync();
+                if (result == ContentDialogResult.Secondary) { switchTo = own; break; }
+                if (result != ContentDialogResult.Primary) break;
+                if (blocked.IsChecked == true && original?.Admission != "block")
+                {
+                    var confirm = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Block this sender?",
+                        Content = "Future mail will be refused and all automatic request permissions will be removed.",
+                        PrimaryButtonText = "Block sender", CloseButtonText = "Cancel" };
+                    if (await confirm.ShowAsync() != ContentDialogResult.Primary) continue;
+                }
+                if (await ViewModel.SaveContactAsync(conversation.Peer, known.IsChecked == true, alias.Text,
+                    blocked.IsChecked == true, choices.Where(c => c.IsChecked == true).Select(c => (string)c.Tag))) break;
+                error.Text = ViewModel.Error ?? "Could not update this sender. Please try again.";
+            }
         }
-        catch (OperationCanceledException) { }
-        catch (Exception ex) { AccountStatus.Text = ex is PostboxException ? ex.Message : "Could not update this contact. Please try again."; }
         finally { dialogOpen = false; }
+        // Complete the native dialog teardown before replacing its mailbox-bound content.
+        if (switchTo is not null)
+        {
+            await ViewModel.SwitchMailboxAsync(switchTo);
+            await ViewModel.AcknowledgeSelectedAsync();
+        }
     }
 
     private async void Attach_Click(object sender, RoutedEventArgs e)

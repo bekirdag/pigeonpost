@@ -17,6 +17,8 @@ try {
     $buildRoot = Join-Path $PSScriptRoot "artifacts/$Architecture/$buildId"
     $publish = Join-Path $buildRoot 'publish'
     $runtime = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
+    $version = ([xml](Get-Content Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    if (-not $version) { throw 'Desktop version must be set before packaging.' }
     New-Item -ItemType Directory -Path $publish -Force | Out-Null
 
     & dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c $Configuration
@@ -46,6 +48,7 @@ try {
         } finally { $source.Dispose() }
 
         $manifest = Get-Content -LiteralPath 'Packaging/Package.appxmanifest' -Raw
+        if (([xml]$manifest).Package.Identity.Version -ne "$version.0") { throw 'Assembly and MSIX versions must agree.' }
         $manifest = $manifest.Replace('__ARCH__', $Architecture.ToLowerInvariant())
         [System.IO.File]::WriteAllText((Join-Path $publish 'AppxManifest.xml'), $manifest, [System.Text.UTF8Encoding]::new($false))
 
@@ -56,13 +59,13 @@ try {
             ForEach-Object { Join-Path $_.FullName 'x64/makeappx.exe' } |
             Where-Object { Test-Path -LiteralPath $_ } | Select-Object -First 1
         if (-not $makeAppx) { throw 'Install the Windows SDK (including MakeAppx) to create an MSIX.' }
-        $packagePath = Join-Path $buildRoot "Pigeonpost-1.0.0-$runtime.msix"
+        $packagePath = Join-Path $buildRoot "Pigeonpost-$version-$runtime.msix"
         & $makeAppx pack /d $publish /p $packagePath /o
         if ($LASTEXITCODE -ne 0) { throw 'MSIX validation/packaging failed.' }
         Write-Host "Store upload package (Microsoft signs after certification): $packagePath"
     }
 
-    $zip = Join-Path $buildRoot "Pigeonpost-1.0.0-$runtime.zip"
+    $zip = Join-Path $buildRoot "Pigeonpost-$version-$runtime.zip"
     Compress-Archive -Path (Join-Path $publish '*') -DestinationPath $zip
     Write-Host "Executable: $(Join-Path $publish 'Pigeonpost.exe')"
     Write-Host "Test archive: $zip"

@@ -3,10 +3,11 @@ namespace Pigeonpost.Core;
 public static class ConversationBuilder
 {
     public static IReadOnlyList<Conversation> Build(InboxSnapshot snapshot, IReadOnlyList<PendingMessage> pending,
-        IReadOnlyList<Mailbox> mailboxes, Mailbox acting)
+        IReadOnlyList<Mailbox> mailboxes, Mailbox acting, IEnumerable<string>? opened = null)
     {
         var aliases = Aliases(snapshot.Messages);
-        string Key(string peer) => aliases.GetValueOrDefault(peer, peer);
+        foreach (var mailbox in mailboxes) aliases[mailbox.Address] = mailbox.Key;
+        string Key(string peer) => PostAddress.Canonical(aliases.GetValueOrDefault(peer, peer));
         var groups = new Dictionary<string, List<ThreadMessage>>(StringComparer.Ordinal);
         List<ThreadMessage> Group(string peer)
         {
@@ -30,6 +31,8 @@ public static class ConversationBuilder
             Group(p.To).Add(new ThreadMessage(p.Id, p.Body, p.At, p.ThreadId, true, Status: p.Status));
         }
         foreach (var contact in snapshot.Contacts.Where(c => !c.IsWildcard)) Group(contact.Peer);
+        foreach (var thread in snapshot.Threads) Group(thread.Peer);
+        foreach (var peer in opened ?? []) Group(peer);
 
         return groups.Select(pair =>
         {
@@ -48,7 +51,7 @@ public static class ConversationBuilder
         var groups = conversation.Messages.GroupBy(m => m.ThreadId ?? "", StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => new Subject(g.Key, null, g.Key.Length == 0, g.ToArray(), g.Max(m => m.At)), StringComparer.Ordinal);
         var aliases = Aliases(snapshot.Messages);
-        foreach (var t in snapshot.Threads.Where(t => aliases.GetValueOrDefault(t.Peer, t.Peer) == conversation.Peer))
+        foreach (var t in snapshot.Threads.Where(t => PostAddress.Canonical(aliases.GetValueOrDefault(t.Peer, t.Peer)) == conversation.Peer))
         {
             groups.TryGetValue(t.ThreadId, out var current);
             groups[t.ThreadId] = new Subject(t.ThreadId, t.Title, t.IsDefault == true, current?.Messages ?? [],
@@ -66,7 +69,7 @@ public static class ConversationBuilder
 
     public static Contact? FindContact(string peer, IReadOnlyList<Contact> contacts)
     {
-        var exact = contacts.FirstOrDefault(c => c.Peer == peer);
+        var exact = contacts.FirstOrDefault(c => PostAddress.Canonical(c.Peer) == PostAddress.Canonical(peer));
         if (exact is not null) return exact;
         var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length >= 2 ? contacts.FirstOrDefault(c => c.Peer == $"/{parts[0]}/*") : null;

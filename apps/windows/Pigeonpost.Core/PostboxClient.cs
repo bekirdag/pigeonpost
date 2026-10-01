@@ -59,7 +59,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
         var archive = ReadAsync<ArchiveResponse>(WithIdentity("/v1/archive", identity), cancellationToken);
         await Task.WhenAll(inbox, threads, contacts, archive).ConfigureAwait(false);
         return new InboxSnapshot((await inbox).Messages ?? [], (await threads).Threads ?? [],
-            (await contacts).Contacts ?? [], new HashSet<string>((await archive).Archived ?? [], StringComparer.Ordinal));
+            (await contacts).Contacts ?? [], new HashSet<string>((await archive).Archived ?? [], StringComparer.Ordinal), (await contacts).Vocabulary);
     }
 
     public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken cancellationToken) =>
@@ -79,6 +79,15 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
         {
             identity, contact.Peer, contact.Alias, contact.Admission, contact.Autonomy, contact.AllowedVerbs
         }, cancellationToken);
+
+    public Task RemoveContactAsync(string identity, string peer, CancellationToken cancellationToken) =>
+        WriteWithoutResponseAsync(HttpMethod.Put, "/v1/contacts", new { identity, peer, remove = true }, cancellationToken);
+
+    public async Task DeleteThreadAsync(string identity, string threadId, CancellationToken cancellationToken)
+    {
+        using var response = await RequestAsync(HttpMethod.Delete,
+            WithIdentity("/v1/threads/" + Uri.EscapeDataString(threadId), identity), null, cancellationToken).ConfigureAwait(false);
+    }
 
     public async Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken cancellationToken)
     {
@@ -182,7 +191,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     private sealed record IdentitiesResponse(IReadOnlyList<IdentityRow>? Identities);
     private sealed record WhoAmI(string? Handle);
     private sealed record ThreadsResponse(IReadOnlyList<ServerThread>? Threads);
-    private sealed record ContactsResponse(IReadOnlyList<Contact>? Contacts);
+    private sealed record ContactsResponse(IReadOnlyList<Contact>? Contacts, Vocabulary? Vocabulary);
     private sealed record ArchiveResponse(IReadOnlyList<string>? Archived);
     private sealed record OpenedThread(string ThreadId);
     private sealed record ErrorResponse(string? Error);
