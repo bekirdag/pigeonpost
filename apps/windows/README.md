@@ -7,11 +7,14 @@ Locker; access tokens and message history stay in memory. The app never executes
 ## Features
 
 - Live mailbox and conversation selection, subject organization, search and unread/held indicators.
-- Text messages, new conversations, per-subject drafts, archive/restore and automatic refresh.
+- New conversations can open without a message or send a first message; failed sends retain the draft.
+- Per-subject drafts, confirmed subject deletion, archive/restore and automatic refresh.
 - Free first-mailbox creation; existing named mailboxes load from the same account.
 - File sending (up to 25 MiB), explicit Save attachments from the message context menu.
-- Contact display names and sender blocking, preserving existing server-owned request permissions.
-- Account management, detailed permissions and optional handle purchases through the web inbox.
+- Clickable sender names/addresses, sender and own-address clipboard actions, and full handle labels.
+- Known sender, full/specific server-defined request permissions, and confirmed blocking that clears grants.
+- Sender details close before switching to another owned mailbox. Find highlights words and retains its match across refresh.
+- Account management and optional handle purchases through the web inbox; visible app version in the window.
 
 No offline message database, tray, push notifications or rich Markdown rendering is included.
 Unsent drafts are discarded on sign-out or app exit. Store availability is tracked in STORE.md;
@@ -62,6 +65,9 @@ data and are uploaded separately from Store packages.
 | Send a file | Attach file |
 | Save received files | Message context menu → Save attachments |
 | Contact settings or archive | Conversation actions menu |
+| Sender details | Click the conversation name or address |
+| Copy peer address | Copy address beside the heading or conversation context menu |
+| Delete subject | Delete subject, then confirm |
 | Account / sign out | Bottom bar |
 
 ## Authentication deployment

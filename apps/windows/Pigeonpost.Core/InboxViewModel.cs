@@ -29,7 +29,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     public bool CanDeleteSubject => CanCompose && !string.IsNullOrEmpty(SelectedSubject?.Id);
     public IReadOnlyList<string> GrantableVerbs => snapshot.Vocabulary?.SafeGrants ?? [];
     public IReadOnlyList<string> NeverAutoVerbs => snapshot.Vocabulary?.NeverAuto ?? [];
-    public Contact? ExactContact(string peer) => snapshot.Contacts.FirstOrDefault(c => c.Peer == peer);
+    public Contact? ExactContact(string peer) => snapshot.Contacts.FirstOrDefault(c => !c.IsWildcard
+        && ConversationBuilder.ResolvePeer(c.Peer, snapshot, Mailboxes) == ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes));
     public Mailbox? OwnMailbox(string peer) => Mailboxes.FirstOrDefault(m => m.Address == peer || PostAddress.Canonical(m.Key) == PostAddress.Canonical(peer));
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];
@@ -205,7 +206,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         {
             ReplacePending(row with { Status = DeliveryStatus.Failed });
             if (generation != mailboxVersion || disposed) return;
-            if (ex is not OperationCanceledException) Error = Describe(ex);
+            if (ex is not OperationCanceledException) Error = ex is PostboxException ? Describe(ex)
+                : "Delivery could not be confirmed. Check this conversation before trying again.";
             Rebuild();
         }
         finally { if (!disposed && generation == mailboxVersion) IsSending = false; }
@@ -221,10 +223,10 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
             return;
         }
         // Opening is local. It does not create a contact or grant the sender any permissions.
-        peer = OwnMailbox(peer)?.Key ?? peer;
+        peer = ConversationBuilder.ResolvePeer(peer, snapshot, Mailboxes);
         if (!opened.TryGetValue(mailbox.Address, out var peers)) opened[mailbox.Address] = peers = [];
         peers.Add(peer);
-        ShowArchived = snapshot.Archived.Contains(peer);
+        ShowArchived = snapshot.Archived.Any(p => ConversationBuilder.ResolvePeer(p, snapshot, Mailboxes) == peer);
         SenderSearch = "";
         Rebuild();
         SelectConversation(Conversations.FirstOrDefault(c => c.Peer == peer));
@@ -262,6 +264,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
     {
         if (SelectedMailbox is not { } mailbox) return false;
         var generation = mailboxVersion;
+        peer = ExactContact(peer)?.Peer ?? peer;
         try
         {
             if (!known && !blocked) await service.RemoveContactAsync(mailbox.Address, peer, mailboxScope.Token);
@@ -332,7 +335,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         var remembered = SelectedMailbox is { } mailbox ? selections.GetValueOrDefault(mailbox.Address) : default;
         var peer = SelectedConversation?.Peer ?? remembered.Peer;
         var subject = SelectedSubject?.Id ?? remembered.Subject;
-        Conversations = allConversations.Where(c => snapshot.Archived.Contains(c.Peer) == ShowArchived
+        var archived = snapshot.Archived.Select(p => ConversationBuilder.ResolvePeer(p, snapshot, Mailboxes)).ToHashSet(StringComparer.Ordinal);
+        Conversations = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
             && (string.IsNullOrWhiteSpace(SenderSearch) || c.Name.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase)
                 || c.Peer.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
         Changed(nameof(Conversations));
@@ -346,7 +350,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
         var previousSubject = SelectedSubject?.Id;
         SelectedConversation = conversation;
-        Subjects = ConversationBuilder.Subjects(conversation, snapshot);
+        Subjects = ConversationBuilder.Subjects(conversation, snapshot, Mailboxes);
         SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
         if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
         Changed(nameof(SelectedConversation));

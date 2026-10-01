@@ -20,7 +20,7 @@ public sealed partial class MainWindow : Window
     private bool dialogOpen;
     private int messageContext = -1;
     private int scrollVersion;
-    private readonly HashSet<TextBlock> messageBodies = [];
+    private readonly Dictionary<TextBlock, long> messageBodies = [];
     public string BuildLabel => "Pigeonpost " + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
 
     public MainWindow()
@@ -235,7 +235,7 @@ public sealed partial class MainWindow : Window
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(InboxViewModel.Find))
-            foreach (var body in messageBodies) HighlightBody(body);
+            foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
             QueueScroll(match, leading: true, select: true);
         if (e.PropertyName != nameof(InboxViewModel.Messages)) return;
@@ -250,13 +250,15 @@ public sealed partial class MainWindow : Window
     private void MessageBody_Loaded(object sender, RoutedEventArgs e)
     {
         if (sender is not TextBlock body) return;
-        messageBodies.Add(body);
+        if (!messageBodies.ContainsKey(body))
+            messageBodies[body] = body.RegisterPropertyChangedCallback(TextBlock.TextProperty, (sender, _) => HighlightBody((TextBlock)sender));
         HighlightBody(body);
     }
 
     private void MessageBody_Unloaded(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBlock body) messageBodies.Remove(body);
+        if (sender is TextBlock body && messageBodies.Remove(body, out var token))
+            body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
     }
 
     private void HighlightBody(TextBlock body)

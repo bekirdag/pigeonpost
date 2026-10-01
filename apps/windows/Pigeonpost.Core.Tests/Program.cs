@@ -520,6 +520,32 @@ AsyncTest("Contact vocabulary is decoded and conflicting forbidden verbs cannot 
     var snapshot = await client.LoadAsync("/k/test", default);
     Equal(snapshot.Vocabulary!.SafeGrants.Single(), "read_file");
 });
+AsyncTest("Canonical contact edits remove the actual existing namespace address rule", async () =>
+{
+    var service = new PreviewInboxService();
+    await service.SetContactAsync("/k/preview-main", new("/person", "Person", "allow", "auto", ["run_tests"]), default);
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    await vm.StartConversationAsync("/person", "");
+    Equal(vm.ExactContact("/person/main")!.Peer, "/person");
+    await vm.SaveContactAsync("/person/main", false, null, false, []);
+    Check(vm.SelectedConversation!.Contact is null, "Removal targeted an alias instead of the exact stored rule.");
+});
+Test("Identity-address rules outrank wildcard rules after handle resolution", () =>
+{
+    var snapshot = new InboxSnapshot(
+        [new() { MessageId = "one", Body = "hello", Peer = "/k/agent", PeerHandle = "/fleet/agent", From = "/k/agent" }], [],
+        [new("/k/agent", "Blocked", "block", "review"), new("/fleet/*", null, "allow", "auto", ["run_tests"])], new HashSet<string>());
+    var row = ConversationBuilder.Build(snapshot, [], [], new("/k/main")).Single();
+    Equal(row.Contact!.Admission, "block"); Equal(row.Contact.Peer, "/k/agent");
+});
+Test("An empty owned-mailbox subject resolves its identity address without history", () =>
+{
+    var mailboxes = new Mailbox[] { new("/k/main", "/owner/main"), new("/k/team", "/owner/team") };
+    var snapshot = new InboxSnapshot([], [new("own-empty", "/k/team", "Empty owned subject")], [], new HashSet<string>());
+    var conversation = ConversationBuilder.Build(snapshot, [], mailboxes, mailboxes[0]).Single();
+    Equal(conversation.Peer, "/owner/team");
+    Equal(ConversationBuilder.Subjects(conversation, snapshot, mailboxes).Single().Id, "own-empty");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)

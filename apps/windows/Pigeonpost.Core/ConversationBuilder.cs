@@ -37,7 +37,8 @@ public static class ConversationBuilder
         return groups.Select(pair =>
         {
             var own = mailboxes.FirstOrDefault(m => Key(m.Key) == pair.Key || Key(m.Address) == pair.Key);
-            var contact = FindContact(pair.Key, snapshot.Contacts);
+            var contact = snapshot.Contacts.FirstOrDefault(c => !c.IsWildcard && Key(c.Peer) == pair.Key)
+                ?? FindContact(pair.Key, snapshot.Contacts);
             var name = own is not null ? (own.Handle is { } handle ? DisplayName(handle) : own.DisplayName)
                 : string.IsNullOrWhiteSpace(contact?.Alias) ? DisplayName(pair.Key) : contact.Alias;
             var messages = pair.Value.OrderBy(m => m.At).ThenBy(m => m.Id, StringComparer.Ordinal).ToArray();
@@ -45,12 +46,13 @@ public static class ConversationBuilder
         }).OrderByDescending(c => c.Last).ThenBy(c => c.Name, StringComparer.OrdinalIgnoreCase).ToArray();
     }
 
-    public static IReadOnlyList<Subject> Subjects(Conversation? conversation, InboxSnapshot snapshot)
+    public static IReadOnlyList<Subject> Subjects(Conversation? conversation, InboxSnapshot snapshot, IReadOnlyList<Mailbox>? mailboxes = null)
     {
         if (conversation is null) return [];
         var groups = conversation.Messages.GroupBy(m => m.ThreadId ?? "", StringComparer.Ordinal)
             .ToDictionary(g => g.Key, g => new Subject(g.Key, null, g.Key.Length == 0, g.ToArray(), g.Max(m => m.At)), StringComparer.Ordinal);
         var aliases = Aliases(snapshot.Messages);
+        foreach (var mailbox in mailboxes ?? []) aliases[mailbox.Address] = mailbox.Key;
         foreach (var t in snapshot.Threads.Where(t => PostAddress.Canonical(aliases.GetValueOrDefault(t.Peer, t.Peer)) == conversation.Peer))
         {
             groups.TryGetValue(t.ThreadId, out var current);
@@ -73,6 +75,12 @@ public static class ConversationBuilder
         if (exact is not null) return exact;
         var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries);
         return parts.Length >= 2 ? contacts.FirstOrDefault(c => c.Peer == $"/{parts[0]}/*") : null;
+    }
+
+    public static string ResolvePeer(string peer, InboxSnapshot snapshot, IReadOnlyList<Mailbox> mailboxes)
+    {
+        var own = mailboxes.FirstOrDefault(m => m.Address == peer);
+        return PostAddress.Canonical(own?.Key ?? Aliases(snapshot.Messages).GetValueOrDefault(peer, peer));
     }
 
     private static Dictionary<string, string> Aliases(IReadOnlyList<InboxMessage> messages)
