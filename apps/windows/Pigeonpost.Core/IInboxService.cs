@@ -8,6 +8,9 @@ public interface IInboxService
     Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken cancellationToken);
     Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken cancellationToken);
     Task AcknowledgeAsync(string identity, string messageId, CancellationToken cancellationToken);
+    Task SetContactAsync(string identity, Contact contact, CancellationToken cancellationToken);
+    Task RemoveContactAsync(string identity, string peer, CancellationToken cancellationToken);
+    Task DeleteThreadAsync(string identity, string threadId, CancellationToken cancellationToken);
 }
 
 public interface IAccessTokenProvider

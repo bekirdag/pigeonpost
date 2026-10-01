@@ -44,6 +44,9 @@ public static class PostAddress
         return value.StartsWith('/') ? value : "/" + value;
     }
 
+    public static string Canonical(string peer) => peer.StartsWith('/') && peer.Count(c => c == '/') == 1
+        && !peer.Contains('@') ? peer + "/main" : peer;
+
     // Typing guard; the server applies the full address grammar and routing rules.
     public static bool IsValid(string peer)
     {
@@ -88,8 +91,13 @@ public sealed record Contact(string Peer, string? Alias, string Admission, strin
 public sealed record ServerThread(string ThreadId, string Peer, string? Title = null, bool? IsDefault = null,
     long? CreatedAt = null, long? LastAt = null, bool? Archived = null);
 public sealed record SendReceipt(string? MessageId, string? SentCopyId);
+public sealed record Vocabulary(IReadOnlyList<string>? Grantable = null, IReadOnlyList<string>? NeverAuto = null)
+{
+    public IReadOnlyList<string> SafeGrants => (Grantable ?? []).Except(NeverAuto ?? [], StringComparer.Ordinal).Distinct(StringComparer.Ordinal).ToArray();
+}
+
 public sealed record InboxSnapshot(IReadOnlyList<InboxMessage> Messages, IReadOnlyList<ServerThread> Threads,
-    IReadOnlyList<Contact> Contacts, IReadOnlySet<string> Archived)
+    IReadOnlyList<Contact> Contacts, IReadOnlySet<string> Archived, Vocabulary? Vocabulary = null)
 {
     public static InboxSnapshot Empty { get; } = new([], [], [], new HashSet<string>(StringComparer.Ordinal));
 }

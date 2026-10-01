@@ -11,7 +11,7 @@
                 <Border HorizontalAlignment="Left" MaxWidth="640" Margin="12,5,64,5" Padding="16,12" CornerRadius="12"
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind DisplayBody}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
+                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
                         <TextBlock Text="{x:Bind AttachmentSummary}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Text="{x:Bind TimeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -27,7 +27,7 @@
                 <Border HorizontalAlignment="Right" MaxWidth="640" Margin="64,5,12,5" Padding="16,12" CornerRadius="12"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind DisplayBody}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
+                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
                         <TextBlock Text="{x:Bind AttachmentSummary}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Text="{x:Bind TimeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
@@ -84,6 +84,7 @@
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="core:Conversation">
                                 <StackPanel Padding="2,8" Spacing="3">
+                                    <StackPanel.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Copy address" Tag="{x:Bind Peer}" Click="CopyPeer_Click" /></MenuFlyout></StackPanel.ContextFlyout>
                                     <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind Peer}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{x:Bind Preview}" FontSize="12" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
@@ -99,7 +100,6 @@
                 <StackPanel Grid.Row="4" Spacing="10">
                     <Button Content="New conversation" Click="NewConversation_Click" HorizontalAlignment="Stretch" AutomationProperties.HelpText="Control N" />
                     <ToggleSwitch Header="Archived conversations" IsOn="{x:Bind ViewModel.ShowArchived, Mode=TwoWay}" OnContent="Showing archive" OffContent="Showing inbox" />
-                    <TextBlock Text="{x:Bind ViewModel.MailboxAddress, Mode=OneWay}" FontSize="11" TextTrimming="CharacterEllipsis" />
                     <TextBlock Text="{x:Bind ViewModel.InboxSummary, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </StackPanel>
             </Grid>
@@ -118,7 +118,10 @@
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <Button Grid.Row="2" Content="New subject" Click="NewSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                <StackPanel Grid.Row="2" Spacing="6">
+                    <Button Content="New subject" Click="NewSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                    <Button Content="Delete subject…" Click="DeleteSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanDeleteSubject, Mode=OneWay}" />
+                </StackPanel>
             </Grid>
             <Thumb Grid.Column="3" DragDelta="SubjectColumn_DragDelta" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" AutomationProperties.Name="Resize subjects column" />
             <Grid Grid.Column="4">
@@ -126,8 +129,16 @@
                 <Grid Padding="18,16" ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <StackPanel Spacing="3">
-                        <TextBlock Text="{x:Bind ViewModel.ConversationTitle, Mode=OneWay}" FontSize="20" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Text="{x:Bind ViewModel.ConversationAddress, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
+                        <HyperlinkButton Content="{x:Bind ViewModel.ConversationTitle, Mode=OneWay}" Click="Contact_Click" Padding="0" FontSize="20" FontWeight="SemiBold"
+                                         HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender details" />
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <HyperlinkButton Click="Contact_Click" Padding="0" FontSize="12" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender address details">
+                                <TextBlock Text="{x:Bind ViewModel.ConversationAddress, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                            </HyperlinkButton>
+                            <HyperlinkButton Grid.Column="1" Content="Copy address" Click="CopyPeer_Click" Padding="0" FontSize="12" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" />
+                        </Grid>
                         <TextBlock Text="{x:Bind ViewModel.SubjectTitle, Mode=OneWay}" FontSize="12" />
                     </StackPanel>
                     <Button Grid.Column="1" Content="More" VerticalAlignment="Top" AutomationProperties.Name="Conversation actions">
@@ -135,7 +146,7 @@
                             <MenuFlyout>
                                 <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                                 <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
-                                <MenuFlyoutItem Text="Contact settings" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                                <MenuFlyoutItem Text="Sender details" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                             </MenuFlyout>
                         </Button.Flyout>
                     </Button>
@@ -196,7 +207,10 @@
         <Border x:Name="AccountBar" Grid.Row="2" Visibility="Collapsed" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="12,6">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <TextBlock x:Name="AccountStatus" Text="Connected to Pigeonpost" FontSize="11" TextWrapping="Wrap" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="{x:Bind BuildLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock x:Name="AccountStatus" Text="Connected to Pigeonpost" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </StackPanel>
                 <Button Grid.Column="1" Content="Copy my address" Click="CopyAddress_Click" />
                 <Button Grid.Column="2" Content="Manage account" Click="ManageAccount_Click" />
                 <Button Grid.Column="3" Content="Sign out" Click="SignOut_Click" />

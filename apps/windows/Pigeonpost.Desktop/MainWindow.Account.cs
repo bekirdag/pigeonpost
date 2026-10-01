@@ -152,11 +152,16 @@ public sealed partial class MainWindow
         try { if (!await Launcher.LaunchUriAsync(uri)) AccountStatus.Text = "Could not open your browser. Please try again."; }
         catch (Exception) { AccountStatus.Text = "Could not open your browser. Please try again."; }
     }
-    private static void CopyText(string text)
+    private void CopyText(string text)
     {
-        var data = new DataPackage();
-        data.SetText(text);
-        Clipboard.SetContent(data);
+        try
+        {
+            var data = new DataPackage();
+            data.SetText(text);
+            Clipboard.SetContent(data);
+            AccountStatus.Text = "Copied to clipboard.";
+        }
+        catch (Exception) { AccountStatus.Text = "Could not copy to the clipboard. Please try again."; }
     }
     private static string FriendlyAccountError(Exception ex) => ex is SignInException ? ex.Message
         : ex is HttpRequestException or TaskCanceledException ? "Could not connect. Check your internet connection and try again."
