@@ -130,6 +130,9 @@ jobs:
       - name: Build the web bundle and copy it into the iPad app
         shell: bash
         working-directory: cosmosmap
+        env:
+          VITE_AVATAR_STUDIO: "1"
+          COSMOS_AVATAR_RELEASE: "1"
         run: |
           set -euo pipefail
           node --version
