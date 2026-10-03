@@ -94,78 +94,100 @@ ITEM_SET_SHA256 = "e36b4db939843c0b738275d645331a8db68ca88b63b25823b6413173ba23e
 
 
 def resubmit_review(version_id, target_id):
-    """Replace the build inside the exact existing seven-item review, with a guarded rollback."""
-    def check_items():
-        items = get(f"/reviewSubmissions/{REVIEW_ID}/items", limit=200)["data"]
-        ids = sorted(item["id"] for item in items)
-        digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()
-        if len(ids) != 7 or len(set(ids)) != 7 or digest != ITEM_SET_SHA256:
-            raise RuntimeError("The original seven review items changed; preserve the concurrent change.")
-        return digest
+    """Resubmit the withdrawn app and the same six purchase versions; resume partial drafts."""
+    def read_items(review_id):
+        return get(f"/reviewSubmissions/{review_id}/items", **{
+            "limit": 200, "include": "appStoreVersion,inAppPurchaseVersion",
+            "fields[reviewSubmissionItems]": "state,appStoreVersion,inAppPurchaseVersion",
+        })["data"]
 
-    def state():
-        return get(f"/reviewSubmissions/{REVIEW_ID}")["data"]["attributes"]["state"]
+    def references(items):
+        refs = set()
+        types = {"appStoreVersion": "appStoreVersions", "inAppPurchaseVersion": "inAppPurchaseVersions"}
+        for item in items:
+            values = [(key, value["data"]) for key, value in item.get("relationships", {}).items() if value.get("data")]
+            if len(values) != 1 or values[0][0] not in types or values[0][1]["type"] != types[values[0][0]]:
+                raise RuntimeError("Unknown review item relationship; preserve it.")
+            key, data = values[0]
+            refs.add((key, data["type"], data["id"]))
+        if len(refs) != len(items):
+            raise RuntimeError("Duplicate review item references; inspect before continuing.")
+        return refs
 
-    def wait_for(allowed):
-        for attempt in range(37):
-            current = state()
-            if current in allowed:
-                return current
-            if current not in {"CANCELING", "READY_FOR_REVIEW"}:
-                raise RuntimeError("Unexpected review transition: " + current)
-            time.sleep(5)
-        raise RuntimeError("Review transition timed out; inspect before continuing.")
-
-    def edit(attributes):
-        return call("PATCH", f"/reviewSubmissions/{REVIEW_ID}", {
-            "data": {"type": "reviewSubmissions", "id": REVIEW_ID, "attributes": attributes},
-        })
-
-    check_items()
+    original = read_items(REVIEW_ID)
+    ids = sorted(item["id"] for item in original)
+    if len(ids) != 7 or len(set(ids)) != 7 or hashlib.sha256("\n".join(ids).encode()).hexdigest() != ITEM_SET_SHA256:
+        raise RuntimeError("The original seven review items changed; preserve them.")
+    expected = references(original)
+    app_refs = [ref for ref in expected if ref[0] == "appStoreVersion"]
+    if app_refs != [("appStoreVersion", "appStoreVersions", version_id)] or sum(ref[0] == "inAppPurchaseVersion" for ref in expected) != 6:
+        raise RuntimeError("The original app version and six purchase versions did not verify.")
+    if get(f"/reviewSubmissions/{REVIEW_ID}")["data"]["attributes"]["state"] != "COMPLETE":
+        raise RuntimeError("The prior review is still active; preserve it.")
     current_build = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
-    current_state = state()
-    if current_build == target_id and current_state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
-        return {"submitted": True, "reviewId": REVIEW_ID, "state": current_state, "items": 7, "itemSetSha256": ITEM_SET_SHA256}
-    if current_build not in {PREVIOUS_BUILD_ID, target_id} or current_state not in {"WAITING_FOR_REVIEW", "READY_FOR_REVIEW"}:
-        raise RuntimeError("The pending build or review changed; preserve it.")
-    try:
-        if current_state == "WAITING_FOR_REVIEW":
-            edit({"canceled": True})
-            wait_for({"READY_FOR_REVIEW"})
-            print("REVIEW_CHECKPOINT returned_to_editing")
-        check_items()
-        current_build = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
-        if current_build not in {PREVIOUS_BUILD_ID, target_id}:
-            raise RuntimeError("Concurrent build selection changed after cancellation.")
-        if current_build != target_id:
-            call("PATCH", f"/appStoreVersions/{version_id}/relationships/build", {"data": {"type": "builds", "id": target_id}})
-        if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
-            raise RuntimeError("Updated review build did not verify.")
-        check_items()
-        edit({"submitted": True})
-        final_state = wait_for({"WAITING_FOR_REVIEW", "IN_REVIEW"})
-        check_items()
-        if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
-            raise RuntimeError("Final review build did not verify.")
-        return {"submitted": True, "reviewId": REVIEW_ID, "state": final_state, "items": 7, "itemSetSha256": ITEM_SET_SHA256}
-    except Exception:
-        # Restore the prior submitted build only while this exact, unchanged draft is editable.
-        try:
-            if state() == "READY_FOR_REVIEW":
-                check_items()
-                selected = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
-                if selected in {PREVIOUS_BUILD_ID, target_id}:
-                    call("PATCH", f"/appStoreVersions/{version_id}/relationships/build", {"data": {"type": "builds", "id": PREVIOUS_BUILD_ID}})
-                    if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != PREVIOUS_BUILD_ID:
-                        raise RuntimeError("Prior build restoration did not verify.")
-                    check_items()
-                    edit({"submitted": True})
-                    restored = wait_for({"WAITING_FOR_REVIEW", "IN_REVIEW"})
-                    check_items()
-                    print("REVIEW_ROLLBACK " + restored)
-        except Exception as rollback_error:
-            print("REVIEW_ROLLBACK_NEEDS_INSPECTION " + str(rollback_error))
-        raise
+    if current_build not in {PREVIOUS_BUILD_ID, target_id}:
+        raise RuntimeError("Another build is selected; preserve the concurrent change.")
+    candidates = [row for row in get(f"/apps/{APP_ID}/reviewSubmissions", limit=20)["data"]
+                  if row["id"] != REVIEW_ID and row["attributes"].get("platform") in {None, "IOS"}
+                  and row["attributes"].get("state") != "COMPLETE"]
+    if len(candidates) > 1:
+        raise RuntimeError("Multiple active reviews exist; preserve them.")
+    review_id = candidates[0]["id"] if candidates else None
+    if review_id:
+        current_state = candidates[0]["attributes"]["state"]
+        found = references(read_items(review_id))
+        if not found.issubset(expected):
+            raise RuntimeError("Another review contains different items; preserve it.")
+        if current_state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+            if found != expected or current_build != target_id:
+                raise RuntimeError("An active review differs from the intended update; preserve it.")
+            return {"submitted": True, "reviewId": review_id, "state": current_state, "items": 7, "replacesReviewId": REVIEW_ID}
+        if current_state != "READY_FOR_REVIEW":
+            raise RuntimeError("The replacement review is in an unexpected state; preserve it.")
+    version_state = get(f"/appStoreVersions/{version_id}")["data"]["attributes"]["appStoreState"]
+    if version_state not in {"DEVELOPER_REJECTED", "PREPARE_FOR_SUBMISSION", "READY_FOR_REVIEW"}:
+        raise RuntimeError("The app version is no longer editable; preserve it.")
+    if current_build != target_id:
+        call("PATCH", f"/appStoreVersions/{version_id}/relationships/build", {"data": {"type": "builds", "id": target_id}})
+    if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
+        raise RuntimeError("Replacement build did not verify.")
+    if not review_id:
+        review_id = call("POST", "/reviewSubmissions", {"data": {
+            "type": "reviewSubmissions", "attributes": {"platform": "IOS"},
+            "relationships": {"app": {"data": {"type": "apps", "id": APP_ID}}},
+        }})["data"]["id"]
+        print("REVIEW_CHECKPOINT created " + review_id)
+    for ref in sorted(expected):
+        if get(f"/reviewSubmissions/{review_id}")["data"]["attributes"]["state"] != "READY_FOR_REVIEW":
+            raise RuntimeError("Draft changed during preparation; preserve it.")
+        found = references(read_items(review_id))
+        if not found.issubset(expected):
+            raise RuntimeError("Concurrent review items changed; preserve them.")
+        if ref not in found:
+            key, resource_type, resource_id = ref
+            call("POST", "/reviewSubmissionItems", {"data": {"type": "reviewSubmissionItems", "relationships": {
+                "reviewSubmission": {"data": {"type": "reviewSubmissions", "id": review_id}},
+                key: {"data": {"type": resource_type, "id": resource_id}},
+            }}})
+    if references(read_items(review_id)) != expected or get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
+        raise RuntimeError("The exact seven items and build 31 did not verify; draft remains available.")
+    call("PATCH", f"/reviewSubmissions/{review_id}", {"data": {
+        "type": "reviewSubmissions", "id": review_id, "attributes": {"submitted": True},
+    }})
+    for attempt in range(37):
+        current_state = get(f"/reviewSubmissions/{review_id}")["data"]["attributes"]["state"]
+        if current_state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+            break
+        if current_state != "READY_FOR_REVIEW":
+            raise RuntimeError("Unexpected submission state: " + current_state)
+        time.sleep(5)
+    else:
+        raise RuntimeError("Submission transition timed out; inspect before continuing.")
+    if references(read_items(review_id)) != expected or get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
+        raise RuntimeError("Final review items or selected build did not verify.")
+    fingerprint = hashlib.sha256("\n".join("|".join(ref) for ref in sorted(expected)).encode()).hexdigest()
+    return {"submitted": True, "reviewId": review_id, "state": current_state, "items": 7,
+            "replacesReviewId": REVIEW_ID, "resourceSetSha256": fingerprint}
 
 
 def main():

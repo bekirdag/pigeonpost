@@ -104,153 +104,177 @@ class ReviewGuards(unittest.TestCase):
 
 
 class ReviewResubmission(unittest.TestCase):
-    """Simulate Apple's asynchronous transitions and changes made by another actor."""
-    def run_case(self, selected=OLD, state='WAITING_FOR_REVIEW', tamper_at=None,
-                 concurrent_build=False, fail=None, cancel_timeout=False):
-        review_id = 'existing-review'
-        item_ids = [f'original-item-{i}' for i in range(7)]
-        mutations = []
-        live = {'build': selected, 'state': state, 'cancelled': False, 'submit_pending': False}
-        failures = set()
+    """Use Apple's observed COMPLETE/REMOVED withdrawal state and resumable drafts."""
+    def run_case(self, selected=OLD, old_state='COMPLETE', app_state='DEVELOPER_REJECTED',
+                 draft_state=None, partial=0, tamper=None, fail_item=False, retry=False):
+        original_id, new_id = 'old-review', 'new-review'
+        refs = [('appStoreVersion', 'appStoreVersions', 'current-version')] + [
+            ('inAppPurchaseVersion', 'inAppPurchaseVersions', f'purchase-version-{i}') for i in range(6)]
+        def item(ref, item_id):
+            key, kind, resource_id = ref
+            return {'id': item_id, 'attributes': {'state': 'REMOVED'}, 'relationships': {
+                key: {'data': {'type': kind, 'id': resource_id}}}}
+        original = [item(ref, f'original-item-{i}') for i, ref in enumerate(refs)]
+        digest = hashlib.sha256('\n'.join(sorted(row['id'] for row in original)).encode()).hexdigest()
+        if tamper == 'original_ids':
+            original.pop()
+        if tamper == 'original_version':
+            original[0]['relationships']['appStoreVersion']['data']['id'] = 'another-version'
+        live = {'build': selected, 'review': new_id if draft_state else None, 'state': draft_state,
+                'items': [item(ref, f'new-item-{i}') for i, ref in enumerate(refs[:partial])], 'submit_pending': False}
+        if tamper == 'draft_items':
+            live['items'].append(item(('inAppPurchaseVersion', 'inAppPurchaseVersions', 'other-purchase'), 'foreign-item'))
+        mutations, failures = [], set()
         def get(path, **params):
-            if path.endswith('/items'):
-                ids = item_ids if not (tamper_at == 'initial' or tamper_at == 'after_cancel' and live['cancelled']) else item_ids[:-1]
-                return {'data': [{'id': item_id} for item_id in ids]}
-            if path.endswith('/current-version/build'):
+            if path == f'/reviewSubmissions/{original_id}/items':
+                self.assertEqual(params['include'], 'appStoreVersion,inAppPurchaseVersion')
+                return {'data': copy.deepcopy(original)}
+            if path == f'/reviewSubmissions/{original_id}':
+                return {'data': {'attributes': {'state': old_state}}}
+            if path == '/appStoreVersions/current-version/build':
                 return {'data': {'id': live['build']}}
-            if path == f'/reviewSubmissions/{review_id}':
+            if path == '/appStoreVersions/current-version':
+                return {'data': {'attributes': {'appStoreState': app_state}}}
+            if path == '/apps/6815358482/reviewSubmissions':
+                rows = [{'id': original_id, 'attributes': {'state': old_state, 'platform': 'IOS'}}]
+                if live['review']:
+                    rows.append({'id': live['review'], 'attributes': {'state': live['state'], 'platform': 'IOS'}})
+                return {'data': rows}
+            if path == f'/reviewSubmissions/{new_id}/items':
+                return {'data': copy.deepcopy(live['items'])}
+            if path == f'/reviewSubmissions/{new_id}':
                 current = live['state']
-                if current == 'CANCELING' and not cancel_timeout:
-                    live['state'] = 'READY_FOR_REVIEW'
-                    if concurrent_build:
-                        live['build'] = 'another-build'
-                elif live['submit_pending']:
-                    live['state'] = 'WAITING_FOR_REVIEW'
-                    live['submit_pending'] = False
+                if live['submit_pending']:
+                    live['state'], live['submit_pending'] = 'WAITING_FOR_REVIEW', False
                 return {'data': {'attributes': {'state': current}}}
             raise AssertionError('Unexpected read: ' + path)
         def call(method, path, body):
-            self.assertEqual(method, 'PATCH')
-            mutations.append((path, copy.deepcopy(body)))
+            mutations.append((method, path, copy.deepcopy(body)))
             if path.endswith('/relationships/build'):
+                self.assertEqual(method, 'PATCH')
+                live['build'] = body['data']['id']
+                return {}
+            if path == '/reviewSubmissions':
+                self.assertEqual(method, 'POST')
+                self.assertIsNone(live['review'])
+                self.assertEqual(body['data']['relationships']['app']['data'], {'type': 'apps', 'id': '6815358482'})
+                self.assertEqual(body['data']['attributes'], {'platform': 'IOS'})
+                live['review'], live['state'] = new_id, 'READY_FOR_REVIEW'
+                return {'data': {'id': new_id}}
+            if path == '/reviewSubmissionItems':
+                self.assertEqual(method, 'POST')
                 self.assertEqual(live['state'], 'READY_FOR_REVIEW')
-                target = body['data']['id']
-                if fail == 'attach' and target == TARGET:
-                    raise RuntimeError('Apple rejected target attachment')
-                live['build'] = target
-            elif path == f'/reviewSubmissions/{review_id}':
-                attrs = body['data']['attributes']
-                self.assertEqual(body['data']['type'], 'reviewSubmissions')
-                self.assertEqual(body['data']['id'], review_id)
-                if attrs == {'canceled': True}:
-                    if fail == 'cancel':
-                        raise RuntimeError('Apple rejected cancellation')
-                    self.assertEqual(live['state'], 'WAITING_FOR_REVIEW')
-                    live['cancelled'] = True
-                    live['state'] = 'CANCELING'
-                elif attrs == {'submitted': True}:
-                    if fail == 'submit_once' and 'submit' not in failures:
-                        failures.add('submit')
-                        raise RuntimeError('Apple rejected first submission')
-                    self.assertEqual(live['state'], 'READY_FOR_REVIEW')
-                    live['submit_pending'] = True
-                else:
-                    raise AssertionError('Unexpected review mutation: ' + repr(attrs))
-            else:
-                raise AssertionError('Unexpected write: ' + path)
-            return {}
-        namespace = {'get': get, 'call': call, 'hashlib': hashlib,
+                if fail_item and len(live['items']) == 2 and 'item' not in failures:
+                    failures.add('item')
+                    raise RuntimeError('Apple rejected one item addition')
+                rels = body['data']['relationships']
+                self.assertEqual(rels['reviewSubmission']['data'], {'type': 'reviewSubmissions', 'id': new_id})
+                self.assertEqual(set(body['data']), {'type', 'relationships'})
+                key = next(key for key in rels if key != 'reviewSubmission')
+                live['items'].append(item((key, rels[key]['data']['type'], rels[key]['data']['id']), f'new-item-{len(live["items"])}'))
+                return {'data': live['items'][-1]}
+            if path == f'/reviewSubmissions/{new_id}':
+                self.assertEqual(method, 'PATCH')
+                self.assertEqual(body['data']['attributes'], {'submitted': True})
+                self.assertEqual(len(live['items']), 7)
+                live['submit_pending'] = True
+                return {}
+            raise AssertionError('Unexpected write: ' + path)
+        namespace = {'get': get, 'call': call, 'hashlib': hashlib, 'APP_ID': '6815358482',
                      'time': SimpleNamespace(sleep=lambda seconds: None),
-                     'REVIEW_ID': review_id, 'PREVIOUS_BUILD_ID': OLD,
-                     'ITEM_SET_SHA256': hashlib.sha256('\n'.join(sorted(item_ids)).encode()).hexdigest()}
+                     'REVIEW_ID': original_id, 'PREVIOUS_BUILD_ID': OLD, 'ITEM_SET_SHA256': digest}
         exec(compile(ast.Module(body=[RESUBMIT], type_ignores=[]), str(SOURCE), 'exec'), namespace)
-        output = io.StringIO()
-        with contextlib.redirect_stdout(output):
+        with contextlib.redirect_stdout(io.StringIO()):
             try:
                 result = namespace['resubmit_review']('current-version', TARGET)
             except RuntimeError as error:
                 result = error
-        return result, mutations, live, output.getvalue()
+                if retry:
+                    result = namespace['resubmit_review']('current-version', TARGET)
+        return result, mutations, live
 
-    def test_pending_review_replaces_only_build_and_retains_all_seven_items(self):
-        result, calls, live, _ = self.run_case()
+    def test_completed_review_replaces_only_build_and_carries_exact_original_resources(self):
+        result, calls, live = self.run_case()
         self.assertTrue(result['submitted'])
+        self.assertEqual(result['reviewId'], 'new-review')
+        self.assertEqual(result['replacesReviewId'], 'old-review')
         self.assertEqual(result['items'], 7)
+        self.assertEqual(len(result['resourceSetSha256']), 64)
         self.assertEqual(live['build'], TARGET)
         self.assertEqual(live['state'], 'WAITING_FOR_REVIEW')
-        self.assertEqual(calls, [
-            ('/reviewSubmissions/existing-review', {'data': {'type': 'reviewSubmissions', 'id': 'existing-review', 'attributes': {'canceled': True}}}),
-            ('/appStoreVersions/current-version/relationships/build', {'data': {'type': 'builds', 'id': TARGET}}),
-            ('/reviewSubmissions/existing-review', {'data': {'type': 'reviewSubmissions', 'id': 'existing-review', 'attributes': {'submitted': True}}}),
-        ])
+        self.assertEqual(len(calls), 10)
+        resources = [c[2]['data']['relationships'] for c in calls if c[1] == '/reviewSubmissionItems']
+        self.assertEqual(sum('appStoreVersion' in row for row in resources), 1)
+        self.assertEqual(sum('inAppPurchaseVersion' in row for row in resources), 6)
+        self.assertFalse(any(c[1].startswith('/inAppPurchase') for c in calls))
+        self.assertFalse(any(c[1].endswith('/old-review') for c in calls))
 
-    def test_existing_draft_does_not_cancel_again(self):
-        result, calls, _, _ = self.run_case(state='READY_FOR_REVIEW')
+    def test_existing_partial_draft_resumes_without_duplicate_items_or_submission(self):
+        result, calls, live = self.run_case(selected=TARGET, draft_state='READY_FOR_REVIEW', partial=3)
         self.assertTrue(result['submitted'])
-        self.assertEqual(len(calls), 2)
-        self.assertEqual(calls[0][0], '/appStoreVersions/current-version/relationships/build')
+        self.assertEqual(len(live['items']), 7)
+        self.assertEqual(sum(c[1] == '/reviewSubmissionItems' for c in calls), 4)
+        self.assertFalse(any(c[1] == '/reviewSubmissions' for c in calls))
 
     def test_already_submitted_target_is_read_only(self):
         for state in ['WAITING_FOR_REVIEW', 'IN_REVIEW']:
             with self.subTest(state=state):
-                result, calls, _, _ = self.run_case(selected=TARGET, state=state)
+                result, calls, _ = self.run_case(selected=TARGET, draft_state=state, partial=7)
                 self.assertTrue(result['submitted'])
                 self.assertEqual(calls, [])
 
-    def test_other_build_or_active_review_is_preserved(self):
-        for kwargs in [{'selected': 'another-build'}, {'state': 'IN_REVIEW'}, {'state': 'COMPLETE'}]:
-            with self.subTest(**kwargs):
-                result, calls, _, _ = self.run_case(**kwargs)
+    def test_other_build_is_preserved(self):
+        result, calls, live = self.run_case(selected='another-build')
+        self.assertIsInstance(result, RuntimeError)
+        self.assertEqual(calls, [])
+        self.assertEqual(live['build'], 'another-build')
+
+    def test_still_active_original_review_is_preserved(self):
+        for state in ['WAITING_FOR_REVIEW', 'IN_REVIEW', 'CANCELING']:
+            with self.subTest(state=state):
+                result, calls, _ = self.run_case(old_state=state)
                 self.assertIsInstance(result, RuntimeError)
                 self.assertEqual(calls, [])
 
-    def test_changed_item_set_prevents_cancellation(self):
-        result, calls, _, _ = self.run_case(tamper_at='initial')
+    def test_changed_original_items_or_app_version_prevent_any_write(self):
+        for tamper in ['original_ids', 'original_version']:
+            with self.subTest(tamper=tamper):
+                result, calls, _ = self.run_case(tamper=tamper)
+                self.assertIsInstance(result, RuntimeError)
+                self.assertEqual(calls, [])
+
+    def test_different_draft_items_are_preserved(self):
+        result, calls, live = self.run_case(draft_state='READY_FOR_REVIEW', partial=2, tamper='draft_items')
+        self.assertIsInstance(result, RuntimeError)
+        self.assertEqual(calls, [])
+        self.assertEqual(len(live['items']), 3)
+
+    def test_active_replacement_with_wrong_build_or_missing_items_is_preserved(self):
+        for kwargs in [{'selected': OLD, 'partial': 7}, {'selected': TARGET, 'partial': 6}]:
+            with self.subTest(**kwargs):
+                result, calls, _ = self.run_case(draft_state='WAITING_FOR_REVIEW', **kwargs)
+                self.assertIsInstance(result, RuntimeError)
+                self.assertEqual(calls, [])
+
+    def test_version_that_started_review_again_is_not_edited(self):
+        result, calls, _ = self.run_case(app_state='IN_REVIEW')
         self.assertIsInstance(result, RuntimeError)
         self.assertEqual(calls, [])
 
-    def test_changed_draft_items_prevent_attachment_and_rollback(self):
-        result, calls, live, output = self.run_case(tamper_at='after_cancel')
+    def test_item_failure_keeps_valid_build_and_partial_draft_for_recovery(self):
+        result, calls, live = self.run_case(fail_item=True)
         self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(live['build'], OLD)
-        self.assertIn('REVIEW_ROLLBACK_NEEDS_INSPECTION', output)
+        self.assertEqual(live['build'], TARGET)
+        self.assertEqual(live['state'], 'READY_FOR_REVIEW')
+        self.assertEqual(len(live['items']), 2)
+        self.assertFalse(any(c[0] == 'PATCH' and c[1].endswith('/new-review') for c in calls))
 
-    def test_concurrent_build_change_after_cancellation_is_preserved(self):
-        result, calls, live, _ = self.run_case(concurrent_build=True)
-        self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(live['build'], 'another-build')
-
-    def test_attachment_failure_restores_previous_pending_submission(self):
-        result, calls, live, output = self.run_case(fail='attach')
-        self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 4)
-        self.assertEqual(live['build'], OLD)
-        self.assertEqual(live['state'], 'WAITING_FOR_REVIEW')
-        self.assertIn('REVIEW_ROLLBACK WAITING_FOR_REVIEW', output)
-
-    def test_submit_failure_restores_previous_build_before_resubmitting(self):
-        result, calls, live, output = self.run_case(fail='submit_once')
-        self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 5)
-        self.assertEqual(live['build'], OLD)
-        self.assertEqual(live['state'], 'WAITING_FOR_REVIEW')
-        self.assertIn('REVIEW_ROLLBACK WAITING_FOR_REVIEW', output)
-
-    def test_cancel_failure_keeps_previous_pending_build(self):
-        result, calls, live, _ = self.run_case(fail='cancel')
-        self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(live['build'], OLD)
-        self.assertEqual(live['state'], 'WAITING_FOR_REVIEW')
-
-    def test_cancel_timeout_never_attaches_or_resubmits_in_unknown_state(self):
-        result, calls, live, _ = self.run_case(cancel_timeout=True)
-        self.assertIsInstance(result, RuntimeError)
-        self.assertEqual(len(calls), 1)
-        self.assertEqual(live['build'], OLD)
-        self.assertEqual(live['state'], 'CANCELING')
+    def test_retry_after_item_failure_completes_same_draft_once(self):
+        result, calls, live = self.run_case(fail_item=True, retry=True)
+        self.assertTrue(result['submitted'])
+        self.assertEqual(len(live['items']), 7)
+        self.assertEqual(sum(c[1] == '/reviewSubmissions' for c in calls), 1)
+        self.assertEqual(sum(c[0] == 'PATCH' and c[1].endswith('/new-review') for c in calls), 1)
 
 
 if __name__ == '__main__':
