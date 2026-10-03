@@ -14,24 +14,24 @@ TREE = ast.parse(SOURCE.read_text())
 MAIN = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
 RESUBMIT = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'resubmit_review')
 WITHDRAW = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'withdraw_review')
-OLD = '0e2928b8-8f0c-414c-bd8d-beeb86b90e63'
-TARGET = 'valid-33'
+OLD = '8023012c-f4d0-48c9-9cde-45ee875fd5c3'
+TARGET = 'valid-34'
 
 
 class ReviewGuards(unittest.TestCase):
-    def run_case(self, action='inspect', selected=OLD, state='WAITING_FOR_REVIEW', processing='VALID', expired=False, encrypted=False, prerelease='1.11', absent=False, patch_error=False):
+    def run_case(self, action='inspect', selected=OLD, state='WAITING_FOR_REVIEW', processing='VALID', expired=False, encrypted=False, prerelease='1.11', absent=False, patch_error=False, number='34'):
         mutations = []
         current = {'id': selected} if selected else None
         version = {'id': 'current-version', 'attributes': {'appStoreState': state, 'releaseType': 'AFTER_APPROVAL'}, 'relationships': {'build': {'data': current}}}
-        target = {'id': TARGET, 'attributes': {'version': '33', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
+        target = {'id': TARGET, 'attributes': {'version': '34', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
         def get(path, **params):
             if path.endswith('/appStoreVersions'):
                 self.assertEqual(params['filter[versionString]'], '1.11')
                 self.assertEqual(params['filter[platform]'], 'IOS')
-                return {'data': [copy.deepcopy(version)], 'included': [{'id': selected, 'type': 'builds', 'attributes': {'version': '31'}}]}
+                return {'data': [copy.deepcopy(version)], 'included': [{'id': selected, 'type': 'builds', 'attributes': {'version': '33'}}]}
             if path == '/builds':
                 self.assertEqual(params['filter[app]'], '6815358482')
-                self.assertEqual(params['filter[version]'], '33')
+                self.assertEqual(params['filter[version]'], '34')
                 return {'data': [] if absent else [target]}
             if path.endswith('/reviewSubmissions'):
                 return {'data': [{'id': 'pending-review', 'attributes': {'state': state, 'platform': 'IOS'}}]}
@@ -50,7 +50,7 @@ class ReviewGuards(unittest.TestCase):
             if patch_error:
                 raise RuntimeError('Apple 409: pending review cannot be edited')
             current = copy.deepcopy(body['data'])
-        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': '33'}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
+        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': number}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
         exec(compile(ast.Module(body=[MAIN], type_ignores=[]), str(SOURCE), 'exec'), namespace)
         with contextlib.redirect_stdout(io.StringIO()):
             try:
@@ -64,6 +64,15 @@ class ReviewGuards(unittest.TestCase):
         self.assertFalse(result['attached'])
         self.assertEqual(calls, [])
         self.assertEqual(current['id'], OLD)
+
+    def test_other_target_numbers_never_mutate_the_review(self):
+        for action in ['attach', 'withdraw', 'resubmit']:
+            for number in ['33', '35']:
+                with self.subTest(action=action, number=number):
+                    result, calls, current = self.run_case(action=action, number=number)
+                    self.assertIsInstance(result, RuntimeError)
+                    self.assertEqual(calls, [])
+                    self.assertEqual(current['id'], OLD)
 
     def test_valid_attachment_changes_only_the_exact_build_relationship(self):
         result, calls, current = self.run_case(action='attach')
@@ -175,10 +184,13 @@ class ReviewResubmission(unittest.TestCase):
                 key: {'data': {'type': kind, 'id': resource_id}}}}
         original = [item(ref, f'original-item-{i}') for i, ref in enumerate(refs)]
         digest = hashlib.sha256('\n'.join(sorted(row['id'] for row in original)).encode()).hexdigest()
+        resource_digest = hashlib.sha256('\n'.join('|'.join(ref) for ref in sorted(refs)).encode()).hexdigest()
         if tamper == 'original_ids':
             original.pop()
         if tamper == 'original_version':
             original[0]['relationships']['appStoreVersion']['data']['id'] = 'another-version'
+        if tamper == 'original_purchase':
+            original[1]['relationships']['inAppPurchaseVersion']['data']['id'] = 'another-purchase-version'
         live = {'build': selected, 'review': new_id if draft_state else None, 'state': draft_state,
                 'items': [item(ref, f'new-item-{i}') for i, ref in enumerate(refs[:partial])], 'submit_pending': False}
         if tamper == 'draft_items':
@@ -241,7 +253,8 @@ class ReviewResubmission(unittest.TestCase):
             raise AssertionError('Unexpected write: ' + path)
         namespace = {'get': get, 'call': call, 'hashlib': hashlib, 'APP_ID': '6815358482',
                      'time': SimpleNamespace(sleep=lambda seconds: None),
-                     'REVIEW_ID': original_id, 'PREVIOUS_BUILD_ID': OLD, 'ITEM_SET_SHA256': digest}
+                     'REVIEW_ID': original_id, 'PREVIOUS_BUILD_ID': OLD, 'ITEM_SET_SHA256': digest,
+                     'RESOURCE_SET_SHA256': resource_digest}
         exec(compile(ast.Module(body=[RESUBMIT], type_ignores=[]), str(SOURCE), 'exec'), namespace)
         with contextlib.redirect_stdout(io.StringIO()):
             try:
@@ -301,6 +314,12 @@ class ReviewResubmission(unittest.TestCase):
                 result, calls, _ = self.run_case(tamper=tamper)
                 self.assertIsInstance(result, RuntimeError)
                 self.assertEqual(calls, [])
+
+    def test_original_purchase_replacement_with_same_item_id_prevents_write(self):
+        result, mutations, live = self.run_case(tamper='original_purchase')
+        self.assertIsInstance(result, RuntimeError)
+        self.assertEqual(mutations, [])
+        self.assertEqual(live['build'], OLD)
 
     def test_different_draft_items_are_preserved(self):
         result, calls, live = self.run_case(draft_state='READY_FOR_REVIEW', partial=2, tamper='draft_items')
