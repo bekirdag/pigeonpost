@@ -32,7 +32,7 @@ on:
         default: false
         type: boolean
       review_action:
-        description: "Status-only App Review operation: inspect, attach or resubmit the validated build 32."
+        description: "Status-only App Review operation: inspect, attach or resubmit the validated build 33."
         required: false
         default: inspect
         type: choice
@@ -51,7 +51,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: ${{ inputs.status_only && 'cosmosmap-app-review-build32' || 'cosmosmap-ipad-testflight' }}
+  group: ${{ inputs.status_only && 'cosmosmap-app-review-build33' || 'cosmosmap-ipad-testflight' }}
   cancel-in-progress: false
 
 jobs:

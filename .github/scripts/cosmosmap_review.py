@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or update the existing CosmosMap review with the validated build 32."""
+"""Inspect or update the existing CosmosMap review with the validated build 33."""
 
 import base64
 import hashlib
@@ -94,7 +94,7 @@ RESOURCE_SET_SHA256 = "b2cd17741ac1bde626d06e65bfcad2bdc698641cc0593bfbd5696bb66
 
 
 def withdraw_review(version_id):
-    """Withdraw only the observed build-31 submission after build 32 validates."""
+    """Withdraw only the observed build-31 submission after build 33 validates."""
     version = get(f"/appStoreVersions/{version_id}")["data"]
     selected = get(f"/appStoreVersions/{version_id}/build")["data"]
     if not selected or selected["id"] != PREVIOUS_BUILD_ID:
@@ -215,7 +215,7 @@ def resubmit_review(version_id, target_id):
                 key: {"data": {"type": resource_type, "id": resource_id}},
             }}})
     if references(read_items(review_id)) != expected or get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
-        raise RuntimeError("The exact seven items and build 32 did not verify; draft remains available.")
+        raise RuntimeError("The exact seven items and build 33 did not verify; draft remains available.")
     call("PATCH", f"/reviewSubmissions/{review_id}", {"data": {
         "type": "reviewSubmissions", "id": review_id, "attributes": {"submitted": True},
     }})
@@ -237,9 +237,9 @@ def resubmit_review(version_id, target_id):
 
 def main():
     action = os.environ.get("ACTION", "inspect")
-    number = os.environ.get("BUILD_NUMBER", "32")
-    if action not in {"inspect", "attach", "withdraw", "resubmit"} or number != "32":
-        raise RuntimeError("Only inspection, attachment or resubmission of CosmosMap build 32 is supported.")
+    number = os.environ.get("BUILD_NUMBER", "33")
+    if action not in {"inspect", "attach", "withdraw", "resubmit"} or number != "33":
+        raise RuntimeError("Only inspection, attachment or resubmission of CosmosMap build 33 is supported.")
     versions = get(f"/apps/{APP_ID}/appStoreVersions", **{
         "filter[platform]": "IOS", "filter[versionString]": VERSION, "include": "build", "limit": 10,
     })
@@ -278,7 +278,7 @@ def main():
     if action == "inspect":
         return report
     if len(builds) != 1:
-        raise RuntimeError("Build 32 is not uniquely available; review is unchanged.")
+        raise RuntimeError("Build 33 is not uniquely available; review is unchanged.")
     target = builds[0]
     a = target["attributes"]
     pre = get(f"/builds/{target['id']}/preReleaseVersion")["data"]
