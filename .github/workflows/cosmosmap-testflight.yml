@@ -31,6 +31,14 @@ on:
         required: true
         default: false
         type: boolean
+      review_action:
+        description: "Status-only App Review operation: inspect or attach the validated build 31."
+        required: false
+        default: inspect
+        type: choice
+        options:
+          - inspect
+          - attach
       runner:
         description: "Runner image. Needs Xcode 26 or later."
         required: false
@@ -61,6 +69,20 @@ jobs:
           ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
           BUNDLE_ID: com.wodo.cosmosmap
         run: python3 .github/scripts/testflight_status.py
+
+      - name: Validate App Review operation guards
+        if: ${{ inputs.status_only }}
+        run: python3 -m unittest discover .github/scripts/tests -p test_cosmosmap_review.py
+
+      - name: Inspect or update the CosmosMap review build
+        if: ${{ inputs.status_only }}
+        env:
+          KEY: ${{ secrets.APPLE_API_PRIVATE_KEY }}
+          KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          ACTION: ${{ inputs.review_action }}
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: python3 .github/scripts/cosmosmap_review.py
 
   archive:
     name: build, archive and upload
