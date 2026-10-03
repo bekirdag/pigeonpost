@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or update the existing CosmosMap review with the validated build 31."""
+"""Inspect or update the existing CosmosMap review with the validated build 32."""
 
 import base64
 import hashlib
@@ -87,9 +87,54 @@ def get(path, **params):
 
 APP_ID = "6815358482"
 VERSION = "1.11"
-PREVIOUS_BUILD_ID = "3189f64a-4e73-4928-ae77-800078d389b5"
-REVIEW_ID = "dfc26d9d-503a-44b5-bcf9-b842dc2e6dcc"
-ITEM_SET_SHA256 = "e36b4db939843c0b738275d645331a8db68ca88b63b25823b6413173ba23e18e"
+PREVIOUS_BUILD_ID = "0e2928b8-8f0c-414c-bd8d-beeb86b90e63"
+REVIEW_ID = "1e894035-0a6c-44a7-828e-16742b67bb1d"
+ITEM_SET_SHA256 = "ec1d451998494a7cdfbe4cdd3e12a1243d6154fe7eb0afe3c3883439abb7740f"
+RESOURCE_SET_SHA256 = "b2cd17741ac1bde626d06e65bfcad2bdc698641cc0593bfbd5696bb66e450f1b"
+
+
+def withdraw_review(version_id):
+    """Withdraw only the observed build-31 submission after build 32 validates."""
+    version = get(f"/appStoreVersions/{version_id}")["data"]
+    selected = get(f"/appStoreVersions/{version_id}/build")["data"]
+    if not selected or selected["id"] != PREVIOUS_BUILD_ID:
+        raise RuntimeError("Another build is selected; preserve the concurrent change.")
+    items = get(f"/reviewSubmissions/{REVIEW_ID}/items", **{
+        "limit": 200, "include": "appStoreVersion,inAppPurchaseVersion",
+        "fields[reviewSubmissionItems]": "state,appStoreVersion,inAppPurchaseVersion",
+    })["data"]
+    ids = sorted(item["id"] for item in items)
+    refs = []
+    for item in items:
+        values = [(key, value["data"]) for key, value in item.get("relationships", {}).items() if value.get("data")]
+        if len(values) != 1:
+            raise RuntimeError("Unknown review item relationship; preserve it.")
+        key, resource = values[0]
+        refs.append((key, resource["type"], resource["id"]))
+    digest = hashlib.sha256("\n".join("|".join(ref) for ref in sorted(refs)).encode()).hexdigest()
+    if len(ids) != 7 or len(set(ids)) != 7 or hashlib.sha256("\n".join(ids).encode()).hexdigest() != ITEM_SET_SHA256 or digest != RESOURCE_SET_SHA256:
+        raise RuntimeError("The seven review resources changed; preserve them.")
+    if ("appStoreVersion", "appStoreVersions", version_id) not in refs:
+        raise RuntimeError("Another app version is under review; preserve it.")
+    review = get(f"/reviewSubmissions/{REVIEW_ID}")["data"]
+    active = [r for r in get(f"/apps/{APP_ID}/reviewSubmissions", limit=20)["data"]
+              if r["attributes"].get("platform") in {None, "IOS"} and r["attributes"].get("state") != "COMPLETE"]
+    state = review["attributes"]["state"]
+    if state == "COMPLETE" and not active and version["attributes"]["appStoreState"] == "DEVELOPER_REJECTED":
+        return {"reviewId": REVIEW_ID, "state": state, "withdrawn": True}
+    if state != "WAITING_FOR_REVIEW" or version["attributes"]["appStoreState"] != "WAITING_FOR_REVIEW" or [r["id"] for r in active] != [REVIEW_ID]:
+        raise RuntimeError("Review state changed; preserve the existing submission.")
+    call("PATCH", f"/reviewSubmissions/{REVIEW_ID}", {"data": {
+        "type": "reviewSubmissions", "id": REVIEW_ID, "attributes": {"canceled": True},
+    }})
+    for attempt in range(37):
+        state = get(f"/reviewSubmissions/{REVIEW_ID}")["data"]["attributes"]["state"]
+        if state == "COMPLETE":
+            return {"reviewId": REVIEW_ID, "state": state, "withdrawn": True}
+        if state not in {"WAITING_FOR_REVIEW", "CANCELING"}:
+            raise RuntimeError("Unexpected withdrawal state; inspect before continuing: " + state)
+        time.sleep(5)
+    raise RuntimeError("Withdrawal is still processing; inspect before resubmitting.")
 
 
 
@@ -170,7 +215,7 @@ def resubmit_review(version_id, target_id):
                 key: {"data": {"type": resource_type, "id": resource_id}},
             }}})
     if references(read_items(review_id)) != expected or get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
-        raise RuntimeError("The exact seven items and build 31 did not verify; draft remains available.")
+        raise RuntimeError("The exact seven items and build 32 did not verify; draft remains available.")
     call("PATCH", f"/reviewSubmissions/{review_id}", {"data": {
         "type": "reviewSubmissions", "id": review_id, "attributes": {"submitted": True},
     }})
@@ -192,9 +237,9 @@ def resubmit_review(version_id, target_id):
 
 def main():
     action = os.environ.get("ACTION", "inspect")
-    number = os.environ.get("BUILD_NUMBER", "31")
-    if action not in {"inspect", "attach", "resubmit"} or number != "31":
-        raise RuntimeError("Only inspection, attachment or resubmission of CosmosMap build 31 is supported.")
+    number = os.environ.get("BUILD_NUMBER", "32")
+    if action not in {"inspect", "attach", "withdraw", "resubmit"} or number != "32":
+        raise RuntimeError("Only inspection, attachment or resubmission of CosmosMap build 32 is supported.")
     versions = get(f"/apps/{APP_ID}/appStoreVersions", **{
         "filter[platform]": "IOS", "filter[versionString]": VERSION, "include": "build", "limit": 10,
     })
@@ -233,12 +278,16 @@ def main():
     if action == "inspect":
         return report
     if len(builds) != 1:
-        raise RuntimeError("Build 31 is not uniquely available; review is unchanged.")
+        raise RuntimeError("Build 32 is not uniquely available; review is unchanged.")
     target = builds[0]
     a = target["attributes"]
     pre = get(f"/builds/{target['id']}/preReleaseVersion")["data"]
     if a["processingState"] != "VALID" or a["expired"] or a.get("usesNonExemptEncryption") is not False or pre["attributes"]["version"] != VERSION:
         raise RuntimeError("Target build is not valid, unexpired, compliant version 1.11; review is unchanged.")
+    if action == "withdraw":
+        report["withdrawal"] = withdraw_review(version["id"])
+        print("VERIFIED_REVIEW " + json.dumps(report))
+        return report
     if action == "resubmit":
         report["submission"] = resubmit_review(version["id"], target["id"])
         report["attached"] = True

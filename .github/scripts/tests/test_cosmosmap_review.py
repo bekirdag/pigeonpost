@@ -13,8 +13,9 @@ SOURCE = Path(__file__).resolve().parents[1] / 'cosmosmap_review.py'
 TREE = ast.parse(SOURCE.read_text())
 MAIN = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'main')
 RESUBMIT = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'resubmit_review')
-OLD = '3189f64a-4e73-4928-ae77-800078d389b5'
-TARGET = 'valid-31'
+WITHDRAW = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'withdraw_review')
+OLD = '0e2928b8-8f0c-414c-bd8d-beeb86b90e63'
+TARGET = 'valid-32'
 
 
 class ReviewGuards(unittest.TestCase):
@@ -22,15 +23,15 @@ class ReviewGuards(unittest.TestCase):
         mutations = []
         current = {'id': selected} if selected else None
         version = {'id': 'current-version', 'attributes': {'appStoreState': state, 'releaseType': 'AFTER_APPROVAL'}, 'relationships': {'build': {'data': current}}}
-        target = {'id': TARGET, 'attributes': {'version': '31', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
+        target = {'id': TARGET, 'attributes': {'version': '32', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
         def get(path, **params):
             if path.endswith('/appStoreVersions'):
                 self.assertEqual(params['filter[versionString]'], '1.11')
                 self.assertEqual(params['filter[platform]'], 'IOS')
-                return {'data': [copy.deepcopy(version)], 'included': [{'id': selected, 'type': 'builds', 'attributes': {'version': '30'}}]}
+                return {'data': [copy.deepcopy(version)], 'included': [{'id': selected, 'type': 'builds', 'attributes': {'version': '31'}}]}
             if path == '/builds':
                 self.assertEqual(params['filter[app]'], '6815358482')
-                self.assertEqual(params['filter[version]'], '31')
+                self.assertEqual(params['filter[version]'], '32')
                 return {'data': [] if absent else [target]}
             if path.endswith('/reviewSubmissions'):
                 return {'data': [{'id': 'pending-review', 'attributes': {'state': state, 'platform': 'IOS'}}]}
@@ -49,7 +50,7 @@ class ReviewGuards(unittest.TestCase):
             if patch_error:
                 raise RuntimeError('Apple 409: pending review cannot be edited')
             current = copy.deepcopy(body['data'])
-        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': '31'}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
+        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': '32'}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
         exec(compile(ast.Module(body=[MAIN], type_ignores=[]), str(SOURCE), 'exec'), namespace)
         with contextlib.redirect_stdout(io.StringIO()):
             try:
@@ -89,6 +90,12 @@ class ReviewGuards(unittest.TestCase):
                 self.assertIsInstance(result, RuntimeError)
                 self.assertEqual(calls, [])
 
+    def test_invalid_build_cannot_withdraw_the_pending_review(self):
+        for kwargs in [{'processing': 'PROCESSING'}, {'expired': True}, {'encrypted': None}, {'prerelease': '1.12'}, {'absent': True}]:
+            result, calls, _ = self.run_case(action='withdraw', **kwargs)
+            self.assertIsInstance(result, RuntimeError)
+            self.assertEqual(calls, [])
+
     def test_active_or_finished_review_is_preserved(self):
         for state in ['IN_REVIEW', 'READY_FOR_DISTRIBUTION', 'PENDING_DEVELOPER_RELEASE']:
             result, calls, _ = self.run_case(action='attach', state=state)
@@ -101,6 +108,58 @@ class ReviewGuards(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(calls[0][0], 'PATCH')
         self.assertEqual(current['id'], OLD)
+
+
+class ReviewWithdrawal(unittest.TestCase):
+    def run_case(self, selected=OLD, state='WAITING_FOR_REVIEW', app_state='WAITING_FOR_REVIEW', foreign=False, tamper=False, complete=False):
+        review_id = 'observed-review'
+        refs = [('appStoreVersion', 'appStoreVersions', 'current-version')] + [('inAppPurchaseVersion', 'inAppPurchaseVersions', f'purchase-{i}') for i in range(6)]
+        items = [{'id': f'item-{i}', 'relationships': {key: {'data': {'type': kind, 'id': rid}}}} for i, (key, kind, rid) in enumerate(refs)]
+        id_digest = hashlib.sha256('\n'.join(sorted(i['id'] for i in items)).encode()).hexdigest()
+        resource_digest = hashlib.sha256('\n'.join('|'.join(ref) for ref in sorted(refs)).encode()).hexdigest()
+        if tamper:
+            items[0]['relationships']['appStoreVersion']['data']['id'] = 'other-version'
+        live = {'state': 'COMPLETE' if complete else state}
+        mutations = []
+        def get(path, **params):
+            if path == '/appStoreVersions/current-version/build': return {'data': {'id': selected}}
+            if path == '/appStoreVersions/current-version': return {'data': {'attributes': {'appStoreState': app_state}}}
+            if path.endswith('/items'): return {'data': copy.deepcopy(items)}
+            if path == f'/reviewSubmissions/{review_id}': return {'data': {'attributes': {'state': live['state']}}}
+            if path.endswith('/reviewSubmissions'):
+                rows = [] if complete else [{'id': review_id, 'attributes': {'state': state, 'platform': 'IOS'}}]
+                if foreign: rows.append({'id': 'concurrent-review', 'attributes': {'state': 'READY_FOR_REVIEW', 'platform': 'IOS'}})
+                return {'data': rows}
+            raise AssertionError(path)
+        def call(method, path, body):
+            mutations.append((method, path, body)); live['state'] = 'COMPLETE'
+        ns = {'get': get, 'call': call, 'hashlib': hashlib, 'time': SimpleNamespace(sleep=lambda _: None), 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': review_id, 'APP_ID': '6815358482', 'ITEM_SET_SHA256': id_digest, 'RESOURCE_SET_SHA256': resource_digest}
+        exec(compile(ast.Module(body=[WITHDRAW], type_ignores=[]), str(SOURCE), 'exec'), ns)
+        try: result = ns['withdraw_review']('current-version')
+        except RuntimeError as error: result = error
+        return result, mutations
+
+    def test_only_observed_pending_submission_is_canceled(self):
+        result, calls = self.run_case()
+        self.assertTrue(result['withdrawn'])
+        self.assertEqual(calls, [('PATCH', '/reviewSubmissions/observed-review', {'data': {'type': 'reviewSubmissions', 'id': 'observed-review', 'attributes': {'canceled': True}}})])
+
+    def test_concurrent_build_resources_or_review_are_preserved(self):
+        for kwargs in [{'selected': 'other-build'}, {'foreign': True}, {'tamper': True}]:
+            result, calls = self.run_case(**kwargs)
+            self.assertIsInstance(result, RuntimeError)
+            self.assertEqual(calls, [])
+
+    def test_started_or_approved_review_is_preserved(self):
+        for state in ['IN_REVIEW', 'COMPLETE', 'UNRESOLVED_ISSUES']:
+            result, calls = self.run_case(state=state)
+            self.assertIsInstance(result, RuntimeError)
+            self.assertEqual(calls, [])
+
+    def test_completed_withdrawal_is_idempotent(self):
+        result, calls = self.run_case(complete=True, app_state='DEVELOPER_REJECTED')
+        self.assertTrue(result['withdrawn'])
+        self.assertEqual(calls, [])
 
 
 class ReviewResubmission(unittest.TestCase):
