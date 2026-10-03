@@ -49,7 +49,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: cosmosmap-ipad-testflight
+  group: ${{ inputs.status_only && 'cosmosmap-app-review-build31' || 'cosmosmap-ipad-testflight' }}
   cancel-in-progress: false
 
 jobs:
