@@ -49,7 +49,7 @@ class ReviewGuards(unittest.TestCase):
             if patch_error:
                 raise RuntimeError('Apple 409: pending review cannot be edited')
             current = copy.deepcopy(body['data'])
-        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': '31'}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD}
+        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': '31'}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
         exec(compile(ast.Module(body=[MAIN], type_ignores=[]), str(SOURCE), 'exec'), namespace)
         with contextlib.redirect_stdout(io.StringIO()):
             try:

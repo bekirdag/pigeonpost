@@ -183,10 +183,18 @@ def main():
     builds = get("/builds", **{"filter[app]": APP_ID, "filter[version]": number, "limit": 10})["data"]
     reviews = get(f"/apps/{APP_ID}/reviewSubmissions", limit=20)["data"]
     review_items = {}
+    review_resources = {}
     for row in reviews:
-        if row["attributes"].get("state") in {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "UNRESOLVED_ISSUES", "IN_REVIEW"}:
-            items = get(f"/reviewSubmissions/{row['id']}/items", limit=200)["data"]
+        if row["id"] == REVIEW_ID or row["attributes"].get("state") in {"READY_FOR_REVIEW", "WAITING_FOR_REVIEW", "UNRESOLVED_ISSUES", "IN_REVIEW"}:
+            response = get(f"/reviewSubmissions/{row['id']}/items", **{
+                "limit": 200, "include": "appStoreVersion,inAppPurchaseVersion",
+                "fields[reviewSubmissionItems]": "state,appStoreVersion,inAppPurchaseVersion",
+                "fields[appStoreVersions]": "versionString,platform,appStoreState",
+                "fields[inAppPurchaseVersions]": "version,state,inAppPurchase",
+            })
+            items = response["data"]
             review_items[row["id"]] = [{"id": item["id"], "state": item["attributes"].get("state"), "relationships": {key: value.get("data") for key, value in item.get("relationships", {}).items()}} for item in items]
+            review_resources[row["id"]] = response.get("included", [])
     report = {
         "appId": APP_ID, "versionId": version["id"], "version": VERSION,
         "appStoreState": version["attributes"].get("appStoreState"),
@@ -196,6 +204,7 @@ def main():
         "targetBuild": [{"id": b["id"], "number": b["attributes"]["version"], "processingState": b["attributes"]["processingState"], "expired": b["attributes"]["expired"], "usesNonExemptEncryption": b["attributes"].get("usesNonExemptEncryption")} for b in builds],
         "reviews": [{"id": row["id"], "state": row["attributes"].get("state"), "platform": row["attributes"].get("platform")} for row in reviews],
         "reviewItems": review_items,
+        "reviewResources": review_resources,
         "action": action, "attached": False,
     }
     print(json.dumps(report, indent=2))
