@@ -32,13 +32,14 @@ on:
         default: false
         type: boolean
       review_action:
-        description: "Status-only App Review operation: inspect or attach the validated build 31."
+        description: "Status-only App Review operation: inspect, attach or resubmit the validated build 31."
         required: false
         default: inspect
         type: choice
         options:
           - inspect
           - attach
+          - resubmit
       runner:
         description: "Runner image. Needs Xcode 26 or later."
         required: false

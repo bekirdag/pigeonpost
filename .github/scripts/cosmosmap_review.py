@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Inspect CosmosMap review and optionally attach an explicitly selected valid build."""
+"""Inspect or update the existing CosmosMap review with the validated build 31."""
 
 import base64
+import hashlib
 import json
 import os
 import subprocess
@@ -87,13 +88,91 @@ def get(path, **params):
 APP_ID = "6815358482"
 VERSION = "1.11"
 PREVIOUS_BUILD_ID = "3189f64a-4e73-4928-ae77-800078d389b5"
+REVIEW_ID = "dfc26d9d-503a-44b5-bcf9-b842dc2e6dcc"
+ITEM_SET_SHA256 = "e36b4db939843c0b738275d645331a8db68ca88b63b25823b6413173ba23e18e"
+
+
+
+def resubmit_review(version_id, target_id):
+    """Replace the build inside the exact existing seven-item review, with a guarded rollback."""
+    def check_items():
+        items = get(f"/reviewSubmissions/{REVIEW_ID}/items", limit=200)["data"]
+        ids = sorted(item["id"] for item in items)
+        digest = hashlib.sha256("\n".join(ids).encode()).hexdigest()
+        if len(ids) != 7 or len(set(ids)) != 7 or digest != ITEM_SET_SHA256:
+            raise RuntimeError("The original seven review items changed; preserve the concurrent change.")
+        return digest
+
+    def state():
+        return get(f"/reviewSubmissions/{REVIEW_ID}")["data"]["attributes"]["state"]
+
+    def wait_for(allowed):
+        for attempt in range(37):
+            current = state()
+            if current in allowed:
+                return current
+            if current not in {"CANCELING", "READY_FOR_REVIEW"}:
+                raise RuntimeError("Unexpected review transition: " + current)
+            time.sleep(5)
+        raise RuntimeError("Review transition timed out; inspect before continuing.")
+
+    def edit(attributes):
+        return call("PATCH", f"/reviewSubmissions/{REVIEW_ID}", {
+            "data": {"type": "reviewSubmissions", "id": REVIEW_ID, "attributes": attributes},
+        })
+
+    check_items()
+    current_build = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
+    current_state = state()
+    if current_build == target_id and current_state in {"WAITING_FOR_REVIEW", "IN_REVIEW"}:
+        return {"submitted": True, "reviewId": REVIEW_ID, "state": current_state, "items": 7, "itemSetSha256": ITEM_SET_SHA256}
+    if current_build not in {PREVIOUS_BUILD_ID, target_id} or current_state not in {"WAITING_FOR_REVIEW", "READY_FOR_REVIEW"}:
+        raise RuntimeError("The pending build or review changed; preserve it.")
+    try:
+        if current_state == "WAITING_FOR_REVIEW":
+            edit({"canceled": True})
+            wait_for({"READY_FOR_REVIEW"})
+            print("REVIEW_CHECKPOINT returned_to_editing")
+        check_items()
+        current_build = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
+        if current_build not in {PREVIOUS_BUILD_ID, target_id}:
+            raise RuntimeError("Concurrent build selection changed after cancellation.")
+        if current_build != target_id:
+            call("PATCH", f"/appStoreVersions/{version_id}/relationships/build", {"data": {"type": "builds", "id": target_id}})
+        if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
+            raise RuntimeError("Updated review build did not verify.")
+        check_items()
+        edit({"submitted": True})
+        final_state = wait_for({"WAITING_FOR_REVIEW", "IN_REVIEW"})
+        check_items()
+        if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
+            raise RuntimeError("Final review build did not verify.")
+        return {"submitted": True, "reviewId": REVIEW_ID, "state": final_state, "items": 7, "itemSetSha256": ITEM_SET_SHA256}
+    except Exception:
+        # Restore the prior submitted build only while this exact, unchanged draft is editable.
+        try:
+            if state() == "READY_FOR_REVIEW":
+                check_items()
+                selected = get(f"/appStoreVersions/{version_id}/build")["data"]["id"]
+                if selected in {PREVIOUS_BUILD_ID, target_id}:
+                    call("PATCH", f"/appStoreVersions/{version_id}/relationships/build", {"data": {"type": "builds", "id": PREVIOUS_BUILD_ID}})
+                    if get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != PREVIOUS_BUILD_ID:
+                        raise RuntimeError("Prior build restoration did not verify.")
+                    check_items()
+                    edit({"submitted": True})
+                    restored = wait_for({"WAITING_FOR_REVIEW", "IN_REVIEW"})
+                    check_items()
+                    print("REVIEW_ROLLBACK " + restored)
+        except Exception as rollback_error:
+            print("REVIEW_ROLLBACK_NEEDS_INSPECTION " + str(rollback_error))
+        raise
 
 
 def main():
     action = os.environ.get("ACTION", "inspect")
     number = os.environ.get("BUILD_NUMBER", "31")
-    if action not in {"inspect", "attach"} or number != "31":
-        raise RuntimeError("Only inspection or attaching the reviewed CosmosMap build 31 is supported.")
+    if action not in {"inspect", "attach", "resubmit"} or number != "31":
+        raise RuntimeError("Only inspection, attachment or resubmission of CosmosMap build 31 is supported.")
     versions = get(f"/apps/{APP_ID}/appStoreVersions", **{
         "filter[platform]": "IOS", "filter[versionString]": VERSION, "include": "build", "limit": 10,
     })
@@ -129,7 +208,10 @@ def main():
     pre = get(f"/builds/{target['id']}/preReleaseVersion")["data"]
     if a["processingState"] != "VALID" or a["expired"] or a.get("usesNonExemptEncryption") is not False or pre["attributes"]["version"] != VERSION:
         raise RuntimeError("Target build is not valid, unexpired, compliant version 1.11; review is unchanged.")
-    if selected and selected["id"] == target["id"]:
+    if action == "resubmit":
+        report["submission"] = resubmit_review(version["id"], target["id"])
+        report["attached"] = True
+    elif selected and selected["id"] == target["id"]:
         report["attached"] = True
     else:
         if not selected or selected["id"] != PREVIOUS_BUILD_ID:
