@@ -338,6 +338,77 @@ AsyncTest("Attachments are scoped, bounded, and sent as file identifiers", async
     await Throws<ArgumentException>(() => client.UploadAsync("/k/main", "empty", [], default));
     Equal(calls.Count, 3);
 });
+AsyncTest("A file sends without a caption or a fabricated work request", async () =>
+{
+    foreach (var caption in new string?[] { null, "", "  \r\n ", "  Please review this file.  " })
+    {
+        using var http = new HttpClient(new Handler(async (request, ct) =>
+        {
+            using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+            Equal(body.RootElement.GetProperty("from").GetString(), "/k/main");
+            Equal(body.RootElement.GetProperty("attachments")[0].GetString(), "file-1");
+            Equal(body.RootElement.GetProperty("thread_id").GetString(), "subject");
+            var sentBody = body.RootElement.GetProperty("body").GetString()!;
+            if (string.IsNullOrWhiteSpace(caption)) Equal(sentBody, "");
+            else Equal(RequestEnvelope.DisplayText(sentBody), "Please review this file.");
+            return Json(HttpStatusCode.Created, "{\"message_id\":\"m1\",\"sent_copy_id\":\"s1\"}");
+        }));
+        using var client = new PostboxClient(http, new Tokens());
+        await client.SendAttachmentAsync("/k/main", "/peer", RequestEnvelope.Attachment(caption), "subject", "file-1", default);
+    }
+});
+AsyncTest("File upload and download use the longer transfer budget; messages keep their own client", async () =>
+{
+    var transfers = 0;
+    using var transferHttp = new HttpClient(new Handler(async (request, ct) =>
+    {
+        transfers++;
+        await Task.Delay(100, ct);
+        Equal(request.Headers.GetValues("x-pigeonpost-identity").Single(), "/k/main");
+        return request.Method == HttpMethod.Post
+            ? Json(HttpStatusCode.Created, "{\"id\":\"file-1\",\"filename\":\"note.txt\",\"media_type\":\"text/plain\",\"bytes\":3}")
+            : new(HttpStatusCode.OK) { Content = new ByteArrayContent([1, 2, 3]) };
+    })) { Timeout = TimeSpan.FromSeconds(2) };
+    using var normalHttp = new HttpClient(new Handler((request, ct) =>
+    {
+        Equal(request.RequestUri!.AbsolutePath, "/v1/send");
+        return Task.FromResult(Json(HttpStatusCode.Created, "{\"message_id\":\"m1\",\"sent_copy_id\":\"s1\"}"));
+    })) { Timeout = TimeSpan.FromMilliseconds(20) };
+    using var client = new PostboxClient(normalHttp, new Tokens(), transfers: transferHttp);
+    var uploaded = await client.UploadAsync("/k/main", "note.txt", [1, 2, 3], default);
+    await client.SendAttachmentAsync("/k/main", "/peer", "", null, uploaded.Id, default);
+    Check((await client.DownloadAsync("/k/main", uploaded.Id, default)).SequenceEqual(new byte[] { 1, 2, 3 }), "Downloaded bytes changed.");
+    Equal(transfers, 2);
+});
+AsyncTest("An expired session replays the same upload exactly once with the renewed token", async () =>
+{
+    var count = 0;
+    var tokens = new Tokens();
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        count++;
+        Equal(request.Headers.Authorization!.Parameter, count == 1 ? "old" : "new");
+        Equal(request.Headers.GetValues("x-pigeonpost-identity").Single(), "/k/main");
+        Equal(request.Headers.GetValues("x-pigeonpost-filename").Single(), "note.txt");
+        Check((await request.Content!.ReadAsByteArrayAsync(ct)).SequenceEqual(new byte[] { 1, 2, 3 }), "Upload replay changed bytes.");
+        return count == 1 ? Json(HttpStatusCode.Unauthorized, "{\"error\":\"unauthorized\"}")
+            : Json(HttpStatusCode.Created, "{\"id\":\"file-1\",\"filename\":\"note.txt\",\"media_type\":\"text/plain\",\"bytes\":3}");
+    }));
+    using var client = new PostboxClient(http, tokens);
+    Equal((await client.UploadAsync("/k/main", "note.txt", [1, 2, 3], default)).Id, "file-1");
+    Equal(count, 2); Equal(tokens.Renewals, 1);
+});
+AsyncTest("Upload cancellation and quota errors remain actionable", async () =>
+{
+    using var http = new HttpClient(new Handler((_, _) => Task.FromResult(Json(HttpStatusCode.Conflict, "{\"error\":\"mailbox_full\"}"))));
+    using var client = new PostboxClient(http, new Tokens());
+    var failure = await Throws<PostboxException>(() => client.UploadAsync("/k/main", "note.txt", [1], default));
+    Equal(failure.Message, "Your mailbox has no room for this file.");
+    using var cancellation = new CancellationTokenSource();
+    using var slowHttp = new HttpClient(new Handler(async (_, ct) => { cancellation.Cancel(); await Task.Delay(1000, ct); return Json(HttpStatusCode.Created, "{}"); }));
+    using var slowClient = new PostboxClient(slowHttp, new Tokens());
+    await Throws<OperationCanceledException>(() => slowClient.UploadAsync("/k/main", "note.txt", [1], cancellation.Token));
+});
 AsyncTest("Contact writes carry mailbox and explicit review permissions", async () =>
 {
     using var http = new HttpClient(new Handler(async (request, ct) =>

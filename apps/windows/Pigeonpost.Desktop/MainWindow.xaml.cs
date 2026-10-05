@@ -26,7 +26,7 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         session = new AccountSession(http, new WindowsTokenStore());
-        postbox = new PostboxClient(http, session);
+        postbox = new PostboxClient(http, session, transfers: transfers);
         ViewModel = new InboxViewModel(postbox);
 #if UI_TESTS
         // Compiled only in the separate UI-test binary; Store packages never enable fixtures.
@@ -36,7 +36,10 @@ public sealed partial class MainWindow : Window
         vaultTest.Clear();
         if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
-        ViewModel = new InboxViewModel(new PreviewInboxService(longHistory: true));
+        var preview = new PreviewInboxService(longHistory: true);
+        ViewModel = new InboxViewModel(preview);
+        postbox.Dispose();
+        postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
 #endif
         InitializeComponent();
         Title = BuildLabel;

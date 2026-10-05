@@ -145,6 +145,9 @@ public sealed record Subject(string Id, string? Title, bool IsDefault, IReadOnly
 
 public static class RequestEnvelope
 {
+    // A file is already message content. Do not invent a caption or an empty work request.
+    public static string Attachment(string? caption) => string.IsNullOrWhiteSpace(caption) ? "" : Work(caption.Trim());
+
     // Matches the current Apple composer. The recipient still owns every permission decision.
     public static string Work(string text) => JsonSerializer.Serialize(new
     {

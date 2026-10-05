@@ -6,7 +6,7 @@
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <RootNamespace>Pigeonpost.Desktop</RootNamespace>
     <AssemblyName>Pigeonpost</AssemblyName>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Pigeonpost.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
