@@ -11,6 +11,10 @@ public sealed class PostboxException(int statusCode, string? code) : Exception(c
     "recipient_unresolved" => "No mailbox at that address.",
     "recipient_inbox_full" => "Their inbox is full.",
     "unauthorized" => "Your session expired. Sign in again.",
+    "attachment_too_large" => "This file exceeds the postbox's attachment size limit.",
+    "empty_attachment" => "The selected file is empty.",
+    "mailbox_full" => "Your mailbox has no room for this file.",
+    "storage_full" => "The postbox has no room for more files. Please try again later.",
     "bad_response" => "The postbox returned an unreadable response.",
     _ => $"The postbox could not complete this request ({statusCode})."
 })
@@ -20,7 +24,7 @@ public sealed class PostboxException(int statusCode, string? code) : Exception(c
 }
 
 // HttpClient and token-provider lifetimes belong to the caller. Never log tokens or raw responses.
-public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null) : IInboxService, IDisposable
+public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IDisposable
 {
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);
@@ -93,13 +97,13 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     {
         if (bytes.Length is 0 or > MaxAttachmentBytes) throw new ArgumentException("Choose a file between 1 byte and 25 MB.");
         var safeName = new string(filename.Select(c => c is >= ' ' and <= '~' && c is not '\r' and not '\n' and not '/' and not '\\' ? c : '_').Take(120).ToArray());
-        using var response = await RequestAsync(HttpMethod.Post, "/v1/attachments", null, cancellationToken, bytes, identity, safeName).ConfigureAwait(false);
+        using var response = await RequestAsync(HttpMethod.Post, "/v1/attachments", null, cancellationToken, bytes, identity, safeName, transfer: true).ConfigureAwait(false);
         return await DecodeAsync<MessageAttachment>(response, cancellationToken).ConfigureAwait(false);
     }
 
     public async Task<byte[]> DownloadAsync(string identity, string attachmentId, CancellationToken cancellationToken)
     {
-        using var response = await RequestAsync(HttpMethod.Get, "/v1/attachments/" + Uri.EscapeDataString(attachmentId), null, cancellationToken, identity: identity).ConfigureAwait(false);
+        using var response = await RequestAsync(HttpMethod.Get, "/v1/attachments/" + Uri.EscapeDataString(attachmentId), null, cancellationToken, identity: identity, transfer: true).ConfigureAwait(false);
         await response.Content.LoadIntoBufferAsync(MaxAttachmentBytes, cancellationToken).ConfigureAwait(false);
         return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
@@ -125,7 +129,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     }
 
     private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken,
-        byte[]? binary = null, string? identity = null, string? filename = null)
+        byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false)
     {
         var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         for (var attempt = 0; ; attempt++)
@@ -142,7 +146,8 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
                 request.Headers.Add("x-pigeonpost-media-type", "application/octet-stream");
             }
             if (json is not null) request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
-            var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            var response = await (transfer ? transfers ?? http : http).SendAsync(request,
+                HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
             {
                 response.Dispose();

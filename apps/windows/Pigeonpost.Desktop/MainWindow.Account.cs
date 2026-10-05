@@ -10,6 +10,8 @@ namespace Pigeonpost.Desktop;
 public sealed partial class MainWindow
 {
     private readonly HttpClient http = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(35) };
+    // Files need time for a slow uplink; ordinary account/message requests keep their short timeout.
+    private readonly HttpClient transfers = new(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromMinutes(5) };
     private readonly AccountSession session;
     private readonly PostboxClient postbox;
     private readonly CancellationTokenSource lifetime = new();

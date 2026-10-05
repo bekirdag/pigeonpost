@@ -10,7 +10,9 @@ Locker; access tokens and message history stay in memory. The app never executes
 - New conversations can open without a message or send a first message; failed sends retain the draft.
 - Per-subject drafts, confirmed subject deletion, archive/restore and automatic refresh.
 - Free first-mailbox creation; existing named mailboxes load from the same account.
-- File sending (up to 25 MiB), explicit Save attachments from the message context menu.
+- File sending (up to 25 MiB) with an optional message; empty captions send only the file. Transfers
+  allow five minutes on slow connections and report upload failures separately from uncertain sends.
+  Explicit Save attachments is available from the message context menu.
 - Clickable sender names/addresses, sender and own-address clipboard actions, and full handle labels.
 - Known sender, full/specific server-defined request permissions, and confirmed blocking that clears grants.
 - Sender details close before switching to another owned mailbox. Find highlights words and retains its match across refresh.

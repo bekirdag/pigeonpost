@@ -93,6 +93,17 @@ public sealed class PreviewInboxService : IInboxService
         return Task.FromResult(id);
     }
 
+    public async Task<SendReceipt> SendFileAsync(string identity, string peer, string body, string? threadId, MessageAttachment file, CancellationToken token)
+    {
+        var receipt = await SendAsync(identity, peer, body, threadId, token);
+        var snapshot = snapshots[identity];
+        snapshots[identity] = snapshot with
+        {
+            Messages = snapshot.Messages.Select(m => m.MessageId == receipt.SentCopyId ? m with { Attachments = [file] } : m).ToArray()
+        };
+        return receipt;
+    }
+
     public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();

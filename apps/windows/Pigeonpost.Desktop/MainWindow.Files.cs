@@ -113,24 +113,35 @@ public sealed partial class MainWindow
         if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
         var thread = ViewModel.SelectedSubject?.Id;
         dialogOpen = true;
+        var sendingMessage = false;
         try
         {
+            StorageFile? file;
+#if UI_TESTS
+            // A real StorageFile exercises the Windows file-reading path; the fixture transport
+            // validates the resulting upload and message without any production credentials.
+            file = await StorageFile.GetFileFromPathAsync(Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE")
+                ?? throw new InvalidOperationException("Attachment fixture file was not provided."));
+#else
             var picker = new FileOpenPicker();
             picker.FileTypeFilter.Add("*");
             WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            var file = await picker.PickSingleFileAsync();
+            file = await picker.PickSingleFileAsync();
+#endif
             if (file is null) return;
             var size = (await file.GetBasicPropertiesAsync()).Size;
             if (size is 0 or > PostboxClient.MaxAttachmentBytes) { AccountStatus.Text = "Choose a file between 1 byte and 25 MB."; return; }
-            var caption = new TextBox { Header = "Message (optional)", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 20000, MinHeight = 80 };
+            var caption = new TextBox { Header = "Message (optional)", PlaceholderText = "Send the file by itself, or add a message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 20000, MinHeight = 80 };
+            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(caption, "File message (optional)");
             var panel = new StackPanel { Spacing = 12 };
             panel.Children.Add(new TextBlock { Text = $"Send {file.Name} to {conversation.Peer}", TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(caption);
             var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Send a file", Content = panel, PrimaryButtonText = "Send file", CloseButtonText = "Cancel" };
+            dialog.IsPrimaryButtonEnabled = true;
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             if (ViewModel.SelectedMailbox?.Address != mailbox.Address || ViewModel.SelectedConversation?.Peer != conversation.Peer || ViewModel.SelectedSubject?.Id != thread)
             { AccountStatus.Text = "The conversation changed. Select the file again to send it here."; return; }
-            AccountStatus.Text = "Sending file…";
+            AccountStatus.Text = "Uploading file…";
             using var stream = await file.OpenStreamForReadAsync();
             if (stream.Length > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
             using var buffer = new MemoryStream();
@@ -142,12 +153,27 @@ public sealed partial class MainWindow
                 buffer.Write(chunk, 0, count);
             }
             var uploaded = await postbox.UploadAsync(mailbox.Address, file.Name, buffer.ToArray(), lifetime.Token);
-            await postbox.SendAttachmentAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Work(string.IsNullOrWhiteSpace(caption.Text) ? file.Name : caption.Text.Trim()), string.IsNullOrEmpty(thread) ? null : thread, uploaded.Id, lifetime.Token);
-            if (ViewModel.SelectedMailbox?.Address == mailbox.Address) await ViewModel.RefreshAsync();
+            lifetime.Token.ThrowIfCancellationRequested();
+            sendingMessage = true;
+            AccountStatus.Text = "Sending file…";
+            var receipt = await postbox.SendAttachmentAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text), string.IsNullOrEmpty(thread) ? null : thread, uploaded.Id, lifetime.Token);
+            if (ViewModel.SelectedMailbox?.Address == mailbox.Address)
+            {
+                await ViewModel.RefreshAsync();
+                if (ViewModel.SelectedConversation?.Peer == conversation.Peer && ViewModel.SelectedSubject?.Id == thread
+                    && ViewModel.Messages.FirstOrDefault(m => m.Id == receipt.SentCopyId) is { } sent)
+                    QueueScroll(sent);
+            }
             AccountStatus.Text = "File sent.";
         }
-        catch (OperationCanceledException) { }
-        catch (Exception) { AccountStatus.Text = "File delivery could not be confirmed. Check this conversation before trying again."; }
+        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+        catch (PostboxException ex) { AccountStatus.Text = ex.Message; }
+        catch (Exception)
+        {
+            AccountStatus.Text = sendingMessage
+                ? "File delivery could not be confirmed. Check this conversation before trying again."
+                : "Could not upload this file. It was not sent. Please try again.";
+        }
         finally { dialogOpen = false; }
     }
 

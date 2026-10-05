@@ -13,6 +13,11 @@ public static class NativeWindowBounds {
 }
 '@
 New-Item -ItemType Directory -Force $OutputDirectory | Out-Null
+if ($Fixture) {
+    $attachmentPath = Join-Path (Resolve-Path $OutputDirectory).Path 'attachment-only.txt'
+    [IO.File]::WriteAllText($attachmentPath, ('Windows file bytes ' * 8192))
+    $env:PIGEONPOST_UI_ATTACHMENT_FILE = $attachmentPath
+}
 if ($PackageFamilyName) {
     $before = @(Get-Process Pigeonpost -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
     Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$PackageFamilyName!App"
@@ -96,6 +101,19 @@ try {
         Capture 'inbox.png'
         Invoke-Control 'Send'
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Successful send did not clear composer.' }
+        Invoke-Control 'Attach file…'
+        $fileMessage = Wait-Element 'File message (optional)'
+        if ($fileMessage.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'File dialog invented a caption.' }
+        Capture 'attachment-without-message.png'
+        Commit-Dialog 'Send file'
+        $null = Wait-Element 'File sent.'
+        $null = Wait-Element 'attachment-only.txt'
+        Capture 'attachment-delivered.png'
+        Invoke-Control 'Attach file…'
+        Set-Text 'File message (optional)' 'Optional file caption'
+        Commit-Dialog 'Send file'
+        $null = Wait-Element 'File sent.'
+        $null = Wait-Element 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
         Invoke-Control 'Copy my address'
@@ -159,6 +177,10 @@ try {
         Capture 'welcome.png'
     }
     Write-Host 'Native Windows UI smoke passed.'
+} catch {
+    if ($root -and -not $process.HasExited) { Capture 'failure.png' }
+    throw
 } finally {
+    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE -ErrorAction SilentlyContinue }
     if (-not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }
 }
