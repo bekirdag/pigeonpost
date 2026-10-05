@@ -25,7 +25,8 @@ internal sealed class AttachmentFixtureHandler(PreviewInboxService preview) : Ht
         if (request.RequestUri!.AbsolutePath == "/v1/attachments")
         {
             var data = await request.Content!.ReadAsByteArrayAsync(token);
-            if (!data.SequenceEqual(await File.ReadAllBytesAsync(file, token))) throw new InvalidOperationException("Windows file bytes changed.");
+            var expectedData = await File.ReadAllBytesAsync(file, token);
+            if (!data.SequenceEqual(expectedData)) throw new InvalidOperationException("Windows file bytes changed.");
             owner = request.Headers.GetValues("x-pigeonpost-identity").Single();
             var filename = request.Headers.GetValues("x-pigeonpost-filename").Single();
             if (filename != Path.GetFileName(file)) throw new InvalidOperationException("Wrong filename.");
