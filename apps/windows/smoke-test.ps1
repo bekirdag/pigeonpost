@@ -101,7 +101,7 @@ try {
         Capture 'inbox.png'
         Invoke-Control 'Send'
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Successful send did not clear composer.' }
-        Invoke-Control 'Attach file'
+        Invoke-Control 'Attach file…'
         $fileMessage = Wait-Element 'File message (optional)'
         if ($fileMessage.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'File dialog invented a caption.' }
         Capture 'attachment-without-message.png'
@@ -109,7 +109,7 @@ try {
         $null = Wait-Element 'File sent.'
         $null = Wait-Element 'attachment-only.txt'
         Capture 'attachment-delivered.png'
-        Invoke-Control 'Attach file'
+        Invoke-Control 'Attach file…'
         Set-Text 'File message (optional)' 'Optional file caption'
         Commit-Dialog 'Send file'
         $null = Wait-Element 'File sent.'
