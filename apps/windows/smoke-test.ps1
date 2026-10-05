@@ -177,6 +177,9 @@ try {
         Capture 'welcome.png'
     }
     Write-Host 'Native Windows UI smoke passed.'
+} catch {
+    if ($root -and -not $process.HasExited) { Capture 'failure.png' }
+    throw
 } finally {
     if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE -ErrorAction SilentlyContinue }
     if (-not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }

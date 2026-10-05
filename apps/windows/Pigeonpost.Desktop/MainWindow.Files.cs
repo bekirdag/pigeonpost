@@ -156,8 +156,14 @@ public sealed partial class MainWindow
             lifetime.Token.ThrowIfCancellationRequested();
             sendingMessage = true;
             AccountStatus.Text = "Sending file…";
-            await postbox.SendAttachmentAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text), string.IsNullOrEmpty(thread) ? null : thread, uploaded.Id, lifetime.Token);
-            if (ViewModel.SelectedMailbox?.Address == mailbox.Address) await ViewModel.RefreshAsync();
+            var receipt = await postbox.SendAttachmentAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text), string.IsNullOrEmpty(thread) ? null : thread, uploaded.Id, lifetime.Token);
+            if (ViewModel.SelectedMailbox?.Address == mailbox.Address)
+            {
+                await ViewModel.RefreshAsync();
+                if (ViewModel.SelectedConversation?.Peer == conversation.Peer && ViewModel.SelectedSubject?.Id == thread
+                    && ViewModel.Messages.FirstOrDefault(m => m.Id == receipt.SentCopyId) is { } sent)
+                    QueueScroll(sent);
+            }
             AccountStatus.Text = "File sent.";
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
