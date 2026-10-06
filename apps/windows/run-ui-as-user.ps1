@@ -30,7 +30,7 @@ public static class StandardUserUi {
     [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool ConvertStringSidToSid(string value, out IntPtr sid);
     [DllImport("advapi32.dll", SetLastError=true)] static extern bool SetTokenInformation(IntPtr token, int kind, ref Label label, int size);
     [DllImport("advapi32.dll")] static extern int GetLengthSid(IntPtr sid);
-    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessWithTokenW(IntPtr token, uint logon, string app, StringBuilder command, uint flags, IntPtr environment, string directory, ref Startup startup, out ProcessInfo info);
+    [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory, ref Startup startup, out ProcessInfo info);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
     static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
@@ -44,9 +44,10 @@ public static class StandardUserUi {
             Check(SetTokenInformation(limited, 25, ref label, Marshal.SizeOf<Label>() + GetLengthSid(sid)));
             var startup = new Startup { cb = Marshal.SizeOf<Startup>(), desktop = @"winsta0\default" };
             ProcessInfo info;
-            Check(CreateProcessWithTokenW(limited, 0, executable,
-                new StringBuilder("\"" + executable + "\" -NoProfile -ExecutionPolicy Bypass -File \"" + script + "\""),
-                0x08000000, IntPtr.Zero, directory, ref startup, out info));
+            Check(CreateProcessAsUserW(limited, executable,
+                new StringBuilder("\"" + executable + "\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\""),
+                IntPtr.Zero, IntPtr.Zero, false, 0x08000000, IntPtr.Zero, directory, ref startup, out info));
+            Console.WriteLine("Started standard-user UI process " + info.pid);
             try {
                 using (var child = Process.GetProcessById(info.pid)) {
                     if (!child.WaitForExit(180000)) { child.Kill(true); throw new TimeoutException("Standard-user UI checks timed out."); }
@@ -80,5 +81,16 @@ try {
 finally { Stop-Transcript | Out-Null }
 "@ | Set-Content $childScript
 try { $code = [StandardUserUi]::Run((Get-Command pwsh).Source, $childScript, (Get-Location).Path) }
+catch {
+    Add-Type -AssemblyName System.Drawing, System.Windows.Forms
+    $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+    $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+    $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+    try {
+        $graphics.CopyFromScreen($bounds.Location, [System.Drawing.Point]::Empty, $bitmap.Size)
+        $bitmap.Save((Join-Path $directory 'standard-user-failure.png'))
+    } finally { $graphics.Dispose(); $bitmap.Dispose() }
+    throw
+}
 finally { if (Test-Path $log) { Get-Content $log | Write-Host } }
 if ($code -ne 0) { throw "Standard-user native UI checks failed ($code)." }

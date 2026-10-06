@@ -146,7 +146,8 @@ try {
         @'
 param([string]$Files)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing.Common @"
+$references = @((Get-ChildItem (Join-Path $PSHOME 'ref/*.dll')).FullName) + @([System.Windows.Forms.Form].Assembly.Location, [System.Drawing.Bitmap].Assembly.Location)
+Add-Type -ReferencedAssemblies $references @"
 using System;
 using System.Drawing;
 using System.Windows.Forms;
