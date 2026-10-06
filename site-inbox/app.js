@@ -323,6 +323,18 @@
       // Cleared so choosing the same file twice in a row still fires a change.
       input.value = "";
     });
+    $("compose").addEventListener("paste", (e) => {
+      if (!state.openPeer) return;
+      const clipboard = e.clipboardData;
+      let files = Array.from(clipboard?.files || []);
+      // Some browsers expose image bytes only through items. These are alternate
+      // representations of the same clipboard, so never append both lists.
+      if (!files.length) files = Array.from(clipboard?.items || [])
+        .filter(item => item.kind === "file").map(item => item.getAsFile()).filter(Boolean);
+      if (!files.length) return; // Ordinary text keeps the browser's selection/undo behaviour.
+      e.preventDefault();
+      stageFiles(files);
+    });
   }
 
   function stageFiles(files) {
@@ -432,6 +444,12 @@
       li.append(name, size, drop);
       list.append(li);
     });
+    updateSendAvailability();
+  }
+
+  function updateSendAvailability() {
+    $("send-btn").disabled = (!$("compose").value.trim() && !staged.length)
+      || !state.openPeer || sendingDrafts.has(composerKey());
   }
 
   function readableBytes(n) {
@@ -2275,10 +2293,6 @@
         return;
       }
       if (!context.current()) return;
-      if (composerKey() === draftKey) {
-      staged.length = 0;
-      renderStaged();
-      }
     }
     text = composeBody(text);
     const record = Pending.add({
@@ -2307,6 +2321,13 @@
       drafts.delete(draftKey);
       if (context.current() && composerKey() === draftKey) {
         if ($("compose").value.trim() === originalText) $("compose").value = "";
+        // A picker/drop can add files while the request is in flight. Remove only
+        // the captured files, and keep the entire draft on upload/send failure.
+        for (const file of files) {
+          const index = staged.indexOf(file);
+          if (index !== -1) staged.splice(index, 1);
+        }
+        renderStaged();
         jumpToLatest();
       }
       // Nothing to reconcile against if the postbox did not keep a copy; drop the optimistic row
@@ -3395,7 +3416,7 @@
       const style = getComputedStyle(compose);
       const border = (parseFloat(style.borderTopWidth) || 0) + (parseFloat(style.borderBottomWidth) || 0);
       compose.style.height = Math.min(compose.scrollHeight + border, window.innerHeight * 0.4) + "px";
-      $("send-btn").disabled = !compose.value.trim() || sendingDrafts.has(composerKey());
+      updateSendAvailability();
     };
     compose.addEventListener("input", autosize);
 
@@ -3413,7 +3434,7 @@
       e.preventDefault();
       const text = compose.value.trim();
       const key = composerKey();
-      if (!text || !state.openPeer || sendingDrafts.has(key)) return;
+      if ((!text && !staged.length) || !state.openPeer || sendingDrafts.has(key)) return;
       sendingDrafts.add(key);
       compose.disabled = true;
       autosize();

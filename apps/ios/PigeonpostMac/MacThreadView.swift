@@ -243,16 +243,19 @@ struct MacThreadView: View {
                     .foregroundStyle(Theme.muted)
                     .help("Attach a file")
 
-                TextField("Write a message", text: $draft, axis: .vertical)
-                    .textFieldStyle(.plain)
-                    .lineLimit(1...8)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 7)
+                MacMessageEditor(text: $draft, attach: { staged.append(contentsOf: $0) },
+                                 reportError: { inbox.toast = $0 }, send: send)
+                    .overlay(alignment: .topLeading) {
+                        if draft.isEmpty {
+                            Text("Write a message")
+                                .font(.system(size: 13))
+                                .foregroundStyle(Theme.muted)
+                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .allowsHitTesting(false)
+                        }
+                    }
                     .background(Theme.ground, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.rule, lineWidth: 1))
-                    // Return sends, which is what every desktop messenger does; a newline needs
-                    // Shift, which SwiftUI gives for free on a vertical-axis field.
-                    .onSubmit(send)
 
                 Button(action: send) { Image(systemName: "paperplane.fill") }
                     .keyboardShortcut(.return, modifiers: .command)
@@ -294,18 +297,8 @@ struct MacThreadView: View {
     /// Read now rather than at send time — the same reason as on the phone: the permission to read
     /// a chosen file is scoped to the moment it was chosen.
     private func stage(_ url: URL) {
-        let scoped = url.startAccessingSecurityScopedResource()
-        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
-            inbox.toast = "Could not read that file."
-            return
-        }
-        staged.append(StagedFile(
-            name: url.lastPathComponent,
-            mediaType: UTType(filenameExtension: url.pathExtension)?.preferredMIMEType
-                ?? "application/octet-stream",
-            data: data
-        ))
+        do { staged.append(try MacClipboardFiles.readFile(url)) }
+        catch { inbox.toast = error.localizedDescription }
     }
 
     private func send() {

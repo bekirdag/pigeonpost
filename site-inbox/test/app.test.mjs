@@ -116,7 +116,7 @@ const EVENTS = {
 
 function fakeFetch(url, opts = {}) {
   const path = String(url).replace("https://postbox.pigeonpost.dev", "");
-  calls.push({ path, method: opts.method || "GET", body: opts.body ? JSON.parse(opts.body) : null });
+  calls.push({ path, method: opts.method || "GET", body: typeof opts.body === "string" ? JSON.parse(opts.body) : opts.body ?? null });
   const json = (body, ok = true, status = 200) =>
     Promise.resolve({ ok, status, json: () => Promise.resolve(body) });
 
@@ -172,6 +172,9 @@ function fakeFetch(url, opts = {}) {
     return Promise.resolve({ ok: true, status: 200, body: EVENTS.body() });
   }
   if (path.startsWith("/v1/ack")) return json({ ok: true });
+  if (path.startsWith("/v1/attachments") && opts.method === "POST") {
+    return json({ id: "attachment-" + calls.length }, true, 201);
+  }
   if (path.startsWith("/v1/send")) return json({ message_id: "sent1", sent_copy_id: "copy1" }, true, 201);
   return json({ error: "not_found" }, false, 404);
 }
@@ -833,6 +836,54 @@ console.log("\n— dropping a file on the conversation —");
   check("the drop is still taken from the browser", homeless.defaultPrevented, true);
   check("but nothing is staged", names().length, 0);
   check("and the reason is given", text($("toast")), "Open a conversation first, then drop the file.");
+}
+
+console.log("\n— pasted attachments stay with the draft until Send —");
+{
+  [...$("threads").querySelectorAll(".thread-row")]
+    .find(r => text(r.querySelector(".tr-name")) === "my fleet").click();
+  await settle(80);
+  const compose = $("compose");
+  const names = () => [...$("pending-files").querySelectorAll(".pf-name")].map(el => text(el));
+  const paste = clipboardData => {
+    const event = new window.Event("paste", { bubbles: true, cancelable: true });
+    Object.defineProperty(event, "clipboardData", { value: clipboardData });
+    compose.dispatchEvent(event);
+    return event;
+  };
+  const png = new window.File([new Uint8Array([137, 80, 78, 71])], "screenshot.png", { type: "image/png" });
+  const second = new window.File(["copied image"], "whatsapp.png", { type: "image/png" });
+  compose.value = "Caption already written";
+  compose.dispatchEvent(new window.Event("input"));
+  const before = calls.length;
+  check("image paste handles the clipboard", paste({ files: [png], items: [{ kind: "file", getAsFile: () => png }] }).defaultPrevented, true);
+  check("alternate clipboard formats do not duplicate the image", names(), "screenshot.png");
+  paste({ files: [], items: [{ kind: "string" }, { kind: "file", getAsFile: () => second }] });
+  check("items-only image paste adds another attachment", names(), "screenshot.png,whatsapp.png");
+  check("paste preserves the typed caption", compose.value, "Caption already written");
+  check("paste sends and uploads nothing", calls.slice(before).some(c => c.path.startsWith("/v1/attachments") || c.path === "/v1/send"), false);
+  check("ordinary text paste uses the browser", paste({ files: [], items: [{ kind: "string" }] }).defaultPrevented, false);
+  $("composer").requestSubmit();
+  await settle(100);
+  const sent = calls.slice(before).filter(c => c.path === "/v1/send");
+  check("multiple images and caption send as one message", sent.length, 1);
+  check("combined message carries both attachment IDs", sent[0]?.body.attachments.length, 2);
+  check("combined message preserves its caption", JSON.parse(sent[0]?.body.body).note, "Caption already written");
+  check("successful send clears attachments", names().length, 0);
+  paste({ files: [png] });
+  check("an image without text enables Send", $("send-btn").disabled, false);
+  const fileOnlyStart = calls.length;
+  $("send-btn").click();
+  await settle(100);
+  const fileOnly = calls.slice(fileOnlyStart).find(c => c.path === "/v1/send");
+  check("image-only message reaches the API", fileOnly?.body.attachments.length, 1);
+  check("image-only message needs no placeholder text", JSON.parse(fileOnly?.body.body).note, "");
+  check("empty composer disables Send", $("send-btn").disabled, true);
+  paste({ files: [png] });
+  $("pending-files").querySelector(".pf-drop").click();
+  check("removing the only image disables Send", $("send-btn").disabled, true);
+  $("back-btn").click();
+  await settle(60);
 }
 
 console.log("\n— the phone walks out one screen at a time —");

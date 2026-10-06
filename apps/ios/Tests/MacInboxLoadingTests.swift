@@ -119,6 +119,7 @@ extension Notification.Name {
             snapshot(host, name: "mac-inbox-empty")
             await repeatedPickerSwitches(window: window, host: host, account: account, inbox: inbox)
             await visitsFromDetails(window: window, host: host, account: account, inbox: inbox)
+            await clipboardMessages(window: window, account: account, inbox: inbox)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
             window.orderOut(nil)
@@ -130,6 +131,92 @@ extension Notification.Name {
     static func settle() async {
         // Main-actor sleeps let AppKit lay out and animate; a blocked UI cannot complete this.
         for _ in 0..<10 { try? await Task.sleep(for: .milliseconds(30)) }
+    }
+
+    static func clipboardMessages(window: NSWindow, account: Account, inbox: Inbox) async {
+        let host = NSHostingView(rootView: MacThreadView(peer: "/test/peer", subthread: nil)
+            .environment(account).environment(inbox))
+        window.contentView = host
+        await settle()
+        func findEditor(_ view: NSView) -> AttachmentTextView? {
+            if let editor = view as? AttachmentTextView { return editor }
+            return view.subviews.compactMap(findEditor).first
+        }
+        guard let editor = findEditor(host) else { fatalError("Native composer did not render") }
+        window.makeFirstResponder(editor)
+        let board = NSPasteboard.withUniqueName()
+        defer { board.releaseGlobally() }
+        let bitmap = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 2, pixelsHigh: 2,
+            bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+            colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        for y in 0..<2 { for x in 0..<2 {
+            let offset = y * bitmap.bytesPerRow + x * 4
+            for (channel, value) in [UInt8(255), 102, 178, 255].enumerated() { bitmap.bitmapData![offset + channel] = value }
+        } }
+        let png = bitmap.representation(using: .png, properties: [:])!
+        editor.insertText("Caption first", replacementRange: NSRange(location: 0, length: 0))
+        await settle()
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setData(png, forType: .png)
+        let pasteItem = NSMenuItem(title: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        InboxLoadingTests.check(editor.validateUserInterfaceItem(pasteItem), "Paste is enabled for an image-only clipboard")
+        InboxLoadingTests.check(NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: pasteItem), "native composer handles PNG Paste command")
+        await settle()
+        InboxLoadingTests.check(editor.string == "Caption first", "image paste preserves the caption")
+        InboxLoadingTests.check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }, "paste does not upload before Send")
+        board.clearContents()
+        board.setData(bitmap.tiffRepresentation!, forType: .tiff)
+        let converted = try! MacClipboardFiles.read(board)
+        InboxLoadingTests.check(converted.count == 1 && converted[0].mediaType == "image/png"
+            && NSBitmapImageRep(data: converted[0].data)?.pixelsWide == 2, "screenshot TIFF converts to a PNG attachment")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("paste-\(UUID().uuidString).png")
+        try! png.write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        board.clearContents()
+        board.writeObjects([file as NSURL])
+        InboxLoadingTests.check(editor.pasteAttachments(from: board), "copied file joins the existing draft")
+        await settle()
+        snapshot(host, name: "mac-pasted-attachments")
+        // Remove the caption through the native text system, then send with Return.
+        editor.selectAll(nil)
+        editor.insertText("", replacementRange: editor.selectedRange())
+        await settle()
+        editor.insertNewline(nil)
+        for index in 0..<2 {
+            await InboxLoadingTests.wait("pasted attachment upload") {
+                ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }
+            }
+            let request = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/attachments" }!
+            InboxLoadingTests.check(request.value(forHTTPHeaderField: "x-pigeonpost-identity") == account.me?.address,
+                                    "pasted image upload uses the active mailbox")
+            ControlledURLProtocol.complete("/v1/attachments", identity: account.me!.address,
+                body: "{\"id\":\"pasted-\(index)\",\"filename\":\"image.png\",\"media_type\":\"image/png\",\"bytes\":\(png.count)}", status: 201)
+        }
+        await InboxLoadingTests.wait("file-only send") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/send" } }
+        let request = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/send" }!
+        var data = request.httpBody ?? Data()
+        if let stream = request.httpBodyStream {
+            stream.open(); defer { stream.close() }
+            var bytes = [UInt8](repeating: 0, count: 4096)
+            while stream.hasBytesAvailable {
+                let count = stream.read(&bytes, maxLength: bytes.count)
+                if count <= 0 { break }
+                data.append(contentsOf: bytes.prefix(count))
+            }
+        }
+        let body = try! JSONSerialization.jsonObject(with: data) as! [String: Any]
+        let envelope = try! JSONSerialization.jsonObject(with: Data((body["body"] as! String).utf8)) as! [String: Any]
+        InboxLoadingTests.check((body["attachments"] as? [String]) == ["pasted-0", "pasted-1"], "one Mac message sends both pasted attachments")
+        InboxLoadingTests.check(envelope["note"] as? String == "", "Mac sends attachments without requiring text")
+        ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"clipboard-sent\"}", status: 201)
+        board.clearContents()
+        board.setString("ordinary text", forType: .string)
+        InboxLoadingTests.check(!editor.pasteAttachments(from: board), "text paste remains with AppKit")
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString("ordinary text", forType: .string)
+        editor.selectAll(nil)
+        editor.paste(nil)
+        InboxLoadingTests.check(editor.string == "ordinary text", "native plain-text paste still inserts text")
     }
 
     static func repeatedPickerSwitches(window: NSWindow, host: NSView, account: Account, inbox: Inbox) async {
@@ -170,7 +257,9 @@ extension Notification.Name {
         host.cacheDisplay(in: host.bounds, to: bitmap)
         var ground: NSColor?
         host.effectiveAppearance.performAsCurrentDrawingAppearance {
-            ground = NSColor(Theme.ground).usingColorSpace(.deviceRGB)
+            // cacheDisplay stores device-profile component values; colorAt labels them
+            // calibrated RGB, so converting that result applies the monitor profile twice.
+            ground = NSColor(Theme.ground).usingColorSpace(bitmap.colorSpace)
         }
         guard let ground else { return false }
         // Inspect only the conversation viewport, excluding the toolbar, composer and scrollbar.
@@ -180,7 +269,7 @@ extension Notification.Name {
         var bubblePixels = 0
         for y in stride(from: Int(90 * scaleY), to: bitmap.pixelsHigh - Int(90 * scaleY), by: 8) {
             for x in stride(from: Int(540 * scaleX), to: bitmap.pixelsWide - Int(60 * scaleX), by: 8) {
-                guard let pixel = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB) else { continue }
+                guard let pixel = bitmap.colorAt(x: x, y: y) else { continue }
                 if pixel.alphaComponent > 0.9,
                    abs(pixel.redComponent - ground.redComponent) < 0.01,
                    abs(pixel.greenComponent - ground.greenComponent) < 0.01,
