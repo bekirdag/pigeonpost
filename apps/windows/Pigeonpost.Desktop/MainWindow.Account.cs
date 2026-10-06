@@ -80,6 +80,10 @@ public sealed partial class MainWindow
         timer.Tick += async (_, _) =>
         {
             if (dialogOpen || lifetime.IsCancellationRequested || InboxLayout.Visibility != Visibility.Visible) return;
+#if UI_TESTS
+            var arrival = Environment.GetEnvironmentVariable("PIGEONPOST_UI_ARRIVAL_FILE");
+            if (arrival is not null && File.Exists(arrival)) { File.Delete(arrival); preview.ReceiveForUiTest(); }
+#endif
             await ViewModel.RefreshAsync(background: true);
         };
         return timer;
@@ -133,9 +137,13 @@ public sealed partial class MainWindow
             refreshTimer?.Stop();
             await session.SignOutAsync(lifetime.Token);
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            ViewModel.MessagesUpdating -= Messages_Updating;
+            ViewModel.MessagesUpdated -= Messages_Updated;
             ViewModel.Dispose();
             ViewModel = new InboxViewModel(postbox);
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+            ViewModel.MessagesUpdating += Messages_Updating;
+            ViewModel.MessagesUpdated += Messages_Updated;
             Bindings.Update();
             InboxLayout.Visibility = AccountBar.Visibility = EmptyAccount.Visibility = Visibility.Collapsed;
             Welcome.Visibility = Visibility.Visible;

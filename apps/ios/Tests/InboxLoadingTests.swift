@@ -55,10 +55,10 @@ final class ControlledURLProtocol: URLProtocol {
     }
     static func identity(_ request: URLRequest) -> String? {
         URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?
-            .queryItems?.first { $0.name == "identity" }?.value
+            .queryItems?.first { $0.name == "identity" }?.value ?? request.value(forHTTPHeaderField: "x-pigeonpost-identity")
     }
     @discardableResult
-    static func complete(_ path: String, identity: String, body: String, status: Int = 200, poll: Bool? = nil) -> Bool {
+    static func complete(_ path: String, identity: String?, body: String, status: Int = 200, poll: Bool? = nil) -> Bool {
         lock.lock()
         let index = pending.firstIndex {
             let isPoll = URLComponents(url: $0.request.url!, resolvingAgainstBaseURL: false)?

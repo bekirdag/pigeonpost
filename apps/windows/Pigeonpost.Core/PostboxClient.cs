@@ -24,7 +24,7 @@ public sealed class PostboxException(int statusCode, string? code) : Exception(c
 }
 
 // HttpClient and token-provider lifetimes belong to the caller. Never log tokens or raw responses.
-public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IDisposable
+public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IAttachmentService, IDisposable
 {
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);
@@ -109,7 +109,10 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     }
 
     public Task<SendReceipt> SendAttachmentAsync(string identity, string peer, string body, string? threadId, string attachmentId, CancellationToken cancellationToken) =>
-        WriteAsync<SendReceipt>(HttpMethod.Post, "/v1/send", new { from = identity, to = peer, body, thread_id = threadId, attachments = new[] { attachmentId } }, cancellationToken);
+        SendAttachmentsAsync(identity, peer, body, threadId, [attachmentId], cancellationToken);
+
+    public Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken cancellationToken) =>
+        WriteAsync<SendReceipt>(HttpMethod.Post, "/v1/send", new { from = identity, to = peer, body, thread_id = threadId, attachments = attachmentIds }, cancellationToken);
 
     private async Task<T> ReadAsync<T>(string path, CancellationToken cancellationToken)
     {

@@ -71,7 +71,7 @@ jobs:
         run: |
           dotnet publish apps/windows/Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:DefineConstants=UI_TESTS --self-contained true -o apps/windows/artifacts/ui-tests
           if ($LASTEXITCODE -ne 0) { throw 'UI-test build failed.' }
-          ./apps/windows/smoke-test.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots -Fixture
+          ./apps/windows/run-ui-as-user.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots
       - name: Install and activate the MSIX on the disposable runner
         if: matrix.architecture == 'x64'
         shell: pwsh
@@ -83,7 +83,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: pigeonpost-windows-native-ui
-          path: apps/windows/artifacts/screenshots/*.png
+          path: |
+            apps/windows/artifacts/screenshots/*.png
+            apps/windows/artifacts/screenshots/*.log
           if-no-files-found: warn
           retention-days: 30
       - name: Check public account and privacy pages

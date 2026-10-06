@@ -1,12 +1,15 @@
+using System.Collections.ObjectModel;
+
 namespace Pigeonpost.Core;
 
 // Construct on the UI context. Awaited service calls return to it; stale mailbox loads are discarded.
-public sealed class InboxViewModel(IInboxService service) : ObservableObject, IDisposable
+public sealed class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null) : ObservableObject, IDisposable
 {
     private InboxSnapshot snapshot = InboxSnapshot.Empty;
     private readonly List<PendingMessage> pending = [];
     private readonly Dictionary<(string Mailbox, string Peer, string Subject), string> drafts = [];
     private readonly Dictionary<string, (string? Peer, string? Subject)> selections = [];
+    private readonly Dictionary<(string Mailbox, string Peer, string Subject), List<DraftAttachment>> attachmentDrafts = [];
     private readonly Dictionary<string, HashSet<string>> opened = [];
     private CancellationTokenSource mailboxScope = new();
     private CancellationTokenSource? loading;
@@ -35,11 +38,36 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];
     public Mailbox? SelectedMailbox { get; private set; }
-    public IReadOnlyList<Conversation> Conversations { get; private set; } = [];
+    public ObservableCollection<Conversation> Conversations { get; } = [];
     public Conversation? SelectedConversation { get; private set; }
-    public IReadOnlyList<Subject> Subjects { get; private set; } = [];
+    public ObservableCollection<Subject> Subjects { get; } = [];
     public Subject? SelectedSubject { get; private set; }
-    public IReadOnlyList<ThreadMessage> Messages { get; private set; } = [];
+    public ObservableCollection<ThreadMessage> Messages { get; } = [];
+    public ObservableCollection<DraftAttachment> DraftAttachments { get; } = [];
+    public bool HasDraftAttachments => DraftAttachments.Count > 0;
+    public void AddAttachments(IEnumerable<DraftAttachment> files)
+    {
+        if (!CanCompose || DraftKey() is not { } key) return;
+        if (!attachmentDrafts.TryGetValue(key, out var list)) attachmentDrafts[key] = list = [];
+        foreach (var file in files)
+            if (list.All(existing => existing.Id != file.Id)) list.Add(file);
+        UpdateDraftAttachments();
+    }
+    public void RemoveAttachment(DraftAttachment file)
+    {
+        if (!CanCompose || DraftKey() is not { } key) return;
+        if (attachmentDrafts.TryGetValue(key, out var list)) list.RemoveAll(f => f.Id == file.Id);
+        UpdateDraftAttachments();
+    }
+    private void UpdateDraftAttachments()
+    {
+        StableList.Reconcile(DraftAttachments, DraftKey() is { } key ? attachmentDrafts.GetValueOrDefault(key) ?? [] : [],
+            f => f.Id, (a, b) => ReferenceEquals(a, b));
+        Changed(nameof(HasDraftAttachments));
+    }
+    public bool IsUpdatingLists { get; private set; }
+    public event EventHandler? MessagesUpdating;
+    public event EventHandler? MessagesUpdated;
     public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending;
@@ -109,13 +137,12 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         SelectedMailbox = mailbox;
         snapshot = InboxSnapshot.Empty;
         allConversations = [];
-        Conversations = [];
+        StableList.Reconcile(Conversations, [], c => c.Peer, StableList.SameConversation);
         IsSending = false;
         Error = null;
         SetSelection(null, null);
         Changed(nameof(SelectedMailbox));
         Changed(nameof(MailboxAddress));
-        Changed(nameof(Conversations));
         Changed(nameof(InboxSummary));
         Changed(nameof(IsListEmpty));
         await RefreshAsync();
@@ -183,23 +210,37 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
 
     public async Task SendDraftAsync()
     {
-        if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(Draft)) return;
+        if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(Draft) && !HasDraftAttachments) return;
         var text = Draft;
+        var files = DraftAttachments.ToArray();
+        var fileService = attachmentService ?? service as IAttachmentService;
+        if (files.Length > 0 && fileService is null) { Error = "File sending is unavailable. Please try again."; return; }
         var subject = SelectedSubject?.Id;
         var generation = mailboxVersion;
         var token = mailboxScope.Token;
         var row = new PendingMessage(Guid.NewGuid().ToString("N"), mailbox.Address, conversation.Peer,
-            RequestEnvelope.Work(text.Trim()), DateTimeOffset.UtcNow.ToUnixTimeSeconds(), string.IsNullOrEmpty(subject) ? null : subject);
+            files.Length > 0 ? RequestEnvelope.Attachment(text) : RequestEnvelope.Work(text.Trim()),
+            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), string.IsNullOrEmpty(subject) ? null : subject,
+            Attachments: files.Select(f => new MessageAttachment(f.Id, f.Filename, "application/octet-stream", f.Bytes)).ToArray());
         pending.Add(row);
         IsSending = true;
         Error = null;
         Rebuild();
+        var sendingMessage = false;
         try
         {
-            var sent = await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token);
-            ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId });
+            var uploaded = new List<MessageAttachment>();
+            foreach (var file in files)
+                uploaded.Add(await fileService!.UploadAsync(mailbox.Address, file.Filename, await file.ReadAsync(token), token));
+            token.ThrowIfCancellationRequested();
+            sendingMessage = true;
+            var sent = files.Length == 0
+                ? await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token)
+                : await fileService!.SendAttachmentsAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id).ToArray(), token);
+            ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId, Attachments = uploaded });
             var sentDraftKey = (mailbox.Address, conversation.Peer, subject ?? "");
             if (drafts.GetValueOrDefault(sentDraftKey) == text) drafts[sentDraftKey] = "";
+            if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
             if (generation != mailboxVersion || disposed) return;
             if (DraftKey() == (mailbox.Address, conversation.Peer, subject ?? "") && Draft == text) Draft = "";
             await RefreshAsync();
@@ -209,7 +250,8 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
             ReplacePending(row with { Status = DeliveryStatus.Failed });
             if (generation != mailboxVersion || disposed) return;
             if (ex is not OperationCanceledException) Error = ex is PostboxException ? Describe(ex)
-                : "Delivery could not be confirmed. Check this conversation before trying again.";
+                : sendingMessage ? "Delivery could not be confirmed. Check this conversation before trying again."
+                : "Could not upload the files. Your message and attachments are still in the draft.";
             Rebuild();
         }
         finally { if (!disposed && generation == mailboxVersion) IsSending = false; }
@@ -235,7 +277,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         SelectSubject(Subjects.FirstOrDefault(s => s.IsDefault));
         if (string.IsNullOrWhiteSpace(firstMessage)) return;
         // Keep an existing draft instead of overwriting it when opening the same peer again.
-        if (!string.IsNullOrEmpty(Draft))
+        if (!string.IsNullOrEmpty(Draft) || HasDraftAttachments)
         {
             Draft += "\n" + firstMessage;
             Error = "This conversation already had an unsent draft. Review the combined message before sending.";
@@ -293,6 +335,7 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         {
             await service.DeleteThreadAsync(mailbox.Address, subject.Id, mailboxScope.Token);
             drafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
+            attachmentDrafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
             pending.RemoveAll(p => p.Mailbox == mailbox.Address && (p.ThreadId == subject.Id || messageIds.Contains(p.Id)));
             if (!disposed && generation == mailboxVersion) await RefreshAsync();
         }
@@ -341,50 +384,70 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         var peer = SelectedConversation?.Peer ?? remembered.Peer;
         var subject = SelectedSubject?.Id ?? remembered.Subject;
         var archived = snapshot.Archived.Select(p => ConversationBuilder.ResolvePeer(p, snapshot, Mailboxes)).ToHashSet(StringComparer.Ordinal);
-        Conversations = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
+        var next = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
             && (string.IsNullOrWhiteSpace(SenderSearch) || c.Name.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase)
                 || c.Peer.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
-        Changed(nameof(Conversations));
+        IsUpdatingLists = true;
+        try
+        {
+            StableList.Reconcile(Conversations, next, c => c.Peer, StableList.SameConversation);
+            SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(), subject);
+        }
+        finally { IsUpdatingLists = false; }
         Changed(nameof(IsListEmpty));
         Changed(nameof(EmptyListMessage));
-        SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(), subject);
     }
 
     private void SetSelection(Conversation? conversation, string? subjectId)
     {
-        var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
-        var previousSubject = SelectedSubject?.Id;
-        SelectedConversation = conversation;
-        Subjects = ConversationBuilder.Subjects(conversation, snapshot, Mailboxes);
-        SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
-        if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
-        Changed(nameof(SelectedConversation));
-        Changed(nameof(Subjects));
-        Changed(nameof(ConversationTitle));
-        Changed(nameof(ConversationAddress));
-        Changed(nameof(HasConversation));
-        Changed(nameof(CanCompose));
-        UpdateMessages();
-        RememberSelection();
+        var wasUpdating = IsUpdatingLists;
+        IsUpdatingLists = true;
+        try
+        {
+            var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
+            var previousSubject = SelectedSubject?.Id;
+            var previousConversation = SelectedConversation;
+            SelectedConversation = conversation;
+            StableList.Reconcile(Subjects, ConversationBuilder.Subjects(conversation, snapshot, Mailboxes), s => s.Id, StableList.SameSubject);
+            SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
+            if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
+            if (!ReferenceEquals(previousConversation, conversation))
+            {
+                Changed(nameof(SelectedConversation));
+                Changed(nameof(ConversationTitle));
+                Changed(nameof(ConversationAddress));
+                Changed(nameof(HasConversation));
+                Changed(nameof(CanCompose));
+            }
+            UpdateMessages();
+            RememberSelection();
+        }
+        finally { IsUpdatingLists = wasUpdating; }
     }
 
     private void UpdateMessages()
     {
         var next = SelectedSubject?.Messages ?? SelectedConversation?.Messages ?? [];
         var context = $"{SelectedMailbox?.Address}|{SelectedConversation?.Peer}|{SelectedSubject?.Id}";
-        if (historyContext != context)
+        var contextChanged = historyContext != context;
+        if (contextChanged)
         {
             historyContext = context;
             ContextVersion++;
             matches = [];
         }
-        history = next;
         Changed(nameof(SelectedSubject));
         Changed(nameof(SubjectTitle));
         Changed(nameof(CanDeleteSubject));
-        if (!Messages.SequenceEqual(next)) { Messages = next; Changed(nameof(Messages)); }
-        draft = DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "";
-        Changed(nameof(Draft));
+        if (contextChanged || !StableList.SameMessages(Messages, next))
+        {
+            MessagesUpdating?.Invoke(this, EventArgs.Empty);
+            StableList.Reconcile(Messages, next, m => m.Id, StableList.SameMessage);
+            MessagesUpdated?.Invoke(this, EventArgs.Empty);
+        }
+        history = Messages;
+        Set(ref draft, DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "", nameof(Draft));
+        UpdateDraftAttachments();
         UpdateMatches();
     }
 

@@ -12,10 +12,27 @@
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
                         <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
-                        <TextBlock Text="{x:Bind AttachmentSummary}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:MessageAttachment">
+                                    <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Margin="0,3" Padding="12,8" AutomationProperties.Name="{x:Bind DownloadLabel}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="{x:Bind Filename}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" />
+                                            <TextBlock Text="Download file" FontSize="12" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Text="{x:Bind TimeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBlock Text="{x:Bind StatusLabel}" FontSize="11" FontWeight="SemiBold" />
+                            <Button Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Padding="4" Background="Transparent" BorderThickness="0"
+                                    AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
+                                <SymbolIcon Symbol="Copy" />
+                            </Button>
                         </StackPanel>
                     </StackPanel>
                     <Border.ContextFlyout>
@@ -28,10 +45,27 @@
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
                         <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
-                        <TextBlock Text="{x:Bind AttachmentSummary}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                        <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:MessageAttachment">
+                                    <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            Margin="0,3" Padding="12,8" AutomationProperties.Name="{x:Bind DownloadLabel}">
+                                        <StackPanel Spacing="4">
+                                            <TextBlock Text="{x:Bind Filename}" FontWeight="SemiBold" TextWrapping="Wrap" />
+                                            <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" />
+                                            <TextBlock Text="Download file" FontSize="12" />
+                                        </StackPanel>
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
                         <StackPanel Orientation="Horizontal" Spacing="12">
                             <TextBlock Text="{x:Bind TimeLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             <TextBlock Text="{x:Bind StatusLabel}" FontSize="11" />
+                            <Button Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Padding="4" Background="Transparent" BorderThickness="0"
+                                    AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
+                                <SymbolIcon Symbol="Copy" />
+                            </Button>
                         </StackPanel>
                     </StackPanel>
                     <Border.ContextFlyout>
@@ -124,7 +158,7 @@
                 </StackPanel>
             </Grid>
             <Thumb Grid.Column="3" DragDelta="SubjectColumn_DragDelta" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" AutomationProperties.Name="Resize subjects column" />
-            <Grid Grid.Column="4">
+            <Grid x:Name="MessagingArea" Grid.Column="4" Background="Transparent">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Grid Padding="18,16" ColumnSpacing="12">
                     <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
@@ -161,19 +195,40 @@
                     <ListView x:Name="MessageList" ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}" SelectionMode="Single"
                               ItemTemplateSelector="{StaticResource MessageTemplateSelector}" AutomationProperties.Name="Messages"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.ItemsPanel>
+                            <ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView" /></ItemsPanelTemplate>
+                        </ListView.ItemsPanel>
                         <ListView.ItemContainerStyle>
-                            <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /></Style>
+                            <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="AllowDrop" Value="True" /></Style>
                         </ListView.ItemContainerStyle>
                     </ListView>
                     <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="32" Height="32" IsHitTestVisible="False" />
                 </Grid>
                 <StackPanel Grid.Row="3" Padding="18,10,18,14" Spacing="8">
                     <TextBlock Text="{x:Bind ViewModel.FindSummary, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <ScrollViewer MaxHeight="128" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attached files">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:DraftAttachment">
+                                    <Grid ColumnSpacing="8" Margin="0,3">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <Button Grid.Column="1" Content="Remove" Tag="{x:Bind}" Click="RemoveAttachment_Click" AutomationProperties.Name="{x:Bind RemoveLabel}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                     <TextBox x:Name="Composer" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" MaxLength="20000"
-                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" />
+                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
+                        <TextBox.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="PasteAttachment_Invoked" />
+                            <KeyboardAccelerator Key="Insert" Modifiers="Shift" Invoked="PasteAttachment_Invoked" />
+                        </TextBox.KeyboardAccelerators>
+                    </TextBox>
                     <Grid>
-                        <Button Content="Attach file…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                        <Button Content="Attach files…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                         <Button Content="Send" Click="Send_Click" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                     </Grid>
                 </StackPanel>

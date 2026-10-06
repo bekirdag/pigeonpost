@@ -83,7 +83,17 @@ public sealed record InboxMessage
     [JsonIgnore] public string PeerKey => PeerHandle ?? Peer ?? (IsOutgoing ? To : SenderHandle ?? From) ?? "unknown";
 }
 
-public sealed record MessageAttachment(string Id, string Filename, string MediaType, long Bytes);
+public sealed record MessageAttachment(string Id, string Filename, string MediaType, long Bytes)
+{
+    [JsonIgnore] public string SizeLabel => Bytes >= 1024 * 1024 ? $"{Bytes / (1024d * 1024):0.#} MB" : Bytes >= 1024 ? $"{Bytes / 1024d:0.#} KB" : $"{Bytes} bytes";
+    [JsonIgnore] public string DownloadLabel => $"Download {Filename}";
+}
+// Local file access stays deferred until Send; never serialize file paths or access callbacks.
+public sealed record DraftAttachment(string Id, string Filename, long Bytes, Func<CancellationToken, Task<byte[]>> ReadAsync)
+{
+    public string RemoveLabel => $"Remove {Filename}";
+}
+
 public sealed record Contact(string Peer, string? Alias, string Admission, string Autonomy, IReadOnlyList<string>? AllowedVerbs = null)
 {
     [JsonIgnore] public bool IsWildcard => Peer.EndsWith("/*", StringComparison.Ordinal);
@@ -105,14 +115,16 @@ public sealed record InboxSnapshot(IReadOnlyList<InboxMessage> Messages, IReadOn
 public enum DeliveryStatus { Sent, Sending, Failed }
 
 public sealed record PendingMessage(string Id, string Mailbox, string To, string Body, long At,
-    string? ThreadId, DeliveryStatus Status = DeliveryStatus.Sending, string? SentCopyId = null);
+    string? ThreadId, DeliveryStatus Status = DeliveryStatus.Sending, string? SentCopyId = null, IReadOnlyList<MessageAttachment>? Attachments = null);
 
 public sealed record ThreadMessage(string Id, string Body, long At, string? ThreadId, bool IsOutgoing,
     bool Read = true, string? Autonomy = null, string? Verb = null, string? HeldBecause = null,
     DeliveryStatus Status = DeliveryStatus.Sent, IReadOnlyList<MessageAttachment>? Attachments = null)
 {
+    public bool CanDownloadAttachments => Status == DeliveryStatus.Sent;
     public bool IsHeld => !IsOutgoing && Autonomy == "review" && !string.IsNullOrEmpty(Verb);
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
+    public string CopyText => string.IsNullOrWhiteSpace(DisplayBody) ? AttachmentSummary : DisplayBody;
     public string AttachmentSummary => string.Join(" · ", (Attachments ?? []).Select(a => a.Filename));
     public string StatusLabel => Status switch
     {
@@ -132,7 +144,7 @@ public sealed record Conversation(string Peer, string Name, IReadOnlyList<Thread
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
     public int Held => Messages.Count(m => m.IsHeld);
     public long Last => Messages.LastOrDefault()?.At ?? 0;
-    public string Preview => Messages.LastOrDefault() is { } m ? m.DisplayBody.ReplaceLineEndings(" ") : "Start a conversation";
+    public string Preview => Messages.LastOrDefault() is { } m ? (string.IsNullOrWhiteSpace(m.DisplayBody) && m.Attachments?.Count > 0 ? m.AttachmentSummary : m.DisplayBody.ReplaceLineEndings(" ")) : "Start a conversation";
     public string Badge => string.Join(" · ", new[] { Unread > 0 ? $"{Unread} unread" : "", Held > 0 ? $"{Held} held" : "" }.Where(s => s.Length > 0));
 }
 

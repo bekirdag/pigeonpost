@@ -619,6 +619,169 @@ Test("An empty owned-mailbox subject resolves its identity address without histo
     Equal(conversation.Peer, "/owner/team");
     Equal(ConversationBuilder.Subjects(conversation, snapshot, mailboxes).Single().Id, "own-empty");
 });
+AsyncTest("Freshly decoded polls preserve every native collection, row, selection and draft", async () =>
+{
+    var service = new WrappedService { CloneLoads = true };
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    vm.SelectConversation(vm.Conversations.Single(c => c.Peer == "/preview/guide"));
+    vm.Draft = "Draft with caret in the middle";
+    var conversations = vm.Conversations.ToArray(); var subjects = vm.Subjects.ToArray(); var messages = vm.Messages.ToArray();
+    var selected = vm.SelectedConversation; var subject = vm.SelectedSubject; var context = vm.ContextVersion;
+    var changes = 0; var updates = 0; var draftChanges = 0;
+    vm.Conversations.CollectionChanged += (_, _) => changes++;
+    vm.Subjects.CollectionChanged += (_, _) => changes++;
+    vm.Messages.CollectionChanged += (_, _) => changes++;
+    vm.MessagesUpdating += (_, _) => updates++;
+    vm.PropertyChanged += (_, e) => { if (e.PropertyName == "Draft") draftChanges++; };
+    for (var i = 0; i < 12; i++) await vm.RefreshAsync(background: true);
+    Equal(changes, 0); Equal(updates, 0); Equal(draftChanges, 0); Equal(vm.ContextVersion, context);
+    Check(ReferenceEquals(selected, vm.SelectedConversation) && ReferenceEquals(subject, vm.SelectedSubject), "Selection objects replaced.");
+    Check(conversations.Zip(vm.Conversations).All(p => ReferenceEquals(p.First, p.Second)), "Unchanged conversation replaced.");
+    Check(subjects.Zip(vm.Subjects).All(p => ReferenceEquals(p.First, p.Second)), "Unchanged subject replaced.");
+    Check(messages.Zip(vm.Messages).All(p => ReferenceEquals(p.First, p.Second)), "Attachment message replaced on poll.");
+});
+AsyncTest("New mail and changed attachment metadata update incrementally without list resets", async () =>
+{
+    var service = new WrappedService { CloneLoads = true };
+    using var vm = new InboxViewModel(service); await vm.InitializeAsync();
+    vm.SelectConversation(vm.Conversations.Single(c => c.Peer == "/preview/guide"));
+    var original = vm.Messages.ToArray(); var selectedSubject = vm.SelectedSubject!.Id;
+    var actions = new List<System.Collections.Specialized.NotifyCollectionChangedAction>();
+    vm.Messages.CollectionChanged += (_, e) => actions.Add(e.Action);
+    var reset = false;
+    vm.Conversations.CollectionChanged += (_, e) => reset |= e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset;
+    vm.Subjects.CollectionChanged += (_, e) => reset |= e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset;
+    var before = -1; var after = -1;
+    vm.MessagesUpdating += (_, _) => before = vm.Messages.Count;
+    vm.MessagesUpdated += (_, _) => after = vm.Messages.Count;
+    service.TransformLoad = snapshot => snapshot with { Messages = [.. snapshot.Messages, new InboxMessage {
+        MessageId = "new-file", Body = "", Peer = "/preview/guide", ThreadId = selectedSubject, ReceivedAt = 2000000000,
+        Attachments = [new("download-id", "report.pdf", "application/pdf", 4096)] }] };
+    await vm.RefreshAsync(background: true);
+    Equal(before, original.Length); Equal(after, original.Length + 1);
+    Check(actions.SequenceEqual(new[] { System.Collections.Specialized.NotifyCollectionChangedAction.Add }), "Arrival reset or replaced history.");
+    Check(!reset && original.Zip(vm.Messages).All(p => ReferenceEquals(p.First, p.Second)), "Existing rows were replaced.");
+    Equal(vm.SelectedSubject!.Id, selectedSubject); Equal(vm.SelectedConversation!.Preview, "report.pdf");
+    Equal(vm.Messages.Last().Attachments!.Single().DownloadLabel, "Download report.pdf");
+    actions.Clear();
+    var transform = service.TransformLoad;
+    service.TransformLoad = snapshot => { var loaded = transform(snapshot); return loaded with { Messages = loaded.Messages.Select(m =>
+        m.MessageId == "new-file" ? m with { Attachments = [new("download-id", "renamed.pdf", "application/pdf", 8192)] } : m).ToArray() }; };
+    await vm.RefreshAsync(background: true);
+    Check(actions.SequenceEqual(new[] { System.Collections.Specialized.NotifyCollectionChangedAction.Replace }), "Metadata update rebuilt history.");
+    Equal(vm.Messages.Last().Attachments!.Single().Filename, "renamed.pdf");
+});
+Test("Incremental lists preserve surviving rows through deletion and reorder", () =>
+{
+    var a = new Mailbox("a"); var b = new Mailbox("b"); var c = new Mailbox("c");
+    var rows = new System.Collections.ObjectModel.ObservableCollection<Mailbox> { a, b, c };
+    var reset = false; rows.CollectionChanged += (_, e) => reset |= e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset;
+    StableList.Reconcile(rows, new Mailbox[] { new("c"), new("d"), new("a") }, m => m.Address, (x, y) => x == y);
+    Equal(string.Join(',', rows.Select(m => m.Address)), "c,d,a");
+    Check(ReferenceEquals(rows[0], c) && ReferenceEquals(rows[2], a) && !reset, "Survivors recreated or reset.");
+    StableList.Reconcile(rows, Array.Empty<Mailbox>(), m => m.Address, (x, y) => x == y);
+    Equal(rows.Count, 0); Check(!reset, "Emptying emitted a reset.");
+});
+AsyncTest("Incoming and outgoing file-only messages retain downloadable metadata after decoding", async () =>
+{
+    using var http = new HttpClient(new Handler((request, _) => Task.FromResult(Json(HttpStatusCode.OK,
+        request.RequestUri!.AbsolutePath == "/v1/inbox" ? """
+        {"messages":[
+          {"message_id":"in","body":"","peer":"/peer/main","attachments":[{"id":"received-file","filename":"received.txt","media_type":"text/plain","bytes":3}]},
+          {"message_id":"out","body":"","direction":"out","peer":"/peer/main","attachments":[{"id":"sent-file","filename":"sent.txt","media_type":"text/plain","bytes":4}]}
+        ]}
+        """ : "{}"))));
+    using var client = new PostboxClient(http, new Tokens());
+    var snapshot = await client.LoadAsync("/k/main", default);
+    var messages = ConversationBuilder.Build(snapshot, [], [], new("/k/main")).Single().Messages;
+    Equal(messages.Single(m => !m.IsOutgoing).Attachments!.Single().Id, "received-file");
+    Equal(messages.Single(m => m.IsOutgoing).Attachments!.Single().DownloadLabel, "Download sent.txt");
+});
+AsyncTest("Multiple dropped files are sent together with an optional empty caption", async () =>
+{
+    using var http = new HttpClient(new Handler(async (request, ct) =>
+    {
+        using var body = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(ct));
+        Equal(body.RootElement.GetProperty("body").GetString(), "");
+        Equal(body.RootElement.GetProperty("from").GetString(), "/k/main");
+        Equal(body.RootElement.GetProperty("to").GetString(), "/peer");
+        Check(body.RootElement.GetProperty("attachments").EnumerateArray().Select(v => v.GetString()).SequenceEqual(new[] { "file-a", "file-b" }), "File batch changed.");
+        return Json(HttpStatusCode.Created, "{\"message_id\":\"received\",\"sent_copy_id\":\"sent\"}");
+    }));
+    using var client = new PostboxClient(http, new Tokens());
+    Equal((await client.SendAttachmentsAsync("/k/main", "/peer", "", "subject", ["file-a", "file-b"], default)).SentCopyId, "sent");
+});
+AsyncTest("Files stage with the text draft and Send creates one message with all selected attachments", async () =>
+{
+    var service = new WrappedService(); var files = new FileService();
+    using var vm = new InboxViewModel(service, files); await vm.InitializeAsync();
+    vm.Draft = "Text written before attaching files";
+    DraftAttachment a = new("a", "one.txt", 3, _ => Task.FromResult(new byte[] { 1, 2, 3 }));
+    DraftAttachment b = new("b", "two.txt", 2, _ => Task.FromResult(new byte[] { 4, 5 }));
+    vm.AddAttachments([a, b]); vm.AddAttachments([a]);
+    Equal(vm.DraftAttachments.Count, 2); Equal(files.UploadCount, 0); Equal(files.SendCount, 0); Equal(service.SendCount, 0);
+    Equal(vm.Draft, "Text written before attaching files");
+    vm.RemoveAttachment(a); Equal(vm.DraftAttachments.Single().Id, "b"); vm.AddAttachments([a]);
+    var subject = vm.SelectedSubject!;
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release"));
+    Equal(vm.DraftAttachments.Count, 0); Equal(vm.Draft, "");
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == subject.Id));
+    Equal(vm.DraftAttachments.Count, 2); Equal(vm.Draft, "Text written before attaching files");
+    await vm.RefreshAsync(background: true); Equal(vm.DraftAttachments.Count, 2);
+    await vm.SendDraftAsync();
+    Equal(files.UploadCount, 2); Equal(files.SendCount, 1); Equal(service.SendCount, 0);
+    Equal(files.Identity, "/k/preview-main"); Equal(files.Peer, "/preview/design"); Equal(files.Thread, subject.Id);
+    Equal(RequestEnvelope.DisplayText(files.Body!), "Text written before attaching files");
+    Check(files.SentIds!.SequenceEqual(new[] { "uploaded-two.txt", "uploaded-one.txt" }), "Files were split or removed incorrectly.");
+    Equal(vm.Draft, ""); Equal(vm.DraftAttachments.Count, 0);
+    Check(vm.Messages.Last().Attachments!.Select(f => f.Id).SequenceEqual(files.SentIds!), "Pending sent copy lost its downloadable files.");
+});
+AsyncTest("File-only drafts send once without a fabricated caption", async () =>
+{
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+    await vm.SendDraftAsync(); Equal(files.Body, ""); Equal(files.SendCount, 1); Equal(vm.DraftAttachments.Count, 0);
+});
+AsyncTest("Upload and uncertain send failures retain text and staged files without retrying", async () =>
+{
+    foreach (var uploadFailure in new[] { true, false })
+    {
+        var files = new FileService { FailUpload = uploadFailure, FailSend = !uploadFailure };
+        using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+        vm.Draft = "keep this text";
+        vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+        await vm.SendDraftAsync();
+        Equal(vm.Draft, "keep this text"); Equal(vm.DraftAttachments.Single().Filename, "one.txt");
+        Equal(files.UploadCount, 1); Equal(files.SendCount, uploadFailure ? 0 : 1); Check(vm.HasError, "Failed file send not surfaced.");
+        await vm.RefreshAsync(background: true); Equal(files.UploadCount, 1); Equal(vm.DraftAttachments.Count, 1);
+    }
+});
+AsyncTest("Mailbox switching during upload cancels delivery and keeps the original file draft", async () =>
+{
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    vm.Draft = "main text";
+    vm.AddAttachments([new("a", "one.txt", 1, async token => { entered.SetResult(); await Task.Delay(Timeout.Infinite, token); return new byte[] { 1 }; })]);
+    var send = vm.SendDraftAsync(); await entered.Task;
+    await vm.SwitchMailboxAsync(vm.Mailboxes[1]);
+    Equal(vm.DraftAttachments.Count, 0); vm.Draft = "team text";
+    await send; Equal(files.SendCount, 0); Equal(vm.Draft, "team text");
+    await vm.SwitchMailboxAsync(vm.Mailboxes[0]); Equal(vm.Draft, "main text"); Equal(vm.DraftAttachments.Count, 1);
+});
+AsyncTest("Opening a conversation with files in its draft cannot send them through the first-message shortcut", async () =>
+{
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    var peer = vm.SelectedConversation!.Peer;
+    vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+    await vm.StartConversationAsync(peer, "first message");
+    Equal(files.SendCount, 0); Equal(vm.DraftAttachments.Count, 1); Check(vm.Draft.Contains("first message"), "First message lost.");
+});
+Test("Message copy uses displayed text and filenames for file-only messages", () =>
+{
+    var message = new ThreadMessage("copy", RequestEnvelope.Work("Visible message text"), 1, null, true);
+    Equal(message.CopyText, "Visible message text");
+    Equal((message with { Body = "", Attachments = [new("a", "one.txt", "text/plain", 1), new("b", "two.pdf", "application/pdf", 2)] }).CopyText, "one.txt · two.pdf");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)
@@ -648,6 +811,8 @@ sealed class WrappedService : IInboxService
     private readonly PreviewInboxService inner = new();
     public Func<string, CancellationToken, Task>? BeforeLoad { get; set; }
     public bool FailSend { get; init; }
+    public bool CloneLoads { get; init; }
+    public Func<InboxSnapshot, InboxSnapshot>? TransformLoad { get; set; }
     public Func<Task>? BeforeSend { get; init; }
     public int SendCount { get; private set; }
     public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken token) => inner.GetMailboxesAsync(token);
@@ -655,7 +820,13 @@ sealed class WrappedService : IInboxService
     {
         if (BeforeLoad is { } before) await before(identity, token);
         // Deliberately ignore cancellation: view-state guards must also handle a late response.
-        return await inner.LoadAsync(identity, CancellationToken.None);
+        var snapshot = await inner.LoadAsync(identity, CancellationToken.None);
+        if (TransformLoad is { } transform) snapshot = transform(snapshot);
+        return CloneLoads ? snapshot with {
+            Messages = JsonSerializer.Deserialize<InboxMessage[]>(JsonSerializer.Serialize(snapshot.Messages, PostboxJson.Options), PostboxJson.Options)!,
+            Contacts = JsonSerializer.Deserialize<Contact[]>(JsonSerializer.Serialize(snapshot.Contacts, PostboxJson.Options), PostboxJson.Options)!,
+            Threads = snapshot.Threads.Select(t => t with { }).ToArray()
+        } : snapshot;
     }
     public async Task<SendReceipt> SendAsync(string identity, string peer, string body, string? thread, CancellationToken token)
     {
@@ -670,4 +841,29 @@ sealed class WrappedService : IInboxService
     public Task SetContactAsync(string identity, Contact contact, CancellationToken token) => inner.SetContactAsync(identity, contact, token);
     public Task RemoveContactAsync(string identity, string peer, CancellationToken token) => inner.RemoveContactAsync(identity, peer, token);
     public Task DeleteThreadAsync(string identity, string id, CancellationToken token) => inner.DeleteThreadAsync(identity, id, token);
+}
+
+sealed class FileService : IAttachmentService
+{
+    public bool FailUpload { get; init; }
+    public bool FailSend { get; init; }
+    public int UploadCount { get; private set; }
+    public int SendCount { get; private set; }
+    public string? Identity { get; private set; }
+    public string? Peer { get; private set; }
+    public string? Thread { get; private set; }
+    public string? Body { get; private set; }
+    public IReadOnlyList<string>? SentIds { get; private set; }
+    public Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested(); UploadCount++;
+        if (FailUpload) throw new IOException("failed upload");
+        return Task.FromResult(new MessageAttachment("uploaded-" + filename, filename, "text/plain", bytes.Length));
+    }
+    public Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested(); SendCount++; Identity = identity; Peer = peer; Thread = threadId; Body = body; SentIds = attachmentIds;
+        if (FailSend) throw new IOException("uncertain send");
+        return Task.FromResult(new SendReceipt("received", "sent"));
+    }
 }

@@ -18,3 +18,9 @@ public interface IAccessTokenProvider
     Task<string> GetTokenAsync(CancellationToken cancellationToken);
     Task<string> RefreshTokenAsync(CancellationToken cancellationToken);
 }
+
+public interface IAttachmentService
+{
+    Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken cancellationToken);
+    Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken cancellationToken);
+}

@@ -57,7 +57,13 @@ public sealed class PreviewInboxService : IInboxService
     public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.FromResult(snapshots[identity]);
+        // Match HTTP polling: every load returns fresh records and attachment arrays.
+        var snapshot = snapshots[identity];
+        return Task.FromResult(snapshot with {
+            Messages = snapshot.Messages.Select(m => m with { Attachments = m.Attachments?.Select(a => a with { }).ToArray() }).ToArray(),
+            Contacts = snapshot.Contacts.Select(c => c with { AllowedVerbs = c.AllowedVerbs?.ToArray() }).ToArray(),
+            Threads = snapshot.Threads.Select(t => t with { }).ToArray()
+        });
     }
 
     public Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken cancellationToken)
@@ -93,15 +99,37 @@ public sealed class PreviewInboxService : IInboxService
         return Task.FromResult(id);
     }
 
-    public async Task<SendReceipt> SendFileAsync(string identity, string peer, string body, string? threadId, MessageAttachment file, CancellationToken token)
+    public Task<SendReceipt> SendFileAsync(string identity, string peer, string body, string? threadId, MessageAttachment file, CancellationToken token) =>
+        SendFilesAsync(identity, peer, body, threadId, [file], token);
+
+    public async Task<SendReceipt> SendFilesAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<MessageAttachment> files, CancellationToken token)
     {
         var receipt = await SendAsync(identity, peer, body, threadId, token);
         var snapshot = snapshots[identity];
         snapshots[identity] = snapshot with
         {
-            Messages = snapshot.Messages.Select(m => m.MessageId == receipt.SentCopyId ? m with { Attachments = [file] } : m).ToArray()
+            Messages = snapshot.Messages.Select(m => m.MessageId == receipt.SentCopyId ? m with { Attachments = files } : m).ToArray()
         };
+        if (mailboxes.FirstOrDefault(m => m.Key == peer || m.Address == peer) is { } recipient)
+        {
+            var received = snapshots[recipient.Address];
+            var sender = mailboxes.Single(m => m.Address == identity).Key;
+            EnsurePeer(ref received, sender);
+            var incomingThread = "files-from-" + sender;
+            if (!received.Threads.Any(t => t.ThreadId == incomingThread))
+                received = received with { Threads = [.. received.Threads, new(incomingThread, sender, IsDefault: true)] };
+            snapshots[recipient.Address] = received with { Messages = [.. received.Messages,
+                Received(receipt.MessageId!, sender, body, incomingThread, Epoch + ++sequence, false) with { Attachments = files }] };
+        }
         return receipt;
+    }
+
+    public void ReceiveForUiTest()
+    {
+        var snapshot = snapshots[mailboxes[0].Address];
+        snapshots[mailboxes[0].Address] = snapshot with { Messages = [.. snapshot.Messages,
+            Received("arrived-" + ++sequence, "/preview/design", "New message during background refresh " + sequence,
+                "design-general", Epoch + sequence, false)] };
     }
 
     public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken cancellationToken)
