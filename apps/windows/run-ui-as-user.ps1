@@ -32,6 +32,9 @@ public static class StandardUserUi {
     [DllImport("advapi32.dll")] static extern int GetLengthSid(IntPtr sid);
     [DllImport("advapi32.dll", CharSet=CharSet.Unicode, SetLastError=true)] static extern bool CreateProcessAsUserW(IntPtr token, string app, StringBuilder command, IntPtr processAttributes, IntPtr threadAttributes, bool inheritHandles, uint flags, IntPtr environment, string directory, ref Startup startup, out ProcessInfo info);
     [DllImport("kernel32.dll")] static extern bool CloseHandle(IntPtr handle);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern uint WaitForSingleObject(IntPtr handle, uint milliseconds);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
+    [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
     static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
     public static int Run(string executable, string script, string directory) {
@@ -44,15 +47,18 @@ public static class StandardUserUi {
             Check(SetTokenInformation(limited, 25, ref label, Marshal.SizeOf<Label>() + GetLengthSid(sid)));
             var startup = new Startup { cb = Marshal.SizeOf<Startup>(), desktop = @"winsta0\default" };
             ProcessInfo info;
-            Check(CreateProcessAsUserW(limited, executable,
-                new StringBuilder("\"" + executable + "\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\""),
+            var shell = Environment.GetEnvironmentVariable("COMSPEC");
+            var startupLog = System.IO.Path.ChangeExtension(script, "startup.log");
+            var command = "\"" + shell + "\" /d /s /c \"\"" + executable + "\" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File \"" + script + "\" > \"" + startupLog + "\" 2>&1\"";
+            Check(CreateProcessAsUserW(limited, shell, new StringBuilder(command),
                 IntPtr.Zero, IntPtr.Zero, false, 0x08000000, IntPtr.Zero, directory, ref startup, out info));
             Console.WriteLine("Started standard-user UI process " + info.pid);
             try {
-                using (var child = Process.GetProcessById(info.pid)) {
-                    if (!child.WaitForExit(180000)) { child.Kill(true); throw new TimeoutException("Standard-user UI checks timed out."); }
-                    return child.ExitCode;
-                }
+                var wait = WaitForSingleObject(info.process, 180000);
+                if (wait == 258) { TerminateProcess(info.process, 1); throw new TimeoutException("Standard-user UI checks timed out."); }
+                if (wait != 0) throw new Win32Exception(Marshal.GetLastWin32Error());
+                Check(GetExitCodeProcess(info.process, out var code));
+                return unchecked((int)code);
             } finally { CloseHandle(info.thread); CloseHandle(info.process); }
         } finally {
             if (sid != IntPtr.Zero) LocalFree(sid);
@@ -92,5 +98,9 @@ catch {
     } finally { $graphics.Dispose(); $bitmap.Dispose() }
     throw
 }
-finally { if (Test-Path $log) { Get-Content $log | Write-Host } }
+finally {
+    foreach ($item in @($log, [IO.Path]::ChangeExtension($childScript, 'startup.log'))) {
+        if (Test-Path $item) { Get-Content $item | Write-Host }
+    }
+}
 if ($code -ne 0) { throw "Standard-user native UI checks failed ($code)." }
