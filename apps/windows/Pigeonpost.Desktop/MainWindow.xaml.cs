@@ -46,6 +46,9 @@ public sealed partial class MainWindow : Window
         ViewModel = new InboxViewModel(preview, postbox);
 #endif
         InitializeComponent();
+        // Native text/list controls may handle routed drag events before their parent.
+        MessagingArea.AddHandler(UIElement.DragOverEvent, new DragEventHandler(Files_DragOver), true);
+        MessagingArea.AddHandler(UIElement.DropEvent, new DragEventHandler(Files_Drop), true);
         Title = BuildLabel;
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
