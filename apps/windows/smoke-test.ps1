@@ -212,7 +212,12 @@ public static class NativeFileDragSource {
             if ($targetProcess -ne $process.Id) { throw "Another window covers the drop target (process $targetProcess)." }
             # Confirm that the runner can deliver a native file drag before testing WinUI.
             $probeCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Native drag probe')
-            $probe = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $probeCondition)
+            $probe = $null
+            for ($n = 0; $n -lt 30; $n++) {
+                $probe = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $probeCondition)
+                if ($probe) { break }
+                Start-Sleep -Milliseconds 200
+            }
             if (-not $probe) { throw 'Native drag probe did not open.' }
             $probeRect = $probe.Current.BoundingRectangle
             $destinations = @(@([int]($probeRect.Left + $probeRect.Width / 2), [int]($probeRect.Top + $probeRect.Height / 2)), @($tx, $ty))
@@ -317,6 +322,41 @@ public static class NativeFileDragSource {
         Set-Text 'Message' ''
 
         Open-Conversation '/preview/team'
+        Write-Host 'Checking native clipboard attachments and text paste.'
+        $composer = Wait-Element 'Message'
+        $composer.SetFocus()
+        Set-Clipboard 'Optional file caption'
+        [System.Windows.Forms.SendKeys]::SendWait('^v')
+        Start-Sleep -Milliseconds 300
+        if ($composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Ordinary text paste failed.' }
+        $bitmap = [System.Drawing.Bitmap]::new(2, 2)
+        try {
+            for ($x = 0; $x -lt 2; $x++) { for ($y = 0; $y -lt 2; $y++) { $bitmap.SetPixel($x, $y, [System.Drawing.Color]::HotPink) } }
+            [System.Windows.Forms.Clipboard]::SetImage($bitmap)
+            [System.Windows.Forms.SendKeys]::SendWait('^v')
+            $null = Wait-Element 'Image attached.'
+        } finally { $bitmap.Dispose() }
+        $buttons = $root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
+        $imageName = @($buttons | Where-Object { $_.Current.Name -like 'Remove image-*.png' })[0].Current.Name.Substring(7)
+        if ($composer.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Image paste changed the caption.' }
+        if (Element "Download $imageName") { throw 'Pasting sent an image before Send.' }
+        Capture 'pasted-image-draft.png'
+        Set-Text 'Message' ''
+        Invoke-Control 'Send'
+        $null = Wait-Element "Download $imageName"
+        Check-Download $imageName (Join-Path (Resolve-Path $OutputDirectory).Path $imageName)
+        $downloadedImage = [System.Drawing.Bitmap]::new((Join-Path $downloadDirectory $imageName))
+        try { if ($downloadedImage.GetPixel(0, 0).ToArgb() -ne [System.Drawing.Color]::HotPink.ToArgb()) { throw 'Clipboard image pixels changed.' } }
+        finally { $downloadedImage.Dispose() }
+        $copiedFiles = [System.Collections.Specialized.StringCollection]::new()
+        $copiedFiles.AddRange([string[]]@($attachmentPath, $secondAttachment))
+        [System.Windows.Forms.Clipboard]::SetFileDropList($copiedFiles)
+        (Wait-Element 'Message').SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('^v')
+        $null = Wait-Element 'Remove attachment-only.txt'
+        $null = Wait-Element 'Remove second-file.txt'
+        Invoke-Control 'Remove attachment-only.txt'
+        Invoke-Control 'Remove second-file.txt'
         Set-Text 'Message' 'Optional file caption'
         Write-Host 'Checking native file drag-and-drop.'
         Drop-Files @($attachmentPath, $secondAttachment)

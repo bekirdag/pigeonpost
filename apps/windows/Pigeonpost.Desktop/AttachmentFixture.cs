@@ -32,8 +32,19 @@ internal sealed class AttachmentFixtureHandler(PreviewInboxService preview) : Ht
             var data = await request.Content!.ReadAsByteArrayAsync(token);
             var filename = request.Headers.GetValues("x-pigeonpost-filename").Single();
             var file = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE"))!, filename);
-            var expectedData = await File.ReadAllBytesAsync(file, token);
-            if (!data.SequenceEqual(expectedData)) throw new InvalidOperationException("Windows file bytes changed.");
+            if (filename.StartsWith("image-") && filename.EndsWith(".png"))
+            {
+                if (data.Length < 24 || !data.AsSpan(0, 8).SequenceEqual(new byte[] { 137, 80, 78, 71, 13, 10, 26, 10 })
+                    || System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(16, 4)) != 2
+                    || System.Buffers.Binary.BinaryPrimitives.ReadUInt32BigEndian(data.AsSpan(20, 4)) != 2)
+                    throw new InvalidOperationException("Clipboard image was not encoded as the expected 2x2 PNG.");
+                await File.WriteAllBytesAsync(file, data, token);
+            }
+            else
+            {
+                var expectedData = await File.ReadAllBytesAsync(file, token);
+                if (!data.SequenceEqual(expectedData)) throw new InvalidOperationException("Windows file bytes changed.");
+            }
             var owner = request.Headers.GetValues("x-pigeonpost-identity").Single();
             var attachment = new MessageAttachment("fixture-file-" + uploaded.Count, filename, "text/plain", data.Length);
             uploaded.Add(attachment.Id, (attachment, data, owner));

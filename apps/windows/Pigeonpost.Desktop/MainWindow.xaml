@@ -221,7 +221,12 @@
                     </ScrollViewer>
                     <TextBox x:Name="Composer" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" MaxLength="20000" AllowDrop="True"
-                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" />
+                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
+                        <TextBox.KeyboardAccelerators>
+                            <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="PasteAttachment_Invoked" />
+                            <KeyboardAccelerator Key="Insert" Modifiers="Shift" Invoked="PasteAttachment_Invoked" />
+                        </TextBox.KeyboardAccelerators>
+                    </TextBox>
                     <Grid>
                         <Button Content="Attach files…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                         <Button Content="Send" Click="Send_Click" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />

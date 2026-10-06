@@ -4,11 +4,81 @@ using Pigeonpost.Core;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
+using Windows.Graphics.Imaging;
+using Windows.Storage.Streams;
 
 namespace Pigeonpost.Desktop;
 
 public sealed partial class MainWindow
 {
+    private async void Composer_Paste(object sender, TextControlPasteEventArgs e)
+    {
+        var data = AttachmentClipboard();
+        if (data is null) return;
+        e.Handled = true;
+        await PasteAttachmentsAsync(data);
+    }
+
+    private async void PasteAttachment_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
+        Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
+    {
+        var data = AttachmentClipboard();
+        if (data is null) return; // Let the text control handle ordinary text/undo.
+        args.Handled = true;
+        await PasteAttachmentsAsync(data);
+    }
+
+    private DataPackageView? AttachmentClipboard()
+    {
+        if (!ViewModel.CanCompose || dialogOpen) return null;
+        try
+        {
+            var data = Clipboard.GetContent();
+            return data.Contains(StandardDataFormats.StorageItems) || data.Contains(StandardDataFormats.Bitmap) ? data : null;
+        }
+        catch (Exception) { AccountStatus.Text = "Could not read the clipboard. Please try again."; return null; }
+    }
+
+    private async Task PasteAttachmentsAsync(DataPackageView data)
+    {
+        if (data.Contains(StandardDataFormats.StorageItems))
+        {
+            await AttachFilesAsync(async () => await data.GetStorageItemsAsync());
+            return;
+        }
+        var context = ViewModel.ContextVersion;
+        dialogOpen = true;
+        try
+        {
+            var reference = await data.GetBitmapAsync();
+            using var input = await reference.OpenReadAsync();
+            var decoder = await BitmapDecoder.CreateAsync(input);
+            // Bound decoded memory before allocating a bitmap, as well as the uploaded PNG.
+            if ((ulong)decoder.PixelWidth * decoder.PixelHeight > 32_000_000)
+            { AccountStatus.Text = "That image is too large. Choose a smaller image."; return; }
+            using var bitmap = await decoder.GetSoftwareBitmapAsync(BitmapPixelFormat.Bgra8, BitmapAlphaMode.Premultiplied);
+            using var output = new InMemoryRandomAccessStream();
+            var encoder = await BitmapEncoder.CreateAsync(BitmapEncoder.PngEncoderId, output);
+            encoder.SetSoftwareBitmap(bitmap);
+            await encoder.FlushAsync();
+            if (output.Size is 0 or > PostboxClient.MaxAttachmentBytes)
+            { AccountStatus.Text = "Choose an image between 1 byte and 25 MB."; return; }
+            output.Seek(0);
+            using var reader = new DataReader(output);
+            await reader.LoadAsync((uint)output.Size);
+            var bytes = new byte[(int)output.Size];
+            reader.ReadBytes(bytes);
+            if (context != ViewModel.ContextVersion || lifetime.IsCancellationRequested) return;
+            var id = Guid.NewGuid().ToString("N");
+            ViewModel.AddAttachments([new DraftAttachment(id, $"image-{id[..8]}.png", bytes.Length,
+                token => { token.ThrowIfCancellationRequested(); return Task.FromResult(bytes); })]);
+            AccountStatus.Text = "Image attached.";
+        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { AccountStatus.Text = "Could not paste that image. Please try again."; }
+        finally { dialogOpen = false; }
+    }
+
     private async void Contact_Click(object sender, RoutedEventArgs e)
     {
         if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedConversation is not { } conversation) return;
