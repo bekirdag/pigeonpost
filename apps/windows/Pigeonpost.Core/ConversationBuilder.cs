@@ -28,7 +28,7 @@ public static class ConversationBuilder
         {
             if (p.SentCopyId is { } sentId && ids.Contains(sentId)) continue;
             if (!ids.Add(p.Id)) continue;
-            Group(p.To).Add(new ThreadMessage(p.Id, p.Body, p.At, p.ThreadId, true, Status: p.Status));
+            Group(p.To).Add(new ThreadMessage(p.Id, p.Body, p.At, p.ThreadId, true, Status: p.Status, Attachments: p.Attachments));
         }
         foreach (var contact in snapshot.Contacts.Where(c => !c.IsWildcard)) Group(contact.Peer);
         foreach (var thread in snapshot.Threads) Group(thread.Peer);

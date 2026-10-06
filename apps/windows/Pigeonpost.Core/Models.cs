@@ -88,6 +88,12 @@ public sealed record MessageAttachment(string Id, string Filename, string MediaT
     [JsonIgnore] public string SizeLabel => Bytes >= 1024 * 1024 ? $"{Bytes / (1024d * 1024):0.#} MB" : Bytes >= 1024 ? $"{Bytes / 1024d:0.#} KB" : $"{Bytes} bytes";
     [JsonIgnore] public string DownloadLabel => $"Download {Filename}";
 }
+// Local file access stays deferred until Send; never serialize file paths or access callbacks.
+public sealed record DraftAttachment(string Id, string Filename, long Bytes, Func<CancellationToken, Task<byte[]>> ReadAsync)
+{
+    public string RemoveLabel => $"Remove {Filename}";
+}
+
 public sealed record Contact(string Peer, string? Alias, string Admission, string Autonomy, IReadOnlyList<string>? AllowedVerbs = null)
 {
     [JsonIgnore] public bool IsWildcard => Peer.EndsWith("/*", StringComparison.Ordinal);
@@ -109,12 +115,13 @@ public sealed record InboxSnapshot(IReadOnlyList<InboxMessage> Messages, IReadOn
 public enum DeliveryStatus { Sent, Sending, Failed }
 
 public sealed record PendingMessage(string Id, string Mailbox, string To, string Body, long At,
-    string? ThreadId, DeliveryStatus Status = DeliveryStatus.Sending, string? SentCopyId = null);
+    string? ThreadId, DeliveryStatus Status = DeliveryStatus.Sending, string? SentCopyId = null, IReadOnlyList<MessageAttachment>? Attachments = null);
 
 public sealed record ThreadMessage(string Id, string Body, long At, string? ThreadId, bool IsOutgoing,
     bool Read = true, string? Autonomy = null, string? Verb = null, string? HeldBecause = null,
     DeliveryStatus Status = DeliveryStatus.Sent, IReadOnlyList<MessageAttachment>? Attachments = null)
 {
+    public bool CanDownloadAttachments => Status == DeliveryStatus.Sent;
     public bool IsHeld => !IsOutgoing && Autonomy == "review" && !string.IsNullOrEmpty(Verb);
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
     public string AttachmentSummary => string.Join(" · ", (Attachments ?? []).Select(a => a.Filename));

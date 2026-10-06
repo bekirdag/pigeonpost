@@ -711,6 +711,71 @@ AsyncTest("Multiple dropped files are sent together with an optional empty capti
     using var client = new PostboxClient(http, new Tokens());
     Equal((await client.SendAttachmentsAsync("/k/main", "/peer", "", "subject", ["file-a", "file-b"], default)).SentCopyId, "sent");
 });
+AsyncTest("Files stage with the text draft and Send creates one message with all selected attachments", async () =>
+{
+    var service = new WrappedService(); var files = new FileService();
+    using var vm = new InboxViewModel(service, files); await vm.InitializeAsync();
+    vm.Draft = "Text written before attaching files";
+    DraftAttachment a = new("a", "one.txt", 3, _ => Task.FromResult(new byte[] { 1, 2, 3 }));
+    DraftAttachment b = new("b", "two.txt", 2, _ => Task.FromResult(new byte[] { 4, 5 }));
+    vm.AddAttachments([a, b]); vm.AddAttachments([a]);
+    Equal(vm.DraftAttachments.Count, 2); Equal(files.UploadCount, 0); Equal(files.SendCount, 0); Equal(service.SendCount, 0);
+    Equal(vm.Draft, "Text written before attaching files");
+    vm.RemoveAttachment(a); Equal(vm.DraftAttachments.Single().Id, "b"); vm.AddAttachments([a]);
+    var subject = vm.SelectedSubject!;
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release"));
+    Equal(vm.DraftAttachments.Count, 0); Equal(vm.Draft, "");
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == subject.Id));
+    Equal(vm.DraftAttachments.Count, 2); Equal(vm.Draft, "Text written before attaching files");
+    await vm.RefreshAsync(background: true); Equal(vm.DraftAttachments.Count, 2);
+    await vm.SendDraftAsync();
+    Equal(files.UploadCount, 2); Equal(files.SendCount, 1); Equal(service.SendCount, 0);
+    Equal(files.Identity, "/k/preview-main"); Equal(files.Peer, "/preview/design"); Equal(files.Thread, subject.Id);
+    Equal(RequestEnvelope.DisplayText(files.Body!), "Text written before attaching files");
+    Check(files.SentIds!.SequenceEqual(new[] { "uploaded-two.txt", "uploaded-one.txt" }), "Files were split or removed incorrectly.");
+    Equal(vm.Draft, ""); Equal(vm.DraftAttachments.Count, 0);
+    Check(vm.Messages.Last().Attachments!.Select(f => f.Id).SequenceEqual(files.SentIds!), "Pending sent copy lost its downloadable files.");
+});
+AsyncTest("File-only drafts send once without a fabricated caption", async () =>
+{
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+    await vm.SendDraftAsync(); Equal(files.Body, ""); Equal(files.SendCount, 1); Equal(vm.DraftAttachments.Count, 0);
+});
+AsyncTest("Upload and uncertain send failures retain text and staged files without retrying", async () =>
+{
+    foreach (var uploadFailure in new[] { true, false })
+    {
+        var files = new FileService { FailUpload = uploadFailure, FailSend = !uploadFailure };
+        using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+        vm.Draft = "keep this text";
+        vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+        await vm.SendDraftAsync();
+        Equal(vm.Draft, "keep this text"); Equal(vm.DraftAttachments.Single().Filename, "one.txt");
+        Equal(files.UploadCount, 1); Equal(files.SendCount, uploadFailure ? 0 : 1); Check(vm.HasError, "Failed file send not surfaced.");
+        await vm.RefreshAsync(background: true); Equal(files.UploadCount, 1); Equal(vm.DraftAttachments.Count, 1);
+    }
+});
+AsyncTest("Mailbox switching during upload cancels delivery and keeps the original file draft", async () =>
+{
+    var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    vm.Draft = "main text";
+    vm.AddAttachments([new("a", "one.txt", 1, async token => { entered.SetResult(); await Task.Delay(Timeout.Infinite, token); return new byte[] { 1 }; })]);
+    var send = vm.SendDraftAsync(); await entered.Task;
+    await vm.SwitchMailboxAsync(vm.Mailboxes[1]);
+    Equal(vm.DraftAttachments.Count, 0); vm.Draft = "team text";
+    await send; Equal(files.SendCount, 0); Equal(vm.Draft, "team text");
+    await vm.SwitchMailboxAsync(vm.Mailboxes[0]); Equal(vm.Draft, "main text"); Equal(vm.DraftAttachments.Count, 1);
+});
+AsyncTest("Opening a conversation with files in its draft cannot send them through the first-message shortcut", async () =>
+{
+    var files = new FileService(); using var vm = new InboxViewModel(new WrappedService(), files); await vm.InitializeAsync();
+    var peer = vm.SelectedConversation!.Peer;
+    vm.AddAttachments([new("a", "one.txt", 1, _ => Task.FromResult(new byte[] { 1 }))]);
+    await vm.StartConversationAsync(peer, "first message");
+    Equal(files.SendCount, 0); Equal(vm.DraftAttachments.Count, 1); Check(vm.Draft.Contains("first message"), "First message lost.");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)
@@ -770,4 +835,29 @@ sealed class WrappedService : IInboxService
     public Task SetContactAsync(string identity, Contact contact, CancellationToken token) => inner.SetContactAsync(identity, contact, token);
     public Task RemoveContactAsync(string identity, string peer, CancellationToken token) => inner.RemoveContactAsync(identity, peer, token);
     public Task DeleteThreadAsync(string identity, string id, CancellationToken token) => inner.DeleteThreadAsync(identity, id, token);
+}
+
+sealed class FileService : IAttachmentService
+{
+    public bool FailUpload { get; init; }
+    public bool FailSend { get; init; }
+    public int UploadCount { get; private set; }
+    public int SendCount { get; private set; }
+    public string? Identity { get; private set; }
+    public string? Peer { get; private set; }
+    public string? Thread { get; private set; }
+    public string? Body { get; private set; }
+    public IReadOnlyList<string>? SentIds { get; private set; }
+    public Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested(); UploadCount++;
+        if (FailUpload) throw new IOException("failed upload");
+        return Task.FromResult(new MessageAttachment("uploaded-" + filename, filename, "text/plain", bytes.Length));
+    }
+    public Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested(); SendCount++; Identity = identity; Peer = peer; Thread = threadId; Body = body; SentIds = attachmentIds;
+        if (FailSend) throw new IOException("uncertain send");
+        return Task.FromResult(new SendReceipt("received", "sent"));
+    }
 }

@@ -158,7 +158,7 @@ $form.Controls.Add($label)
             }
             Start-Sleep -Milliseconds 400
             [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
-            $null = Wait-Element 'File message (optional)'
+            $null = Wait-Element ('Remove ' + [IO.Path]::GetFileName($Files[0]))
         } finally {
             [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
             if (-not $sourceProcess.HasExited) { $null = $sourceProcess.CloseMainWindow(); if (-not $sourceProcess.WaitForExit(3000)) { $sourceProcess.Kill() } }
@@ -170,19 +170,20 @@ $form.Controls.Add($label)
         Capture 'inbox.png'
         Invoke-Control 'Send'
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Successful send did not clear composer.' }
-        Invoke-Control 'Attach file…'
-        $fileMessage = Wait-Element 'File message (optional)'
-        if ($fileMessage.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'File dialog invented a caption.' }
+        Invoke-Control 'Attach files…'
+        $null = Wait-Element 'Remove attachment-only.txt'
+        if (Element 'Download attachment-only.txt') { throw 'Picking a file sent it before Send.' }
         Capture 'attachment-without-message.png'
-        Commit-Dialog 'Send file'
-        $null = Wait-Element 'File sent.'
+        Invoke-Control 'Send'
         $null = Wait-Element 'Download attachment-only.txt'
+        if (Element 'Remove attachment-only.txt') { throw 'Successful send retained the attached draft file.' }
         Check-Download 'attachment-only.txt' $attachmentPath
         Capture 'attachment-delivered.png'
-        Invoke-Control 'Attach file…'
-        Set-Text 'File message (optional)' 'Optional file caption'
-        Commit-Dialog 'Send file'
-        $null = Wait-Element 'File sent.'
+        Set-Text 'Message' 'Optional file caption'
+        Invoke-Control 'Attach files…'
+        $null = Wait-Element 'Remove attachment-only.txt'
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Attaching a file lost the text draft.' }
+        Invoke-Control 'Send'
         $null = Wait-Element 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
@@ -207,14 +208,14 @@ $form.Controls.Add($label)
         Set-Text 'Find in this subject' ''
         $anchor = Wait-Element 'History message 15: desktop parity check.'
         $anchorTop = $anchor.Current.BoundingRectangle.Top
-        $conversationSelection = (Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()[0]
+        $conversationSelection = (Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
         $conversationId = $conversationSelection.GetRuntimeId() -join ','
-        $subjectSelection = (Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()[0]
+        $subjectSelection = (Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
         $subjectId = $subjectSelection.GetRuntimeId() -join ','
         Set-Text 'Message' 'Draft survives background checks'
         Start-Sleep -Seconds 3
         if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'An unchanged poll moved the history viewport.' }
-        if ((($conversationSelection.GetRuntimeId() -join ',') -ne $conversationId) -or (($subjectSelection.GetRuntimeId() -join ',') -ne $subjectId)) { throw 'Polling recreated a selected menu row.' }
+        if ((((Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $conversationId) -or (((Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $subjectId)) { throw 'Polling recreated a selected menu row.' }
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft survives background checks') { throw 'Polling lost the draft.' }
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive')
         Start-Sleep -Seconds 2
@@ -229,10 +230,26 @@ $form.Controls.Add($label)
         Set-Text 'Message' ''
 
         Open-Conversation '/preview/team'
+        Set-Text 'Message' 'Optional file caption'
         Drop-Files @($attachmentPath, $secondAttachment)
-        Capture 'dragged-files-confirmation.png'
-        Commit-Dialog 'Send files'
-        $null = Wait-Element 'Files sent.'
+        $null = Wait-Element 'Remove second-file.txt'
+        if (Element 'Download second-file.txt') { throw 'Dropping files sent them before Send.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Dropping files lost the existing message.' }
+        Invoke-Control 'Remove attachment-only.txt'
+        if (Element 'Remove attachment-only.txt') { throw 'Removing a staged file failed.' }
+        Invoke-Control 'Attach files…'
+        $null = Wait-Element 'Remove attachment-only.txt'
+        Capture 'message-with-staged-files.png'
+        # Files and text stay in this draft across conversation switches and background checks.
+        Open-Conversation '/preview/design'
+        if (Element 'Remove second-file.txt') { throw 'Staged files leaked to another conversation.' }
+        Open-Conversation '/preview/team'
+        $null = Wait-Element 'Remove second-file.txt'
+        $null = Wait-Element 'Remove attachment-only.txt'
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Switching lost the file-message draft.' }
+        Invoke-Control 'Send'
+        $null = Wait-Element 'Download second-file.txt'
+        if (Element 'Remove second-file.txt') { throw 'Successful send did not clear staged files.' }
         Check-Download 'attachment-only.txt' $attachmentPath
         Check-Download 'second-file.txt' $secondAttachment
         Capture 'sender-attachment-downloads.png'

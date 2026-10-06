@@ -24,7 +24,7 @@ public sealed class PostboxException(int statusCode, string? code) : Exception(c
 }
 
 // HttpClient and token-provider lifetimes belong to the caller. Never log tokens or raw responses.
-public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IDisposable
+public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IAttachmentService, IDisposable
 {
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);

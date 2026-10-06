@@ -12,7 +12,7 @@
                         Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
                         <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
-                        <ItemsControl ItemsSource="{x:Bind Attachments}">
+                        <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="core:MessageAttachment">
                                     <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
@@ -41,7 +41,7 @@
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
                         <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
-                        <ItemsControl ItemsSource="{x:Bind Attachments}">
+                        <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="core:MessageAttachment">
                                     <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
@@ -198,11 +198,24 @@
                 </Grid>
                 <StackPanel Grid.Row="3" Padding="18,10,18,14" Spacing="8">
                     <TextBlock Text="{x:Bind ViewModel.FindSummary, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <ScrollViewer MaxHeight="128" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
+                        <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attached files">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="core:DraftAttachment">
+                                    <Grid ColumnSpacing="8" Margin="0,3">
+                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                        <TextBlock Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <Button Grid.Column="1" Content="Remove" Tag="{x:Bind}" Click="RemoveAttachment_Click" AutomationProperties.Name="{x:Bind RemoveLabel}" />
+                                    </Grid>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                    </ScrollViewer>
                     <TextBox x:Name="Composer" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
                              AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" MaxLength="20000"
                              IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" />
                     <Grid>
-                        <Button Content="Attach file…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                        <Button Content="Attach files…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                         <Button Content="Send" Click="Send_Click" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                     </Grid>
                 </StackPanel>

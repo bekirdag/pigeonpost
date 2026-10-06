@@ -152,73 +152,53 @@ public sealed partial class MainWindow
     private async Task AttachFilesAsync(Func<Task<IReadOnlyList<IStorageItem>>> chooseFiles)
     {
         if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
-        var thread = ViewModel.SelectedSubject?.Id;
         var context = ViewModel.ContextVersion;
         dialogOpen = true;
-        var sendingMessage = false;
         try
         {
             var items = await chooseFiles();
             if (items.Count == 0) return;
             if (items.Any(item => item is not StorageFile))
-            { AccountStatus.Text = "Choose files, not folders. No files were sent."; return; }
-            var files = items.Cast<StorageFile>().ToArray();
-            foreach (var file in files)
-                if ((await file.GetBasicPropertiesAsync()).Size is 0 or > PostboxClient.MaxAttachmentBytes)
-                { AccountStatus.Text = $"{file.Name}: choose a file between 1 byte and 25 MB. No files were sent."; return; }
-            var caption = new TextBox { Header = "Message (optional)", PlaceholderText = "Send files by themselves, or add a message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 20000, MinHeight = 80 };
-            Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(caption, "File message (optional)");
-            var panel = new StackPanel { Spacing = 12 };
-            panel.Children.Add(new TextBlock { Text = $"To {conversation.Peer}", TextWrapping = TextWrapping.Wrap });
-            panel.Children.Add(new TextBlock { Text = string.Join("\n", files.Select(f => f.Name)), TextWrapping = TextWrapping.Wrap });
-            panel.Children.Add(caption);
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = files.Length == 1 ? "Send a file" : "Send files",
-                Content = new ScrollViewer { Content = panel, MaxHeight = 440 },
-                PrimaryButtonText = files.Length == 1 ? "Send file" : "Send files", CloseButtonText = "Cancel" };
-            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (context != ViewModel.ContextVersion)
-            { AccountStatus.Text = "The conversation changed. Select the files again to send them here."; return; }
-            var uploaded = new List<string>();
-            foreach (var file in files)
+            { AccountStatus.Text = "Choose files, not folders. No files were attached."; return; }
+            var selected = new List<DraftAttachment>();
+            foreach (var file in items.Cast<StorageFile>())
             {
-                AccountStatus.Text = $"Uploading {file.Name}…";
-                using var stream = await file.OpenStreamForReadAsync();
-                if (stream.Length > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
-                using var buffer = new MemoryStream();
-                var chunk = new byte[64 * 1024];
-                int count;
-                while ((count = await stream.ReadAsync(chunk, lifetime.Token)) > 0)
-                {
-                    if (buffer.Length + count > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
-                    buffer.Write(chunk, 0, count);
-                }
-                uploaded.Add((await postbox.UploadAsync(mailbox.Address, file.Name, buffer.ToArray(), lifetime.Token)).Id);
+                var size = (await file.GetBasicPropertiesAsync()).Size;
+                if (size is 0 or > PostboxClient.MaxAttachmentBytes)
+                { AccountStatus.Text = $"{file.Name}: choose a file between 1 byte and 25 MB. No files were attached."; return; }
+                var id = string.IsNullOrEmpty(file.Path) ? Guid.NewGuid().ToString("N")
+                    : Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(file.Path.ToUpperInvariant())));
+                selected.Add(new DraftAttachment(id, file.Name, (long)size, token => ReadAttachmentAsync(file, token)));
             }
-            lifetime.Token.ThrowIfCancellationRequested();
-            // A mailbox/subject switch during a long upload must never send to an unexpected target.
-            if (context != ViewModel.ContextVersion)
-            { AccountStatus.Text = "The conversation changed. The files were not sent."; return; }
-            sendingMessage = true;
-            AccountStatus.Text = "Sending files…";
-            var receipt = await postbox.SendAttachmentsAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text),
-                string.IsNullOrEmpty(thread) ? null : thread, uploaded, lifetime.Token);
-            if (ViewModel.SelectedMailbox?.Address == mailbox.Address)
-            {
-                await ViewModel.RefreshAsync();
-                if (context == ViewModel.ContextVersion && ViewModel.Messages.FirstOrDefault(m => m.Id == receipt.SentCopyId) is { } sent)
-                    QueueScroll(sent);
-            }
-            AccountStatus.Text = files.Length == 1 ? "File sent." : "Files sent.";
+            if (context != ViewModel.ContextVersion || lifetime.IsCancellationRequested)
+            { AccountStatus.Text = "The conversation changed. Select the files again to attach them here."; return; }
+            ViewModel.AddAttachments(selected);
+            AccountStatus.Text = ViewModel.DraftAttachments.Count == 1 ? "1 file attached." : $"{ViewModel.DraftAttachments.Count} files attached.";
+            Composer.Focus(FocusState.Programmatic);
         }
-        catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
-        catch (PostboxException ex) { AccountStatus.Text = ex.Message; }
-        catch (Exception)
-        {
-            AccountStatus.Text = sendingMessage
-                ? "File delivery could not be confirmed. Check this conversation before trying again."
-                : "Could not upload the files. They were not sent. Please try again.";
-        }
+        catch (OperationCanceledException) { }
+        catch (Exception) { AccountStatus.Text = "Could not read the selected files. Please try again."; }
         finally { dialogOpen = false; }
+    }
+
+    private static async Task<byte[]> ReadAttachmentAsync(StorageFile file, CancellationToken token)
+    {
+        using var stream = await file.OpenStreamForReadAsync();
+        if (stream.Length is 0 or > PostboxClient.MaxAttachmentBytes) throw new IOException("Attachment size changed.");
+        using var buffer = new MemoryStream();
+        var chunk = new byte[64 * 1024];
+        int count;
+        while ((count = await stream.ReadAsync(chunk, token)) > 0)
+        {
+            if (buffer.Length + count > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
+            buffer.Write(chunk, 0, count);
+        }
+        return buffer.ToArray();
+    }
+
+    private void RemoveAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: DraftAttachment attachment }) ViewModel.RemoveAttachment(attachment);
     }
 
     private async void SaveAttachment_Click(object sender, RoutedEventArgs e)

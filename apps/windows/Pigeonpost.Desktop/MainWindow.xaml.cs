@@ -41,9 +41,9 @@ public sealed partial class MainWindow : Window
         if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
         preview = new PreviewInboxService(longHistory: true);
-        ViewModel = new InboxViewModel(preview);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
+        ViewModel = new InboxViewModel(preview, postbox);
 #endif
         InitializeComponent();
         Title = BuildLabel;
@@ -108,7 +108,13 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Subject subject }) ViewModel.SelectSubject(subject);
     }
 
-    private async void Send_Click(object sender, RoutedEventArgs e) => await ViewModel.SendDraftAsync();
+    private async Task SendComposerAsync()
+    {
+        var context = ViewModel.ContextVersion;
+        await ViewModel.SendDraftAsync();
+        if (context == ViewModel.ContextVersion && !ViewModel.HasError && ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+    }
+    private async void Send_Click(object sender, RoutedEventArgs e) => await SendComposerAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshAsync();
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ViewModel.ArchiveSelectedAsync();
     private void PreviousMatch_Click(object sender, RoutedEventArgs e) => ViewModel.MoveMatch(-1);
@@ -199,7 +205,7 @@ public sealed partial class MainWindow : Window
     {
         if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer)) return;
         args.Handled = true;
-        await ViewModel.SendDraftAsync();
+        await SendComposerAsync();
     }
 
     private void CopyOriginal_Click(object sender, RoutedEventArgs e)
