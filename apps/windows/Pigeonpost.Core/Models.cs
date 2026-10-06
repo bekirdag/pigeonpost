@@ -83,7 +83,11 @@ public sealed record InboxMessage
     [JsonIgnore] public string PeerKey => PeerHandle ?? Peer ?? (IsOutgoing ? To : SenderHandle ?? From) ?? "unknown";
 }
 
-public sealed record MessageAttachment(string Id, string Filename, string MediaType, long Bytes);
+public sealed record MessageAttachment(string Id, string Filename, string MediaType, long Bytes)
+{
+    [JsonIgnore] public string SizeLabel => Bytes >= 1024 * 1024 ? $"{Bytes / (1024d * 1024):0.#} MB" : Bytes >= 1024 ? $"{Bytes / 1024d:0.#} KB" : $"{Bytes} bytes";
+    [JsonIgnore] public string DownloadLabel => $"Download {Filename}";
+}
 public sealed record Contact(string Peer, string? Alias, string Admission, string Autonomy, IReadOnlyList<string>? AllowedVerbs = null)
 {
     [JsonIgnore] public bool IsWildcard => Peer.EndsWith("/*", StringComparison.Ordinal);
@@ -132,7 +136,7 @@ public sealed record Conversation(string Peer, string Name, IReadOnlyList<Thread
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
     public int Held => Messages.Count(m => m.IsHeld);
     public long Last => Messages.LastOrDefault()?.At ?? 0;
-    public string Preview => Messages.LastOrDefault() is { } m ? m.DisplayBody.ReplaceLineEndings(" ") : "Start a conversation";
+    public string Preview => Messages.LastOrDefault() is { } m ? (string.IsNullOrWhiteSpace(m.DisplayBody) && m.Attachments?.Count > 0 ? m.AttachmentSummary : m.DisplayBody.ReplaceLineEndings(" ")) : "Start a conversation";
     public string Badge => string.Join(" · ", new[] { Unread > 0 ? $"{Unread} unread" : "", Held > 0 ? $"{Held} held" : "" }.Where(s => s.Length > 0));
 }
 

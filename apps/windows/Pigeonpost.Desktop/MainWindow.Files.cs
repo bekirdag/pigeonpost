@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Pigeonpost.Core;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 using Windows.Storage.Pickers;
 
@@ -108,63 +109,106 @@ public sealed partial class MainWindow
         }
     }
 
-    private async void Attach_Click(object sender, RoutedEventArgs e)
+    private async void Attach_Click(object sender, RoutedEventArgs e) => await AttachFilesAsync(async () =>
+    {
+#if UI_TESTS
+        return [await StorageFile.GetFileFromPathAsync(Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE")
+            ?? throw new InvalidOperationException("Attachment fixture file was not provided."))];
+#else
+        var picker = new FileOpenPicker();
+        picker.FileTypeFilter.Add("*");
+        WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
+        return (await picker.PickMultipleFilesAsync()).Cast<IStorageItem>().ToArray();
+#endif
+    });
+
+    private void Files_DragOver(object sender, DragEventArgs e)
+    {
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        e.Handled = true;
+        e.AcceptedOperation = !dialogOpen && ViewModel.CanCompose ? DataPackageOperation.Copy : DataPackageOperation.None;
+        e.DragUIOverride.Caption = "Attach files to this conversation";
+        e.DragUIOverride.IsCaptionVisible = true;
+    }
+
+    private async void Files_Drop(object sender, DragEventArgs e)
+    {
+        if (dialogOpen || !ViewModel.CanCompose || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+        e.Handled = true;
+        e.AcceptedOperation = DataPackageOperation.Copy;
+        var deferral = e.GetDeferral();
+        var context = ViewModel.ContextVersion;
+        IReadOnlyList<IStorageItem>? items = null;
+        dialogOpen = true;
+        try { items = await e.DataView.GetStorageItemsAsync(); }
+        catch (Exception) { AccountStatus.Text = "Could not read the dropped files. Please try again."; }
+        finally { dialogOpen = false; deferral.Complete(); }
+        if (items is null || lifetime.IsCancellationRequested) return;
+        if (context != ViewModel.ContextVersion)
+        { AccountStatus.Text = "The conversation changed. Drop the files again to send them here."; return; }
+        await AttachFilesAsync(() => Task.FromResult(items));
+    }
+
+    private async Task AttachFilesAsync(Func<Task<IReadOnlyList<IStorageItem>>> chooseFiles)
     {
         if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;
         var thread = ViewModel.SelectedSubject?.Id;
+        var context = ViewModel.ContextVersion;
         dialogOpen = true;
         var sendingMessage = false;
         try
         {
-            StorageFile? file;
-#if UI_TESTS
-            // A real StorageFile exercises the Windows file-reading path; the fixture transport
-            // validates the resulting upload and message without any production credentials.
-            file = await StorageFile.GetFileFromPathAsync(Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE")
-                ?? throw new InvalidOperationException("Attachment fixture file was not provided."));
-#else
-            var picker = new FileOpenPicker();
-            picker.FileTypeFilter.Add("*");
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-            file = await picker.PickSingleFileAsync();
-#endif
-            if (file is null) return;
-            var size = (await file.GetBasicPropertiesAsync()).Size;
-            if (size is 0 or > PostboxClient.MaxAttachmentBytes) { AccountStatus.Text = "Choose a file between 1 byte and 25 MB."; return; }
-            var caption = new TextBox { Header = "Message (optional)", PlaceholderText = "Send the file by itself, or add a message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 20000, MinHeight = 80 };
+            var items = await chooseFiles();
+            if (items.Count == 0) return;
+            if (items.Any(item => item is not StorageFile))
+            { AccountStatus.Text = "Choose files, not folders. No files were sent."; return; }
+            var files = items.Cast<StorageFile>().ToArray();
+            foreach (var file in files)
+                if ((await file.GetBasicPropertiesAsync()).Size is 0 or > PostboxClient.MaxAttachmentBytes)
+                { AccountStatus.Text = $"{file.Name}: choose a file between 1 byte and 25 MB. No files were sent."; return; }
+            var caption = new TextBox { Header = "Message (optional)", PlaceholderText = "Send files by themselves, or add a message", AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MaxLength = 20000, MinHeight = 80 };
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(caption, "File message (optional)");
             var panel = new StackPanel { Spacing = 12 };
-            panel.Children.Add(new TextBlock { Text = $"Send {file.Name} to {conversation.Peer}", TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(new TextBlock { Text = $"To {conversation.Peer}", TextWrapping = TextWrapping.Wrap });
+            panel.Children.Add(new TextBlock { Text = string.Join("\n", files.Select(f => f.Name)), TextWrapping = TextWrapping.Wrap });
             panel.Children.Add(caption);
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Send a file", Content = panel, PrimaryButtonText = "Send file", CloseButtonText = "Cancel" };
-            dialog.IsPrimaryButtonEnabled = true;
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = files.Length == 1 ? "Send a file" : "Send files",
+                Content = new ScrollViewer { Content = panel, MaxHeight = 440 },
+                PrimaryButtonText = files.Length == 1 ? "Send file" : "Send files", CloseButtonText = "Cancel" };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-            if (ViewModel.SelectedMailbox?.Address != mailbox.Address || ViewModel.SelectedConversation?.Peer != conversation.Peer || ViewModel.SelectedSubject?.Id != thread)
-            { AccountStatus.Text = "The conversation changed. Select the file again to send it here."; return; }
-            AccountStatus.Text = "Uploading file…";
-            using var stream = await file.OpenStreamForReadAsync();
-            if (stream.Length > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
-            using var buffer = new MemoryStream();
-            var chunk = new byte[64 * 1024];
-            int count;
-            while ((count = await stream.ReadAsync(chunk, lifetime.Token)) > 0)
+            if (context != ViewModel.ContextVersion)
+            { AccountStatus.Text = "The conversation changed. Select the files again to send them here."; return; }
+            var uploaded = new List<string>();
+            foreach (var file in files)
             {
-                if (buffer.Length + count > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
-                buffer.Write(chunk, 0, count);
+                AccountStatus.Text = $"Uploading {file.Name}…";
+                using var stream = await file.OpenStreamForReadAsync();
+                if (stream.Length > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
+                using var buffer = new MemoryStream();
+                var chunk = new byte[64 * 1024];
+                int count;
+                while ((count = await stream.ReadAsync(chunk, lifetime.Token)) > 0)
+                {
+                    if (buffer.Length + count > PostboxClient.MaxAttachmentBytes) throw new IOException("File grew beyond attachment limit.");
+                    buffer.Write(chunk, 0, count);
+                }
+                uploaded.Add((await postbox.UploadAsync(mailbox.Address, file.Name, buffer.ToArray(), lifetime.Token)).Id);
             }
-            var uploaded = await postbox.UploadAsync(mailbox.Address, file.Name, buffer.ToArray(), lifetime.Token);
             lifetime.Token.ThrowIfCancellationRequested();
+            // A mailbox/subject switch during a long upload must never send to an unexpected target.
+            if (context != ViewModel.ContextVersion)
+            { AccountStatus.Text = "The conversation changed. The files were not sent."; return; }
             sendingMessage = true;
-            AccountStatus.Text = "Sending file…";
-            var receipt = await postbox.SendAttachmentAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text), string.IsNullOrEmpty(thread) ? null : thread, uploaded.Id, lifetime.Token);
+            AccountStatus.Text = "Sending files…";
+            var receipt = await postbox.SendAttachmentsAsync(mailbox.Address, conversation.Peer, RequestEnvelope.Attachment(caption.Text),
+                string.IsNullOrEmpty(thread) ? null : thread, uploaded, lifetime.Token);
             if (ViewModel.SelectedMailbox?.Address == mailbox.Address)
             {
                 await ViewModel.RefreshAsync();
-                if (ViewModel.SelectedConversation?.Peer == conversation.Peer && ViewModel.SelectedSubject?.Id == thread
-                    && ViewModel.Messages.FirstOrDefault(m => m.Id == receipt.SentCopyId) is { } sent)
+                if (context == ViewModel.ContextVersion && ViewModel.Messages.FirstOrDefault(m => m.Id == receipt.SentCopyId) is { } sent)
                     QueueScroll(sent);
             }
-            AccountStatus.Text = "File sent.";
+            AccountStatus.Text = files.Length == 1 ? "File sent." : "Files sent.";
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (PostboxException ex) { AccountStatus.Text = ex.Message; }
@@ -172,29 +216,45 @@ public sealed partial class MainWindow
         {
             AccountStatus.Text = sendingMessage
                 ? "File delivery could not be confirmed. Check this conversation before trying again."
-                : "Could not upload this file. It was not sent. Please try again.";
+                : "Could not upload the files. They were not sent. Please try again.";
         }
         finally { dialogOpen = false; }
     }
 
+    private async void SaveAttachment_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: MessageAttachment attachment }) await SaveAttachmentsAsync([attachment]);
+    }
+
     private async void SaveFiles_Click(object sender, RoutedEventArgs e)
     {
-        if (dialogOpen || sender is not MenuFlyoutItem { Tag: ThreadMessage message } || ViewModel.SelectedMailbox is not { } mailbox) return;
+        if (sender is MenuFlyoutItem { Tag: ThreadMessage message }) await SaveAttachmentsAsync(message.Attachments ?? []);
+    }
+
+    private async Task SaveAttachmentsAsync(IReadOnlyList<MessageAttachment> attachments)
+    {
+        if (dialogOpen || ViewModel.SelectedMailbox is not { } mailbox) return;
         dialogOpen = true;
         try
         {
-            foreach (var attachment in message.Attachments ?? [])
+            foreach (var attachment in attachments)
             {
                 var safeName = Path.GetFileName(attachment.Filename.Replace('\\', '/'));
                 foreach (var c in Path.GetInvalidFileNameChars()) safeName = safeName.Replace(c, '_');
                 if (string.IsNullOrWhiteSpace(safeName)) safeName = "attachment";
+#if UI_TESTS
+                var folder = await StorageFolder.GetFolderFromPathAsync(Environment.GetEnvironmentVariable("PIGEONPOST_UI_DOWNLOAD_DIRECTORY")!);
+                var destination = await folder.CreateFileAsync(safeName, CreationCollisionOption.ReplaceExisting);
+#else
                 var picker = new FileSavePicker { SuggestedFileName = safeName };
                 var extension = Path.GetExtension(safeName);
                 if (extension.Length is < 2 or > 20 || !extension[1..].All(char.IsAsciiLetterOrDigit)) extension = ".bin";
                 picker.FileTypeChoices.Add("File", new List<string> { extension });
                 WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
                 var destination = await picker.PickSaveFileAsync();
+#endif
                 if (destination is null) break;
+                AccountStatus.Text = $"Downloading {safeName}…";
                 var bytes = await postbox.DownloadAsync(mailbox.Address, attachment.Id, lifetime.Token);
                 await FileIO.WriteBytesAsync(destination, bytes);
                 AccountStatus.Text = $"Saved {safeName}.";

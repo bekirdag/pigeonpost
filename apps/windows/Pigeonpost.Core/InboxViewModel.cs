@@ -1,3 +1,5 @@
+using System.Collections.ObjectModel;
+
 namespace Pigeonpost.Core;
 
 // Construct on the UI context. Awaited service calls return to it; stale mailbox loads are discarded.
@@ -35,11 +37,14 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];
     public Mailbox? SelectedMailbox { get; private set; }
-    public IReadOnlyList<Conversation> Conversations { get; private set; } = [];
+    public ObservableCollection<Conversation> Conversations { get; } = [];
     public Conversation? SelectedConversation { get; private set; }
-    public IReadOnlyList<Subject> Subjects { get; private set; } = [];
+    public ObservableCollection<Subject> Subjects { get; } = [];
     public Subject? SelectedSubject { get; private set; }
-    public IReadOnlyList<ThreadMessage> Messages { get; private set; } = [];
+    public ObservableCollection<ThreadMessage> Messages { get; } = [];
+    public bool IsUpdatingLists { get; private set; }
+    public event EventHandler? MessagesUpdating;
+    public event EventHandler? MessagesUpdated;
     public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending;
@@ -109,13 +114,12 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         SelectedMailbox = mailbox;
         snapshot = InboxSnapshot.Empty;
         allConversations = [];
-        Conversations = [];
+        StableList.Reconcile(Conversations, [], c => c.Peer, StableList.SameConversation);
         IsSending = false;
         Error = null;
         SetSelection(null, null);
         Changed(nameof(SelectedMailbox));
         Changed(nameof(MailboxAddress));
-        Changed(nameof(Conversations));
         Changed(nameof(InboxSummary));
         Changed(nameof(IsListEmpty));
         await RefreshAsync();
@@ -341,50 +345,69 @@ public sealed class InboxViewModel(IInboxService service) : ObservableObject, ID
         var peer = SelectedConversation?.Peer ?? remembered.Peer;
         var subject = SelectedSubject?.Id ?? remembered.Subject;
         var archived = snapshot.Archived.Select(p => ConversationBuilder.ResolvePeer(p, snapshot, Mailboxes)).ToHashSet(StringComparer.Ordinal);
-        Conversations = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
+        var next = allConversations.Where(c => archived.Contains(c.Peer) == ShowArchived
             && (string.IsNullOrWhiteSpace(SenderSearch) || c.Name.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase)
                 || c.Peer.Contains(SenderSearch.Trim(), StringComparison.OrdinalIgnoreCase))).ToArray();
-        Changed(nameof(Conversations));
+        IsUpdatingLists = true;
+        try
+        {
+            StableList.Reconcile(Conversations, next, c => c.Peer, StableList.SameConversation);
+            SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(), subject);
+        }
+        finally { IsUpdatingLists = false; }
         Changed(nameof(IsListEmpty));
         Changed(nameof(EmptyListMessage));
-        SetSelection(Conversations.FirstOrDefault(c => c.Peer == peer) ?? Conversations.FirstOrDefault(), subject);
     }
 
     private void SetSelection(Conversation? conversation, string? subjectId)
     {
-        var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
-        var previousSubject = SelectedSubject?.Id;
-        SelectedConversation = conversation;
-        Subjects = ConversationBuilder.Subjects(conversation, snapshot, Mailboxes);
-        SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
-        if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
-        Changed(nameof(SelectedConversation));
-        Changed(nameof(Subjects));
-        Changed(nameof(ConversationTitle));
-        Changed(nameof(ConversationAddress));
-        Changed(nameof(HasConversation));
-        Changed(nameof(CanCompose));
-        UpdateMessages();
-        RememberSelection();
+        var wasUpdating = IsUpdatingLists;
+        IsUpdatingLists = true;
+        try
+        {
+            var peerChanged = SelectedConversation?.Peer != conversation?.Peer;
+            var previousSubject = SelectedSubject?.Id;
+            var previousConversation = SelectedConversation;
+            SelectedConversation = conversation;
+            StableList.Reconcile(Subjects, ConversationBuilder.Subjects(conversation, snapshot, Mailboxes), s => s.Id, StableList.SameSubject);
+            SelectedSubject = Subjects.FirstOrDefault(s => s.Id == subjectId) ?? Subjects.FirstOrDefault();
+            if (peerChanged || previousSubject != SelectedSubject?.Id) Find = "";
+            if (!ReferenceEquals(previousConversation, conversation))
+            {
+                Changed(nameof(SelectedConversation));
+                Changed(nameof(ConversationTitle));
+                Changed(nameof(ConversationAddress));
+                Changed(nameof(HasConversation));
+                Changed(nameof(CanCompose));
+            }
+            UpdateMessages();
+            RememberSelection();
+        }
+        finally { IsUpdatingLists = wasUpdating; }
     }
 
     private void UpdateMessages()
     {
         var next = SelectedSubject?.Messages ?? SelectedConversation?.Messages ?? [];
         var context = $"{SelectedMailbox?.Address}|{SelectedConversation?.Peer}|{SelectedSubject?.Id}";
-        if (historyContext != context)
+        var contextChanged = historyContext != context;
+        if (contextChanged)
         {
             historyContext = context;
             ContextVersion++;
             matches = [];
         }
-        history = next;
         Changed(nameof(SelectedSubject));
         Changed(nameof(SubjectTitle));
         Changed(nameof(CanDeleteSubject));
-        if (!Messages.SequenceEqual(next)) { Messages = next; Changed(nameof(Messages)); }
-        draft = DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "";
-        Changed(nameof(Draft));
+        if (contextChanged || !StableList.SameMessages(Messages, next))
+        {
+            MessagesUpdating?.Invoke(this, EventArgs.Empty);
+            StableList.Reconcile(Messages, next, m => m.Id, StableList.SameMessage);
+            MessagesUpdated?.Invoke(this, EventArgs.Empty);
+        }
+        history = Messages;
+        Set(ref draft, DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "", nameof(Draft));
         UpdateMatches();
     }
 

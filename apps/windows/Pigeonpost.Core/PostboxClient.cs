@@ -109,7 +109,10 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     }
 
     public Task<SendReceipt> SendAttachmentAsync(string identity, string peer, string body, string? threadId, string attachmentId, CancellationToken cancellationToken) =>
-        WriteAsync<SendReceipt>(HttpMethod.Post, "/v1/send", new { from = identity, to = peer, body, thread_id = threadId, attachments = new[] { attachmentId } }, cancellationToken);
+        SendAttachmentsAsync(identity, peer, body, threadId, [attachmentId], cancellationToken);
+
+    public Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken cancellationToken) =>
+        WriteAsync<SendReceipt>(HttpMethod.Post, "/v1/send", new { from = identity, to = peer, body, thread_id = threadId, attachments = attachmentIds }, cancellationToken);
 
     private async Task<T> ReadAsync<T>(string path, CancellationToken cancellationToken)
     {

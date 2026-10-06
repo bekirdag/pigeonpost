@@ -15,35 +15,47 @@ internal sealed class AttachmentFixtureTokens : IAccessTokenProvider
 
 internal sealed class AttachmentFixtureHandler(PreviewInboxService preview) : HttpMessageHandler
 {
-    private MessageAttachment? uploaded;
-    private string? owner;
-    private int sends;
+    private readonly Dictionary<string, (MessageAttachment File, byte[] Data, string Owner)> uploaded = [];
+    private readonly Dictionary<string, HashSet<string>> readers = [];
     protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
     {
+        if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.StartsWith("/v1/attachments/"))
+        {
+            var id = request.RequestUri.Segments.Last();
+            var identity = request.Headers.GetValues("x-pigeonpost-identity").Single();
+            if (!readers.TryGetValue(id, out var permitted) || !permitted.Contains(identity)) throw new InvalidOperationException("Download used the wrong mailbox.");
+            return new(HttpStatusCode.OK) { Content = new ByteArrayContent(uploaded[id].Data) };
+        }
         if (request.Method != HttpMethod.Post) throw new InvalidOperationException("Unexpected fixture request.");
-        var file = Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE")!;
         if (request.RequestUri!.AbsolutePath == "/v1/attachments")
         {
             var data = await request.Content!.ReadAsByteArrayAsync(token);
+            var filename = request.Headers.GetValues("x-pigeonpost-filename").Single();
+            var file = Path.Combine(Path.GetDirectoryName(Environment.GetEnvironmentVariable("PIGEONPOST_UI_ATTACHMENT_FILE"))!, filename);
             var expectedData = await File.ReadAllBytesAsync(file, token);
             if (!data.SequenceEqual(expectedData)) throw new InvalidOperationException("Windows file bytes changed.");
-            owner = request.Headers.GetValues("x-pigeonpost-identity").Single();
-            var filename = request.Headers.GetValues("x-pigeonpost-filename").Single();
-            if (filename != Path.GetFileName(file)) throw new InvalidOperationException("Wrong filename.");
-            uploaded = new("fixture-file", filename, "text/plain", data.Length);
-            return Json(uploaded);
+            var owner = request.Headers.GetValues("x-pigeonpost-identity").Single();
+            var attachment = new MessageAttachment("fixture-file-" + uploaded.Count, filename, "text/plain", data.Length);
+            uploaded.Add(attachment.Id, (attachment, data, owner));
+            return Json(attachment);
         }
-        if (request.RequestUri.AbsolutePath != "/v1/send" || uploaded is null) throw new InvalidOperationException("Send happened before upload.");
+        if (request.RequestUri.AbsolutePath != "/v1/send") throw new InvalidOperationException("Unexpected fixture request.");
         using var json = JsonDocument.Parse(await request.Content!.ReadAsStringAsync(token));
         var body = json.RootElement;
-        if (body.GetProperty("from").GetString() != owner || body.GetProperty("attachments")[0].GetString() != uploaded.Id)
-            throw new InvalidOperationException("File changed mailbox or attachment.");
+        var ownerAddress = body.GetProperty("from").GetString()!;
+        var ids = body.GetProperty("attachments").EnumerateArray().Select(v => v.GetString()!).ToArray();
+        if (ids.Length == 0 || ids.Any(id => uploaded[id].Owner != ownerAddress)) throw new InvalidOperationException("File changed mailbox or attachment.");
         var caption = body.GetProperty("body").GetString()!;
-        var expected = sends++ == 0 ? "" : "Optional file caption";
-        if (RequestEnvelope.DisplayText(caption) != expected || expected == "" && caption != "")
-            throw new InvalidOperationException("Unexpected file caption.");
-        var receipt = await preview.SendFileAsync(owner!, body.GetProperty("to").GetString()!, caption,
-            body.TryGetProperty("thread_id", out var thread) ? thread.GetString() : null, uploaded, token);
+        if (caption != "" && RequestEnvelope.DisplayText(caption) != "Optional file caption") throw new InvalidOperationException("Unexpected file caption.");
+        var peer = body.GetProperty("to").GetString()!;
+        var receipt = await preview.SendFilesAsync(ownerAddress, peer, caption,
+            body.TryGetProperty("thread_id", out var thread) ? thread.GetString() : null, ids.Select(id => uploaded[id].File).ToArray(), token);
+        var mailboxes = await preview.GetMailboxesAsync(token);
+        foreach (var id in ids)
+        {
+            readers[id] = [ownerAddress];
+            if (mailboxes.FirstOrDefault(m => m.Key == peer || m.Address == peer) is { } recipient) readers[id].Add(recipient.Address);
+        }
         return Json(receipt);
     }
     private static HttpResponseMessage Json<T>(T value) => new(HttpStatusCode.Created)

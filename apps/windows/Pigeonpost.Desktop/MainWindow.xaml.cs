@@ -20,7 +20,11 @@ public sealed partial class MainWindow : Window
     private bool dialogOpen;
     private int messageContext = -1;
     private int scrollVersion;
+    private bool followMessages;
     private readonly Dictionary<TextBlock, long> messageBodies = [];
+#if UI_TESTS
+    private readonly PreviewInboxService preview;
+#endif
     public string BuildLabel => "Pigeonpost " + (System.Reflection.Assembly.GetExecutingAssembly().GetName().Version?.ToString(3) ?? "1.0.0");
 
     public MainWindow()
@@ -36,7 +40,7 @@ public sealed partial class MainWindow : Window
         vaultTest.Clear();
         if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
-        var preview = new PreviewInboxService(longHistory: true);
+        preview = new PreviewInboxService(longHistory: true);
         ViewModel = new InboxViewModel(preview);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
@@ -47,12 +51,16 @@ public sealed partial class MainWindow : Window
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
         AppWindow.Changed += Window_Changed;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
+        ViewModel.MessagesUpdating += Messages_Updating;
+        ViewModel.MessagesUpdated += Messages_Updated;
         Closed += (_, _) =>
         {
             lifetime.Cancel();
             signInAttempt?.Cancel();
             refreshTimer?.Stop();
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
+            ViewModel.MessagesUpdating -= Messages_Updating;
+            ViewModel.MessagesUpdated -= Messages_Updated;
             ViewModel.Dispose();
         };
     }
@@ -63,7 +71,7 @@ public sealed partial class MainWindow : Window
         initialized = true;
 #if UI_TESTS
         await OpenInboxAsync();
-        refreshTimer?.Stop();
+        refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
         AccountStatus.Text = "Demonstration account";
 #else
         await RestoreAccountAsync();
@@ -88,7 +96,7 @@ public sealed partial class MainWindow : Window
 
     private async void Conversation_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is ListView { SelectedItem: Conversation conversation } && conversation.Peer != ViewModel.SelectedConversation?.Peer)
+        if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Conversation conversation } && conversation.Peer != ViewModel.SelectedConversation?.Peer)
         {
             ViewModel.SelectConversation(conversation);
             await ViewModel.AcknowledgeSelectedAsync();
@@ -97,7 +105,7 @@ public sealed partial class MainWindow : Window
 
     private void Subject_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (sender is ListView { SelectedItem: Subject subject }) ViewModel.SelectSubject(subject);
+        if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Subject subject }) ViewModel.SelectSubject(subject);
     }
 
     private async void Send_Click(object sender, RoutedEventArgs e) => await ViewModel.SendDraftAsync();
@@ -241,12 +249,20 @@ public sealed partial class MainWindow : Window
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
             QueueScroll(match, leading: true, select: true);
-        if (e.PropertyName != nameof(InboxViewModel.Messages)) return;
-        var context = ViewModel.ContextVersion;
+    }
+
+    private void Messages_Updating(object? sender, EventArgs e)
+    {
+        // Decide before the collection changes: appends must not pull a reader out of history.
         var viewer = Descendant<ScrollViewer>(MessageList);
-        var follow = context != messageContext || viewer is null || viewer.ScrollableHeight - viewer.VerticalOffset < 48;
-        messageContext = context;
-        if (follow && ViewModel.Find.Length == 0 && ViewModel.Messages.LastOrDefault() is { } last)
+        followMessages = ViewModel.ContextVersion != messageContext || viewer is null
+            || viewer.ScrollableHeight - viewer.VerticalOffset < 48;
+        messageContext = ViewModel.ContextVersion;
+    }
+
+    private void Messages_Updated(object? sender, EventArgs e)
+    {
+        if (followMessages && ViewModel.Find.Length == 0 && ViewModel.Messages.LastOrDefault() is { } last)
             QueueScroll(last);
     }
 

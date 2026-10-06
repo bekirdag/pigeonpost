@@ -7,6 +7,8 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class NativeWindowBounds {
+    [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
+    [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
     [StructLayout(LayoutKind.Sequential)] public struct Rect { public int Left, Top, Right, Bottom; }
     [DllImport("dwmapi.dll")] public static extern int DwmGetWindowAttribute(IntPtr window, int attribute, out Rect value, int size);
@@ -17,6 +19,12 @@ if ($Fixture) {
     $attachmentPath = Join-Path (Resolve-Path $OutputDirectory).Path 'attachment-only.txt'
     [IO.File]::WriteAllText($attachmentPath, ('Windows file bytes ' * 8192))
     $env:PIGEONPOST_UI_ATTACHMENT_FILE = $attachmentPath
+    $downloadDirectory = Join-Path (Resolve-Path $OutputDirectory).Path 'downloads'
+    New-Item -ItemType Directory -Force $downloadDirectory | Out-Null
+    $env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY = $downloadDirectory
+    $env:PIGEONPOST_UI_ARRIVAL_FILE = Join-Path (Resolve-Path $OutputDirectory).Path 'arrival.signal'
+    $secondAttachment = Join-Path (Resolve-Path $OutputDirectory).Path 'second-file.txt'
+    [IO.File]::WriteAllText($secondAttachment, 'Second dropped file bytes')
 }
 if ($PackageFamilyName) {
     $before = @(Get-Process Pigeonpost -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Id)
@@ -95,6 +103,67 @@ try {
         Set-Text 'Pigeonpost address' $Address
         Commit-Dialog 'Open'
     }
+    function Check-Download([string]$Name, [string]$Original) {
+        $destination = Join-Path $downloadDirectory $Name
+        Remove-Item $destination -ErrorAction SilentlyContinue
+        Invoke-Control "Download $Name"
+        $null = Wait-Element "Saved $Name."
+        if ((Get-FileHash $destination).Hash -ne (Get-FileHash $Original).Hash) { throw "Attachment download changed bytes: $Name" }
+    }
+    function Drop-Files([string[]]$Files) {
+        # Exercise OLE file drag-and-drop from another Windows app, rather than call the handler.
+        $sourceScript = Join-Path $OutputDirectory 'drag-source.ps1'
+        $sourceFiles = Join-Path $OutputDirectory 'drag-files.json'
+        ConvertTo-Json -InputObject @($Files) | Set-Content $sourceFiles
+        @'
+param([string]$Files)
+Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+$form = [System.Windows.Forms.Form]::new()
+$form.Text = 'Attachment drag source'
+$form.StartPosition = 'Manual'
+$form.Location = [System.Drawing.Point]::new(1500, 50)
+$form.Size = [System.Drawing.Size]::new(300, 150)
+$form.TopMost = $true
+$label = [System.Windows.Forms.Label]::new()
+$label.Text = 'Drag these files'
+$label.Dock = 'Fill'
+$label.TextAlign = 'MiddleCenter'
+$script:paths = [string[]](Get-Content $Files -Raw | ConvertFrom-Json)
+$label.Add_MouseDown({
+    $data = [System.Windows.Forms.DataObject]::new([System.Windows.Forms.DataFormats]::FileDrop, $script:paths)
+    $null = $label.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy)
+})
+$form.Controls.Add($label)
+[System.Windows.Forms.Application]::Run($form)
+'@ | Set-Content $sourceScript
+        $sourceProcess = Start-Process pwsh -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
+        try {
+            for ($n = 0; $n -lt 30; $n++) {
+                Start-Sleep -Milliseconds 200
+                $sourceProcess.Refresh()
+                if ($sourceProcess.MainWindowHandle -ne 0) { break }
+            }
+            if ($sourceProcess.MainWindowHandle -eq 0) { throw 'Drag source did not open.' }
+            $sourceRoot = [System.Windows.Automation.AutomationElement]::FromHandle($sourceProcess.MainWindowHandle)
+            $rect = $sourceRoot.Current.BoundingRectangle
+            $x = [int]($rect.Left + $rect.Width / 2); $y = [int]($rect.Top + $rect.Height / 2)
+            $target = (Wait-Element 'Messages').Current.BoundingRectangle
+            $tx = [int]($target.Left + $target.Width / 2); $ty = [int]($target.Top + $target.Height / 2)
+            $null = [NativeWindowBounds]::SetCursorPos($x, $y)
+            [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 200
+            for ($step = 1; $step -le 20; $step++) {
+                $null = [NativeWindowBounds]::SetCursorPos([int]($x + ($tx - $x) * $step / 20), [int]($y + ($ty - $y) * $step / 20))
+                Start-Sleep -Milliseconds 50
+            }
+            Start-Sleep -Milliseconds 400
+            [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+            $null = Wait-Element 'File message (optional)'
+        } finally {
+            [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+            if (-not $sourceProcess.HasExited) { $null = $sourceProcess.CloseMainWindow(); if (-not $sourceProcess.WaitForExit(3000)) { $sourceProcess.Kill() } }
+        }
+    }
     if ($Fixture) {
         $null = Wait-Element 'New conversation'
         Set-Text 'Message' 'Please review the release checklist.'
@@ -107,7 +176,8 @@ try {
         Capture 'attachment-without-message.png'
         Commit-Dialog 'Send file'
         $null = Wait-Element 'File sent.'
-        $null = Wait-Element 'attachment-only.txt'
+        $null = Wait-Element 'Download attachment-only.txt'
+        Check-Download 'attachment-only.txt' $attachmentPath
         Capture 'attachment-delivered.png'
         Invoke-Control 'Attach file…'
         Set-Text 'File message (optional)' 'Optional file caption'
@@ -131,6 +201,50 @@ try {
         $null = Wait-Element '1 of 1'
         Capture 'history-find.png'
         Set-Text 'Find in this subject' ''
+
+        Set-Text 'Find in this subject' 'History message 15:'
+        $null = Wait-Element '1 of 1'
+        Set-Text 'Find in this subject' ''
+        $anchor = Wait-Element 'History message 15: desktop parity check.'
+        $anchorTop = $anchor.Current.BoundingRectangle.Top
+        $conversationSelection = (Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()[0]
+        $conversationId = $conversationSelection.GetRuntimeId() -join ','
+        $subjectSelection = (Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()[0]
+        $subjectId = $subjectSelection.GetRuntimeId() -join ','
+        Set-Text 'Message' 'Draft survives background checks'
+        Start-Sleep -Seconds 3
+        if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'An unchanged poll moved the history viewport.' }
+        if ((($conversationSelection.GetRuntimeId() -join ',') -ne $conversationId) -or (($subjectSelection.GetRuntimeId() -join ',') -ne $subjectId)) { throw 'Polling recreated a selected menu row.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft survives background checks') { throw 'Polling lost the draft.' }
+        [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive')
+        Start-Sleep -Seconds 2
+        if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'New mail pulled the reader out of history.' }
+        Capture 'refresh-preserves-history.png'
+        $scroll = (Wait-Element 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+        $scroll.SetScrollPercent(-1, 100)
+        Start-Sleep -Milliseconds 500
+        [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive again')
+        Start-Sleep -Seconds 2
+        if ($scroll.Current.VerticalScrollPercent -lt 99) { throw 'A reader at the end did not follow the new message.' }
+        Set-Text 'Message' ''
+
+        Open-Conversation '/preview/team'
+        Drop-Files @($attachmentPath, $secondAttachment)
+        Capture 'dragged-files-confirmation.png'
+        Commit-Dialog 'Send files'
+        $null = Wait-Element 'Files sent.'
+        Check-Download 'attachment-only.txt' $attachmentPath
+        Check-Download 'second-file.txt' $secondAttachment
+        Capture 'sender-attachment-downloads.png'
+        Invoke-Control 'Sender details'
+        Invoke-Control 'Open this mailbox'
+        Open-Conversation '/preview/main'
+        Check-Download 'attachment-only.txt' $attachmentPath
+        Check-Download 'second-file.txt' $secondAttachment
+        Capture 'recipient-attachment-downloads.png'
+        Invoke-Control 'Sender details'
+        Invoke-Control 'Open this mailbox'
+        Open-Conversation '/preview/design'
 
         Invoke-Control 'New conversation'
         Set-Text 'Pigeonpost address' '/preview/new-agent'
@@ -181,6 +295,6 @@ try {
     if ($root -and -not $process.HasExited) { Capture 'failure.png' }
     throw
 } finally {
-    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE -ErrorAction SilentlyContinue }
+    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE -ErrorAction SilentlyContinue }
     if (-not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }
 }
