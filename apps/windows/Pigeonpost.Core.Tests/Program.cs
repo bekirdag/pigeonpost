@@ -776,6 +776,12 @@ AsyncTest("Opening a conversation with files in its draft cannot send them throu
     await vm.StartConversationAsync(peer, "first message");
     Equal(files.SendCount, 0); Equal(vm.DraftAttachments.Count, 1); Check(vm.Draft.Contains("first message"), "First message lost.");
 });
+Test("Message copy uses displayed text and filenames for file-only messages", () =>
+{
+    var message = new ThreadMessage("copy", RequestEnvelope.Work("Visible message text"), 1, null, true);
+    Equal(message.CopyText, "Visible message text");
+    Equal((message with { Body = "", Attachments = [new("a", "one.txt", "text/plain", 1), new("b", "two.pdf", "application/pdf", 2)] }).CopyText, "one.txt · two.pdf");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)

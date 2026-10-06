@@ -208,6 +208,11 @@ public sealed partial class MainWindow : Window
         await SendComposerAsync();
     }
 
+    private void CopyMessage_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is Button { Tag: string text }) CopyText(text);
+    }
+
     private void CopyOriginal_Click(object sender, RoutedEventArgs e)
     {
         if (sender is not MenuFlyoutItem { Tag: string body }) return;

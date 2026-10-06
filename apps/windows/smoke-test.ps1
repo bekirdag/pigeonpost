@@ -38,6 +38,7 @@ if ($PackageFamilyName) {
     if (-not $process) { throw 'Installed MSIX failed to activate.' }
 } else {
     if (-not $Executable) { throw 'Executable or package family is required.' }
+    Write-Host "Launching native test executable."
     $process = Start-Process -FilePath $Executable -PassThru
 }
 try {
@@ -52,6 +53,7 @@ try {
         }
     }
     if (-not $root) { throw 'No native desktop window appeared.' }
+    Write-Host 'Native window is available.'
     $screen = [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea
     $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, [Math]::Min(1440, $screen.Width - 24), [Math]::Min(900, $screen.Height - 24), 4)
     Start-Sleep -Milliseconds 500
@@ -114,6 +116,21 @@ try {
         Set-Text 'Pigeonpost address' $Address
         Commit-Dialog 'Open'
     }
+    function Copy-Message([string]$Text) {
+        $body = Wait-Element $Text
+        $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
+        $row = $body
+        while ($row -and $row.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { $row = $walker.GetParent($row) }
+        if (-not $row) { throw "Could not find message row for copy: $Text" }
+        $condition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Copy message'),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
+        $button = $row.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+        if (-not $button) { throw "Copy icon missing for message: $Text" }
+        $button.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 200
+        if ((Get-Clipboard -Raw).Trim() -ne $Text) { throw 'Copy icon did not copy the displayed message.' }
+    }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name
         Remove-Item $destination -ErrorAction SilentlyContinue
@@ -129,25 +146,28 @@ try {
         @'
 param([string]$Files)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-$form = [System.Windows.Forms.Form]::new()
-$form.Text = 'Attachment drag source'
-$form.StartPosition = 'Manual'
-$form.Location = [System.Drawing.Point]::new(1500, 50)
-$form.Size = [System.Drawing.Size]::new(300, 150)
-$form.TopMost = $true
-$label = [System.Windows.Forms.Label]::new()
-$label.Text = 'Drag these files'
-$label.Dock = 'Fill'
-$label.TextAlign = 'MiddleCenter'
-$script:paths = [string[]](Get-Content $Files -Raw | ConvertFrom-Json)
-$label.Add_MouseDown({
-    $data = [System.Windows.Forms.DataObject]::new([System.Windows.Forms.DataFormats]::FileDrop, $script:paths)
-    Write-Host "Drag source mouse down: $($script:paths.Count) files"
-    $result = $label.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy)
-    Write-Host "Drag result: $result"
-})
-$form.Controls.Add($label)
-[System.Windows.Forms.Application]::Run($form)
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing.Common @"
+using System;
+using System.Drawing;
+using System.Windows.Forms;
+public static class NativeFileDragSource {
+    public static void Run(string[] paths) {
+        using (var form = new Form()) {
+            form.Text = "Attachment drag source"; form.StartPosition = FormStartPosition.Manual;
+            form.Location = new Point(1500, 50); form.Size = new Size(300, 150); form.TopMost = true;
+            var label = new Label { Text = "Drag these files", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
+            label.MouseDown += (sender, args) => {
+                Console.WriteLine("Drag source mouse down: " + paths.Length + " files");
+                var data = new DataObject(DataFormats.FileDrop, paths);
+                Console.WriteLine("Drag result: " + label.DoDragDrop(data, DragDropEffects.Copy));
+            };
+            form.Controls.Add(label);
+            Application.Run(form);
+        }
+    }
+}
+"@
+[NativeFileDragSource]::Run([string[]](Get-Content $Files -Raw | ConvertFrom-Json))
 '@ | Set-Content $sourceScript
         $sourceLog = Join-Path $OutputDirectory 'drag-source.log'
         $sourceError = Join-Path $OutputDirectory 'drag-source-error.log'
@@ -182,6 +202,7 @@ $form.Controls.Add($label)
         }
     }
     if ($Fixture) {
+        Write-Host 'Checking composer attachments and downloads.'
         $null = Wait-Element 'New conversation'
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
@@ -202,6 +223,7 @@ $form.Controls.Add($label)
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Optional file caption') { throw 'Attaching a file lost the text draft.' }
         Invoke-Control 'Send'
         $null = Wait-Element 'Optional file caption'
+        Copy-Message 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
         Invoke-Control 'Copy my address'
@@ -217,9 +239,11 @@ $form.Controls.Add($label)
         Invoke-Control 'Cancel'
         Set-Text 'Find in this subject' 'History message 1:'
         $null = Wait-Element '1 of 1'
+        Copy-Message 'History message 1: desktop parity check.'
         Capture 'history-find.png'
         Set-Text 'Find in this subject' ''
 
+        Write-Host 'Checking background refresh and scrolling.'
         Set-Text 'Find in this subject' 'History message 15:'
         $null = Wait-Element '1 of 1'
         Set-Text 'Find in this subject' ''
@@ -256,6 +280,7 @@ $form.Controls.Add($label)
 
         Open-Conversation '/preview/team'
         Set-Text 'Message' 'Optional file caption'
+        Write-Host 'Checking native file drag-and-drop.'
         Drop-Files @($attachmentPath, $secondAttachment)
         $null = Wait-Element 'Remove second-file.txt'
         if (Element 'Download second-file.txt') { throw 'Dropping files sent them before Send.' }

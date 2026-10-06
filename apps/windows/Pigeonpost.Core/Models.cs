@@ -124,6 +124,7 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
     public bool CanDownloadAttachments => Status == DeliveryStatus.Sent;
     public bool IsHeld => !IsOutgoing && Autonomy == "review" && !string.IsNullOrEmpty(Verb);
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
+    public string CopyText => string.IsNullOrWhiteSpace(DisplayBody) ? AttachmentSummary : DisplayBody;
     public string AttachmentSummary => string.Join(" · ", (Attachments ?? []).Select(a => a.Filename));
     public string StatusLabel => Status switch
     {

@@ -49,7 +49,7 @@ public static class StandardUserUi {
                 0x08000000, IntPtr.Zero, directory, ref startup, out info));
             try {
                 using (var child = Process.GetProcessById(info.pid)) {
-                    if (!child.WaitForExit(600000)) { child.Kill(true); throw new TimeoutException("Standard-user UI checks timed out."); }
+                    if (!child.WaitForExit(180000)) { child.Kill(true); throw new TimeoutException("Standard-user UI checks timed out."); }
                     return child.ExitCode;
                 }
             } finally { CloseHandle(info.thread); CloseHandle(info.process); }
@@ -79,6 +79,6 @@ try {
 } catch { Write-Host (`$_ | Out-String); exit 1 }
 finally { Stop-Transcript | Out-Null }
 "@ | Set-Content $childScript
-$code = [StandardUserUi]::Run((Get-Command pwsh).Source, $childScript, (Get-Location).Path)
-if (Test-Path $log) { Get-Content $log | Write-Host }
+try { $code = [StandardUserUi]::Run((Get-Command pwsh).Source, $childScript, (Get-Location).Path) }
+finally { if (Test-Path $log) { Get-Content $log | Write-Host } }
 if ($code -ne 0) { throw "Standard-user native UI checks failed ($code)." }
