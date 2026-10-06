@@ -333,6 +333,11 @@ public static class NativeFileDragSource {
         try {
             for ($x = 0; $x -lt 2; $x++) { for ($y = 0; $y -lt 2; $y++) { $bitmap.SetPixel($x, $y, [System.Drawing.Color]::HotPink) } }
             [System.Windows.Forms.Clipboard]::SetImage($bitmap)
+            (Wait-Element 'Find in this subject').SetFocus()
+            [System.Windows.Forms.SendKeys]::SendWait('^v')
+            Start-Sleep -Milliseconds 300
+            if (Element 'Image attached.') { throw 'Pasting into search attached an image to the message.' }
+            $composer.SetFocus()
             [System.Windows.Forms.SendKeys]::SendWait('^v')
             $null = Wait-Element 'Image attached.'
         } finally { $bitmap.Dispose() }

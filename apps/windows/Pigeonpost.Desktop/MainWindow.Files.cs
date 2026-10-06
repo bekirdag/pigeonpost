@@ -22,6 +22,7 @@ public sealed partial class MainWindow
     private async void PasteAttachment_Invoked(Microsoft.UI.Xaml.Input.KeyboardAccelerator sender,
         Microsoft.UI.Xaml.Input.KeyboardAcceleratorInvokedEventArgs args)
     {
+        if (!ReferenceEquals(Microsoft.UI.Xaml.Input.FocusManager.GetFocusedElement(Root.XamlRoot), Composer)) return;
         var data = AttachmentClipboard();
         if (data is null) return; // Let the text control handle ordinary text/undo.
         args.Handled = true;
