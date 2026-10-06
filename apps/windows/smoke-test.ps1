@@ -149,7 +149,10 @@ try {
         @'
 param([string]$Files)
 Add-Type -AssemblyName System.Windows.Forms, System.Drawing
-$references = @((Get-ChildItem (Join-Path $PSHOME 'ref/*.dll')).FullName) + @([System.Windows.Forms.Form].Assembly.Location, [System.Drawing.Bitmap].Assembly.Location)
+$references = @((Get-ChildItem (Join-Path $PSHOME 'ref/*.dll')).FullName) + @(
+    [System.Windows.Forms.Form].Assembly.Location, [System.Drawing.Bitmap].Assembly.Location,
+    [Reflection.Assembly]::Load('System.Windows.Forms.Primitives').Location,
+    [Reflection.Assembly]::Load('System.Private.Windows.Core').Location)
 Add-Type -ReferencedAssemblies $references @"
 using System;
 using System.Drawing;
