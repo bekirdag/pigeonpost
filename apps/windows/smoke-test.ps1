@@ -117,7 +117,10 @@ try {
         Commit-Dialog 'Open'
     }
     function Copy-Message([string]$Text) {
-        $body = Wait-Element $Text
+        $messages = Wait-List 'Messages'
+        $bodyCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Text)
+        $body = $messages.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
+        if (-not $body) { throw "Message body missing for copy: $Text" }
         $walker = [System.Windows.Automation.TreeWalker]::ControlViewWalker
         $row = $body
         while ($row -and $row.Current.ControlType -ne [System.Windows.Automation.ControlType]::ListItem) { $row = $walker.GetParent($row) }
