@@ -57,7 +57,7 @@ public static class StandardUserUi {
         return original;
     }
     public static int Run(string executable, string script, string directory) {
-        IntPtr original = IntPtr.Zero, limited = IntPtr.Zero, sid = IntPtr.Zero;
+        IntPtr original = IntPtr.Zero, limited = IntPtr.Zero, sid = IntPtr.Zero, adminSid = IntPtr.Zero, disabledGroups = IntPtr.Zero;
         var station = GetProcessWindowStation(); var desktop = GetThreadDesktop(GetCurrentThreadId());
         byte[] stationAcl = null, desktopAcl = null;
         try {
@@ -66,7 +66,10 @@ public static class StandardUserUi {
             stationAcl = GrantDesktopAccess(station, 0xF037F);
             desktopAcl = GrantDesktopAccess(desktop, 0xF01FF);
             Check(OpenProcessToken(Process.GetCurrentProcess().Handle, 0xF01FF, out original));
-            Check(CreateRestrictedToken(original, 0x5, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out limited));
+            Check(ConvertStringSidToSid("S-1-5-32-544", out adminSid));
+            disabledGroups = Marshal.AllocHGlobal(Marshal.SizeOf<Label>());
+            Marshal.StructureToPtr(new Label { sid = adminSid }, disabledGroups, false);
+            Check(CreateRestrictedToken(original, 0x1, 1, disabledGroups, 0, IntPtr.Zero, 0, IntPtr.Zero, out limited));
             Check(ConvertStringSidToSid("S-1-16-8192", out sid));
             var label = new Label { sid = sid, attributes = 0x20 };
             Check(SetTokenInformation(limited, 25, ref label, Marshal.SizeOf<Label>() + GetLengthSid(sid)));
@@ -90,6 +93,8 @@ public static class StandardUserUi {
             if (desktopAcl != null) Check(SetUserObjectSecurity(desktop, ref information, desktopAcl));
             if (stationAcl != null) Check(SetUserObjectSecurity(station, ref information, stationAcl));
             if (sid != IntPtr.Zero) LocalFree(sid);
+            if (disabledGroups != IntPtr.Zero) Marshal.FreeHGlobal(disabledGroups);
+            if (adminSid != IntPtr.Zero) LocalFree(adminSid);
             if (limited != IntPtr.Zero) CloseHandle(limited);
             if (original != IntPtr.Zero) CloseHandle(original);
         }
