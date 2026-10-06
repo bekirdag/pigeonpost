@@ -233,10 +233,18 @@ $form.Controls.Add($label)
         if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'New mail pulled the reader out of history.' }
         Capture 'refresh-preserves-history.png'
         $scroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
-        $scroll.SetScrollPercent(-1, 100)
-        Start-Sleep -Milliseconds 500
+        # WinUI estimates the height of unrealized, variable-height rows. A single UIA
+        # percentage jump may stop short as more rows are measured; establish the actual end.
+        for ($attempt = 0; $attempt -lt 10; $attempt++) {
+            $scroll.SetScrollPercent(-1, 100)
+            Start-Sleep -Milliseconds 250
+            if ($scroll.Current.VerticalScrollPercent -ge 99.9) { break }
+        }
+        if ($scroll.Current.VerticalScrollPercent -lt 99.9) { throw 'Could not establish the end-of-history precondition.' }
+        Write-Host "Before arrival: scroll $($scroll.Current.VerticalScrollPercent)%"
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive again')
         Start-Sleep -Seconds 2
+        Write-Host "After arrival: scroll $($scroll.Current.VerticalScrollPercent)%"
         if ($scroll.Current.VerticalScrollPercent -lt 99) { throw 'A reader at the end did not follow the new message.' }
         Set-Text 'Message' ''
 
