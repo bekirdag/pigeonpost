@@ -63,6 +63,17 @@ try {
         for ($n = 0; $n -lt 40; $n++) { $e = Element $Name; if ($e) { return $e }; Start-Sleep -Milliseconds 250 }
         throw "Native control missing: $Name"
     }
+    function Wait-List([string]$Name) {
+        $condition = [System.Windows.Automation.AndCondition]::new(
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name),
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::List))
+        for ($n = 0; $n -lt 40; $n++) {
+            $element = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
+            if ($element) { return $element }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Native list missing: $Name"
+    }
     function Capture([string]$Name) {
         Start-Sleep -Milliseconds 500
         $rect = [NativeWindowBounds+Rect]::new()
@@ -147,7 +158,7 @@ $form.Controls.Add($label)
             $sourceRoot = [System.Windows.Automation.AutomationElement]::FromHandle($sourceProcess.MainWindowHandle)
             $rect = $sourceRoot.Current.BoundingRectangle
             $x = [int]($rect.Left + $rect.Width / 2); $y = [int]($rect.Top + $rect.Height / 2)
-            $target = (Wait-Element 'Messages').Current.BoundingRectangle
+            $target = (Wait-List 'Messages').Current.BoundingRectangle
             $tx = [int]($target.Left + $target.Width / 2); $ty = [int]($target.Top + $target.Height / 2)
             $null = [NativeWindowBounds]::SetCursorPos($x, $y)
             [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
@@ -208,20 +219,20 @@ $form.Controls.Add($label)
         Set-Text 'Find in this subject' ''
         $anchor = Wait-Element 'History message 15: desktop parity check.'
         $anchorTop = $anchor.Current.BoundingRectangle.Top
-        $conversationSelection = (Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
+        $conversationSelection = (Wait-List 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
         $conversationId = $conversationSelection.GetRuntimeId() -join ','
-        $subjectSelection = (Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
+        $subjectSelection = (Wait-List 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0]
         $subjectId = $subjectSelection.GetRuntimeId() -join ','
         Set-Text 'Message' 'Draft survives background checks'
         Start-Sleep -Seconds 3
         if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'An unchanged poll moved the history viewport.' }
-        if ((((Wait-Element 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $conversationId) -or (((Wait-Element 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $subjectId)) { throw 'Polling recreated a selected menu row.' }
+        if ((((Wait-List 'Conversations').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $conversationId) -or (((Wait-List 'Subjects').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()[0].GetRuntimeId() -join ',') -ne $subjectId)) { throw 'Polling recreated a selected menu row.' }
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft survives background checks') { throw 'Polling lost the draft.' }
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive')
         Start-Sleep -Seconds 2
         if ([Math]::Abs((Wait-Element 'History message 15: desktop parity check.').Current.BoundingRectangle.Top - $anchorTop) -gt 2) { throw 'New mail pulled the reader out of history.' }
         Capture 'refresh-preserves-history.png'
-        $scroll = (Wait-Element 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+        $scroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
         $scroll.SetScrollPercent(-1, 100)
         Start-Sleep -Milliseconds 500
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_ARRIVAL_FILE, 'arrive again')
