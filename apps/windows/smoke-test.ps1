@@ -180,18 +180,21 @@ public static class NativeFileDragSource {
         $sourceError = Join-Path $OutputDirectory 'drag-source-error.log'
         $sourceProcess = Start-Process pwsh -RedirectStandardOutput $sourceLog -RedirectStandardError $sourceError -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
         try {
-            for ($n = 0; $n -lt 30; $n++) {
+            $sourceRoot = $null
+            $sourceCondition = [System.Windows.Automation.AndCondition]::new(
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Attachment drag source'),
+                [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ProcessIdProperty, $sourceProcess.Id))
+            for ($n = 0; $n -lt 50; $n++) {
                 Start-Sleep -Milliseconds 200
-                $sourceProcess.Refresh()
-                if ($sourceProcess.MainWindowHandle -ne 0) { break }
+                $sourceRoot = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $sourceCondition)
+                if ($sourceRoot) { break }
             }
-            if ($sourceProcess.MainWindowHandle -eq 0) { throw 'Drag source did not open.' }
-            $sourceRoot = [System.Windows.Automation.AutomationElement]::FromHandle($sourceProcess.MainWindowHandle)
+            if (-not $sourceRoot) { throw 'Drag source did not open.' }
             $rect = $sourceRoot.Current.BoundingRectangle
             $x = [int]($rect.Left + $rect.Width / 2); $y = [int]($rect.Top + $rect.Height / 2)
             $target = (Wait-List 'Messages').Current.BoundingRectangle
             $tx = [int]($target.Left + $target.Width / 2); $ty = [int]($target.Top + $target.Height / 2)
-            Write-Host "Drag from ($x,$y) to ($tx,$ty), source window $($sourceProcess.MainWindowHandle)"
+            Write-Host "Drag from ($x,$y) to ($tx,$ty), source window $($sourceRoot.Current.Name)"
             $null = [NativeWindowBounds]::SetCursorPos($x, $y)
             [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 200
