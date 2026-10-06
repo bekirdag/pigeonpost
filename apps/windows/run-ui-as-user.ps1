@@ -36,10 +36,35 @@ public static class StandardUserUi {
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool GetExitCodeProcess(IntPtr process, out uint code);
     [DllImport("kernel32.dll", SetLastError=true)] static extern bool TerminateProcess(IntPtr process, uint code);
     [DllImport("kernel32.dll")] static extern IntPtr LocalFree(IntPtr value);
+    [DllImport("kernel32.dll")] static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] static extern IntPtr GetProcessWindowStation();
+    [DllImport("user32.dll")] static extern IntPtr GetThreadDesktop(uint thread);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool GetUserObjectSecurity(IntPtr handle, ref int information, byte[] descriptor, uint size, out uint needed);
+    [DllImport("user32.dll", SetLastError=true)] static extern bool SetUserObjectSecurity(IntPtr handle, ref int information, byte[] descriptor);
     static void Check(bool ok) { if (!ok) throw new Win32Exception(Marshal.GetLastWin32Error()); }
+    static byte[] GrantDesktopAccess(IntPtr handle, int access) {
+        int information = 4; uint needed;
+        GetUserObjectSecurity(handle, ref information, null, 0, out needed);
+        var original = new byte[needed];
+        Check(GetUserObjectSecurity(handle, ref information, original, needed, out needed));
+        var descriptor = new System.Security.AccessControl.RawSecurityDescriptor(original, 0);
+        var user = System.Security.Principal.WindowsIdentity.GetCurrent().User;
+        descriptor.DiscretionaryAcl.InsertAce(descriptor.DiscretionaryAcl.Count,
+            new System.Security.AccessControl.CommonAce(System.Security.AccessControl.AceFlags.None,
+                System.Security.AccessControl.AceQualifier.AccessAllowed, access, user, false, null));
+        var updated = new byte[descriptor.BinaryLength]; descriptor.GetBinaryForm(updated, 0);
+        Check(SetUserObjectSecurity(handle, ref information, updated));
+        return original;
+    }
     public static int Run(string executable, string script, string directory) {
         IntPtr original = IntPtr.Zero, limited = IntPtr.Zero, sid = IntPtr.Zero;
+        var station = GetProcessWindowStation(); var desktop = GetThreadDesktop(GetCurrentThreadId());
+        byte[] stationAcl = null, desktopAcl = null;
         try {
+            // The runner's desktop ACL grants Administrators. The reduced token instead
+            // needs an explicit current-user ACE; restore both objects when checks finish.
+            stationAcl = GrantDesktopAccess(station, 0xF037F);
+            desktopAcl = GrantDesktopAccess(desktop, 0xF01FF);
             Check(OpenProcessToken(Process.GetCurrentProcess().Handle, 0xF01FF, out original));
             Check(CreateRestrictedToken(original, 0x5, 0, IntPtr.Zero, 0, IntPtr.Zero, 0, IntPtr.Zero, out limited));
             Check(ConvertStringSidToSid("S-1-16-8192", out sid));
@@ -61,6 +86,9 @@ public static class StandardUserUi {
                 return unchecked((int)code);
             } finally { CloseHandle(info.thread); CloseHandle(info.process); }
         } finally {
+            int information = 4;
+            if (desktopAcl != null) Check(SetUserObjectSecurity(desktop, ref information, desktopAcl));
+            if (stationAcl != null) Check(SetUserObjectSecurity(station, ref information, stationAcl));
             if (sid != IntPtr.Zero) LocalFree(sid);
             if (limited != IntPtr.Zero) CloseHandle(limited);
             if (original != IntPtr.Zero) CloseHandle(original);
