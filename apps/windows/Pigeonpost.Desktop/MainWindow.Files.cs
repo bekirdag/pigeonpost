@@ -192,48 +192,6 @@ public sealed partial class MainWindow
 #endif
     });
 
-    private void Files_DragOver(object sender, DragEventArgs e)
-    {
-#if UI_TESTS
-        TraceFileDrag("over", e);
-#endif
-        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        e.Handled = true;
-        e.AcceptedOperation = !dialogOpen && ViewModel.CanCompose ? DataPackageOperation.Copy : DataPackageOperation.None;
-        e.DragUIOverride.Caption = "Attach files to this conversation";
-        e.DragUIOverride.IsCaptionVisible = true;
-    }
-
-    private async void Files_Drop(object sender, DragEventArgs e)
-    {
-#if UI_TESTS
-        TraceFileDrag("drop", e);
-#endif
-        if (dialogOpen || !ViewModel.CanCompose || !e.DataView.Contains(StandardDataFormats.StorageItems)) return;
-        e.Handled = true;
-        e.AcceptedOperation = DataPackageOperation.Copy;
-        var deferral = e.GetDeferral();
-        var context = ViewModel.ContextVersion;
-        IReadOnlyList<IStorageItem>? items = null;
-        dialogOpen = true;
-        try { items = await e.DataView.GetStorageItemsAsync(); }
-        catch (Exception) { AccountStatus.Text = "Could not read the dropped files. Please try again."; }
-        finally { dialogOpen = false; deferral.Complete(); }
-        if (items is null || lifetime.IsCancellationRequested) return;
-        if (context != ViewModel.ContextVersion)
-        { AccountStatus.Text = "The conversation changed. Drop the files again to send them here."; return; }
-        await AttachFilesAsync(() => Task.FromResult(items));
-    }
-
-#if UI_TESTS
-    private void TraceFileDrag(string phase, DragEventArgs e)
-    {
-        var directory = Path.GetDirectoryName(Environment.GetEnvironmentVariable("PIGEONPOST_UI_DOWNLOAD_DIRECTORY"));
-        if (directory is not null) File.AppendAllText(Path.Combine(directory, "drag-target.log"),
-            $"{phase}: formats={string.Join(',', e.DataView.AvailableFormats)} compose={ViewModel.CanCompose} dialog={dialogOpen}\n");
-    }
-#endif
-
     private async Task AttachFilesAsync(Func<Task<IReadOnlyList<IStorageItem>>> chooseFiles)
     {
         if (dialogOpen || !ViewModel.CanCompose || ViewModel.SelectedMailbox is not { } mailbox || ViewModel.SelectedConversation is not { } conversation) return;

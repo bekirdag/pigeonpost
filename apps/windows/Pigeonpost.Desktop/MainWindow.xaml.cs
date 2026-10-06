@@ -21,6 +21,7 @@ public sealed partial class MainWindow : Window
     private int messageContext = -1;
     private int scrollVersion;
     private bool followMessages;
+    private NativeFileDrop? fileDrop;
     private readonly Dictionary<TextBlock, long> messageBodies = [];
 #if UI_TESTS
     private readonly PreviewInboxService preview;
@@ -46,9 +47,6 @@ public sealed partial class MainWindow : Window
         ViewModel = new InboxViewModel(preview, postbox);
 #endif
         InitializeComponent();
-        // Native text/list controls may handle routed drag events before their parent.
-        MessagingArea.AddHandler(UIElement.DragOverEvent, new DragEventHandler(Files_DragOver), true);
-        MessagingArea.AddHandler(UIElement.DropEvent, new DragEventHandler(Files_Drop), true);
         Title = BuildLabel;
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
@@ -58,6 +56,7 @@ public sealed partial class MainWindow : Window
         ViewModel.MessagesUpdated += Messages_Updated;
         Closed += (_, _) =>
         {
+            fileDrop?.Dispose();
             lifetime.Cancel();
             signInAttempt?.Cancel();
             refreshTimer?.Stop();
@@ -72,6 +71,22 @@ public sealed partial class MainWindow : Window
     {
         if (initialized) return;
         initialized = true;
+        var window = WinRT.Interop.WindowNative.GetWindowHandle(this);
+        fileDrop = new NativeFileDrop(window, (x, y) =>
+        {
+            if (dialogOpen || !ViewModel.CanCompose || MessagingArea.Visibility != Visibility.Visible) return false;
+            var origin = new DropPoint();
+            if (!NativeFileDrop.ClientToScreen(window, ref origin)) return false;
+            var point = MessagingArea.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point());
+            var scale = Root.XamlRoot.RasterizationScale;
+            return x >= origin.X + point.X * scale && x < origin.X + (point.X + MessagingArea.ActualWidth) * scale
+                && y >= origin.Y + point.Y * scale && y < origin.Y + (point.Y + MessagingArea.ActualHeight) * scale;
+        }, paths => _ = AttachFilesAsync(async () =>
+        {
+            var items = new List<Windows.Storage.IStorageItem>();
+            foreach (var path in paths) items.Add(await Windows.Storage.StorageFile.GetFileFromPathAsync(path));
+            return items;
+        }));
 #if UI_TESTS
         await OpenInboxAsync();
         refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
