@@ -166,13 +166,21 @@ public static class NativeFileDragSource {
             form.Text = "Attachment drag source"; form.StartPosition = FormStartPosition.Manual;
             form.Location = new Point(1500, 50); form.Size = new Size(300, 150); form.TopMost = true;
             var label = new Label { Text = "Drag these files", Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
+            label.QueryContinueDrag += (sender, args) => Console.WriteLine("Continue drag: " + args.KeyState + " " + args.Action + " at " + Control.MousePosition);
+            label.GiveFeedback += (sender, args) => Console.WriteLine("Drag feedback: " + args.Effect + " at " + Control.MousePosition);
             label.MouseDown += (sender, args) => {
                 Console.WriteLine("Drag source mouse down: " + paths.Length + " files");
                 var data = new DataObject(DataFormats.FileDrop, paths);
                 Console.WriteLine("Drag result: " + label.DoDragDrop(data, DragDropEffects.Copy));
             };
             form.Controls.Add(label);
-            Application.Run(form);
+            using (var probe = new Form { Text = "Native drag probe", StartPosition = FormStartPosition.Manual,
+                Location = new Point(1500, 300), Size = new Size(300, 150), TopMost = true, AllowDrop = true }) {
+                probe.DragEnter += (sender, args) => args.Effect = args.Data.GetDataPresent(DataFormats.FileDrop) ? DragDropEffects.Copy : DragDropEffects.None;
+                probe.DragDrop += (sender, args) => Console.WriteLine("Probe received: " + ((string[])args.Data.GetData(DataFormats.FileDrop)).Length);
+                form.Shown += (sender, args) => probe.Show(form);
+                Application.Run(form);
+            }
         }
     }
 }
@@ -202,16 +210,28 @@ public static class NativeFileDragSource {
             $null = [NativeWindowBounds]::GetWindowThreadProcessId([NativeWindowBounds]::WindowFromPoint($targetPoint), [ref]$targetProcess)
             Capture 'drag-ready.png'
             if ($targetProcess -ne $process.Id) { throw "Another window covers the drop target (process $targetProcess)." }
+            # Confirm that the runner can deliver a native file drag before testing WinUI.
+            $probeCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, 'Native drag probe')
+            $probe = [System.Windows.Automation.AutomationElement]::RootElement.FindFirst([System.Windows.Automation.TreeScope]::Children, $probeCondition)
+            if (-not $probe) { throw 'Native drag probe did not open.' }
+            $probeRect = $probe.Current.BoundingRectangle
+            $destinations = @(@([int]($probeRect.Left + $probeRect.Width / 2), [int]($probeRect.Top + $probeRect.Height / 2)), @($tx, $ty))
+            foreach ($destination in $destinations) {
+            $tx = $destination[0]; $ty = $destination[1]
             Write-Host "Drag from ($x,$y) to ($tx,$ty), source window $($sourceRoot.Current.Name)"
             $null = [NativeWindowBounds]::SetCursorPos($x, $y)
             [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 200
             for ($step = 1; $step -le 20; $step++) {
                 $null = [NativeWindowBounds]::SetCursorPos([int]($x + ($tx - $x) * $step / 20), [int]($y + ($ty - $y) * $step / 20))
+                [NativeWindowBounds]::mouse_event(1, 0, 0, 0, [UIntPtr]::Zero)
                 Start-Sleep -Milliseconds 50
             }
             Start-Sleep -Milliseconds 400
             [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 500
+            if (-not (Get-Content $sourceLog -Raw).Contains("Probe received: $($Files.Count)")) { throw 'The runner failed to deliver a native drag to the control probe.' }
+            }
             $null = Wait-Element ('Remove ' + [IO.Path]::GetFileName($Files[0]))
         } finally {
             [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
