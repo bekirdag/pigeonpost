@@ -142,12 +142,16 @@ $label.TextAlign = 'MiddleCenter'
 $script:paths = [string[]](Get-Content $Files -Raw | ConvertFrom-Json)
 $label.Add_MouseDown({
     $data = [System.Windows.Forms.DataObject]::new([System.Windows.Forms.DataFormats]::FileDrop, $script:paths)
-    $null = $label.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy)
+    Write-Host "Drag source mouse down: $($script:paths.Count) files"
+    $result = $label.DoDragDrop($data, [System.Windows.Forms.DragDropEffects]::Copy)
+    Write-Host "Drag result: $result"
 })
 $form.Controls.Add($label)
 [System.Windows.Forms.Application]::Run($form)
 '@ | Set-Content $sourceScript
-        $sourceProcess = Start-Process pwsh -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
+        $sourceLog = Join-Path $OutputDirectory 'drag-source.log'
+        $sourceError = Join-Path $OutputDirectory 'drag-source-error.log'
+        $sourceProcess = Start-Process pwsh -RedirectStandardOutput $sourceLog -RedirectStandardError $sourceError -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
         try {
             for ($n = 0; $n -lt 30; $n++) {
                 Start-Sleep -Milliseconds 200
@@ -160,6 +164,7 @@ $form.Controls.Add($label)
             $x = [int]($rect.Left + $rect.Width / 2); $y = [int]($rect.Top + $rect.Height / 2)
             $target = (Wait-List 'Messages').Current.BoundingRectangle
             $tx = [int]($target.Left + $target.Width / 2); $ty = [int]($target.Top + $target.Height / 2)
+            Write-Host "Drag from ($x,$y) to ($tx,$ty), source window $($sourceProcess.MainWindowHandle)"
             $null = [NativeWindowBounds]::SetCursorPos($x, $y)
             [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
             Start-Sleep -Milliseconds 200
@@ -173,6 +178,7 @@ $form.Controls.Add($label)
         } finally {
             [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
             if (-not $sourceProcess.HasExited) { $null = $sourceProcess.CloseMainWindow(); if (-not $sourceProcess.WaitForExit(3000)) { $sourceProcess.Kill() } }
+            foreach ($log in @($sourceLog, $sourceError)) { if (Test-Path $log) { Get-Content $log | Write-Host } }
         }
     }
     if ($Fixture) {
