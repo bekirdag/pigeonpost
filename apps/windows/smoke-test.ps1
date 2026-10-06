@@ -7,6 +7,9 @@ Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class NativeWindowBounds {
+    [StructLayout(LayoutKind.Sequential)] public struct Point { public int X, Y; }
+    [DllImport("user32.dll")] public static extern IntPtr WindowFromPoint(Point point);
+    [DllImport("user32.dll")] public static extern uint GetWindowThreadProcessId(IntPtr window, out uint process);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] public static extern void mouse_event(uint flags, uint x, uint y, uint data, UIntPtr extra);
     [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
@@ -178,7 +181,7 @@ public static class NativeFileDragSource {
 '@ | Set-Content $sourceScript
         $sourceLog = Join-Path $OutputDirectory 'drag-source.log'
         $sourceError = Join-Path $OutputDirectory 'drag-source-error.log'
-        $sourceProcess = Start-Process pwsh -RedirectStandardOutput $sourceLog -RedirectStandardError $sourceError -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
+        $sourceProcess = Start-Process pwsh -NoNewWindow -RedirectStandardOutput $sourceLog -RedirectStandardError $sourceError -ArgumentList @('-NoProfile', '-STA', '-File', "`"$sourceScript`"", '-Files', "`"$sourceFiles`"") -PassThru
         try {
             $sourceRoot = $null
             $sourceCondition = [System.Windows.Automation.AndCondition]::new(
@@ -194,6 +197,11 @@ public static class NativeFileDragSource {
             $x = [int]($rect.Left + $rect.Width / 2); $y = [int]($rect.Top + $rect.Height / 2)
             $target = (Wait-List 'Messages').Current.BoundingRectangle
             $tx = [int]($target.Left + $target.Width / 2); $ty = [int]($target.Top + $target.Height / 2)
+            $targetPoint = [NativeWindowBounds+Point]::new(); $targetPoint.X = $tx; $targetPoint.Y = $ty
+            [uint32]$targetProcess = 0
+            $null = [NativeWindowBounds]::GetWindowThreadProcessId([NativeWindowBounds]::WindowFromPoint($targetPoint), [ref]$targetProcess)
+            Capture 'drag-ready.png'
+            if ($targetProcess -ne $process.Id) { throw "Another window covers the drop target (process $targetProcess)." }
             Write-Host "Drag from ($x,$y) to ($tx,$ty), source window $($sourceRoot.Current.Name)"
             $null = [NativeWindowBounds]::SetCursorPos($x, $y)
             [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
