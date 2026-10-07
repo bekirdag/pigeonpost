@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// The paperclip, driven the way a thumb drives it.
 ///
@@ -22,7 +23,7 @@ final class AttachmentTests: XCTestCase {
         let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
         app.launchArguments = ["-fixtures", "-open=/bekir/agent1"]
         app.launch()
-        XCTAssertTrue(app.textFields.firstMatch.waitForExistence(timeout: 20), "no composer")
+        XCTAssertTrue(app.textViews["messageComposer"].waitForExistence(timeout: 20), "no composer")
         return app
     }
 
@@ -47,7 +48,7 @@ final class AttachmentTests: XCTestCase {
     /// `ThreadView.sheet`. There the second one silently never presented.
     func testFilesStillOpens() {
         let app = openComposer()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         press(app.buttons["Attach"], "paperclip")
         press(app.buttons["Files"], "files option")
         expectation(for: NSPredicate(format: "isHittable == false"), evaluatedWith: field)
@@ -65,7 +66,7 @@ final class AttachmentTests: XCTestCase {
     /// this is here to catch.
     func testChoosingTheLibraryBringsUpThePicker() {
         let app = openComposer()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.isHittable, "the composer was covered before anything was tapped")
         press(app.buttons["Attach"], "paperclip")
         press(app.buttons["Photo Library"], "photo library option")
@@ -74,5 +75,38 @@ final class AttachmentTests: XCTestCase {
         waitForExpectations(timeout: 20) { error in
             XCTAssertNil(error, "the photo picker never came up over the conversation")
         }
+    }
+}
+
+extension AttachmentTests {
+    @MainActor func testPastingImagesPreservesCaptionAndStagesMultipleFiles() {
+        let app = openComposer()
+        let field = app.textViews["messageComposer"]
+        press(field, "composer")
+        field.typeText("Keep this caption")
+        for _ in 0..<2 {
+            let renderer = UIGraphicsImageRenderer(size: CGSize(width: 48, height: 32))
+            UIPasteboard.general.image = renderer.image { context in
+                UIColor.systemPink.setFill()
+                context.fill(CGRect(x: 0, y: 0, width: 48, height: 32))
+            }
+            field.press(forDuration: 1.2)
+            let paste = app.menuItems["Paste"].waitForExistence(timeout: 4) ? app.menuItems["Paste"] : app.buttons["Paste"]
+            press(paste, "image Paste action")
+            if app.alerts.buttons["Allow Paste"].waitForExistence(timeout: 1) { app.alerts.buttons["Allow Paste"].tap() }
+        }
+        let files = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Remove Pasted image-"))
+        expectation(for: NSPredicate(format: "count == 2"), evaluatedWith: files)
+        waitForExpectations(timeout: 15)
+        XCTAssertEqual(field.value as? String, "Keep this caption")
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "ios-caption-with-pasted-image-previews"; shot.lifetime = .keepAlways; add(shot)
+        // A file-only message must still be sendable after removing the caption.
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "Keep this caption".count))
+        XCTAssertTrue(app.buttons["Send"].isEnabled)
+        press(app.buttons["Send"], "send attachments without text")
+        expectation(for: NSPredicate(format: "count == 0"), evaluatedWith: files)
+        waitForExpectations(timeout: 15)
     }
 }

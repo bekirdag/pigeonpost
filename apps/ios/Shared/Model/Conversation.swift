@@ -78,6 +78,7 @@ struct PendingMessage: Identifiable {
     /// The id of the server's own copy, once the send has been answered. Holding it is what lets
     /// this row retire the moment that copy comes back, instead of the message appearing twice.
     var sentCopyId: String?
+    var attachments: [MessageAttachment] = []
 }
 
 struct Conversation: Identifiable, Equatable {
@@ -189,7 +190,8 @@ enum ConversationBuilder {
                 at: row.at,
                 body: row.body,
                 threadId: row.threadId,
-                status: row.status
+                status: row.status,
+                attachments: row.attachments
             ))
         }
 

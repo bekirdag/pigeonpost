@@ -18,7 +18,7 @@ Section: net
 Priority: optional
 Architecture: all
 Maintainer: Wodo Teknoloji A.Ş. <support@pigeonpost.dev>
-Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0 (>= 4.8), gir1.2-adw-1 (>= 1.2), gir1.2-secret-1, ca-certificates
+Depends: python3 (>= 3.10), python3-gi, python3-gi-cairo, gir1.2-gtk-4.0 (>= 4.8), gir1.2-adw-1 (>= 1.2), gir1.2-secret-1, gir1.2-poppler-0.18, gir1.2-gstreamer-1.0, gir1.2-gst-plugins-base-1.0, gstreamer1.0-plugins-good, gstreamer1.0-libav, ca-certificates
 Recommends: gnome-keyring | keepassxc, xdg-desktop-portal, xdg-desktop-portal-gtk
 Homepage: https://pigeonpost.dev
 Description: Native Pigeonpost desktop messaging client

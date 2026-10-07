@@ -1175,23 +1175,17 @@ impl Store {
             let Some(account) = account else {
                 return Ok(Tier::Anonymous);
             };
-            // Any unexpired namespace this account holds counts as paid, whatever bought it —
-            // an App Store subscription, or a grant made out of band. The postbox does not care
-            // which; it cares that somebody is entitled.
-            let paid: Option<i64> = c
-                .query_row(
-                    "SELECT 1 FROM namespaces
-                      WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2)
-                      LIMIT 1",
-                    params![account, now as i64],
-                    |r| r.get(0),
-                )
-                .optional()?;
-            Ok(if paid.is_some() {
-                Tier::Paid
-            } else {
-                Tier::Free
-            })
+            // A verified plan provides hosted storage immediately, including before the owner
+            // chooses a name. Legacy subscriptions and explicit namespace grants remain valid.
+            let paid: bool = c.query_row(
+                "SELECT EXISTS(SELECT 1 FROM namespaces
+                    WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2))
+                 OR EXISTS(SELECT 1 FROM apple_handle_plans
+                    WHERE account_id = ?1 AND active = 1 AND expires_at > ?2)",
+                params![account, now as i64],
+                |r| r.get(0),
+            )?;
+            Ok(if paid { Tier::Paid } else { Tier::Free })
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -4436,6 +4430,77 @@ mod tests {
             created_at,
             ..sample(addr)
         }
+    }
+
+    #[tokio::test]
+    async fn apple_hosted_storage_activates_before_names_and_tracks_expiry_and_revocation() {
+        let store = Store::open(":memory:").unwrap();
+        let mut mailbox = sample("/k/subscriber");
+        mailbox.account_id = Some("subscriber".into());
+        store.insert(mailbox).await.unwrap();
+        let mut other = sample("/k/other");
+        other.account_id = Some("other".into());
+        other.cap_hash = [8; 32];
+        store.insert(other).await.unwrap();
+        assert_eq!(
+            store.tier_of("/k/subscriber".into(), 100).await.unwrap(),
+            Tier::Free
+        );
+        let status = |active| crate::appstore::SubscriptionStatus {
+            entitlement: crate::appstore::Entitlement {
+                original_transaction_id: "storage-plan".into(),
+                product_id: "dev.pigeonpost.inbox.handles.1.yearly".into(),
+                app_account_token: Some(crate::appstore::account_token("subscriber")),
+                expires_at: 200,
+                environment: "Sandbox".into(),
+            },
+            active,
+            terminal: !active,
+            revoked: !active,
+        };
+        store
+            .apply_apple_plan("subscriber".into(), status(true), None, 100)
+            .await
+            .unwrap();
+        assert!(store
+            .apple_plan_handles("subscriber".into(), 100)
+            .await
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            store.tier_of("/k/subscriber".into(), 100).await.unwrap(),
+            Tier::Paid
+        );
+        assert_eq!(
+            store.tier_of("/k/other".into(), 100).await.unwrap(),
+            Tier::Free
+        );
+        assert_eq!(
+            store.tier_of("/k/subscriber".into(), 200).await.unwrap(),
+            Tier::Free
+        );
+        store
+            .apply_apple_plan("subscriber".into(), status(false), None, 101)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.tier_of("/k/subscriber".into(), 101).await.unwrap(),
+            Tier::Free
+        );
+        store
+            .set_namespace_owner(
+                "legacy".into(),
+                "subscriber".into(),
+                "entitlement",
+                101,
+                None,
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            store.tier_of("/k/subscriber".into(), 201).await.unwrap(),
+            Tier::Paid
+        );
     }
 
     #[tokio::test]

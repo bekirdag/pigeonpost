@@ -2,6 +2,9 @@ package dev.pigeonpost.inbox
 
 import android.content.Context
 import android.net.Uri
+import android.util.LruCache
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import android.provider.OpenableColumns
 import dev.pigeonpost.core.*
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +16,38 @@ import java.util.UUID
 
 /** Private staging plus narrowly scoped FileProvider URIs; no storage permission required. */
 class PlatformFiles(private val context: Context, private val api: PostboxApi) {
+    private val previewSlots = Semaphore(2)
+    @Volatile private var previewGeneration = 0
+    private val previews = object : LruCache<String, AttachmentThumbnail>(16 * 1024 * 1024) {
+        override fun sizeOf(key: String, value: AttachmentThumbnail) = value.bitmap?.byteCount ?: 4096
+    }
+    suspend fun preview(identity: String, attachment: Attachment): AttachmentThumbnail? = previewSlots.withPermit {
+        withContext(Dispatchers.IO) {
+            val generation = previewGeneration
+            val key = "$identity:${attachment.id}"
+            previews.get(key)?.let { return@withContext it }
+            val file = download(identity, attachment)
+            try {
+                currentCoroutineContext().ensureActive()
+                AttachmentThumbnails.render(file, attachment.filename, attachment.mediaType)?.also {
+                    currentCoroutineContext().ensureActive()
+                    if (generation == previewGeneration) previews.put(key, it)
+                }
+            } finally { file.parentFile?.deleteRecursively() }
+        }
+    }
+    suspend fun preview(file: StagedAttachment): AttachmentThumbnail? = previewSlots.withPermit {
+        withContext(Dispatchers.IO) {
+            val generation = previewGeneration
+            val key = "draft:${file.id}"
+            previews.get(key)?.let { return@withContext it }
+            require(file.file.length() <= MAX_ATTACHMENT_BYTES)
+            AttachmentThumbnails.render(file.file, file.name, file.mediaType)?.also {
+                currentCoroutineContext().ensureActive()
+                if (generation == previewGeneration) previews.put(key, it)
+            }
+        }
+    }
     private val staging = File(context.cacheDir, "staged")
     private val received = File(context.cacheDir, "received")
     suspend fun stage(uris: List<Uri>): List<StagedAttachment> = withContext(Dispatchers.IO) {
@@ -60,7 +95,7 @@ class PlatformFiles(private val context: Context, private val api: PostboxApi) {
         val output = context.contentResolver.openOutputStream(uri, "wt") ?: error("Could not save the file.")
         output.use { sink -> file.inputStream().use { source -> source.copyTo(sink) } }
     }
-    fun clear() { staging.deleteRecursively(); received.deleteRecursively() }
+    fun clear() { previewGeneration++; previews.evictAll(); staging.deleteRecursively(); received.deleteRecursively() }
 }
 
 fun safeFilename(name: String): String = name.substringAfterLast('/').substringAfterLast('\\')

@@ -31,7 +31,7 @@ final class IOSUXTests: XCTestCase {
     private func assertBottom(_ id: String) {
         let cell = history.cells["message:" + id]
         XCTAssertTrue(cell.waitForExistence(timeout: 8))
-        let composer = app.textFields.firstMatch
+        let composer = app.textViews["messageComposer"]
         XCTAssertTrue(composer.exists)
         XCTAssertLessThanOrEqual(cell.frame.maxY, composer.frame.minY + 16)
         XCTAssertGreaterThan(cell.frame.maxY, composer.frame.minY - 50)
@@ -71,14 +71,14 @@ final class IOSUXTests: XCTestCase {
 
     func testKeyboardSendAndSubjectSwitchStayAtNewest() {
         open(["-ios-history"])
-        let composer = app.textFields.firstMatch
+        let composer = app.textViews["messageComposer"]
         composer.tap()
         composer.typeText("Newest message from the composer")
         assertBottom("history-44")
         app.buttons["Send"].tap()
         expectState("latest=true")
         XCTAssertTrue(app.staticTexts["Newest message from the composer"].isHittable)
-        XCTAssertEqual(app.textFields.firstMatch.value as? String, "Write a message")
+        XCTAssertEqual(app.textViews["messageComposer"].value as? String, "")
         screenshot("sent-above-keyboard")
         app.buttons["the deploy"].tap()
         XCTAssertEqual(history.cells.count, 0)

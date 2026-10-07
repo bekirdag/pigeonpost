@@ -1,0 +1,2 @@
+A small attachment preview.
+<script>This stays plain text.</script>

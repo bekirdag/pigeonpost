@@ -15,8 +15,18 @@ struct MacThreadView: View {
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
-    @State private var draft = ""
-    @State private var staged: [StagedFile] = []
+    private struct ComposerDraft { var text = ""; var files: [StagedFile] = [] }
+    @State private var drafts: [ScrollContext: ComposerDraft] = [:]
+    @State private var sending: Set<ScrollContext> = []
+    private var composerKey: ScrollContext { ScrollContext(mailbox: account.me?.address, peer: peer, subject: subthread) }
+    private var draft: String {
+        get { drafts[composerKey]?.text ?? "" }
+        nonmutating set { drafts[composerKey, default: ComposerDraft()].text = newValue }
+    }
+    private var staged: [StagedFile] {
+        get { drafts[composerKey]?.files ?? [] }
+        nonmutating set { drafts[composerKey, default: ComposerDraft()].files = newValue }
+    }
     @State private var dropping = false
     /// What the toolbar's search field is looking for, inside this conversation.
     @State private var find = ""
@@ -223,7 +233,7 @@ struct MacThreadView: View {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
                         ForEach(staged) { file in
-                            StagedFileChip(file: file) { staged.removeAll { $0.id == file.id } }
+                            StagedFileChip(file: file) { if !sending.contains(composerKey) { staged.removeAll { $0.id == file.id } } }
                         }
                     }
                     .padding(.horizontal, 12)
@@ -243,7 +253,7 @@ struct MacThreadView: View {
                     .foregroundStyle(Theme.muted)
                     .help("Attach a file")
 
-                MacMessageEditor(text: $draft, attach: { staged.append(contentsOf: $0) },
+                MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sending.contains(composerKey) { staged.append(contentsOf: $0) } },
                                  reportError: { inbox.toast = $0 }, send: send)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
@@ -266,10 +276,11 @@ struct MacThreadView: View {
         }
         .padding(.vertical, 8)
         .background(.bar)
+        .disabled(sending.contains(composerKey))
     }
 
     private var sendable: Bool {
-        !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty
+        !sending.contains(composerKey) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty)
     }
 
     private static let floor = "thread-floor"
@@ -297,6 +308,7 @@ struct MacThreadView: View {
     /// Read now rather than at send time — the same reason as on the phone: the permission to read
     /// a chosen file is scoped to the moment it was chosen.
     private func stage(_ url: URL) {
+        guard !sending.contains(composerKey) else { return }
         do { staged.append(try MacClipboardFiles.readFile(url)) }
         catch { inbox.toast = error.localizedDescription }
     }
@@ -305,11 +317,15 @@ struct MacThreadView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard sendable else { return }
         let files = staged
-        staged = []
-        draft = ""
+        let key = composerKey
+        sending.insert(key)
         // Whichever subject is on screen, including the single one a quiet peer has where no strip
         // is drawn. A reply that leaves the thread it answers is the only outcome nobody wants.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
-        Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
+        Task {
+            defer { sending.remove(key) }
+            guard account.me?.address == key.mailbox else { return }
+            if await inbox.send(text, to: peer, threadId: threadId, files: files) { drafts[key] = nil }
+        }
     }
 }

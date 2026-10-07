@@ -3,24 +3,31 @@ import SwiftUI
 struct BuyHandleSection: View {
     let store: HandleStore
     @Environment(Account.self) private var account
+    @Environment(Inbox.self) private var inbox
     let closeSettings: () -> Void
 
     var body: some View {
         @Bindable var store = store
         Section {
-            Text("One yearly subscription covers the number of names you choose. Change your plan here or in the App Store.")
+            Text("Pigeonpost Cloud keeps your messages and attachments hosted and available across iPhone, iPad, Android, desktop and web. Every yearly plan includes 1 GB of cloud storage per mailbox on your account, plus ongoing delivery through the number of custom names you choose.")
                 .font(.subheadline).foregroundStyle(Theme.body)
+            Text("Free accounts include 20 MB per mailbox. Paid storage starts when your subscription is verified, even before you register a name. All plans include the same storage allowance; higher plans include more custom names.")
+                .font(.subheadline).foregroundStyle(Theme.body)
+            if let quota = inbox.quota {
+                LabeledContent("This mailbox", value: "\(quota.used) of \(quota.limit)")
+                    .accessibilityIdentifier("subscription-storage-usage")
+            }
             if let plan = store.plan {
                 LabeledContent("Current plan", value: "\(plan.capacity) \(plan.capacity == 1 ? "name" : "names") · \(plan.active ? "Active" : "Expired")")
                 Text("\(store.planNameCount) registered · paid through \(Date(timeIntervalSince1970: TimeInterval(plan.expiresAt)).formatted(date: .abbreviated, time: .omitted))")
                     .font(.caption).foregroundStyle(Theme.muted)
             }
-            if store.activity == .loading { progress("Loading handle plans…") }
+            if store.activity == .loading { progress("Loading cloud plans…") }
             ForEach(store.products) { product in
                 productRow(product)
             }
             if let product = store.nextProduct {
-                Text("\(product.displayName ?? "Handle plan"): \(product.displayPrice) per year")
+                Text("\(product.displayName ?? "Cloud plan"): \(product.displayPrice) per year")
                     .font(.headline).accessibilityIdentifier("handle-product-price")
                 Button(store.plan?.active == true ? "Change plan for \(product.displayPrice) a year" : "Subscribe for \(product.displayPrice) a year") {
                     Task { await store.changePlan() }
@@ -32,10 +39,12 @@ struct BuyHandleSection: View {
                 Button("Retry loading subscriptions") { Task { await store.refresh() } }
                     .accessibilityIdentifier("handle-retry-products")
             }
-        } header: { Text("All handle plans") }
+        } header: { Text("Pigeonpost Cloud") }
         footer: {
-            Text("Prices are the total yearly price for the selected plan. You have one plan at a time. Upgrades take effect immediately; downgrades take effect at renewal. After a downgrade, the first names you registered remain active up to the new limit. Other names enter a 30-day recovery period; mailbox history stays with your account.")
+            Text("Prices are the total yearly price for the selected plan. You have one plan at a time. Upgrades take effect immediately; downgrades take effect at renewal. After a downgrade, the first names you registered remain active up to the new limit. Other names enter a 30-day recovery period; mailbox history stays with your account. When paid service ends, storage returns to the free allowance; existing messages remain available, but a full mailbox cannot receive more until space is available.")
         }
+
+        .task(id: "\(store.plan?.productId ?? ""):\(store.plan?.expiresAt ?? 0):\(store.plan?.active ?? false)") { await inbox.refreshQuota() }
 
         Section {
             if store.availableCapacity > 0 {
@@ -93,9 +102,9 @@ struct BuyHandleSection: View {
         return Button { store.select(product) } label: {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(product.displayName ?? "\(capacity) \(capacity == 1 ? "name" : "names") — yearly")
+                    Text(product.displayName ?? "Cloud · \(capacity) \(capacity == 1 ? "name" : "names") — yearly")
                         .foregroundStyle(Theme.ink).accessibilityIdentifier("handle-product-name")
-                    Text("\(product.displayPrice) per year · \(capacity) \(capacity == 1 ? "name" : "names") included")
+                    Text("\(product.displayPrice) per year · 1 GB per mailbox · \(capacity) \(capacity == 1 ? "name" : "names")")
                         .font(.caption).foregroundStyle(Theme.muted)
                 }
                 Spacer()

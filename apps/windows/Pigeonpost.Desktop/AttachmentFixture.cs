@@ -46,7 +46,7 @@ internal sealed class AttachmentFixtureHandler(PreviewInboxService preview) : Ht
                 if (!data.SequenceEqual(expectedData)) throw new InvalidOperationException("Windows file bytes changed.");
             }
             var owner = request.Headers.GetValues("x-pigeonpost-identity").Single();
-            var attachment = new MessageAttachment("fixture-file-" + uploaded.Count, filename, "text/plain", data.Length);
+            var attachment = new MessageAttachment("fixture-file-" + uploaded.Count, filename, request.Content.Headers.ContentType?.MediaType ?? "application/octet-stream", data.Length);
             uploaded.Add(attachment.Id, (attachment, data, owner));
             return Json(attachment);
         }

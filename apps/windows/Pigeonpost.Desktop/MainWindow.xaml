@@ -18,6 +18,7 @@
                                     <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                             Margin="0,3" Padding="12,8" AutomationProperties.Name="{x:Bind DownloadLabel}">
                                         <StackPanel Spacing="4">
+                                            <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
                                             <TextBlock Text="{x:Bind Filename}" FontWeight="SemiBold" TextWrapping="Wrap" />
                                             <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" />
                                             <TextBlock Text="Download file" FontSize="12" />
@@ -51,6 +52,7 @@
                                     <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
                                             Margin="0,3" Padding="12,8" AutomationProperties.Name="{x:Bind DownloadLabel}">
                                         <StackPanel Spacing="4">
+                                            <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
                                             <TextBlock Text="{x:Bind Filename}" FontWeight="SemiBold" TextWrapping="Wrap" />
                                             <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" />
                                             <TextBlock Text="Download file" FontSize="12" />
@@ -212,7 +214,10 @@
                                 <DataTemplate x:DataType="core:DraftAttachment">
                                     <Grid ColumnSpacing="8" Margin="0,3">
                                         <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <TextBlock Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        <StackPanel Orientation="Horizontal" Spacing="8">
+                                            <Border Tag="{x:Bind}" Width="72" Height="54" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
+                                            <TextBlock Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
+                                        </StackPanel>
                                         <Button Grid.Column="1" Content="Remove" Tag="{x:Bind}" Click="RemoveAttachment_Click" AutomationProperties.Name="{x:Bind RemoveLabel}" />
                                     </Grid>
                                 </DataTemplate>

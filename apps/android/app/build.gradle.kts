@@ -26,8 +26,8 @@ android {
         applicationId = "dev.pigeonpost.inbox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 9
-        versionName = "0.2.6"
+        versionCode = 10
+        versionName = "0.2.7"
         // Firebase project identifiers are public. Inject the restricted API key at build time.
         // Forked PRs without secrets can still run fixtures and produce development artifacts.
         resValue("string", "google_api_key", firebaseApiKey ?: "not-configured")
@@ -54,6 +54,7 @@ android {
     }
     packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
     testOptions { unitTests.isReturnDefaultValues = true }
+    sourceSets.getByName("androidTest").assets.srcDir("../../../tests/fixtures/attachments")
 }
 kotlin { jvmToolchain(17) }
 

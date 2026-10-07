@@ -30,6 +30,21 @@ final class HandlePurchaseTests: XCTestCase {
         add(attachment)
     }
 
+    func testReviewCloudServiceAndSignInScreenshots() {
+        app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=sale"]
+        app.launch()
+        XCTAssertTrue(app.buttons["settings-handles"].waitForExistence(timeout: 8))
+        app.buttons["settings-handles"].tap()
+        app.buttons["settings-purchases"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Pigeonpost Cloud keeps your messages")).firstMatch.waitForExistence(timeout: 8))
+        screenshot("cloud-service-before-purchase")
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(app.buttons["signInWithApple"].waitForExistence(timeout: 12))
+        screenshot("native-apple-sign-in")
+    }
+
     func testPurchasePageIsDirectlyAvailableFromSettings() {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=sale"]
         app.launch()
@@ -47,10 +62,12 @@ final class HandlePurchaseTests: XCTestCase {
     func testUnavailableCatalogOffersRetryWithoutInventingAPrice() {
         open("soon")
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
+        scrollTo(app.buttons["handle-register"])
         XCTAssertTrue(app.buttons["Subscription unavailable"].exists)
         XCTAssertFalse(app.buttons["Subscription unavailable"].isEnabled)
         XCTAssertFalse(app.staticTexts["handle-product-price"].exists)
         XCTAssertFalse(app.buttons["handle-register"].label.contains("$"))
+        scrollTo(app.buttons["handle-retry-products"])
         app.buttons["handle-retry-products"].tap()
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
         screenshot("subscription-retry")
@@ -136,7 +153,7 @@ final class HandlePurchaseTests: XCTestCase {
     func testBackNavigationPreservesUnfinishedHandleName() {
         open("sale")
         enter("cosmos")
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         app.buttons["settings-purchases"].tap()
         scrollTo(app.textFields["yourname"])
         XCTAssertEqual(app.textFields["yourname"].value as? String, "cosmos")
@@ -163,6 +180,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Active App Store subscriptions"].exists)
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8),
                       "An existing owner needs a way to add another handle")
+        scrollTo(app.buttons["handle-register"])
         XCTAssertTrue(app.buttons["handle-register"].label.contains("$16.00"))
     }
 
@@ -193,12 +211,12 @@ final class HandlePurchaseTests: XCTestCase {
         waitForEnabledBuy()
         buy.tap()
         XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         let inbox = app.buttons["Open /cosmos"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 8))
         screenshot("registered-handle")
         inbox.tap()
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Get a handle"])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Pigeonpost Cloud"])
         waitForExpectations(timeout: 5)
     }
 
@@ -259,7 +277,7 @@ final class HandlePurchaseTests: XCTestCase {
         screenshot("recover-purchase")
         finish.tap()
         XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["Open /cosmos"].waitForExistence(timeout: 8))
     }
 

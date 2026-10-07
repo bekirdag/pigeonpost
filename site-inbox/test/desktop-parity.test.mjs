@@ -449,3 +449,56 @@ test("unavailable sender settings can be retried before any permission change", 
   assert.equal(a.$("peer-known").disabled, false);
   assert.equal(a.$("peer-known").checked, true);
 });
+
+test("sender and receiver previews use scoped downloads and render document text literally", async t => {
+  const a = await app(t, s => {
+    for (const [index, id] of [[33, "received-note"], [34, "sent-note"]]) {
+      s.mailboxes[OWNER].messages[index].attachments = [{ id, filename: "note.txt", media_type: "text/plain", bytes: 50 }];
+    }
+    s.intercept = call => call.path.startsWith("/v1/attachments/")
+      ? { ok: true, blob: async () => new Blob(['<script>window.previewExecuted = true</script>']) } : undefined;
+  });
+  await a.clickPeer();
+  await until(() => a.$("messages").querySelectorAll(".attachment-preview pre").length === 2);
+  assert.equal(a.w.previewExecuted, undefined);
+  const previews = [...a.$("messages").querySelectorAll(".attachment-preview")];
+  assert.ok(previews.every(p => p.textContent.includes("<script>")));
+  const calls = a.server.calls.filter(c => c.path.startsWith("/v1/attachments/"));
+  assert.equal(calls.length, 2);
+  assert.ok(calls.every(c => c.opts.headers["x-pigeonpost-identity"] === OWNER && c.opts.headers.authorization === "Bearer fixture_account"));
+  await a.refresh();
+  assert.equal(a.$("messages").querySelector(".attachment-preview"), previews[0], "refresh preserves the rendered preview");
+  assert.equal(a.server.calls.filter(c => c.path.startsWith("/v1/attachments/")).length, 2);
+});
+
+test("preview selection rejects active content and oversize files but accepts generic MIME with a safe extension", async t => {
+  const a = await app(t, s => {
+    s.mailboxes[OWNER].messages[34].attachments = [
+      { id: "html", filename: "picture.png", media_type: "text/html", bytes: 10 },
+      { id: "svg", filename: "picture.svg", media_type: "image/svg+xml", bytes: 10 },
+      { id: "huge", filename: "large.png", media_type: "image/png", bytes: 26 * 1024 * 1024 },
+      { id: "generic", filename: "notes.txt", media_type: "application/octet-stream", bytes: 10 },
+    ];
+    s.intercept = call => call.path.startsWith("/v1/attachments/") ? { ok: true, blob: async () => new Blob(["hello"]) } : undefined;
+  });
+  await a.clickPeer();
+  await until(() => a.$("messages").querySelector(".attachment-preview pre"));
+  assert.equal(a.$("messages").querySelectorAll(".attachment-preview").length, 1);
+  assert.deepEqual(a.server.calls.filter(c => c.path.startsWith("/v1/attachments/")).map(c => c.path), ["/v1/attachments/generic"]);
+  assert.equal(a.$("messages").querySelectorAll("a.file").length, 4, "all originals remain downloadable");
+});
+
+test("switching mailboxes discards a late attachment preview", async t => {
+  const late = deferred();
+  const a = await app(t, s => {
+    s.mailboxes[OWNER].messages[34].attachments = [{ id: "late-note", filename: "private.txt", media_type: "text/plain", bytes: 12 }];
+    s.intercept = call => call.path === "/v1/attachments/late-note" ? { ok: true, blob: () => late.promise } : undefined;
+  });
+  await a.clickPeer();
+  await until(() => a.server.calls.some(c => c.path === "/v1/attachments/late-note"));
+  await a.switchTo("/garden/main");
+  await a.clickPeer();
+  late.resolve(new Blob(["previous mailbox secret"]));
+  await tick();
+  assert.doesNotMatch(a.$("messages").textContent, /previous mailbox secret/);
+});

@@ -6,7 +6,7 @@
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <RootNamespace>Pigeonpost.Desktop</RootNamespace>
     <AssemblyName>Pigeonpost</AssemblyName>
-    <Version>1.0.3</Version>
+    <Version>1.0.4</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Pigeonpost.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
@@ -31,5 +31,6 @@
   </ItemGroup>
   <ItemGroup Condition="'$(DefineConstants)' == 'UI_TESTS'">
     <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />
+    <Content Include="../../../tests/fixtures/attachments/*" Link="PreviewFixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

@@ -60,7 +60,7 @@ class MainActivity : ComponentActivity() {
                 catch (_: ActivityNotFoundException) { model.session.cancel(); model.inbox.showError("Install a browser to sign in.") }
             } } },
             chooseFile = { model.chooseAttachments(); documents.launch(arrayOf("*/*")) },
-            choosePhoto = { model.chooseAttachments(); photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            choosePhoto = { model.chooseAttachments(); photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
             scan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan a Pigeonpost sign-in code").setBeepEnabled(false).setOrientationLocked(false)) },
             attachment = ::attachment,
             openLink = ::openLink, notificationSettings = ::notificationSettings) }

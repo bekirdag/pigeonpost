@@ -136,6 +136,10 @@ public sealed partial class MainWindow
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             refreshTimer?.Stop();
             await session.SignOutAsync(lifetime.Token);
+            foreach (var cancellation in previewTasks.Values) { cancellation.Cancel(); cancellation.Dispose(); }
+            previewTasks.Clear();
+            previewCache.Clear();
+            previewOrder.Clear();
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
             ViewModel.MessagesUpdating -= Messages_Updating;
             ViewModel.MessagesUpdated -= Messages_Updated;

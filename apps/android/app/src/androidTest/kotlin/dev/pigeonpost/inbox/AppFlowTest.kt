@@ -251,6 +251,40 @@ class AppFlowTest {
         }
     }
 
+    @Test fun nativeImagePasteStagesMultiplePreviewsAndSendsWithoutACaption() {
+        launch().use {
+            shown("Inbox")
+            ui.onNodeWithText("demo/builder").performClick()
+            shown("The Android build is ready for review.")
+            ui.onNodeWithText("Message").performTextInput("Keep this caption")
+            val folder = File(context.cacheDir, "received/paste-test").apply { mkdirs() }
+            try {
+                for (name in listOf("first.png", "second.png")) {
+                    val file = File(folder, name)
+                    androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().context.assets.open("preview.png").use { input ->
+                        file.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    val uri = FileProvider.getUriForFile(context, "${context.packageName}.files", file)
+                    ui.runOnIdle {
+                        val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                        clipboard.setPrimaryClip(android.content.ClipData.newUri(context.contentResolver, name, uri))
+                    }
+                    ui.onNode(hasSetTextAction()).performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.PasteText) { paste -> paste() }
+                    ui.waitUntil(10_000) { ui.onAllNodesWithContentDescription("Preview of $name", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                    ui.onNodeWithText("Keep this caption").assertExists()
+                    ui.onNodeWithContentDescription("Remove $name", useUnmergedTree = true).assertExists()
+                }
+                ui.onNode(hasSetTextAction()).performTextClearance()
+                ui.onNodeWithContentDescription("Send message").assertIsEnabled().performClick()
+                ui.waitUntil(10_000) { ui.onAllNodesWithContentDescription("Remove first.png", useUnmergedTree = true).fetchSemanticsNodes().isEmpty() }
+                for (name in listOf("first.png", "second.png")) {
+                    ui.waitUntil(10_000) { ui.onAllNodesWithContentDescription("Preview of $name", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+                }
+                ui.onAllNodesWithContentDescription("Copy message").onLast().assertExists()
+            } finally { folder.deleteRecursively() }
+        }
+    }
+
     @Test fun encryptedSessionAndAttachmentsUsePrivateStorage() = runBlocking {
         val root = File(context.cacheDir, "storage-test").apply { mkdirs() }
         try {

@@ -39,6 +39,7 @@ struct MacMessageEditor: NSViewRepresentable {
         context.coordinator.parent = self
         guard let editor = scroll.documentView as? AttachmentTextView else { return }
         if editor.string != text { editor.string = text }
+        editor.isEditable = context.environment.isEnabled
         editor.attach = attach
         editor.reportError = reportError
         editor.send = send
@@ -74,14 +75,14 @@ final class AttachmentTextView: NSTextView {
 
     /// Return false only for text so AppKit preserves selection, undo and text input behaviour.
     @discardableResult func pasteAttachments(from pasteboard: NSPasteboard) -> Bool {
-        guard MacClipboardFiles.containsAttachments(pasteboard) else { return false }
+        guard isEditable, MacClipboardFiles.containsAttachments(pasteboard) else { return false }
         do { attach(try MacClipboardFiles.read(pasteboard)) }
         catch { reportError(error.localizedDescription) }
         return true
     }
 
     override func validateUserInterfaceItem(_ item: NSValidatedUserInterfaceItem) -> Bool {
-        if item.action == #selector(paste(_:)), MacClipboardFiles.containsAttachments(.general) { return true }
+        if item.action == #selector(paste(_:)), isEditable, MacClipboardFiles.containsAttachments(.general) { return true }
         return super.validateUserInterfaceItem(item)
     }
 
