@@ -17,6 +17,7 @@
       "name": "poppler",
       "buildsystem": "cmake-ninja",
       "config-opts": [
+        "-DCMAKE_INSTALL_LIBDIR=lib",
         "-DENABLE_GLIB=ON",
         "-DENABLE_BOOST=OFF",
         "-DENABLE_GOBJECT_INTROSPECTION=ON",
