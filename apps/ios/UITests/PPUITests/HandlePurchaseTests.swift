@@ -47,10 +47,12 @@ final class HandlePurchaseTests: XCTestCase {
     func testUnavailableCatalogOffersRetryWithoutInventingAPrice() {
         open("soon")
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
+        scrollTo(app.buttons["handle-register"])
         XCTAssertTrue(app.buttons["Subscription unavailable"].exists)
         XCTAssertFalse(app.buttons["Subscription unavailable"].isEnabled)
         XCTAssertFalse(app.staticTexts["handle-product-price"].exists)
         XCTAssertFalse(app.buttons["handle-register"].label.contains("$"))
+        scrollTo(app.buttons["handle-retry-products"])
         app.buttons["handle-retry-products"].tap()
         XCTAssertTrue(app.buttons["handle-retry-products"].waitForExistence(timeout: 8))
         screenshot("subscription-retry")
@@ -163,6 +165,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Active App Store subscriptions"].exists)
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8),
                       "An existing owner needs a way to add another handle")
+        scrollTo(app.buttons["handle-register"])
         XCTAssertTrue(app.buttons["handle-register"].label.contains("$16.00"))
     }
 

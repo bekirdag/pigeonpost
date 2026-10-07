@@ -43,7 +43,7 @@ object AttachmentThumbnails {
                     options.inJustDecodeBounds = false
                     BitmapFactory.decodeFile(file.path, options)
                 }
-                bitmap?.let { AttachmentThumbnail(bitmap = it) }
+                bitmap?.let { AttachmentThumbnail(bitmap = bounded(it)) }
             }
             mime == "application/pdf" -> ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
                 PdfRenderer(descriptor).use { renderer ->
@@ -61,7 +61,15 @@ object AttachmentThumbnails {
                 try {
                     retriever.setDataSource(file.path)
                     if (mime.startsWith("video/")) {
-                        retriever.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 440, 300)?.let { AttachmentThumbnail(bitmap = it) }
+                        val frame = if (Build.VERSION.SDK_INT >= 27)
+                            retriever.getScaledFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC, 440, 300)
+                        else {
+                            val width = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toLongOrNull() ?: 0
+                            val height = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toLongOrNull() ?: 0
+                            require(width > 0 && height > 0 && width * height <= 32_000_000)
+                            retriever.getFrameAtTime(1_000_000, MediaMetadataRetriever.OPTION_CLOSEST_SYNC)
+                        }
+                        frame?.let { AttachmentThumbnail(bitmap = bounded(it)) }
                     } else {
                         val duration = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()?.div(1000)
                         AttachmentThumbnail(text = "♫ $name" + (duration?.let { " · $it sec" } ?: ""))
@@ -74,5 +82,13 @@ object AttachmentThumbnails {
                 AttachmentThumbnail(text = if (count > 0) String(chars, 0, count) else "Empty document")
             }
         }
+    }
+
+    private fun bounded(bitmap: Bitmap): Bitmap {
+        val scale = min(1.0, min(440.0 / bitmap.width, 300.0 / bitmap.height))
+        if (scale == 1.0) return bitmap
+        val resized = Bitmap.createScaledBitmap(bitmap, max(1, (bitmap.width * scale).toInt()), max(1, (bitmap.height * scale).toInt()), true)
+        if (resized !== bitmap) bitmap.recycle()
+        return resized
     }
 }

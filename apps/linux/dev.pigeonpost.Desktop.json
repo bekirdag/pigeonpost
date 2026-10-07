@@ -18,6 +18,7 @@
       "buildsystem": "cmake-ninja",
       "config-opts": [
         "-DENABLE_GLIB=ON",
+        "-DENABLE_BOOST=OFF",
         "-DENABLE_GOBJECT_INTROSPECTION=ON",
         "-DENABLE_CPP=OFF",
         "-DENABLE_QT5=OFF",
