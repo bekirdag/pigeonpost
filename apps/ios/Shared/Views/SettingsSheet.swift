@@ -36,7 +36,7 @@ struct SettingsSheet: View {
     private enum Page: String, Hashable {
         case account = "Account"
         case handles = "Handles"
-        case purchases = "Get a handle"
+        case purchases = "Pigeonpost Cloud"
         case inbox = "Inbox and storage"
         case contacts = "Contacts and permissions"
         case help = "Help and about"
@@ -54,7 +54,7 @@ struct SettingsSheet: View {
                 }
                 Section {
                     #if os(iOS)
-                    destination(.purchases, icon: "plus.circle", detail: "Choose a name · yearly App Store subscription")
+                    destination(.purchases, icon: "plus.circle", detail: "Cloud storage and custom names · yearly plan")
                         .disabled(handle == nil)
                     #endif
                     destination(.handles, icon: "at", detail: handle == nil ? "Loading your handles…" : "Your names and subscriptions")
@@ -144,7 +144,7 @@ struct SettingsSheet: View {
             }
         case .handles:
             Section {
-                destination(.purchases, icon: "plus.circle", detail: "Register a name or restore purchases")
+                destination(.purchases, icon: "plus.circle", detail: "Manage cloud service, register a name or restore purchases")
             }
             if let handle { AccountHandlesSection(store: handle, closeSettings: { dismiss() }) }
         case .purchases:

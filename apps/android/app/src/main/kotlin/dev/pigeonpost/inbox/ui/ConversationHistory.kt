@@ -99,7 +99,9 @@ internal fun ConversationHistory(
         val index = visible.indexOfFirst { it.id == scrollRequest?.id }
         // Apply after the new item provider is composed. An immediate request can be consumed by
         // the old provider, after which stable keys incorrectly restore the previous message.
-        if (index >= 0) list.scrollToItem(index)
+        // This effect can begin inside BoxWithConstraints subcomposition. Schedule the
+        // position for the next measure instead of forcing a nested measure/layout pass.
+        if (index >= 0) list.requestScrollToItem(index)
     }
     Box(modifier) {
         LazyColumn(

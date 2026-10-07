@@ -124,6 +124,7 @@
     acked.clear();
     resetConversationView();
     $("messages").textContent = "";
+    prunePreviews();
     $("threads").textContent = "";
     state = freshState();
     const banner = $("offline-banner");
@@ -441,9 +442,11 @@
         staged.splice(index, 1);
         renderStaged();
       });
+      addPreview(li, { name: file.name, type: file.type, bytes: file.size, load: async () => file }, true);
       li.append(name, size, drop);
       list.append(li);
     });
+    prunePreviews();
     updateSendAvailability();
   }
 
@@ -462,6 +465,149 @@
       unit += 1;
     }
     return (value < 10 && unit > 0 ? value.toFixed(1) : Math.round(value)) + " " + units[unit];
+  }
+
+
+  // Preview only known passive formats. A name cannot override an explicit content type.
+  function previewType(type, name) {
+    let mime = String(type || "").split(";")[0].trim().toLowerCase();
+    if (!mime || mime === "application/octet-stream") {
+      mime = { png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif",
+        webp: "image/webp", bmp: "image/bmp", avif: "image/avif", mp4: "video/mp4",
+        m4v: "video/mp4", mov: "video/quicktime", webm: "video/webm", mp3: "audio/mpeg",
+        m4a: "audio/mp4", wav: "audio/wav", ogg: "audio/ogg", pdf: "application/pdf",
+        txt: "text/plain", csv: "text/csv", md: "text/plain", json: "application/json" }[String(name || "").split(".").pop().toLowerCase()];
+    }
+    if (/^image\/(png|jpeg|gif|webp|bmp|avif)$/.test(mime)) return { kind: "image", mime };
+    if (/^video\/(mp4|webm|quicktime)$/.test(mime)) return { kind: "video", mime };
+    if (/^audio\/(mpeg|mp4|wav|x-wav|ogg|webm)$/.test(mime)) return { kind: "audio", mime };
+    if (mime === "application/pdf") return { kind: "pdf", mime };
+    if (["text/plain", "text/csv", "text/markdown", "application/json"].includes(mime)) return { kind: "text", mime };
+    return null;
+  }
+
+  const previewRecords = new Map();
+  let previewActive = 0;
+  const previewQueue = [];
+  const previewObserver = typeof IntersectionObserver === "function" ? new IntersectionObserver(entries => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        previewObserver.unobserve(entry.target);
+        const record = previewRecords.get(entry.target);
+        if (record) { previewQueue.push(record); pumpPreviews(); }
+      }
+    }
+  }, { rootMargin: "100px" }) : null;
+
+  function prunePreviews() {
+    for (const [node, record] of previewRecords) if (!node.isConnected) {
+      record.disposed = true;
+      record.controller.abort();
+      record.cancel?.();
+      if (record.url) URL.revokeObjectURL(record.url);
+      previewObserver?.unobserve(node);
+      previewRecords.delete(node);
+    }
+  }
+
+  function addPreview(parent, { name, type, bytes, load }, compact = false) {
+    const format = previewType(type, name);
+    if (!format || !Number.isFinite(bytes) || bytes > 25 * 1024 * 1024 || bytes <= 0) return;
+    const node = document.createElement("div");
+    node.className = "attachment-preview" + (compact ? " compact" : "");
+    node.setAttribute("aria-label", "Preview of " + name);
+    node.textContent = "Loading preview…";
+    parent.append(node);
+    const record = { node, format, load, name, controller: new AbortController(), disposed: false };
+    previewRecords.set(node, record);
+    if (previewObserver) previewObserver.observe(node);
+    else queueMicrotask(() => { previewQueue.push(record); pumpPreviews(); });
+  }
+
+  function pumpPreviews() {
+    while (previewActive < 3 && previewQueue.length) {
+      const record = previewQueue.shift();
+      if (record.disposed) continue;
+      previewActive++;
+      renderPreview(record).catch(() => {
+        if (!record.disposed) record.node.textContent = "Preview unavailable";
+      }).finally(() => { previewActive--; pumpPreviews(); });
+    }
+  }
+
+  async function renderPreview(record) {
+    const { node, format, controller } = record;
+    const blob = await record.load(controller.signal);
+    if (record.disposed || controller.signal.aborted) return;
+    if (!blob.size || blob.size > 25 * 1024 * 1024) throw new Error("Preview size limit");
+    if (format.kind === "text") {
+      const text = document.createElement("pre");
+      text.textContent = (await blob.slice(0, 4096).text()).slice(0, 1200);
+      if (!record.disposed) node.replaceChildren(text);
+      return;
+    }
+    const canvas = document.createElement("canvas");
+    let source, cleanup = () => {};
+    if (format.kind === "pdf") {
+      const pdfjs = await import("./pdfjs/pdf.mjs");
+      pdfjs.GlobalWorkerOptions.workerSrc = new URL("./pdfjs/pdf.worker.mjs", location.href).href;
+      const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()),
+        isEvalSupported: false, useWasm: false, disableFontFace: true,
+        standardFontDataUrl: new URL("./pdfjs/standard_fonts/", location.href).href,
+        cMapUrl: new URL("./pdfjs/cmaps/", location.href).href, cMapPacked: true });
+      record.cancel = () => { void task.destroy(); };
+      try {
+        const pdf = await task.promise;
+        const page = await pdf.getPage(1), initial = page.getViewport({ scale: 1 });
+        const viewport = page.getViewport({ scale: Math.min(440 / initial.width, 300 / initial.height) });
+        canvas.width = Math.max(1, Math.ceil(viewport.width)); canvas.height = Math.max(1, Math.ceil(viewport.height));
+        await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      } finally { await task.destroy(); record.cancel = null; }
+    } else {
+      const rawURL = URL.createObjectURL(new Blob([blob], { type: format.mime }));
+      let media;
+      cleanup = () => { if (media) { media.removeAttribute("src"); media.load(); } URL.revokeObjectURL(rawURL); };
+      try {
+        if (format.kind === "image") {
+          source = new Image(); source.decoding = "async"; source.src = rawURL;
+          await source.decode();
+        } else {
+          media = document.createElement(format.kind === "video" ? "video" : "audio");
+          media.preload = "auto"; media.muted = true;
+          if (format.kind === "video") media.playsInline = true;
+          await new Promise((resolve, reject) => {
+            const timer = setTimeout(() => done(new Error("Preview timed out")), 12000);
+            const abort = () => done(new Error("Preview cancelled"));
+            const done = error => {
+              clearTimeout(timer); controller.signal.removeEventListener("abort", abort);
+              media.onloadeddata = media.onerror = null;
+              error ? reject(error) : resolve();
+            };
+            controller.signal.addEventListener("abort", abort, { once: true });
+            media.onloadeddata = () => done(); media.onerror = () => done(new Error("Unsupported media"));
+            media.src = rawURL; media.load();
+          });
+          if (format.kind === "audio") {
+            const label = document.createElement("span");
+            label.textContent = "♫ " + record.name + (Number.isFinite(media.duration) ? ` · ${Math.round(media.duration)} sec` : "");
+            if (!record.disposed) node.replaceChildren(label);
+            return;
+          }
+          source = media;
+        }
+        const width = source.naturalWidth || source.videoWidth, height = source.naturalHeight || source.videoHeight;
+        if (!width || !height || width * height > 64 * 1024 * 1024) throw new Error("Image too large");
+        const scale = Math.min(1, 440 / width, 300 / height);
+        canvas.width = Math.max(1, Math.round(width * scale)); canvas.height = Math.max(1, Math.round(height * scale));
+        canvas.getContext("2d").drawImage(source, 0, 0, canvas.width, canvas.height);
+      } finally { cleanup(); }
+    }
+    if (record.disposed) return;
+    canvas.setAttribute("role", "img"); canvas.setAttribute("aria-label", "Preview of " + record.name);
+    node.replaceChildren(canvas);
+    if (format.kind === "video") {
+      const play = document.createElement("span"); play.className = "preview-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true"); node.append(play);
+    }
   }
 
   // The bytes are the whole body; the metadata rides in headers. Not `api()` — that one sends and
@@ -1296,6 +1442,7 @@
       // Reuse unchanged bubbles so a refresh preserves selection and attachment/copy controls.
       rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
       while (list.children.length > rows.length) list.lastElementChild.remove();
+      prunePreviews();
       view.cache = cache;
       view.signature = signature;
       positionMessages(view, anchor, view.target);
@@ -1508,9 +1655,7 @@
       bubble.append(text);
     }
 
-    // Files that came with the message. Names and sizes, and a link that downloads — never an
-    // inline preview: the bytes are another agent's and the postbox serves them as attachments
-    // precisely so a browser does not open them in this origin.
+    // Passive, bounded thumbnails accompany the original authenticated download.
     if (Array.isArray(m.attachments) && m.attachments.length) {
       const files = document.createElement("ul");
       files.className = "files";
@@ -1550,7 +1695,18 @@
         const size = document.createElement("span");
         size.className = "file-size";
         size.textContent = readableBytes(file.bytes);
-        li.append(link, size);
+        const context = mailboxContext();
+        addPreview(li, { name: file.filename, type: file.media_type, bytes: file.bytes, load: async signal => {
+          if (!context.current()) throw new Error("Mailbox changed");
+          const res = await fetch(link.href, { headers: { authorization: "Bearer " + getToken(),
+            "x-pigeonpost-identity": context.address }, signal });
+          if (!res.ok || !context.current()) throw new Error("Preview unavailable");
+          const blob = await res.blob();
+          if (!context.current()) throw new Error("Mailbox changed");
+          return blob;
+        }});
+        const label = document.createElement("div"); label.className = "file-label";
+        label.append(link, size); li.append(label);
         files.append(li);
       }
       bubble.append(files);
@@ -2303,7 +2459,7 @@
       at: Math.floor(Date.now() / 1000),
       status: "sending",
       thread_id: threadId,
-      attachments: files.map((file, i) => ({ id: attachments[i], filename: file.name, bytes: file.size })),
+      attachments: files.map((file, i) => ({ id: attachments[i], filename: file.name, media_type: file.type, bytes: file.size })),
     });
     render();
 

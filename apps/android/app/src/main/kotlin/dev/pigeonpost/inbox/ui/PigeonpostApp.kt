@@ -131,7 +131,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                             }
                             if (wide) VerticalDivider()
                             if (state.selectedPeer != null) {
-                                ConversationPane(state, store, Modifier.weight(1f), wide,
+                                ConversationPane(state, store, model, Modifier.weight(1f), wide,
                                     info = { sheet = "peer" }, newSubject = { sheet = "subject" },
                                     chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = attachment, openLink = openLink)
                             } else if (wide) EmptyPane("A place for your agents", "Choose a conversation or start a new one.", Modifier.weight(1f))
@@ -255,8 +255,10 @@ private fun ConversationRow(row: Conversation, selected: Boolean, select: () -> 
 }
 
 @Composable
-private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Modifier, wide: Boolean, info: () -> Unit,
+private fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel, modifier: Modifier, wide: Boolean, info: () -> Unit,
     newSubject: () -> Unit, chooseFile: () -> Unit, choosePhoto: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
+    val staging by model.stagingAttachments.collectAsStateWithLifecycle()
+    val loadingFiles = staging[state.draftKey]?.let { it > 0 } == true
     val peer = state.selectedPeer.orEmpty()
     val subjects = state.subjects
     val subject = state.subject
@@ -295,12 +297,19 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
         else key(state.acting?.address, peer, subject?.id) {
             ConversationHistory(messages, Modifier.weight(1f),
                 searchTarget = if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
-                MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true), store, attachment, openLink)
+                MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true), store, attachment, openLink, model, state.acting?.address.orEmpty())
             }
         }
         if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
-                label = { Text(file.name, maxLines = 1) }, trailingIcon = { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) }) }
+                label = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    AttachmentPreview("draft:${file.id}", file.name, file.mediaType, compact = true) { model.files.preview(file) }
+                    Text(file.name, maxLines = 1)
+                } }, trailingIcon = { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) }) }
+        }
+        if (loadingFiles) Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+            Text("Preparing attachments…", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelSmall)
         }
         if (state.quota?.full == true) Text("Storage is full. Delete messages or attachments to make space.", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error)
         Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
@@ -311,9 +320,11 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
                     DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; choosePhoto() })
                 }
             }
-            OutlinedTextField(state.draft, store::draft, Modifier.weight(1f).onFocusChanged { if (it.isFocused) latestRequest++ }, placeholder = { Text("Message") }, maxLines = 5,
-                enabled = !state.isSending, shape = RoundedCornerShape(20.dp))
-            IconButton({ latestRequest++; store.send() }, enabled = !state.isSending && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
+            key(state.draftKey) {
+                MessageEditor(state.draft, store::draft, !state.isSending,
+                    Modifier.weight(1f).onFocusChanged { if (it.isFocused) latestRequest++ }, model::pasteAttachments)
+            }
+            IconButton({ latestRequest++; store.send() }, enabled = !state.isSending && !loadingFiles && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
                 if (state.isSending) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
                 else Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = MaterialTheme.colorScheme.primary)
             }
@@ -325,7 +336,8 @@ private fun ConversationPane(state: InboxState, store: InboxStore, modifier: Mod
 
 @Suppress("DEPRECATION")
 @Composable
-private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: InboxStore, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
+private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: InboxStore, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
+    model: InboxViewModel, identity: String) {
     var menu by remember { mutableStateOf(false) }
     var original by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
@@ -345,7 +357,10 @@ private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: I
                 message.attachments.forEach { file ->
                     var fileMenu by remember { mutableStateOf(false) }
                     Box {
-                        OutlinedButton({ fileMenu = true }) { Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(file.filename + " · " + bytes(file.bytes), maxLines = 2) }
+                        Column(Modifier.clickable { fileMenu = true }) {
+                            AttachmentPreview("$identity:${file.id}", file.filename, file.mediaType) { model.files.preview(identity, file) }
+                            OutlinedButton({ fileMenu = true }) { Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(file.filename + " · " + bytes(file.bytes), maxLines = 2) }
+                        }
                         DropdownMenu(fileMenu, { fileMenu = false }) {
                             listOf("Open" to "open", "Share" to "share", "Save a copy" to "save").forEach { (label, action) ->
                                 DropdownMenuItem({ Text(label) }, { fileMenu = false; attachment(file, action) })
@@ -356,6 +371,9 @@ private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: I
                 Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
                     Text(when (message.status) { Delivery.SENDING -> "Sending…"; Delivery.FAILED -> "Delivery unconfirmed"; Delivery.SENT -> shortTime(message.at) }, style = MaterialTheme.typography.labelSmall,
                         color = if (message.status == Delivery.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    IconButton({ clipboard.setText(AnnotatedString(message.display.text)) }, Modifier.size(40.dp)) {
+                        Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp))
+                    }
                     IconButton({ menu = true }, Modifier.size(32.dp)) { Icon(Icons.Outlined.MoreHoriz, "Message actions", Modifier.size(18.dp)) }
                 }
                 DropdownMenu(menu, { menu = false }) {

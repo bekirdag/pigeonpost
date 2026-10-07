@@ -82,18 +82,10 @@ struct MacSignInView: View {
             Button(working ? "Signing in…" : "Sign in") { go(otherAccount: false) }
                 .keyboardShortcut(.defaultAction)
                 .disabled(working)
-            Button {
+            AppleSignInButton(enabled: !working) {
                 go(otherAccount: false, provider: .apple)
-            } label: {
-                Label("Sign in with Apple", systemImage: "apple.logo")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(width: 260, height: 48)
             }
-            .buttonStyle(.plain)
-            .background(.black, in: RoundedRectangle(cornerRadius: 10))
-            .foregroundStyle(.white)
-            .accessibilityIdentifier("signInWithApple")
-            .disabled(working)
+            .frame(width: 260, height: 48)
             Button("Use a different account") { go(otherAccount: true) }
                 .buttonStyle(.plain)
                 .font(.system(size: 12.5))

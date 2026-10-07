@@ -16,35 +16,24 @@ struct ThreadView: View {
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
 
-    @State private var draft = ""
-
-    /// Bumped by every send, to hand the composer a text field that has never held anything.
-    ///
-    /// Emptying `draft` is not enough, and the screenshot that finally showed this says so
-    /// plainly: the Send button in it is drawn in `Theme.muted`, and muted is `sendable == false`,
-    /// which is an empty `draft` and no staged files. The model had cleared. The field sitting
-    /// above it was still showing every word of the message that had just gone.
-    ///
-    /// What is proven is that gap: state emptied, field not. The mechanism behind it is inference,
-    /// and worth reading as one. The likeliest is UIKit's rule about marked text — a field holding
-    /// it is mid-composition, and SwiftUI will not overwrite a composition in progress, because for
-    /// two-stage input (Japanese, Chinese, dictation) that would destroy what somebody is halfway
-    /// through typing. iOS 17's inline predictive text puts an ordinary English sentence into that
-    /// same state on a device, for the word last typed, which is every send that ends in a word;
-    /// the write would then land in `draft` and stop there. It also explains why this was read as
-    /// fixed twice from the code and why a suite that types and sends passes: inline prediction is
-    /// off in the simulator, so the field there has no composition to protect. But no device
-    /// confirmed it — a phone with predictive text turned off still emptying the field would say
-    /// the cause is something else.
-    ///
-    /// The fix does not rest on that being the right cause. Any state the old field is holding on
-    /// to goes with the old field.
-    ///
-    /// A new identity is the one lever SwiftUI has that reaches a field's own state: the old one
-    /// is torn down with whatever it was holding, and what replaces it reads a `draft` already
-    /// empty.
-    /// Focus is given back on the next turn so the keyboard does not leave between two messages.
-    @State private var composerLife = 0
+    private struct ComposerDraft {
+        var text = ""
+        var files: [StagedFile] = []
+    }
+    @State private var drafts: [HistoryKey: ComposerDraft] = [:]
+    @State private var loading: [HistoryKey: Int] = [:]
+    @State private var sending: Set<HistoryKey> = []
+    private var composerKey: HistoryKey { HistoryKey(mailbox: account.me?.address, peer: peer, subthread: subthread) }
+    private var draft: String {
+        get { drafts[composerKey]?.text ?? "" }
+        nonmutating set { drafts[composerKey, default: ComposerDraft()].text = newValue }
+    }
+    private var staged: [StagedFile] {
+        get { drafts[composerKey]?.files ?? [] }
+        nonmutating set { drafts[composerKey, default: ComposerDraft()].files = newValue }
+    }
+    private var loadingPhotos: Int { loading[composerKey, default: 0] }
+    private var sendPending: Bool { sending.contains(composerKey) }
 
     @State private var subthread: String?
     /// One sheet at a time. Two stacked `.sheet` modifiers on one view are not reliably both
@@ -55,21 +44,11 @@ struct ThreadView: View {
     /// What the photo picker last handed back. Emptied by `stage(_:)` as soon as the bytes are in
     /// `staged`, so this never holds a selection between one attachment and the next.
     @State private var photos: [PhotosPickerItem] = []
-    @State private var staged: [StagedFile] = []
-    /// Photos whose bytes are still on their way. A photo the picker names is not a photo the app
-    /// holds: `loadTransferable` is a copy, and for a big one — or one that has to come down from
-    /// iCloud first — it is a copy that takes long enough to press send in the middle of. See
-    /// `send`.
-    @State private var loadingPhotos = 0
-    /// A send that is waiting for `loadingPhotos` to reach zero. It stops the send button offering
-    /// to do the same thing twice while the first one waits.
-    @State private var sendPending = false
-
     private enum Sheet: String, Identifiable {
         case info, newThread
         var id: String { rawValue }
     }
-    @FocusState private var composing: Bool
+    @State private var composing = false
 
     @State private var latestRequest = 0
 
@@ -216,7 +195,7 @@ struct ThreadView: View {
                     HStack(spacing: 6) {
                         ForEach(staged) { file in
                             StagedFileChip(file: file) {
-                                staged.removeAll { $0.id == file.id }
+                                if !sendPending { staged.removeAll { $0.id == file.id } }
                             }
                         }
                     }
@@ -257,16 +236,19 @@ struct ThreadView: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Attach")
+            .disabled(sendPending)
 
-            TextField("Write a message", text: $draft, axis: .vertical)
-                .lineLimit(1...5)
-                .font(.system(size: 15))
-                .padding(.horizontal, 12)
-                .padding(.vertical, 9)
+            MessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), focused: $composing,
+                          enabled: !sendPending, pasteImages: pasteImages)
+                .overlay(alignment: .topLeading) {
+                    if draft.isEmpty {
+                        Text("Write a message").font(.system(size: 15)).foregroundStyle(Theme.muted)
+                            .padding(.horizontal, 13).padding(.vertical, 9).allowsHitTesting(false)
+                    }
+                }
                 .background(Theme.wash, in: RoundedRectangle(cornerRadius: 18))
                 .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.rule, lineWidth: 1))
-                .focused($composing)
-                .id(composerLife)
+                .id(composerKey)
 
             Button(action: send) {
                 Image(systemName: "paperplane.fill")
@@ -289,14 +271,11 @@ struct ThreadView: View {
             guard case let .success(urls) = result else { return }
             for url in urls { stage(url) }
         }
-        // Photos, not everything a library holds. A video is a file like any other and Files will
-        // still hand one over; what it is not is something to let somebody attach by accident, since
-        // a minute of 4K is a couple of hundred megabytes and the first this app would say about it
-        // is the postbox refusing the upload.
         .photosPicker(
             isPresented: $pickingPhotos,
             selection: $photos,
-            matching: .images,
+            maxSelectionCount: 5,
+            matching: .any(of: [.images, .videos]),
             photoLibrary: .shared()
         )
         .onChange(of: photos) { _, chosen in
@@ -314,8 +293,9 @@ struct ThreadView: View {
     /// failure here is a failure to copy rather than a failure to be allowed.
     @MainActor
     private func stage(_ chosen: [PhotosPickerItem]) async {
-        loadingPhotos += 1
-        defer { loadingPhotos -= 1 }
+        let key = composerKey
+        loading[key, default: 0] += 1
+        defer { loading[key, default: 1] -= 1 }
         let now = Date()
         var failed = 0
         for (index, item) in chosen.enumerated() {
@@ -324,7 +304,12 @@ struct ThreadView: View {
                 continue
             }
             let type = item.supportedContentTypes.first
-            staged.append(StagedFile(
+            guard account.me?.address == key.mailbox else { return }
+            guard data.count <= AttachmentThumbnails.maxBytes, drafts[key, default: ComposerDraft()].files.count < 5 else {
+                failed += 1
+                continue
+            }
+            drafts[key, default: ComposerDraft()].files.append(StagedFile(
                 name: PickedImage.filename(for: type, index: index, at: now),
                 mediaType: PickedImage.mediaType(for: type),
                 data: data
@@ -332,8 +317,8 @@ struct ThreadView: View {
         }
         if failed > 0 {
             inbox.toast = failed == 1
-                ? "Could not read that photo."
-                : "Could not read \(failed) of those photos."
+                ? "Could not attach that photo or video. Files must be at most 25 MB; attach up to 5 per message."
+                : "Could not attach \(failed) items. Files must be at most 25 MB; attach up to 5 per message."
         }
         // Emptied so the same photo can be chosen again after it has been removed from the strip.
         // The guard in `onChange` is what stops this coming straight back round.
@@ -346,7 +331,13 @@ struct ThreadView: View {
     private func stage(_ url: URL) {
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
-        guard let data = try? Data(contentsOf: url) else {
+        guard !sendPending, staged.count < 5,
+              let size = try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize,
+              size <= AttachmentThumbnails.maxBytes else {
+            inbox.toast = "Attach up to 5 files, at most 25 MB each."
+            return
+        }
+        guard let data = try? Data(contentsOf: url), data.count <= AttachmentThumbnails.maxBytes else {
             inbox.toast = "Could not read that file."
             return
         }
@@ -374,66 +365,57 @@ struct ThreadView: View {
         let subthread: String?
     }
 
-    /// Send what is in the composer, once all of it is actually there.
-    ///
-    /// The wait is for photos. `stage(_ chosen:)` is asynchronous because `loadTransferable` is, and
-    /// between choosing a photo and its bytes arriving there is a window — a second or two on a big
-    /// one, longer on one that has to come down from iCloud — in which the composer draws no chip
-    /// for it. Pressing send inside that window used to take a copy of `staged` that the photo was
-    /// not in yet: the message left without it, and the photo then appeared in the strip afterwards,
-    /// attached to nothing, as though it had been left behind on purpose.
-    ///
-    /// So a send with a photo in flight is held until the reading finishes, and `sendPending` holds
-    /// the button while it waits — otherwise a second press queues a second message and the first
-    /// one to reach `staged` takes the files, leaving the other to send bare text.
-    ///
-    /// With nothing in flight this is what it always was: clear the composer, send, one turn, no
-    /// window in which the same files could be taken twice.
+    /// Keep the complete draft until the server accepts the message. Drafts and asynchronous
+    /// clipboard/photo reads belong to a mailbox and subject, including while navigating away.
     private func send() {
-        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard sendable else { return }
-        // Whichever subject is on screen — including the one a peer with a single conversation has,
-        // where no strip is drawn. Sending into the conversation you are reading is the only
-        // behaviour that does not surprise: the alternative is a reply that leaves the thread it
-        // answers.
+        let key = composerKey
+        let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
-        clearComposer()
-        guard loadingPhotos > 0 else {
-            let files = staged
-            staged = []
-            Task { await inbox.send(text, to: peer, threadId: threadId, files: files) }
-            return
-        }
-        sendPending = true
+        sending.insert(key)
         Task { @MainActor in
-            while loadingPhotos > 0 {
-                try? await Task.sleep(nanoseconds: 20_000_000)
+            defer { sending.remove(key) }
+            while loading[key, default: 0] > 0 {
+                try? await Task.sleep(nanoseconds: 50_000_000)
             }
-            let files = staged
-            staged = []
-            sendPending = false
-            // Every photo it was waiting for failed to read, and nothing was typed. The toast
-            // `stage` raised has already said so; an empty message would only say it again.
+            guard account.me?.address == key.mailbox else { return }
+            let files = drafts[key]?.files ?? []
             guard !text.isEmpty || !files.isEmpty else { return }
-            await inbox.send(text, to: peer, threadId: threadId, files: files)
+            if await inbox.send(text, to: peer, threadId: threadId, files: files) {
+                drafts[key] = nil
+                if composerKey == key { clearComposer() }
+            }
         }
     }
 
-    /// Empty the composer in both of the places it exists — the state, and the field drawing it.
-    /// See `composerLife` for why the second one is not the first one said over again.
-    ///
-    /// Focus is dropped and taken back rather than left alone: the field that holds it is the old
-    /// field, which is about to stop existing, and re-asserting a `@FocusState` that already reads
-    /// `true` is not a change and so moves nothing. Off and on again is what puts the keyboard in
-    /// front of the field that replaced it. If the keyboard was already down — a file sent with
-    /// nothing typed — it stays down.
+    private func pasteImages(_ providers: [NSItemProvider]) {
+        let key = composerKey
+        guard !sendPending else { return }
+        loading[key, default: 0] += 1
+        Task { @MainActor in
+            defer { loading[key, default: 1] -= 1 }
+            for provider in providers.prefix(5) {
+                guard let identifier = provider.registeredTypeIdentifiers.first(where: { UTType($0)?.conforms(to: .image) == true }) else { continue }
+                let data: Data? = await withCheckedContinuation { continuation in
+                    provider.loadDataRepresentation(forTypeIdentifier: identifier) { data, _ in continuation.resume(returning: data) }
+                }
+                guard account.me?.address == key.mailbox else { return }
+                guard let data, !data.isEmpty, data.count <= AttachmentThumbnails.maxBytes,
+                      drafts[key, default: ComposerDraft()].files.count < 5 else {
+                    inbox.toast = "Could not paste that image. Attach up to 5 files, at most 25 MB each."
+                    continue
+                }
+                let type = UTType(identifier)
+                let ext = type?.preferredFilenameExtension ?? "png"
+                drafts[key, default: ComposerDraft()].files.append(StagedFile(
+                    name: "Pasted image-\(UUID().uuidString.prefix(8)).\(ext)",
+                    mediaType: type?.preferredMIMEType ?? "image/png", data: data))
+            }
+        }
+    }
+
     private func clearComposer() {
         latestRequest += 1
-        let keyboardWasUp = composing
         draft = ""
-        composing = false
-        composerLife &+= 1
-        guard keyboardWasUp else { return }
-        Task { @MainActor in composing = true }
     }
 }

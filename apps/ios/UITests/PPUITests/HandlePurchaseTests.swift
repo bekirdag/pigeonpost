@@ -136,7 +136,7 @@ final class HandlePurchaseTests: XCTestCase {
     func testBackNavigationPreservesUnfinishedHandleName() {
         open("sale")
         enter("cosmos")
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         app.buttons["settings-purchases"].tap()
         scrollTo(app.textFields["yourname"])
         XCTAssertEqual(app.textFields["yourname"].value as? String, "cosmos")
@@ -193,12 +193,12 @@ final class HandlePurchaseTests: XCTestCase {
         waitForEnabledBuy()
         buy.tap()
         XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         let inbox = app.buttons["Open /cosmos"]
         XCTAssertTrue(inbox.waitForExistence(timeout: 8))
         screenshot("registered-handle")
         inbox.tap()
-        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Get a handle"])
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.navigationBars["Pigeonpost Cloud"])
         waitForExpectations(timeout: 5)
     }
 
@@ -259,7 +259,7 @@ final class HandlePurchaseTests: XCTestCase {
         screenshot("recover-purchase")
         finish.tap()
         XCTAssertTrue(app.staticTexts["/cosmos is ready."].waitForExistence(timeout: 8))
-        app.navigationBars["Get a handle"].buttons.element(boundBy: 0).tap()
+        app.navigationBars["Pigeonpost Cloud"].buttons.element(boundBy: 0).tap()
         XCTAssertTrue(app.buttons["Open /cosmos"].waitForExistence(timeout: 8))
     }
 

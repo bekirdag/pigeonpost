@@ -154,6 +154,10 @@ extension Notification.Name {
             for (channel, value) in [UInt8(255), 102, 178, 255].enumerated() { bitmap.bitmapData![offset + channel] = value }
         } }
         let png = bitmap.representation(using: .png, properties: [:])!
+        let thumbnail = try? await AttachmentThumbnails.load(key: "native-png-fixture", name: "image.png", mediaType: "image/png") { png }
+        InboxLoadingTests.check(thumbnail != nil, "native QuickLook produces a real image thumbnail")
+        InboxLoadingTests.check(AttachmentThumbnails.supports(name: "image.png", mediaType: "application/octet-stream"), "generic MIME falls back to image extension")
+        InboxLoadingTests.check(!AttachmentThumbnails.supports(name: "image.png", mediaType: "text/html"), "an image extension cannot turn HTML into a preview")
         editor.insertText("Caption first", replacementRange: NSRange(location: 0, length: 0))
         await settle()
         NSPasteboard.general.clearContents()
@@ -182,6 +186,14 @@ extension Notification.Name {
         editor.insertText("", replacementRange: editor.selectedRange())
         await settle()
         editor.insertNewline(nil)
+        await InboxLoadingTests.wait("failed attachment upload") {
+            ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }
+        }
+        ControlledURLProtocol.complete("/v1/attachments", identity: account.me!.address,
+            body: "{\"error\":\"unavailable\"}", status: 503)
+        await settle()
+        InboxLoadingTests.check(editor.isEditable, "a failed upload makes the native composer editable again")
+        editor.insertNewline(nil)
         for index in 0..<2 {
             await InboxLoadingTests.wait("pasted attachment upload") {
                 ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }
@@ -209,6 +221,7 @@ extension Notification.Name {
         InboxLoadingTests.check((body["attachments"] as? [String]) == ["pasted-0", "pasted-1"], "one Mac message sends both pasted attachments")
         InboxLoadingTests.check(envelope["note"] as? String == "", "Mac sends attachments without requiring text")
         ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"clipboard-sent\"}", status: 201)
+        await settle()
         board.clearContents()
         board.setString("ordinary text", forType: .string)
         InboxLoadingTests.check(!editor.pasteAttachments(from: board), "text paste remains with AppKit")

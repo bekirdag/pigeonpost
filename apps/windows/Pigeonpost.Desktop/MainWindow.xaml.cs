@@ -88,6 +88,7 @@ public sealed partial class MainWindow : Window
             return items;
         }));
 #if UI_TESTS
+        await CheckNativePreviewsAsync();
         await OpenInboxAsync();
         refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
         AccountStatus.Text = "Demonstration account";

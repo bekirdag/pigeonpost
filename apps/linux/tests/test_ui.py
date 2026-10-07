@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import unittest
+from pathlib import Path
 
 from pigeonpost.ui import Adw, GLib, Gtk, Window
 
@@ -53,6 +54,34 @@ class FakeAPI:
 
 
 class NativeTests(unittest.TestCase):
+    def test_native_previews_render_image_video_and_pdf_pixels(self):
+        from pigeonpost.previews import ThumbnailCache, supports
+        cache = ThumbnailCache()
+        folder = Path(__file__).resolve().parents[3] / "tests/fixtures/attachments"
+        for name, mime, channel in [("preview.png", "image/png", 0), ("preview.mp4", "video/mp4", 2), ("preview.pdf", "application/pdf", 1)]:
+            pixbuf = cache.load(name, name, mime, lambda: (folder / name).read_bytes())
+            self.assertIsNotNone(pixbuf, name)
+            self.assertLessEqual(pixbuf.get_width(), 440)
+            self.assertLessEqual(pixbuf.get_height(), 300)
+            offset = (pixbuf.get_height() // 2) * pixbuf.get_rowstride() + (pixbuf.get_width() // 2) * pixbuf.get_n_channels()
+            rgb = pixbuf.get_pixels()[offset:offset + 3]
+            self.assertGreater(rgb[channel], min(rgb) + 80, name)
+            self.assertIs(cache.load(name, name, mime, lambda: self.fail("Cached preview was downloaded twice")), pixbuf)
+        self.assertFalse(supports("image.png", "text/html"))
+        self.assertFalse(supports("image.svg", "image/svg+xml"))
+
+    def test_staging_prevents_partial_send_and_preserves_caption(self):
+        self.select()
+        self.window.composer.get_buffer().set_text("A caption")
+        key = self.window.draft_key()
+        self.window.stage_started(key)
+        self.assertFalse(self.window.send_button.get_sensitive())
+        self.window.send()
+        self.assertFalse(any(call[1] == "/v1/send" for call in self.api.calls))
+        self.window.stage_finished(key)
+        self.assertTrue(self.window.send_button.get_sensitive())
+        self.assertEqual(self.window.drafts[key], "A caption")
+
     @classmethod
     def setUpClass(cls):
         cls.app = Adw.Application(application_id="dev.pigeonpost.NativeTests")

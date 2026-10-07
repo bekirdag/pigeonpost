@@ -11,6 +11,11 @@ environment = dict(os.environ, GSK_RENDERER="cairo")
 subprocess.run(["gnome-keyring-daemon", "--unlock", "--components=secrets"], input=b"\n", capture_output=True, check=True)
 probe = "import sys; sys.path.insert(0, '/app/share/pigeonpost-desktop'); from pigeonpost.vault import Vault; v=Vault(); v.save('ephemeral-ci-keyring-probe'); assert v.load()=='ephemeral-ci-keyring-probe'; v.clear(); assert v.load() is None; print('Sandbox keyring round trip passed')"
 subprocess.run(["flatpak", "run", "--command=python3", "dev.pigeonpost.Desktop", "-c", probe], check=True, timeout=30)
+# Exercise the installed runtime's decoders with the same passive fixtures as the native tests.
+preview_probe = "import sys; from pathlib import Path; sys.path.insert(0, '/app/share/pigeonpost-desktop'); from pigeonpost.previews import render; result=render(Path(sys.argv[1]).read_bytes(), sys.argv[1], sys.argv[2]); assert result is not None and result.get_width()>0; print('Sandbox preview passed:', sys.argv[2])"
+for name, mime in [("preview.png", "image/png"), ("preview.mp4", "video/mp4"), ("preview.pdf", "application/pdf")]:
+    fixture = pathlib.Path("../../tests/fixtures/attachments", name).resolve()
+    subprocess.run(["flatpak", "run", "--file-forwarding", "--command=python3", "dev.pigeonpost.Desktop", "-c", preview_probe, "@@", str(fixture), "@@", mime], check=True, timeout=30)
 # Document portal must actually be mounted, not just an app window that tolerates a failed portal.
 result = subprocess.check_output(["gdbus", "call", "--session", "--dest", "org.freedesktop.portal.Documents", "--object-path", "/org/freedesktop/portal/documents", "--method", "org.freedesktop.portal.Documents.GetMountPoint"], text=True)
 assert "/doc" in result or "0x2f" in result, "Document portal mount is unavailable"

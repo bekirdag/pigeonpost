@@ -17,6 +17,7 @@ from .auth import Session
 from .model import (contact_for, conversation_address_input, conversations, display_name, message_text, normalize, safe_filename,
                     size_text, subjects, target_thread, timestamp, valid_peer)
 from .vault import Vault
+from .previews import ThumbnailCache, supports as preview_supported
 
 
 def box(spacing=8, horizontal=False, margin=0):
@@ -181,7 +182,9 @@ class Window(Adw.ApplicationWindow):
         self.vocabulary, self.quota = {}, {}
         self.identity = self.peer = self.subject = None
         self.drafts, self.files = {}, {}
+        self.previews = ThumbnailCache()
         self.polling = self.sending = self.rendering = self.acking = False
+        self.staging = {}
         self.known_ids, self.dialogs = None, []
         self.message_limit = 200
         self.pool = threading.BoundedSemaphore(8)
@@ -625,6 +628,12 @@ class Window(Adw.ApplicationWindow):
             text.set_selectable(True)
             inner.append(text)
             for attachment in message.get("attachments") or []:
+                identity = self.identity
+                preview = self.attachment_preview(
+                    f"{identity}:{attachment.get('id')}", attachment.get("filename", "attachment"), attachment.get("media_type", ""),
+                    lambda a=attachment, owner=identity: self.api.download(owner, a["id"]))
+                if preview:
+                    inner.append(preview)
                 inner.append(button("Save " + safe_filename(attachment.get("filename", "attachment")) + " · " + size_text(attachment.get("bytes", 0)),
                                     lambda a=attachment: self.save_attachment(a)))
             actions = box(horizontal=True)
@@ -687,16 +696,55 @@ class Window(Adw.ApplicationWindow):
         self.rendering = False
         clear(self.file_chips)
         for item in self.files.get(self.draft_key(), []):
-            self.file_chips.append(button("Remove " + item["name"], lambda f=item: self.remove_file(f)))
+            chip = box(4)
+            preview = self.attachment_preview(f"draft:{id(item)}", item["name"], item["media_type"], lambda f=item: f["content"], compact=True)
+            if preview:
+                chip.append(preview)
+            chip.append(button("Remove " + item["name"], lambda f=item: self.remove_file(f)))
+            self.file_chips.append(chip)
         self.update_send()
 
     def update_send(self):
         enabled = bool(self.peer and self.identity and not self.sending)
         self.composer.set_sensitive(enabled)
         self.attach_button.set_sensitive(enabled)
-        self.send_button.set_sensitive(enabled and bool(self.drafts.get(self.draft_key(), "").strip() or self.files.get(self.draft_key())))
+        self.send_button.set_sensitive(enabled and not self.staging.get(self.draft_key(), 0) and bool(self.drafts.get(self.draft_key(), "").strip() or self.files.get(self.draft_key())))
+
+    def stage_started(self, key):
+        self.staging[key] = self.staging.get(key, 0) + 1
+        self.update_send()
+
+    def stage_finished(self, key):
+        self.staging[key] = max(0, self.staging.get(key, 0) - 1)
+        self.update_send()
 
     def composer_keys(self, _, key, code, state):
+        paste = (key in (Gdk.KEY_v, Gdk.KEY_V) and state & Gdk.ModifierType.CONTROL_MASK) or (key == Gdk.KEY_Insert and state & Gdk.ModifierType.SHIFT_MASK)
+        if paste and self.peer and not self.sending:
+            clipboard = self.composer.get_clipboard()
+            if clipboard.get_formats().contain_gtype(Gdk.Texture):
+                target, generation = self.draft_key(), self.generation
+                self.stage_started(target)
+                def pasted(source, result):
+                    try:
+                        texture = source.read_texture_finish(result)
+                        if generation != self.generation or texture is None:
+                            return
+                        if texture.get_width() * texture.get_height() > 32_000_000:
+                            raise ValueError("That image is too large.")
+                        data = texture.save_to_png_bytes().get_data()
+                        if len(data) > MAX_FILE or len(self.files.get(target, [])) >= 5:
+                            raise ValueError("Attach up to five files, at most 25 MiB each.")
+                        self.files.setdefault(target, []).append({"name": "Pasted image.png", "media_type": "image/png", "content": data})
+                        if target == self.draft_key():
+                            self.restore_draft()
+                    except Exception:
+                        self.toast("Could not paste that image. Attach up to five files, at most 25 MiB each.")
+                    finally:
+                        if generation == self.generation:
+                            self.stage_finished(target)
+                clipboard.read_texture_async(None, pasted)
+                return True
         if key in (Gdk.KEY_Return, Gdk.KEY_KP_Enter) and not state & Gdk.ModifierType.SHIFT_MASK:
             self.send()
             return True
@@ -785,7 +833,7 @@ class Window(Adw.ApplicationWindow):
         if not self.peer or self.sending:
             return False
         key = self.draft_key()
-        if len(self.files.get(key, [])) >= 5:
+        if len(self.files.get(key, [])) + self.staging.get(key, 0) >= 5:
             self.toast("Attach up to five files per message.")
             return False
         def read():
@@ -798,18 +846,80 @@ class Window(Adw.ApplicationWindow):
                 raise APIError(0, "file_too_large", "Choose a file smaller than 25 MiB.")
             return {"name": Path(path).name, "content": content,
                     "media_type": mimetypes.guess_type(path)[0] or "application/octet-stream"}
+        self.stage_started(key)
         def staged(item):
+            self.stage_finished(key)
             if len(self.files.get(key, [])) < 5:
                 self.files.setdefault(key, []).append(item)
             if key == self.draft_key():
                 self.restore_draft()
-        self._work(read, staged)
+        def failed(error):
+            self.stage_finished(key)
+            self.toast(self.error_text(error))
+        self._work(read, staged, failed)
         return True
 
     def remove_file(self, item):
         if not self.sending:
             self.files[self.draft_key()].remove(item)
             self.restore_draft()
+
+    def attachment_preview(self, key, name, mime, read, compact=False):
+        if not preview_supported(name, mime):
+            return None
+        frame = Gtk.Frame()
+        frame.set_size_request(72 if compact else 220, 54 if compact else 150)
+        frame.set_halign(Gtk.Align.START)
+        frame.set_overflow(Gtk.Overflow.HIDDEN)
+        frame.set_child(label("Loading preview…", "dim-label"))
+        frame.set_tooltip_text("Preview of " + name)
+        frame.preview_started = False
+        frame.preview_timer = None
+        generation = self.generation
+
+        def painted(result):
+            if not frame.get_root() or generation != self.generation:
+                return
+            if isinstance(result, str) or result is None:
+                text = label(result or "Preview unavailable", "dim-label", wrap=True)
+                text.set_lines(2 if compact else 8)
+                text.set_ellipsize(Pango.EllipsizeMode.END)
+                text.set_max_width_chars(12 if compact else 30)
+                frame.set_child(text)
+            else:
+                from gi.repository import GdkPixbuf
+                scale = min((72 if compact else 220) / result.get_width(), (54 if compact else 150) / result.get_height())
+                sized = result.scale_simple(max(1, int(result.get_width() * scale)), max(1, int(result.get_height() * scale)), GdkPixbuf.InterpType.BILINEAR)
+                picture = Gtk.Picture.new_for_paintable(Gdk.Texture.new_for_pixbuf(sized))
+                picture.set_can_shrink(True)
+                picture.set_content_fit(Gtk.ContentFit.CONTAIN)
+                frame.set_child(picture)
+
+        def visible():
+            if not frame.get_root() or generation != self.generation or frame.preview_started:
+                frame.preview_timer = None
+                return False
+            if not compact:
+                ok, bounds = frame.compute_bounds(self.message_scroll)
+                if not ok or bounds.get_y() > self.message_scroll.get_height() + 100 or bounds.get_y() + bounds.get_height() < -100:
+                    return True
+            frame.preview_started = True
+            frame.preview_timer = None
+            self._work(lambda: self.previews.load(key, name, mime, read), painted, lambda _: painted(None))
+            return False
+
+        def mapped(_):
+            if not frame.preview_started and frame.preview_timer is None:
+                frame.preview_timer = GLib.timeout_add(100, visible)
+
+        def unmapped(_):
+            if frame.preview_timer is not None:
+                GLib.source_remove(frame.preview_timer)
+                frame.preview_timer = None
+
+        frame.connect("map", mapped)
+        frame.connect("unmap", unmapped)
+        return frame
 
     def save_attachment(self, attachment):
         identity = self.identity
@@ -1190,6 +1300,8 @@ class Window(Adw.ApplicationWindow):
         self.identity = self.peer = self.subject = None
         self.messages, self.contacts, self.threads, self.archived, self.mailboxes = [], [], [], [], []
         self.drafts, self.files, self.quota, self.vocabulary = {}, {}, {}, {}
+        self.staging.clear()
+        self.previews.clear()
         self.known_ids = None
         self.polling = self.sending = self.acking = False
         self.restore_draft()

@@ -1,10 +1,6 @@
 //  Files, on the way out and on the way in.
 //
-//  A received file is never previewed inline. The postbox serves attachments with
-//  `Content-Disposition: attachment` and a narrowed content type precisely so another agent's bytes
-//  do not render themselves; showing them inline here would undo that on the client instead. A row
-//  says what the file is and hands it to the system when asked, which is the same decision the web
-//  app makes.
+//  Static system thumbnails identify supported media; opening or sharing stays explicit.
 
 import SwiftUI
 import UniformTypeIdentifiers
@@ -21,9 +17,8 @@ struct StagedFileChip: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            Image(systemName: "doc")
-                .font(.system(size: 11))
-                .foregroundStyle(Theme.muted)
+            AttachmentPreview(name: file.name, mediaType: file.mediaType, bytes: file.data.count,
+                              cacheKey: "draft:\(file.id)", compact: true) { file.data }
             Text(file.name)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.ink)
@@ -45,8 +40,8 @@ struct StagedFileChip: View {
         .padding(.leading, 9)
         .padding(.trailing, 3)
         .padding(.vertical, 4)
-        .background(Theme.wash, in: Capsule())
-        .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
+        .background(Theme.wash, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.rule, lineWidth: 1))
     }
 }
 
@@ -66,7 +61,14 @@ struct AttachmentList: View {
                 Button {
                     fetch(file)
                 } label: {
-                    HStack(spacing: 8) {
+                    VStack(alignment: .leading, spacing: 8) {
+                        if let identity = account.me?.address {
+                            AttachmentPreview(name: file.filename, mediaType: file.mediaType, bytes: file.bytes,
+                                              cacheKey: "\(identity):\(file.id)") {
+                                try await account.client.downloadAttachment(identity: identity, id: file.id)
+                            }
+                        }
+                        HStack(spacing: 8) {
                         if downloading == file.id {
                             ProgressView().controlSize(.small)
                                 .frame(width: 16)
@@ -83,6 +85,7 @@ struct AttachmentList: View {
                             .font(.system(size: 11.5))
                             .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.muted)
                         Spacer(minLength: 0)
+                        }
                     }
                     .foregroundStyle(isMine ? Color.white : Theme.navy)
                     .padding(.horizontal, 9)

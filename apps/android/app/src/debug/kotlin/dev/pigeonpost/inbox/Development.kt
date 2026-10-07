@@ -47,6 +47,7 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
     private val subjects = mutableListOf(ServerThread("t_build", "/demo/builder", "Android build", lastAt = now), ServerThread("t_design", "/demo/builder", "Design", lastAt = now - 600))
     private val people = mutableListOf(Contact("/demo/builder", "Build agent", "allow", "auto", listOf("report_status")), Contact("/demo/docdex", "Docdex"), Contact("/demo/archived", "Archived agent"))
     private val archived = mutableSetOf("/demo/archived")
+    private val attachmentMetadata = mutableMapOf<String, Attachment>()
     private val attachments = mutableMapOf("a_notes" to "Pigeonpost Android development build".toByteArray())
     init {
         if (mode == "long" || mode == "long-tall") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
@@ -82,7 +83,7 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
         delay(150)
         val id = "sent_" + UUID.randomUUID()
         messages += Message(id, body, to = to, direction = "out", peerHandle = to, threadId = threadId, sentAt = System.currentTimeMillis() / 1000,
-            attachments = attachments.map { Attachment(it, "attachment.txt", "text/plain", this.attachments[it]?.size?.toLong() ?: 0) })
+            attachments = attachments.map { attachmentMetadata[it] ?: Attachment(it, "attachment.txt", "text/plain", this.attachments[it]?.size?.toLong() ?: 0) })
         return SendResponse("delivered_" + id, id)
     }
     override suspend fun ack(identity: String, messageId: String) { val index = messages.indexOfFirst { it.id == messageId }; if (index >= 0) messages[index] = messages[index].copy(read = true) }
@@ -93,6 +94,6 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
     override suspend fun setArchived(identity: String, peer: String, archived: Boolean) { if (archived) this.archived += peer else this.archived -= peer }
     override suspend fun saveContact(identity: String, contact: Contact) { people.removeAll { it.peer == contact.peer }; people += contact }
     override suspend fun removeContact(identity: String, peer: String) { people.removeAll { it.peer == peer } }
-    override suspend fun upload(identity: String, file: File, filename: String, mediaType: String): Attachment { val id = "a_" + UUID.randomUUID(); attachments[id] = file.readBytes(); return Attachment(id, filename, mediaType, file.length()) }
+    override suspend fun upload(identity: String, file: File, filename: String, mediaType: String): Attachment { val id = "a_" + UUID.randomUUID(); attachments[id] = file.readBytes(); return Attachment(id, filename, mediaType, file.length()).also { attachmentMetadata[id] = it } }
     override suspend fun download(identity: String, id: String, output: OutputStream, maximumBytes: Long) { output.write(attachments[id] ?: error("Attachment not found")) }
 }

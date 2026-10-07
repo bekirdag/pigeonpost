@@ -662,8 +662,9 @@ final class Inbox {
         }
     }
 
-    func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = []) async {
-        guard let me else { return }
+    @discardableResult
+    func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = []) async -> Bool {
+        guard let me, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return false }
         // Everything sent from this app asks for work, at the most it can ask for. The optimistic
         // row carries the envelope too, so what is on screen the second after pressing send is what
         // the next poll will bring back.
@@ -683,9 +684,10 @@ final class Inbox {
         if Fixtures.enabled {
             update(row.id) { $0.status = .sent }
             rebuild()
-            return
+            return true
         }
 
+        var succeeded = false
         do {
             // Uploaded before the send names them. A failure here stops the message rather than
             // sending it without the files it was about: half a message is worse than none,
@@ -699,6 +701,7 @@ final class Inbox {
                     mediaType: file.mediaType
                 )
                 ids.append(uploaded.id)
+                update(row.id) { $0.attachments.append(MessageAttachment(id: uploaded.id, filename: uploaded.filename, mediaType: uploaded.mediaType, bytes: uploaded.bytes)) }
             }
             let sent = try await client.sendMessage(
                 from: me.address, to: peer, body: wire, threadId: threadId, attachments: ids)
@@ -711,7 +714,8 @@ final class Inbox {
                 // optimistic row and let the next listing be the truth.
                 pending.removeAll { $0.id == row.id }
             }
-            await loadInbox()
+            succeeded = true
+            Task { await loadInbox() }
         } catch let error as APIError {
             update(row.id) { $0.status = .failed }
             toast = error.sendFailureMessage
@@ -720,6 +724,7 @@ final class Inbox {
             toast = "Could not reach the postbox."
         }
         rebuild()
+        return succeeded
     }
 
     private func update(_ id: String, _ change: (inout PendingMessage) -> Void) {

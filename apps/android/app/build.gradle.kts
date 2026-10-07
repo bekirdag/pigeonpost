@@ -54,6 +54,7 @@ android {
     }
     packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
     testOptions { unitTests.isReturnDefaultValues = true }
+    sourceSets.getByName("androidTest").assets.srcDir("../../../tests/fixtures/attachments")
 }
 kotlin { jvmToolchain(17) }
 

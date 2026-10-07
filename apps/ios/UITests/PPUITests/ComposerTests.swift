@@ -16,7 +16,7 @@ final class ComposerTests: XCTestCase {
     }
 
     private func drafted(_ app: XCUIApplication) -> String {
-        (app.textFields.firstMatch.value as? String) ?? ""
+        (app.textViews["messageComposer"].value as? String) ?? ""
     }
 
     private func assertCleared(_ app: XCUIApplication, _ what: String) {
@@ -33,7 +33,7 @@ final class ComposerTests: XCTestCase {
     /// rather than noticed later.
     func testKeyboardStaysUpAcrossASend() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
         field.tap()
         field.typeText("still typing after this one")
@@ -46,7 +46,7 @@ final class ComposerTests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5),
                       "the keyboard left when the message did")
         // And the replacement field is the one being typed into, not a ghost of the old one.
-        app.textFields.firstMatch.typeText("second")
+        app.textViews["messageComposer"].typeText("second")
         Thread.sleep(forTimeInterval: 1)
         XCTAssertEqual(drafted(app), "second", "keys went somewhere else after the send")
     }
@@ -54,7 +54,7 @@ final class ComposerTests: XCTestCase {
     /// Ordinary prose, long enough to grow the field past one line.
     func testDraftClearsAfterSending() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
         field.tap()
         field.typeText("this is a test of the composer clearing after a send is made and it runs long enough to wrap onto several lines")
@@ -69,7 +69,7 @@ final class ComposerTests: XCTestCase {
     /// the send happens — the state a binding write is documented not to reach.
     func testDraftClearsWhileAutocorrectIsPending() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
         field.tap()
         field.typeText("teh quick brwon fox jumpd")
@@ -92,15 +92,15 @@ final class ComposerTests: XCTestCase {
     /// second inherits it.
     func testDraftClearsOnConsecutiveSends() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
         field.tap()
         field.typeText("first message")
         app.buttons["Send"].tap()
         Thread.sleep(forTimeInterval: 2)
         assertCleared(app, "first of two")
-        app.textFields.firstMatch.tap()
-        app.textFields.firstMatch.typeText("second message")
+        app.textViews["messageComposer"].tap()
+        app.textViews["messageComposer"].typeText("second message")
         Thread.sleep(forTimeInterval: 1)
         app.buttons["Send"].tap()
         Thread.sleep(forTimeInterval: 2)
@@ -111,7 +111,7 @@ final class ComposerTests: XCTestCase {
     /// report described.
     func testDraftClearsAfterMultilineEntry() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
         field.tap()
         field.typeText("line one\nline two\nline three\nline four")
@@ -125,11 +125,11 @@ final class ComposerTests: XCTestCase {
     /// because the launch is the slow part and the assertion is identical.
     func testDraftClearsForEveryDraftShape() throws {
         let app = openThread()
-        let field = app.textFields.firstMatch
+        let field = app.textViews["messageComposer"]
         XCTAssertTrue(field.waitForExistence(timeout: 15), "no composer")
 
         func round(_ what: String, _ text: String, doubleTap: Bool = false) {
-            let field = app.textFields.firstMatch
+            let field = app.textViews["messageComposer"]
             field.tap()
             field.typeText(text)
             Thread.sleep(forTimeInterval: 0.5)

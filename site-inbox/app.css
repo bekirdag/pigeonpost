@@ -1337,3 +1337,14 @@ button { font: inherit; color: inherit; }
 @media (prefers-reduced-motion: reduce) {
   .spinner { animation: none; }
 }
+
+/* Fixed preview geometry keeps the reading position stable as thumbnails arrive. */
+.files li { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.file-label { display: flex; align-items: center; gap: 8px; max-width: 100%; }
+.attachment-preview { position: relative; display: grid; place-items: center; width: 220px; height: 150px;
+  max-width: 100%; overflow: hidden; border-radius: 8px; background: var(--wash); color: var(--muted); font-size: 12px; }
+.attachment-preview canvas { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
+.attachment-preview pre { margin: 0; padding: 8px; width: 100%; height: 100%; overflow: hidden;
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.4 monospace; color: var(--ink); }
+.attachment-preview.compact { width: 72px; height: 54px; flex: 0 0 72px; }
+.preview-play { position: absolute; padding: 5px 8px; border-radius: 50%; background: #0009; color: white; }
