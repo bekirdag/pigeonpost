@@ -30,6 +30,21 @@ final class HandlePurchaseTests: XCTestCase {
         add(attachment)
     }
 
+    func testReviewCloudServiceAndSignInScreenshots() {
+        app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=sale"]
+        app.launch()
+        XCTAssertTrue(app.buttons["settings-handles"].waitForExistence(timeout: 8))
+        app.buttons["settings-handles"].tap()
+        app.buttons["settings-purchases"].tap()
+        XCTAssertTrue(app.staticTexts.containing(NSPredicate(format: "label BEGINSWITH %@", "Pigeonpost Cloud keeps your messages")).firstMatch.waitForExistence(timeout: 8))
+        screenshot("cloud-service-before-purchase")
+        app.terminate()
+        app.launchArguments = []
+        app.launch()
+        XCTAssertTrue(app.buttons["signInWithApple"].waitForExistence(timeout: 12))
+        screenshot("native-apple-sign-in")
+    }
+
     func testPurchasePageIsDirectlyAvailableFromSettings() {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=sale"]
         app.launch()
