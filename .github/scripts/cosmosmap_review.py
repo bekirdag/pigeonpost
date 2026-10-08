@@ -87,11 +87,11 @@ def get(path, **params):
 
 APP_ID = "6815358482"
 VERSION = "1.11"
-PREVIOUS_BUILD_ID = "6f9beb64-bbbb-4ae3-be2b-3e311d3937d5"  # build 34, selected in the 998f4762 submission
-REVIEW_ID = "998f4762-0ab4-421e-b581-0afea86be6b8"  # pending 1.11 submission (version + six purchases)
-ITEM_SET_SHA256 = "f08b9a89eac180c9bbe5be5738bd912a89ec18141a5381a276cc7959ffc383f8"
+PREVIOUS_BUILD_ID = "7d3382d7-675a-42ed-853e-995bd77dfbb6"  # build 38, selected in the 2ca261e1 submission
+REVIEW_ID = "2ca261e1-cf25-4517-99d8-603291dbf084"  # pending 1.11 submission (version + six purchases)
+ITEM_SET_SHA256 = "f938c6cf75fc9e130656960f1a8793ad84f870ec1ce318a7a49813b010e2e67c"
 RESOURCE_SET_SHA256 = "b2cd17741ac1bde626d06e65bfcad2bdc698641cc0593bfbd5696bb66e450f1b"
-TARGET_BUILD = "38"  # Paris neighbourhood build replacing build 34 in the pending submission
+TARGET_BUILD = "39"  # Rome, city life, crowds and streamed planet surfaces, replacing build 38 in the pending submission
 
 
 def withdraw_review(version_id):
