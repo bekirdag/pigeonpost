@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Inspect or update the existing CosmosMap review with the validated build 34."""
+"""Inspect or update the pending CosmosMap 1.11 review with the validated target build."""
 
 import base64
 import hashlib
@@ -87,14 +87,15 @@ def get(path, **params):
 
 APP_ID = "6815358482"
 VERSION = "1.11"
-PREVIOUS_BUILD_ID = "8023012c-f4d0-48c9-9cde-45ee875fd5c3"
-REVIEW_ID = "e91b44f2-0261-4786-94ca-6bb5c34578bc"
-ITEM_SET_SHA256 = "c44b9527744610e9ff850bd0af11373c690eeb62ed87849e26821bc3f5598fc5"
+PREVIOUS_BUILD_ID = "6f9beb64-bbbb-4ae3-be2b-3e311d3937d5"  # build 34, selected in the 998f4762 submission
+REVIEW_ID = "998f4762-0ab4-421e-b581-0afea86be6b8"  # pending 1.11 submission (version + six purchases)
+ITEM_SET_SHA256 = "f08b9a89eac180c9bbe5be5738bd912a89ec18141a5381a276cc7959ffc383f8"
 RESOURCE_SET_SHA256 = "b2cd17741ac1bde626d06e65bfcad2bdc698641cc0593bfbd5696bb66e450f1b"
+TARGET_BUILD = "38"  # Paris neighbourhood build replacing build 34 in the pending submission
 
 
 def withdraw_review(version_id):
-    """Withdraw only the observed build-33 submission after build 34 validates."""
+    """Withdraw only the observed pending submission after the target build validates."""
     version = get(f"/appStoreVersions/{version_id}")["data"]
     selected = get(f"/appStoreVersions/{version_id}/build")["data"]
     if not selected or selected["id"] != PREVIOUS_BUILD_ID:
@@ -218,7 +219,7 @@ def resubmit_review(version_id, target_id):
                 key: {"data": {"type": resource_type, "id": resource_id}},
             }}})
     if references(read_items(review_id)) != expected or get(f"/appStoreVersions/{version_id}/build")["data"]["id"] != target_id:
-        raise RuntimeError("The exact seven items and build 34 did not verify; draft remains available.")
+        raise RuntimeError("The exact seven items and the target build did not verify; draft remains available.")
     call("PATCH", f"/reviewSubmissions/{review_id}", {"data": {
         "type": "reviewSubmissions", "id": review_id, "attributes": {"submitted": True},
     }})
@@ -240,9 +241,9 @@ def resubmit_review(version_id, target_id):
 
 def main():
     action = os.environ.get("ACTION", "inspect")
-    number = os.environ.get("BUILD_NUMBER", "34")
-    if action not in {"inspect", "attach", "withdraw", "resubmit"} or number != "34":
-        raise RuntimeError("Only inspection, attachment, withdrawal or resubmission of CosmosMap build 34 is supported.")
+    number = os.environ.get("BUILD_NUMBER", TARGET_BUILD)
+    if action not in {"inspect", "attach", "withdraw", "resubmit"} or number != TARGET_BUILD:
+        raise RuntimeError(f"Only inspection, attachment, withdrawal or resubmission of CosmosMap build {TARGET_BUILD} is supported.")
     versions = get(f"/apps/{APP_ID}/appStoreVersions", **{
         "filter[platform]": "IOS", "filter[versionString]": VERSION, "include": "build", "limit": 10,
     })
@@ -281,7 +282,7 @@ def main():
     if action == "inspect":
         return report
     if len(builds) != 1:
-        raise RuntimeError("Build 34 is not uniquely available; review is unchanged.")
+        raise RuntimeError(f"Build {TARGET_BUILD} is not uniquely available; review is unchanged.")
     target = builds[0]
     a = target["attributes"]
     pre = get(f"/builds/{target['id']}/preReleaseVersion")["data"]

@@ -15,15 +15,15 @@ MAIN = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name ==
 RESUBMIT = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'resubmit_review')
 WITHDRAW = next(n for n in TREE.body if isinstance(n, ast.FunctionDef) and n.name == 'withdraw_review')
 OLD = '8023012c-f4d0-48c9-9cde-45ee875fd5c3'
-TARGET = 'valid-34'
+TARGET = 'valid-38'
 
 
 class ReviewGuards(unittest.TestCase):
-    def run_case(self, action='inspect', selected=OLD, state='WAITING_FOR_REVIEW', processing='VALID', expired=False, encrypted=False, prerelease='1.11', absent=False, patch_error=False, number='34'):
+    def run_case(self, action='inspect', selected=OLD, state='WAITING_FOR_REVIEW', processing='VALID', expired=False, encrypted=False, prerelease='1.11', absent=False, patch_error=False, number='38'):
         mutations = []
         current = {'id': selected} if selected else None
         version = {'id': 'current-version', 'attributes': {'appStoreState': state, 'releaseType': 'AFTER_APPROVAL'}, 'relationships': {'build': {'data': current}}}
-        target = {'id': TARGET, 'attributes': {'version': '34', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
+        target = {'id': TARGET, 'attributes': {'version': '38', 'processingState': processing, 'expired': expired, 'usesNonExemptEncryption': encrypted}}
         def get(path, **params):
             if path.endswith('/appStoreVersions'):
                 self.assertEqual(params['filter[versionString]'], '1.11')
@@ -31,7 +31,7 @@ class ReviewGuards(unittest.TestCase):
                 return {'data': [copy.deepcopy(version)], 'included': [{'id': selected, 'type': 'builds', 'attributes': {'version': '33'}}]}
             if path == '/builds':
                 self.assertEqual(params['filter[app]'], '6815358482')
-                self.assertEqual(params['filter[version]'], '34')
+                self.assertEqual(params['filter[version]'], '38')
                 return {'data': [] if absent else [target]}
             if path.endswith('/reviewSubmissions'):
                 return {'data': [{'id': 'pending-review', 'attributes': {'state': state, 'platform': 'IOS'}}]}
@@ -50,7 +50,7 @@ class ReviewGuards(unittest.TestCase):
             if patch_error:
                 raise RuntimeError('Apple 409: pending review cannot be edited')
             current = copy.deepcopy(body['data'])
-        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': number}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review'}
+        namespace = {'os': SimpleNamespace(environ={'ACTION': action, 'BUILD_NUMBER': number}), 'json': json, 'get': get, 'call': call, 'APP_ID': '6815358482', 'VERSION': '1.11', 'PREVIOUS_BUILD_ID': OLD, 'REVIEW_ID': 'original-review', 'TARGET_BUILD': '38'}
         exec(compile(ast.Module(body=[MAIN], type_ignores=[]), str(SOURCE), 'exec'), namespace)
         with contextlib.redirect_stdout(io.StringIO()):
             try:
