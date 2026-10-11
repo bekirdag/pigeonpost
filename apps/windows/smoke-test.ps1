@@ -452,6 +452,7 @@ public static class NativeFileDragSource {
         [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
         Start-Sleep -Milliseconds 500
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Draft leaked to another subject.' }
+        Capture 'subject-conversation.png'
         Set-Text 'Message' 'Subject-specific draft'
         $subject.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{ENTER}')
@@ -496,6 +497,14 @@ public static class NativeFileDragSource {
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Light')
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Restoring the light theme failed.' }
+        $filter = Wait-Element 'Conversation filter'
+        $filter.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
+        $null = Wait-Element 'No archived conversations'
+        $filter.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{ENTER}')
+        Start-Sleep -Milliseconds 500
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Changing the archive filter lost the draft.' }
     } else {
         $button = Wait-Element 'Sign in or create account'
         $null = Wait-Element 'Privacy policy'

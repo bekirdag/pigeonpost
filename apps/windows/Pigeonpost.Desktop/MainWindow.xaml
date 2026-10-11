@@ -160,11 +160,11 @@
                                         <Grid ColumnSpacing="8">
                                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                             <TextBlock Text="{x:Bind Preview}" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                                            <Border Grid.Column="1" MinWidth="20" Padding="5,1" CornerRadius="10" Background="{ThemeResource AccentFillColorDefaultBrush}" Visibility="{x:Bind HasUnread, Converter={StaticResource BoolVisibility}}">
+                                            <Border Grid.Column="1" MinWidth="20" Padding="5,1" CornerRadius="10" Background="{ThemeResource AccentFillColorDefaultBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
                                                 <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
                                             </Border>
                                         </Grid>
-                                        <Border Padding="6,2" CornerRadius="4" HorizontalAlignment="Left" Background="{ThemeResource ReviewSurfaceBrush}" Visibility="{x:Bind HasHeld, Converter={StaticResource BoolVisibility}}">
+                                        <Border Padding="6,2" CornerRadius="4" HorizontalAlignment="Left" Background="{ThemeResource ReviewSurfaceBrush}" Visibility="{Binding HasHeld, Converter={StaticResource BoolVisibility}}">
                                             <TextBlock Text="{x:Bind ReviewLabel}" FontSize="11" Foreground="{ThemeResource ReviewTextBrush}" />
                                         </Border>
                                     </StackPanel>

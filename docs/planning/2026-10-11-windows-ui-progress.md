@@ -19,3 +19,4 @@
 - Local delegation attempted a small presentation edge-case review through Docdex; the output contained invalid date assertions, so it was rejected and the focused cases were reviewed directly.
 - `git diff --check` and `docdexd hook pre-commit` passed. Native tests now exercise search shortcuts, the subject selector, account menu, pinned/medium/compact layouts, draft preservation, and light/dark screenshots in addition to the existing attachment and refresh regressions.
 - Store submission has not started. Native Windows build and screenshot review are next.
+- First Windows run `38160997415`: core tests passed; ARM64 compilation caught WinUI generated-code CS1503 for a resource converter in a compiled binding rooted at `Window`. Changed the two badge visibility bindings to ordinary data-template bindings, which resolve resources on the template element. Retesting both architectures.

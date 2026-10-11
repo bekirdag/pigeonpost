@@ -7,6 +7,10 @@ Locker; access tokens and message history stay in memory. The app never executes
 ## Features
 
 - Live mailbox and conversation selection, subject organization, search and unread/held indicators.
+- Two-pane conversation layout with a subject switcher and optional pinned Subjects pane on wide
+  windows. Narrow windows use inbox/conversation navigation without losing the current draft.
+- Conversation initials, activity dates, unread counts and distinct needs-review badges.
+- Integrated message composer with removable file previews, clipboard paste and native file drop.
 - New conversations can open without a message or send a first message; failed sends retain the draft.
 - Per-subject drafts, confirmed subject deletion, archive/restore and automatic refresh.
 - Free first-mailbox creation; existing named mailboxes load from the same account.
@@ -57,20 +61,23 @@ data and are uploaded separately from Store packages.
 | Action | Control |
 |---|---|
 | Switch mailbox | Mailbox selector |
-| Resize columns | Drag either separator |
+| Switch subject | Current subject selector in the conversation header |
+| Pin subjects | Pin subjects button (wide windows) |
+| Resize columns | Drag a visible separator |
 | New conversation | Ctrl+N |
 | Search senders | Ctrl+K |
-| Find in current subject | Ctrl+F; previous/next arrows |
+| Find in current subject | Ctrl+F or search button; previous/next arrows; Esc closes search |
 | Refresh | Ctrl+R |
 | Send message | Ctrl+Enter or Send |
 | Insert a new line | Enter |
-| Send a file | Attach file |
+| Stage files | Attachment button, paste, or drop; Send delivers files and text together |
 | Save received files | Message context menu → Save attachments |
 | Contact settings or archive | Conversation actions menu |
 | Sender details | Click the conversation name or address |
 | Copy peer address | Copy address beside the heading or conversation context menu |
-| Delete subject | Delete subject, then confirm |
-| Account / sign out | Bottom bar |
+| Delete subject | Subject actions → Delete subject, then confirm |
+| Account / sign out | Account menu in the bottom bar |
+| Compact inbox | Back to conversations or Ctrl+K |
 
 ## Authentication deployment
 
