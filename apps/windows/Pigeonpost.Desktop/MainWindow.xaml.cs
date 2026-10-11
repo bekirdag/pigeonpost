@@ -277,11 +277,13 @@ public sealed partial class MainWindow : Window
         var model = ViewModel;
         var context = model.ContextVersion;
         var request = ++scrollVersion;
-        DispatcherQueue.TryEnqueue(() =>
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
         {
             if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel) || context != model.ContextVersion || request != scrollVersion) return;
             var current = model.Messages.FirstOrDefault(m => m.Id == message.Id);
             if (current is null) return;
+            // Initial binding and adaptive layout must finish before WinUI can locate a row.
+            MessageList.UpdateLayout();
             if (select) MessageList.SelectedItem = current;
             MessageList.ScrollIntoView(current, leading ? ScrollIntoViewAlignment.Leading : ScrollIntoViewAlignment.Default);
         });

@@ -5,7 +5,7 @@
     xmlns:local="using:Pigeonpost.Desktop"
     xmlns:core="using:Pigeonpost.Core"
     Title="Pigeonpost Desktop">
-    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded" SizeChanged="Root_SizeChanged">
+    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded" SizeChanged="Root_SizeChanged" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.Resources>
             <local:BooleanVisibilityConverter x:Key="BoolVisibility" />
             <Style x:Key="QuietIconButton" TargetType="Button">
@@ -258,6 +258,26 @@
                     <ListView x:Name="MessageList" ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}" SelectionMode="Single"
                               ItemTemplateSelector="{StaticResource MessageTemplateSelector}" AutomationProperties.Name="Messages"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.Resources>
+                            <ResourceDictionary>
+                                <ResourceDictionary.ThemeDictionaries>
+                                    <ResourceDictionary x:Key="Light">
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="Default">
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                                    </ResourceDictionary>
+                                </ResourceDictionary.ThemeDictionaries>
+                            </ResourceDictionary>
+                        </ListView.Resources>
                         <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView" /></ItemsPanelTemplate></ListView.ItemsPanel>
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="AllowDrop" Value="True" /></Style>

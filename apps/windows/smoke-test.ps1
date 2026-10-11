@@ -81,6 +81,7 @@ try {
         throw "Native list missing: $Name"
     }
     function Capture([string]$Name) {
+        $null = [NativeWindowBounds]::SetCursorPos($screen.Right - 2, $screen.Bottom - 2)
         Start-Sleep -Milliseconds 500
         $rect = [NativeWindowBounds+Rect]::new()
         if ([NativeWindowBounds]::DwmGetWindowAttribute($process.MainWindowHandle, 9, [ref]$rect, 16) -ne 0) { throw 'Could not obtain visible native window bounds.' }
@@ -250,6 +251,9 @@ public static class NativeFileDragSource {
         $null = Wait-Element 'New conversation'
         if (Element 'Find in this subject') { throw 'Search should be closed initially.' }
         if (Element 'Subjects') { throw 'The subjects pane should be collapsed initially.' }
+        $initialScroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+        for ($n = 0; $n -lt 40 -and $initialScroll.Current.VerticalScrollPercent -lt 95; $n++) { Start-Sleep -Milliseconds 100 }
+        if ($initialScroll.Current.VerticalScrollPercent -lt 95) { throw 'Initial conversation did not open at its newest messages.' }
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
         (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
