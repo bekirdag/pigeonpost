@@ -71,6 +71,7 @@ public sealed partial class MainWindow : Window
     {
         if (initialized) return;
         initialized = true;
+        UpdateLayoutMode();
         var window = WinRT.Interop.WindowNative.GetWindowHandle(this);
         fileDrop = new NativeFileDrop(window, (x, y) =>
         {
@@ -99,9 +100,12 @@ public sealed partial class MainWindow : Window
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1;
+        var minimumWidth = (int)Math.Ceiling(420 * scale);
+        var minimumHeight = (int)Math.Ceiling(500 * scale);
         if (args.DidSizeChange && sender.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Restored }
-            && (sender.Size.Width < 900 || sender.Size.Height < 560))
-            sender.Resize(new SizeInt32(Math.Max(900, sender.Size.Width), Math.Max(560, sender.Size.Height)));
+            && (sender.Size.Width < minimumWidth || sender.Size.Height < minimumHeight))
+            sender.Resize(new SizeInt32(Math.Max(minimumWidth, sender.Size.Width), Math.Max(minimumHeight, sender.Size.Height)));
     }
 
     private async void Mailbox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -118,13 +122,15 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Conversation conversation } && conversation.Peer != ViewModel.SelectedConversation?.Peer)
         {
             ViewModel.SelectConversation(conversation);
+            ShowConversation();
             await ViewModel.AcknowledgeSelectedAsync();
         }
     }
 
     private void Subject_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Subject subject }) ViewModel.SelectSubject(subject);
+        var subject = sender switch { ListView list => list.SelectedItem as Subject, ComboBox box => box.SelectedItem as Subject, _ => null };
+        if (!ViewModel.IsUpdatingLists && subject is not null) ViewModel.SelectSubject(subject);
     }
 
     private async Task SendComposerAsync()
@@ -175,7 +181,11 @@ public sealed partial class MainWindow : Window
             };
             peer.TextChanged += Validate;
             message.TextChanged += Validate;
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary) await ViewModel.StartConversationAsync(peer.Text, message.Text);
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                await ViewModel.StartConversationAsync(peer.Text, message.Text);
+                ShowConversation();
+            }
         }
         finally { dialogOpen = false; }
     }
@@ -214,10 +224,14 @@ public sealed partial class MainWindow : Window
         finally { dialogOpen = false; }
     }
 
-    private void SenderColumn_DragDelta(object sender, DragDeltaEventArgs e) => SenderColumn.Width = new GridLength(Math.Clamp(SenderColumn.Width.Value + e.HorizontalChange, 240, 420));
-    private void SubjectColumn_DragDelta(object sender, DragDeltaEventArgs e) => SubjectColumn.Width = new GridLength(Math.Clamp(SubjectColumn.Width.Value + e.HorizontalChange, 170, 340));
-    private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { FindBox.Focus(FocusState.Programmatic); args.Handled = true; }
-    private void SenderSearch_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { SenderSearchBox.Focus(FocusState.Programmatic); args.Handled = true; }
+    private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { ShowFind(); args.Handled = true; }
+    private void SenderSearch_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        compactConversation = false;
+        UpdateLayoutMode();
+        SenderSearchBox.Focus(FocusState.Programmatic);
+        args.Handled = true;
+    }
     private async void NewConversation_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await NewConversationAsync(); }
     private async void Refresh_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await ViewModel.RefreshAsync(); }
     private async void Send_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -275,6 +289,7 @@ public sealed partial class MainWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
@@ -340,6 +355,12 @@ public sealed partial class MainWindow : Window
         }
         return null;
     }
+}
+
+public sealed class BooleanVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) => value is true ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
 }
 
 public sealed class MessageTemplateSelector : DataTemplateSelector

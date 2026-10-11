@@ -1,0 +1,21 @@
+# Windows UI refresh — progress
+
+## Baseline
+
+- Authorized implementation and Microsoft Store publication on 2026-10-11.
+- Branch: `codex/windows-ui-refresh-20261011`; base: b118dbef2276015b8558c2f87464c2f3ef647dcb.
+- Existing Windows Actions pipeline builds x64/ARM64, runs core and native UI tests, validates MSIX and installs/activates the x64 package on a disposable runner.
+- Prior native screenshots show permanent sender/subject/message columns, always-visible find controls and an account footer. Staged attachments, previews and per-message copy are already implemented.
+- Shared browser connected with original tabs preserved; a separate Partner Center tab is open. No Store changes yet.
+- Docdex is indexed for the worktree through its HTTP MCP endpoint (the configured MCP session is bound to the original checkout). Symbols found for C#; dependency edges absent and XAML/PowerShell symbol records unavailable. Manual cross-reference inspection supplements these checks.
+- Planning/profile directives reviewed. The user's explicit instruction covers implementation, versioning, git publication and Microsoft Store submission; no additional approval is required for this scope.
+
+## Implementation and validation
+
+- Implemented two-pane default, optional pinned subjects at widths >=1100 logical pixels, compact navigation below 760, current-subject selector, on-demand search, account menu, richer conversation rows and an integrated composer.
+- Published Store baseline verified in Partner Center: x64 and ARM64 version 1.0.4.0. This update increments assembly/MSIX to 1.0.5 / 1.0.5.0.
+- Local .NET 10.0.401: 74/74 core tests pass. XAML files parse as XML; native compilation remains a Windows-only check.
+- `docdexd run-tests --target apps/windows/Pigeonpost.Core.Tests` selected the repository's Cargo runner and rejected the .NET target. Used the workflow's direct `dotnet run --project ... -c Release` command instead.
+- Local delegation attempted a small presentation edge-case review through Docdex; the output contained invalid date assertions, so it was rejected and the focused cases were reviewed directly.
+- `git diff --check` and `docdexd hook pre-commit` passed. Native tests now exercise search shortcuts, the subject selector, account menu, pinned/medium/compact layouts, draft preservation, and light/dark screenshots in addition to the existing attachment and refresh regressions.
+- Store submission has not started. Native Windows build and screenshot review are next.

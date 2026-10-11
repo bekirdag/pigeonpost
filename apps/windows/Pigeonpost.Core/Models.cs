@@ -144,6 +144,13 @@ public sealed record Conversation(string Peer, string Name, IReadOnlyList<Thread
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
     public int Held => Messages.Count(m => m.IsHeld);
     public long Last => Messages.LastOrDefault()?.At ?? 0;
+    public string Initials => ConversationPresentation.Initials(Name);
+    public string ActivityLabel => ConversationPresentation.ActivityLabel(Last, DateTimeOffset.Now);
+    public string UnreadLabel => Unread > 99 ? "99+" : Unread.ToString();
+    public string ReviewLabel => Held == 1 ? "1 needs review" : $"{Held} need review";
+    public bool HasUnread => Unread > 0;
+    public bool HasHeld => Held > 0;
+    public string AccessibleSummary => $"{Name}, {Peer}. {Preview}. {Badge}";
     public string Preview => Messages.LastOrDefault() is { } m ? (string.IsNullOrWhiteSpace(m.DisplayBody) && m.Attachments?.Count > 0 ? m.AttachmentSummary : m.DisplayBody.ReplaceLineEndings(" ")) : "Start a conversation";
     public string Badge => string.Join(" · ", new[] { Unread > 0 ? $"{Unread} unread" : "", Held > 0 ? $"{Held} held" : "" }.Where(s => s.Length > 0));
 }

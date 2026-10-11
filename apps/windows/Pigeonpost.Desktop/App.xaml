@@ -10,12 +10,33 @@
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
                     <SolidColorBrush x:Key="OutgoingMessageBrush" Color="#EDF1FF" />
+                    <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F4F6FA" />
+                    <SolidColorBrush x:Key="ConversationSurfaceBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="IncomingMessageBrush" Color="#F3F5F8" />
+                    <SolidColorBrush x:Key="AvatarSurfaceBrush" Color="#E5EDFC" />
+                    <SolidColorBrush x:Key="AvatarTextBrush" Color="#315DA8" />
+                    <SolidColorBrush x:Key="ReviewSurfaceBrush" Color="#FFF2D4" />
+                    <SolidColorBrush x:Key="ReviewTextBrush" Color="#755100" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Default">
                     <SolidColorBrush x:Key="OutgoingMessageBrush" Color="#25324F" />
+                    <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#20242C" />
+                    <SolidColorBrush x:Key="ConversationSurfaceBrush" Color="#191D24" />
+                    <SolidColorBrush x:Key="IncomingMessageBrush" Color="#292E38" />
+                    <SolidColorBrush x:Key="AvatarSurfaceBrush" Color="#2B3C5B" />
+                    <SolidColorBrush x:Key="AvatarTextBrush" Color="#C1D4FF" />
+                    <SolidColorBrush x:Key="ReviewSurfaceBrush" Color="#44391F" />
+                    <SolidColorBrush x:Key="ReviewTextBrush" Color="#FFE09B" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
                     <SolidColorBrush x:Key="OutgoingMessageBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="ConversationSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="IncomingMessageBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="AvatarSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="AvatarTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
+                    <SolidColorBrush x:Key="ReviewSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="ReviewTextBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                 </ResourceDictionary>
             </ResourceDictionary.ThemeDictionaries>
         </ResourceDictionary>

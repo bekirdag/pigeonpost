@@ -83,6 +83,12 @@ public sealed partial class MainWindow
 #if UI_TESTS
             var arrival = Environment.GetEnvironmentVariable("PIGEONPOST_UI_ARRIVAL_FILE");
             if (arrival is not null && File.Exists(arrival)) { File.Delete(arrival); preview.ReceiveForUiTest(); }
+            var themeFile = Environment.GetEnvironmentVariable("PIGEONPOST_UI_THEME_FILE");
+            if (themeFile is not null && File.Exists(themeFile))
+            {
+                Root.RequestedTheme = File.ReadAllText(themeFile).Trim() == "Dark" ? ElementTheme.Dark : ElementTheme.Light;
+                File.Delete(themeFile);
+            }
 #endif
             await ViewModel.RefreshAsync(background: true);
         };
