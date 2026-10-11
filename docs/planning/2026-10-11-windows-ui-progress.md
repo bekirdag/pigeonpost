@@ -25,3 +25,24 @@
 - Shared Playwright stalled on Partner Center's new web components. The existing task tab remains available through direct page CDP at the same persistent browser endpoint; no browser/profile/service restart or login reset was performed.
 - Run `38161835511` compiled both architectures but the new launch assertion caught the existing initial-scroll bug. A single deferred ScrollIntoView still did not settle the virtualized extent. Tail requests now settle across bounded frames and cancel on pointer input or context changes; fixture-only geometry traces help verify the behavior. These artifacts are not approved for Store upload.
 - Partner Center update draft created: Submission 6, ID `1152921505702097627`. Listing text is being prepared; no new packages uploaded and no certification request sent yet.
+
+## Verified release candidate
+
+- Final implementation commit: `63f01ba854583852a954254df77b4e117a0db1e3`; PR: https://github.com/bekirdag/pigeonpost/pull/37.
+- Windows run `38162272856` passed all jobs. Native automation confirms initial newest-message scrolling after the virtualized extent settles, while preserving reader scroll during refresh. C# fixture diagnostics recorded the extent growing before the bounded scroll reached the tail.
+- Reviewed final inbox, pinned-subjects, compact, staged-file, subject and dark screenshots. Four captioned native 1426x893 screenshots are saved in the Store listing. Their SHA-256 hashes match the local reviewed PNGs after reloading the saved listing.
+- Release artifacts and verification records: `/Users/bekirdag/Documents/releases/pigeonpost/windows-1.0.5/38162272856`.
+- x64 MSIX SHA-256: `19547441a1212c2dfc7ed1a340a3e30e53b279d99ffcdf10468044888daa2d49`.
+- ARM64 MSIX SHA-256: `1de6a931138e1f4013993e2f0b5d0e1c720f709317447c1ffd9b66504bf657bb`.
+- Package identity, publisher, architecture and 1.0.5.0 version verified from each manifest. Release packages contain no preview fixtures or UI-test controls.
+- Partner Center validates both packages in Submission 6. Saved package changes remove the superseded 1.0.4 packages from the update draft. Updated description, features, release notes and four screenshots are saved. Publication remains automatic after certification.
+- General CI run `38162272844` is completing the Windows lifecycle build; all other checks have passed. Certification submission awaits that final check and PR merge.
+
+## Submission outcome
+
+- All 15 PR checks passed. General CI `38162272844` completed successfully, including Windows Rust tests and the exact Windows client/Loft/Directory lifecycle.
+- PR #37 merged on 2026-10-11 at 18:21:33 UTC: `aa4d8428e0f7a09bf02cbbb3023ae3b7909551f3`. Its tree is identical to the tested/package-source commit `63f01ba854583852a954254df77b4e117a0db1e3`.
+- Submitted version 1.0.5.0 x64/ARM64 in Partner Center Submission 6 (`1152921505702097627`) on 2026-10-11 at approximately 18:22 UTC. Portal now confirms **Update in certification** and **Your product will start publishing as soon as it passes certification**.
+- Public Store presence remains Submission 5 / 1.0.4.0 while Microsoft reviews the update. This is a submitted update, not a claim that 1.0.5 is already publicly available.
+- Store link: https://apps.microsoft.com/detail/9N0NWJ9L8XDP. No further publishing action is scheduled or needed after certification unless Microsoft requests changes.
+- Implementation, native verification, package/listing upload and certification submission are complete. Remaining external dependency: Microsoft certification and Store propagation.

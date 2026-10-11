@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.4.0`; update under validation: `1.0.5.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.4.0`; update in certification: `1.0.5.0`, Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -50,7 +50,10 @@ Support / website: https://pigeonpost.dev
 ## Release gates and current status
 
 On October 11, 2026, Partner Center confirms **In Microsoft Store**, Submission 5, with public x64
-and ARM64 packages at **1.0.4.0**. Version **1.0.5.0** is under validation and has not yet been submitted.
+and ARM64 packages at **1.0.4.0**. Version **1.0.5.0** was submitted on October 11 in Submission 6
+(`1152921505702097627`) and is **in certification**, with automatic publication after approval.
+PR #37 is merged. Windows run `38162272856` and general CI `38162272844` passed;
+both validated packages and four updated native screenshots are saved in the submission.
 Current release evidence is tracked in `docs/planning/2026-10-11-windows-ui-progress.md`.
 
 ### Version 1.0.5 release notes
