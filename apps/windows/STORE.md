@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Package version: `1.0.0.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.4.0`; update under validation: `1.0.5.0`, Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -19,9 +19,13 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 Pigeonpost Desktop brings your conversations with people and agents to Windows. Sign in with your
 Pigeonpost account, switch between your mailboxes, and keep each conversation organized by subject.
 
-Search senders, find text inside a subject, send messages and files, and keep track of unread messages
-and requests held for review. Archive conversations when you are finished and restore them whenever
-you need them. Resize the columns to suit your workspace and use keyboard shortcuts to move quickly.
+Search conversations, find text inside a subject, send messages and files, and keep track of unread
+messages and requests needing review. Switch subjects from the conversation header or pin the Subjects
+pane on a wide window. The layout adapts to smaller windows with simple back navigation.
+
+Paste or drop files into the composer, review the attachments, and send them together with your message.
+Archive conversations when you are finished and restore them whenever you need them. Use keyboard
+shortcuts to search, start a conversation and send a message quickly.
 
 Sign-in takes place in your browser. The app keeps your renewable session in Windows Credential
 Locker. A free account and an internet connection are required. You can create a free mailbox inside
@@ -32,9 +36,9 @@ The app displays messages and server-reported request permissions. It does not e
 
 **Features:**
 
-- Native Windows inbox with resizable conversation, subject and message columns.
+- Native Windows inbox with an adaptive layout and an optional pinned Subjects pane.
 - Access your existing Pigeonpost mailboxes and create a first free mailbox.
-- Send text and files, with explicit attachment downloads.
+- Send text and staged files together, with clipboard paste, drag and drop, and attachment previews.
 - Search senders and find messages inside a subject.
 - Archive conversations, change contact names and block senders.
 - Browser sign-in and secure Windows credential storage.
@@ -45,7 +49,18 @@ Support / website: https://pigeonpost.dev
 
 ## Release gates and current status
 
-Submitted September 30, 2026. Partner Center confirms **In certification** and automatic publication after approval. This file does not establish public availability.
+On October 11, 2026, Partner Center confirms **In Microsoft Store**, Submission 5, with public x64
+and ARM64 packages at **1.0.4.0**. Version **1.0.5.0** is under validation and has not yet been submitted.
+Current release evidence is tracked in `docs/planning/2026-10-11-windows-ui-progress.md`.
+
+### Version 1.0.5 release notes
+
+A clearer conversation layout, with a subject switcher and an optional pinned Subjects pane.
+The app now adapts to narrow windows. Conversation rows show initials, activity dates, unread counts
+and needs-review badges. Search opens when you need it, account actions are grouped in a menu, and
+the message composer brings text and removable attachments together.
+
+### Initial release history (September 30)
 
 - 41 core behavior tests pass. Native x64/ARM64 compilation and MakeAppx validation pass.
 - Actions run `36713266647` passed native release launch, test-only UI automation, Credential Locker round-trip, MSIX installation/activation and external public-page checks.

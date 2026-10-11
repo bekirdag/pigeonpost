@@ -26,6 +26,8 @@ if ($Fixture) {
     New-Item -ItemType Directory -Force $downloadDirectory | Out-Null
     $env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY = $downloadDirectory
     $env:PIGEONPOST_UI_ARRIVAL_FILE = Join-Path (Resolve-Path $OutputDirectory).Path 'arrival.signal'
+    $env:PIGEONPOST_UI_THEME_FILE = Join-Path (Resolve-Path $OutputDirectory).Path 'theme.signal'
+    $env:PIGEONPOST_UI_SCROLL_LOG = Join-Path (Resolve-Path $OutputDirectory).Path 'scroll.log'
     $secondAttachment = Join-Path (Resolve-Path $OutputDirectory).Path 'second-file.txt'
     [IO.File]::WriteAllText($secondAttachment, 'Second dropped file bytes')
 }
@@ -80,6 +82,7 @@ try {
         throw "Native list missing: $Name"
     }
     function Capture([string]$Name) {
+        $null = [NativeWindowBounds]::SetCursorPos($screen.Right - 2, $screen.Bottom - 2)
         Start-Sleep -Milliseconds 500
         $rect = [NativeWindowBounds+Rect]::new()
         if ([NativeWindowBounds]::DwmGetWindowAttribute($process.MainWindowHandle, 9, [ref]$rect, 16) -ne 0) { throw 'Could not obtain visible native window bounds.' }
@@ -247,8 +250,16 @@ public static class NativeFileDragSource {
     if ($Fixture) {
         Write-Host 'Checking composer attachments and downloads.'
         $null = Wait-Element 'New conversation'
+        if (Element 'Find in this subject') { throw 'Search should be closed initially.' }
+        if (Element 'Subjects') { throw 'The subjects pane should be collapsed initially.' }
+        $initialScroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
+        for ($n = 0; $n -lt 40 -and $initialScroll.Current.VerticalScrollPercent -lt 95; $n++) { Start-Sleep -Milliseconds 100 }
+        if ($initialScroll.Current.VerticalScrollPercent -lt 95) { throw 'Initial conversation did not open at its newest messages.' }
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
+        (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        $null = Wait-List 'Subjects'
+        Capture 'pinned-subjects.png'
         Invoke-Control 'Send'
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Successful send did not clear composer.' }
         Invoke-Control 'Attach files…'
@@ -269,6 +280,7 @@ public static class NativeFileDragSource {
         Copy-Message 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
+        Invoke-Control 'Account'
         Invoke-Control 'Copy my address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/main') { throw 'Own copy did not preserve the routing address.' }
         Invoke-Control 'Sender details'
@@ -280,6 +292,8 @@ public static class NativeFileDragSource {
         Invoke-Control 'Sender address details'
         $null = Wait-Element 'Known sender'
         Invoke-Control 'Cancel'
+        (Wait-Element 'Message').SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('^f')
         Set-Text 'Find in this subject' 'History message 1:'
         $null = Wait-Element '1 of 1'
         Copy-Message 'History message 1: desktop parity check.'
@@ -424,15 +438,78 @@ public static class NativeFileDragSource {
         Capture 'new-subject.png'
         Commit-Dialog 'Create'
         $null = Wait-Element 'Native parity subject'
+        Invoke-Control 'Subject actions'
         Invoke-Control 'Delete subject…'
         $null = Wait-Element 'Cancel'
         Capture 'delete-subject.png'
         Invoke-Control 'Cancel'
         $null = Wait-Element 'Native parity subject'
+        Invoke-Control 'Subject actions'
         Invoke-Control 'Delete subject…'
         Commit-Dialog 'Delete subject'
         if (Element 'Native parity subject') { throw 'Deleted subject remains visible.' }
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Deleting a different subject lost the main draft.' }
+
+        Write-Host 'Checking subject switching and adaptive layouts.'
+        Invoke-Control 'Close search'
+        $subject = Wait-Element 'Current subject'
+        $subject.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
+        Start-Sleep -Milliseconds 500
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Draft leaked to another subject.' }
+        Capture 'subject-conversation.png'
+        Set-Text 'Message' 'Subject-specific draft'
+        $subject.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{ENTER}')
+        Start-Sleep -Milliseconds 500
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Subject switcher lost the original draft.' }
+
+        $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 900, 720, 4)
+        Start-Sleep -Milliseconds 500
+        if (Element 'Subjects') { throw 'Pinned subjects should collapse at medium width.' }
+        Capture 'medium-window.png'
+        $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 520, 720, 4)
+        $null = Wait-Element 'Back to conversations'
+        if (Element 'Search senders') { throw 'Compact conversation still shows the sidebar.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Resizing lost the draft.' }
+        Capture 'compact-conversation.png'
+        Invoke-Control 'Back to conversations'
+        $null = Wait-Element 'Search senders'
+        if (Element 'Message') { throw 'Compact inbox should hide the composer.' }
+        Capture 'compact-inbox.png'
+        # Ctrl+F reopens the selected conversation even from the compact inbox.
+        (Wait-Element 'Search senders').SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('^f')
+        Set-Text 'Find in this subject' 'History message 1:'
+        $null = Wait-Element '1 of 1'
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 250
+        if (Element 'Find in this subject') { throw 'Escape did not close search.' }
+        (Wait-Element 'Message').SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('^k')
+        $null = Wait-Element 'Search senders'
+        $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 1440, 900, 4)
+        $null = Wait-List 'Subjects'
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Returning to wide layout lost the draft.' }
+        (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        Start-Sleep -Milliseconds 500
+        if (Element 'Subjects') { throw 'Unpinning did not hide the subjects pane.' }
+        Capture 'refreshed-inbox.png'
+        [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Dark')
+        for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
+        if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Native theme switch was not applied.' }
+        Capture 'dark-inbox.png'
+        [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Light')
+        for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
+        if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Restoring the light theme failed.' }
+        $filter = Wait-Element 'Conversation filter'
+        $filter.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
+        $null = Wait-Element 'No archived conversations'
+        $filter.SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{ENTER}')
+        Start-Sleep -Milliseconds 500
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Changing the archive filter lost the draft.' }
     } else {
         $button = Wait-Element 'Sign in or create account'
         $null = Wait-Element 'Privacy policy'
@@ -445,6 +522,6 @@ public static class NativeFileDragSource {
     if ($root -and -not $process.HasExited) { Capture 'failure.png' }
     throw
 } finally {
-    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE -ErrorAction SilentlyContinue }
+    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE, Env:PIGEONPOST_UI_SCROLL_LOG -ErrorAction SilentlyContinue }
     if (-not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }
 }

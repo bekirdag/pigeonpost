@@ -22,6 +22,33 @@ var acting = new Mailbox("/k/cz6900v2h90vnwefj7g7ezvbh4", "/bekir/su_iam", "su_i
 Mailbox[] own = [acting, new("/k/zz1111v2h90vnwefj7g7ezvbh9", "/bekir/docdex", "docdex box"), new("/k/qq2222v2h90vnwefj7g7ezvbh7", Label: "scratch")];
 IReadOnlyList<Conversation> Build(InboxSnapshot? value = null, IReadOnlyList<PendingMessage>? pending = null) => ConversationBuilder.Build(value ?? fixture, pending ?? [], own, acting);
 
+Test("Conversation initials preserve Unicode text elements and keep anonymous identifiers neutral", () =>
+{
+    Equal(ConversationPresentation.Initials("Design team"), "DT");
+    Equal(ConversationPresentation.Initials("/wodo/hr"), "WH");
+    Equal(ConversationPresentation.Initials("/k/abc123"), "?");
+    Equal(ConversationPresentation.Initials(" / - _ "), "?");
+    Equal(ConversationPresentation.Initials("👩🏽‍💻 Developer"), "👩🏽‍💻D");
+    Equal(ConversationPresentation.Initials("O\u0308zgu\u0308r Demir"), "O\u0308D");
+});
+Test("Activity labels use local calendar days and reject missing or malformed timestamps", () =>
+{
+    var now = new DateTimeOffset(new DateTime(2026, 10, 11, 0, 10, 0, DateTimeKind.Local));
+    Equal(ConversationPresentation.ActivityLabel(now.AddMinutes(-20).ToUnixTimeSeconds(), now), "Yesterday");
+    Equal(ConversationPresentation.ActivityLabel(now.ToUnixTimeSeconds(), now), now.ToString("t"));
+    Equal(ConversationPresentation.ActivityLabel(now.AddYears(-1).ToUnixTimeSeconds(), now), now.AddYears(-1).ToString("MMM d, yyyy"));
+    Equal(ConversationPresentation.ActivityLabel(0, now), "");
+    Equal(ConversationPresentation.ActivityLabel(long.MaxValue, now), "");
+});
+Test("Unread and review badges keep separate server-derived meanings", () =>
+{
+    var row = Build().Single(c => c.Peer == "/bekir/agent1");
+    Check(row.HasHeld && row.HasUnread, "Held and unread should both be visible.");
+    Equal(row.ReviewLabel, "1 needs review");
+    var read = row with { Messages = row.Messages.Select(m => m with { Read = true }).ToArray() };
+    Check(!read.HasUnread && read.HasHeld, "Reading a request must not grant automatic permission.");
+});
+
 Test("Default inbox labels distinguish namespaces and preserve routing keys", () =>
 {
     Equal(new Mailbox("/k/one", "/bekir/main", "main").DisplayName, "/bekir");

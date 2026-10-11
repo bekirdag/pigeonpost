@@ -5,13 +5,24 @@
     xmlns:local="using:Pigeonpost.Desktop"
     xmlns:core="using:Pigeonpost.Core"
     Title="Pigeonpost Desktop">
-    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded">
+    <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" Loaded="Root_Loaded" SizeChanged="Root_SizeChanged" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.Resources>
+            <local:BooleanVisibilityConverter x:Key="BoolVisibility" />
+            <Style x:Key="QuietIconButton" TargetType="Button">
+                <Setter Property="Background" Value="Transparent" /><Setter Property="BorderThickness" Value="0" />
+                <Setter Property="Padding" Value="8" /><Setter Property="MinWidth" Value="32" /><Setter Property="MinHeight" Value="32" />
+            </Style>
+            <Style x:Key="PaneDivider" TargetType="Thumb">
+                <Setter Property="HorizontalAlignment" Value="Stretch" /><Setter Property="VerticalAlignment" Value="Stretch" />
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb">
+                    <Border Background="{ThemeResource NavigationSurfaceBrush}"><Border Width="1" HorizontalAlignment="Center" Background="{ThemeResource CardStrokeColorDefaultBrush}" /></Border>
+                </ControlTemplate></Setter.Value></Setter>
+            </Style>
             <DataTemplate x:Key="IncomingMessage" x:DataType="core:ThreadMessage">
-                <Border HorizontalAlignment="Left" MaxWidth="640" Margin="12,5,64,5" Padding="16,12" CornerRadius="12"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
+                <Border HorizontalAlignment="Left" MaxWidth="640" Margin="16,6,40,6" Padding="16,12" CornerRadius="12"
+                        Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
+                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="15" />
                         <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="core:MessageAttachment">
@@ -42,10 +53,10 @@
                 </Border>
             </DataTemplate>
             <DataTemplate x:Key="OutgoingMessage" x:DataType="core:ThreadMessage">
-                <Border HorizontalAlignment="Right" MaxWidth="640" Margin="64,5,12,5" Padding="16,12" CornerRadius="12"
+                <Border HorizontalAlignment="Right" MaxWidth="640" Margin="40,6,16,6" Padding="16,12" CornerRadius="12"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1">
                     <StackPanel Spacing="6">
-                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14" />
+                        <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="15" />
                         <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate x:DataType="core:MessageAttachment">
@@ -94,53 +105,80 @@
                  Severity="Error" Message="{x:Bind ViewModel.Error, Mode=OneWay}" />
         <Grid x:Name="InboxLayout" Grid.Row="1" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
-                <ColumnDefinition x:Name="SenderColumn" Width="300" MinWidth="240" MaxWidth="420" />
-                <ColumnDefinition Width="6" />
-                <ColumnDefinition x:Name="SubjectColumn" Width="210" MinWidth="170" MaxWidth="340" />
-                <ColumnDefinition Width="6" />
-                <ColumnDefinition Width="*" MinWidth="300" />
+                <ColumnDefinition x:Name="SenderColumn" Width="304" />
+                <ColumnDefinition x:Name="SenderDividerColumn" Width="5" />
+                <ColumnDefinition x:Name="SubjectColumn" Width="0" />
+                <ColumnDefinition x:Name="SubjectDividerColumn" Width="0" />
+                <ColumnDefinition x:Name="MessageColumn" Width="*" />
             </Grid.ColumnDefinitions>
-            <Grid Grid.Column="0" Padding="12,16,12,12" RowSpacing="12">
+            <Grid x:Name="SenderPane" Padding="16,20,12,12" RowSpacing="16" Background="{ThemeResource NavigationSurfaceBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                    <RowDefinition Height="*" /><RowDefinition Height="Auto" />
+                    <RowDefinition Height="Auto" /><RowDefinition Height="*" />
                 </Grid.RowDefinitions>
-                <StackPanel Orientation="Horizontal" Spacing="10">
+                <Grid ColumnSpacing="10">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Image Source="ms-appx:///Assets/Logo.png" Width="30" Height="30" AutomationProperties.Name="Pigeonpost" />
-                    <TextBlock Text="Pigeonpost" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
-                </StackPanel>
+                    <TextBlock Grid.Column="1" Text="Pigeonpost" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" />
+                    <Button Grid.Column="2" Click="NewConversation_Click" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="New conversation" ToolTipService.ToolTip="New conversation (Ctrl+N)">
+                        <FontIcon Glyph="&#xE8F2;" FontSize="18" />
+                    </Button>
+                </Grid>
                 <ComboBox Grid.Row="1" ItemsSource="{x:Bind ViewModel.Mailboxes, Mode=OneWay}" DisplayMemberPath="DisplayName"
                           SelectedItem="{x:Bind ViewModel.SelectedMailbox, Mode=OneWay}" SelectionChanged="Mailbox_SelectionChanged"
-                          HorizontalAlignment="Stretch" AutomationProperties.Name="Mailbox" />
-                <TextBox x:Name="SenderSearchBox" Grid.Row="2" PlaceholderText="Search senders"
+                          HorizontalAlignment="Stretch" AutomationProperties.Name="Mailbox" ToolTipService.ToolTip="Choose the mailbox you send from" />
+                <TextBox x:Name="SenderSearchBox" Grid.Row="2" PlaceholderText="Search conversations"
                          Text="{x:Bind ViewModel.SenderSearch, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Search senders" />
-                <Grid Grid.Row="3">
-                    <ListView ItemsSource="{x:Bind ViewModel.Conversations, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedConversation, Mode=OneWay}"
-                              SelectionChanged="Conversation_SelectionChanged" SelectionMode="Single" AutomationProperties.Name="Conversations">
+                <Grid Grid.Row="3" ColumnSpacing="8">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <ComboBox SelectedIndex="0" SelectionChanged="ArchiveFilter_SelectionChanged" AutomationProperties.Name="Conversation filter" MinWidth="108">
+                        <ComboBoxItem Content="Inbox" /><ComboBoxItem Content="Archived" />
+                    </ComboBox>
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InboxSummary, Mode=OneWay}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                </Grid>
+                <Grid Grid.Row="4" Margin="-8,0,-4,0">
+                    <ListView x:Name="ConversationList" ItemsSource="{x:Bind ViewModel.Conversations, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedConversation, Mode=OneWay}"
+                              SelectionChanged="Conversation_SelectionChanged" IsItemClickEnabled="True" ItemClick="Conversation_ItemClick"
+                              SelectionMode="Single" AutomationProperties.Name="Conversations" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                        <ListView.ItemContainerStyle>
+                            <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="8,4" /><Setter Property="Margin" Value="0,2" /></Style>
+                        </ListView.ItemContainerStyle>
                         <ListView.ItemTemplate>
                             <DataTemplate x:DataType="core:Conversation">
-                                <StackPanel Padding="2,8" Spacing="3">
-                                    <StackPanel.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Copy address" Tag="{x:Bind Peer}" Click="CopyPeer_Click" /></MenuFlyout></StackPanel.ContextFlyout>
-                                    <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind Peer}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind Preview}" FontSize="12" MaxLines="2" TextWrapping="Wrap" TextTrimming="CharacterEllipsis" />
-                                    <TextBlock Text="{x:Bind Badge}" FontSize="11" FontWeight="SemiBold" />
-                                </StackPanel>
+                                <Grid Padding="0,8" ColumnSpacing="10" AutomationProperties.Name="{x:Bind AccessibleSummary}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="40" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                                    <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Copy address" Tag="{x:Bind Peer}" Click="CopyPeer_Click" /></MenuFlyout></Grid.ContextFlyout>
+                                    <Border Width="40" Height="40" CornerRadius="20" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}">
+                                        <TextBlock Text="{x:Bind Initials}" FontSize="14" FontWeight="SemiBold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                                    </Border>
+                                    <StackPanel Grid.Column="1" Spacing="5">
+                                        <Grid ColumnSpacing="6">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind Peer}" />
+                                            <TextBlock Grid.Column="1" Text="{x:Bind ActivityLabel}" FontSize="11" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                        </Grid>
+                                        <Grid ColumnSpacing="8">
+                                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                            <TextBlock Text="{x:Bind Preview}" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                            <Border Grid.Column="1" MinWidth="20" Padding="5,1" CornerRadius="10" Background="{ThemeResource AccentFillColorDefaultBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
+                                                <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                                            </Border>
+                                        </Grid>
+                                        <Border Padding="6,2" CornerRadius="4" HorizontalAlignment="Left" Background="{ThemeResource ReviewSurfaceBrush}" Visibility="{Binding HasHeld, Converter={StaticResource BoolVisibility}}">
+                                            <TextBlock Text="{x:Bind ReviewLabel}" FontSize="11" Foreground="{ThemeResource ReviewTextBrush}" />
+                                        </Border>
+                                    </StackPanel>
+                                </Grid>
                             </DataTemplate>
                         </ListView.ItemTemplate>
                     </ListView>
-                    <TextBlock Text="{x:Bind ViewModel.EmptyListMessage, Mode=OneWay}" TextWrapping="Wrap" Margin="12,20"
+                    <TextBlock Text="{x:Bind ViewModel.EmptyListMessage, Mode=OneWay}" TextWrapping="Wrap" Margin="16,24"
                                Foreground="{ThemeResource TextFillColorSecondaryBrush}" IsHitTestVisible="False"
                                Visibility="{x:Bind ToVisibility(ViewModel.IsListEmpty), Mode=OneWay}" />
                 </Grid>
-                <StackPanel Grid.Row="4" Spacing="10">
-                    <Button Content="New conversation" Click="NewConversation_Click" HorizontalAlignment="Stretch" AutomationProperties.HelpText="Control N" />
-                    <ToggleSwitch Header="Archived conversations" IsOn="{x:Bind ViewModel.ShowArchived, Mode=TwoWay}" OnContent="Showing archive" OffContent="Showing inbox" />
-                    <TextBlock Text="{x:Bind ViewModel.InboxSummary, Mode=OneWay}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
             </Grid>
-            <Thumb Grid.Column="1" DragDelta="SenderColumn_DragDelta" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" AutomationProperties.Name="Resize conversations column" />
-            <Grid Grid.Column="2" Padding="12,18,12,12" RowSpacing="12">
+            <Thumb x:Name="SenderDivider" Grid.Column="1" DragDelta="SenderColumn_DragDelta" Style="{StaticResource PaneDivider}" AutomationProperties.Name="Resize conversations column" />
+            <Grid x:Name="SubjectPane" Grid.Column="2" Padding="12,22,12,12" RowSpacing="16" Visibility="Collapsed" Background="{ThemeResource NavigationSurfaceBrush}">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <TextBlock Text="Subjects" FontSize="18" FontWeight="SemiBold" />
                 <ListView Grid.Row="1" ItemsSource="{x:Bind ViewModel.Subjects, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedSubject, Mode=OneWay}"
@@ -149,94 +187,139 @@
                         <DataTemplate x:DataType="core:Subject">
                             <StackPanel Padding="2,8" Spacing="5">
                                 <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap" FontWeight="SemiBold" />
-                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </DataTemplate>
                     </ListView.ItemTemplate>
                 </ListView>
-                <StackPanel Grid.Row="2" Spacing="6">
-                    <Button Content="New subject" Click="NewSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
-                    <Button Content="Delete subject…" Click="DeleteSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanDeleteSubject, Mode=OneWay}" />
-                </StackPanel>
+                <Button Grid.Row="2" Content="New subject" Click="NewSubject_Click" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
             </Grid>
-            <Thumb Grid.Column="3" DragDelta="SubjectColumn_DragDelta" HorizontalAlignment="Stretch" VerticalAlignment="Stretch" AutomationProperties.Name="Resize subjects column" />
-            <Grid x:Name="MessagingArea" Grid.Column="4" Background="Transparent">
+            <Thumb x:Name="SubjectDivider" Grid.Column="3" DragDelta="SubjectColumn_DragDelta" Style="{StaticResource PaneDivider}" Visibility="Collapsed" AutomationProperties.Name="Resize subjects column" />
+            <Grid x:Name="MessagingArea" Grid.Column="4" Background="{ThemeResource ConversationSurfaceBrush}">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
-                <Grid Padding="18,16" ColumnSpacing="12">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <StackPanel Spacing="3">
-                        <HyperlinkButton Content="{x:Bind ViewModel.ConversationTitle, Mode=OneWay}" Click="Contact_Click" Padding="0" FontSize="20" FontWeight="SemiBold"
-                                         HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender details" />
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <HyperlinkButton Click="Contact_Click" Padding="0" FontSize="12" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
-                                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender address details">
-                                <TextBlock Text="{x:Bind ViewModel.ConversationAddress, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
-                            </HyperlinkButton>
-                            <HyperlinkButton Grid.Column="1" Content="Copy address" Click="CopyPeer_Click" Padding="0" FontSize="12" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" />
+                <Border BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,0,0,1" Padding="20,16,16,14">
+                    <Grid RowSpacing="12">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Grid ColumnSpacing="10">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Button x:Name="BackButton" Click="Back_Click" Style="{StaticResource QuietIconButton}" Visibility="Collapsed" VerticalAlignment="Top" AutomationProperties.Name="Back to conversations" ToolTipService.ToolTip="Back to conversations"><SymbolIcon Symbol="Back" /></Button>
+                            <StackPanel Grid.Column="1" Spacing="2">
+                                <HyperlinkButton Click="Contact_Click" Padding="0" FontSize="20" FontWeight="SemiBold" Foreground="{ThemeResource TextFillColorPrimaryBrush}"
+                                                 HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender details">
+                                    <TextBlock Text="{x:Bind ViewModel.ConversationTitle, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                </HyperlinkButton>
+                                <Grid ColumnSpacing="6" HorizontalAlignment="Left">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <HyperlinkButton Click="Contact_Click" Padding="0" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" HorizontalContentAlignment="Left"
+                                                     IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Sender address details">
+                                        <TextBlock Text="{x:Bind ViewModel.ConversationAddress, Mode=OneWay}" TextTrimming="CharacterEllipsis" />
+                                    </HyperlinkButton>
+                                    <Button Grid.Column="1" Click="CopyPeer_Click" Padding="4" Background="Transparent" BorderThickness="0" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" AutomationProperties.Name="Copy address" ToolTipService.ToolTip="Copy address"><FontIcon Glyph="&#xE8C8;" FontSize="12" /></Button>
+                                </Grid>
+                            </StackPanel>
+                            <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4" VerticalAlignment="Top">
+                                <Button x:Name="FindButton" Click="Find_Click" Style="{StaticResource QuietIconButton}" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" AutomationProperties.Name="Find messages" ToolTipService.ToolTip="Find in this subject (Ctrl+F)"><SymbolIcon Symbol="Find" /></Button>
+                                <Button Style="{StaticResource QuietIconButton}" AutomationProperties.Name="Conversation actions" ToolTipService.ToolTip="Conversation actions">
+                                    <SymbolIcon Symbol="More" />
+                                    <Button.Flyout><MenuFlyout>
+                                        <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                                        <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
+                                        <MenuFlyoutItem Text="Sender details" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                                    </MenuFlyout></Button.Flyout>
+                                </Button>
+                            </StackPanel>
                         </Grid>
-                        <TextBlock Text="{x:Bind ViewModel.SubjectTitle, Mode=OneWay}" FontSize="12" />
-                    </StackPanel>
-                    <Button Grid.Column="1" Content="More" VerticalAlignment="Top" AutomationProperties.Name="Conversation actions">
-                        <Button.Flyout>
-                            <MenuFlyout>
-                                <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
-                                <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
-                                <MenuFlyoutItem Text="Sender details" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
-                            </MenuFlyout>
-                        </Button.Flyout>
-                    </Button>
-                </Grid>
-                <Grid Grid.Row="1" Margin="18,0,18,10" ColumnSpacing="6">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                    <TextBox x:Name="FindBox" PlaceholderText="Find in this subject" Text="{x:Bind ViewModel.Find, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Find in this subject" />
+                        <Grid Grid.Row="1" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <ComboBox x:Name="SubjectSelector" ItemsSource="{x:Bind ViewModel.Subjects, Mode=OneWay}" DisplayMemberPath="Name"
+                                      SelectedItem="{x:Bind ViewModel.SelectedSubject, Mode=OneWay}" SelectionChanged="Subject_SelectionChanged"
+                                      IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" HorizontalAlignment="Left" MinWidth="132" MaxWidth="320" AutomationProperties.Name="Current subject" ToolTipService.ToolTip="Switch subject" />
+                            <Button Grid.Column="1" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="Subject actions" ToolTipService.ToolTip="Subject actions" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}">
+                                <SymbolIcon Symbol="More" />
+                                <Button.Flyout><MenuFlyout>
+                                    <MenuFlyoutItem Text="New subject" Click="NewSubject_Click" />
+                                    <MenuFlyoutItem Text="Delete subject…" Click="DeleteSubject_Click" IsEnabled="{x:Bind ViewModel.CanDeleteSubject, Mode=OneWay}" />
+                                </MenuFlyout></Button.Flyout>
+                            </Button>
+                            <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Pin the subjects pane on wide windows"><FontIcon Glyph="&#xE840;" FontSize="18" /></ToggleButton>
+                        </Grid>
+                    </Grid>
+                </Border>
+                <Grid x:Name="FindBar" Grid.Row="1" Margin="20,12,20,0" ColumnSpacing="6" RowSpacing="4" Visibility="Collapsed">
+                    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <TextBox x:Name="FindBox" PlaceholderText="Find in this subject" Text="{x:Bind ViewModel.Find, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" AutomationProperties.Name="Find in this subject" KeyDown="FindBox_KeyDown" />
                     <Button Grid.Column="1" Content="↑" Click="PreviousMatch_Click" AutomationProperties.Name="Previous match" />
                     <Button Grid.Column="2" Content="↓" Click="NextMatch_Click" AutomationProperties.Name="Next match" />
+                    <Button Grid.Column="3" Click="CloseFind_Click" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="Close search" ToolTipService.ToolTip="Close search (Esc)"><SymbolIcon Symbol="Cancel" /></Button>
+                    <TextBlock Grid.Row="1" Grid.ColumnSpan="4" Text="{x:Bind ViewModel.FindSummary, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                 </Grid>
-                <Grid Grid.Row="2">
+                <Grid Grid.Row="2" Margin="0,8">
                     <ListView x:Name="MessageList" ItemsSource="{x:Bind ViewModel.Messages, Mode=OneWay}" SelectionMode="Single"
                               ItemTemplateSelector="{StaticResource MessageTemplateSelector}" AutomationProperties.Name="Messages"
                               ScrollViewer.HorizontalScrollBarVisibility="Disabled">
-                        <ListView.ItemsPanel>
-                            <ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView" /></ItemsPanelTemplate>
-                        </ListView.ItemsPanel>
+                        <ListView.Resources>
+                            <ResourceDictionary>
+                                <ResourceDictionary.ThemeDictionaries>
+                                    <ResourceDictionary x:Key="Light">
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                                    </ResourceDictionary>
+                                    <ResourceDictionary x:Key="Default">
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="Transparent" />
+                                        <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="Transparent" />
+                                    </ResourceDictionary>
+                                </ResourceDictionary.ThemeDictionaries>
+                            </ResourceDictionary>
+                        </ListView.Resources>
+                        <ListView.ItemsPanel><ItemsPanelTemplate><ItemsStackPanel ItemsUpdatingScrollMode="KeepItemsInView" /></ItemsPanelTemplate></ListView.ItemsPanel>
                         <ListView.ItemContainerStyle>
                             <Style TargetType="ListViewItem"><Setter Property="HorizontalContentAlignment" Value="Stretch" /><Setter Property="Padding" Value="0" /><Setter Property="AllowDrop" Value="True" /></Style>
                         </ListView.ItemContainerStyle>
                     </ListView>
                     <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="32" Height="32" IsHitTestVisible="False" />
                 </Grid>
-                <StackPanel Grid.Row="3" Padding="18,10,18,14" Spacing="8">
-                    <TextBlock Text="{x:Bind ViewModel.FindSummary, Mode=OneWay}" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <ScrollViewer MaxHeight="128" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
-                        <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attached files">
-                            <ItemsControl.ItemTemplate>
-                                <DataTemplate x:DataType="core:DraftAttachment">
-                                    <Grid ColumnSpacing="8" Margin="0,3">
-                                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                        <StackPanel Orientation="Horizontal" Spacing="8">
-                                            <Border Tag="{x:Bind}" Width="72" Height="54" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
-                                            <TextBlock Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" />
-                                        </StackPanel>
-                                        <Button Grid.Column="1" Content="Remove" Tag="{x:Bind}" Click="RemoveAttachment_Click" AutomationProperties.Name="{x:Bind RemoveLabel}" />
-                                    </Grid>
-                                </DataTemplate>
-                            </ItemsControl.ItemTemplate>
-                        </ItemsControl>
-                    </ScrollViewer>
-                    <TextBox x:Name="Composer" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
-                             AcceptsReturn="True" TextWrapping="Wrap" MinHeight="72" MaxHeight="160" MaxLength="20000"
-                             IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
-                        <TextBox.KeyboardAccelerators>
-                            <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="PasteAttachment_Invoked" />
-                            <KeyboardAccelerator Key="Insert" Modifiers="Shift" Invoked="PasteAttachment_Invoked" />
-                        </TextBox.KeyboardAccelerators>
-                    </TextBox>
-                    <Grid>
-                        <Button Content="Attach files…" Click="Attach_Click" HorizontalAlignment="Left" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
-                        <Button Content="Send" Click="Send_Click" HorizontalAlignment="Right" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                <Border Grid.Row="3" Margin="16,0,16,16" Padding="8" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource ControlStrokeColorDefaultBrush}" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+                    <Grid RowSpacing="6">
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <ScrollViewer MaxHeight="120" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attached files">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="core:DraftAttachment">
+                                        <Border CornerRadius="8" Background="{ThemeResource NavigationSurfaceBrush}" Padding="8" Margin="2,2,2,4">
+                                            <Grid ColumnSpacing="10">
+                                                <Grid.ColumnDefinitions><ColumnDefinition Width="48" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                                <Border Tag="{x:Bind}" Width="48" Height="40" CornerRadius="6" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
+                                                <TextBlock Grid.Column="1" Text="{x:Bind Filename}" VerticalAlignment="Center" TextTrimming="CharacterEllipsis" FontSize="13" ToolTipService.ToolTip="{x:Bind Filename}" />
+                                                <Button Grid.Column="2" Tag="{x:Bind}" Click="RemoveAttachment_Click" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="{x:Bind RemoveLabel}" ToolTipService.ToolTip="Remove attachment"><FontIcon Glyph="&#xE711;" FontSize="12" /></Button>
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                        </ScrollViewer>
+                        <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
+                                 AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="15"
+                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
+                            <TextBox.KeyboardAccelerators>
+                                <KeyboardAccelerator Key="V" Modifiers="Control" Invoked="PasteAttachment_Invoked" />
+                                <KeyboardAccelerator Key="Insert" Modifiers="Shift" Invoked="PasteAttachment_Invoked" />
+                            </TextBox.KeyboardAccelerators>
+                        </TextBox>
+                        <Grid Grid.Row="2" ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <Button Click="Attach_Click" Style="{StaticResource QuietIconButton}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attach files…" ToolTipService.ToolTip="Attach files or paste from clipboard"><SymbolIcon Symbol="Attach" /></Button>
+                            <TextBlock Grid.Column="1" Text="Ctrl+Enter to send" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                            <Button Grid.Column="2" Content="Send" Click="Send_Click" Padding="20,6" Style="{StaticResource AccentButtonStyle}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                        </Grid>
                     </Grid>
-                </StackPanel>
+                </Border>
             </Grid>
         </Grid>
         <StackPanel x:Name="Welcome" Grid.RowSpan="3" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" Margin="32">
@@ -264,16 +347,26 @@
                 <Button Content="Refresh mailboxes" Click="ReloadAccount_Click" />
             </StackPanel>
         </Border>
-        <Border x:Name="AccountBar" Grid.Row="2" Visibility="Collapsed" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="12,6">
+        <Border x:Name="AccountBar" Grid.Row="2" Visibility="Collapsed" Background="{ThemeResource NavigationSurfaceBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="12,4">
             <Grid ColumnSpacing="12">
-                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                <StackPanel VerticalAlignment="Center">
-                    <TextBlock Text="{x:Bind BuildLabel}" FontSize="11" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                    <TextBlock x:Name="AccountStatus" Text="Connected to Pigeonpost" FontSize="11" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
-                </StackPanel>
-                <Button Grid.Column="1" Content="Copy my address" Click="CopyAddress_Click" />
-                <Button Grid.Column="2" Content="Manage account" Click="ManageAccount_Click" />
-                <Button Grid.Column="3" Content="Sign out" Click="SignOut_Click" />
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <Button Background="Transparent" BorderThickness="0" Padding="6" AutomationProperties.Name="Account" ToolTipService.ToolTip="Account and settings">
+                    <SymbolIcon Symbol="Contact" />
+                    <Button.Flyout><MenuFlyout>
+                        <MenuFlyoutItem Text="Copy my address" Click="CopyAddress_Click" />
+                        <MenuFlyoutItem Text="Manage account" Click="ManageAccount_Click" />
+                        <MenuFlyoutItem Text="Privacy policy" Click="Privacy_Click" />
+                        <MenuFlyoutSeparator />
+                        <MenuFlyoutItem Text="{x:Bind BuildLabel}" IsEnabled="False" />
+                        <MenuFlyoutItem Text="Sign out" Click="SignOut_Click" />
+                    </MenuFlyout></Button.Flyout>
+                </Button>
+                <Grid Grid.Column="1" ColumnSpacing="6" VerticalAlignment="Center">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <TextBlock x:Name="SendingAsLabel" Text="Sending as" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                    <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.MailboxAddress, Mode=OneWay}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" ToolTipService.ToolTip="{x:Bind ViewModel.MailboxAddress, Mode=OneWay}" />
+                </Grid>
+                <TextBlock x:Name="AccountStatus" Grid.Column="2" Text="Connected" MaxWidth="220" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
             </Grid>
         </Border>
     </Grid>

@@ -16,9 +16,9 @@ public sealed class PreviewInboxService : IInboxService
     {
         var messages = new List<InboxMessage>
         {
-            Received("design-1", "/preview/design", "The desktop layout is ready: conversations on the left, subjects in the middle, and the message you are reading on the right.", "design-general", Epoch - 7200, true),
-            new() { MessageId = "design-2", Direction = "out", From = mailboxes[0].Address, To = "/preview/design", Peer = "/preview/design", Body = RequestEnvelope.Work("Keep the columns resizable and make the keyboard feel at home on Windows."), ThreadId = "design-general", SentAt = Epoch - 7000 },
-            Received("design-3", "/preview/design", "Agreed. The preview uses native controls, with room for long conversations and clear unread indicators.", "design-general", Epoch - 300, false),
+            Received("design-1", "/preview/design", "I've organized the feedback for the next release. Can you review the desktop layout?", "design-general", Epoch - 7200, true),
+            new() { MessageId = "design-2", Direction = "out", From = mailboxes[0].Address, To = "/preview/design", Peer = "/preview/design", Body = RequestEnvelope.Work("I'll check the layout, keyboard shortcuts, and how it works in a smaller window."), ThreadId = "design-general", SentAt = Epoch - 7000 },
+            Received("design-3", "/preview/design", "Thanks. Let's keep the conversation easy to follow and make files simple to share.", "design-general", Epoch - 300, false),
             Received("release-1", "/preview/design", "Release checklist\n\n• Verify x64 and ARM64 builds\n• Check keyboard navigation and text scaling\n• Publish the finished MSIX through Microsoft Store", "design-release", Epoch - 900, true),
             Received("engineering-1", "/preview/engineering", "The same postbox will serve all three clients. The API contract tests are ready for the Windows port.", "engineering-general", Epoch - 600, false),
             Received("engineering-2", "/preview/engineering", "{\"v\":1,\"verb\":\"run_tests\",\"args\":{\"suite\":\"desktop\"},\"note\":\"Please check the desktop build before release.\"}", "engineering-general", Epoch - 500, false) with { Autonomy = "review", Verb = "run_tests", HeldBecause = "verb_denied" },

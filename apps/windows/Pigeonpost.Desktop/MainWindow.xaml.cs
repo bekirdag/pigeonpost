@@ -47,6 +47,8 @@ public sealed partial class MainWindow : Window
         ViewModel = new InboxViewModel(preview, postbox);
 #endif
         InitializeComponent();
+        MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
+        MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         Title = BuildLabel;
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
@@ -71,6 +73,7 @@ public sealed partial class MainWindow : Window
     {
         if (initialized) return;
         initialized = true;
+        UpdateLayoutMode();
         var window = WinRT.Interop.WindowNative.GetWindowHandle(this);
         fileDrop = new NativeFileDrop(window, (x, y) =>
         {
@@ -99,9 +102,12 @@ public sealed partial class MainWindow : Window
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)
     {
+        var scale = Root.XamlRoot?.RasterizationScale ?? 1;
+        var minimumWidth = (int)Math.Ceiling(420 * scale);
+        var minimumHeight = (int)Math.Ceiling(500 * scale);
         if (args.DidSizeChange && sender.Presenter is OverlappedPresenter { State: OverlappedPresenterState.Restored }
-            && (sender.Size.Width < 900 || sender.Size.Height < 560))
-            sender.Resize(new SizeInt32(Math.Max(900, sender.Size.Width), Math.Max(560, sender.Size.Height)));
+            && (sender.Size.Width < minimumWidth || sender.Size.Height < minimumHeight))
+            sender.Resize(new SizeInt32(Math.Max(minimumWidth, sender.Size.Width), Math.Max(minimumHeight, sender.Size.Height)));
     }
 
     private async void Mailbox_SelectionChanged(object sender, SelectionChangedEventArgs e)
@@ -118,13 +124,15 @@ public sealed partial class MainWindow : Window
         if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Conversation conversation } && conversation.Peer != ViewModel.SelectedConversation?.Peer)
         {
             ViewModel.SelectConversation(conversation);
+            ShowConversation();
             await ViewModel.AcknowledgeSelectedAsync();
         }
     }
 
     private void Subject_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (!ViewModel.IsUpdatingLists && sender is ListView { SelectedItem: Subject subject }) ViewModel.SelectSubject(subject);
+        var subject = sender switch { ListView list => list.SelectedItem as Subject, ComboBox box => box.SelectedItem as Subject, _ => null };
+        if (!ViewModel.IsUpdatingLists && subject is not null) ViewModel.SelectSubject(subject);
     }
 
     private async Task SendComposerAsync()
@@ -175,7 +183,11 @@ public sealed partial class MainWindow : Window
             };
             peer.TextChanged += Validate;
             message.TextChanged += Validate;
-            if (await dialog.ShowAsync() == ContentDialogResult.Primary) await ViewModel.StartConversationAsync(peer.Text, message.Text);
+            if (await dialog.ShowAsync() == ContentDialogResult.Primary)
+            {
+                await ViewModel.StartConversationAsync(peer.Text, message.Text);
+                ShowConversation();
+            }
         }
         finally { dialogOpen = false; }
     }
@@ -214,10 +226,14 @@ public sealed partial class MainWindow : Window
         finally { dialogOpen = false; }
     }
 
-    private void SenderColumn_DragDelta(object sender, DragDeltaEventArgs e) => SenderColumn.Width = new GridLength(Math.Clamp(SenderColumn.Width.Value + e.HorizontalChange, 240, 420));
-    private void SubjectColumn_DragDelta(object sender, DragDeltaEventArgs e) => SubjectColumn.Width = new GridLength(Math.Clamp(SubjectColumn.Width.Value + e.HorizontalChange, 170, 340));
-    private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { FindBox.Focus(FocusState.Programmatic); args.Handled = true; }
-    private void SenderSearch_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { SenderSearchBox.Focus(FocusState.Programmatic); args.Handled = true; }
+    private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { ShowFind(); args.Handled = true; }
+    private void SenderSearch_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
+    {
+        compactConversation = false;
+        UpdateLayoutMode();
+        SenderSearchBox.Focus(FocusState.Programmatic);
+        args.Handled = true;
+    }
     private async void NewConversation_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await NewConversationAsync(); }
     private async void Refresh_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await ViewModel.RefreshAsync(); }
     private async void Send_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
@@ -263,18 +279,43 @@ public sealed partial class MainWindow : Window
         var model = ViewModel;
         var context = model.ContextVersion;
         var request = ++scrollVersion;
-        DispatcherQueue.TryEnqueue(() =>
+        TraceScroll($"queued request={request} context={context} messages={model.Messages.Count} leading={leading}");
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () =>
         {
-            if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel) || context != model.ContextVersion || request != scrollVersion) return;
-            var current = model.Messages.FirstOrDefault(m => m.Id == message.Id);
-            if (current is null) return;
-            if (select) MessageList.SelectedItem = current;
-            MessageList.ScrollIntoView(current, leading ? ScrollIntoViewAlignment.Leading : ScrollIntoViewAlignment.Default);
+            // A virtualized list revises its estimated extent as rows are realized. Settle the
+            // requested tail over a few frames; context changes and user input cancel the work.
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel) || context != model.ContextVersion || request != scrollVersion)
+                { TraceScroll($"cancelled request={request} current={scrollVersion}"); return; }
+                var current = model.Messages.FirstOrDefault(m => m.Id == message.Id);
+                if (current is null) return;
+                MessageList.UpdateLayout();
+                if (select) MessageList.SelectedItem = current;
+                MessageList.ScrollIntoView(current, leading ? ScrollIntoViewAlignment.Leading : ScrollIntoViewAlignment.Default);
+                if (leading || current.Id != model.Messages.LastOrDefault()?.Id) return;
+                if (Descendant<ScrollViewer>(MessageList) is { } viewer)
+                {
+                    viewer.ChangeView(null, viewer.ScrollableHeight, null, disableAnimation: true);
+                    TraceScroll($"applied request={request} attempt={attempt} items={MessageList.Items.Count} height={viewer.ScrollableHeight} offset={viewer.VerticalOffset}");
+                }
+                await Task.Delay(32);
+            }
         });
+    }
+
+    [System.Diagnostics.Conditional("UI_TESTS")]
+    private void TraceScroll(string note)
+    {
+#if UI_TESTS
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_SCROLL_LOG") is { } path)
+            File.AppendAllText(path, note + Environment.NewLine);
+#endif
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
@@ -287,6 +328,7 @@ public sealed partial class MainWindow : Window
         var viewer = Descendant<ScrollViewer>(MessageList);
         followMessages = ViewModel.ContextVersion != messageContext || viewer is null
             || viewer.ScrollableHeight - viewer.VerticalOffset < 48;
+        TraceScroll($"updating context={ViewModel.ContextVersion} previous={messageContext} follow={followMessages} height={viewer?.ScrollableHeight} offset={viewer?.VerticalOffset}");
         messageContext = ViewModel.ContextVersion;
     }
 
@@ -340,6 +382,12 @@ public sealed partial class MainWindow : Window
         }
         return null;
     }
+}
+
+public sealed class BooleanVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) => value is true ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
 }
 
 public sealed class MessageTemplateSelector : DataTemplateSelector
