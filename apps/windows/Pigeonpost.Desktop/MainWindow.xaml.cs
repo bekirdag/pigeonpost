@@ -47,6 +47,8 @@ public sealed partial class MainWindow : Window
         ViewModel = new InboxViewModel(preview, postbox);
 #endif
         InitializeComponent();
+        MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
+        MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         Title = BuildLabel;
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
@@ -277,16 +279,38 @@ public sealed partial class MainWindow : Window
         var model = ViewModel;
         var context = model.ContextVersion;
         var request = ++scrollVersion;
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+        TraceScroll($"queued request={request} context={context} messages={model.Messages.Count} leading={leading}");
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, async () =>
         {
-            if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel) || context != model.ContextVersion || request != scrollVersion) return;
-            var current = model.Messages.FirstOrDefault(m => m.Id == message.Id);
-            if (current is null) return;
-            // Initial binding and adaptive layout must finish before WinUI can locate a row.
-            MessageList.UpdateLayout();
-            if (select) MessageList.SelectedItem = current;
-            MessageList.ScrollIntoView(current, leading ? ScrollIntoViewAlignment.Leading : ScrollIntoViewAlignment.Default);
+            // A virtualized list revises its estimated extent as rows are realized. Settle the
+            // requested tail over a few frames; context changes and user input cancel the work.
+            for (var attempt = 0; attempt < 8; attempt++)
+            {
+                if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel) || context != model.ContextVersion || request != scrollVersion)
+                { TraceScroll($"cancelled request={request} current={scrollVersion}"); return; }
+                var current = model.Messages.FirstOrDefault(m => m.Id == message.Id);
+                if (current is null) return;
+                MessageList.UpdateLayout();
+                if (select) MessageList.SelectedItem = current;
+                MessageList.ScrollIntoView(current, leading ? ScrollIntoViewAlignment.Leading : ScrollIntoViewAlignment.Default);
+                if (leading || current.Id != model.Messages.LastOrDefault()?.Id) return;
+                if (Descendant<ScrollViewer>(MessageList) is { } viewer)
+                {
+                    viewer.ChangeView(null, viewer.ScrollableHeight, null, disableAnimation: true);
+                    TraceScroll($"applied request={request} attempt={attempt} items={MessageList.Items.Count} height={viewer.ScrollableHeight} offset={viewer.VerticalOffset}");
+                }
+                await Task.Delay(32);
+            }
         });
+    }
+
+    [System.Diagnostics.Conditional("UI_TESTS")]
+    private void TraceScroll(string note)
+    {
+#if UI_TESTS
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_SCROLL_LOG") is { } path)
+            File.AppendAllText(path, note + Environment.NewLine);
+#endif
     }
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
@@ -304,6 +328,7 @@ public sealed partial class MainWindow : Window
         var viewer = Descendant<ScrollViewer>(MessageList);
         followMessages = ViewModel.ContextVersion != messageContext || viewer is null
             || viewer.ScrollableHeight - viewer.VerticalOffset < 48;
+        TraceScroll($"updating context={ViewModel.ContextVersion} previous={messageContext} follow={followMessages} height={viewer?.ScrollableHeight} offset={viewer?.VerticalOffset}");
         messageContext = ViewModel.ContextVersion;
     }
 

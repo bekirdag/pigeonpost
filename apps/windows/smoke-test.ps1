@@ -27,6 +27,7 @@ if ($Fixture) {
     $env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY = $downloadDirectory
     $env:PIGEONPOST_UI_ARRIVAL_FILE = Join-Path (Resolve-Path $OutputDirectory).Path 'arrival.signal'
     $env:PIGEONPOST_UI_THEME_FILE = Join-Path (Resolve-Path $OutputDirectory).Path 'theme.signal'
+    $env:PIGEONPOST_UI_SCROLL_LOG = Join-Path (Resolve-Path $OutputDirectory).Path 'scroll.log'
     $secondAttachment = Join-Path (Resolve-Path $OutputDirectory).Path 'second-file.txt'
     [IO.File]::WriteAllText($secondAttachment, 'Second dropped file bytes')
 }
@@ -521,6 +522,6 @@ public static class NativeFileDragSource {
     if ($root -and -not $process.HasExited) { Capture 'failure.png' }
     throw
 } finally {
-    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE -ErrorAction SilentlyContinue }
+    if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE, Env:PIGEONPOST_UI_SCROLL_LOG -ErrorAction SilentlyContinue }
     if (-not $process.HasExited) { $null = $process.CloseMainWindow(); if (-not $process.WaitForExit(5000)) { $process.Kill() } }
 }
