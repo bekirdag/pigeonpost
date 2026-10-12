@@ -78,6 +78,13 @@ extension Notification.Name {
         window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps: true)
         Task {
+            if CommandLine.arguments.contains("--composer-sizing-only") {
+                await composerSizing(window: window, account: account, inbox: inbox)
+                print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
+                watchdog.cancel()
+                window.orderOut(nil)
+                exit(InboxLoadingTests.failures == 0 ? 0 : 1)
+            }
             let a = InboxLoadingTests.a
             let b = InboxLoadingTests.b
             await InboxLoadingTests.pending(a.address, count: 5)
@@ -120,6 +127,7 @@ extension Notification.Name {
             await repeatedPickerSwitches(window: window, host: host, account: account, inbox: inbox)
             await visitsFromDetails(window: window, host: host, account: account, inbox: inbox)
             await clipboardMessages(window: window, account: account, inbox: inbox)
+            await composerSizing(window: window, account: account, inbox: inbox)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
             window.orderOut(nil)
@@ -133,6 +141,66 @@ extension Notification.Name {
         for _ in 0..<10 { try? await Task.sleep(for: .milliseconds(30)) }
     }
 
+    static func composerSizing(window: NSWindow, account: Account, inbox: Inbox) async {
+        print("Starting native composer sizing regression")
+        let host = NSHostingView(rootView: MacThreadView(peer: "/test/peer", subthread: nil)
+            .environment(account).environment(inbox))
+        window.contentView = host
+        window.setContentSize(NSSize(width: 760, height: 640))
+        await settle()
+        func findEditor(_ view: NSView) -> AttachmentTextView? {
+            if let editor = view as? AttachmentTextView { return editor }
+            return view.subviews.compactMap(findEditor).first
+        }
+        guard let editor = findEditor(host), let container = editor.textContainer,
+              let scroll = editor.enclosingScrollView else { fatalError("Composer did not render") }
+        window.makeFirstResponder(editor)
+        let draft = String(repeating: "English and Türkçe: İstanbul, görüşme, 👩🏽‍💻. A long draft wraps safely.\n", count: 120)
+        editor.insertText(draft, replacementRange: NSRange(location: 0, length: (editor.string as NSString).length))
+        await settle()
+        editor.setSelectedRange(NSRange(location: 8, length: 5))
+        let selection = editor.selectedRange()
+        let originalContainer = container.containerSize
+        let originalFrame = editor.frame
+        let originalScroll = scroll.contentView.bounds.origin
+        for width: CGFloat? in [0, 1, 40, 300, 640, nil, .infinity] {
+            let size = editor.fittingSize(width: width)
+            InboxLoadingTests.check(size?.width.isFinite == true && size?.height.isFinite == true,
+                                    "composer returns finite dimensions for width \(String(describing: width))")
+            InboxLoadingTests.check(container.containerSize == originalContainer && editor.frame == originalFrame,
+                                    "measuring a proposed width does not resize the live text system")
+        }
+        InboxLoadingTests.check(editor.string == draft && editor.selectedRange() == selection,
+                                "proposed-size measurement preserves draft and selection")
+        InboxLoadingTests.check(scroll.contentView.bounds.origin == originalScroll,
+                                "proposed-size measurement preserves draft scroll position")
+        for width in [430.0, 1000, 520, 760, 430, 1100] {
+            let started = Date()
+            window.setContentSize(NSSize(width: width, height: 640))
+            await settle()
+            InboxLoadingTests.check(Date().timeIntervalSince(started) < 2,
+                                    "long-draft window resize returns to the main run loop promptly")
+            InboxLoadingTests.check(editor.string == draft && editor.selectedRange() == selection,
+                                    "long draft and selection survive window resizing")
+            InboxLoadingTests.check(scroll.frame.height >= 32 && scroll.frame.height <= 161,
+                                    "long composer stays within its height limit")
+        }
+        editor.scrollRangeToVisible(NSRange(location: 0, length: 0))
+        await settle()
+        let top = scroll.contentView.bounds.origin.y
+        editor.scrollRangeToVisible(NSRange(location: (draft as NSString).length, length: 0))
+        await settle()
+        InboxLoadingTests.check(scroll.contentView.bounds.origin.y > top,
+                                "a long draft scrolls beyond the bounded composer viewport")
+        snapshot(host, name: "mac-composer-long-draft")
+        editor.selectAll(nil)
+        editor.insertText("Short draft", replacementRange: editor.selectedRange())
+        await settle()
+        InboxLoadingTests.check(scroll.frame.height <= 40 && editor.string == "Short draft",
+                                "replacing a long draft shrinks the composer again")
+        snapshot(host, name: "mac-composer-short-draft")
+    }
+
     static func clipboardMessages(window: NSWindow, account: Account, inbox: Inbox) async {
         let host = NSHostingView(rootView: MacThreadView(peer: "/test/peer", subthread: nil)
             .environment(account).environment(inbox))
@@ -143,6 +211,9 @@ extension Notification.Name {
             return view.subviews.compactMap(findEditor).first
         }
         guard let editor = findEditor(host) else { fatalError("Native composer did not render") }
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        await InboxLoadingTests.wait("clipboard test window is active") { NSApp.isActive && window.isKeyWindow }
         window.makeFirstResponder(editor)
         let board = NSPasteboard.withUniqueName()
         defer { board.releaseGlobally() }
