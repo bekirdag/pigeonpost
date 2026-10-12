@@ -17,3 +17,9 @@
 - Full native suite reached picker cycle 6 before an interaction timeout while building concurrently. Re-running without the concurrent archive build before deciding whether the app or test needs further correction.
 
 - Full native suite retry passed (exit 0) without concurrent archive compilation: picker stress, conversation/details navigation, clipboard/attachment sending and composer sizing. No picker production change was needed. Docdex staged-change hook passed.
+
+- Local full native result: 194 checks, 0 failures. GitHub Mac suite 38226645349 passes the same 194 checks on macOS 14 and 26. PR #38 merged as da911494689ea10d1a471d80933cd31c59a00d13. Earlier push-run cancellation is superseded by this successful PR run.
+- Build 45 published at https://github.com/bekirdag/pigeonpost/releases/tag/macos-1.0-45 on 2026-10-12 09:02:47 UTC. Source commit efe363e782d4c94a9b72f6b4a9c55dcf24ad243a. Apple accepted notarization 1e745ccc-075a-4f0c-b95e-638f8edb17eb (run 38226664309).
+- Final public archive and SHA256SUMS were downloaded without GitHub authentication; checksum, universal architectures, Developer ID, hardened runtime, no debugging entitlement, stapled ticket and Gatekeeper all pass. ZIP is 1,644,838 bytes; SHA-256 68a7dc7eabef47f02b36bbdb1d8ca9b6a1ed3b94d1ea9f6cf2c830fe2d3c6b37.
+- Website PR #39 merged as a0fa2a8316c8513191f4c60de879a203084a645a. All 23 download tests and the website CI job passed. Server install is awaiting interactive sudo authentication; see the build45 release progress log for the exact staged command and rollback.
+- Broader CI is not entirely green: the separate iOS StoreKit test NativeHandleStoreKitTests.swift:45 expected the restored 10-handle entitlement but received an empty list (run 38226645352). That test and iOS production configuration are unchanged by this Mac repair; no Mac suite failed in the completed PR run. Other platform jobs continued after the relevant Mac/site checks passed.
