@@ -12,3 +12,12 @@
 - Website payload and guarded deploy script are staged at `/home/wodo/pigeonpost-mac45-deploy/` on wodomini. Payload SHA-256: `589f0b8b7bae60312b4b0e06b81c91a4fc1e053c604aad051a54a515dd3c3504`; script SHA-256: `d388013f8d6c00a250677226d83cdd4d6df81f8418cd7feea1ae6838befc511f`. The script verifies the public ZIP hash, refuses to overwrite an unexpectedly changed live page, keeps the old page at `/var/backups/pigeonpost/mac-build45-20261012/download.html`, and atomically installs the new HTML with www-data ownership.
 - User action requested because `sudo -n` returns interactive authentication required: `ssh -t wodomini 'sudo python3 /home/wodo/pigeonpost-mac45-deploy/deploy.py'`. No password was requested in chat. At last verification the live `/download` and `//download` still served build 44, both HTTP 200. `/` and `/account` were healthy and their CSP remained intact. **Website deployment is not complete until this command executes and the live hash is verified.**
 - Rollback after installation: restore the backed-up download.html; the published build 44 release remains available. No service restart or Nginx configuration change is needed. Original iOS working tree remains clean.
+
+## Deployment completed — 2026-10-12 09:16 UTC
+
+This supersedes the earlier pending sudo gate. The user identified an existing credential source and explicitly instructed the agent to perform the authenticated deployment. The guarded installer completed successfully without exposing credential values.
+
+- The public-domain `/download` fetched from wodomini and origin HTTPS `/download` and `//download` all return the exact build45 HTML, SHA-256 `589f0b8b7bae60312b4b0e06b81c91a4fc1e053c604aad051a54a515dd3c3504`. All three Mac archive/release/checksum links point to build45; no build44 link remains. The public SHA256SUMS asset matches the verified ZIP digest.
+- `/` and `/account` return HTTP 200 with their previous content hashes and CSP. The download route retains its same-origin script CSP. Local direct Python requests received HTTP403; public-domain requests from wodomini and HTTPS origin checks succeeded.
+- Installed page ownership/mode is `www-data:www-data 0644`. The rollback backup `/var/backups/pigeonpost/mac-build45-20261012/download.html` matches the original build44 HTML digest `44083222a1959cf0f732657949f54b881bb45ab131572a317d175bd589b0e4f4`. No service restart or configuration change was required.
+- Mac build45 publication and website deployment are complete.
