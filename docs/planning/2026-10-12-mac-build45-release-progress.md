@@ -1,0 +1,7 @@
+# Mac build 45 — download rollout
+
+- Source fix: PR #38, commit efe363e782d4c94a9b72f6b4a9c55dcf24ad243a. Full local native suite: 194 checks, 0 failures; focused sizing regression: 36 checks, 0 failures. The exact reported 37-second hang was not reproduced; six old-code sizing regression failures became passing checks.
+- Universal archive built with Xcode 16.2 for macOS 14+, Developer ID team AH277897AV. Apple notarization accepted submission 1e745ccc-075a-4f0c-b95e-638f8edb17eb in workflow run 38226664309. Final ZIP passes the repository verifier for both architectures, hardened runtime, stapled ticket and Gatekeeper.
+- Final ZIP: Pigeonpost-Desktop-1.0-45.zip, 1,644,838 bytes, SHA-256 68a7dc7eabef47f02b36bbdb1d8ca9b6a1ed3b94d1ea9f6cf2c830fe2d3c6b37. Draft release also holds SHA256SUMS. Public publication waits for source CI checks.
+- Website changes update only the Mac version, size, archive/release/checksum links and existing download test fixture. Download tests pass via docdexd test run-node. Symbols/impact were checked before these edits in the sibling source worktree; HTML AST and dependency edges are unavailable, so HTML/test references were checked directly.
+- Live download.html currently exactly matches base SHA-256 44083222a1959cf0f732657949f54b881bb45ab131572a317d175bd589b0e4f4. Deployment needs interactive sudo on wodomini. Prepare a guarded single-file install with backup; preserve build 44 for rollback. Do not switch the live card before the public build 45 ZIP is verified.
