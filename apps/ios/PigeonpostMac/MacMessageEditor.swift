@@ -46,12 +46,7 @@ struct MacMessageEditor: NSViewRepresentable {
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
-        guard let editor = nsView.documentView as? NSTextView,
-              let container = editor.textContainer, let layout = editor.layoutManager else { return nil }
-        let width = proposal.width ?? 300
-        container.containerSize = NSSize(width: max(1, width - 10), height: .greatestFiniteMagnitude)
-        layout.ensureLayout(for: container)
-        return CGSize(width: width, height: min(160, max(32, layout.usedRect(for: container).height + 14)))
+        (nsView.documentView as? AttachmentTextView)?.fittingSize(width: proposal.width)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -68,6 +63,65 @@ final class AttachmentTextView: NSTextView {
     var attach: ([StagedFile]) -> Void = { _ in }
     var reportError: (String) -> Void = { _ in }
     var send: () -> Void = {}
+    private var measuredText = ""
+    private var measuredFont: NSFont?
+    private var measuredParagraph: NSParagraphStyle?
+    private var measuredInsets = NSSize.zero
+    private var measuredPadding: CGFloat = -1
+    private var measuredSizes: [CGFloat: CGSize] = [:]
+
+    func fittingSize(width proposedWidth: CGFloat?) -> CGSize? {
+        // SwiftUI probes zero, ideal and infinite widths during a single layout pass. Never
+        // change the live, width-tracking text container here: forcing its layout resizes the
+        // NSTextView and retiles its NSScrollView while SwiftUI is still measuring (Sonoma hang).
+        let width = max(0, proposedWidth.flatMap { $0.isFinite ? $0 : nil } ?? 300)
+        guard width > 0 else { return CGSize(width: 0, height: 32) }
+        let font = self.font ?? .systemFont(ofSize: 13)
+        let paragraph = defaultParagraphStyle ?? .default
+        let padding = textContainer?.lineFragmentPadding ?? 5
+        if measuredText != string || measuredFont != font || measuredParagraph != paragraph
+            || measuredInsets != textContainerInset || measuredPadding != padding {
+            measuredText = string
+            measuredFont = font
+            measuredParagraph = paragraph
+            measuredInsets = textContainerInset
+            measuredPadding = padding
+            measuredSizes.removeAll(keepingCapacity: true)
+        }
+        let scrollerWidth: CGFloat
+        if let scroll = enclosingScrollView, scroll.hasVerticalScroller, scroll.scrollerStyle == .legacy {
+            scrollerWidth = NSScroller.scrollerWidth(for: .regular, scrollerStyle: .legacy)
+        } else { scrollerWidth = 0 }
+        let textWidth = max(1, width - scrollerWidth - 2 * textContainerInset.width)
+        if let cached = measuredSizes[textWidth] { return CGSize(width: width, height: cached.height) }
+
+        // A separate TextKit stack has no view to resize. Lay out only enough lines to fill
+        // the capped composer; the real editor retains the entire draft and scrolls normally.
+        let maximumHeight: CGFloat = 160
+        let verticalInset = 2 * textContainerInset.height
+        let storage = NSTextStorage(attributedString: NSAttributedString(string: string,
+            attributes: [.font: font, .paragraphStyle: paragraph]))
+        let layout = NSLayoutManager()
+        layout.backgroundLayoutEnabled = false
+        let container = NSTextContainer(size: NSSize(width: textWidth, height: max(1, maximumHeight - verticalInset)))
+        container.lineFragmentPadding = padding
+        layout.addTextContainer(container)
+        storage.addLayoutManager(layout)
+        layout.ensureLayout(for: container)
+        let height: CGFloat
+        if layout.firstUnlaidCharacterIndex() < storage.length {
+            height = maximumHeight
+        } else {
+            // Include the insertion line after a trailing newline, which has no glyph of its own.
+            let used = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
+            height = min(maximumHeight, max(32, ceil(used + verticalInset)))
+        }
+        let size = CGSize(width: width, height: height)
+        // Remember SwiftUI's few width probes, without growing a cache throughout window resizing.
+        if measuredSizes.count >= 4 { measuredSizes.removeAll(keepingCapacity: true) }
+        measuredSizes[textWidth] = size
+        return size
+    }
 
     override func paste(_ sender: Any?) {
         if !pasteAttachments(from: .general) { super.paste(sender) }

@@ -27,7 +27,7 @@ swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-in
 # Run as a normal macOS app and keep its output. `open` does not propagate the app's exit
 # status, so require its explicit successful-completion line after it terminates.
 open -n -W --stdout "$out/stdout" --stderr "$out/stderr" \
-  --env "PIGEONPOST_UI_TEST_OUTPUT=${PIGEONPOST_UI_TEST_OUTPUT:-}" "$app"
+  --env "PIGEONPOST_UI_TEST_OUTPUT=${PIGEONPOST_UI_TEST_OUTPUT:-}" "$app" --args "$@"
 cat "$out/stdout"
 cat "$out/stderr" >&2
 grep -Eq '^Mac inbox integration: [0-9]+ checks, 0 failures$' "$out/stdout"
