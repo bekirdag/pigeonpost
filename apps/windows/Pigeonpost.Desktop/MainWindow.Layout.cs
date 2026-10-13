@@ -20,21 +20,23 @@ public sealed partial class MainWindow
         if (MessagingArea is null || PinSubjectsButton is null || AccountStatus is null || Root.ActualWidth <= 0) return;
         var compact = IsCompact;
         var conversation = !compact || (compactConversation && ViewModel.HasConversation);
-        var subjects = !compact && Root.ActualWidth >= 1100 && PinSubjectsButton.IsChecked == true;
+        var subjects = !compact && PinSubjectsButton.IsChecked == true;
         SenderPane.Visibility = ToVisibility(!compact || !conversation);
         MessagingArea.Visibility = ToVisibility(conversation);
         SubjectPane.Visibility = ToVisibility(subjects);
         SenderDivider.Visibility = ToVisibility(!compact);
         SubjectDivider.Visibility = ToVisibility(subjects);
         BackButton.Visibility = ToVisibility(compact);
-        PinSubjectsButton.Visibility = ToVisibility(Root.ActualWidth >= 1100);
+        PinSubjectsButton.Visibility = ToVisibility(!compact);
         SendingAsLabel.Visibility = ToVisibility(!compact);
         AccountStatus.MaxWidth = compact ? 150 : 260;
         SenderColumn.Width = compact
             ? (conversation ? new GridLength(0) : new GridLength(1, GridUnitType.Star))
-            : new GridLength(Math.Min(senderWidth, Root.ActualWidth * .4));
+            : new GridLength(Math.Min(senderWidth, Root.ActualWidth * (subjects ? .32 : .4)));
         SenderDividerColumn.Width = new GridLength(compact ? 0 : 5);
-        SubjectColumn.Width = new GridLength(subjects ? subjectWidth : 0);
+        // Keep all three panes usable in ordinary desktop windows, including the default
+        // 1100px outer window whose client width is smaller than 1100 logical pixels.
+        SubjectColumn.Width = new GridLength(subjects ? Math.Min(subjectWidth, Root.ActualWidth * .24) : 0);
         SubjectDividerColumn.Width = new GridLength(subjects ? 5 : 0);
         MessageColumn.Width = conversation ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
     }
