@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.5.0`; prepared update: `1.0.6.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.5.0`; update in certification: `1.0.6.0`, Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -51,9 +51,12 @@ Support / website: https://pigeonpost.dev
 ## Release gates and current status
 
 On October 13, 2026, Partner Center confirms **In Microsoft Store**, Submission 6 (modified October 12),
-with **1.0.5.0** publicly released. Version **1.0.6.0** is being prepared to restore the Subjects/Threads
-column by default in ordinary desktop windows. Validation and Store submission status are recorded
-in `docs/planning/2026-10-13-windows-threads-progress.md`.
+with **1.0.5.0** publicly released. **1.0.6.0**, which restores the Subjects/Threads column by default,
+is submitted as **Submission 7** (`1152921505702114561`) and shows **Update in certification**.
+Both x64 and ARM64 packages validated, and publication starts automatically after certification.
+PR #42 merged as `d2a09c9`; Windows workflow `38398981807` passed all native release, UI and package checks.
+The new update is not yet confirmed publicly live. Evidence and package hashes are recorded in
+`docs/planning/2026-10-13-windows-threads-progress.md`.
 
 ### Version 1.0.6 release notes
 

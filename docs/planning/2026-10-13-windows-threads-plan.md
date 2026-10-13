@@ -13,3 +13,7 @@ Authorization: the user explicitly requests restoring the missing Windows thread
 ## Evidence and rollback
 
 Record source files, test/build commands and outputs, native screenshots, package digests, commit/CI links and the Store submission identity/status in a separate progress log. Microsoft certification is external; do not claim public availability before it is shown. Keep the previous Store release available until the new submission completes; a regression requires a higher-version correction rather than distributing unsigned upload artifacts.
+
+## Completion
+
+Implementation, native validation, package verification, merge and Store submission completed October 13, 2026. Submission 7 is in certification with automatic publication; public availability remains an external Microsoft step. The progress ledger records the existing unrelated Rust audit finding and all release evidence.
