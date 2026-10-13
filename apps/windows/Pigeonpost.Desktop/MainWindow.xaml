@@ -241,7 +241,7 @@
                                     <MenuFlyoutItem Text="Delete subject…" Click="DeleteSubject_Click" IsEnabled="{x:Bind ViewModel.CanDeleteSubject, Mode=OneWay}" />
                                 </MenuFlyout></Button.Flyout>
                             </Button>
-                            <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Pin the subjects pane on wide windows"><FontIcon Glyph="&#xE840;" FontSize="18" /></ToggleButton>
+                            <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" IsChecked="True" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" Background="Transparent" BorderThickness="0" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Show or hide the subjects column"><FontIcon Glyph="&#xE840;" FontSize="18" /></ToggleButton>
                         </Grid>
                     </Grid>
                 </Border>

@@ -81,6 +81,23 @@ try {
         }
         throw "Native list missing: $Name"
     }
+    function Assert-DesktopColumns {
+        $conversations = Wait-List 'Conversations'
+        $subjects = Wait-List 'Subjects'
+        $messages = Wait-List 'Messages'
+        if ($conversations.Current.IsOffscreen -or $subjects.Current.IsOffscreen -or $messages.Current.IsOffscreen) {
+            throw 'All three desktop columns must be visible.'
+        }
+        $left = $conversations.Current.BoundingRectangle
+        $middle = $subjects.Current.BoundingRectangle
+        $right = $messages.Current.BoundingRectangle
+        if ($left.Right -gt $middle.Left -or $middle.Right -gt $right.Left) {
+            throw 'Conversation, subject and message columns overlap or appear out of order.'
+        }
+        if ($middle.Width -lt 120 -or $right.Width -lt 280 -or $right.Right -gt $root.Current.BoundingRectangle.Right) {
+            throw 'The subjects or messages column is clipped or too narrow to use.'
+        }
+    }
     function Capture([string]$Name) {
         $null = [NativeWindowBounds]::SetCursorPos($screen.Right - 2, $screen.Bottom - 2)
         Start-Sleep -Milliseconds 500
@@ -251,14 +268,20 @@ public static class NativeFileDragSource {
         Write-Host 'Checking composer attachments and downloads.'
         $null = Wait-Element 'New conversation'
         if (Element 'Find in this subject') { throw 'Search should be closed initially.' }
-        if (Element 'Subjects') { throw 'The subjects pane should be collapsed initially.' }
+        Assert-DesktopColumns
+        $pin = (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
+        if ($pin.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On) { throw 'Subjects must be pinned by default.' }
         $initialScroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
         for ($n = 0; $n -lt 40 -and $initialScroll.Current.VerticalScrollPercent -lt 95; $n++) { Start-Sleep -Milliseconds 100 }
         if ($initialScroll.Current.VerticalScrollPercent -lt 95) { throw 'Initial conversation did not open at its newest messages.' }
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
+        $pin.Toggle()
+        Start-Sleep -Milliseconds 500
+        if (Element 'Subjects') { throw 'Unpinning did not hide the subjects pane.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Please review the release checklist.') { throw 'Hiding subjects lost the draft.' }
         (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
-        $null = Wait-List 'Subjects'
+        Assert-DesktopColumns
         Capture 'pinned-subjects.png'
         Invoke-Control 'Send'
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne '') { throw 'Successful send did not clear composer.' }
@@ -464,12 +487,26 @@ public static class NativeFileDragSource {
         Start-Sleep -Milliseconds 500
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Subject switcher lost the original draft.' }
 
-        $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 900, 720, 4)
+        foreach ($width in @(1100, 800, 900)) {
+            $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, $width, 720, 4)
+            Start-Sleep -Milliseconds 500
+            Assert-DesktopColumns
+            $null = Wait-Element 'Pin subjects'
+            if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Desktop resizing lost the draft.' }
+        }
+        $subjectItems = (Wait-List 'Subjects').FindAll([System.Windows.Automation.TreeScope]::Children,
+            [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::ListItem))
+        if ($subjectItems.Count -lt 2) { throw 'The restored subjects column is missing its threads.' }
+        $subjectItems[1].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
         Start-Sleep -Milliseconds 500
-        if (Element 'Subjects') { throw 'Pinned subjects should collapse at medium width.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Subject-specific draft') { throw 'The restored column did not select the subject and its draft.' }
+        $subjectItems[0].GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select()
+        Start-Sleep -Milliseconds 500
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'The restored column lost the original subject draft.' }
         Capture 'medium-window.png'
         $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 520, 720, 4)
         $null = Wait-Element 'Back to conversations'
+        if (Element 'Subjects') { throw 'Compact conversation should hide the subjects column.' }
         if (Element 'Search senders') { throw 'Compact conversation still shows the sidebar.' }
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Resizing lost the draft.' }
         Capture 'compact-conversation.png'
@@ -489,11 +526,14 @@ public static class NativeFileDragSource {
         [System.Windows.Forms.SendKeys]::SendWait('^k')
         $null = Wait-Element 'Search senders'
         $null = [NativeWindowBounds]::SetWindowPos($process.MainWindowHandle, [IntPtr]::Zero, 12, 12, 1440, 900, 4)
-        $null = Wait-List 'Subjects'
+        Assert-DesktopColumns
         if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Draft in main mailbox') { throw 'Returning to wide layout lost the draft.' }
         (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
         Start-Sleep -Milliseconds 500
         if (Element 'Subjects') { throw 'Unpinning did not hide the subjects pane.' }
+        Capture 'subjects-hidden.png'
+        (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle()
+        Assert-DesktopColumns
         Capture 'refreshed-inbox.png'
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Dark')
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }

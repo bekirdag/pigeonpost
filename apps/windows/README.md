@@ -7,8 +7,8 @@ Locker; access tokens and message history stay in memory. The app never executes
 ## Features
 
 - Live mailbox and conversation selection, subject organization, search and unread/held indicators.
-- Two-pane conversation layout with a subject switcher and optional pinned Subjects pane on wide
-  windows. Narrow windows use inbox/conversation navigation without losing the current draft.
+- Three-column desktop layout with conversations, subjects and messages visible by default. The
+  Subjects column can be hidden or restored; narrow windows use inbox/conversation navigation without losing the current draft.
 - Conversation initials, activity dates, unread counts and distinct needs-review badges.
 - Integrated message composer with removable file previews, clipboard paste and native file drop.
 - New conversations can open without a message or send a first message; failed sends retain the draft.
@@ -62,7 +62,7 @@ data and are uploaded separately from Store packages.
 |---|---|
 | Switch mailbox | Mailbox selector |
 | Switch subject | Current subject selector in the conversation header |
-| Pin subjects | Pin subjects button (wide windows) |
+| Show or hide subjects | Pin subjects button (desktop windows; shown by default) |
 | Resize columns | Drag a visible separator |
 | New conversation | Ctrl+N |
 | Search senders | Ctrl+K |

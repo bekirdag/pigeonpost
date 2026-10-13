@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.4.0`; update in certification: `1.0.5.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.5.0`; prepared update: `1.0.6.0`, Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -20,8 +20,9 @@ Pigeonpost Desktop brings your conversations with people and agents to Windows. 
 Pigeonpost account, switch between your mailboxes, and keep each conversation organized by subject.
 
 Search conversations, find text inside a subject, send messages and files, and keep track of unread
-messages and requests needing review. Switch subjects from the conversation header or pin the Subjects
-pane on a wide window. The layout adapts to smaller windows with simple back navigation.
+messages and requests needing review. The Subjects column is visible by default alongside conversations and messages. Switch subjects
+from the column or conversation header, and hide or restore the column when needed. The layout
+adapts to smaller windows with simple back navigation.
 
 Paste or drop files into the composer, review the attachments, and send them together with your message.
 Archive conversations when you are finished and restore them whenever you need them. Use keyboard
@@ -36,7 +37,7 @@ The app displays messages and server-reported request permissions. It does not e
 
 **Features:**
 
-- Native Windows inbox with an adaptive layout and an optional pinned Subjects pane.
+- Native Windows inbox with conversations, subjects and messages visible together by default.
 - Access your existing Pigeonpost mailboxes and create a first free mailbox.
 - Send text and staged files together, with clipboard paste, drag and drop, and attachment previews.
 - Search senders and find messages inside a subject.
@@ -49,12 +50,16 @@ Support / website: https://pigeonpost.dev
 
 ## Release gates and current status
 
-On October 11, 2026, Partner Center confirms **In Microsoft Store**, Submission 5, with public x64
-and ARM64 packages at **1.0.4.0**. Version **1.0.5.0** was submitted on October 11 in Submission 6
-(`1152921505702097627`) and is **in certification**, with automatic publication after approval.
-PR #37 is merged. Windows run `38162272856` and general CI `38162272844` passed;
-both validated packages and four updated native screenshots are saved in the submission.
-Current release evidence is tracked in `docs/planning/2026-10-11-windows-ui-progress.md`.
+On October 13, 2026, Partner Center confirms **In Microsoft Store**, Submission 6 (modified October 12),
+with **1.0.5.0** publicly released. Version **1.0.6.0** is being prepared to restore the Subjects/Threads
+column by default in ordinary desktop windows. Validation and Store submission status are recorded
+in `docs/planning/2026-10-13-windows-threads-progress.md`.
+
+### Version 1.0.6 release notes
+
+The Subjects/Threads column is back by default, alongside conversations and messages. It remains
+visible when you resize an ordinary desktop window, and you can hide or restore it with the pin
+button. Small windows retain compact navigation, and switching subjects or resizing preserves drafts.
 
 ### Version 1.0.5 release notes
 
