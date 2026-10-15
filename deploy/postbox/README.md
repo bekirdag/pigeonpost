@@ -10,40 +10,46 @@ vault, persists to SQLite, returns a capability token; the capability-token-auth
 (`POST /v1/send` hosted→hosted, `GET /v1/inbox`, `POST /v1/ack`); and the **MCP connector**
 (`POST /mcp`, JSON-RPC) exposing `whoami` / `send_pigeonpost_message` / `check_pigeonpost_inbox` /
 `ack_pigeonpost_message` / `list_pigeonpost_threads` / `read_pigeonpost_thread`. Point a Claude/ChatGPT client at `https://mcp.pigeonpost.dev/mcp` with the
-capability token as its bearer. Not yet built: cross-box delivery, accounts/OAuth, quotas, Postgres.
+capability token as its bearer. The current service also supports signed-in accounts, per-mailbox
+quotas, attachments, push notifications and paid handles; SQLite remains its persistent store.
 
-## Host
+## Production host (updated 2026-10-15)
 
-- Box: **`159.69.201.24`** — `postbox.pigeonpost.dev` (A) + `mcp.pigeonpost.dev` (CNAME), both
-  **grey-cloud** (not Cloudflare-proxied) so MCP streaming isn't cut and Caddy can auto-issue TLS.
-- Both grey-cloud so MCP streaming isn't cut by an edge proxy.
+- SSH: `root@45.132.181.100`, port 22. This host also runs registry, directory and Loft1.
+- `postbox.pigeonpost.dev` points to this server; `mcp.pigeonpost.dev` follows its CNAME.
+  Both are DNS-only. nginx terminates HTTPS and proxies to `127.0.0.1:8990`.
+- Runtime: `/opt/pigeonpost-postbox/compose.json`, with separate owner-only `postbox.env`
+  and `reaper.env`. Use this deployed definition to preserve all current mounts and settings.
+  The repository's Caddy Compose file below is a generic alternative, not the production stack.
+- Containers: `pigeonpost-postbox` and `pigeonpost-postbox-reaper`, both `unless-stopped`,
+  sharing `/opt/pigeonpost-postbox/data`. The migration retained image
+  `pigeonpost-postbox:cloud-storage-b118dbe` and its existing keys and data.
+- Persistent dependencies: `data/postbox.db`, `master.age`, `fcm.json`, the APNs/App Store
+  keys under `data/`, `/mnt/web-volume/pigeonpost-blobs`, and the Google Play credential at
+  `/opt/pigeonpost-android-billing-20260912/google-play-service-account.json`.
+- nginx: `/etc/nginx/sites-available/pigeonpost-postbox`; certificate lineage
+  `/etc/letsencrypt/live/postbox.pigeonpost.dev`. Keep proxy buffering disabled, the 120-second
+  read timeout and attachment-size allowance. Validate nginx before reloading it.
+- `/opt/pigeonpost-privacy/account-deletions.py` and its systemd timer remain installed.
+  The daily schedule is explicitly 10:00 Europe/Berlin; notification delivery uses local sendmail.
+- The attachment mirror runs on Raijin, pulling with a restricted read-only SSH key.
 
-## Production deploy (as actually live — 2026-08-12)
+Restart the deployed services with:
 
-`159.69.201.24` is a **shared box** (`web`) already running Apache on 80/443 (many vhosts + Drone +
-the pigeonpost loft) with old Docker 18.09 and no `docker compose`. So production does **not** use
-the Compose/Caddy stack below — it mirrors the loft's proven pattern: a loopback container behind an
-Apache vhost with certbot TLS. The Compose stack stays valid for a *dedicated* box.
+```sh
+docker compose -f /opt/pigeonpost-postbox/compose.json up -d
+curl -fsS https://postbox.pigeonpost.dev/health
+```
 
-Live setup (SSH `-p 34251 root@159.69.201.24`):
-- Source at `/opt/pigeonpost-src` (rsync of `crates/` + manifests + `deploy/`); runtime state at
-  `/opt/pigeonpost-postbox` (`postbox.env`, `master.age`, `data/`) owned by uid `65532`.
-- Image built on the box (**bullseye base** — 18.09's seccomp blocks bookworm's `clone3`):
-  `docker build -f deploy/postbox/Dockerfile -t pigeonpost-postbox:0.2.0 .`
-- Two containers, `--restart unless-stopped`: `pigeonpost-postbox` (`-p 127.0.0.1:8990:8990`) and
-  `pigeonpost-postbox-reaper` (`--reaper`), sharing `/opt/pigeonpost-postbox/data`.
-- Apache vhost `pigeonpost-postbox.conf` proxies `postbox.` + `mcp.pigeonpost.dev` → `127.0.0.1:8990`
-  (always `apache2ctl configtest` before reload); `certbot --apache` issued the cert + HTTP→HTTPS.
-  The `ProxyPass` line carries **`flushpackets=on`** and the reason is `GET /v1/events`: without it
-  `mod_proxy_http` may hold the response body in its own buffer, so a Server-Sent Events stream is
-  accepted, answered 200, and then delivers nothing until enough has accumulated to flush. A client
-  cannot tell that apart from a quiet mailbox, which is why the web app treats silence past the
-  15-second keep-alive as a broken stream and goes back to long-polling. `timeout=120` stays: the
-  keep-alive is well inside it, so an idle stream is never mistaken for a dead backend.
-- **Redeploy:** keep the source directory as a clean Git checkout, fetch `origin`, and fast-forward
-  `main` to the tested deployment commit. Build from that checkout, tag the image with the commit,
-  then recreate both containers with the log limits below. Data, credentials, and TLS stay in the
-  separate runtime directory. Verify the source checkout's `HEAD` and clean status after deployment.
+For an application release, use the clean `/opt/pigeonpost-src` checkout, build and tag the
+reviewed commit, update the runtime image reference, and recreate both services. Preserve the
+private environment, bind mounts, numeric data ownership and log limits. Before moving state,
+stop both writers and the deletion timer, then compare the cold database and attachment files.
+A rollback after new messages have arrived must carry the latest state back; do not restart an
+older frozen database over newer mail.
+
+The former `159.69.201.24:34251` deployment is retired as an application origin. Its Apache
+configuration and Docker history are recovery artifacts, not deployment targets.
 
 ### Bound container logs on every deployment
 
@@ -265,9 +271,9 @@ with the container.
 
 ### The offsite mirror
 
-`blob-mirror.sh` in this directory, running **on wodomini** hourly out of `wodo`'s crontab, pulling
+`blob-mirror.sh` in this directory, running **on Raijin** hourly out of `wodo`'s crontab, pulling
 into `~/pigeonpost-mirror/blobs` (0700, on ext4 — not `/mnt/expansion`, which is exfat and cannot
-express a mode). It pulls because it cannot be pushed to: wodomini is behind NAT with no inbound
+express a mode). It pulls because it cannot be pushed to: Raijin is behind NAT with no inbound
 port, and a key on the public box that could write to the private one would put the blast radius
 the wrong way round.
 
@@ -369,10 +375,10 @@ recorded first, and a mint that fails logs and answers `mailbox: null` rather th
 completed payment into an error. A namespace that already holds a mailbox is left alone, so renewals
 do not accumulate them.
 
-## Bring it up (dedicated box, Compose)
+## Generic fresh installation (standalone Caddy, Compose)
 
 ```sh
-# on 159.69.201.24, in this directory
+# on a new dedicated host with free ports 80/443, in this directory
 cp postbox.env.example postbox.env      # edit; chmod 600 postbox.env
 mkdir -p secrets
 # place the sealed vault master key; a random 32+ bytes is fine (its SHA-256 becomes the key):
@@ -382,11 +388,12 @@ chmod 600 secrets/*
 docker compose up -d --build
 ```
 
-Caddy issues TLS for both names once DNS is live. Verify:
+This creates a new empty deployment. For production migration, retain the existing master key,
+database, attachments and private configuration instead. Caddy issues TLS once DNS is live. Verify:
 
 ```sh
-curl -s https://postbox.pigeonpost.dev/health        # {"status":"ok",...,"stage":"scaffold"}
-curl -s -o /dev/null -w '%{http_code}\n' -X POST https://mcp.pigeonpost.dev/mcp   # 501 (scaffold)
+curl -fsS https://postbox.pigeonpost.dev/health
+# Test /mcp with a valid JSON-RPC request and a capability token you own.
 ```
 
 Supervise across reboots with a `pigeonpost-postbox.service` systemd unit that runs

@@ -1,4 +1,5 @@
-# pigeonpost-postbox — hosted plane on 159.69.201.24 (postbox.pigeonpost.dev / mcp.pigeonpost.dev).
+# Generic standalone postbox stack (postbox.pigeonpost.dev / mcp.pigeonpost.dev).
+# Production uses nginx and /opt/pigeonpost-postbox/compose.json; see README.md.
 # DNS is grey-cloud (not Cloudflare-proxied): Caddy auto-issues TLS via HTTP-01/TLS-ALPN, and MCP
 # streaming is not cut by an edge proxy. See docs/planning/hosted-postbox-architecture-2026-08-12.md.
 #
@@ -30,7 +31,7 @@ services:
     restart: unless-stopped
     logging: *bounded-logging
     ports:
-      - "80:80"     # public on 159.69.201.24 (ACME + redirect)
+      - "80:80"     # public HTTP (ACME + redirect)
       - "443:443"
     networks: [edge, internal]
     volumes:

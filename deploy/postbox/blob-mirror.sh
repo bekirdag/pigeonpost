@@ -18,8 +18,8 @@
 # Install: see `## Attachments` in deploy/postbox/README.md.
 set -eu
 
-REMOTE="${PIGEONPOST_BLOB_REMOTE:-root@159.69.201.24}"
-PORT="${PIGEONPOST_BLOB_PORT:-34251}"
+REMOTE="${PIGEONPOST_BLOB_REMOTE:-root@45.132.181.100}"
+PORT="${PIGEONPOST_BLOB_PORT:-22}"
 KEY="${PIGEONPOST_BLOB_KEY:-$HOME/.ssh/pigeonpost-blob-mirror}"
 DEST="${PIGEONPOST_BLOB_MIRROR:-$HOME/pigeonpost-mirror/blobs}"
 LOG="${PIGEONPOST_BLOB_LOG:-$HOME/pigeonpost-mirror/mirror.log}"

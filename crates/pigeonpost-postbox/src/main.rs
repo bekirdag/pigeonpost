@@ -1,6 +1,6 @@
 //! # pigeonpost-postbox (scaffold)
 //!
-//! The hosted plane for mass adoption: a Dockerized box on `159.69.201.24`
+//! The hosted plane for mass adoption: a Dockerized service
 //! (`postbox.pigeonpost.dev` / `mcp.pigeonpost.dev`) that will serve a remote MCP connector, a
 //! zero-terminal web inbox, key custody, and hosted lofts.
 //!
