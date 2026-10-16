@@ -86,6 +86,7 @@ jobs:
           path: |
             apps/windows/artifacts/screenshots/*.png
             apps/windows/artifacts/screenshots/*.log
+            apps/windows/artifacts/screenshots/*.json
           if-no-files-found: warn
           retention-days: 30
       - name: Check public account and privacy pages

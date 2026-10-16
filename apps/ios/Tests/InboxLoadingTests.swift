@@ -26,7 +26,7 @@ enum Fixtures {
     static let quotaState: String? = nil
 }
 #if !MAC_INBOX_UI_TESTS
-enum AppLife { static let isActive = true }
+@MainActor enum AppLife { static var isActive = true }
 struct StagedFile { let data: Data; let name: String; let mediaType: String }
 #endif
 
@@ -143,6 +143,9 @@ final class ControlledURLProtocol: URLProtocol {
         await failedLoadAndRetry()
         await oldPollIsIgnored()
         await oldUnauthorizedPollIsIgnored()
+        #if !MAC_INBOX_UI_TESTS
+        await backgroundUnreadAndThreadAlerts()
+        #endif
         print("Inbox loading: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
@@ -170,6 +173,44 @@ final class ControlledURLProtocol: URLProtocol {
         check(inbox.quota == nil && inbox.policy == nil && inbox.vocabulary == nil,
               "switch clears quota, policy and vocabulary as well as messages")
     }
+
+    #if !MAC_INBOX_UI_TESTS
+    static func backgroundUnreadAndThreadAlerts() async {
+        let (_, inbox) = make()
+        let load = Task { await inbox.loadAll() }
+        await pending(a.address, count: 5)
+        finish(a.address, marker: "baseline", empty: true)
+        await load.value
+        inbox.reading = "/test/peer"
+        inbox.readingSubthread = "a"
+        var delivered = 0
+        inbox.onArrival = { delivered += $0.count }
+        AppLife.isActive = false
+        let poll = Task { await inbox.live() }
+        await pending(a.address, count: 1)
+        let body = """
+        {"messages":[{"message_id":"background","from":"/test/peer","peer":"/test/peer","thread_id":"a","body":"background","read":false,"received_at":1}]}
+        """
+        ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: body, poll: true)
+        await wait("background delivery") { delivered == 1 }
+        await inbox.acknowledge(peer: "/test/peer", subthread: "a")
+        check(inbox.unreadCount == 1, "background selected-thread arrival stays unread")
+        check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/ack" }, "background window sends no acknowledgement")
+        await pending(a.address, count: 1)
+        ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: body, poll: true)
+        await pending(a.address, count: 1)
+        check(delivered == 1, "repeated listing does not repeat desktop alert")
+        AppLife.isActive = true
+        let otherThread = body.replacingOccurrences(of: "background", with: "other-thread").replacingOccurrences(of: "\"thread_id\":\"a\"", with: "\"thread_id\":\"b\"")
+        ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: otherThread, poll: true)
+        await wait("hidden subject announcement") { inbox.announcement != nil }
+        check(inbox.announcement?.id == "other-thread", "another subject in the selected conversation is announced")
+        poll.cancel()
+        await poll.value
+        inbox.reset()
+        check(inbox.readingSubthread == nil && inbox.unreadCount == 0, "mailbox reset clears reading scope and count")
+    }
+    #endif
 
     static func oldLoadCannotFinishNewSpinner() async {
         let (account, inbox) = make()

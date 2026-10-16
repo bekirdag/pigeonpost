@@ -6,7 +6,7 @@
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <RootNamespace>Pigeonpost.Desktop</RootNamespace>
     <AssemblyName>Pigeonpost</AssemblyName>
-    <Version>1.0.6</Version>
+    <Version>1.0.7</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Pigeonpost.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
@@ -22,6 +22,9 @@
     <ImplicitUsings>enable</ImplicitUsings>
   </PropertyGroup>
   <ItemGroup>
+    <!-- NotifyIcon needs the Forms runtime, but its desktop SDK imports the WPF
+         XAML compiler, which conflicts with WinUI's own XAML build targets. -->
+    <FrameworkReference Include="Microsoft.WindowsDesktop.App.WindowsForms" />
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="2.4.0" />
     <PackageReference Include="Microsoft.Windows.SDK.BuildTools" Version="10.0.26100.4654" />
     <ProjectReference Include="..\Pigeonpost.Core\Pigeonpost.Core.csproj" />

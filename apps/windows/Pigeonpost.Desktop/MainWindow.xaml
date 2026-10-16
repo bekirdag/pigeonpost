@@ -185,8 +185,14 @@
                           SelectionChanged="Subject_SelectionChanged" SelectionMode="Single" AutomationProperties.Name="Subjects">
                     <ListView.ItemTemplate>
                         <DataTemplate x:DataType="core:Subject">
-                            <StackPanel Padding="2,8" Spacing="5">
-                                <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                            <StackPanel Padding="2,8" Spacing="5" AutomationProperties.Name="{x:Bind AccessibleSummary}">
+                                <Grid ColumnSpacing="8">
+                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                    <TextBlock Text="{x:Bind Name}" TextWrapping="Wrap" FontWeight="SemiBold" />
+                                    <Border Grid.Column="1" MinWidth="22" Padding="5,2" CornerRadius="12" VerticalAlignment="Top" Background="{ThemeResource AccentFillColorDefaultBrush}" Visibility="{Binding HasUnread, Converter={StaticResource BoolVisibility}}">
+                                        <TextBlock Text="{x:Bind UnreadLabel}" FontSize="12" FontWeight="SemiBold" TextAlignment="Center" Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}" />
+                                    </Border>
+                                </Grid>
                                 <TextBlock Text="{x:Bind Detail}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
                             </StackPanel>
                         </DataTemplate>
@@ -231,7 +237,7 @@
                         </Grid>
                         <Grid Grid.Row="1" ColumnSpacing="8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <ComboBox x:Name="SubjectSelector" ItemsSource="{x:Bind ViewModel.Subjects, Mode=OneWay}" DisplayMemberPath="Name"
+                            <ComboBox x:Name="SubjectSelector" ItemsSource="{x:Bind ViewModel.Subjects, Mode=OneWay}" DisplayMemberPath="PickerLabel"
                                       SelectedItem="{x:Bind ViewModel.SelectedSubject, Mode=OneWay}" SelectionChanged="Subject_SelectionChanged"
                                       IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" HorizontalAlignment="Left" MinWidth="132" MaxWidth="320" AutomationProperties.Name="Current subject" ToolTipService.ToolTip="Switch subject" />
                             <Button Grid.Column="1" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="Subject actions" ToolTipService.ToolTip="Subject actions" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}">

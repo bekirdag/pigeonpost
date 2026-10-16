@@ -69,9 +69,16 @@ public sealed partial class MainWindow
         AccountBar.Visibility = Visibility.Visible;
         await ViewModel.InitializeAsync();
         EmptyAccount.Visibility = ViewModel.Mailboxes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
-        await ViewModel.AcknowledgeSelectedAsync();
+        if (pendingNotification is { } target)
+        {
+            pendingNotification = null;
+            await OpenNotificationAsync(target);
+        }
+        await AcknowledgeVisibleAsync();
+        await RefreshOtherNotificationsAsync();
         refreshTimer ??= CreateRefreshTimer();
         refreshTimer.Start();
+        StartAccountEvents();
     }
 
     private DispatcherTimer CreateRefreshTimer()
@@ -91,6 +98,7 @@ public sealed partial class MainWindow
             }
 #endif
             await ViewModel.RefreshAsync(background: true);
+            await RefreshOtherNotificationsAsync();
         };
         return timer;
     }
@@ -141,6 +149,7 @@ public sealed partial class MainWindow
             };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             refreshTimer?.Stop();
+            accountEvents?.Cancel();
             await session.SignOutAsync(lifetime.Token);
             foreach (var cancellation in previewTasks.Values) { cancellation.Cancel(); cancellation.Dispose(); }
             previewTasks.Clear();
@@ -149,11 +158,17 @@ public sealed partial class MainWindow
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
             ViewModel.MessagesUpdating -= Messages_Updating;
             ViewModel.MessagesUpdated -= Messages_Updated;
+            ViewModel.InboxUpdated -= Inbox_Updated;
             ViewModel.Dispose();
             ViewModel = new InboxViewModel(postbox);
             ViewModel.PropertyChanged += ViewModel_PropertyChanged;
             ViewModel.MessagesUpdating += Messages_Updating;
             ViewModel.MessagesUpdated += Messages_Updated;
+            ViewModel.InboxUpdated += Inbox_Updated;
+            unreadState.Clear();
+            pendingNotification = null;
+            notifications?.Update(0);
+            await DesktopNotifications.ClearAlertsAsync();
             Bindings.Update();
             InboxLayout.Visibility = AccountBar.Visibility = EmptyAccount.Visibility = Visibility.Collapsed;
             Welcome.Visibility = Visibility.Visible;

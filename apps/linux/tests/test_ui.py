@@ -112,6 +112,26 @@ class NativeTests(unittest.TestCase):
         window.peer_list.select_row(row)
         pump(timeout=0.05)
 
+    def test_subject_unread_counts_and_notification_target(self):
+        self.api.rows += [
+            {"message_id": "new-release", "peer_handle": "/alex/main", "body": "new", "thread_id": "release", "read": False},
+            {"message_id": "new-design", "peer_handle": "/alex/main", "body": "new", "thread_id": "design", "read": False},
+        ]
+        self.window.messages = copy.deepcopy(self.api.rows)
+        self.window.peer, self.window.subject = "/alex/main", "release"
+        self.window.render_all()
+        design = self.window.subject_list.get_first_child()
+        while design and design.subject != "design":
+            design = design.get_next_sibling()
+        self.assertIn("1 unread", design.get_child().get_text())
+        self.assertIn("3 unread", self.window.get_title())
+        self.window.notification_target = "/k/one", "new-design"
+        self.window.apply_notification_target()
+        self.assertEqual((self.window.peer, self.window.subject), ("/alex/main", "design"))
+        self.assertIsNone(self.window.notification_target)
+        self.window.clear_account()
+        self.assertEqual(self.window.get_title(), "Pigeonpost")
+
     def test_widgets_display_real_messages_and_subjects(self):
         self.select()
         self.assertEqual(self.window.peer_title.get_text(), "Alex")

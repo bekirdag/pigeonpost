@@ -17,6 +17,7 @@
   <url type="vcs-browser">https://github.com/bekirdag/pigeonpost</url>
   <content_rating type="oars-1.1"><content_attribute id="social-chat">intense</content_attribute><content_attribute id="social-info">mild</content_attribute></content_rating>
   <releases>
+    <release version="1.0.7" date="2026-10-16"><description><p>Show unread counts on subjects and compatible desktop docks, and open the original subject from message notifications.</p></description></release>
     <release version="1.0.6" date="2026-10-07"><description><p>Preview images, videos, PDFs and text attachments. Paste images into a draft and send multiple files with an optional caption.</p></description></release>
     <release version="1.0.5" date="2026-09-14"><description><p>Default inboxes show their namespace, and new conversations automatically include the opening address slash.</p></description></release>
     <release version="1.0.3" date="2026-09-14"><description><p>Copy your full post address directly from the inbox and account settings.</p></description></release>

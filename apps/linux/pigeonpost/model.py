@@ -62,6 +62,11 @@ def conversations(messages, contacts=()):
     return dict(sorted(result.items(), key=lambda item: (-timestamp(item[1][-1]) if item[1] else 0, item[0])))
 
 
+def unread_count(messages):
+    return len({m.get("message_id") for m in messages
+                if m.get("message_id") and m.get("direction") != "out" and not m.get("read")})
+
+
 def subjects(peer, messages, threads):
     rows = {t["thread_id"]: dict(t) for t in threads if normalize(t.get("peer", ""), messages) == peer}
     for message in conversations(messages).get(peer, []):

@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.5.0`; update in certification: `1.0.6.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`, Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -50,13 +50,25 @@ Support / website: https://pigeonpost.dev
 
 ## Release gates and current status
 
-On October 13, 2026, Partner Center confirms **In Microsoft Store**, Submission 6 (modified October 12),
-with **1.0.5.0** publicly released. **1.0.6.0**, which restores the Subjects/Threads column by default,
-is submitted as **Submission 7** (`1152921505702114561`) and shows **Update in certification**.
-Both x64 and ARM64 packages validated, and publication starts automatically after certification.
-PR #42 merged as `d2a09c9`; Windows workflow `38398981807` passed all native release, UI and package checks.
-The new update is not yet confirmed publicly live. Evidence and package hashes are recorded in
-`docs/planning/2026-10-13-windows-threads-progress.md`.
+On October 16, 2026, Partner Center confirms **1.0.6.0** publicly released in Submission 7
+(modified October 14). **1.0.7.0** is submitted as **Submission 8** (`1152921505702147106`)
+and shows **In certification**, with pre-processing in progress. Both x64 and ARM64 packages
+validated, and publication starts automatically after certification. The update is not yet confirmed live.
+
+Windows workflow `38870868381`, source `6a57b1f`, passed core behavior, native x64/ARM64 builds,
+MSIX installation, UI smoke and ten notification integration checks. The hosted test account is
+different from Explorer's account, so the taskbar overlay API is denied there; this is handled without
+disabling the tray or native alerts. Overlay display in a normal same-user Explorer session was not
+visually tested. Evidence and package hashes are recorded in
+`docs/planning/2026-10-16-desktop-notifications-progress.md`.
+
+### Version 1.0.7 release notes
+
+Unread counts appear on each subject/thread. Reading one subject preserves unread messages in
+other subjects. Windows notifications open the matching conversation and subject. Taskbar and tray
+icons show the unread count across account mailboxes. Closing the signed-in window keeps the app
+running in the tray; choose Quit Pigeonpost from its icon menu to stop it. Alerts follow Windows
+notification settings. Notification text does not reveal message contents.
 
 ### Version 1.0.6 release notes
 
