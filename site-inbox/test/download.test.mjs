@@ -6,10 +6,10 @@ import { JSDOM } from "jsdom";
 const html = readFileSync(new URL("../../site/download.html", import.meta.url), "utf8");
 const source = readFileSync(new URL("../../site/download.js", import.meta.url), "utf8");
 const homepage = readFileSync(new URL("../../site/index.html", import.meta.url), "utf8");
-const macArchive = "https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-45/Pigeonpost-Desktop-1.0-45.zip";
+const macArchive = "https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-46/Pigeonpost-Desktop-1.0-46.zip";
 const windowsStore = "https://apps.microsoft.com/detail/9N0NWJ9L8XDP";
 const webInbox = "https://inbox.pigeonpost.dev/";
-const linuxArchive = "https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.6/Pigeonpost-Desktop-1.0.6-x86_64.flatpak";
+const linuxArchive = "https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.7/Pigeonpost-Desktop-1.0.7-x86_64.flatpak";
 const linuxArmArchive = linuxArchive.replace("x86_64", "aarch64");
 
 function page(t, navigator = {}, runScript = true) {

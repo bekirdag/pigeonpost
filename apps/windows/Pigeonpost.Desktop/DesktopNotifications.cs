@@ -18,6 +18,8 @@ internal sealed class DesktopNotifications : IDisposable
     private ITaskbarList3? taskbar;
     private int count = -1;
     public bool CanHide => tray.Visible;
+    internal int UnreadCount => count;
+    internal string? TaskbarWarning { get; private set; }
 
     public DesktopNotifications(IntPtr window, Action show, Action quit)
     {
@@ -29,7 +31,8 @@ internal sealed class DesktopNotifications : IDisposable
         tray = new Forms.NotifyIcon { Icon = normal, Text = "Pigeonpost", ContextMenuStrip = menu, Visible = true };
         tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) show(); };
         try { taskbar = (ITaskbarList3)new TaskbarList(); taskbar.HrInit(); }
-        catch (COMException) { taskbar = null; }
+        catch (Exception ex) when (ex is COMException or UnauthorizedAccessException)
+        { taskbar = null; TaskbarWarning = ex.Message; }
         Update(0);
     }
 
@@ -42,8 +45,17 @@ internal sealed class DesktopNotifications : IDisposable
         badge = unread == 0 ? null : CreateBadge(unread);
         tray.Icon = badge ?? normal;
         tray.Text = unread == 0 ? "Pigeonpost — no unread messages" : $"Pigeonpost — {unread} unread messages";
-        try { taskbar?.SetOverlayIcon(window, badge?.Handle ?? IntPtr.Zero, tray.Text); }
-        catch (COMException) { /* Explorer may be restarting; the next activation reapplies it. */ }
+        try
+        {
+            taskbar?.SetOverlayIcon(window, badge?.Handle ?? IntPtr.Zero, tray.Text);
+            if (taskbar is not null) TaskbarWarning = null;
+        }
+        catch (Exception ex) when (ex is COMException or UnauthorizedAccessException)
+        {
+            // Explorer can be restarting or owned by another user (CI). Keep the
+            // tray and alerts alive; the next activation retries the shell overlay.
+            TaskbarWarning = ex.Message;
+        }
         previous?.Dispose();
     }
 
@@ -94,7 +106,8 @@ internal sealed class DesktopNotifications : IDisposable
 
     public void Dispose()
     {
-        try { taskbar?.SetOverlayIcon(window, IntPtr.Zero, ""); } catch (COMException) { }
+        try { taskbar?.SetOverlayIcon(window, IntPtr.Zero, ""); }
+        catch (Exception ex) when (ex is COMException or UnauthorizedAccessException) { }
         tray.Visible = false;
         tray.ContextMenuStrip?.Dispose();
         tray.Dispose(); badge?.Dispose(); normal.Dispose();

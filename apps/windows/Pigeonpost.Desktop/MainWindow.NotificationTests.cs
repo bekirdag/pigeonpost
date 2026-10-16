@@ -31,6 +31,7 @@ public sealed partial class MainWindow
             preview.ReceiveForUiTest("design-release");
             await ViewModel.RefreshAsync();
             Check(unreadState.Count == baseline + 2, "Hidden arrivals increase the account badge by two");
+            Check(notifications!.UnreadCount == unreadState.Count, "Tray icon reflects the account unread count");
             Check(ViewModel.Subjects.Single(s => s.Id == "design-release").Unread == 1, "Hidden subject retains its unread marker");
             var alerts = await AppNotificationManager.Default.GetAllAsync();
             Check(alerts.Count == 2, "Windows notification center contains both native alerts");
@@ -48,7 +49,7 @@ public sealed partial class MainWindow
             unreadState.Clear(); notifications!.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
             Check(unreadState.Count == 0 && (await AppNotificationManager.Default.GetAllAsync()).Count == 0, "Sign-out cleanup clears the badge and native alerts");
-            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks }));
+            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, taskbarWarning = notifications.TaskbarWarning }));
         }
         catch (Exception ex)
         {
