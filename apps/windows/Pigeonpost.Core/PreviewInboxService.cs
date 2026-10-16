@@ -124,12 +124,12 @@ public sealed class PreviewInboxService : IInboxService
         return receipt;
     }
 
-    public void ReceiveForUiTest()
+    public void ReceiveForUiTest(string thread = "design-general")
     {
         var snapshot = snapshots[mailboxes[0].Address];
         snapshots[mailboxes[0].Address] = snapshot with { Messages = [.. snapshot.Messages,
             Received("arrived-" + ++sequence, "/preview/design", "New message during background refresh " + sequence,
-                "design-general", Epoch + sequence, false)] };
+                thread, Epoch + sequence, false)] };
     }
 
     public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken cancellationToken)

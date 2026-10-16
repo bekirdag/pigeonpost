@@ -159,6 +159,10 @@ public sealed record Subject(string Id, string? Title, bool IsDefault, IReadOnly
 {
     public string Name => !string.IsNullOrWhiteSpace(Title) ? Title : IsDefault ? "General" : "Untitled";
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
+    public bool HasUnread => Unread > 0;
+    public string UnreadLabel => Unread > 99 ? "99+" : Unread.ToString();
+    public string AccessibleSummary => $"{Name}, {Detail}";
+    public string PickerLabel => HasUnread ? $"{Name} · {Unread} unread" : Name;
     public string Detail => $"{Messages.Count} message{(Messages.Count == 1 ? "" : "s")}" + (Unread > 0 ? $" · {Unread} unread" : "");
 }
 

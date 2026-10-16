@@ -37,6 +37,7 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
     public Mailbox? OwnMailbox(string peer) => Mailboxes.FirstOrDefault(m => m.Address == peer || PostAddress.Canonical(m.Key) == PostAddress.Canonical(peer));
 
     public IReadOnlyList<Mailbox> Mailboxes { get; private set; } = [];
+    public event EventHandler<InboxUpdate>? InboxUpdated;
     public Mailbox? SelectedMailbox { get; private set; }
     public ObservableCollection<Conversation> Conversations { get; } = [];
     public Conversation? SelectedConversation { get; private set; }
@@ -168,6 +169,7 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
             var serverIds = loaded.Messages.Select(m => m.MessageId).ToHashSet(StringComparer.Ordinal);
             pending.RemoveAll(p => p.Mailbox == mailbox.Address && p.SentCopyId is { } id && serverIds.Contains(id));
             Rebuild();
+            InboxUpdated?.Invoke(this, new(mailbox, snapshot));
         }
         catch (OperationCanceledException) { }
         catch (Exception ex)
@@ -355,16 +357,21 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
         catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
     }
 
-    public async Task AcknowledgeSelectedAsync()
+    public async Task AcknowledgeSelectedAsync(Func<bool>? isVisible = null)
     {
-        if (SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation) return;
-        var unread = conversation.Messages.Where(m => !m.IsOutgoing && !m.Read).ToArray();
+        if (SelectedMailbox is not { } mailbox || SelectedSubject is not { } subject || isVisible?.Invoke() == false) return;
+        var context = ContextVersion;
+        var unread = subject.Messages.Where(m => !m.IsOutgoing && !m.Read).ToArray();
         if (unread.Length == 0) return;
         var generation = mailboxVersion;
         var token = mailboxScope.Token;
         try
         {
-            foreach (var message in unread) await service.AcknowledgeAsync(mailbox.Address, message.Id, token);
+            foreach (var message in unread)
+            {
+                if (disposed || generation != mailboxVersion || context != ContextVersion || isVisible?.Invoke() == false) break;
+                await service.AcknowledgeAsync(mailbox.Address, message.Id, token);
+            }
             if (!disposed && generation == mailboxVersion) await RefreshAsync();
         }
         catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }

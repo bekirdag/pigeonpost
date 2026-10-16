@@ -54,6 +54,7 @@ final class Inbox {
     /// Which conversation is on screen, so arrivals in it are not announced. Reading a message and
     /// being told about it at the same moment is the notification nobody wants.
     var reading: String?
+    var readingSubthread: String?
 
     /// The ids of the previous listing. A listing is adopted whole, so anything in this one that
     /// was not in that one is new. The *first* listing only seeds this: mail that was waiting
@@ -229,7 +230,8 @@ final class Inbox {
             !listed.contains(message.messageId)
                 && !message.isOutgoing
                 && !message.isRead
-                && message.peerKey != reading
+                && !(AppLife.isActive && message.peerKey == reading
+                    && (readingSubthread == nil || (message.threadId ?? "") == readingSubthread))
         }
         guard !fresh.isEmpty else { return }
         tell(about: fresh)
@@ -287,6 +289,7 @@ final class Inbox {
         offline = false
         toast = nil
         reading = nil
+        readingSubthread = nil
         quota = nil
         policy = nil
         vocabulary = nil
@@ -404,7 +407,7 @@ final class Inbox {
     /// Scoped to what is actually on screen: with several threads open on a peer, marking the others
     /// read because one of them was looked at would clear a mark nobody has seen.
     func acknowledge(peer: String, subthread: String?) async {
-        guard let me else { return }
+        guard AppLife.isActive, let me else { return }
         let unread = messages.filter { message in
             message.peerKey == peer
                 && !message.isOutgoing

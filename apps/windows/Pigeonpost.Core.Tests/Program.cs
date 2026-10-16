@@ -184,6 +184,39 @@ AsyncTest("Subjects retain separate drafts and sends reconcile once", async () =
     vm.SelectSubject(vm.Subjects.Single(s => s.Id == original));
     Equal(vm.Draft, "general draft");
 });
+Test("Desktop badge totals deduplicate snapshots and do not replay initial or read mail", () =>
+{
+    var state = new DesktopUnreadState();
+    var first = new InboxMessage { MessageId = "first", Body = "private", Peer = "/test/peer", ThreadId = "a" };
+    Equal(state.Observe("main", [first, first]).Count, 0); Equal(state.Count, 1);
+    Equal(state.Observe("team", [first]).Count, 0); Equal(state.Count, 2);
+    var second = first with { MessageId = "second", ThreadId = "b" };
+    var arrivals = state.Observe("main", [first, second, second, first with { MessageId = "sent", Direction = "out" }]);
+    Equal(arrivals.Count, 1); Equal(arrivals[0].ThreadId, "b"); Equal(arrivals[0].Mailbox, "main"); Equal(state.Count, 3);
+    Equal(state.Observe("main", [first with { Read = true }, second]).Count, 0); Equal(state.Count, 2);
+    Equal(state.Observe("main", [first with { Read = true }, second with { Read = true }]).Count, 0); Equal(state.Count, 1);
+    state.Clear(); Equal(state.Count, 0);
+    Equal(state.Observe("main", [second]).Count, 0);
+});
+AsyncTest("Reading one subject preserves the other subject and background arrivals", async () =>
+{
+    var service = new PreviewInboxService();
+    service.ReceiveForUiTest("design-release");
+    using var vm = new InboxViewModel(service);
+    await vm.InitializeAsync();
+    vm.SelectConversation(vm.Conversations.Single(c => c.Peer == "/preview/design"));
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-general"));
+    await vm.AcknowledgeSelectedAsync(() => false);
+    Equal(vm.Subjects.Single(s => s.Id == "design-general").Unread, 1);
+    Equal(vm.Subjects.Single(s => s.Id == "design-release").Unread, 1);
+    await vm.AcknowledgeSelectedAsync(() => true);
+    Equal(vm.SelectedSubject!.Unread, 0);
+    Equal(vm.Subjects.Single(s => s.Id == "design-release").Unread, 1);
+    Check(vm.Subjects.Single(s => s.Id == "design-release").PickerLabel.Contains("1 unread"), "Picker lost the unread thread.");
+    vm.SelectSubject(vm.Subjects.Single(s => s.Id == "design-release"));
+    await vm.AcknowledgeSelectedAsync(() => true);
+    Equal(vm.SelectedConversation!.Unread, 0);
+});
 AsyncTest("Archive is reversible and acknowledgements retain held status", async () =>
 {
     using var vm = new InboxViewModel(new PreviewInboxService());
@@ -241,6 +274,22 @@ AsyncTest("Inbox query keeps sent/read history, wait and escaped identity", asyn
     });
     using var http = new HttpClient(handler); using var client = new PostboxClient(http, new Tokens());
     Equal((await client.GetInboxAsync("/wodo/test?x=1&z=2", 25)).Messages!.Count, 5);
+});
+AsyncTest("Account push stream ignores heartbeats and delivers mail with cancellation", async () =>
+{
+    using var stop = new CancellationTokenSource();
+    var changes = 0;
+    var handler = new Handler((request, _) =>
+    {
+        Equal(request.RequestUri!.AbsolutePath, "/v1/events");
+        Equal(request.Headers.Authorization?.ToString(), "Bearer old");
+        Equal(request.Headers.Accept.Single().MediaType, "text/event-stream");
+        return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content = new StringContent(": heartbeat\n\nid: 42\nevent: mail\ndata: {}\n\n", System.Text.Encoding.UTF8, "text/event-stream") });
+    });
+    using var http = new HttpClient(handler); using var client = new PostboxClient(http, new Tokens());
+    await client.WatchMailAsync(() => { changes++; stop.Cancel(); return Task.CompletedTask; }, stop.Token);
+    Equal(changes, 1);
 });
 AsyncTest("Send uses the Apple wire contract and exposes sent_copy_id", async () =>
 {

@@ -22,7 +22,9 @@ Locker; access tokens and message history stay in memory. The app never executes
 - Sender details close before switching to another owned mailbox. Find highlights words and retains its match across refresh.
 - Account management and optional handle purchases through the web inbox; visible app version in the window.
 
-No offline message database, tray, push notifications or rich Markdown rendering is included.
+Native Windows notifications arrive through the account event stream, with periodic refresh as a fallback. Thread badges, the taskbar overlay and notification-area icon show unread counts; the system indicators include all account mailboxes. Clicking an alert opens its original thread. Closing a signed-in window keeps the app running in the tray; choose Quit Pigeonpost from the tray menu to exit. Alerts follow Windows notification/Do Not Disturb settings. Notifications contain no message preview.
+
+No offline message database or rich Markdown rendering is included.
 Unsent drafts are discarded on sign-out or app exit. Store availability is tracked in STORE.md;
 unsigned build artifacts are for validation and are not public installers.
 

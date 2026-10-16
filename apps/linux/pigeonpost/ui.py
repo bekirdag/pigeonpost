@@ -15,7 +15,7 @@ from . import APP_ID, VERSION
 from .api import APIError, MAX_FILE, Postbox
 from .auth import Session
 from .model import (contact_for, conversation_address_input, conversations, display_name, message_text, normalize, safe_filename,
-                    size_text, subjects, target_thread, timestamp, valid_peer)
+                    size_text, subjects, target_thread, timestamp, valid_peer, unread_count)
 from .vault import Vault
 from .previews import ThumbnailCache, supports as preview_supported
 
@@ -186,6 +186,7 @@ class Window(Adw.ApplicationWindow):
         self.polling = self.sending = self.rendering = self.acking = False
         self.staging = {}
         self.known_ids, self.dialogs = None, []
+        self.notification_target = None
         self.message_limit = 200
         self.pool = threading.BoundedSemaphore(8)
         self.overlay = Adw.ToastOverlay()
@@ -341,7 +342,8 @@ class Window(Adw.ApplicationWindow):
         self.mailbox_picker.set_visible(bool(rows))
         self.post_address.set_visible(bool(rows))
         if rows:
-            self.mailbox_picker.set_selected(0)
+            index = next((i for i, row in enumerate(rows) if self.notification_target and row["address"] == self.notification_target[0]), 0)
+            self.mailbox_picker.set_selected(index)
             self.select_mailbox()
         else:
             self.empty_thread("Create your inbox to start messaging.")
@@ -502,14 +504,21 @@ class Window(Adw.ApplicationWindow):
             ids = {m["message_id"] for m in messages}
             if self.known_ids is not None:
                 new = [m for m in messages if m["message_id"] not in self.known_ids and m.get("direction") != "out" and not m.get("read")]
-                if new and not self.is_active():
-                    notification = Gio.Notification.new("New Pigeonpost message")
-                    notification.set_body("Open Pigeonpost to read your messages.")
-                    self.get_application().send_notification("new-mail", notification)
+                for message in new:
+                    peer = next((p for p, rows in conversations(messages).items() if any(m["message_id"] == message["message_id"] for m in rows)), None)
+                    visible = (self.is_active() and self.peer == peer
+                               and (self.subject is None or (message.get("thread_id") or "") == self.subject)
+                               and self.message_search.get_text().casefold() in message_text(message).casefold())
+                    if not visible:
+                        notification = Gio.Notification.new("New Pigeonpost message")
+                        notification.set_body("Open Pigeonpost to read your message.")
+                        notification.set_default_action_and_target("app.open-message", GLib.Variant("(ss)", (identity, message["message_id"])))
+                        self.get_application().send_notification("new-mail", notification)
             changed = (messages, threads, contacts.get("contacts", []), archived) != (self.messages, self.threads, self.contacts, self.archived)
             self.messages, self.threads = messages, threads
             self.contacts, self.vocabulary = contacts.get("contacts", []), contacts.get("vocabulary", {})
             self.archived, self.quota, self.known_ids = archived, quota, ids
+            self.apply_notification_target()
             self.connection_status.set_text("Connected")
             if changed:
                 self.render_all()
@@ -525,6 +534,50 @@ class Window(Adw.ApplicationWindow):
         self.render_peers()
         self.render_subjects()
         self.render_messages()
+        self.update_unread_indicator()
+
+    def update_unread_indicator(self):
+        count = unread_count(self.messages)
+        self.set_title(f"Pigeonpost — {count} unread" if count else "Pigeonpost")
+        # Ubuntu Dock, Unity and compatible taskbars consume this desktop-entry badge.
+        # Other shells still show thread counts and the count in the window title.
+        connection = self.get_application().get_dbus_connection()
+        if connection:
+            try:
+                connection.emit_signal(None, "/dev/pigeonpost/Desktop", "com.canonical.Unity.LauncherEntry", "Update",
+                    GLib.Variant("(sa{sv})", ("application://dev.pigeonpost.Desktop.desktop",
+                        {"count": GLib.Variant("x", count), "count-visible": GLib.Variant("b", count > 0)})))
+            except GLib.Error:
+                pass
+
+    def open_notification(self, identity, message_id):
+        if not self.mailboxes:
+            self.notification_target = identity, message_id
+            return
+        index = next((i for i, row in enumerate(self.mailboxes) if row["address"] == identity), None)
+        if index is None:
+            return
+        self.notification_target = identity, message_id
+        if identity != self.identity:
+            self.mailbox_picker.set_selected(index)
+        else:
+            self.apply_notification_target()
+            self.render_all()
+            self.ack_visible()
+        self.present()
+
+    def apply_notification_target(self):
+        if not self.notification_target or self.notification_target[0] != self.identity:
+            return
+        message_id = self.notification_target[1]
+        for peer, messages in conversations(self.messages).items():
+            message = next((m for m in messages if m["message_id"] == message_id), None)
+            if message:
+                self.peer, self.subject = peer, message.get("thread_id") or ""
+                self.message_search.set_text("")
+                self.restore_draft()
+                self.notification_target = None
+                return
 
     def render_peers(self):
         self.rendering = True
@@ -541,7 +594,7 @@ class Window(Adw.ApplicationWindow):
             row = Gtk.ListBoxRow()
             row.peer = peer
             content = box(4, margin=8)
-            unread = sum(m.get("direction") != "out" and not m.get("read") for m in messages)
+            unread = unread_count(messages)
             content.append(label(name + (f"  • {unread}" if unread else ""), "heading"))
             content.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "dim-label"))
             row.set_child(content)
@@ -564,10 +617,13 @@ class Window(Adw.ApplicationWindow):
         self.rendering = True
         clear(self.subject_list)
         rows = [{"thread_id": None, "title": "All messages"}] + subjects(self.peer, self.messages, self.threads) if self.peer else []
+        messages = conversations(self.messages).get(self.peer, [])
         for item in rows:
             row = Gtk.ListBoxRow()
             row.subject = item["thread_id"]
-            row.set_child(label(item.get("title") or ("General" if item.get("is_default") else "Untitled")))
+            title = item.get("title") or ("General" if item.get("is_default") else "Untitled")
+            unread = unread_count([m for m in messages if row.subject is None or (m.get("thread_id") or "") == row.subject])
+            row.set_child(label(title + (f"  • {unread} unread" if unread else ""), "heading" if unread else None))
             row.get_child().set_margin_top(12)
             row.get_child().set_margin_bottom(12)
             self.subject_list.append(row)
@@ -680,6 +736,8 @@ class Window(Adw.ApplicationWindow):
                 if m["message_id"] in acked:
                     m["read"] = True
             self.render_peers()
+            self.render_subjects()
+            self.update_unread_indicator()
         self._work(ack, done, lambda _: setattr(self, "acking", False))
 
     def draft_key(self):
@@ -1303,6 +1361,8 @@ class Window(Adw.ApplicationWindow):
         self.staging.clear()
         self.previews.clear()
         self.known_ids = None
+        self.notification_target = None
+        self.get_application().withdraw_notification("new-mail")
         self.polling = self.sending = self.acking = False
         self.restore_draft()
         self.render_all()
@@ -1330,6 +1390,13 @@ class Application(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.window = None
+        action = Gio.SimpleAction.new("open-message", GLib.VariantType.new("(ss)"))
+        action.connect("activate", self.open_message)
+        self.add_action(action)
+
+    def open_message(self, action, parameter):
+        self.activate()
+        self.window.open_notification(*parameter.unpack())
 
     def do_activate(self):
         if not self.window or self.window.closed:

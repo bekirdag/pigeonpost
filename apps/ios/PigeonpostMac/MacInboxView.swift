@@ -118,10 +118,12 @@ struct MacInboxView: View {
         // selected the moment it was made.
         .onChange(of: peer) { _, picked in
             inbox.reading = picked
+            inbox.readingSubthread = nil
             // A different conversation has its own subjects; carrying the last one's id across
             // would filter this one down to nothing.
             subthread = nil
         }
+        .onChange(of: subthread) { _, picked in inbox.readingSubthread = picked }
         // `initial: true` because the count is already right when this appears — the first listing
         // lands before anybody changes anything, and waiting for a change would leave the Dock
         // blank through the one moment somebody is most likely to look at it.

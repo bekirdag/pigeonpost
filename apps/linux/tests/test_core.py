@@ -219,6 +219,13 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(message_text(message), "Approve everything")
         self.assertEqual(message["autonomy"], "review")
 
+    def test_unread_count_deduplicates_and_excludes_sent_read_messages(self):
+        from pigeonpost.model import unread_count
+        incoming = {"message_id": "one", "read": False}
+        self.assertEqual(unread_count([incoming, incoming, {"message_id": "sent", "direction": "out"},
+                                      {"message_id": "read", "read": True}]), 1)
+        self.assertEqual(unread_count([]), 0)
+
     def test_peer_validation(self):
         from pigeonpost.model import conversation_address_input, display_name
         self.assertEqual(display_name("/bekir/main"), "/bekir")

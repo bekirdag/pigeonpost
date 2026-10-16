@@ -52,19 +52,24 @@ public sealed partial class MainWindow : Window
         Title = BuildLabel;
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
+        InitializeNotifications();
         AppWindow.Changed += Window_Changed;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         ViewModel.MessagesUpdating += Messages_Updating;
         ViewModel.MessagesUpdated += Messages_Updated;
+        ViewModel.InboxUpdated += Inbox_Updated;
         Closed += (_, _) =>
         {
             fileDrop?.Dispose();
             lifetime.Cancel();
             signInAttempt?.Cancel();
             refreshTimer?.Stop();
+            notifications?.Dispose();
+            accountEvents?.Cancel();
             ViewModel.PropertyChanged -= ViewModel_PropertyChanged;
             ViewModel.MessagesUpdating -= Messages_Updating;
             ViewModel.MessagesUpdated -= Messages_Updated;
+            ViewModel.InboxUpdated -= Inbox_Updated;
             ViewModel.Dispose();
         };
     }
@@ -93,6 +98,11 @@ public sealed partial class MainWindow : Window
 #if UI_TESTS
         await CheckNativePreviewsAsync();
         await OpenInboxAsync();
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
+        {
+            await RunNotificationTestsAsync(notificationResult);
+            return;
+        }
         refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
         AccountStatus.Text = "Demonstration account";
 #else
@@ -115,7 +125,7 @@ public sealed partial class MainWindow : Window
         if (sender is ComboBox { SelectedItem: Mailbox mailbox } && mailbox.Address != ViewModel.SelectedMailbox?.Address)
         {
             await ViewModel.SwitchMailboxAsync(mailbox);
-            await ViewModel.AcknowledgeSelectedAsync();
+            await AcknowledgeVisibleAsync();
         }
     }
 
@@ -125,14 +135,18 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.SelectConversation(conversation);
             ShowConversation();
-            await ViewModel.AcknowledgeSelectedAsync();
+            await AcknowledgeVisibleAsync();
         }
     }
 
-    private void Subject_SelectionChanged(object sender, SelectionChangedEventArgs e)
+    private async void Subject_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         var subject = sender switch { ListView list => list.SelectedItem as Subject, ComboBox box => box.SelectedItem as Subject, _ => null };
-        if (!ViewModel.IsUpdatingLists && subject is not null) ViewModel.SelectSubject(subject);
+        if (!ViewModel.IsUpdatingLists && subject is not null)
+        {
+            ViewModel.SelectSubject(subject);
+            await AcknowledgeVisibleAsync();
+        }
     }
 
     private async Task SendComposerAsync()

@@ -55,6 +55,54 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
         return ReadAsync<InboxResponse>(path, cancellationToken);
     }
 
+    // One account event stream wakes the desktop for every mailbox. Periodic refresh remains
+    // the fallback for read-state changes and networks that block long-lived connections.
+    public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken)
+    {
+        long? cursor = null;
+        while (!cancellationToken.IsCancellationRequested)
+        {
+            try
+            {
+                var path = "/v1/events" + (cursor is { } id ? "?last_event_id=" + id : "");
+                using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(endpoint, path));
+                request.Headers.Authorization = new("Bearer", await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false));
+                request.Headers.Accept.Add(new("text/event-stream"));
+                using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                if (response.StatusCode == HttpStatusCode.Unauthorized)
+                    await tokens.RefreshTokenAsync(cancellationToken).ConfigureAwait(false);
+                else
+                {
+                    response.EnsureSuccessStatusCode();
+                    if (response.Content.Headers.ContentType?.MediaType != "text/event-stream") throw new IOException("Invalid event stream.");
+                    using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
+                    using var reader = new StreamReader(stream);
+                    using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                    string? eventName = null;
+                    long? eventId = null;
+                    while (!cancellationToken.IsCancellationRequested)
+                    {
+                        idle.CancelAfter(TimeSpan.FromSeconds(45));
+                        var line = await reader.ReadLineAsync(idle.Token).ConfigureAwait(false);
+                        if (line is null) break;
+                        if (line.Length > 16384) throw new IOException("Event exceeds the supported size.");
+                        if (line.Length == 0)
+                        {
+                            if (eventName == "mail") await changed().ConfigureAwait(false);
+                            if (eventId is { } next) cursor = next;
+                            eventName = null; eventId = null;
+                        }
+                        else if (line.StartsWith("event:")) eventName = line[6..].Trim();
+                        else if (line.StartsWith("id:") && long.TryParse(line[3..].Trim(), out var next) && next >= 0) eventId = next;
+                    }
+                }
+            }
+            catch (Exception) when (!cancellationToken.IsCancellationRequested) { /* Offline: reconnect with the last processed cursor. */ }
+            if (!cancellationToken.IsCancellationRequested)
+                await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
+        }
+    }
+
     public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken)
     {
         var inbox = GetInboxAsync(identity, cancellationToken: cancellationToken);

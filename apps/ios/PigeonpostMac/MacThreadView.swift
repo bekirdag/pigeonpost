@@ -15,6 +15,7 @@ struct MacThreadView: View {
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(\.scenePhase) private var scenePhase
     private struct ComposerDraft { var text = ""; var files: [StagedFile] = [] }
     @State private var drafts: [ScrollContext: ComposerDraft] = [:]
     @State private var sending: Set<ScrollContext> = []
@@ -172,12 +173,18 @@ struct MacThreadView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { findBar }
         }
-        .task(id: taskKey) { await inbox.acknowledge(peer: peer, subthread: subthread) }
+        .task(id: taskKey) {
+            guard scenePhase == .active else { return }
+            await inbox.acknowledge(peer: peer, subthread: subthread)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSApplication.didBecomeActiveNotification)) { _ in
+            Task { await inbox.acknowledge(peer: peer, subthread: subthread) }
+        }
 
     }
 
     /// Re-acknowledge when the subject changes or new mail lands, but not on every render.
-    private var taskKey: String { "\(peer)|\(subthread ?? "")|\(conversation?.unread ?? 0)" }
+    private var taskKey: String { "\(peer)|\(subthread ?? "")|\(conversation?.unread ?? 0)|\(scenePhase)" }
 
     /// Find in this conversation: a field, the tally, and the two ways through it.
     private var findBar: some View {

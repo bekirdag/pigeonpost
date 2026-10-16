@@ -1,0 +1,10 @@
+# Desktop unread notifications — progress
+
+- Base origin/main 9b765d7; isolated worktree pigeonpost-desktop-notifications-20261016. Current released source Windows 1.0.6, Mac build 45.
+- Windows AcknowledgeSelectedAsync currently acknowledges every unread message in a conversation; selection handlers call it before users visit other subjects. Subject rows only show unread as secondary text. README explicitly says no tray or push notifications.
+- Docdex MCP session is bound to original checkout; a separate HTTP repo binding was initialized successfully for this worktree. Plan/progress and validation/release steps apply; user already authorized publishing.
+
+- Implemented Windows subject-scoped acknowledgement and explicit thread/picker badges; account-wide in-memory notification tracking ignores initial history/duplicates/sent/read messages. Added native App SDK alerts, notification routing, tray/background lifetime and numeric ITaskbarList3 overlay. Added manifest COM activation and standard-user native notification integration harness.
+- Mac now preserves background unread arrivals and announces hidden subjects; active re-entry acknowledges visible messages. Linux gets subject unread labels, compatible dock count and notification activation routing.
+- Docdex symbols/impact reviewed for changed models/views/tests. C#/Swift/XAML graphs are empty and XAML/XML/PowerShell symbols unsupported; references were inspected directly. Linux graph confirms UI/model/import dependencies. Retrieval DAG mcp-1 exported. Local delegation for four regression scenarios failed its first expected-outcome draft; corrected retry validated and used.
+- Existing /tmp/pigeonpost-dotnet10 SDK was incomplete. Installed official SDK 10.0.100 into isolated /tmp/pp-notifications-dotnet10 without changing system SDK. Windows core 76/76 pass. Swift model/auth/purchase/navigation suite passes, including 71 inbox checks and new background/hidden-subject/duplicate regressions. Native platform validation remains pending.
