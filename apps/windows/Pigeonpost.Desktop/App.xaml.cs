@@ -13,7 +13,7 @@ public partial class App : Application
     {
         window = new MainWindow();
         var dispatcher = window.DispatcherQueue;
-        AppNotificationManager.Default.NotificationInvoked += (_, activation) =>
+        void HandleNotification(AppNotificationActivatedEventArgs activation) =>
             dispatcher.TryEnqueue(async () =>
             {
                 var values = activation.Arguments;
@@ -22,6 +22,14 @@ public partial class App : Application
                     await window.OpenNotificationAsync(new(mailbox, peer, values.TryGetValue("thread", out var thread) ? thread : null, message));
                 else window.ShowInbox();
             });
+        void HandleActivation(AppActivationArguments activation)
+        {
+            if (activation.Kind == ExtendedActivationKind.AppNotification
+                && activation.Data is AppNotificationActivatedEventArgs notification)
+                HandleNotification(notification);
+            else dispatcher.TryEnqueue(() => window.ShowInbox());
+        }
+        AppNotificationManager.Default.NotificationInvoked += (_, activation) => HandleNotification(activation);
         try { AppNotificationManager.Default.Register(); }
         catch (Exception) { /* Elevated/test sessions may not support alerts; the inbox and badges still work. */ }
         var instance = AppInstance.FindOrRegisterForKey("pigeonpost-desktop");
@@ -31,12 +39,17 @@ public partial class App : Application
             Exit();
             return;
         }
-        instance.Activated += (_, _) => dispatcher.TryEnqueue(() => window.ShowInbox());
+        instance.Activated += (_, activation) => HandleActivation(activation);
         window.Closed += (_, _) =>
         {
             try { AppNotificationManager.Default.Unregister(); } catch (Exception) { }
             instance.UnregisterKey();
         };
-        window.Activate();
+        var initialActivation = AppInstance.GetCurrent().GetActivatedEventArgs();
+        // COM launches deliver their target through NotificationInvoked. Wait for it
+        // before activating, so the previously selected subject is not acknowledged.
+        if (initialActivation.Kind == ExtendedActivationKind.AppNotification
+            || !args.Arguments.Contains("----AppNotificationActivated:", StringComparison.Ordinal))
+            HandleActivation(initialActivation);
     }
 }

@@ -6,6 +6,8 @@ namespace Pigeonpost.Desktop;
 
 public sealed partial class MainWindow
 {
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
     private async Task RunNotificationTestsAsync(string resultPath)
     {
         var checks = new List<string>();
@@ -18,10 +20,11 @@ public sealed partial class MainWindow
         {
             refreshTimer?.Stop();
             await DesktopNotifications.ClearAlertsAsync();
+            if (notificationInitializationError is not null) throw new InvalidOperationException("Notification initialization failed", notificationInitializationError);
             Check(notifications?.CanHide == true, "Native tray icon created");
             var baseline = unreadState.Count;
             // Exercise the actual close-to-tray path and poll using the release integration.
-            Close();
+            SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE, as the title-bar button sends
             await Task.Delay(200);
             Check(!AppWindow.IsVisible && !lifetime.IsCancellationRequested, "Close keeps the signed-in app running in the tray");
             preview.ReceiveForUiTest();

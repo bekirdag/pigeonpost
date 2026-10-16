@@ -8,6 +8,7 @@ public sealed partial class MainWindow
 {
     private readonly DesktopUnreadState unreadState = new();
     private DesktopNotifications? notifications;
+    private Exception? notificationInitializationError;
     private bool activeWindow;
     private bool quitting;
     private bool acknowledging;
@@ -57,7 +58,11 @@ public sealed partial class MainWindow
     private void InitializeNotifications()
     {
         try { notifications = new(WinRT.Interop.WindowNative.GetWindowHandle(this), ShowInbox, Quit); }
-        catch (Exception) { AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts."; }
+        catch (Exception ex)
+        {
+            notificationInitializationError = ex;
+            AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
+        }
         Activated += async (_, e) =>
         {
             activeWindow = e.WindowActivationState != WindowActivationState.Deactivated;
