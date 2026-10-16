@@ -10,3 +10,5 @@ User authorizes fixes and publication for Windows and any other affected desktop
 6. Version, commit and publish affected builds through established channels. Submit signed-by-Store Windows packages with automatic publication, and verify submission status; retain prior release artifacts for rollback. Do not claim certification complete while pending.
 
 Acceptance: unread thread indicators identify where messages arrived; reading thread A does not clear B; background arrivals retain badges and can surface OS alerts; badge totals clear after reading/sign-out; clicking an alert opens its original thread; duplicate refreshes do not repeat alerts. No broad product or server upgrade is intended.
+
+Status: steps1–6 completed. Windows publication is queued with Microsoft; certification remains external and pending. Mac/Linux releases and public download links verified.
