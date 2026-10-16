@@ -13,3 +13,6 @@
 
 - Native Mac 14/26 retry passed 194 checks each; first Mac 14 failure was a transient synthetic-click focus/timing failure. Published notarized universal build 46 at macos-1.0-46 (source b035e93), notarization run 38869535612 accepted; stapler and Gatekeeper pass. Previous build 45 retained. Linux release tag linux-desktop-1.0.7 points to independently validated b035e93 and release workflow 38870023239 is building.
 - Windows run 38869473805 passed both builds and general native UI smoke; the new notification harness exposed a tray initialization exception on a disposable standard account. Added diagnostics and correct WM_CLOSE simulation; investigating before Store upload. Store submission8 (1152921505702147106) is a draft with updated release notes; 1.0.6 remains public.
+
+- Linux 1.0.7 is public: release workflow 38870023239 passed both architectures, installed packages and publication. Downloaded all three packages and verified SHA256SUMS. Download page regression suite passes 23/23.
+- Windows tray failure was shell overlay E_ACCESSDENIED (test app runs as a separate standard user from Explorer), not tray creation itself. Isolated that recoverable shell error so it cannot tear down tray, badges, alerts or shutdown. Native tests now exercise WM_CLOSE and report the shell limitation explicitly.
