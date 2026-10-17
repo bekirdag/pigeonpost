@@ -74,11 +74,11 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Limit LFS downloads to bundled public runtime assets
+      - name: Limit LFS downloads to bundled public runtime assets and iPad avatar copies
         shell: bash
         run: |
           set -euo pipefail
-          git config --global lfs.fetchinclude 'public/**'
+          git config --global lfs.fetchinclude 'public/**,assets/player-avatars/compact/*.ipad.glb'
           git config --global lfs.fetchexclude ''
 
       - name: Check out CosmosMap through its read-only deploy key
@@ -89,7 +89,7 @@ jobs:
           path: cosmosmap
           ssh-key: ${{ secrets.COSMOSMAP_DEPLOY_KEY }}
           persist-credentials: false
-          lfs: true  # only public/**; game source archives and streamed ship assets stay excluded
+          lfs: true  # only public/** and the avatars' iPad copies; game source archives and streamed ship assets stay excluded
 
       - name: Require an immutable CosmosMap source commit
         shell: bash
@@ -115,7 +115,7 @@ jobs:
           import json, subprocess
           records = json.loads(subprocess.check_output(['git', 'lfs', 'ls-files', '--json']))
           paths = [record['name'] for record in records['files']]
-          assets = [Path(name) for name in paths if name.startswith('public/')]
+          assets = [Path(name) for name in paths if name.startswith('public/') or (name.startswith('assets/player-avatars/compact/') and name.endswith('.ipad.glb'))]
           if not assets:
               raise SystemExit('::error::No public runtime LFS assets are tracked.')
           for path in assets:
