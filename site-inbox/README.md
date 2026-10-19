@@ -9,6 +9,7 @@ Intended home: `inbox.pigeonpost.dev`.
 index.html   the shell
 app.css      the theme — the site's tokens (site/style.css), messenger layout
 app.js       auth, the postbox API, the thread model, rendering
+theme.js     applies the chosen theme (Settings → Inbox and appearance) before first paint
 config.js    endpoints and the OIDC client. No secret
 ```
 

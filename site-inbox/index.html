@@ -19,8 +19,9 @@
 <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+<script src="theme.js?v=20261019-theme"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261019-scrollbars">
+<link rel="stylesheet" href="app.css?v=20261019-theme">
 </head>
 <body>
 
@@ -233,7 +234,7 @@
       <button class="icon-btn" id="settings-close" type="button" aria-label="Close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
     </header>
     <div class="sheet-body">
-      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
+      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Theme, text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
       <div data-settings-page="account" hidden><section class="setting">
         <h3>Account</h3>
         <dl class="account-facts">
@@ -253,6 +254,14 @@
         <p class="field-note">Expired names need renewal through their original provider. <a href="https://pigeonpost.dev/account" target="_blank" rel="noopener noreferrer">Manage account</a></p>
       </section></div>
       <div data-settings-page="inbox" hidden><section class="setting">
+        <h3 id="theme-title">Theme</h3>
+        <p class="field-note">Follow your device, or keep the inbox light or dark.</p>
+        <div class="segmented" id="theme-choice" role="radiogroup" aria-labelledby="theme-title">
+          <label><input type="radio" name="theme" value="system"><span>System</span></label>
+          <label><input type="radio" name="theme" value="light"><span>Light</span></label>
+          <label><input type="radio" name="theme" value="dark"><span>Dark</span></label>
+        </div>
+      </section><section class="setting">
         <h3>Message size</h3>
         <p class="field-note">Choose a comfortable size for conversation text.</p>
         <div class="size-row">
@@ -398,6 +407,6 @@
 
 <script src="config.js"></script>
 <script src="handle.js"></script>
-<script src="app.js?v=20261019-scrollbars"></script>
+<script src="app.js?v=20261019-theme"></script>
 </body>
 </html>
