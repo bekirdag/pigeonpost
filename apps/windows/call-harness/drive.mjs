@@ -26,7 +26,7 @@ const note = (name, detail) => { result.checks.push({ name, ok: null, detail });
 const procs = [];
 const run = (args, env = {}) => { const p = spawn(process.execPath, args, { env: { ...process.env, ...env }, stdio: ["ignore", "inherit", "inherit"] }); procs.push(p); return p; };
 run([here("mockpostbox.mjs"), String(POSTBOX)]);
-run([path.join(repo, "calls-service/src/server.js")], { CALLS_TURN_SECRET: "", CALLS_PORT: String(CALLS), CALLS_POSTBOX_URL: `http://127.0.0.1:${POSTBOX}`, CALLS_ALLOWED_ORIGINS: `http://127.0.0.1:${SITE}`, CALLS_TRUST_PROXY: "0" });
+run([here("calls.mjs"), path.join(repo, "calls-service/src/server.js")], { CALLS_TURN_SECRET: "", CALLS_PORT: String(CALLS), CALLS_POSTBOX_URL: `http://127.0.0.1:${POSTBOX}`, CALLS_ALLOWED_ORIGINS: `http://127.0.0.1:${SITE}`, CALLS_TRUST_PROXY: "0" });
 run([here("serve.mjs"), path.join(repo, "site-inbox"), String(SITE), String(CALLS)]);
 await sleep(1500);
 
@@ -34,11 +34,11 @@ await sleep(1500);
 let appProcess = null, A = null, B = null;
 const logFile = path.join(process.env.LOCALAPPDATA || "", "Pigeonpost", "logs", "desktop.log");
 const appLog = () => {
-  if (simulate || !existsSync(logFile)) return [];
+  if (simulate || !appProcess || !existsSync(logFile)) return [];
   return readFileSync(logFile, "utf8").split(/\r?\n/).filter((l) => l.includes(`[${appProcess.pid}]`));
 };
 const logged = (text) => appLog().filter((l) => l.includes(text)).length;
-const pwsh = (...args) => execFileSync("pwsh", ["-NoProfile", "-File", here("window.ps1"), "-ProcessId", String(appProcess.pid), ...args], { encoding: "utf8" }).trim();
+const pwsh = (...args) => !appProcess ? "" : execFileSync("pwsh", ["-NoProfile", "-File", here("window.ps1"), "-ProcessId", String(appProcess.pid), ...args], { encoding: "utf8" }).trim();
 const capture = (name) => { if (!simulate) pwsh("-Action", "capture", "-Path", path.join(out, name)); };
 const buttonEnabled = (name) => simulate ? null : pwsh("-Action", "enabled", "-Name", name) === "True";
 
