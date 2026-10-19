@@ -125,6 +125,28 @@ test("an unchanged refresh keeps the rendered message nodes and inline attachmen
   assert.equal(a.$("messages").lastElementChild, last);
 });
 
+test("new mail and read receipts keep a text selection inside an existing message", async t => {
+  const a = await app(t, s => { s.mailboxes[OWNER].messages.at(-1).read = false; });
+  await a.clickPeer();
+  const before = [...a.$("messages").children];
+  const body = a.$("messages").lastElementChild.querySelector(".text").firstChild;
+  const text = body.nodeType === 3 ? body : a.w.document.createTreeWalker(body, a.w.NodeFilter.SHOW_TEXT).nextNode();
+  const range = a.w.document.createRange();
+  range.setStart(text, 2); range.setEnd(text, 9);
+  a.w.getSelection().removeAllRanges(); a.w.getSelection().addRange(range);
+  const selected = a.w.getSelection().toString();
+  assert.equal(selected.length, 7);
+  const last = a.server.mailboxes[OWNER].messages.at(-1);
+  a.server.mailboxes[OWNER].messages.forEach(m => { m.read = true; });
+  a.server.mailboxes[OWNER].messages.push({ ...last, message_id: "arrival", body: "Arrived while reading.", received_at: last.received_at + 60, read: false });
+  await a.refresh();
+  await until(() => a.$("messages").lastElementChild.textContent.includes("Arrived while reading."));
+  const kept = before.filter(row => row.isConnected);
+  assert.ok(kept.includes(before.at(-1)) && kept.includes(before[0]), "the selected bubble and its day separator stay");
+  assert.deepEqual([...a.$("messages").children].filter(row => kept.includes(row)), kept, "rows that stay are reused in order");
+  assert.equal(a.w.getSelection().toString(), selected);
+});
+
 test("sent requests do not display an invented held verdict", async t => {
   const a = await app(t, server => {
     server.mailboxes[OWNER].messages.at(-1).body = JSON.stringify({ v: 1, verb: "full_access", args: { task: "My request" }, note: "My request" });
