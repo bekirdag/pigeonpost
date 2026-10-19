@@ -36,6 +36,7 @@ struct PigeonpostApp: App {
                 .environment(account)
                 .environment(inbox)
                 .environment(push)
+                .appliesAppearanceChoice()
                 .task {
                     push.attach(to: account)
                     // And the inbox, which is what the notification delegate consults before it

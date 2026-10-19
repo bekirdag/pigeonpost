@@ -38,6 +38,7 @@ struct PigeonpostMacApp: App {
                 .environment(account)
                 .environment(inbox)
                 .environment(MacPushDelegate.service)
+                .appliesAppearanceChoice()
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)

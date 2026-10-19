@@ -116,6 +116,29 @@ import SwiftUI
             try? await Task.sleep(for: .milliseconds(300))
             let after = scroll?.contentView.bounds.origin.y ?? -1
             check(after != before, "a scroll-wheel event over the text scrolls the list (\(before) -> \(after))")
+            // The theme's colours are resolved when drawn, so the text view follows a change of the
+            // app's appearance (the Settings choice) without being rebuilt: its darkest glyph pixels
+            // are light under Dark and dark under Light.
+            @MainActor func glyphLuminance(_ name: NSAppearance.Name) async -> CGFloat {
+                NSApp.appearance = NSAppearance(named: name)
+                // The change reaches each view's effective appearance on the next pass.
+                try? await Task.sleep(for: .milliseconds(300))
+                tv.display()
+                let rep = tv.bitmapImageRepForCachingDisplay(in: tv.bounds)!
+                tv.cacheDisplay(in: tv.bounds, to: rep)
+                var extreme: CGFloat = name == .darkAqua ? 0 : 1
+                for y in stride(from: 0, to: rep.pixelsHigh, by: 2) {
+                    for x in stride(from: 0, to: rep.pixelsWide, by: 2) {
+                        guard let c = rep.colorAt(x: x, y: y)?.usingColorSpace(.sRGB), c.alphaComponent > 0.9 else { continue }
+                        let l = 0.2126 * c.redComponent + 0.7152 * c.greenComponent + 0.0722 * c.blueComponent
+                        extreme = name == .darkAqua ? max(extreme, l) : min(extreme, l)
+                    }
+                }
+                return extreme
+            }
+            let inDark = await glyphLuminance(.darkAqua), inLight = await glyphLuminance(.aqua)
+            NSApp.appearance = nil
+            check(inDark > 0.7 && inLight < 0.3, "text recolours with the app's appearance (dark \(inDark), light \(inLight))")
             let image = host.bitmapImageRepForCachingDisplay(in: host.bounds)!
             tv.setSelectedRange(NSRange(location: 4, length: 20)); tv.display()
             host.cacheDisplay(in: host.bounds, to: image)

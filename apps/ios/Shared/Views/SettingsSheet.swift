@@ -63,6 +63,11 @@ struct SettingsSheet: View {
                     destination(.contacts, icon: "person.2", detail: "Senders you know and trust")
                 }
                 Section {
+                    AppearancePicker()
+                } header: {
+                    Text("Appearance")
+                }
+                Section {
                     destination(.help, icon: "questionmark.circle", detail: "Support, privacy and app information")
                 }
             }

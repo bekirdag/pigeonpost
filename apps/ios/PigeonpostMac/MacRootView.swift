@@ -23,13 +23,6 @@ struct MacRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.app)
         .tint(Theme.accent)
-        #if DEBUG
-        .onAppear {
-            if let look = Fixtures.appearance {
-                NSApplication.shared.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua)
-            }
-        }
-        #endif
         .task(id: session.status) {
             guard !Fixtures.enabled, session.status == .signedIn else { return }
             await account.loadIdentities()

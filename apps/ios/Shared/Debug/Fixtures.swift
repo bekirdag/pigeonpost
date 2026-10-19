@@ -61,8 +61,8 @@ enum Fixtures {
         enabled && CommandLine.arguments.contains("-empty")
     }
 
-    /// `-appearance=dark` or `-appearance=light` pins the Mac window's appearance, so both can be
-    /// looked at without changing the whole system's. A simulator is told with `simctl ui` instead.
+    /// `-appearance=dark` or `-appearance=light` pins the app's appearance for screenshots, without
+    /// changing the system's or the saved Settings choice. See `AppearanceChoice`.
     static var appearance: String? {
         guard enabled else { return nil }
         return CommandLine.arguments

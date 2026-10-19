@@ -71,7 +71,8 @@ extension EnvironmentValues {
 /// estimates, and the stack ended up scrolled past rows it had placed somewhere else: a blank pane
 /// over the composer, with the scroller at the bottom. A `Layout` is pure, so the rows are measured
 /// exactly whether or not their text views exist yet.
-private struct MeasuredByText: Layout {
+// `@unchecked`: the attributed string is never mutated once built.
+private struct MeasuredByText: Layout, @unchecked Sendable {
     let text: NSAttributedString
     let wraps: Bool
 
