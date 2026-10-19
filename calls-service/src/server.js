@@ -67,7 +67,7 @@ const ADDRESS = /^\/[A-Za-z0-9._~\-/]{1,200}$/;
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE = /^[A-Za-z0-9]{6}$/;
 const KINDS = new Set(["audio", "video"]);
-const SIGNALS = new Set(["offer", "answer", "ice"]);
+const SIGNALS = new Set(["offer", "answer", "ice", "mute"]);
 
 class HttpError extends Error {
   constructor(status, code) {
@@ -556,6 +556,8 @@ export function createCallsService(cfg, deps = {}) {
   }
 
   function validSignal(type, data) {
+    // Anyone in a call may mute anyone else, as in every meeting app. Only the person can unmute.
+    if (type === "mute") return null;
     if (type === "offer" || type === "answer") {
       if (!data || data.type !== type || typeof data.sdp !== "string" || data.sdp.length > LIMITS.sdpChars) {
         throw new HttpError(400, "bad_signal");
@@ -570,6 +572,22 @@ export function createCallsService(cfg, deps = {}) {
     if (typeof data.sdpMid === "string" && data.sdpMid.length <= 64) out.sdpMid = data.sdpMid;
     if (Number.isInteger(data.sdpMLineIndex) && data.sdpMLineIndex >= 0 && data.sdpMLineIndex < 64) out.sdpMLineIndex = data.sdpMLineIndex;
     return out;
+  }
+
+  // ---- connection reports -----------------------------------------------------------------------
+
+  // How a pair of browsers fared, for the service log: an outcome and candidate counts. No
+  // addresses or descriptions are accepted, so none can be logged.
+  function report(auth, room, body) {
+    const from = participantFor(room, auth, body.session);
+    const to = room.participants.get(String(body.to || ""));
+    if (!to) throw new HttpError(404, "no_participant");
+    if (limited("report:" + from.id, 30, 60_000)) throw new HttpError(429, "rate_limited");
+    const counts = (o) => ["host", "srflx", "prflx", "relay"].map((k) => k[0] + Math.min(99, Number((o || {})[k]) || 0)).join("");
+    const state = ["connected", "stalled", "failed"].includes(body.state) ? body.state : "other";
+    const route = ["relay", "direct"].includes(body.route) ? body.route : "-";
+    console.log(`calls: pair room=${room.id.slice(0, 6)} ${from.id.slice(0, 6)}>${to.id.slice(0, 6)} size=${room.participants.size} state=${state} route=${route} relay_only=${body.relay_only === true} restarts=${Math.min(9, Number(body.restarts) || 0)} local=${counts(body.local)} remote=${counts(body.remote)}`);
+    return { ok: true };
   }
 
   // ---- reconnecting -------------------------------------------------------------------------------
@@ -676,11 +694,11 @@ export function createCallsService(cfg, deps = {}) {
         const body = await readJson(req);
         return json(res, 200, answerKnock(auth, roomFor(knockAnswer[1]), knockAnswer[2], body));
       }
-      const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume)$/.exec(path);
+      const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume|report)$/.exec(path);
       if (req.method === "POST" && m) {
         const body = await readJson(req);
         const room = roomFor(m[1]);
-        const action = { accept, decline, leave, signal, resume }[m[2]];
+        const action = { accept, decline, leave, signal, resume, report }[m[2]];
         return json(res, 200, action(auth, room, body));
       }
       throw new HttpError(404, "not_found");

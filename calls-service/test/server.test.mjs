@@ -384,3 +384,22 @@ test("postbox answers are cached so signals cost no postbox round trip", async (
     assert.equal(t.postbox.calls.length, before);
   } finally { await t.stop(); }
 });
+
+test("anyone in the call can mute anyone else; reports log counts only", async () => {
+  const t = await start();
+  try {
+    const { alice, bob, room, alicePid, bobPid } = await connectedPair(t);
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${room}/signal`, { session: alice.id, to: bobPid, type: "mute", data: { anything: "ignored" } })).status, 200);
+    const ev = await bob.until("signal");
+    assert.deepEqual([ev.data.type, ev.data.data, ev.data.from], ["mute", null, alicePid]);
+    const logs = [];
+    const orig = console.log;
+    console.log = (line) => logs.push(line);
+    try {
+      assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${room}/report`, { session: bob.id, to: alicePid, state: "stalled", local: { host: 2, relay: 1, evil: "x" }, remote: { srflx: 1 }, route: "203.0.113.5", sdp: "v=0 secret" })).status, 200);
+    } finally { console.log = orig; }
+    assert.equal(logs.length, 1);
+    assert.match(logs[0], /state=stalled route=- relay_only=false restarts=0 local=h2s0p0r1 remote=h0s1p0r0/);
+    assert.ok(!logs[0].includes("203.0.113.5") && !logs[0].includes("secret"));
+  } finally { await t.stop(); }
+});

@@ -68,7 +68,11 @@
     screen: '<rect x="2.5" y="3.5" width="15" height="10" rx="1.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M7 17h6M10 13.5V17M10 11V6.5M7.8 8.6 10 6.4l2.2 2.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
     chat: '<path d="M3.5 5.5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2H9l-3.5 3v-3h0a2 2 0 0 1-2-2Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/>',
     people: '<circle cx="7.5" cy="7" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M2.8 16.5a4.7 4.7 0 0 1 9.4 0M13 4.7a2.6 2.6 0 0 1 0 4.8M14.5 12.3a4.7 4.7 0 0 1 2.7 4.2" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
-    gear: '<circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
+    // Lucide's "settings" cog (ISC licence), drawn on its own 24-unit grid.
+    gear: '<g transform="scale(.8333)" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></g>',
+    fullscreen: '<path d="M3.5 7.5v-4h4M16.5 7.5v-4h-4M3.5 12.5v4h4M16.5 12.5v4h-4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+    unfullscreen: '<path d="M7.5 3.5v4h-4M12.5 3.5v4h4M7.5 16.5v-4h-4M12.5 16.5v-4h4" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
+    pin: '<path d="M7.5 2.5h5l-.8 4.8 2.8 2.7v1.5H5.5V10l2.8-2.7Z M10 11.5v6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>',
     end: '<path d="M2.4 11.6c-.4-.5-.4-1.2.1-1.7C5 7.6 7.4 6.8 10 6.8s5 .8 7.5 3.1c.5.5.5 1.2.1 1.7l-1.2 1.4c-.4.4-1 .5-1.5.3l-2-1c-.5-.2-.8-.7-.8-1.2V9.7a8.6 8.6 0 0 0-4.2 0v1.4c0 .5-.3 1-.8 1.2l-2 1c-.5.2-1.1.1-1.5-.3Z" fill="currentColor"/>',
     phone: '<path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="currentColor"/>',
     back: '<path d="M12.5 4 6 10l6.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
@@ -124,7 +128,9 @@
   const peers = new Map(); // participant id -> peer
   const knocks = new Map(); // knock id -> request waiting inside a call
   const chatLog = [];
-  const local = { stream: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false };
+  // `rawMic` is the microphone as captured (with the browser's echo cancellation); `mic` is what is
+  // sent — the same track, or the same track after noise removal.
+  const local = { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false };
   const prefs = {
     get mic() { return store.get("ppi_call_mic"); }, set mic(v) { store.set("ppi_call_mic", v); },
     get cam() { return store.get("ppi_call_cam"); }, set cam(v) { store.set("ppi_call_cam", v); },
@@ -465,6 +471,82 @@
     }
   }
 
+  // ---- background noise removal -----------------------------------------------------------------
+  //
+  // "Standard" is the browser's own noise suppression, always on. "Strong" adds RNNoise, a small
+  // neural noise remover running locally in an AudioWorklet (vendored, MIT): fans, keyboards,
+  // traffic and room hum are taken out before the voice leaves this device. If it cannot start, the
+  // call carries on with the standard suppression.
+  const canStrongNoise = Boolean(window.AudioWorkletNode && window.WebAssembly);
+  const NOISE_BASE = "/vendor/web-noise-suppressor/";
+  const noise = { mode: store.get("ppi_call_noise") || "strong", ctx: null, node: null, src: null, wasm: null, active: false };
+
+  async function processMic(raw) {
+    teardownNoise();
+    if (noise.mode !== "strong" || !canStrongNoise) return raw;
+    try {
+      const lib = await import(NOISE_BASE + "index.js");
+      const ctx = new AudioContext({ sampleRate: 48_000 });
+      noise.wasm ||= await lib.loadRnnoise({ url: NOISE_BASE + "rnnoise.wasm", simdUrl: NOISE_BASE + "rnnoise_simd.wasm" });
+      await ctx.audioWorklet.addModule(NOISE_BASE + "rnnoise/workletProcessor.js");
+      const src = ctx.createMediaStreamSource(new MediaStream([raw]));
+      const node = new lib.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: noise.wasm });
+      const dest = ctx.createMediaStreamDestination();
+      src.connect(node).connect(dest);
+      await ctx.resume().catch(() => {});
+      Object.assign(noise, { ctx, node, src, active: true });
+      const out = dest.stream.getAudioTracks()[0];
+      out.contentHint = "speech";
+      return out;
+    } catch (err) {
+      console.warn("calls: strong noise removal unavailable", err && err.name);
+      teardownNoise();
+      return raw;
+    }
+  }
+
+  function teardownNoise() {
+    try { noise.src?.disconnect(); noise.node?.disconnect(); noise.node?.destroy?.(); noise.ctx?.close(); } catch (_) { /* closed */ }
+    Object.assign(noise, { ctx: null, node: null, src: null, active: false });
+  }
+
+  // Put a (new) microphone into the call: process it, swap it in on every connection, release the
+  // old one.
+  async function setMicTrack(raw) {
+    const oldRaw = local.rawMic, oldSent = local.mic;
+    if (raw) raw.contentHint = "speech";
+    const sent = raw ? await processMic(raw) : null;
+    if (sent) sent.enabled = !local.muted;
+    local.rawMic = raw;
+    local.mic = sent;
+    if (local.stream) {
+      if (oldSent && oldSent !== sent) local.stream.removeTrack(oldSent);
+      if (sent && !local.stream.getTracks().includes(sent)) local.stream.addTrack(sent);
+    }
+    for (const p of peers.values()) {
+      const sender = p.pc && oldSent && p.pc.getSenders().find((x) => x.track === oldSent);
+      if (sender && oldSent !== sent) await sender.replaceTrack(sent).catch(() => {});
+    }
+    if (oldSent && oldSent !== sent && oldSent !== raw) oldSent.stop();
+    if (oldRaw && oldRaw !== raw) oldRaw.stop();
+  }
+
+  async function setNoiseMode(mode) {
+    noise.mode = mode === "standard" ? "standard" : "strong";
+    store.set("ppi_call_noise", noise.mode);
+    if (local.rawMic) await setMicTrack(local.rawMic);
+    renderNoise();
+  }
+
+  function renderNoise() {
+    const select = $("call-noise");
+    if (!select) return;
+    select.value = noise.mode;
+    $("call-noise-note").textContent = noise.mode === "strong"
+      ? (noise.active ? "Removing background noise on this device." : canStrongNoise ? "Starts with your microphone." : "Not available in this browser — standard suppression is on.")
+      : "Your browser’s standard noise suppression.";
+  }
+
   async function startLocalMedia(withVideo) {
     let media;
     try {
@@ -477,19 +559,19 @@
       toast("No camera available — joining with audio only.");
     }
     local.stream = new MediaStream();
-    local.mic = media.getAudioTracks()[0] || null;
-    local.cam = media.getVideoTracks()[0] || null;
-    if (local.mic) { local.mic.contentHint = "speech"; local.stream.addTrack(local.mic); }
-    if (local.cam) local.stream.addTrack(local.cam);
     local.muted = false;
     local.cameraOff = false;
+    await setMicTrack(media.getAudioTracks()[0] || null);
+    local.cam = media.getVideoTracks()[0] || null;
+    if (local.cam) local.stream.addTrack(local.cam);
     warnIfNoEchoCancellation();
     showSelf();
     renderControls();
   }
 
   function echoCancelling() {
-    const settings = local.mic && local.mic.getSettings ? local.mic.getSettings() : {};
+    const track = local.rawMic || local.mic;
+    const settings = track && track.getSettings ? track.getSettings() : {};
     return "echoCancellation" in settings ? Boolean(settings.echoCancellation) : null;
   }
   function warnIfNoEchoCancellation() {
@@ -497,8 +579,9 @@
   }
 
   function stopLocalMedia() {
-    for (const t of [local.mic, local.cam, local.screen]) t?.stop();
-    Object.assign(local, { stream: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false });
+    for (const t of [local.rawMic, local.mic, local.cam, local.screen]) t?.stop();
+    teardownNoise();
+    Object.assign(local, { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false });
   }
 
   // Turning the camera on in a voice call makes it a video call: the track is added to every
@@ -650,7 +733,18 @@
     if (kind === "mic") prefs.mic = deviceId || null;
     if (kind === "cam") prefs.cam = deviceId || null;
     if (!local.stream) return;
-    const old = kind === "mic" ? local.mic : local.cam;
+    if (kind === "mic") {
+      if (!local.rawMic) return;
+      try {
+        const media = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS(deviceId || null) });
+        await setMicTrack(media.getAudioTracks()[0]);
+        warnIfNoEchoCancellation();
+      } catch (err) { toast(mediaMessage(err, "audio")); }
+      fillDevices();
+      renderNoise();
+      return;
+    }
+    const old = local.cam;
     if (!old) return;
     const open = (id) => navigator.mediaDevices.getUserMedia(kind === "mic" ? { audio: AUDIO_CONSTRAINTS(id) } : { video: VIDEO_CONSTRAINTS(id) });
     let media;
@@ -698,7 +792,8 @@
       pc: null, dc: null, polite: String(room.you) < String(info.participant), makingOffer: false, ignoreOffer: false,
       pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), audio: new MediaStream(), cameraId: null, screenId: null, streams: new Map() },
       state: { muted: false, cameraOff: false }, security: null, connected: false, dropTimer: null, tile: null, ready: null,
-      initiator, restarts: 0, watchdog: null,
+      initiator, restarts: 0, watchdog: null, relayOnly: forceRelay,
+      diag: { local: {}, remote: {}, reported: "" },
     };
     peers.set(p.id, p);
     room.size = peers.size + 1;
@@ -724,7 +819,10 @@
       p.dc = pc.createDataChannel("pigeonpost", { negotiated: true, id: 0, ordered: true });
       p.dc.onopen = () => sendState(p);
       p.dc.onmessage = (e) => onPeerMessage(p, e.data);
-      pc.onicecandidate = (e) => sendSignal(p, "ice", e.candidate ? e.candidate.toJSON() : null);
+      pc.onicecandidate = (e) => {
+        if (e.candidate && e.candidate.type) p.diag.local[e.candidate.type] = (p.diag.local[e.candidate.type] || 0) + 1;
+        sendSignal(p, "ice", e.candidate ? e.candidate.toJSON() : null);
+      };
       pc.ontrack = (e) => onRemoteTrack(p, e);
       pc.onconnectionstatechange = () => onConnectionState(p);
       pc.onnegotiationneeded = () => negotiate(p).catch(() => {});
@@ -785,7 +883,13 @@
     const p = peers.get(fromId) || ensurePeer({ participant: fromId, name: "Someone" }, false);
     if (!p.ready) p.ready = createConnection(p, false);
     const pc = await p.ready;
+    if (type === "mute") {
+      if (!local.muted && local.mic) { toggleMute(); toast(displayName(p) + " muted you. Unmute when you want to speak."); }
+      return;
+    }
     if (type === "ice") {
+      const kind = data && /\btyp (host|srflx|prflx|relay)\b/.exec(data.candidate || "");
+      if (kind) p.diag.remote[kind[1]] = (p.diag.remote[kind[1]] || 0) + 1;
       if (!pc.remoteDescription) { p.pendingIce.push(data); return; }
       try { await pc.addIceCandidate(data || null); } catch (err) { if (!p.ignoreOffer) console.warn("calls: ice", err && err.name); }
       return;
@@ -841,15 +945,37 @@
   // A pair that has not connected after a while gets fresh ICE candidates (and fresh relay
   // allocations) rather than sitting on "connecting" for ever. Only the side that started the
   // connection restarts, so the two never both renegotiate at once.
+  //
+  // First a plain ICE restart. If that does not do it either, the pair falls back to the relay
+  // only: two people on the same office or home network can often reach neither each other's local
+  // address (the router isolates them) nor their shared public address (no hairpinning), and the
+  // relay is the one path that always works.
   function armWatchdog(p) {
     if (p.watchdog || p.connected) return;
     const check = () => {
       p.watchdog = null;
       if (!peers.has(p.id) || p.connected || !p.pc || p.pc.signalingState === "closed") return;
-      if (p.initiator && p.restarts < 3) { p.restarts += 1; p.pc.restartIce?.(); }
-      p.watchdog = setTimeout(check, 12_000);
+      reportPair(p, "stalled");
+      if (p.initiator && p.restarts < 4) {
+        p.restarts += 1;
+        if (p.restarts >= 2 && !p.relayOnly) {
+          p.relayOnly = true;
+          try { p.pc.setConfiguration(Object.assign(p.pc.getConfiguration(), { iceTransportPolicy: "relay" })); } catch (_) { /* older browsers keep "all" */ }
+        }
+        p.pc.restartIce?.();
+      }
+      p.watchdog = setTimeout(check, 10_000);
     };
-    p.watchdog = setTimeout(check, 12_000);
+    p.watchdog = setTimeout(check, 10_000);
+  }
+
+  // One line per pair in the call service's log — the outcome and how many candidates of each kind
+  // were tried. Never addresses, never descriptions: enough to see why a pair failed to connect.
+  function reportPair(p, state) {
+    const key = state + JSON.stringify(p.diag.local) + JSON.stringify(p.diag.remote) + (p.stats?.route || "");
+    if (!room || !room.id || !session || p.diag.reported === key) return;
+    p.diag.reported = key;
+    post(`/rooms/${room.id}/report`, { session, to: p.id, state, local: p.diag.local, remote: p.diag.remote, relay_only: Boolean(p.relayOnly), restarts: p.restarts, route: p.stats?.route || null }).catch(() => {});
   }
 
   function onConnectionState(p) {
@@ -868,6 +994,7 @@
           room.statsTimer = setInterval(sampleStats, 2000);
         }
         verifySecurity(p).catch(() => {});
+        setTimeout(() => { sampleStats().then(() => reportPair(p, "connected")).catch(() => {}); }, 2500);
       }
       renderClock();
       renderStage();
@@ -890,7 +1017,7 @@
     try { p.pc?.close(); } catch (_) { /* closed */ }
     for (const t of [...p.remote.camera.getTracks(), ...p.remote.screen.getTracks(), ...p.remote.audio.getTracks()]) t.stop();
     if (p.audioEl) { p.audioEl.srcObject = null; p.audioEl.remove(); }
-    p.tile?.remove();
+    if (room && room.tiles) for (const [id, tile] of room.tiles) if (id.startsWith(p.id + ":")) { tile.remove(); room.tiles.delete(id); }
     peers.delete(p.id);
     if (room) room.size = peers.size + 1;
     applyBitrates();
@@ -930,6 +1057,15 @@
     }
   }
 
+  function muteOther(p) {
+    if (!room || !p) return;
+    sendSignal(p, "mute", null);
+    p.state.muted = true;
+    renderStage();
+    renderPeople();
+    toast(displayName(p) + " is muted. Only they can unmute themselves.");
+  }
+
   function sendChat(text) {
     const value = String(text || "").trim().slice(0, CHAT_CHARS);
     if (!value || !room) return false;
@@ -938,7 +1074,8 @@
       if (p.dc && p.dc.readyState === "open") { p.dc.send(JSON.stringify({ t: "chat", text: value })); delivered++; }
     }
     if (!delivered) { toast("Nobody else is connected yet."); return false; }
-    chatLog.push({ who: "You", mine: true, text: value, at: Date.now() });
+    const missed = [...peers.values()].filter((p) => !(p.dc && p.dc.readyState === "open")).map((p) => displayName(p));
+    chatLog.push({ who: "You", mine: true, text: value, at: Date.now(), missed });
     renderChat();
     return true;
   }
@@ -1080,10 +1217,12 @@
     const ui = $("call-ui");
     if (ui) {
       for (const v of ui.querySelectorAll("video")) { v.pause?.(); v.srcObject = null; }
+      if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
       ui.hidden = true;
       if ($("call-mini")) $("call-mini").hidden = true;
       $("call-panel").hidden = true;
-      $("call-grid").textContent = "";
+      $("call-strip").textContent = "";
+      for (const t of [...$("call-grid").children]) if (t.id !== "call-strip") t.remove();
       $("call-knocks").textContent = "";
     }
     renderHead();
@@ -1126,11 +1265,15 @@
               el("p", { class: "call-handle", id: "call-handle" }),
               el("p", { class: "call-status" }, el("span", { id: "call-status", "aria-live": "polite" }), el("span", { class: "call-quality", id: "call-quality" })),
             ),
-            el("p", { class: "call-sas", id: "call-sas", hidden: true, title: "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." },
-              svg(ICON.lock), el("span", { text: "Security code" }), el("strong", { id: "call-sas-code" })),
+            el("div", { class: "call-top-right" },
+              el("p", { class: "call-sas", id: "call-sas", hidden: true, title: "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." },
+                svg(ICON.lock), el("span", { text: "Security code" }), el("strong", { id: "call-sas-code" })),
+              el("button", { class: "call-back", id: "call-layout", type: "button", hidden: true, onclick: () => toggleLayout() }, svg(ICON.people), el("span", { text: "Grid" })),
+              (document.fullscreenEnabled || document.webkitFullscreenEnabled) ? el("button", { class: "call-icon-btn call-top-btn", id: "call-fullscreen", type: "button", "aria-label": "Full screen", title: "Full screen", onclick: () => toggleFullscreen() }, svg(ICON.fullscreen)) : null,
+            ),
           ),
           el("div", { class: "call-knocks", id: "call-knocks", "aria-live": "polite" }),
-          el("div", { class: "call-grid", id: "call-grid", "data-count": "0" }),
+          el("div", { class: "call-grid", id: "call-grid", "data-count": "0", "data-layout": "grid" }, el("div", { class: "call-strip", id: "call-strip" })),
           el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
           el("div", { class: "call-self", id: "call-self", "data-screen": "false" },
             el("video", { id: "call-self-screen", class: "call-self-screen", autoplay: true, playsinline: true, muted: true }),
@@ -1171,6 +1314,12 @@
           ),
           el("div", { class: "call-panel-body", id: "call-panel-settings" },
             deviceField("mic", "Microphone"),
+            el("label", { class: "call-field", for: "call-noise" },
+              el("span", { class: "call-panel-label", text: "Noise cancellation" }),
+              el("select", { id: "call-noise", class: "call-select", onchange: (e) => setNoiseMode(e.target.value) },
+                el("option", { value: "strong", text: "Strong — remove background noise" }),
+                el("option", { value: "standard", text: "Standard" })),
+              el("span", { class: "call-panel-note", id: "call-noise-note" })),
             deviceField("cam", "Camera"),
             canPickSpeaker ? deviceField("speaker", "Speaker") : null,
           ),
@@ -1256,7 +1405,7 @@
     for (const v of ["chat", "people", "settings"]) $("call-panel-" + v).hidden = v !== view;
     if (view === "chat") { if (room) room.unread = 0; renderChat(); $("call-chat-input").focus({ preventScroll: true }); }
     if (view === "people") renderPeople();
-    if (view === "settings") fillDevices();
+    if (view === "settings") { fillDevices(); renderNoise(); }
     renderControls();
   }
 
@@ -1308,6 +1457,7 @@
   function minimize() {
     if (!room || !host()) return;
     room.minimized = true;
+    if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
     $("call-ui").hidden = true;
     $("call-mini").hidden = false;
     renderMini();
@@ -1400,29 +1550,134 @@
   function setStatus(text) { const s = $("call-status"); if (s) s.textContent = text; }
   function renderClock() { if (room && room.startedAt) setStatus(clock(Date.now() - room.startedAt)); if (room && room.minimized) renderMini(); }
 
-  // Tiles: one per person. Whoever is sharing a screen takes the big space; everyone else shrinks
-  // into a strip beside it.
+  // Views: each person's camera, plus each shared screen as a view of its own. A pinned view — or,
+  // if nothing is pinned, a shared screen — takes the stage and the rest line up in a strip beside
+  // it. "Grid" puts everything back side by side.
+  function viewsFor(list) {
+    const views = [];
+    for (const p of list) {
+      views.push({ id: p.id + ":cam", kind: "cam", p });
+      if (p.remote.screen.getVideoTracks().some((t) => t.readyState === "live")) views.push({ id: p.id + ":screen", kind: "screen", p });
+    }
+    return views;
+  }
+
+  function tileFor(view) {
+    room.tiles ||= new Map();
+    let tile = room.tiles.get(view.id);
+    if (tile) return tile;
+    const pin = el("button", { class: "call-tile-act call-pin", type: "button" }, svg(ICON.pin));
+    pin.addEventListener("click", (e) => { e.stopPropagation(); togglePin(view.id); });
+    const children = [el("video", { class: "call-tile-video", autoplay: true, playsinline: true, muted: true })];
+    if (view.kind === "cam") {
+      children.push(el("span", { class: "avatar call-tile-face", "aria-hidden": "true" }));
+      children.push(el("span", { class: "call-mute-badge", hidden: true, title: "Muted", "aria-label": "Muted" }, svg(ICON.mic + ICON.slash)));
+    }
+    const acts = el("div", { class: "call-tile-acts" }, pin);
+    if (view.kind === "cam") {
+      const mute = el("button", { class: "call-tile-act call-tile-mute", type: "button" }, svg(ICON.mic + ICON.slash));
+      mute.addEventListener("click", (e) => { e.stopPropagation(); muteOther(peers.get(view.p.id)); });
+      acts.append(mute);
+    }
+    children.push(acts, el("figcaption", { class: "call-tile-name" }, el("span", { class: "call-tile-label" })));
+    tile = el("figure", { class: "call-tile", "data-view": view.id, "data-kind": view.kind }, ...children);
+    // A thumbnail in the strip is the quickest way to put someone on the stage.
+    tile.addEventListener("click", () => { if (tile.parentElement && tile.parentElement.id === "call-strip") togglePin(view.id); });
+    room.tiles.set(view.id, tile);
+    return tile;
+  }
+
+  function isFullscreen() { return Boolean(document.fullscreenElement || document.webkitFullscreenElement); }
+  function toggleFullscreen() {
+    const ui = $("call-ui");
+    if (isFullscreen()) (document.exitFullscreen || document.webkitExitFullscreen).call(document);
+    else (ui.requestFullscreen || ui.webkitRequestFullscreen)?.call(ui)?.catch?.(() => {});
+  }
+  function renderFullscreen() {
+    const b = $("call-fullscreen");
+    if (!b) return;
+    const on = isFullscreen();
+    b.replaceChildren(svg(on ? ICON.unfullscreen : ICON.fullscreen));
+    b.setAttribute("aria-label", on ? "Exit full screen" : "Full screen");
+    b.title = b.getAttribute("aria-label");
+  }
+  document.addEventListener("fullscreenchange", renderFullscreen);
+  document.addEventListener("webkitfullscreenchange", renderFullscreen);
+
+  function togglePin(id) {
+    if (!room) return;
+    room.pinned = room.pinned === id ? null : id;
+    if (room.pinned) room.layout = "auto";
+    renderStage();
+  }
+
+  function toggleLayout() {
+    if (!room) return;
+    room.layout = room.layout === "grid" ? "auto" : "grid";
+    if (room.layout === "grid") room.pinned = null;
+    renderStage();
+  }
+
   function renderStage() {
     if (!room || !$("call-ui")) return;
+    room.tiles ||= new Map();
     const grid = $("call-grid");
+    const strip = $("call-strip");
     const list = [...peers.values()];
-    const presenter = list.find((p) => p.remote.screen.getVideoTracks().some((t) => t.readyState === "live"));
-    grid.dataset.count = String(list.length);
-    grid.dataset.presenting = String(Boolean(presenter));
+    const views = viewsFor(list);
+    if (room.pinned && !views.some((v) => v.id === room.pinned)) room.pinned = null;
+    const spotlightView = room.layout === "grid" ? null
+      : views.find((v) => v.id === room.pinned) || views.find((v) => v.kind === "screen") || null;
+    const spotlight = Boolean(spotlightView && views.length > 1);
+    grid.dataset.layout = spotlight ? "spotlight" : "grid";
+    grid.dataset.count = String(views.length);
     $("call-waiting").hidden = list.some((p) => p.connected);
     if (list.length === 1 && !list[0].connected) setStatus(room.state === "ringing" ? "Ringing…" : "Connecting…");
-    for (const p of list) {
-      if (!p.tile) {
-        p.tile = el("figure", { class: "call-tile" },
-          el("video", { class: "call-tile-video", autoplay: true, playsinline: true }),
-          el("video", { class: "call-tile-screen", autoplay: true, playsinline: true, muted: true }),
-          el("span", { class: "avatar call-tile-face", "aria-hidden": "true" }),
-          el("span", { class: "call-mute-badge", hidden: true, title: "Muted", "aria-label": "Muted" }, svg(ICON.mic + ICON.slash)),
-          el("figcaption", { class: "call-tile-name" }, el("span", { class: "call-tile-label" })),
-        );
-        p.tile.dataset.pid = p.id;
-        grid.append(p.tile);
+
+    const wanted = new Set();
+    for (const view of views) {
+      const p = view.p;
+      const tile = tileFor(view);
+      wanted.add(view.id);
+      const video = tile.querySelector(".call-tile-video");
+      const stream = view.kind === "screen" ? p.remote.screen : p.remote.camera;
+      video.muted = true;
+      if (video.srcObject !== stream) video.srcObject = stream;
+      const isMain = spotlight && view === spotlightView;
+      const parent = !spotlight || isMain ? grid : strip;
+      if (tile.parentElement !== parent) parent.append(tile);
+      if (video.paused) video.play().catch(() => {});
+      const live = stream.getVideoTracks().some((t) => t.readyState === "live" && !t.muted) && (view.kind === "screen" || !p.state.cameraOff);
+      tile.dataset.video = String(live);
+      tile.dataset.connected = String(p.connected);
+      tile.dataset.main = String(isMain);
+      tile.dataset.pinned = String(room.pinned === view.id);
+      const name = displayName(p);
+      tile.querySelector(".call-tile-label").textContent = view.kind === "screen" ? name + "’s screen" : name + (p.guest ? " · guest" : "") + (p.connected ? "" : " · connecting");
+      const pin = tile.querySelector(".call-pin");
+      const pinned = room.pinned === view.id;
+      pin.setAttribute("aria-pressed", String(pinned));
+      pin.setAttribute("aria-label", (pinned ? "Unpin " : "Pin ") + (view.kind === "screen" ? name + "’s screen" : name));
+      pin.title = pin.getAttribute("aria-label");
+      if (view.kind === "cam") {
+        paintFace(tile.querySelector(".call-tile-face"), p.mailbox ? (p.mailbox.handle || p.mailbox.address) : p.name);
+        tile.querySelector(".call-mute-badge").hidden = !p.state.muted;
+        const mute = tile.querySelector(".call-tile-mute");
+        mute.hidden = p.state.muted;
+        mute.setAttribute("aria-label", "Mute " + name);
+        mute.title = "Mute " + name;
       }
+    }
+    // The stage first, the strip in arrival order behind it.
+    if (spotlight) {
+      const main = room.tiles.get(spotlightView.id);
+      if (grid.firstElementChild !== main) grid.prepend(main);
+      if (strip.parentElement !== grid) grid.append(strip);
+    }
+    for (const [id, tile] of room.tiles) if (!wanted.has(id)) { tile.querySelector("video").srcObject = null; tile.remove(); room.tiles.delete(id); }
+
+    // Voices, one <audio> per person, independent of any tile.
+    for (const p of list) {
       if (!p.audioEl) {
         p.audioEl = el("audio", { autoplay: true });
         $("call-audio").append(p.audioEl);
@@ -1432,25 +1687,8 @@
         if (prefs.speaker) p.audioEl.setSinkId?.(prefs.speaker).catch(() => {});
       }
       if (p.audioEl.paused) p.audioEl.play().catch(() => {});
-      const video = p.tile.querySelector(".call-tile-video");
-      const screen = p.tile.querySelector(".call-tile-screen");
-      video.muted = true;
-      if (video.srcObject !== p.remote.camera) video.srcObject = p.remote.camera;
-      if (screen.srcObject !== p.remote.screen) screen.srcObject = p.remote.screen;
-      // Browsers pause silent videos that were hidden; start them again whenever the call is shown.
-      if (video.paused) video.play().catch(() => {});
-      if (screen.paused) screen.play().catch(() => {});
-      const camLive = p.remote.camera.getVideoTracks().some((t) => t.readyState === "live" && !t.muted) && !p.state.cameraOff;
-      const screenLive = p === presenter;
-      p.tile.dataset.video = String(camLive);
-      p.tile.dataset.screen = String(screenLive);
-      p.tile.dataset.connected = String(p.connected);
-      p.tile.classList.toggle("call-tile-presenter", screenLive);
-      paintFace(p.tile.querySelector(".call-tile-face"), p.mailbox ? (p.mailbox.handle || p.mailbox.address) : p.name);
-      p.tile.querySelector(".call-tile-label").textContent = displayName(p) + (p.guest ? " · guest" : "") + (p.connected ? "" : " · connecting");
-      p.tile.querySelector(".call-mute-badge").hidden = !p.state.muted;
     }
-    for (const tile of [...grid.children]) if (!peers.has(tile.dataset.pid)) tile.remove();
+
     // The header names the call: the other person, or how many are in it.
     if (list.length > 1) {
       $("call-name").textContent = (list.length + 1) + " people";
@@ -1462,6 +1700,11 @@
     const solo = list.length === 1 ? list[0] : null;
     $("call-sas").hidden = !(solo && solo.security);
     if (solo && solo.security) $("call-sas-code").textContent = solo.security.code;
+    const layoutBtn = $("call-layout");
+    layoutBtn.hidden = views.length < 2;
+    layoutBtn.setAttribute("aria-pressed", String(room.layout === "grid"));
+    layoutBtn.querySelector("span").textContent = room.layout === "grid" ? "Spotlight" : "Grid";
+    layoutBtn.title = room.layout === "grid" ? "Put the pinned person or shared screen on the stage" : "Show everyone side by side";
     $("call-link").textContent = meetingLink();
     renderControls();
     if (!$("call-panel").hidden && $("call-panel").dataset.view === "people") renderPeople();
@@ -1514,7 +1757,11 @@
       else if (p.stats?.route === "relay") notes.push("relayed");
       if (p.state.muted) notes.push("muted");
       if (p.state.aec === false) notes.push("no echo cancellation — ask them to use headphones");
-      list.append(row(displayName(p), notes.join(" · "), p.security?.code, key));
+      const r = row(displayName(p), notes.join(" · "), p.security?.code, key);
+      const mute = el("button", { class: "call-pill call-person-mute", type: "button", text: p.state.muted ? "Muted" : "Mute", disabled: p.state.muted, "aria-label": p.state.muted ? displayName(p) + " is muted" : "Mute " + displayName(p) });
+      mute.addEventListener("click", () => muteOther(p));
+      r.append(mute);
+      list.append(r);
     }
   }
 
@@ -1525,7 +1772,8 @@
     for (const m of chatLog) {
       log.append(el("li", { class: "call-chat-item" + (m.mine ? " call-chat-mine" : "") },
         el("p", { class: "call-chat-meta" }, el("span", { class: "call-chat-who", text: m.who }), el("time", { text: new Date(m.at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) })),
-        el("p", { class: "call-chat-text", text: m.text })));
+        el("p", { class: "call-chat-text", text: m.text }),
+        m.missed && m.missed.length ? el("p", { class: "call-chat-missed", text: "Not delivered to " + m.missed.join(", ") + " — not connected yet" }) : null));
     }
     log.scrollTop = log.scrollHeight;
     renderControls();
@@ -1761,11 +2009,15 @@
       const media = this.previewStream;
       this.previewStream = null;
       local.stream = new MediaStream();
-      local.mic = media?.getAudioTracks()[0] || null;
-      local.cam = media?.getVideoTracks()[0] || null;
-      if (local.mic) { local.mic.contentHint = "speech"; local.mic.enabled = !this.micOff; local.stream.addTrack(local.mic); }
-      if (local.cam) local.stream.addTrack(local.cam);
       local.muted = Boolean(this.micOff);
+      local.cam = media?.getVideoTracks()[0] || null;
+      if (local.cam) local.stream.addTrack(local.cam);
+      const raw = media?.getAudioTracks()[0] || null;
+      // Start with the raw microphone so nobody waits, then swap in the cleaned one.
+      local.rawMic = raw;
+      local.mic = raw;
+      if (raw) { raw.enabled = !local.muted; local.stream.addTrack(raw); }
+      if (raw) setMicTrack(raw).catch(() => {});
       local.cameraOff = false;
       $("join").hidden = true;
       openRoomUI({ title: "Call", sub: "", face: this.name, status: "Connecting…" });
@@ -1809,8 +2061,9 @@
       call: room && { id: room.id, state: room.state === "active" && [...peers.values()].some((p) => p.connected) ? "active" : room.state },
       ring: ring && { room: ring.room, kind: ring.kind },
       knocks: [...knocks.keys()],
-      minimized: Boolean(room && room.minimized), aec: echoCancelling(),
-      local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: local.mic?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
+      minimized: Boolean(room && room.minimized), aec: echoCancelling(), noise: { mode: noise.mode, active: noise.active },
+      pinned: room && room.pinned, layout: room && (room.layout || "auto"), fullscreen: isFullscreen(),
+      local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: (local.rawMic || local.mic)?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
       peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), polite: p.polite, pendingIce: p.pendingIce.length }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
     }),
