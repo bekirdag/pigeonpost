@@ -115,6 +115,9 @@ public sealed partial class MainWindow : Window
         // where the shell cannot thumbnail video; the standard-user smoke covers previews.
         if (!startedInNotificationArea && Environment.GetEnvironmentVariable("PIGEONPOST_CALLS_PAGE") is null)
         { await CheckNativePreviewsAsync(); await CheckViewerContentAsync(); }
+        // Fixture data loads synchronously; let the first layout finish before the inbox appears,
+        // as a real sign-in's network round trip always does.
+        else await Task.Delay(500);
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
