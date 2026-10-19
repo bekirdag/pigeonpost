@@ -752,6 +752,11 @@ public static class NativeFileDragSource {
     Write-Host "App process exited: $($process.HasExited)"
     $appLog = "$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log"
     if ($PackageFamilyName -and (Test-Path $appLog)) { Get-Content $appLog -Tail 40 | Write-Host }
+    if ($PackageFamilyName) {
+        Get-WinEvent -LogName Application -MaxEvents 60 -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' -and $_.Message -match 'Pigeonpost' } |
+            Select-Object -First 3 | ForEach-Object { Write-Host "Event $($_.Id) $($_.ProviderName): $($_.Message)" }
+    }
     throw
 } finally {
     if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE, Env:PIGEONPOST_UI_SCROLL_LOG -ErrorAction SilentlyContinue }

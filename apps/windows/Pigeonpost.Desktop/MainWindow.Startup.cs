@@ -26,9 +26,10 @@ public sealed partial class MainWindow
         }
         try
         {
-            var task = await StartupTask.GetAsync(StartupTaskId);
-            ApplyStartupState(task.State);
-            if (log) DesktopLog.Write($"Start at sign-in: {task.State}");
+            if (log) DesktopLog.Write("Reading the sign-in startup setting");
+            var state = await Task.Run(async () => (await StartupTask.GetAsync(StartupTaskId)).State);
+            ApplyStartupState(state);
+            if (log) DesktopLog.Write($"Start at sign-in: {state}");
         }
         catch (Exception ex)
         {

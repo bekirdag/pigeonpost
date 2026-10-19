@@ -95,6 +95,7 @@ public sealed partial class MainWindow : Window
             foreach (var path in paths) items.Add(await Windows.Storage.StorageFile.GetFileFromPathAsync(path));
             return items;
         }));
+        DesktopLog.Write("Window loaded");
         _ = RefreshStartupToggleAsync();
         await EnsureStartedAsync();
     }
