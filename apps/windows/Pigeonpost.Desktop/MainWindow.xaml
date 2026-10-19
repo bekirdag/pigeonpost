@@ -394,7 +394,7 @@
                         </ScrollViewer>
                         <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
                                  AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="14.5" Padding="6,6,6,4"
-                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
+                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste" PreviewKeyDown="Composer_PreviewKeyDown">
                             <TextBox.Resources>
                                 <!-- The card is the field: keep the inner editor flat in every state. -->
                                 <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />

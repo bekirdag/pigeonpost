@@ -301,7 +301,9 @@ try {
     }
     function Wait-ComposerEmpty {
         for ($n = 0; $n -lt 40; $n++) { if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq '') { return }; Start-Sleep -Milliseconds 150 }
-        throw 'The message was not sent.'
+        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+        Capture 'composer-send-failure.png'
+        throw "The message was not sent (composer: '$((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value)', focused: $(if ($focused) { $focused.Current.Name }))."
     }
     function Open-Viewer([string]$Name, [string]$Content, [string]$Shot) {
         Invoke-Control "Open $Name"

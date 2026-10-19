@@ -299,8 +299,18 @@ public sealed partial class MainWindow : Window
     private async void Refresh_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await ViewModel.RefreshAsync(); }
     private async void Send_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer)) return;
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer) || ViewModel.IsSending) return;
         args.Handled = true;
+        await SendComposerAsync();
+    }
+
+    // Ctrl+Enter sends from the composer itself: a multi-line text box would otherwise take the
+    // Enter as a new line before the window's accelerator sees it.
+    private async void Composer_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter || !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)) return;
+        e.Handled = true;
         await SendComposerAsync();
     }
 
