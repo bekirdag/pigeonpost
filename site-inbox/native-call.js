@@ -1,4 +1,5 @@
-// Pigeonpost — the bridge between the iPhone/iPad app and the call client (calls.js).
+// Pigeonpost — the bridge between the native apps (iPhone, iPad, Mac, Android, Windows, Linux) and
+// the call client (calls.js).
 //
 // The app owns sign-in; this page only ever holds the member token the app hands it, renews it by
 // asking the app, and tells the app how much of the screen the call needs: all of it (a call or an
@@ -6,8 +7,17 @@
 (function () {
   "use strict";
 
-  const bridge = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pigeonpost;
-  const tell = (message) => { try { if (bridge) bridge.postMessage(message); } catch (_) { /* app gone */ } };
+  // One message channel per host: WKWebView (iPhone, iPad, Mac) and WebKitGTK (Linux) register a
+  // `pigeonpost` script message handler; Android's WebView exposes a `PigeonpostAndroid` object that
+  // takes a JSON string; Windows' WebView2 has `chrome.webview`.
+  function tell(message) {
+    try {
+      const apple = window.webkit && window.webkit.messageHandlers && window.webkit.messageHandlers.pigeonpost;
+      if (apple) { apple.postMessage(message); return; }
+      if (window.PigeonpostAndroid && window.PigeonpostAndroid.postMessage) { window.PigeonpostAndroid.postMessage(JSON.stringify(message)); return; }
+      if (window.chrome && window.chrome.webview) window.chrome.webview.postMessage(message);
+    } catch (_) { /* app gone */ }
+  }
 
   let token = null, me = null, peer = null, names = {};
   let renewing = null, settle = null;
