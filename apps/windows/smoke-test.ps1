@@ -167,14 +167,20 @@ try {
         $rect = $body.Current.BoundingRectangle
         $y = [int]($rect.Top + [Math]::Min(10, $rect.Height / 2)); $x = [int]$rect.Left + 1; $end = [int]$rect.Left + 45
         Set-Clipboard 'selection-sentinel'
-        $null = [NativeWindowBounds]::SetCursorPos($x, $y)
+        # Absolute moves produce real pointer updates; zero-delta relative moves can be dropped.
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        function Move-Mouse([int]$X, [int]$Y) {
+            [NativeWindowBounds]::mouse_event(0x8001, [uint32][Math]::Round($X * 65535 / ($bounds.Width - 1)), [uint32][Math]::Round($Y * 65535 / ($bounds.Height - 1)), 0, [UIntPtr]::Zero)
+        }
+        Move-Mouse $x $y
+        Start-Sleep -Milliseconds 150
         [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 150
-        for ($step = 1; $step -le 10; $step++) {
-            $null = [NativeWindowBounds]::SetCursorPos([int]($x + ($end - $x) * $step / 10), $y)
-            [NativeWindowBounds]::mouse_event(1, 0, 0, 0, [UIntPtr]::Zero)
+        for ($step = 1; $step -le 15; $step++) {
+            Move-Mouse ([int]($x + ($end - $x) * $step / 15)) $y
             Start-Sleep -Milliseconds 30
         }
+        Start-Sleep -Milliseconds 100
         [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 300
         try {

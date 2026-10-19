@@ -303,7 +303,38 @@
                                     <MenuFlyoutItem Text="Delete subject…" Click="DeleteSubject_Click" IsEnabled="{x:Bind ViewModel.CanDeleteSubject, Mode=OneWay}" />
                                 </MenuFlyout></Button.Flyout>
                             </Button>
-                            <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" IsChecked="True" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" MinWidth="32" MinHeight="32" CornerRadius="8" Background="Transparent" BorderThickness="0" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Show or hide the subjects column"><FontIcon Glyph="&#xE840;" FontSize="16" /></ToggleButton>
+                            <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" IsChecked="True" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" MinWidth="32" MinHeight="32" CornerRadius="8" Background="Transparent" BorderThickness="0" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Show or hide the subjects column">
+                                <ToggleButton.Resources>
+                                    <!-- Checked states animate from template storyboards, so the quiet pinned look is scoped here. -->
+                                    <ResourceDictionary>
+                                        <ResourceDictionary.ThemeDictionaries>
+                                            <ResourceDictionary x:Key="Light">
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#E4E9F1" />
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#DCE2EC" />
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#D3DAE6" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#15181D" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#15181D" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#15181D" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
+                                            </ResourceDictionary>
+                                            <ResourceDictionary x:Key="Default">
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#252B34" />
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#2B323C" />
+                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#313844" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#E8EAED" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#E8EAED" />
+                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#E8EAED" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
+                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
+                                            </ResourceDictionary>
+                                        </ResourceDictionary.ThemeDictionaries>
+                                    </ResourceDictionary>
+                                </ToggleButton.Resources>
+                                <FontIcon Glyph="&#xE840;" FontSize="16" />
+                            </ToggleButton>
                         </Grid>
                     </Grid>
                 </Border>

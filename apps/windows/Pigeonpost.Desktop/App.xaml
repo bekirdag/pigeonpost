@@ -126,14 +126,6 @@
                     <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#DADFE6" />
                     <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#E4E9F1" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#DCE2EC" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#D3DAE6" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#15181D" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#15181D" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#15181D" />
-                    <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
-                    <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#ECEFF3" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#E4E9F1" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#DEE4EE" />
@@ -219,14 +211,6 @@
                     <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#2A3039" />
                     <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#171B21" />
                     <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#252B34" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#2B323C" />
-                    <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#313844" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#E8EAED" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#E8EAED" />
-                    <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#E8EAED" />
-                    <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
-                    <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#171B21" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#1C2129" />
                     <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#20262F" />
