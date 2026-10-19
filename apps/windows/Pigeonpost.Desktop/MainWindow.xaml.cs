@@ -23,6 +23,7 @@ public sealed partial class MainWindow : Window
     private bool followMessages;
     private NativeFileDrop? fileDrop;
     private readonly Dictionary<TextBlock, long> messageBodies = [];
+    private readonly Dictionary<TextBlock, FlyoutBase?> textMenus = [];
 #if UI_TESTS
     private readonly PreviewInboxService preview;
 #endif
@@ -365,29 +366,34 @@ public sealed partial class MainWindow : Window
     {
         if (sender is not TextBlock body) return;
         if (!messageBodies.ContainsKey(body))
+        {
             messageBodies[body] = body.RegisterPropertyChangedCallback(TextBlock.TextProperty, (sender, _) => HighlightBody((TextBlock)sender));
+            // The text's built-in menu would cover the message menu on every right-click.
+            // Keep it for selections only (see MessageBody_ContextRequested).
+            textMenus[body] = body.ContextFlyout;
+            body.ContextFlyout = null;
+        }
         HighlightBody(body);
     }
 
     private void MessageBody_Unloaded(object sender, RoutedEventArgs e)
     {
-        if (sender is TextBlock body && messageBodies.Remove(body, out var token))
+        if (sender is not TextBlock body) return;
+        if (messageBodies.Remove(body, out var token))
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
+        if (textMenus.Remove(body, out var menu)) body.ContextFlyout = menu;
     }
 
-    // With text selected, the text's own menu offers Copy for the selection. Without a
-    // selection, keep showing the message's menu (Copy original message, Save attachments).
+    // With text selected, show the text menu (Copy the selection). Without a selection the
+    // request bubbles to the message card, whose menu offers Copy original message and
+    // Save attachments, exactly as when right-clicking elsewhere on the card.
     private void MessageBody_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
-        if (sender is not TextBlock body || body.SelectedText.Length > 0) return;
-        for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
-        {
-            if (node is not FrameworkElement { ContextFlyout: { } menu }) continue;
-            e.Handled = true;
-            if (e.TryGetPosition(body, out var point)) menu.ShowAt(body, new FlyoutShowOptions { Position = point });
-            else menu.ShowAt(body);
-            return;
-        }
+        if (sender is not TextBlock body || body.SelectedText.Length == 0) return;
+        if (!textMenus.TryGetValue(body, out var menu) || menu is null) return;
+        e.Handled = true;
+        if (e.TryGetPosition(body, out var point)) menu.ShowAt(body, new FlyoutShowOptions { Position = point });
+        else menu.ShowAt(body);
     }
 
     private void HighlightBody(TextBlock body)
