@@ -64,6 +64,8 @@ public sealed partial class MainWindow
             DesktopLog.Error("Notification-area icon unavailable", ex);
             AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
         }
+        if (notifications is { CanHide: false })
+            AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
         Activated += async (_, e) =>
         {
             activeWindow = e.WindowActivationState != WindowActivationState.Deactivated;
@@ -172,5 +174,22 @@ public sealed partial class MainWindow
         }
         finally { openingNotification = false; pendingNotification = null; }
         await AcknowledgeVisibleAsync();
+    }
+}
+
+public sealed partial class MainWindow
+{
+    // Windows owns the alert switch; say so instead of failing silently.
+    private void ExplainAlertSetting()
+    {
+        var setting = Microsoft.Windows.AppNotifications.AppNotificationSetting.Unsupported;
+        try { setting = Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Setting; }
+        catch (Exception ex) { DesktopLog.Error("Reading the Windows alert setting failed", ex); }
+        DesktopLog.Write($"Inbox open; alerts {setting}; notification-area icon {(notifications?.CanHide == true ? "shown" : "unavailable")}");
+        if (setting is Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledForApplication
+            or Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledForUser)
+            AccountStatus.Text = "Windows notifications are off for Pigeonpost. Turn them on in Settings > System > Notifications.";
+        else if (setting is Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledByGroupPolicy)
+            AccountStatus.Text = "Windows notifications are turned off by your organization's policy.";
     }
 }

@@ -71,7 +71,8 @@ jobs:
         run: |
           dotnet publish apps/windows/Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:DefineConstants=UI_TESTS --self-contained true -o apps/windows/artifacts/ui-tests
           if ($LASTEXITCODE -ne 0) { throw 'UI-test build failed.' }
-          ./apps/windows/run-ui-as-user.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots
+          ./apps/windows/package-ui-tests.ps1 -UiTestDirectory apps/windows/artifacts/ui-tests -ReleaseArtifacts apps/windows/artifacts/x64 -Output "$PWD/apps/windows/artifacts/ui-tests-package/Pigeonpost-ui-tests.msix"
+          ./apps/windows/run-ui-as-user.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots -PackagedNotifications "$PWD/apps/windows/artifacts/ui-tests-package/Pigeonpost-ui-tests.msix"
       - name: Install and activate the MSIX on the disposable runner
         if: matrix.architecture == 'x64'
         shell: pwsh
@@ -81,7 +82,7 @@ jobs:
       - name: Notification integration in the installed package (taskbar owner's session)
         if: matrix.architecture == 'x64'
         shell: pwsh
-        run: ./apps/windows/test-packaged-notifications.ps1 -UiTestDirectory apps/windows/artifacts/ui-tests -ReleaseArtifacts apps/windows/artifacts/x64 -OutputDirectory apps/windows/artifacts/screenshots
+        run: ./apps/windows/test-packaged-notifications.ps1 -Package "$PWD/apps/windows/artifacts/ui-tests-package/Pigeonpost-ui-tests.msix" -Mode shell -OutputDirectory apps/windows/artifacts/screenshots
       - name: Upload native UI evidence
         if: always() && matrix.architecture == 'x64'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

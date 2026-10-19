@@ -25,11 +25,12 @@ public sealed partial class MainWindow
             var shell = notifications!.ShellIconState();
             var setting = AppNotificationManager.Default.Setting;
             var identity = DesktopLog.PackageIdentity();
+            var alertsExpected = packaged is null || packaged.Mode == "alerts";
             if (packaged is not null)
             {
                 Check(identity != "unpackaged", "Runs with the installed package identity");
-                Check(shell == 0, $"Windows shell holds the notification-area icon (0x{shell:X8})");
-                Check(setting == AppNotificationSetting.Enabled, $"Windows allows Pigeonpost alerts ({setting})");
+                if (packaged.Mode == "shell") Check(shell == 0, $"Windows shell holds the notification-area icon (0x{shell:X8})");
+                if (alertsExpected) Check(setting == AppNotificationSetting.Enabled, $"Windows allows Pigeonpost alerts ({setting})");
             }
             var baseline = unreadState.Count;
             // Exercise the actual close-to-tray path and poll using the release integration.
@@ -43,7 +44,8 @@ public sealed partial class MainWindow
             Check(notifications!.UnreadCount == unreadState.Count, "Tray icon reflects the account unread count");
             Check(ViewModel.Subjects.Single(s => s.Id == "design-release").Unread == 1, "Hidden subject retains its unread marker");
             var alerts = await AppNotificationManager.Default.GetAllAsync();
-            Check(alerts.Count == 2, "Windows notification center contains both native alerts");
+            if (alertsExpected) Check(alerts.Count == 2, "Windows notification center contains both native alerts");
+            else checks.Add($"Alerts not asserted in this session ({setting}, {alerts.Count} in history)");
             if (packaged is not null)
             {
                 // Let the harness photograph the banner and notification area while they are shown.
@@ -51,7 +53,7 @@ public sealed partial class MainWindow
                 for (var n = 0; n < 150 && !File.Exists(Path.Combine(packaged.Signals, "alerts.captured")); n++) await Task.Delay(100);
             }
             await ViewModel.RefreshAsync();
-            Check((await AppNotificationManager.Default.GetAllAsync()).Count == 2, "Repeated refresh does not duplicate native alerts");
+            if (alertsExpected) Check((await AppNotificationManager.Default.GetAllAsync()).Count == 2, "Repeated refresh does not duplicate native alerts");
             var snapshot = await preview.LoadAsync(ViewModel.SelectedMailbox!.Address, lifetime.Token);
             var message = snapshot.Messages.Last(m => m.ThreadId == "design-release");
             await OpenNotificationAsync(new(ViewModel.SelectedMailbox.Address, message.PeerKey, message.ThreadId, message.MessageId));
@@ -63,7 +65,7 @@ public sealed partial class MainWindow
                 "Reading notification target preserves unread mail in the other subject");
             unreadState.Clear(); notifications!.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
-            Check(unreadState.Count == 0 && (await AppNotificationManager.Default.GetAllAsync()).Count == 0, "Sign-out cleanup clears the badge and native alerts");
+            Check(unreadState.Count == 0 && (!alertsExpected || (await AppNotificationManager.Default.GetAllAsync()).Count == 0), "Sign-out cleanup clears the badge and native alerts");
             File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, identity, shell = $"0x{shell:X8}", setting = setting.ToString(), taskbarWarning = notifications.TaskbarWarning }));
         }
         catch (Exception ex)
@@ -75,11 +77,17 @@ public sealed partial class MainWindow
     }
 }
 
-internal sealed record PackagedNotificationTest(string Result, string Signals)
+// Mode "shell": the taskbar owner's (elevated) runner session, which proves the icon; Windows does
+// not support alerts for elevated apps, so the alert checks run in mode "alerts" as a standard user.
+internal sealed record PackagedNotificationTest(string Mode, string Result, string Signals)
 {
     private const string Folder = @"C:\PigeonpostUiTest";
-    public static PackagedNotificationTest? Load() =>
-        File.Exists(Path.Combine(Folder, "packaged-notifications.request"))
-            ? new(Path.Combine(Folder, "packaged-notifications.json"), Folder) : null;
+    public static PackagedNotificationTest? Load()
+    {
+        var request = Path.Combine(Folder, "packaged-notifications.request");
+        if (!File.Exists(request)) return null;
+        var mode = File.ReadAllText(request).Trim();
+        return new(mode, Path.Combine(Folder, $"packaged-notifications-{mode}.json"), Folder);
+    }
 }
 #endif

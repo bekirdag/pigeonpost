@@ -97,7 +97,8 @@ public sealed partial class MainWindow : Window
             return items;
         }));
 #if UI_TESTS
-        await CheckNativePreviewsAsync();
+        // Media previews depend on codecs the packaged notification sessions do not need.
+        if (PackagedNotificationTest.Load() is null) await CheckNativePreviewsAsync();
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {

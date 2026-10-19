@@ -4,7 +4,6 @@ using System.Runtime.InteropServices;
 using Microsoft.Windows.AppNotifications;
 using Microsoft.Windows.AppNotifications.Builder;
 using Pigeonpost.Core;
-using Forms = System.Windows.Forms;
 
 namespace Pigeonpost.Desktop;
 
@@ -12,12 +11,14 @@ namespace Pigeonpost.Desktop;
 internal sealed class DesktopNotifications : IDisposable
 {
     private readonly IntPtr window;
-    private readonly Forms.NotifyIcon tray;
+    private readonly TrayIcon tray;
     private readonly Icon normal;
     private Icon? badge;
     private ITaskbarList3? taskbar;
     private int count = -1;
-    public bool CanHide => tray.Visible;
+    // Hide to the tray only when the shell really shows our icon; otherwise closing would
+    // leave a running app with no window and no way back.
+    public bool CanHide => tray.IsAdded;
     internal int UnreadCount => count;
     internal string? TaskbarWarning { get; private set; }
 
@@ -25,12 +26,7 @@ internal sealed class DesktopNotifications : IDisposable
     {
         this.window = window;
         normal = new Icon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
-        var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("Open Pigeonpost", null, (_, _) => show());
-        menu.Items.Add("Quit Pigeonpost", null, (_, _) => quit());
-        tray = new Forms.NotifyIcon { Icon = normal, Text = "Pigeonpost", ContextMenuStrip = menu, Visible = true };
-        tray.MouseClick += (_, e) => { if (e.Button == Forms.MouseButtons.Left) show(); };
-        DesktopLog.Write($"Notification-area icon requested; shell reports 0x{ShellIconState():X8}");
+        tray = new TrayIcon(normal.Handle, show, quit);
         try { taskbar = (ITaskbarList3)new TaskbarList(); taskbar.HrInit(); }
         catch (Exception ex) when (ex is COMException or UnauthorizedAccessException)
         { taskbar = null; TaskbarWarning = ex.Message; }
@@ -44,11 +40,11 @@ internal sealed class DesktopNotifications : IDisposable
         count = unread;
         var previous = badge;
         badge = unread == 0 ? null : CreateBadge(unread);
-        tray.Icon = badge ?? normal;
-        tray.Text = unread == 0 ? "Pigeonpost — no unread messages" : $"Pigeonpost — {unread} unread messages";
+        var text = unread == 0 ? "Pigeonpost — no unread messages" : $"Pigeonpost — {unread} unread messages";
+        tray.Update((badge ?? normal).Handle, text);
         try
         {
-            taskbar?.SetOverlayIcon(window, badge?.Handle ?? IntPtr.Zero, tray.Text);
+            taskbar?.SetOverlayIcon(window, badge?.Handle ?? IntPtr.Zero, text);
             if (taskbar is not null) TaskbarWarning = null;
         }
         catch (Exception ex) when (ex is COMException or UnauthorizedAccessException)
@@ -110,32 +106,12 @@ internal sealed class DesktopNotifications : IDisposable
     {
         try { taskbar?.SetOverlayIcon(window, IntPtr.Zero, ""); }
         catch (Exception ex) when (ex is COMException or UnauthorizedAccessException) { }
-        tray.Visible = false;
-        tray.ContextMenuStrip?.Dispose();
         tray.Dispose(); badge?.Dispose(); normal.Dispose();
         if (taskbar is not null) Marshal.FinalReleaseComObject(taskbar);
     }
 
-    // Asks the shell whether it holds our icon (S_OK when registered, visible or in overflow).
-    internal int ShellIconState()
-    {
-        try
-        {
-            var fields = typeof(Forms.NotifyIcon).GetFields(System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
-            var host = fields.Select(f => f.GetValue(tray)).OfType<Forms.NativeWindow>().FirstOrDefault();
-            var id = fields.Where(f => f.FieldType == typeof(int) && f.Name.Contains("id", StringComparison.OrdinalIgnoreCase)).Select(f => (int)f.GetValue(tray)!).FirstOrDefault();
-            if (host is null || host.Handle == IntPtr.Zero) return unchecked((int)0x80004005);
-            var identifier = new NotifyIconIdentifier { Size = (uint)Marshal.SizeOf<NotifyIconIdentifier>(), Window = host.Handle, Id = (uint)id };
-            return Shell_NotifyIconGetRect(ref identifier, out _);
-        }
-        catch (Exception ex) { return ex.HResult; }
-    }
+    internal int ShellIconState() => tray.ShellState();
 
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NotifyIconIdentifier { public uint Size; public IntPtr Window; public uint Id; public Guid Item; }
-    [StructLayout(LayoutKind.Sequential)]
-    private struct NativeRect { public int Left, Top, Right, Bottom; }
-    [DllImport("shell32.dll")] private static extern int Shell_NotifyIconGetRect(ref NotifyIconIdentifier identifier, out NativeRect location);
     [DllImport("user32.dll")] private static extern bool DestroyIcon(IntPtr icon);
 }
 

@@ -78,6 +78,7 @@ public sealed partial class MainWindow
         await RefreshOtherNotificationsAsync();
         refreshTimer ??= CreateRefreshTimer();
         refreshTimer.Start();
+        ExplainAlertSetting();
         StartAccountEvents();
     }
 
