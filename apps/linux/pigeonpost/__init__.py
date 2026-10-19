@@ -1,4 +1,4 @@
 """Native Linux Pigeonpost desktop client."""
 
-VERSION = "1.0.7"
+VERSION = "1.0.8"
 APP_ID = "dev.pigeonpost.Desktop"

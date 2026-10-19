@@ -17,10 +17,32 @@ def media_type(name, mime):
     return (mimetypes.guess_type(name)[0] or "") if mime in ("", "application/octet-stream") else mime
 
 
-def supports(name, mime):
+IMAGES = {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif"}
+TEXT = {"text/plain", "text/csv", "text/markdown", "application/json"}
+MARKUP = {"text/html", "application/xhtml+xml", "image/svg+xml", "text/xml", "application/xml"}
+
+
+def viewer_kind(name, mime):
+    """image, video, audio, pdf or text — or None for anything else, markup above all."""
     mime = media_type(name, mime)
-    return mime in {"image/png", "image/jpeg", "image/gif", "image/webp", "image/bmp", "image/avif",
-                    "application/pdf", "text/plain", "text/csv", "text/markdown", "application/json"} or mime.startswith(("video/", "audio/"))
+    suffix = Path(str(name)).suffix.lower()
+    if mime in MARKUP or suffix in (".html", ".htm", ".xhtml", ".svg", ".svgz", ".xml"):
+        return None
+    if mime in IMAGES:
+        return "image"
+    if mime == "application/pdf":
+        return "pdf"
+    if mime in TEXT:
+        return "text"
+    if mime.startswith("video/"):
+        return "video"
+    if mime.startswith("audio/"):
+        return "audio"
+    return None
+
+
+def supports(name, mime):
+    return viewer_kind(name, mime) is not None
 
 
 class ThumbnailCache:
@@ -45,6 +67,8 @@ class ThumbnailCache:
             data = read()
             if not data or len(data) > MAX_BYTES:
                 return None
+            if viewer_kind(name, mime) is None:
+                return None
             result = render(data, name, media_type(name, mime))
             with self.lock:
                 if generation == self.generation:
@@ -56,7 +80,8 @@ class ThumbnailCache:
 
 def render(data, name, mime):
     if mime.startswith("image/"):
-        loader = GdkPixbuf.PixbufLoader.new()
+        # The declared type's own loader: no content sniffing into an SVG renderer.
+        loader = GdkPixbuf.PixbufLoader.new_with_mime_type(mime)
         valid = [True]
 
         def size(_, width, height):

@@ -18,6 +18,10 @@ from .model import (contact_for, conversation_address_input, conversations, disp
                     size_text, subjects, target_thread, timestamp, valid_peer, unread_count)
 from .vault import Vault
 from .previews import ThumbnailCache, supports as preview_supported
+from .theme import CHOICES, Design, Preferences, apply_appearance
+from .viewer import AttachmentViewer
+
+WEB_INBOX = "https://inbox.pigeonpost.dev/"
 
 
 def box(spacing=8, horizontal=False, margin=0):
@@ -171,9 +175,13 @@ class SettingsNavigation:
 
 
 class Window(Adw.ApplicationWindow):
-    def __init__(self, app, session=None, api=None, restore=True):
+    def __init__(self, app, session=None, api=None, restore=True, preferences=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
+        self.preferences = preferences or getattr(app, "preferences", None) or Preferences()
+        apply_appearance(self.preferences.appearance)
+        if not getattr(app, "design", None):
+            app.design = Design(self.get_display())
         self.session = session or Session(Vault())
         self.api = api or Postbox(self.session)
         self.generation, self.revision, self.closed = 0, 0, False
@@ -191,6 +199,7 @@ class Window(Adw.ApplicationWindow):
         self.pool = threading.BoundedSemaphore(8)
         self.overlay = Adw.ToastOverlay()
         self.root = box(0)
+        self.root.add_css_class("pp-root")
         self.header = Adw.HeaderBar()
         self.title = Adw.WindowTitle(title="Pigeonpost", subtitle="Private messaging")
         self.header.set_title_widget(self.title)
@@ -363,8 +372,12 @@ class Window(Adw.ApplicationWindow):
     def inbox_view(self):
         sidebar = box(10, margin=12)
         sidebar.set_size_request(210, -1)
+        sidebar_ground = box(0)
+        sidebar_ground.add_css_class("pp-sidebar")
+        sidebar_ground.append(sidebar)
         self.mailbox_model = Gtk.StringList.new([])
         self.mailbox_picker = Gtk.DropDown(model=self.mailbox_model)
+        self.mailbox_picker.add_css_class("pp-mailbox")
         self.mailbox_picker.set_tooltip_text("Active mailbox")
         self.mailbox_picker.connect("notify::selected", lambda *_: self.select_mailbox())
         sidebar.append(self.mailbox_picker)
@@ -375,49 +388,64 @@ class Window(Adw.ApplicationWindow):
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
-        sidebar.append(button("New conversation", self.new_conversation, "list-add-symbolic"))
+        sidebar.append(button("New conversation", self.new_conversation, "list-add-symbolic", "pp-pill-button"))
         self.peer_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.peer_list.add_css_class("navigation-sidebar")
+        self.peer_list.add_css_class("pp-list")
         self.peer_list.connect("row-selected", self.peer_selected)
         sidebar.append(scroll(self.peer_list))
-        self.connection_status = label("", "dim-label", wrap=True)
+        self.connection_status = label("", "pp-status", wrap=True)
         sidebar.append(self.connection_status)
-        sidebar.append(button("Handles", self.handles))
+        sidebar.append(button("Handles", self.handles, style="pp-pill-button"))
         subpanel = box(10, margin=12)
         subpanel.set_size_request(165, -1)
+        subpanel_ground = box(0)
+        subpanel_ground.add_css_class("pp-column")
+        subpanel_ground.append(subpanel)
         subhead = box(horizontal=True)
-        heading = label("Subjects", "heading")
+        heading = label("Subjects", "pp-overline")
         heading.set_hexpand(True)
         subhead.append(heading)
-        subhead.append(button("New subject", self.new_subject, "list-add-symbolic"))
+        subhead.append(button("New subject", self.new_subject, "list-add-symbolic", "flat"))
         subpanel.append(subhead)
         self.subject_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.subject_list.add_css_class("navigation-sidebar")
+        self.subject_list.add_css_class("pp-list")
         self.subject_list.connect("row-selected", self.subject_selected)
         subpanel.append(scroll(self.subject_list))
-        self.subject_delete = button("Delete subject", self.delete_subject, "user-trash-symbolic")
+        self.subject_delete = button("Delete subject", self.delete_subject, "user-trash-symbolic", "flat")
         subpanel.append(self.subject_delete)
         detail = box(0)
         detail.set_size_request(350, -1)
-        toolbar = box(horizontal=True, margin=12)
-        self.peer_title = label("Your inbox", "title-3")
+        detail.add_css_class("pp-wash")
+        toolbar = box(4, horizontal=True, margin=12)
+        toolbar.add_css_class("pp-toolbar")
+        self.peer_title = label("Your inbox", "pp-title")
         self.peer_title.set_hexpand(True)
         toolbar.append(self.peer_title)
-        toolbar.append(button("Contact details", lambda: self.contact_editor(self.peer), "avatar-default-symbolic"))
-        toolbar.append(button("Archive conversation", self.archive_peer, "folder-download-symbolic"))
+        # Calls run in the web inbox: no Linux WebKitGTK build ships WebRTC (see README).
+        self.voice_call_button = button("Voice call", lambda: self.call(False), "call-start-symbolic", "flat")
+        self.video_call_button = button("Video call", lambda: self.call(True), "camera-video-symbolic", "flat")
+        toolbar.append(self.voice_call_button)
+        toolbar.append(self.video_call_button)
+        toolbar.append(button("Contact details", lambda: self.contact_editor(self.peer), "avatar-default-symbolic", "flat"))
+        toolbar.append(button("Archive conversation", self.archive_peer, "folder-download-symbolic", "flat"))
         detail.append(toolbar)
         self.message_search = Gtk.SearchEntry(placeholder_text="Search this conversation")
-        self.message_search.set_margin_start(12)
-        self.message_search.set_margin_end(12)
+        self.message_search.set_margin_start(16)
+        self.message_search.set_margin_end(16)
+        self.message_search.set_margin_top(10)
         self.message_search.connect("search-changed", lambda _: self.render_messages())
         detail.append(self.message_search)
-        self.message_list = box(12, margin=16)
+        self.message_list = box(14, margin=20)
         self.message_scroll = scroll(self.message_list)
         detail.append(self.message_scroll)
         self.file_chips = box(horizontal=True, margin=8)
         detail.append(self.file_chips)
-        composer = box(horizontal=True, margin=12)
-        self.attach_button = button("Attach a file", self.pick_file, "mail-attachment-symbolic")
+        composer = box(6, horizontal=True, margin=16)
+        composer.set_margin_top(4)
+        composer.add_css_class("pp-composer")
+        self.attach_button = button("Attach a file", self.pick_file, "mail-attachment-symbolic", "flat")
         composer.append(self.attach_button)
         self.composer = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, accepts_tab=False)
         self.composer.set_top_margin(8)
@@ -433,19 +461,21 @@ class Window(Adw.ApplicationWindow):
         compose_scroll.set_child(self.composer)
         composer.append(compose_scroll)
         self.send_button = button("Send message", self.send, "mail-send-symbolic", "suggested-action")
+        self.send_button.set_valign(Gtk.Align.END)
+        self.attach_button.set_valign(Gtk.Align.END)
         composer.append(self.send_button)
         detail.append(composer)
         drop = Gtk.DropTarget.new(Gio.File, Gdk.DragAction.COPY)
         drop.connect("drop", lambda _, file, x, y: self.stage_file(file))
         detail.add_controller(drop)
         right = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=200)
-        right.set_start_child(subpanel)
+        right.set_start_child(subpanel_ground)
         right.set_end_child(detail)
         right.set_resize_start_child(False)
         right.set_shrink_start_child(False)
         right.set_shrink_end_child(False)
         panes = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=270)
-        panes.set_start_child(sidebar)
+        panes.set_start_child(sidebar_ground)
         panes.set_end_child(right)
         panes.set_resize_start_child(False)
         panes.set_shrink_start_child(False)
@@ -593,10 +623,10 @@ class Window(Adw.ApplicationWindow):
                 continue
             row = Gtk.ListBoxRow()
             row.peer = peer
-            content = box(4, margin=8)
+            content = box(3, margin=9)
             unread = unread_count(messages)
-            content.append(label(name + (f"  • {unread}" if unread else ""), "heading"))
-            content.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "dim-label"))
+            content.append(label(name + (f"  • {unread}" if unread else ""), "pp-peer"))
+            content.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "pp-preview"))
             row.set_child(content)
             self.peer_list.append(row)
             if peer == self.peer:
@@ -624,8 +654,11 @@ class Window(Adw.ApplicationWindow):
             title = item.get("title") or ("General" if item.get("is_default") else "Untitled")
             unread = unread_count([m for m in messages if row.subject is None or (m.get("thread_id") or "") == row.subject])
             row.set_child(label(title + (f"  • {unread} unread" if unread else ""), "heading" if unread else None))
-            row.get_child().set_margin_top(12)
-            row.get_child().set_margin_bottom(12)
+            row.get_child().add_css_class("pp-subject")
+            row.get_child().set_margin_top(10)
+            row.get_child().set_margin_bottom(10)
+            row.get_child().set_margin_start(10)
+            row.get_child().set_margin_end(10)
             self.subject_list.append(row)
             if row.subject == self.subject:
                 self.subject_list.select_row(row)
@@ -647,7 +680,7 @@ class Window(Adw.ApplicationWindow):
 
     def empty_thread(self, text):
         clear(self.message_list)
-        self.message_list.append(label(text, "dim-label", wrap=True))
+        self.message_list.append(label(text, "pp-status", wrap=True))
         self.update_send()
 
     def render_messages(self):
@@ -662,49 +695,95 @@ class Window(Adw.ApplicationWindow):
         query = self.message_search.get_text().casefold()
         rows = [m for m in self.shown_messages() if query in message_text(m).casefold()]
         if len(rows) > self.message_limit:
-            self.message_list.append(button(f"Load earlier messages ({len(rows) - self.message_limit})", self.load_earlier))
+            self.message_list.append(button(f"Load earlier messages ({len(rows) - self.message_limit})", self.load_earlier, style="pp-pill-button"))
         if not rows:
-            self.message_list.append(label("No matching messages." if query else "Say hello to start this conversation.", "dim-label", wrap=True))
+            self.message_list.append(label("No matching messages." if query else "Say hello to start this conversation.", "pp-status", wrap=True))
         for message in rows[-self.message_limit:]:
             outgoing = message.get("direction") == "out"
-            bubble = box(6, margin=4)
-            bubble.add_css_class("card")
-            inner = box(6, margin=12)
+            bubble = box(6)
+            bubble.add_css_class("pp-bubble")
+            if outgoing:
+                bubble.add_css_class("pp-mine")
+            bubble.insert_action_group("message", self.message_actions(message, outgoing))
+            inner = box(8, margin=14)
+            inner.set_margin_start(16)
+            inner.set_margin_end(16)
             who = "You" if outgoing else self.peer
             when = timestamp(message)
             try:
                 suffix = datetime.datetime.fromtimestamp(when / 1000 if when > 10**11 else when).strftime("%d %b · %H:%M") if when else ""
             except (ValueError, OSError, OverflowError):
                 suffix = ""
-            inner.append(label(who + "   " + suffix, "dim-label"))
+            meta = label(who + "   " + suffix, "pp-meta")
+            meta.add_css_class("pp-mono" if not outgoing else "pp-meta")
+            inner.append(meta)
             if message.get("verb"):
                 state = "Review required" if message.get("autonomy") != "auto" else "Automatic handling allowed"
-                inner.append(label(state + " · " + str(message["verb"]), "heading", wrap=True))
-            text = label(message_text(message), wrap=True)
-            text.set_selectable(True)
-            inner.append(text)
+                verb = label(state + " · " + str(message["verb"]), "pp-verb", wrap=True)
+                verb.add_css_class("pp-auto" if message.get("autonomy") == "auto" else "pp-held")
+                verb.set_halign(Gtk.Align.START)
+                inner.append(verb)
+            inner.append(self.message_body(message))
             for attachment in message.get("attachments") or []:
                 identity = self.identity
                 preview = self.attachment_preview(
                     f"{identity}:{attachment.get('id')}", attachment.get("filename", "attachment"), attachment.get("media_type", ""),
                     lambda a=attachment, owner=identity: self.api.download(owner, a["id"]))
                 if preview:
-                    inner.append(preview)
-                inner.append(button("Save " + safe_filename(attachment.get("filename", "attachment")) + " · " + size_text(attachment.get("bytes", 0)),
-                                    lambda a=attachment: self.save_attachment(a)))
-            actions = box(horizontal=True)
-            actions.append(button("Copy message", lambda m=message: self.get_clipboard().set(message_text(m)), "edit-copy-symbolic"))
-            actions.append(button("Delete message", lambda m=message: self.delete_message(m), "user-trash-symbolic"))
+                    opener = Gtk.Button(child=preview)
+                    opener.add_css_class("flat")
+                    opener.add_css_class("pp-preview-button")
+                    opener.set_halign(Gtk.Align.START)
+                    name = safe_filename(attachment.get("filename", "attachment"))
+                    opener.set_tooltip_text("Open " + name)
+                    opener.update_property([Gtk.AccessibleProperty.LABEL], ["Open " + name])
+                    opener.connect("clicked", lambda _, a=attachment: self.open_attachment(a))
+                    inner.append(opener)
+                save = button("Save " + safe_filename(attachment.get("filename", "attachment")) + " · " + size_text(attachment.get("bytes", 0)),
+                              lambda a=attachment: self.save_attachment(a), style="pp-file")
+                save.set_halign(Gtk.Align.START)
+                inner.append(save)
+            actions = box(2, horizontal=True)
+            actions.append(button("Copy message", lambda m=message: self.get_clipboard().set(message_text(m)), "edit-copy-symbolic", "flat"))
+            actions.append(button("Delete message", lambda m=message: self.delete_message(m), "user-trash-symbolic", "flat"))
             if not outgoing:
-                actions.append(button("Report spam", lambda m=message: self.report_message(m), "dialog-warning-symbolic"))
+                actions.append(button("Report spam", lambda m=message: self.report_message(m), "dialog-warning-symbolic", "flat"))
             inner.append(actions)
             bubble.append(inner)
-            bubble.set_margin_start(36 if outgoing else 0)
-            bubble.set_margin_end(0 if outgoing else 36)
+            bubble.set_margin_start(64 if outgoing else 0)
+            bubble.set_margin_end(0 if outgoing else 64)
             self.message_list.append(bubble)
         self.update_send()
         if bottom and not query:
             GLib.idle_add(lambda: adj.set_value(max(0, adj.get_upper() - adj.get_page_size())))
+
+    def message_body(self, message):
+        """Plain text (never markup) that can be partly selected and copied.
+
+        The label's own menu keeps Copy for the selection and adds the message's actions, so the
+        selection never hides them."""
+        text = label(message_text(message), "pp-body", wrap=True)
+        text.set_selectable(True)
+        text.set_use_markup(False)
+        menu = Gio.Menu()
+        menu.append("Copy message", "message.copy")
+        menu.append("Delete message", "message.delete")
+        if message.get("direction") != "out":
+            menu.append("Report spam", "message.report")
+        text.set_extra_menu(menu)
+        return text
+
+    def message_actions(self, message, outgoing):
+        group = Gio.SimpleActionGroup()
+        handlers = {"copy": lambda: self.get_clipboard().set(message_text(message)),
+                    "delete": lambda: self.delete_message(message)}
+        if not outgoing:
+            handlers["report"] = lambda: self.report_message(message)
+        for name, handler in handlers.items():
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda *_, run=handler: run())
+            group.add_action(action)
+        return group
 
     def load_earlier(self):
         self.message_limit += 200
@@ -764,6 +843,8 @@ class Window(Adw.ApplicationWindow):
 
     def update_send(self):
         enabled = bool(self.peer and self.identity and not self.sending)
+        self.voice_call_button.set_sensitive(bool(self.peer and self.identity))
+        self.video_call_button.set_sensitive(bool(self.peer and self.identity))
         self.composer.set_sensitive(enabled)
         self.attach_button.set_sensitive(enabled)
         self.send_button.set_sensitive(enabled and not self.staging.get(self.draft_key(), 0) and bool(self.drafts.get(self.draft_key(), "").strip() or self.files.get(self.draft_key())))
@@ -852,17 +933,40 @@ class Window(Adw.ApplicationWindow):
             self.drafts.pop(key, None)
             self.files.pop(key, None)
             self.restore_draft()
+            self.keep_composer_focus(key)
             self.toast("Message sent")
             # Read immediately; the long-poll worker may still be waiting on another update.
             self.reload_messages()
         def failed(error):
             self.sending = False
             self.update_send()
+            self.keep_composer_focus(key)
             message = self.error_text(error)
             if getattr(error, "status", 0) == 0 or getattr(error, "status", 0) >= 500:
                 message += " Your draft is saved here. Check the conversation before retrying; delivery may have succeeded."
             self.notice("Message could not be confirmed", message)
         self._work(send, sent, failed)
+
+    def keep_composer_focus(self, key):
+        """Back to the message box after Send or Enter, so the next message can be typed at once.
+
+        Sending disables the box, which drops focus; give it back unless the person has since moved
+        to another conversation or into a dialog."""
+        if key == self.draft_key() and self.composer.get_sensitive() and not any(d.get_visible() for d in self.dialogs):
+            self.composer.grab_focus()
+
+    def call(self, video):
+        """Open the call in the web inbox, which has the full call client.
+
+        The embedded call page needs WebRTC, and neither Debian/Ubuntu's WebKitGTK nor the GNOME
+        Flatpak runtime's is built with it. The address is copied so it can be found at once."""
+        if not self.peer:
+            return
+        peer = self.peer
+        self.get_clipboard().set(peer)
+        self.open_url(WEB_INBOX)
+        kind = "video" if video else "voice"
+        self.toast(f"Calls open in the web inbox. Choose {display_name(peer)} there and start a {kind} call — the address is copied.")
 
     def sent_snapshot(self, messages):
         self.messages = messages
@@ -979,7 +1083,14 @@ class Window(Adw.ApplicationWindow):
         frame.connect("unmap", unmapped)
         return frame
 
-    def save_attachment(self, attachment):
+    def open_attachment(self, attachment):
+        identity = self.identity
+        name = safe_filename(attachment.get("filename", "attachment"))
+        return AttachmentViewer(self, name, attachment.get("media_type", ""),
+                                lambda: self.api.download(identity, attachment["id"]),
+                                lambda data: self.save_attachment(attachment, data))
+
+    def save_attachment(self, attachment, data=None):
         identity = self.identity
         chooser = Gtk.FileChooserNative.new("Save attachment", self, Gtk.FileChooserAction.SAVE, "Save", "Cancel")
         chooser.set_current_name(safe_filename(attachment.get("filename", "attachment")))
@@ -989,9 +1100,9 @@ class Window(Adw.ApplicationWindow):
             if not file:
                 return
             def save():
-                data = self.api.download(identity, attachment["id"])
+                content = data if data is not None else self.api.download(identity, attachment["id"])
                 # GIO atomically replaces only the explicit user-selected path, including portals.
-                file.replace_contents(data, None, False, Gio.FileCreateFlags.REPLACE_DESTINATION, None)
+                file.replace_contents(content, None, False, Gio.FileCreateFlags.REPLACE_DESTINATION, None)
             self._work(save, lambda _: self.toast("Attachment saved"))
         chooser.connect("response", chosen)
         chooser.show()
@@ -1147,6 +1258,7 @@ class Window(Adw.ApplicationWindow):
     def settings(self):
         navigation = SettingsNavigation(self)
         content = navigation.content
+        content.append(self.appearance_picker())
         settings_group(content, settings_row("Account", self.title.get_subtitle() or "Your profile and devices",
                        "avatar-default-symbolic", lambda: self.account_settings(navigation)))
         settings_group(content,
@@ -1156,6 +1268,31 @@ class Window(Adw.ApplicationWindow):
         settings_group(content, settings_row("Help and about", "Support, privacy and app information",
                        "help-about-symbolic", lambda: self.help_settings(navigation)))
         navigation.window.present()
+
+    def appearance_picker(self):
+        """System, Light or Dark, applied at once and kept between launches."""
+        section = box(8)
+        section.append(label("Appearance", "heading"))
+        strip = box(0, horizontal=True)
+        strip.add_css_class("pp-segmented")
+        strip.set_halign(Gtk.Align.START)
+        self.appearance_buttons = {}
+        first = None
+        for choice in CHOICES:
+            toggle = Gtk.ToggleButton(label=choice.title(), active=self.preferences.appearance == choice)
+            toggle.update_property([Gtk.AccessibleProperty.LABEL], [choice.title() + " appearance"])
+            if first:
+                toggle.set_group(first)
+            first = first or toggle
+            toggle.connect("toggled", lambda button, value=choice: self.choose_appearance(value) if button.get_active() else None)
+            self.appearance_buttons[choice] = toggle
+            strip.append(toggle)
+        section.append(strip)
+        return section
+
+    def choose_appearance(self, choice):
+        self.preferences.appearance = choice
+        apply_appearance(choice)
 
     def account_settings(self, navigation):
         content = navigation.push("Account")
@@ -1390,6 +1527,8 @@ class Application(Adw.Application):
     def __init__(self):
         super().__init__(application_id=APP_ID, flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
         self.window = None
+        self.preferences = Preferences()
+        self.design = None
         action = Gio.SimpleAction.new("open-message", GLib.VariantType.new("(ss)"))
         action.connect("activate", self.open_message)
         self.add_action(action)
@@ -1397,6 +1536,11 @@ class Application(Adw.Application):
     def open_message(self, action, parameter):
         self.activate()
         self.window.open_notification(*parameter.unpack())
+
+    def do_startup(self):
+        Adw.Application.do_startup(self)
+        apply_appearance(self.preferences.appearance)
+        self.design = Design()
 
     def do_activate(self):
         if not self.window or self.window.closed:
