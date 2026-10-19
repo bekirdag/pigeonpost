@@ -31,6 +31,10 @@
     <Manifest Include="$(ApplicationManifest)" />
     <Content Include="Assets\Logo.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Pigeonpost.ico" CopyToOutputDirectory="PreserveNewest" />
+    <!-- Geist and Geist Mono, SIL Open Font License 1.1; the license travels with the fonts. -->
+    <Content Include="Assets\Fonts\Geist-Variable.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\GeistMono-Variable.ttf" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup Condition="'$(DefineConstants)' == 'UI_TESTS'">
     <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />

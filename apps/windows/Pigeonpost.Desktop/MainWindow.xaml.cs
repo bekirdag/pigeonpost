@@ -366,6 +366,41 @@ public sealed partial class MainWindow : Window
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
     }
 
+    // Message bodies are selectable text inside ListView rows. A mouse press or click that
+    // reaches the ListViewItem makes the row take selection and focus, which clears the
+    // text selection the user is dragging out (and steals Ctrl+C). The text keeps its own
+    // pointer handling; we only stop mouse input from bubbling to the row. Touch and pen
+    // still reach the list so scrolling and row selection keep working there, and clicks
+    // on the card outside the text still select the row for keyboard navigation.
+    private static bool IsMouse(Microsoft.UI.Input.PointerDeviceType device) => device == Microsoft.UI.Input.PointerDeviceType.Mouse;
+    private void MessageBody_Pointer(object sender, PointerRoutedEventArgs e)
+    {
+        if (IsMouse(e.Pointer.PointerDeviceType)) e.Handled = true;
+    }
+    private void MessageBody_Tapped(object sender, TappedRoutedEventArgs e)
+    {
+        if (IsMouse(e.PointerDeviceType)) e.Handled = true;
+    }
+    private void MessageBody_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
+    {
+        if (IsMouse(e.PointerDeviceType)) e.Handled = true;
+    }
+
+    // With text selected, the text's own menu offers Copy for the selection. Without a
+    // selection, keep showing the message's menu (Copy original message, Save attachments).
+    private void MessageBody_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
+    {
+        if (sender is not TextBlock body || body.SelectedText.Length > 0) return;
+        for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
+        {
+            if (node is not FrameworkElement { ContextFlyout: { } menu }) continue;
+            e.Handled = true;
+            if (e.TryGetPosition(body, out var point)) menu.ShowAt(body, new FlyoutShowOptions { Position = point });
+            else menu.ShowAt(body);
+            return;
+        }
+    }
+
     private void HighlightBody(TextBlock body)
     {
         body.TextHighlighters.Clear();
@@ -401,6 +436,12 @@ public sealed partial class MainWindow : Window
 public sealed class BooleanVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language) => value is true ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
+}
+
+public sealed class TextVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
     public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
 }
 

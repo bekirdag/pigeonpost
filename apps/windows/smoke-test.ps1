@@ -157,6 +157,36 @@ try {
         Start-Sleep -Milliseconds 200
         if ((Get-Clipboard -Raw).Trim() -ne $Text) { throw 'Copy icon did not copy the displayed message.' }
     }
+    function Select-PartialText([string]$Text) {
+        # Drag across the start of a message body with the real mouse, as a reader would,
+        # then copy with the keyboard. The row must not swallow the drag or the focus.
+        $messages = Wait-List 'Messages'
+        $bodyCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Text)
+        $body = $messages.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
+        if (-not $body) { throw "Message body missing for selection: $Text" }
+        $rect = $body.Current.BoundingRectangle
+        $y = [int]($rect.Top + [Math]::Min(10, $rect.Height / 2)); $x = [int]$rect.Left + 1; $end = [int]$rect.Left + 45
+        Set-Clipboard 'selection-sentinel'
+        $null = [NativeWindowBounds]::SetCursorPos($x, $y)
+        [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 150
+        for ($step = 1; $step -le 10; $step++) {
+            $null = [NativeWindowBounds]::SetCursorPos([int]($x + ($end - $x) * $step / 10), $y)
+            [NativeWindowBounds]::mouse_event(1, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 30
+        }
+        [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 300
+        [System.Windows.Forms.SendKeys]::SendWait('^c')
+        Start-Sleep -Milliseconds 300
+        $copied = Get-Clipboard -Raw
+        Write-Host "Partial selection copied: '$copied'"
+        if (-not $copied -or $copied -eq 'selection-sentinel' -or $copied.Length -ge $Text.Length -or -not $Text.StartsWith($copied)) {
+            Capture 'partial-selection-failed.png'
+            throw "Dragging over a message did not copy part of its text (got '$copied')."
+        }
+        Capture 'partial-selection.png'
+    }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name
         Remove-Item $destination -ErrorAction SilentlyContinue
@@ -301,6 +331,7 @@ public static class NativeFileDragSource {
         Invoke-Control 'Send'
         $null = Wait-Element 'Optional file caption'
         Copy-Message 'Optional file caption'
+        Select-PartialText 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
         Invoke-Control 'Account'
