@@ -694,6 +694,44 @@ public static class NativeFileDragSource {
         if (-not $button.Current.IsEnabled) { throw 'Sign-in button is not enabled.' }
         if (Element 'Could not access your saved account. Please try again.') { throw 'Windows credential vault could not be read.' }
         Capture 'welcome.png'
+        if ($PackageFamilyName) {
+            Write-Host 'Checking the notification-area icon of the installed package.'
+            # The app's own diagnostics record the shell's answer for this process.
+            $log = @("$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log", "$env:LOCALAPPDATA\Packages\$PackageFamilyName\LocalCache\Local\Pigeonpost\logs\desktop.log") | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $log) { throw 'The installed app wrote no diagnostics log.' }
+            Copy-Item $log (Join-Path $OutputDirectory 'installed-desktop.log') -Force
+            $lines = @(Get-Content $log | Where-Object { $_.Contains("[$($process.Id)]") })
+            $lines | Write-Host
+            if (-not ($lines -like '*Launch * as WodoTeknolojiA.PigeonpostDesktop_*')) { throw 'The installed app did not run with its package identity.' }
+            if (-not ($lines -like '*Notification-area icon added*shell reports 0x00000000*')) { throw 'Windows did not accept the notification-area icon.' }
+            function Tray-Icon {
+                $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
+                @($buttons | Where-Object { $_.Current.Name -like 'Pigeonpost — *' }) | Select-Object -First 1
+            }
+            function Capture-Screen([string]$Name) {
+                $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                try { $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size); $bitmap.Save((Join-Path $OutputDirectory $Name), [System.Drawing.Imaging.ImageFormat]::Png) }
+                finally { $graphics.Dispose(); $bitmap.Dispose() }
+            }
+            $icon = Tray-Icon
+            $where = 'notification area'
+            if (-not $icon) {
+                # Windows 11 places new icons in the overflow until the user chooses to show them.
+                $chevron = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
+                    Where-Object { $_.Current.Name -like '*hidden icons*' } | Select-Object -First 1
+                if ($chevron) { $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 800 }
+                $icon = Tray-Icon
+                $where = 'overflow'
+            }
+            Capture-Screen 'installed-notification-area.png'
+            if ($where -eq 'overflow') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+            if (-not $icon) { throw 'The Pigeonpost icon is missing from the notification area and its overflow.' }
+            Write-Host "Pigeonpost icon found in the $where`: $($icon.Current.Name)"
+        }
     }
     Write-Host 'Native Windows UI smoke passed.'
 } catch {

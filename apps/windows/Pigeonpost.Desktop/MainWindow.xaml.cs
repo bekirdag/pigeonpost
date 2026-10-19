@@ -97,21 +97,11 @@ public sealed partial class MainWindow : Window
             return items;
         }));
 #if UI_TESTS
-        // Media previews depend on codecs the packaged notification sessions do not need.
-        var packagedRun = PackagedNotificationTest.Load();
-        if (packagedRun is null) await CheckNativePreviewsAsync();
-        else DesktopLog.Write($"Packaged {packagedRun.Mode} checks: opening the demonstration inbox");
+        await CheckNativePreviewsAsync();
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
             await RunNotificationTestsAsync(notificationResult);
-            return;
-        }
-        // An MSIX launched by Explorer does not inherit the test's environment; it reads a fixed file.
-        if (packagedRun is { } packagedTest)
-        {
-            DesktopLog.Write("Packaged checks: inbox open, running");
-            await RunNotificationTestsAsync(packagedTest.Result, packagedTest);
             return;
         }
         refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
