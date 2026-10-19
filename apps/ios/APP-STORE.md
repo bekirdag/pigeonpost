@@ -2,6 +2,8 @@
 
 ## September 28 replacement in progress
 
+**Build 48 (2026-10-19)** answers the 18 October rejection of build 46 under guideline 4 ("Sign in with Apple button still includes logo artwork that is not downloaded from Apple Design Resources", reviewed on an iPad Air). On iPhone and iPad the button is `ASAuthorizationAppleIDButton` and now opens Apple's own system sheet; the realm's hosted Apple page (used only as a fallback, and on the Mac) carries Apple's official artwork since 2026-10-18. The build also adds calls, in-app attachment viewing and the iPad three-column layout; screenshots were retaken for the new design, including 13" iPad landscape (`Screenshots/13-inch-ipad`).
+
 Apple rejected build 1.0 (43) under 3.1.2(b) and 2.1(b). The live submission `6b5a1281-f265-46dc-ac15-0cb74da89b5a` is **UNRESOLVED_ISSUES**. The replacement changes the ten independent subscriptions to one subscription group with 1–10-name capacity levels. See [the current model](Store/HANDLES.md) and [required physical recording](Store/PHYSICAL-REVIEW-RECORDING.md). Publication and resubmission are not yet complete; the records below describe earlier submissions, not the current state.
 
 The new IDs are `dev.pigeonpost.inbox.handles.1.yearly` through `.10.yearly`. Remove old product/group versions from the replacement submission, retain restore support for existing receipts, and attach the new binary, all ten new levels, their single group and a matching physical-device recording. Keep reviewer credentials private and unchanged unless a login check requires repair.
