@@ -614,7 +614,9 @@ export function createCallsService(cfg, deps = {}) {
     if (auth.guest && !sessionInRoom(session)) throw new HttpError(403, "not_in_room");
     if (!cfg.turnSecret || !cfg.turnUrls.length) return { iceServers: [], ttl: 0 };
     const expires = Math.floor(now() / 1000) + cfg.turnTtlSeconds;
-    const username = `${expires}:${sha256(auth.account).slice(0, 12)}`;
+    // Unique per issue: coturn's per-user allocation quota then applies per connection set-up rather
+    // than per account, so one person in a six-way call cannot exhaust it on their own.
+    const username = `${expires}:${sha256(auth.account).slice(0, 12)}.${crypto.randomBytes(4).toString("hex")}`;
     const credential = crypto.createHmac("sha1", cfg.turnSecret).update(username).digest("base64");
     return { iceServers: [{ urls: cfg.turnUrls, username, credential }], ttl: cfg.turnTtlSeconds };
   }
