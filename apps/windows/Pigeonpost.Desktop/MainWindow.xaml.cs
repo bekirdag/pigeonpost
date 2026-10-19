@@ -50,6 +50,7 @@ public sealed partial class MainWindow : Window
         MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         Title = BuildLabel;
+        InitializeTheme();
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
         InitializeNotifications();

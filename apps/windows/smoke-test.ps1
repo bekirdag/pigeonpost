@@ -235,6 +235,47 @@ try {
         [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
         Start-Sleep -Milliseconds 300
     }
+    function Sample-Luminance([double]$XFraction, [int]$FromTop, [int]$FromBottom) {
+        $null = [NativeWindowBounds]::SetCursorPos($screen.Right - 2, $screen.Bottom - 2)
+        Start-Sleep -Milliseconds 300
+        $rect = [NativeWindowBounds+Rect]::new()
+        if ([NativeWindowBounds]::DwmGetWindowAttribute($process.MainWindowHandle, 9, [ref]$rect, 16) -ne 0) { throw 'Could not obtain window bounds.' }
+        $x = [int]($rect.Left + ($rect.Right - $rect.Left) * $XFraction)
+        $y = if ($FromTop -ge 0) { $rect.Top + $FromTop } else { $rect.Bottom - $FromBottom }
+        $bitmap = [System.Drawing.Bitmap]::new(1, 1)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size); $c = $bitmap.GetPixel(0, 0) }
+        finally { $graphics.Dispose(); $bitmap.Dispose() }
+        return [int](0.2126 * $c.R + 0.7152 * $c.G + 0.0722 * $c.B)
+    }
+    function Choose-Theme([string]$Name) {
+        Invoke-Control 'Account'
+        $menu = Wait-Element 'Theme'
+        try { $menu.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() }
+        catch { $menu.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        Start-Sleep -Milliseconds 400
+        $item = Wait-Element $Name
+        try { $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        catch {
+            try { $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+            catch { $item.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }
+        }
+        Start-Sleep -Milliseconds 700
+        if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+        if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+    }
+    function Assert-Theme([string]$Expected, [string]$Stored) {
+        $body = Sample-Luminance 0.5 -1 22
+        $caption = Sample-Luminance 0.5 15 0
+        Write-Host "Theme $Expected`: account bar luminance $body, title bar luminance $caption"
+        $dark = $Expected -eq 'Dark'
+        if (($dark -and ($body -gt 60 -or $caption -gt 60)) -or (-not $dark -and ($body -lt 190 -or $caption -lt 190))) {
+            Capture "theme-$($Expected.ToLowerInvariant())-failed.png"
+            throw "The window or its title bar did not switch to the $Expected theme."
+        }
+        $file = Join-Path $env:LOCALAPPDATA 'Pigeonpost\preferences.json'
+        if (-not (Test-Path $file) -or -not (Get-Content $file -Raw).Contains("`"theme`":`"$Stored`"")) { throw "The $Stored theme preference was not saved." }
+    }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name
         Remove-Item $destination -ErrorAction SilentlyContinue
@@ -625,6 +666,20 @@ public static class NativeFileDragSource {
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Light')
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Restoring the light theme failed.' }
+        Write-Host 'Checking the theme choice in the account menu.'
+        Choose-Theme 'Dark'
+        Assert-Theme 'Dark' 'dark'
+        Capture 'theme-menu-dark.png'
+        Invoke-Control 'Account'
+        try { (Wait-Element 'Theme').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() } catch { }
+        Start-Sleep -Milliseconds 400
+        Capture 'theme-menu-open.png'
+        foreach ($n in 1..2) { if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 } }
+        Choose-Theme 'Light'
+        Assert-Theme 'Light' 'light'
+        Capture 'theme-menu-light.png'
+        Choose-Theme 'System'
+        Assert-Theme 'Light' 'system'
         $filter = Wait-Element 'Conversation filter'
         $filter.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')

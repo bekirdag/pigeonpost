@@ -93,7 +93,7 @@ public sealed partial class MainWindow
             var themeFile = Environment.GetEnvironmentVariable("PIGEONPOST_UI_THEME_FILE");
             if (themeFile is not null && File.Exists(themeFile))
             {
-                Root.RequestedTheme = File.ReadAllText(themeFile).Trim() == "Dark" ? ElementTheme.Dark : ElementTheme.Light;
+                ApplyTheme(File.ReadAllText(themeFile).Trim() == "Dark" ? AppTheme.Dark : AppTheme.Light); // Not persisted.
                 File.Delete(themeFile);
             }
 #endif
