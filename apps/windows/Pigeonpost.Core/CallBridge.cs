@@ -5,7 +5,7 @@ namespace Pigeonpost.Core;
 
 public enum CallMode { Hidden, Mini, Full }
 
-public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null);
+public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null, bool Ringing = false);
 
 // The contract between the app and the web call client's native page (site-inbox/native-call.js).
 // The page posts {type: ready|mode|renew|toast}; the app answers through PigeonpostNative.*.
@@ -24,6 +24,7 @@ public static class CallBridge
             return type switch
             {
                 "ready" or "renew" => new CallPageMessage(type),
+                "ring" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),
                 "mode" => new CallPageMessage(type, ParseMode(message["mode"] is JsonValue m && m.TryGetValue<string>(out var mode) ? mode : null)),
                 "toast" => message["text"] is JsonValue t && t.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)
                     ? new CallPageMessage(type, Text: text.Length > 300 ? text[..300] : text) : null,
@@ -32,6 +33,26 @@ public static class CallBridge
         }
         catch (JsonException) { return null; }
     }
+
+    // Windows only, added by the app: WebView2 in WinUI cannot show the inbox through a transparent
+    // page, so while the page only rings (no call yet) the app shrinks the view to the ring card.
+    public const string RingObserverScript = """
+        (() => {
+          let last = null;
+          const post = () => {
+            const ring = document.getElementById("call-ring"), ui = document.getElementById("call-ui");
+            const ringing = Boolean(ring && !ring.hidden && !(ui && !ui.hidden));
+            if (ringing === last) return;
+            last = ringing;
+            try { window.chrome.webview.postMessage({ type: "ring", ringing }); } catch (_) {}
+          };
+          const start = () => {
+            new MutationObserver(post).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"] });
+            post();
+          };
+          if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", start); else start();
+        })();
+        """;
 
     public static CallMode ParseMode(string? mode) => mode switch { "full" => CallMode.Full, "mini" => CallMode.Mini, _ => CallMode.Hidden };
 

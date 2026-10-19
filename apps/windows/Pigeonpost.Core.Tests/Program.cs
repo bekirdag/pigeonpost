@@ -939,6 +939,8 @@ Test("Call page messages parse strictly and scripts carry JSON-encoded values on
     Equal(CallBridge.Parse("{\"type\":\"mode\",\"mode\":\"mini\"}")!.Mode, CallMode.Mini);
     Equal(CallBridge.Parse("{\"type\":\"mode\",\"mode\":\"weird\"}")!.Mode, CallMode.Hidden);
     Equal(CallBridge.Parse("{\"type\":\"toast\",\"text\":\"Call ended\"}")!.Text, "Call ended");
+    Check(CallBridge.Parse("{\"type\":\"ring\",\"ringing\":true}")!.Ringing, "A ring was not reported.");
+    Check(!CallBridge.Parse("{\"type\":\"ring\",\"ringing\":\"yes\"}")!.Ringing, "A malformed ring flag counted as ringing.");
     foreach (var bad in new[] { null, "", "nope", "[]", "\"ready\"", "{\"type\":1}", "{\"type\":\"eval\"}", "{\"type\":\"toast\"}", "{\"type\":\"toast\",\"text\":\" \"}" })
         Check(CallBridge.Parse(bad) is null, "Accepted an invalid page message: " + bad);
     var script = CallBridge.CallScript("/bob\");alert(1);//", video: true);

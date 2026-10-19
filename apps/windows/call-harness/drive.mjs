@@ -156,10 +156,11 @@ try {
   capture("call-incoming-ring.png");
   if (!simulate) {
     const colours = Number(pwsh("-Action", "colors"));
-    check("The ring floats over the inbox (the call view is see-through)", colours > 12, { distinctColours: colours });
+    check("The ring is a card over the inbox, which stays visible", logged("Call view ring card") > 0 && colours > 12, { distinctColours: colours });
   }
   await A.evaluate("document.getElementById('call-ring-accept').click()");
   await until(async () => (await inspect(B)).peers[0]?.connected && (await inspect(A)).peers[0]?.connected, 40000, 250, "incoming call connected");
+  if (!simulate) check("Answering turns the ring card into the full-window call", logged("Call view ring card closed") > 0 && mode() === "full");
   await sleep(7000);
   a = await inspect(A); b = await inspect(B);
   result.incoming = { app: a.peers.map((p) => ({ connected: p.connected, route: p.stats?.route, receiving: p.stats?.receiving })), browser: b.peers.map((p) => ({ connected: p.connected, route: p.stats?.route, receiving: p.stats?.receiving })) };

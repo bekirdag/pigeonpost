@@ -29,6 +29,7 @@ public sealed partial class MainWindow
     private bool callReady;
     private bool callsSignedIn;
     private CallMode callMode = CallMode.Hidden;
+    private bool callRinging;
     private (string Peer, bool Video)? pendingCall;
     private int callRestarts;
     private Uri callPage = CallBridge.ProductionPage;
@@ -73,14 +74,10 @@ public sealed partial class MainWindow
 #endif
             Directory.CreateDirectory(CallsDataFolder);
             DesktopLog.Write("Call view starting");
-            // The page is see-through except for the call itself (a ring floats over the inbox), so
-            // the web view must not paint its own white background: set before the browser starts.
-            Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, CallsDataFolder,
                 new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
             var view = new WebView2
             {
-                DefaultBackgroundColor = Microsoft.UI.Colors.Transparent,
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
             };
@@ -92,7 +89,6 @@ public sealed partial class MainWindow
             ApplyCallMode(CallMode.Hidden);
             DesktopLog.Write($"Call view environment ready ({environment.BrowserVersionString})");
             await view.EnsureCoreWebView2Async(environment);
-            view.DefaultBackgroundColor = Microsoft.UI.Colors.Transparent;
             var core = view.CoreWebView2;
             var settings = core.Settings;
             settings.AreDefaultContextMenusEnabled = false;
@@ -106,6 +102,7 @@ public sealed partial class MainWindow
 #else
             settings.AreDevToolsEnabled = false;
 #endif
+            await core.AddScriptToExecuteOnDocumentCreatedAsync(CallBridge.RingObserverScript);
             core.NavigationStarting += CallView_NavigationStarting;
             core.FrameNavigationStarting += (_, e) =>
             {
@@ -190,6 +187,10 @@ public sealed partial class MainWindow
             case { Type: "mode", Mode: var mode }:
                 ApplyCallMode(mode);
                 break;
+            case { Type: "ring", Ringing: var ringing }:
+                callRinging = ringing;
+                ApplyCallMode(callMode);
+                break;
             case { Type: "renew" }:
                 await RenewCallTokenAsync();
                 break;
@@ -203,6 +204,7 @@ public sealed partial class MainWindow
     {
         DesktopLog.Write($"Call view process failed: {e.ProcessFailedKind}");
         callReady = false;
+        callRinging = false;
         ApplyCallMode(CallMode.Hidden);
         if (lifetime.IsCancellationRequested || !callsSignedIn || ++callRestarts > 3) return;
         if (e.ProcessFailedKind == CoreWebView2ProcessFailedKind.BrowserProcessExited)
@@ -284,8 +286,9 @@ public sealed partial class MainWindow
         VoiceCallButton.IsEnabled = VideoCallButton.IsEnabled = enabled;
     }
 
-    // Full: the call covers the window. Mini: a strip at the top, with the inbox moved down. Hidden:
-    // loaded but invisible, one pixel, out of the way of clicks and screen readers.
+    // Full: the call covers the window (while it only rings, just the ring card in the top-right
+    // corner, over the inbox). Mini: a strip at the top, with the inbox moved down. Hidden: loaded
+    // but invisible, one pixel, out of the way of clicks and screen readers.
     private void ApplyCallMode(CallMode mode)
     {
         var previous = callMode;
@@ -295,9 +298,12 @@ public sealed partial class MainWindow
             var shown = mode != CallMode.Hidden;
             CallRow.Height = new GridLength(mode == CallMode.Mini ? 64 : 0);
             Grid.SetRowSpan(view, mode == CallMode.Mini ? 1 : 4);
-            view.Width = view.Height = shown ? double.NaN : 1;
-            view.HorizontalAlignment = shown ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
-            view.VerticalAlignment = shown ? VerticalAlignment.Stretch : VerticalAlignment.Top;
+            var ringCard = mode == CallMode.Full && callRinging;
+            view.Width = ringCard ? 424 : shown ? double.NaN : 1;
+            view.Height = ringCard ? 116 : shown ? double.NaN : 1;
+            view.HorizontalAlignment = ringCard ? HorizontalAlignment.Right : shown ? HorizontalAlignment.Stretch : HorizontalAlignment.Left;
+            view.VerticalAlignment = shown && !ringCard ? VerticalAlignment.Stretch : VerticalAlignment.Top;
+            if (Root.Background is Microsoft.UI.Xaml.Media.SolidColorBrush ground) view.DefaultBackgroundColor = ground.Color;
             view.Opacity = shown ? 1 : 0;
             view.IsHitTestVisible = shown;
             view.IsTabStop = shown;
@@ -310,9 +316,12 @@ public sealed partial class MainWindow
                 view.Focus(FocusState.Programmatic);
             }
             if (previous != mode) DesktopLog.Write($"Call view {mode}");
+            if (ringCard != lastRingCard) { lastRingCard = ringCard; DesktopLog.Write(ringCard ? "Call view ring card" : "Call view ring card closed"); }
         }
         UpdateCallButtons();
     }
+
+    private bool lastRingCard;
 
     // Sign-out ends any call and forgets the member; the page stays loaded for the next sign-in.
     private async Task StopCallsAsync()
