@@ -148,7 +148,7 @@ final class Session {
     /// and every token the postbox sees — is the same one the web flow reaches.
     ///
     /// Returns false when the web flow should take over instead: chiefly an existing account with
-    /// the same email that has not been linked to Apple yet. Linking needs proof the person owns that
+    /// the same contact address that has not been linked to Apple yet. Linking needs proof the person owns that
     /// account, and only the realm's own pages can ask for it.
     private func signInWithAppleNatively() async -> Bool {
         let credential: ASAuthorizationAppleIDCredential

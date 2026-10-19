@@ -201,4 +201,27 @@ final class IOSUXTests: XCTestCase {
         XCTAssertTrue(back.waitForExistence(timeout: 5))
         app.webViews.buttons["Leave call"].firstMatch.tap()
     }
+
+    /// App Store screenshots from the fixture mailbox: `TEST_RUNNER_PP_STORE_SHOTS=<directory>`.
+    /// iPad in landscape, iPhone in portrait. Skipped otherwise.
+    func testStoreScreenshots() throws {
+        let path = ProcessInfo.processInfo.environment["PP_STORE_SHOTS"] ?? ""
+        try XCTSkipIf(path.isEmpty, "set PP_STORE_SHOTS to take store screenshots")
+        let directory = URL(fileURLWithPath: path)
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        XCUIDevice.shared.orientation = pad ? .landscapeLeft : .portrait
+        let scenes: [(String, [String])] = pad
+            ? [("1-conversation", ["-open=/bekir/agent1"]),
+               ("2-first-contact", ["-open=/k/eeee5555ffff6666gggg7777hh"]),
+               ("3-settings", ["-open=/bekir/agent1", "-sheet=settings"])]
+            : [("1-list", []), ("2-thread", ["-open=/bekir/agent1"])]
+        for (name, extra) in scenes {
+            app.terminate()
+            app.launchArguments = ["-fixtures", "-appearance=dark"] + extra
+            app.launch()
+            sleep(4)
+            let shot = XCUIScreen.main.screenshot()
+            try shot.pngRepresentation.write(to: directory.appendingPathComponent("store-\(name).png"))
+        }
+    }
 }
