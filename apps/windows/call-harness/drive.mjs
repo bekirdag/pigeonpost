@@ -94,7 +94,10 @@ try {
   }
   await until(() => A.evaluate("Boolean(window.PigeonpostCalls && PigeonpostCalls.inspect().session)"), 30000, 250, "the app's call session");
   check("The app's call client is signed in as alice", true);
-  if (!simulate) check("Idle call view is hidden and the call buttons are enabled", mode() === "hidden" && buttonEnabled("Video call") && buttonEnabled("Voice call"));
+  if (!simulate) {
+    const idle = { mode: mode(), video: buttonEnabled("Video call"), voice: buttonEnabled("Voice call") };
+    check("Idle call view is hidden and the call buttons are enabled", idle.mode === "hidden" && idle.video && idle.voice, idle);
+  }
   capture("calls-idle.png");
 
   // ---- 1. Outgoing video call from the app ----

@@ -32,7 +32,11 @@ if ($Action -eq 'size') {
     Write-Output 'captured'
 } else {
     $root = [System.Windows.Automation.AutomationElement]::FromHandle($process.MainWindowHandle)
-    $condition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name)
+    # The app's own (XAML) button: the call page inside WebView2 has hidden buttons with the same names.
+    $condition = [System.Windows.Automation.AndCondition]::new(
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Name),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::FrameworkIdProperty, 'XAML'),
+        [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
     $element = $root.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $condition)
     if (-not $element) { throw "No control named $Name." }
     Write-Output $element.Current.IsEnabled
