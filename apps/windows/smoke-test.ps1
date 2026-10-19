@@ -217,6 +217,23 @@ try {
             Capture 'word-selection-failed.png'
             throw "Double-clicking a word did not select it (got '$word')."
         }
+        # Right-click on selected text offers the text menu; without a selection, the message menu.
+        [NativeWindowBounds]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(0x10, 0, 0, 0, [UIntPtr]::Zero)
+        $null = Wait-Element 'Copy'
+        if (Element 'Copy original message') { throw 'Right-clicking selected text showed the message menu instead of Copy.' }
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 300
+        Move-Mouse ($x + 80) $y
+        [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 400
+        [NativeWindowBounds]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(0x10, 0, 0, 0, [UIntPtr]::Zero)
+        $null = Wait-Element 'Copy original message'
+        Capture 'message-menu-over-text.png'
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 300
     }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name

@@ -61,7 +61,7 @@
                 <Border HorizontalAlignment="Left" MaxWidth="620" Margin="24,7,64,7" CornerRadius="14"
                         Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
+                        <StackPanel Padding="16,12,16,14">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        ContextRequested="MessageBody_ContextRequested"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
@@ -105,7 +105,7 @@
                 <Border HorizontalAlignment="Right" MaxWidth="620" Margin="64,7,24,7" CornerRadius="14"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
+                        <StackPanel Padding="16,12,16,14">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        ContextRequested="MessageBody_ContextRequested"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />

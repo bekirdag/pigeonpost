@@ -375,26 +375,6 @@ public sealed partial class MainWindow : Window
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
     }
 
-    // Message bodies are selectable text inside ListView rows. A mouse press or click that
-    // reaches the ListViewItem makes the row take selection and focus, which clears the
-    // text selection the user is dragging out (and steals Ctrl+C). The text keeps its own
-    // pointer handling; we only stop mouse input from bubbling to the row. Touch and pen
-    // still reach the list so scrolling and row selection keep working there, and clicks
-    // on the card outside the text still select the row for keyboard navigation.
-    private static bool IsMouse(Microsoft.UI.Input.PointerDeviceType device) => device == Microsoft.UI.Input.PointerDeviceType.Mouse;
-    private void MessageBody_Pointer(object sender, PointerRoutedEventArgs e)
-    {
-        if (IsMouse(e.Pointer.PointerDeviceType)) e.Handled = true;
-    }
-    private void MessageBody_Tapped(object sender, TappedRoutedEventArgs e)
-    {
-        if (IsMouse(e.PointerDeviceType)) e.Handled = true;
-    }
-    private void MessageBody_DoubleTapped(object sender, DoubleTappedRoutedEventArgs e)
-    {
-        if (IsMouse(e.PointerDeviceType)) e.Handled = true;
-    }
-
     // With text selected, the text's own menu offers Copy for the selection. Without a
     // selection, keep showing the message's menu (Copy original message, Save attachments).
     private void MessageBody_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
