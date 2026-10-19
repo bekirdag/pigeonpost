@@ -179,7 +179,7 @@ public sealed partial class MainWindow : Window
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(message, "First message");
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "New conversation", Content = panel,
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "New conversation", Content = panel,
                 PrimaryButtonText = "Open", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false
             };
             void Validate(object _, TextChangedEventArgs __)
@@ -220,7 +220,7 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(error);
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "New subject", Content = panel,
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "New subject", Content = panel,
                 PrimaryButtonText = "Create", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false
             };
             title.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(title.Text);
@@ -238,6 +238,15 @@ public sealed partial class MainWindow : Window
             await dialog.ShowAsync();
         }
         finally { dialogOpen = false; }
+    }
+
+    // Dialogs open in a popup outside Root, so they take the window's theme and the shared
+    // control styling explicitly.
+    private static ResourceDictionary DialogTheme()
+    {
+        var resources = new ResourceDictionary();
+        resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("ms-appx:///Themes/Controls.xaml") });
+        return resources;
     }
 
     private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { ShowFind(); args.Handled = true; }
@@ -280,7 +289,7 @@ public sealed partial class MainWindow : Window
         dialogOpen = true;
         try
         {
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Delete {ViewModel.SubjectTitle}?",
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = $"Delete {ViewModel.SubjectTitle}?",
                 Content = "This deletes the subject and its messages from this mailbox. The other side keeps its copy.",
                 PrimaryButtonText = "Delete subject", CloseButtonText = "Cancel" };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary) await ViewModel.DeleteSubjectAsync();

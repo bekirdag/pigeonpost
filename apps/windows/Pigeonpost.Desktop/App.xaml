@@ -25,14 +25,12 @@
             <!-- Shape language: soft 8-10px controls, 14px cards, 16px dialogs. -->
             <CornerRadius x:Key="ControlCornerRadius">8</CornerRadius>
             <CornerRadius x:Key="OverlayCornerRadius">12</CornerRadius>
-            <CornerRadius x:Key="ListViewItemCornerRadius">10</CornerRadius>
-            <x:Boolean x:Key="ListViewItemSelectionIndicatorVisualEnabled">False</x:Boolean>
-            <Thickness x:Key="TextControlBorderThemeThicknessFocused">1</Thickness>
-            <Thickness x:Key="ContentDialogPadding">24</Thickness>
 
             <Style TargetType="ContentDialog" BasedOn="{StaticResource DefaultContentDialogStyle}">
                 <Setter Property="CornerRadius" Value="16" />
                 <Setter Property="BorderThickness" Value="1" />
+                <Setter Property="Background" Value="{ThemeResource DialogSurfaceBrush}" />
+                <Setter Property="BorderBrush" Value="{ThemeResource DialogBorderBrush}" />
                 <Setter Property="PrimaryButtonStyle" Value="{StaticResource AccentButtonStyle}" />
                 <Setter Property="TitleTemplate">
                     <Setter.Value>
@@ -50,6 +48,8 @@
 
             <ResourceDictionary.ThemeDictionaries>
                 <ResourceDictionary x:Key="Light">
+                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#FFFFFF" />
+                    <SolidColorBrush x:Key="DialogBorderBrush" Color="#DADFE6" />
                     <!-- Surfaces -->
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#F4F5F7" />
                     <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#F3F4F7" />
@@ -92,51 +92,10 @@
                     <SolidColorBrush x:Key="ComposerSurfaceBrush" Color="#FFFFFF" />
                     <SolidColorBrush x:Key="ComposerBorderBrush" Color="#D9DEE5" />
                     <SolidColorBrush x:Key="ComposerAreaBrush" Color="#FAFBFC" />
-                    <!-- Built-in control overrides -->
-                    <SolidColorBrush x:Key="TextControlBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#C3CAD3" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#3466D1" />
-                    <SolidColorBrush x:Key="TextControlElevationBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="TextControlElevationBorderFocusedBrush" Color="#3466D1" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#858D98" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#858D98" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#A0A7B0" />
-                    <SolidColorBrush x:Key="TextControlHeaderForeground" Color="#2A3039" />
-                    <SolidColorBrush x:Key="ButtonBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#F1F3F6" />
-                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#E8EBF0" />
-                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#D5DAE1" />
-                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#C6CCD5" />
-                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#C6CCD5" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="#3466D1" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="#2A54AE" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="#2A54AE" />
-                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#2A54AE" />
-                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="#E4E8EE" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="#E4E8EE" />
-                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="#8E96A1" />
-                    <SolidColorBrush x:Key="ComboBoxBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#F7F8FA" />
-                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#C6CCD5" />
-                    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#ECEFF3" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#E4E9F1" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#DEE4EE" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#E4E9F1" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#D8DFEA" />
-                    <SolidColorBrush x:Key="ContentDialogBackground" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="ContentDialogTopOverlay" Color="#FFFFFF" />
-                    <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#DADFE6" />
-                    <SolidColorBrush x:Key="ContentDialogSeparatorBorderBrush" Color="Transparent" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="Default">
+                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="#171B21" />
+                    <SolidColorBrush x:Key="DialogBorderBrush" Color="#2A3039" />
                     <!-- Exact values from the design mockup. -->
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="#0D0F12" />
                     <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="#111419" />
@@ -175,54 +134,10 @@
                     <SolidColorBrush x:Key="ComposerSurfaceBrush" Color="#151920" />
                     <SolidColorBrush x:Key="ComposerBorderBrush" Color="#2A3039" />
                     <SolidColorBrush x:Key="ComposerAreaBrush" Color="#0F1216" />
-                    <SolidColorBrush x:Key="TextControlBackground" Color="#13161B" />
-                    <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="#171B21" />
-                    <SolidColorBrush x:Key="TextControlBackgroundFocused" Color="#0F1216" />
-                    <SolidColorBrush x:Key="TextControlBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushPointerOver" Color="#343B46" />
-                    <SolidColorBrush x:Key="TextControlBorderBrushFocused" Color="#8AB4FF" />
-                    <SolidColorBrush x:Key="TextControlElevationBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="TextControlElevationBorderFocusedBrush" Color="#8AB4FF" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForeground" Color="#7D8590" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundPointerOver" Color="#7D8590" />
-                    <SolidColorBrush x:Key="TextControlPlaceholderForegroundFocused" Color="#5F6670" />
-                    <SolidColorBrush x:Key="TextControlHeaderForeground" Color="#D7DCE3" />
-                    <SolidColorBrush x:Key="ButtonBackground" Color="Transparent" />
-                    <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="#1C2129" />
-                    <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="#22272F" />
-                    <SolidColorBrush x:Key="ButtonBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="ButtonBorderBrushPointerOver" Color="#343B46" />
-                    <SolidColorBrush x:Key="ButtonBorderBrushPressed" Color="#343B46" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrush" Color="#8AB4FF" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushPointerOver" Color="#B5CEFF" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushPressed" Color="#73A0F7" />
-                    <SolidColorBrush x:Key="AccentButtonBackgroundPointerOver" Color="#B5CEFF" />
-                    <SolidColorBrush x:Key="AccentButtonForeground" Color="#0D0F12" />
-                    <SolidColorBrush x:Key="AccentButtonForegroundPointerOver" Color="#0D0F12" />
-                    <SolidColorBrush x:Key="AccentButtonForegroundPressed" Color="#0D0F12" />
-                    <SolidColorBrush x:Key="AccentButtonBackgroundDisabled" Color="#252B34" />
-                    <SolidColorBrush x:Key="AccentButtonBorderBrushDisabled" Color="#252B34" />
-                    <SolidColorBrush x:Key="AccentButtonForegroundDisabled" Color="#7D8590" />
-                    <SolidColorBrush x:Key="ComboBoxBackground" Color="#161A20" />
-                    <SolidColorBrush x:Key="ComboBoxBackgroundPointerOver" Color="#1A1F26" />
-                    <SolidColorBrush x:Key="ComboBoxBorderBrush" Color="#262B33" />
-                    <SolidColorBrush x:Key="ComboBoxBorderBrushPointerOver" Color="#2F3540" />
-                    <SolidColorBrush x:Key="ComboBoxDropDownBackground" Color="#171B21" />
-                    <SolidColorBrush x:Key="ComboBoxDropDownBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="MenuFlyoutPresenterBackground" Color="#171B21" />
-                    <SolidColorBrush x:Key="MenuFlyoutPresenterBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundPointerOver" Color="#171B21" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelected" Color="#1C2129" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPointerOver" Color="#20262F" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundPressed" Color="#1C2129" />
-                    <SolidColorBrush x:Key="ListViewItemBackgroundSelectedPressed" Color="#232933" />
-                    <SolidColorBrush x:Key="ContentDialogBackground" Color="#171B21" />
-                    <SolidColorBrush x:Key="ContentDialogTopOverlay" Color="#171B21" />
-                    <SolidColorBrush x:Key="ContentDialogBorderBrush" Color="#2A3039" />
-                    <SolidColorBrush x:Key="ContentDialogSeparatorBorderBrush" Color="Transparent" />
-                    <SolidColorBrush x:Key="ContentDialogSmokeFill" Color="#B806080B" />
                 </ResourceDictionary>
                 <ResourceDictionary x:Key="HighContrast">
+                    <SolidColorBrush x:Key="DialogSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
+                    <SolidColorBrush x:Key="DialogBorderBrush" Color="{ThemeResource SystemColorWindowTextColor}" />
                     <SolidColorBrush x:Key="AppBackgroundBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="NavigationSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />
                     <SolidColorBrush x:Key="ThreadsSurfaceBrush" Color="{ThemeResource SystemColorWindowColor}" />

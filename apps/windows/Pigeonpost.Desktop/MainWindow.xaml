@@ -7,6 +7,10 @@
     Title="Pigeonpost Desktop">
     <Grid x:Name="Root" Background="{ThemeResource AppBackgroundBrush}" Loaded="Root_Loaded" SizeChanged="Root_SizeChanged" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.Resources>
+            <ResourceDictionary>
+            <ResourceDictionary.MergedDictionaries>
+                <ResourceDictionary Source="ms-appx:///Themes/Controls.xaml" />
+            </ResourceDictionary.MergedDictionaries>
             <local:BooleanVisibilityConverter x:Key="BoolVisibility" />
             <local:TextVisibilityConverter x:Key="TextVisibility" />
             <!-- Plain TextBlocks are not Controls; give them the design's typeface explicitly. -->
@@ -57,7 +61,7 @@
                 <Border HorizontalAlignment="Left" MaxWidth="620" Margin="24,7,64,7" CornerRadius="14"
                         Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14" Spacing="10" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
+                        <StackPanel Padding="16,12,16,14" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        ContextRequested="MessageBody_ContextRequested"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
@@ -65,7 +69,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
                                         <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
-                                                Margin="0,3" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
+                                                Margin="0,10,0,0" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
                                             <StackPanel Spacing="4">
                                                 <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
                                                 <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" />
@@ -101,7 +105,7 @@
                 <Border HorizontalAlignment="Right" MaxWidth="620" Margin="64,7,24,7" CornerRadius="14"
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel>
-                        <StackPanel Padding="16,12,16,14" Spacing="10" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
+                        <StackPanel Padding="16,12,16,14" PointerPressed="MessageBody_Pointer" PointerReleased="MessageBody_Pointer" Tapped="MessageBody_Tapped" DoubleTapped="MessageBody_DoubleTapped">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        ContextRequested="MessageBody_ContextRequested"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
@@ -109,7 +113,7 @@
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
                                         <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
-                                                Margin="0,3" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
+                                                Margin="0,10,0,0" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
                                             <StackPanel Spacing="4">
                                                 <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
                                                 <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" />
@@ -140,6 +144,7 @@
             </DataTemplate>
             <local:MessageTemplateSelector x:Key="MessageTemplateSelector"
                 Incoming="{StaticResource IncomingMessage}" Outgoing="{StaticResource OutgoingMessage}" />
+            </ResourceDictionary>
         </Grid.Resources>
         <Grid.KeyboardAccelerators>
             <KeyboardAccelerator Key="N" Modifiers="Control" Invoked="NewConversation_Invoked" />
@@ -304,35 +309,6 @@
                                 </MenuFlyout></Button.Flyout>
                             </Button>
                             <ToggleButton x:Name="PinSubjectsButton" Grid.Column="2" IsChecked="True" Checked="PinSubjects_Click" Unchecked="PinSubjects_Click" Padding="8" MinWidth="32" MinHeight="32" CornerRadius="8" Background="Transparent" BorderThickness="0" Foreground="{ThemeResource TextSecondaryBrush}" AutomationProperties.Name="Pin subjects" ToolTipService.ToolTip="Show or hide the subjects column">
-                                <ToggleButton.Resources>
-                                    <!-- Checked states animate from template storyboards, so the quiet pinned look is scoped here. -->
-                                    <ResourceDictionary>
-                                        <ResourceDictionary.ThemeDictionaries>
-                                            <ResourceDictionary x:Key="Light">
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#E4E9F1" />
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#DCE2EC" />
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#D3DAE6" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#15181D" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#15181D" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#15181D" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
-                                            </ResourceDictionary>
-                                            <ResourceDictionary x:Key="Default">
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundChecked" Color="#252B34" />
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPointerOver" Color="#2B323C" />
-                                                <SolidColorBrush x:Key="ToggleButtonBackgroundCheckedPressed" Color="#313844" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundChecked" Color="#E8EAED" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPointerOver" Color="#E8EAED" />
-                                                <SolidColorBrush x:Key="ToggleButtonForegroundCheckedPressed" Color="#E8EAED" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushChecked" Color="Transparent" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPointerOver" Color="Transparent" />
-                                                <SolidColorBrush x:Key="ToggleButtonBorderBrushCheckedPressed" Color="Transparent" />
-                                            </ResourceDictionary>
-                                        </ResourceDictionary.ThemeDictionaries>
-                                    </ResourceDictionary>
-                                </ToggleButton.Resources>
                                 <FontIcon Glyph="&#xE840;" FontSize="16" />
                             </ToggleButton>
                         </Grid>

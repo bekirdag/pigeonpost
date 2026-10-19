@@ -150,7 +150,7 @@ public sealed partial class MainWindow
             UpdatePermissions();
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "Sender details", Content = new ScrollViewer { Content = panel, MaxHeight = 440 },
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Sender details", Content = new ScrollViewer { Content = panel, MaxHeight = 440 },
                 PrimaryButtonText = "Save", CloseButtonText = "Cancel",
                 SecondaryButtonText = own is not null && own.Address != ViewModel.SelectedMailbox?.Address ? "Open this mailbox" : ""
             };
@@ -161,7 +161,7 @@ public sealed partial class MainWindow
                 if (result != ContentDialogResult.Primary) break;
                 if (blocked.IsChecked == true && original?.Admission != "block")
                 {
-                    var confirm = new ContentDialog { XamlRoot = Root.XamlRoot, Title = "Block this sender?",
+                    var confirm = new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Block this sender?",
                         Content = "Future mail will be refused and all automatic request permissions will be removed.",
                         PrimaryButtonText = "Block sender", CloseButtonText = "Cancel" };
                     if (await confirm.ShowAsync() != ContentDialogResult.Primary) continue;

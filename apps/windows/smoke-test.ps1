@@ -583,6 +583,10 @@ public static class NativeFileDragSource {
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Native theme switch was not applied.' }
         Capture 'dark-inbox.png'
+        Invoke-Control 'New subject'
+        Set-Text 'Subject title' 'Dark theme subject'
+        Capture 'dark-new-subject.png'
+        Invoke-Control 'Cancel'
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Light')
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Restoring the light theme failed.' }

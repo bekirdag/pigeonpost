@@ -144,7 +144,7 @@ public sealed partial class MainWindow
         {
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "Sign out of Pigeonpost?", Content = "Unsent drafts in this window will be discarded.",
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Sign out of Pigeonpost?", Content = "Unsent drafts in this window will be discarded.",
                 PrimaryButtonText = "Sign out", CloseButtonText = "Cancel"
             };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
