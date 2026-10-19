@@ -1,7 +1,9 @@
 //  Files, on the way out and on the way in.
 //
-//  Static system thumbnails identify supported media; opening or sharing stays explicit.
+//  Static system thumbnails identify supported media. On iPhone and iPad a tap opens pictures,
+//  video, sound, PDFs and text in place; other files are shared, as before.
 
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(UIKit)
@@ -54,6 +56,8 @@ struct AttachmentList: View {
     @Environment(Inbox.self) private var inbox
     @State private var downloading: String?
     @State private var saved: URL?
+    /// A file the app can show itself, opened in place; its Share button is the download.
+    @State private var previewing: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -104,6 +108,9 @@ struct AttachmentList: View {
         // puts the file somewhere and shows you where.
         #if canImport(UIKit)
         .sheet(item: $saved) { url in ShareSheet(url: url) }
+        // Pictures, video, sound, PDFs and plain text open inside the app (Quick Look), as on the
+        // web; its share button saves to Photos or Files. Anything else is handed over as before.
+        .quickLookPreview($previewing)
         #elseif canImport(AppKit)
         .onChange(of: saved) { _, url in
             guard let url else { return }
@@ -111,6 +118,13 @@ struct AttachmentList: View {
             saved = nil
         }
         #endif
+    }
+
+    /// Media and documents only — never markup (HTML, SVG) that could carry active content.
+    static func viewable(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        if type.conforms(to: .html) || type.conforms(to: .svg) || type.conforms(to: .xml) { return false }
+        return [UTType.image, .movie, .audiovisualContent, .audio, .pdf, .plainText].contains { type.conforms(to: $0) }
     }
 
     private func fetch(_ file: MessageAttachment) {
@@ -127,7 +141,11 @@ struct AttachmentList: View {
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent(name.isEmpty ? "attachment" : name)
                 try data.write(to: url, options: .atomic)
+                #if canImport(UIKit)
+                if Self.viewable(url) { previewing = url } else { saved = url }
+                #else
                 saved = url
+                #endif
             } catch let failure as APIError {
                 inbox.toast = failure.errorDescription ?? "Could not download that file."
             } catch {

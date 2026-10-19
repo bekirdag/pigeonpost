@@ -59,6 +59,24 @@ struct DesktopInboxView: View {
             threadsColumn
         } detail: {
             detailColumn
+                #if os(iOS)
+                // The way back. On an iPad the system's own toggle lives in the leftmost visible
+                // column's bar — and the subjects column hides its bar — so once the sidebar was
+                // folded away there was nothing on screen to bring it back.
+                .toolbar {
+                    if columns != .all {
+                        ToolbarItem(placement: .topBarLeading) {
+                            Button {
+                                withAnimation { columns = .all }
+                            } label: {
+                                Image(systemName: "sidebar.left")
+                            }
+                            .accessibilityLabel("Show conversations")
+                            .accessibilityIdentifier("showSidebar")
+                        }
+                    }
+                }
+                #endif
         }
         .navigationSplitViewStyle(.balanced)
         #if os(macOS)
@@ -187,6 +205,19 @@ struct DesktopInboxView: View {
         // archive rather than the inbox. Settings is where it is opened.
         .navigationTitle(inbox.viewingArchive ? "Archive" : "")
         .navigationBarTitleDisplayMode(.inline)
+        // One pair of controls, ours: hide here, show from the thread's bar.
+        .toolbar(removing: .sidebarToggle)
+        .toolbar {
+            ToolbarItem(placement: .topBarLeading) {
+                Button {
+                    withAnimation { columns = .detailOnly }
+                } label: {
+                    Image(systemName: "sidebar.left")
+                }
+                .accessibilityLabel("Hide conversations")
+                .accessibilityIdentifier("hideSidebar")
+            }
+        }
         #endif
         // In the window's own bar, beside the button that collapses this column — which is where a
         // Mac keeps the things that act on a window rather than on what is in it.

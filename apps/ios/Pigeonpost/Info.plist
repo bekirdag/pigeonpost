@@ -18,10 +18,14 @@
 	</array>
 	<!-- HTTPS and the platform's own TLS only. Declared so every upload is not held for an export
 	     compliance question we already know the answer to. -->
-	<!-- The camera is used for exactly one thing: reading the sign-in QR that `pigeonpost login`
-	     prints on another machine. Nothing is recorded, kept, or sent anywhere. -->
+	<!-- The camera: video calls (sent only to the people in the call, encrypted end to end), and
+	     reading the sign-in QR that `pigeonpost login` prints on another machine. Nothing is
+	     recorded or kept. -->
 	<key>NSCameraUsageDescription</key>
-	<string>To scan the sign-in code shown by the pigeonpost command line, so you can sign that machine in from here.</string>
+	<string>For video calls, and to scan the sign-in code shown by the pigeonpost command line.</string>
+	<!-- Calls only. Audio goes straight to the people in the call, encrypted end to end. -->
+	<key>NSMicrophoneUsageDescription</key>
+	<string>So the people you call can hear you.</string>
 	<!-- Geist and Geist Mono (SIL OFL 1.1, Shared/Fonts/Geist-OFL.txt), the conversation design's type. -->
 	<key>UIAppFonts</key>
 	<array>
