@@ -63,7 +63,7 @@
                     <StackPanel>
                         <StackPanel Padding="16,12,16,14">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
-                                       ContextRequested="MessageBody_ContextRequested"
+                                       SelectionChanged="MessageBody_SelectionChanged"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>
@@ -107,7 +107,7 @@
                     <StackPanel>
                         <StackPanel Padding="16,12,16,14">
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
-                                       ContextRequested="MessageBody_ContextRequested"
+                                       SelectionChanged="MessageBody_SelectionChanged"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>

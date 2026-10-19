@@ -365,13 +365,8 @@ public sealed partial class MainWindow : Window
     {
         if (sender is not TextBlock body) return;
         if (!messageBodies.ContainsKey(body))
-        {
             messageBodies[body] = body.RegisterPropertyChangedCallback(TextBlock.TextProperty, (sender, _) => HighlightBody((TextBlock)sender));
-            // Selectable text otherwise opens its built-in Select All menu on every right-click,
-            // hiding the message menu. Share the card's menu (same instance, same items).
-            for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
-                if (node is FrameworkElement { ContextFlyout: { } menu }) { body.ContextFlyout = menu; break; }
-        }
+        UpdateBodyMenu(body);
         HighlightBody(body);
     }
 
@@ -381,17 +376,20 @@ public sealed partial class MainWindow : Window
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
     }
 
-    // With text selected, right-click shows the standard text commands (Copy the selection).
-    // Without a selection it shows the message menu: Copy original message, Save attachments.
+    // Selectable text would otherwise open its built-in Select All menu on every right-click,
+    // hiding the message menu. With a selection, right-click offers the standard text commands
+    // (Copy); without one, the card's own menu (Copy original message, Save attachments).
     private TextCommandBarFlyout? selectionMenu;
-    private void MessageBody_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
+    private void MessageBody_SelectionChanged(object sender, RoutedEventArgs e)
     {
-        if (sender is not TextBlock body || body.SelectedText.Length == 0) return;
-        e.Handled = true;
-        selectionMenu ??= new TextCommandBarFlyout();
-        var options = new FlyoutShowOptions { ShowMode = FlyoutShowMode.Standard };
-        if (e.TryGetPosition(body, out var point)) options.Position = point;
-        selectionMenu.ShowAt(body, options);
+        if (sender is TextBlock body) UpdateBodyMenu(body);
+    }
+
+    private void UpdateBodyMenu(TextBlock body)
+    {
+        if (body.SelectedText.Length > 0) { body.ContextFlyout = selectionMenu ??= new TextCommandBarFlyout(); return; }
+        for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
+            if (node is FrameworkElement { ContextFlyout: { } menu }) { body.ContextFlyout = menu; return; }
     }
 
     private void HighlightBody(TextBlock body)
