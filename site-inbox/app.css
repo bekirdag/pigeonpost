@@ -1830,7 +1830,7 @@ button { font: inherit; color: inherit; }
   pointer-events: none;
 }
 .call-top > * { pointer-events: auto; }
-.call-who { min-width: 0; }
+.call-who { min-width: 0; flex: 1; }
 .call-who h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--call-ink); }
 .call-handle {
   margin: 2px 0 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted);
@@ -2116,13 +2116,7 @@ body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); 
   .join-card { padding: 18px; }
 }
 
-/* While a screen or window is shared: a red frame round this window (a page cannot draw beyond
-   it), and the same red in the floating always-on-top indicator. */
-.call-share-frame {
-  position: fixed; inset: 0; z-index: 200; display: none; pointer-events: none;
-  border: 4px solid var(--call-end);
-}
-html[data-sharing] .call-share-frame { display: block; }
+/* The red of "you are sharing": the floating always-on-top indicator and the banner dot. */
 .share-pip-dot {
   width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--call-end);
   animation: share-pulse 1.6s ease-in-out infinite;
@@ -2138,3 +2132,88 @@ body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-in
 }
 .share-pip-text { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .call-presenting .call-pill[hidden] { display: none; }
+
+/* Back to the inbox while the call keeps going. */
+.call-back {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px 0 8px; margin-right: 4px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-chip); color: var(--call-ink);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.call-back:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-back svg { width: 16px; height: 16px; }
+.call-back:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+
+/* Muted: a red mic on the person's picture — in the corner of their video, or beside their face
+   in a voice call — and on your own view. */
+.call-mute-badge {
+  position: absolute; z-index: 3; width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--call-end); color: var(--call-on-solid);
+  box-shadow: 0 4px 12px var(--call-shadow);
+}
+.call-mute-badge[hidden] { display: none; }
+.call-mute-badge svg { width: 16px; height: 16px; }
+.call-mute-badge .slash { display: block; }
+.call-tile .call-mute-badge { top: 12px; right: 12px; }
+.call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 18px); right: auto; left: calc(50% + 18px); }
+.call-grid[data-count="1"] .call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 28px); left: calc(50% + 28px); width: 34px; height: 34px; }
+.call-grid[data-count="1"] .call-tile[data-video="true"] .call-mute-badge,
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-mute-badge { top: 96px; right: 24px; }
+.call-self .call-mute-badge { top: 8px; left: 8px; width: 26px; height: 26px; }
+.call-self .call-mute-badge svg { width: 14px; height: 14px; }
+
+/* Your own view, and while sharing, the screen the others see (with your camera in its corner). */
+.call-self-screen { display: none; }
+.call-self[data-screen="true"] { width: min(34vw, 420px); }
+.call-self[data-screen="true"] .call-self-screen { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--call-ground); }
+.call-self[data-screen="true"] .call-self-camera { position: absolute; right: 8px; top: 8px; width: 28%; height: auto; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px solid var(--call-edge); }
+.call-self[data-camera="false"] .call-self-camera { display: none; }
+.call-self .call-self-camera { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.call-audio { display: none; }
+
+.call-inner-toast {
+  position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%); z-index: 9;
+  max-width: min(520px, calc(100% - 32px)); padding: 9px 14px; border-radius: 10px;
+  background: var(--call-ink); color: var(--call-ground); font-size: 13.5px; font-weight: 500;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-inner-toast[hidden] { display: none; }
+
+/* The call, shrunk to a bar over the inbox. Follows the inbox theme. */
+.call-mini {
+  /* Bottom-left, over the end of the conversation list: the composer and its send button own the
+     bottom-right. */
+  position: fixed; left: 16px; bottom: 16px; z-index: 59;
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 6px;
+  background: var(--ground); color: var(--ink); border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 24px 60px var(--shadow-sheet);
+}
+.call-mini[hidden] { display: none; }
+.call-mini-open {
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 240px;
+  padding: 4px 8px 4px 4px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.call-mini-open:hover { background: var(--hover); }
+.call-mini-open .avatar { width: 36px; height: 36px; flex: none; }
+.call-mini-text { display: flex; flex-direction: column; min-width: 0; }
+.call-mini-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-mini-status { font-size: 12px; color: var(--auto-text); font-variant-numeric: tabular-nums; }
+.call-mini .call-badge { top: 0; right: 2px; }
+.call-mini-btn {
+  width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 50%;
+  border: 1px solid var(--edge); background: var(--ground); color: var(--ink); cursor: pointer;
+}
+.call-mini-btn:hover { background: var(--hover); }
+.call-mini-btn svg { width: 18px; height: 18px; }
+.call-mini-btn .slash { display: none; }
+.call-mini-btn[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.call-mini-btn[aria-pressed="true"] .slash { display: block; }
+.call-mini-btn.call-mini-end { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); }
+.call-mini-btn.call-mini-end:hover { background: var(--call-end-hover); }
+.call-mini-btn:focus-visible, .call-mini-open:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .call-back span { display: none; }
+  .call-back { padding: 0 8px; }
+  .call-self[data-screen="true"] { width: 46vw; }
+  .call-mini { left: 10px; right: 10px; bottom: auto; top: calc(10px + env(safe-area-inset-top)); }
+  .call-mini-open { flex: 1; max-width: none; }
+}
