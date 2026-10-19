@@ -8,17 +8,20 @@ import androidx.compose.foundation.content.contentReceiver
 import androidx.compose.foundation.text.input.TextFieldLineLimits
 import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.sp
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 fun MessageEditor(text: String, changed: (String) -> Unit, enabled: Boolean, modifier: Modifier,
-    attach: (List<Uri>, Any) -> Unit) {
+    attach: (List<Uri>, Any) -> Unit, focus: FocusRequester = remember { FocusRequester() }) {
     val field = rememberTextFieldState(text)
     val currentChanged by rememberUpdatedState(changed)
     val currentAttach by rememberUpdatedState(attach)
@@ -38,6 +41,13 @@ fun MessageEditor(text: String, changed: (String) -> Unit, enabled: Boolean, mod
             }
         }
     }
-    OutlinedTextField(state = field, modifier = modifier.contentReceiver(receiver), placeholder = { Text("Message") },
-        enabled = enabled, shape = RoundedCornerShape(20.dp), lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 5))
+    // Read-only rather than disabled while a message is sending: a disabled field drops focus and the
+    // keyboard, and the next message should be typed straight after Send.
+    val p = Pp.colors
+    TextField(state = field, modifier = modifier.focusRequester(focus).contentReceiver(receiver),
+        placeholder = { Text("Message", style = geist(15.sp), color = p.muted) },
+        readOnly = !enabled, textStyle = geist(15.sp, color = p.ink), lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 6),
+        colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+            disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+            disabledIndicatorColor = Color.Transparent, cursorColor = p.accent))
 }

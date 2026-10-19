@@ -22,6 +22,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 import dev.pigeonpost.inbox.billing.GooglePlayBilling
 import dev.pigeonpost.inbox.push.PushNotifications
+import dev.pigeonpost.inbox.calls.CallHost
+import dev.pigeonpost.inbox.calls.CallsOverride
+import dev.pigeonpost.inbox.ui.AppearanceChoice
 
 data class AppGraph(val session: UserSession, val api: PostboxApi, val fixtures: Boolean = false) {
     companion object {
@@ -33,11 +36,21 @@ data class AppGraph(val session: UserSession, val api: PostboxApi, val fixtures:
 }
 class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(this) } }
 
-class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(app) {
+class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
+    // The appearance choice is the device owner's, not the account's: it survives sign-out.
+    private val looks = app.getSharedPreferences("appearance", 0)
+    private val appearanceState = MutableStateFlow(pinnedAppearance?.let(AppearanceChoice::of) ?: AppearanceChoice.of(looks.getString("choice", null)))
+    val appearance = appearanceState.asStateFlow()
+    fun chooseAppearance(choice: AppearanceChoice) {
+        appearanceState.value = choice
+        looks.edit().putString("choice", choice.name.lowercase()).apply()
+    }
+    /** Calls run the web call client in a kept-alive WebView; fixtures have none unless a debug harness is given. */
+    val calls = if (graph.fixtures && callsOverride == null) null else CallHost(app, graph.session, viewModelScope, callsOverride)
     val inbox = InboxStore(graph.api, viewModelScope,
         rememberMailbox = { preferences.edit().putString("mailbox", it).apply() },
         onSessionExpired = { signOut() })
@@ -55,6 +68,16 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
     var attachmentTarget: DraftKey? = null
     var pendingSave: File? = null
     init {
+        calls?.let { host ->
+            viewModelScope.launch {
+                combine(session.state, inbox.state) { session, state ->
+                    if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null)
+                        state.acting to state.conversations.associate { it.peer to it.name } else null
+                }.distinctUntilChanged().collect { target ->
+                    if (target != null) host.attach(target.first!!, target.second) else host.signOut()
+                }
+            }
+        }
         viewModelScope.launch {
             combine(session.state, inbox.state) { session, state ->
                 if (!session.loading && session.signedIn && session.termsAccepted) state.acting?.address else null
@@ -89,7 +112,7 @@ class InboxViewModel(app: Application, val graph: AppGraph) : AndroidViewModel(a
             inbox.selectPeer(peer)
         }
     }
-    override fun onCleared() { billing?.close(); super.onCleared() }
+    override fun onCleared() { billing?.close(); calls?.destroy(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey }
     fun attach(uris: List<Uri>) {
         val target = attachmentTarget ?: return

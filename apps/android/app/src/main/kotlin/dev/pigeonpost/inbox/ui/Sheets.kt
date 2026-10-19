@@ -1,6 +1,7 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 package dev.pigeonpost.inbox.ui
 
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -21,6 +22,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import dev.pigeonpost.core.*
@@ -30,12 +32,13 @@ import dev.pigeonpost.inbox.auth.SessionState
 @Composable
 fun PageDialog(title: String, dismiss: () -> Unit, back: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
     Dialog({ (back ?: dismiss)() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.padding(16.dp).widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.92f), shape = MaterialTheme.shapes.extraLarge) {
+        Surface(Modifier.padding(16.dp).widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.92f), shape = MaterialTheme.shapes.extraLarge,
+            color = Pp.colors.ground, border = androidx.compose.foundation.BorderStroke(1.dp, Pp.colors.stroke)) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, back)
-                    Text(title, Modifier.weight(1f), style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold)
-                    ActionIcon("Close $title", Icons.Outlined.Close, dismiss)
+                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, tint = Pp.colors.accent, action = back)
+                    Text(title, Modifier.weight(1f).padding(start = if (back != null) 4.dp else 0.dp), style = geist(19.sp, FontWeight.SemiBold), color = Pp.colors.ink)
+                    ActionIcon("Close $title", Icons.Outlined.Close, action = dismiss)
                 }
                 key(title) {
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
@@ -54,10 +57,11 @@ fun Confirm(title: String, detail: String, action: String, confirm: () -> Unit, 
 fun MailboxDialog(state: InboxState, select: (Mailbox) -> Unit, dismiss: () -> Unit, username: String? = null) {
     PageDialog("Your inboxes", dismiss) {
         orderedMailboxes(state.mailboxes, username).forEach { mailbox ->
-            ListItem(headlineContent = { Text(mailbox.name) }, supportingContent = { Text(mailbox.key) }, leadingContent = { Avatar(mailbox.name) },
+            ListItem(headlineContent = { Text(mailbox.name, style = geistMono(14.sp, FontWeight.Medium)) }, supportingContent = { Text(mailbox.key, style = geistMono(12.sp)) }, leadingContent = { Avatar(mailbox.key, mailbox.name) },
+                colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
                 trailingContent = {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp))
+                        if (mailbox.address == state.acting?.address) Icon(Icons.Outlined.Check, "Selected", Modifier.size(18.dp), tint = Pp.colors.accent)
                         CopyAddressButton(mailbox.key)
                     }
                 }, modifier = Modifier.testTag("mailbox:" + mailbox.address).semantics { selected = mailbox.address == state.acting?.address }.clickable { select(mailbox) })
@@ -74,7 +78,7 @@ fun NewConversationDialog(state: InboxState, select: (String) -> Unit, dismiss: 
         val own = state.mailboxes.filter { it.address != state.acting?.address }
         if (own.isNotEmpty()) {
             Text("Your agents", style = MaterialTheme.typography.titleSmall)
-            own.forEach { mailbox -> ListItem(headlineContent = { Text(mailbox.name) }, supportingContent = { Text(mailbox.key) }, leadingContent = { Avatar(mailbox.name) }, modifier = Modifier.clickable { select(mailbox.key) }) }
+            own.forEach { mailbox -> ListItem(headlineContent = { Text(mailbox.name) }, supportingContent = { Text(mailbox.key) }, leadingContent = { Avatar(mailbox.key, mailbox.name) }, modifier = Modifier.clickable { select(mailbox.key) }) }
         }
         val contacts = state.contacts.filter { !it.wildcard && it.admission != "block" }
         if (contacts.isNotEmpty()) {
@@ -99,11 +103,13 @@ private enum class SettingsPage(val title: String) {
 
 @Composable
 private fun SettingsRow(title: String, detail: String, icon: ImageVector, click: () -> Unit) {
-    Surface(shape = MaterialTheme.shapes.medium, tonalElevation = 1.dp) {
-        ListItem(headlineContent = { Text(title, fontWeight = FontWeight.Medium) },
-            supportingContent = { Text(detail) },
-            leadingContent = { Icon(icon, null, tint = MaterialTheme.colorScheme.primary) },
-            trailingContent = { Icon(Icons.Outlined.ChevronRight, null) },
+    val p = Pp.colors
+    Surface(shape = MaterialTheme.shapes.medium, color = p.wash, border = androidx.compose.foundation.BorderStroke(1.dp, p.stroke)) {
+        ListItem(headlineContent = { Text(title, style = geist(15.sp, FontWeight.Medium), color = p.ink) },
+            supportingContent = { Text(detail, style = geist(13.sp), color = p.secondary) },
+            leadingContent = { Box(Modifier.size(34.dp).background(p.tile, MaterialTheme.shapes.small), contentAlignment = Alignment.Center) { Icon(icon, null, Modifier.size(19.dp), tint = p.accent) } },
+            trailingContent = { Icon(Icons.Outlined.ChevronRight, null, tint = p.muted) },
+            colors = ListItemDefaults.colors(containerColor = androidx.compose.ui.graphics.Color.Transparent),
             modifier = Modifier.fillMaxWidth().clickable(onClick = click))
     }
 }
@@ -114,7 +120,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     accountHandles: AccountHandleStore? = null, refreshMailboxes: () -> Unit = {},
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit,
-    notificationSettings: () -> Unit = {}) {
+    notificationSettings: () -> Unit = {}, appearance: AppearanceChoice = AppearanceChoice.SYSTEM,
+    chooseAppearance: (AppearanceChoice) -> Unit = {}) {
     var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
     val page = SettingsPage.valueOf(pageName)
     fun navigate(next: SettingsPage) { pageName = next.name }
@@ -130,6 +137,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
                 SettingsRow("Help and about", "Support, privacy and app information", Icons.Outlined.HelpOutline) { navigate(SettingsPage.HELP) }
+                AppearancePicker(appearance, chooseAppearance)
             }
             SettingsPage.ACCOUNT -> {
                 Text("Signed in as", style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -261,7 +269,7 @@ fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: 
     var confirmation by remember { mutableStateOf<String?>(null) }
     PageDialog("Conversation info", dismiss) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Avatar(state.conversation?.name ?: displayName(peer)); Text(state.conversation?.name ?: displayName(peer), style = MaterialTheme.typography.titleLarge)
+            Avatar(peer, state.conversation?.name ?: displayName(peer), 44.dp); Text(state.conversation?.name ?: displayName(peer), style = MaterialTheme.typography.titleLarge)
         }
         SelectionContainer { Text(peer) }
         state.conversation?.identity?.let { own -> Button({ store.switchMailbox(own); dismiss() }) { Text("Open this inbox") } }
@@ -297,5 +305,22 @@ private fun ToggleRow(title: String, detail: String, checked: Boolean, enabled: 
     Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
         Column(Modifier.weight(1f)) { Text(title, style = MaterialTheme.typography.titleSmall); Text(detail, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
         Switch(checked, change, enabled = enabled)
+    }
+}
+
+/** Light, dark, or whatever the device is doing — kept between launches. */
+@Composable
+fun AppearancePicker(choice: AppearanceChoice, choose: (AppearanceChoice) -> Unit) {
+    val p = Pp.colors
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text("Appearance", style = geist(13.sp, FontWeight.Medium), color = p.secondary)
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().testTag("appearance-picker")) {
+            AppearanceChoice.entries.forEachIndexed { index, option ->
+                SegmentedButton(choice == option, { choose(option) }, SegmentedButtonDefaults.itemShape(index, AppearanceChoice.entries.size),
+                    colors = SegmentedButtonDefaults.colors(activeContainerColor = p.chip, activeContentColor = p.ink, inactiveContainerColor = p.wash,
+                        inactiveContentColor = p.secondary, activeBorderColor = p.strokeStrong, inactiveBorderColor = p.strokeStrong),
+                    icon = {}) { Text(option.label, style = geist(14.sp, FontWeight.Medium)) }
+            }
+        }
     }
 }

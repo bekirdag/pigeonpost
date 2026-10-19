@@ -1,6 +1,9 @@
 package dev.pigeonpost.inbox
 
+import android.content.ContentValues
 import android.content.Context
+import android.os.Environment
+import android.provider.MediaStore
 import android.net.Uri
 import android.util.LruCache
 import kotlinx.coroutines.sync.Semaphore
@@ -94,6 +97,25 @@ class PlatformFiles(private val context: Context, private val api: PostboxApi) {
         require(uri.scheme == "content")
         val output = context.contentResolver.openOutputStream(uri, "wt") ?: error("Could not save the file.")
         output.use { sink -> file.inputStream().use { source -> source.copyTo(sink) } }
+    }
+    /** Photos and videos into the shared gallery (Pictures/Pigeonpost, Movies/Pigeonpost). Android 10 and later need no permission. */
+    @androidx.annotation.RequiresApi(29)
+    suspend fun saveToGallery(file: File, name: String, mime: String) = withContext(Dispatchers.IO) {
+        val video = mime.startsWith("video/")
+        val collection = if (video) MediaStore.Video.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+            else MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val values = ContentValues().apply {
+            put(MediaStore.MediaColumns.DISPLAY_NAME, safeFilename(name))
+            put(MediaStore.MediaColumns.MIME_TYPE, mime)
+            put(MediaStore.MediaColumns.RELATIVE_PATH, (if (video) Environment.DIRECTORY_MOVIES else Environment.DIRECTORY_PICTURES) + "/Pigeonpost")
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
+        }
+        val resolver = context.contentResolver
+        val target = resolver.insert(collection, values) ?: error("Could not save to your photos.")
+        try {
+            (resolver.openOutputStream(target, "w") ?: error("Could not save to your photos.")).use { sink -> file.inputStream().use { it.copyTo(sink) } }
+            resolver.update(target, ContentValues().apply { put(MediaStore.MediaColumns.IS_PENDING, 0) }, null, null)
+        } catch (failure: Exception) { resolver.delete(target, null, null); throw failure }
     }
     fun clear() { previewGeneration++; previews.evictAll(); staging.deleteRecursively(); received.deleteRecursively() }
 }
