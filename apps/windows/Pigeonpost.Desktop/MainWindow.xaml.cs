@@ -23,7 +23,6 @@ public sealed partial class MainWindow : Window
     private bool followMessages;
     private NativeFileDrop? fileDrop;
     private readonly Dictionary<TextBlock, long> messageBodies = [];
-    private readonly Dictionary<TextBlock, FlyoutBase?> textMenus = [];
 #if UI_TESTS
     private readonly PreviewInboxService preview;
 #endif
@@ -368,32 +367,31 @@ public sealed partial class MainWindow : Window
         if (!messageBodies.ContainsKey(body))
         {
             messageBodies[body] = body.RegisterPropertyChangedCallback(TextBlock.TextProperty, (sender, _) => HighlightBody((TextBlock)sender));
-            // The text's built-in menu would cover the message menu on every right-click.
-            // Keep it for selections only (see MessageBody_ContextRequested).
-            textMenus[body] = body.ContextFlyout;
-            body.ContextFlyout = null;
+            // Selectable text otherwise opens its built-in Select All menu on every right-click,
+            // hiding the message menu. Share the card's menu (same instance, same items).
+            for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
+                if (node is FrameworkElement { ContextFlyout: { } menu }) { body.ContextFlyout = menu; break; }
         }
         HighlightBody(body);
     }
 
     private void MessageBody_Unloaded(object sender, RoutedEventArgs e)
     {
-        if (sender is not TextBlock body) return;
-        if (messageBodies.Remove(body, out var token))
+        if (sender is TextBlock body && messageBodies.Remove(body, out var token))
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
-        if (textMenus.Remove(body, out var menu)) body.ContextFlyout = menu;
     }
 
-    // With text selected, show the text menu (Copy the selection). Without a selection the
-    // request bubbles to the message card, whose menu offers Copy original message and
-    // Save attachments, exactly as when right-clicking elsewhere on the card.
+    // With text selected, right-click shows the standard text commands (Copy the selection).
+    // Without a selection it shows the message menu: Copy original message, Save attachments.
+    private TextCommandBarFlyout? selectionMenu;
     private void MessageBody_ContextRequested(UIElement sender, ContextRequestedEventArgs e)
     {
         if (sender is not TextBlock body || body.SelectedText.Length == 0) return;
-        if (!textMenus.TryGetValue(body, out var menu) || menu is null) return;
         e.Handled = true;
-        if (e.TryGetPosition(body, out var point)) menu.ShowAt(body, new FlyoutShowOptions { Position = point });
-        else menu.ShowAt(body);
+        selectionMenu ??= new TextCommandBarFlyout();
+        var options = new FlyoutShowOptions { ShowMode = FlyoutShowMode.Standard };
+        if (e.TryGetPosition(body, out var point)) options.Position = point;
+        selectionMenu.ShowAt(body, options);
     }
 
     private void HighlightBody(TextBlock body)
