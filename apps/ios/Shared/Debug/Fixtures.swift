@@ -33,7 +33,7 @@ enum Fixtures {
     }
 
     /// `-sheet=settings` opens a sheet straight away, so the screens that need two taps to reach can
-    /// be looked at — and screenshotted — without any. `settings`, `new`, `identities`, or `peer`
+    /// be looked at — and screenshotted — without any. `settings`, `new`, `identities`, `thread` (the new-thread dialog), or `peer`
     /// (which needs `-open=` as well, since a sender panel is about somebody).
     static var sheet: String? {
         guard enabled else { return nil }

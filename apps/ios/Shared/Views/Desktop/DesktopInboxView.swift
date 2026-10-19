@@ -61,6 +61,11 @@ struct DesktopInboxView: View {
             detailColumn
         }
         .navigationSplitViewStyle(.balanced)
+        #if os(macOS)
+        // The window's bar in the conversation's own ground, as the conversation design's header
+        // is, instead of the system's grey strip.
+        .toolbarBackground(Theme.wash, for: .windowToolbar)
+        #endif
         // Empty on purpose. The sender is drawn as a button in the detail toolbar, and an
         // unset title falls back to the application's name — which put "Pigeonpost Desktop"
         // immediately beside "bdya" and made the bar read as two titles.
@@ -116,7 +121,7 @@ struct DesktopInboxView: View {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text(inbox.hasLoaded ? "Updating inbox…" : "Loading inbox…")
-                        .font(.system(size: 12))
+                        .font(.geist(12))
                         .foregroundStyle(Theme.muted)
                     Spacer(minLength: 0)
                 }
@@ -129,11 +134,20 @@ struct DesktopInboxView: View {
             // width has been fragile, and a flat stack of rows is the shape with the fewest
             // opinions in it.
             if searching {
-                TextField("Search senders", text: $inbox.filter)
-                    .textFieldStyle(.roundedBorder)
-                    .font(.system(size: 12))
-                    .padding(.horizontal, 10)
-                    .padding(.bottom, 7)
+                HStack(spacing: 8) {
+                    Image(systemName: "magnifyingglass")
+                        .font(.geist(13, .medium))
+                        .foregroundStyle(Theme.muted)
+                    TextField("Search senders", text: $inbox.filter)
+                        .textFieldStyle(.plain)
+                        .font(.geist(13.5))
+                        .foregroundStyle(Theme.ink)
+                }
+                .padding(.horizontal, 10)
+                .frame(height: 36)
+                .background(Theme.field, in: RoundedRectangle(cornerRadius: 9))
+                .padding(.horizontal, 12)
+                .padding(.bottom, 10)
                     // Escape closes it *and* clears it. A filter left behind by a box nobody can
                     // see is a sidebar quietly hiding conversations for no visible reason.
                     #if os(macOS)
@@ -143,18 +157,17 @@ struct DesktopInboxView: View {
                     }
                     #endif
             }
-            Divider()
             conversationList
             // Which build this window is. Settings carries it too, but a released app is asked
             // "is the fix in this one?" far more often than Settings is opened, and the answer was
             // not visible anywhere in the window.
-            Divider()
             Text("Pigeonpost \(Config.version)")
-                .font(.system(size: 10.5))
+                .font(.geist(12))
                 .foregroundStyle(Theme.muted)
-                .padding(.horizontal, 12)
-                .padding(.vertical, 5)
+                .padding(.horizontal, 16)
+                .padding(.vertical, 12)
                 .frame(maxWidth: .infinity, alignment: .leading)
+                .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
                 .textSelection(.enabled)
                 .accessibilityIdentifier("appVersion")
         }
@@ -164,10 +177,12 @@ struct DesktopInboxView: View {
         // window. This app draws its own colours rather than the system's, so with a white window
         // behind it the material lightened while the text stayed light, and the names washed out.
         // Vibrancy only works when the text colour is the system's to adjust.
-        .background(Theme.wash)
+        .background(Theme.sidebar)
         .overlay(alignment: .trailing) { seam }
         .navigationSplitViewColumnWidth(min: 240, ideal: 300, max: 420)
         #if os(iOS)
+        .toolbarBackground(Theme.sidebar, for: .navigationBar)
+        .toolbarBackground(.visible, for: .navigationBar)
         // The phone's word for the one state the sidebar cannot otherwise show: that it is the
         // archive rather than the inbox. Settings is where it is opened.
         .navigationTitle(inbox.viewingArchive ? "Archive" : "")
@@ -186,18 +201,21 @@ struct DesktopInboxView: View {
                     if !searching { inbox.filter = "" }
                 } label: {
                     Image(systemName: "magnifyingglass")
+                        .foregroundStyle(Theme.secondary)
                 }
                 .help("Search senders")
                 .accessibilityLabel("Search senders")
 
                 Button(action: newConversation) {
                     Image(systemName: "square.and.pencil")
+                        .foregroundStyle(Theme.secondary)
                 }
                 .help("New conversation")
                 .accessibilityLabel("New conversation")
 
                 Button(action: openSettings) {
                     Image(systemName: "gearshape")
+                        .foregroundStyle(Theme.secondary)
                 }
                 // Without this VoiceOver reads the symbol's own name, because the label is an image
                 // with nothing to say.
@@ -217,17 +235,18 @@ struct DesktopInboxView: View {
             if inbox.offline, inbox.hasLoaded {
                 VStack(alignment: .leading, spacing: 6) {
                     Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
-                        .font(.system(size: 12))
+                        .font(.geist(12))
                         .foregroundStyle(Theme.muted)
                     Button("Try again") { Task { await inbox.loadAll() } }
                         .disabled(inbox.loading)
                 }
                 .listRowBackground(Color.clear)
+                .listRowSeparator(.hidden)
             }
             ForEach(inbox.visible) { conversation in
                 let isSelected = conversation.peer == peer
                 DesktopConversationRow(conversation: conversation, isSelected: isSelected)
-                    .selectable(isSelected) { peer = conversation.peer }
+                    .selectable(isSelected, radius: 10) { peer = conversation.peer }
                     .accessibilityIdentifier("conversation:" + conversation.peer)
                     #if os(iOS)
                     .swipeActions(edge: .trailing) {
@@ -299,36 +318,42 @@ struct DesktopInboxView: View {
         if let peer, let conversation = inbox.conversation(with: peer) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text(conversation.name)
-                            .font(.system(size: 12.5, weight: .semibold))
-                            .foregroundStyle(Theme.ink)
-                            .lineLimit(1)
+                    VStack(alignment: .leading, spacing: 2) {
                         Text("Threads")
-                            .font(.system(size: 11))
+                            .font(.geist(11))
+                            .textCase(.uppercase)
+                            .kerning(0.66)
                             .foregroundStyle(Theme.muted)
+                        Text(conversation.name)
+                            .font(.geistMono(12.5))
+                            .foregroundStyle(Theme.quiet)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
                     }
                     Spacer(minLength: 0)
                     // A tapped image, not a `Button`, for the reason in the toolbar note above.
                     Image(systemName: "plus")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
-                        .frame(width: 16, height: 16)
+                        .font(.geist(15, .medium))
+                        .foregroundStyle(Theme.ink)
+                        .frame(width: 32, height: 32)
+                        .background(Theme.field, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.strokeStrong, lineWidth: 1))
                         .contentShape(Rectangle())
                         .onTapGesture { openingThread = ThreadTarget(id: peer) }
                         .help("Start a thread about a new subject")
                         .accessibilityLabel("New thread")
                         .accessibilityAddTraits(.isButton)
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 8)
-                Divider()
+                .padding(.leading, 18)
+                .padding(.trailing, 12)
+                .frame(height: 64)
+                .overlay(alignment: .bottom) { Rectangle().fill(Theme.rule).frame(height: 1) }
 
                 List {
                     ForEach(inbox.subthreads(of: peer)) { thread in
                         let isSelected = subthread == thread.id
                         DesktopThreadRow(thread: thread, isSelected: isSelected)
-                            .selectable(isSelected) { subthread = isSelected ? nil : thread.id }
+                            .selectable(isSelected, radius: 9) { subthread = isSelected ? nil : thread.id }
                             .accessibilityIdentifier("subthread:" + thread.name)
                             .contextMenu {
                                 Button("Delete Thread", role: .destructive) {
@@ -343,9 +368,11 @@ struct DesktopInboxView: View {
                 }
                 .listStyle(.plain)
                 .scrollContentBackground(.hidden)
+                .contentMargins(.top, 10, for: .scrollContent)
             }
-            .background(Theme.wash)
+            .background(Theme.column)
             .overlay(alignment: .trailing) { seam }
+            .onAppear { if Fixtures.sheet == "thread" { openingThread = ThreadTarget(id: peer) } }
             .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 340)
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
@@ -354,7 +381,7 @@ struct DesktopInboxView: View {
             // Nothing picked yet. An empty column rather than a message: the sidebar beside it is
             // already saying what to do.
             Color.clear
-                .background(Theme.wash)
+                .background(Theme.column)
                 .overlay(alignment: .trailing) { seam }
                 .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 340)
                 #if os(iOS)
@@ -370,7 +397,7 @@ struct DesktopInboxView: View {
             VStack(spacing: 14) {
                 if inbox.offline, !inbox.loading {
                     Image(systemName: "wifi.exclamationmark")
-                        .font(.system(size: 30))
+                        .font(.geist(30))
                         .foregroundStyle(Theme.muted)
                     Text("Couldn't load this inbox")
                         .font(.headline)
@@ -408,11 +435,12 @@ struct DesktopInboxView: View {
                 .toolbar {
                     ToolbarItem(placement: .navigation) {
                         Button { showPeer(conversation) } label: {
-                            HStack(spacing: 6) {
-                                Avatar(peer: conversation.peer, size: 18)
+                            HStack(spacing: 10) {
+                                Avatar(peer: conversation.peer, size: 28)
                                 Text(conversation.name)
-                                    .font(.system(size: 13, weight: .semibold))
+                                    .font(.geistMono(14, .semibold))
                                     .foregroundStyle(Theme.ink)
+                                    .lineLimit(1)
                             }
                         }
                         .buttonStyle(.plain)
@@ -460,21 +488,26 @@ struct DesktopInboxView: View {
     /// app drops its identity list *inside* the sidebar, spanning the column, and that is both the
     /// nicer shape and the one that cannot fight this List for width.
     private var mailboxBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
+            Avatar(peer: account.me?.key, size: 30)
             Text(account.me?.handle.map(PeerFace.displayName) ?? account.me?.label ?? "—")
-                .font(.system(size: 12.5, weight: .semibold))
+                .font(.geistMono(13, .medium))
                 .foregroundStyle(Theme.ink)
+                .lineLimit(1)
+                .truncationMode(.middle)
             Spacer(minLength: 0)
             if account.mailboxes.count > 1 {
                 Image(systemName: "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(Theme.muted)
+                    .font(.geist(12, .semibold))
+                    .foregroundStyle(Theme.secondary)
                     .rotationEffect(.degrees(switchingMailbox ? 180 : 0))
                     .fixedSize()
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(Theme.field.opacity(0.9), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.stroke, lineWidth: 1))
         .contentShape(Rectangle())
         .onTapGesture {
             guard account.mailboxes.count > 1 else { return }
@@ -483,6 +516,9 @@ struct DesktopInboxView: View {
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(.isButton)
         .accessibilityIdentifier("mailboxSwitcher")
+        .padding(.horizontal, 12)
+        .padding(.top, 12)
+        .padding(.bottom, 12)
     }
 
     /// The other mailboxes on this account, as rows in the column rather than a popup over it.
@@ -496,21 +532,22 @@ struct DesktopInboxView: View {
                     let isCurrent = mailbox.address == account.me?.address
                     HStack(spacing: 4) {
                         HStack(spacing: 8) {
-                            Avatar(peer: mailbox.handle ?? mailbox.address, size: 20)
+                            Avatar(peer: mailbox.handle ?? mailbox.address, size: 24)
                             Text(mailbox.handle.map(PeerFace.displayName) ?? mailbox.label ?? mailbox.address)
-                                .font(.system(size: 12))
+                                .font(.geistMono(12.5))
                                 .foregroundStyle(Theme.ink)
                                 .lineLimit(1)
                             Spacer(minLength: 0)
                             if isCurrent {
                                 Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .semibold))
+                                    .font(.geist(10, .semibold))
                                     .foregroundStyle(Theme.navy)
                                     .fixedSize()
                             }
                         }
                         .padding(.horizontal, 12)
-                        .padding(.vertical, 5)
+                        .padding(.vertical, 6)
+                        .background(isCurrent ? Theme.selected : Color.clear, in: RoundedRectangle(cornerRadius: 8))
                         .contentShape(Rectangle())
                         .onTapGesture { switchTo(mailbox) }
                         .accessibilityElement(children: .combine)
@@ -518,12 +555,12 @@ struct DesktopInboxView: View {
                         .accessibilityIdentifier("mailbox:" + mailbox.key)
                         CopyAddressButton(address: mailbox.key)
                     }
-                    .padding(.trailing, 8)
+                    .padding(.horizontal, 8)
                 }
             }
         }
         .frame(maxHeight: 260)
-        .padding(.bottom, 4)
+        .padding(.bottom, 10)
     }
 
     private func switchTo(_ mailbox: Mailbox) {
@@ -536,16 +573,18 @@ struct DesktopInboxView: View {
 }
 
 private extension View {
-    /// A list row that chooses itself when tapped, drawn selected in this app's own colours.
-    func selectable(_ isSelected: Bool, choose: @escaping () -> Void) -> some View {
+    /// A list row that chooses itself when tapped, drawn selected in this app's own colours: a
+    /// quiet grey card behind the row, as in the conversation design, rather than a fill of the
+    /// accent.
+    func selectable(_ isSelected: Bool, radius: CGFloat, choose: @escaping () -> Void) -> some View {
         self
+            .padding(.horizontal, 10)
+            .padding(.vertical, radius == 10 ? 10 : 9)
+            .background(isSelected ? Theme.selected : Color.clear, in: RoundedRectangle(cornerRadius: radius))
             .contentShape(Rectangle())
             .onTapGesture(perform: choose)
-            .listRowBackground(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isSelected ? Theme.navy : Color.clear)
-                    .padding(.horizontal, 6)
-            )
+            .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+            .listRowBackground(Color.clear)
             .listRowSeparator(.hidden)
             .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
@@ -556,64 +595,62 @@ private struct DesktopThreadRow: View {
     let thread: Subthread
     let isSelected: Bool
 
+    /// A subject nobody named is drawn as the placeholder it is.
+    private var unnamed: Bool { (thread.title ?? "").isEmpty && !thread.isDefault }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 2) {
-            HStack(spacing: 6) {
-                Text(thread.name)
-                    .font(.system(size: 12.5, weight: isSelected ? .semibold : .regular))
-                    .foregroundStyle(isSelected ? Color.white : Theme.ink)
-                    .lineLimit(1)
-                Spacer(minLength: 0)
-                if thread.unread > 0 {
-                    Circle()
-                        .fill(isSelected ? Color.white : Theme.blue)
-                        .frame(width: 6, height: 6)
-                        .fixedSize()
-                }
+        HStack(spacing: 10) {
+            Text(thread.name)
+                .font(.geist(13.5, isSelected ? .medium : .regular))
+                .italic(unnamed)
+                .foregroundStyle(unnamed ? Theme.secondary : Theme.ink)
+                .lineLimit(1)
+            Spacer(minLength: 0)
+            if thread.unread > 0 {
+                Circle()
+                    .fill(Theme.accent)
+                    .frame(width: 6, height: 6)
+                    .fixedSize()
             }
             if thread.last > 0 {
                 Text(Time.listTime(thread.last))
-                    .font(.system(size: 10.5))
-                    .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Theme.muted)
+                    .font(.geist(11.5))
+                    .foregroundStyle(Theme.muted)
                     .fixedSize()
             }
         }
-        .padding(.vertical, 3)
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 private struct DesktopConversationRow: View {
     let conversation: Conversation
-    /// A selected row is filled with the accent, and text that stays as it was is unreadable on it.
-    /// SwiftUI inverts only the colours it chose itself, and every colour here was chosen
-    /// deliberately, so the row has to do it.
     var isSelected: Bool = false
 
     var body: some View {
         // The spacers live *inside* the two rows, never beside the column that holds them. Put one
         // next to the column and it takes the width instead: the name and preview collapse to two
         // characters and an ellipsis while the sidebar sits there half empty.
-        HStack(alignment: .top, spacing: 9) {
-            Avatar(peer: conversation.peer, size: 26)
+        HStack(alignment: .center, spacing: 11) {
+            Avatar(peer: conversation.peer, size: 38)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)
-                        .font(.system(size: 13, weight: .semibold))
-                        .foregroundStyle(isSelected ? Color.white : Theme.ink)
+                        .font(.geistMono(13, .semibold))
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Theme.muted)
+                            .font(.geist(11.5))
+                            .foregroundStyle(Theme.muted)
                             .fixedSize()
                     }
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(conversation.messages.last.map(ConversationBuilder.preview) ?? "")
-                        .font(.system(size: 12))
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Theme.body)
+                        .font(.geist(13))
+                        .foregroundStyle(Theme.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     // The accessories are rigid and the text beside them is what gives way. Say it
@@ -630,6 +667,5 @@ private struct DesktopConversationRow: View {
         }
         // Take the full row so the whole strip is the click target, not just the text.
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding(.vertical, 3)
     }
 }

@@ -24,6 +24,8 @@ enum AuthError: Error { case sessionExpired }
 enum Fixtures {
     static let enabled = false
     static let quotaState: String? = nil
+    static let openPeer: String? = nil
+    static let sheet: String? = nil
 }
 #if !MAC_INBOX_UI_TESTS
 @MainActor enum AppLife { static var isActive = true }

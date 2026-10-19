@@ -21,51 +21,23 @@ struct MessageBubble: View {
 
     private var isMine: Bool { message.kind == .outgoing }
 
+    /// A request that is still waiting on you is drawn in amber, the colour of the decision it is
+    /// waiting for. Only inbound: your own requests were never subject to one.
+    private var isHeldRequest: Bool {
+        message.envelope != nil && message.kind == .incoming && message.autonomy != "auto"
+    }
+
+    private var fill: Color { isMine ? Theme.Mine.fill : (isHeldRequest ? Theme.Held.fill : Theme.ground) }
+    private var stroke: Color { isMine ? Theme.Mine.stroke : (isHeldRequest ? Theme.Held.stroke : Theme.stroke) }
+    private var divider: Color { isMine ? Theme.Mine.rule : (isHeldRequest ? Theme.Held.stroke : Theme.tile) }
+    private var metaColor: Color { isMine ? Theme.Mine.meta : (isHeldRequest ? Theme.Held.text : Theme.muted) }
+
     var body: some View {
-        HStack {
-            if isMine { Spacer(minLength: 40) }
-            VStack(alignment: .leading, spacing: 3) {
-                if let envelope = message.envelope {
-                    RequestCard(
-                        envelope: envelope,
-                        autonomy: message.autonomy,
-                        heldBecause: message.heldBecause,
-                        // Only inbound. A sent copy carries no admission verdict — your own words
-                        // were never subject to one — and a "held" pill on your own request would
-                        // be a lie about somebody else's decision.
-                        showsDecision: message.kind == .incoming,
-                        isMine: isMine
-                    )
-                } else if let reply = message.autoReply {
-                    AutoReplyBody(reply: reply)
-                } else {
-                    MarkdownText(
-                        raw: message.body,
-                        onDark: isMine,
-                        highlight: highlight,
-                        isCurrentMatch: isFound
-                    )
-                }
-                if !message.attachments.isEmpty {
-                    AttachmentList(attachments: message.attachments, isMine: isMine)
-                }
-                meta
-            }
-            .padding(.horizontal, 12)
-            .padding(.top, 8)
-            .padding(.bottom, 6)
-            .background(isMine ? Theme.navy : Theme.ground, in: RoundedRectangle(cornerRadius: 12))
-            // A border on the match you are standing on, and nothing else. The words inside carry
-            // the mark — see `MarkdownText.marked` — because a whole bubble tinted purple says
-            // "somewhere in these forty lines", which is barely narrower than not having searched.
-            // The outline is only so the eye lands on the right bubble after a jump.
-            .overlay(
-                RoundedRectangle(cornerRadius: 12)
-                    .stroke(isFound ? Theme.found : (isMine ? Theme.navy : Theme.rule),
-                            lineWidth: isFound ? 2 : 1)
-            )
-            .frame(maxWidth: 560, alignment: isMine ? .trailing : .leading)
-            if !isMine { Spacer(minLength: 40) }
+        HStack(spacing: 0) {
+            if isMine { Spacer(minLength: 36) }
+            card
+                .frame(maxWidth: 620, alignment: isMine ? .trailing : .leading)
+            if !isMine { Spacer(minLength: 36) }
         }
         .padding(.vertical, 2)
         .contextMenu {
@@ -117,6 +89,67 @@ struct MessageBubble: View {
         }
     }
 
+    /// A card rather than a bubble: a header when the message has one, the words, and a footer
+    /// that carries the copy button and the time, each band divided by a hairline.
+    private var card: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let reply = message.autoReply {
+                AutoReplyHeader(reply: reply)
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .overlay(alignment: .bottom) { Rectangle().fill(divider).frame(height: 1) }
+            }
+            VStack(alignment: .leading, spacing: 10) {
+                if let envelope = message.envelope {
+                    RequestCard(
+                        envelope: envelope,
+                        autonomy: message.autonomy,
+                        heldBecause: message.heldBecause,
+                        // Only inbound. A sent copy carries no admission verdict — your own words
+                        // were never subject to one — and a "held" pill on your own request would
+                        // be a lie about somebody else's decision.
+                        showsDecision: message.kind == .incoming,
+                        isMine: isMine
+                    )
+                } else if let reply = message.autoReply {
+                    // The one place markdown matters most: an agent's report is nearly always
+                    // headings, bullets and fenced code, and as flat text it reads as a wall.
+                    MarkdownText(raw: reply.body, highlight: highlight, isCurrentMatch: isFound)
+                } else {
+                    MarkdownText(
+                        raw: message.body,
+                        onDark: isMine,
+                        highlight: highlight,
+                        isCurrentMatch: isFound
+                    )
+                }
+                if !message.attachments.isEmpty {
+                    AttachmentList(attachments: message.attachments, isMine: isMine)
+                }
+            }
+            .padding(.horizontal, 16)
+            .padding(.top, 12)
+            .padding(.bottom, 13)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            meta
+                .padding(.leading, 10)
+                .padding(.trailing, 16)
+                .padding(.vertical, 5)
+                .overlay(alignment: .top) { Rectangle().fill(divider).frame(height: 1) }
+        }
+        .background(fill, in: RoundedRectangle(cornerRadius: 14))
+        // A border on the match you are standing on, and nothing else. The words inside carry
+        // the mark — see `MarkdownText.marked` — because a whole card tinted purple says
+        // "somewhere in these forty lines", which is barely narrower than not having searched.
+        // The outline is only so the eye lands on the right card after a jump.
+        .overlay(
+            RoundedRectangle(cornerRadius: 14)
+                .stroke(isFound ? Theme.found : stroke, lineWidth: isFound ? 2 : 1)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 14))
+    }
+
     private var meta: some View {
         HStack(spacing: 6) {
             // Copy sits at the start of the meta row, before the spacer, so it lands under the
@@ -134,9 +167,9 @@ struct MessageBubble: View {
                 }
             } label: {
                 Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isMine ? Color.white.opacity(0.72) : Theme.muted)
-                    .frame(width: 22, height: 18)
+                    .font(.geist(12.5, .medium))
+                    .foregroundStyle(metaColor)
+                    .frame(width: 26, height: 26)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -144,19 +177,18 @@ struct MessageBubble: View {
             Spacer(minLength: 0)
             if message.status == .failed {
                 Text("not sent")
-                    .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(isMine ? Theme.Pill.blockedStroke : Theme.Pill.blockedText)
+                    .font(.geist(12, .semibold))
+                    .foregroundStyle(Theme.Pill.blockedText)
             }
             if message.status == .sending {
                 Text("sending…")
-                    .font(.system(size: 11))
-                    .foregroundStyle(isMine ? Color.white.opacity(0.72) : Theme.muted)
+                    .font(.geist(12))
+                    .foregroundStyle(metaColor)
             }
             Text(Time.clockTime(message.at))
-                .font(.system(size: 11))
-                .foregroundStyle(isMine ? Color.white.opacity(0.72) : Theme.muted)
+                .font(.geist(12))
+                .foregroundStyle(metaColor)
         }
-        .padding(.top, 1)
     }
 }
 
@@ -170,10 +202,13 @@ struct RequestCard: View {
     /// On the navy bubble the card is white-on-dark; everywhere else it is ink on paper.
     var isMine: Bool = false
 
-    private var primary: Color { isMine ? .white : Theme.ink }
-    private var secondary: Color { isMine ? .white.opacity(0.82) : Theme.body }
-    private var faint: Color { isMine ? .white.opacity(0.62) : Theme.muted }
-    private var panel: Color { isMine ? .white.opacity(0.14) : Theme.wash }
+    /// Held, the card is amber and so are its words; otherwise the ordinary card colours.
+    private var held: Bool { showsDecision && autonomy != "auto" }
+    private var primary: Color { isMine ? Theme.Mine.text : (held ? Theme.Held.title : Theme.ink) }
+    private var secondary: Color { isMine ? Theme.Mine.secondary : (held ? Theme.Held.text : Theme.body) }
+    private var faint: Color { isMine ? Theme.Mine.meta : (held ? Theme.Held.text.opacity(0.8) : Theme.muted) }
+    private var panel: Color { isMine ? Theme.Mine.panel : (held ? Theme.Held.panel : Theme.Code.fill) }
+    private var panelText: Color { isMine ? Theme.Mine.panelText : (held ? Theme.Held.panelText : Theme.Code.text) }
 
     /// Arguments worth showing beside the note. When the note repeats an argument verbatim — which
     /// is what this app's own sends look like — the argument is the duplicate, and showing it turns
@@ -184,13 +219,13 @@ struct RequestCard: View {
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
             // The verb is a header worth showing only when it says something. Everything these
             // clients send is `full_access`, so labelling every message with it is a banner
             // repeated on every line — it tells the reader nothing they did not already know.
             if envelope.verb != "full_access" {
                 Text(envelope.title)
-                    .font(.system(size: 14.5, weight: .semibold))
+                    .font(.geist(14.5, .semibold))
                     .foregroundStyle(primary)
             }
 
@@ -199,22 +234,23 @@ struct RequestCard: View {
                     ForEach(visibleArgs.keys.sorted(), id: \.self) { key in
                         HStack(alignment: .top, spacing: 6) {
                             Text(key)
-                                .font(.system(size: 12, design: .monospaced))
+                                .font(.geistMono(12))
                                 .foregroundStyle(faint)
                             Text(visibleArgs[key] ?? "")
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(secondary)
+                                .font(.geistMono(12))
+                                .foregroundStyle(panelText)
                         }
                     }
                 }
-                .padding(8)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 10)
                 .frame(maxWidth: .infinity, alignment: .leading)
-                .background(panel, in: RoundedRectangle(cornerRadius: 7))
+                .background(panel, in: RoundedRectangle(cornerRadius: 10))
             }
 
             if let note = envelope.note, !note.isEmpty {
                 Text(note)
-                    .font(.system(size: 13))
+                    .font(.geist(14.5))
                     .foregroundStyle(secondary)
             }
 
@@ -226,7 +262,7 @@ struct RequestCard: View {
                     PillView(text: "held", kind: .held)
                     if let heldBecause {
                         Text(ConversationBuilder.heldReason(heldBecause))
-                            .font(.system(size: 11.5))
+                            .font(.geist(12.5))
                             .foregroundStyle(faint)
                             .fixedSize(horizontal: false, vertical: true)
                     }
@@ -238,23 +274,18 @@ struct RequestCard: View {
 }
 
 /// An answer generated without a human reading it. The two header lines every one of them carries
-/// become one small caption, so the answer is what you see.
-struct AutoReplyBody: View {
+/// become the card's header band, so the answer is what you see.
+struct AutoReplyHeader: View {
     let reply: AutoReply
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(systemName: reply.failed ? "exclamationmark.triangle" : "bolt.horizontal.circle")
-                    .font(.system(size: 11))
-                Text(caption)
-                    .font(.system(size: 11.5))
-            }
-            .foregroundStyle(reply.failed ? Theme.Pill.blockedText : Theme.muted)
-
-            // The one place markdown matters most: an agent's report is nearly always headings,
-            // bullets and fenced code, and as flat text it reads as a wall.
-            MarkdownText(raw: reply.body)
+        HStack(spacing: 8) {
+            Image(systemName: reply.failed ? "exclamationmark.triangle" : "bolt")
+                .font(.geist(12.5, .semibold))
+                .foregroundStyle(reply.failed ? Theme.Pill.blockedText : Theme.accent)
+            Text(caption)
+                .font(.geist(12.5, .medium))
+                .foregroundStyle(reply.failed ? Theme.Pill.blockedText : Theme.secondary)
         }
     }
 

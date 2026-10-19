@@ -13,7 +13,8 @@ import SwiftUI
 /// box that contains them.
 struct UnreadBadge: View {
     let count: Int
-    /// On a selected row the two colours swap: navy on navy is a badge nobody can count.
+    /// Kept for callers that still say which row they are on. A selected row is a quiet grey now,
+    /// not a fill of the accent, so the badge reads the same on both.
     var inverted: Bool = false
 
     private static let size: CGFloat = 11
@@ -22,15 +23,15 @@ struct UnreadBadge: View {
 
     var body: some View {
         Text("\(count)")
-            .font(.system(size: Self.size, weight: .semibold))
+            .font(.geist(Self.size, .semibold))
             .monospacedDigit()
-            .foregroundStyle(inverted ? Theme.navy : Color.white)
+            .foregroundStyle(Theme.onAccent)
             .alignmentGuide(VerticalAlignment.center) { d in
                 d[.firstTextBaseline] - Self.capHeight / 2
             }
             .padding(.horizontal, 5)
             .frame(minWidth: 18, minHeight: 18)
-            .background(inverted ? Color.white : Theme.navy, in: Capsule())
+            .background(Theme.accent, in: Capsule())
             // Never let a neighbour compress it; the count is two characters at most and all of it
             // matters.
             .fixedSize()
@@ -94,14 +95,20 @@ struct PillView: View {
     let kind: Kind
 
     var body: some View {
-        Text(text.uppercased())
-            .font(.system(size: 10, weight: .semibold))
-            .kerning(0.3)
-            .foregroundStyle(foreground)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(fill, in: RoundedRectangle(cornerRadius: 5))
-            .overlay(RoundedRectangle(cornerRadius: 5).stroke(stroke, lineWidth: 1))
+        HStack(spacing: 4) {
+            // The held chip carries a dot, as it does in the conversation design: it is the one
+            // decision still waiting on somebody.
+            if kind == .held {
+                Circle().fill(foreground).frame(width: 5, height: 5)
+            }
+            Text(text.uppercased())
+                .font(.geist(10.5, .semibold))
+                .kerning(0.42)
+        }
+        .foregroundStyle(foreground)
+        .padding(.horizontal, 6)
+        .frame(minHeight: 18)
+        .background(fill, in: RoundedRectangle(cornerRadius: 5))
     }
 
     private var foreground: Color {
@@ -129,6 +136,24 @@ struct PillView: View {
     }
 }
 
+/// The day a run of messages was sent, between two hairlines across the conversation.
+struct DayDivider: View {
+    let label: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Rectangle().fill(Theme.rule).frame(height: 1)
+            Text(label)
+                .font(.geist(12))
+                .foregroundStyle(Theme.muted)
+                .fixedSize()
+            Rectangle().fill(Theme.rule).frame(height: 1)
+        }
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity)
+    }
+}
+
 /// A line of text that appears, is read, and goes. Anything worth keeping belongs on the screen it
 /// happened on, not here.
 private struct Toast: ViewModifier {
@@ -138,11 +163,12 @@ private struct Toast: ViewModifier {
         content.overlay(alignment: .bottom) {
             if let message {
                 Text(message)
-                    .font(.system(size: 13.5))
+                    .font(.geist(13.5))
                     .foregroundStyle(.white)
                     .padding(.horizontal, 14)
                     .padding(.vertical, 10)
                     .background(Theme.toastFill, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.strokeStrong, lineWidth: 1))
                     .padding(.horizontal, 20)
                     .padding(.bottom, 28)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
@@ -211,11 +237,11 @@ private struct Announcer: ViewModifier {
                 Avatar(peer: announcement.peer, size: 30)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(announcement.title)
-                        .font(.system(size: 13.5, weight: .semibold))
+                        .font(.geist(13.5, .semibold))
                         .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Text(announcement.body)
-                        .font(.system(size: 12.5))
+                        .font(.geist(12.5))
                         .foregroundStyle(Theme.body)
                         .lineLimit(2)
                         .multilineTextAlignment(.leading)
@@ -225,9 +251,9 @@ private struct Announcer: ViewModifier {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .frame(maxWidth: 460)
-            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.rule, lineWidth: 1))
-            .shadow(color: .black.opacity(0.14), radius: 12, y: 4)
+            .background(Theme.ground, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+            .shadow(color: .black.opacity(0.3), radius: 24, y: 12)
         }
         .buttonStyle(.plain)
         .padding(.horizontal, 12)

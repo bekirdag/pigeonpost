@@ -14,7 +14,7 @@ import SwiftUI
 
 struct MarkdownText: View {
     let raw: String
-    /// White-on-navy for your own bubble, ink on paper everywhere else.
+    /// Your own message's colours rather than a received one's.
     var onDark: Bool = false
     /// What the find bar is looking for. Every occurrence of it in this text is marked.
     var highlight: String = ""
@@ -24,13 +24,17 @@ struct MarkdownText: View {
     /// the one it meant.
     var isCurrentMatch: Bool = false
 
-    private var primary: Color { onDark ? .white : Theme.ink }
-    private var secondary: Color { onDark ? .white.opacity(0.86) : Theme.body }
-    private var faint: Color { onDark ? .white.opacity(0.6) : Theme.muted }
-    private var panel: Color { onDark ? .white.opacity(0.14) : Theme.wash }
+    /// Headings and emphasis.
+    private var strong: Color { onDark ? Theme.Mine.text : Theme.ink }
+    /// The words themselves.
+    private var primary: Color { onDark ? Theme.Mine.text : Theme.body }
+    private var secondary: Color { onDark ? Theme.Mine.secondary : Theme.body }
+    private var faint: Color { onDark ? Theme.Mine.meta : Theme.muted }
+    private var panel: Color { onDark ? Theme.Mine.panel : Theme.Code.fill }
+    private var panelStroke: Color { onDark ? Theme.Mine.stroke : Theme.Code.stroke }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
+        VStack(alignment: .leading, spacing: 10) {
             ForEach(Array(Markdown.blocks(of: raw).enumerated()), id: \.offset) { _, block in
                 view(for: block)
             }
@@ -44,13 +48,13 @@ struct MarkdownText: View {
         switch block {
         case let .heading(level, text):
             inline(text)
-                .font(.system(size: level == 1 ? 19 : level == 2 ? 17 : 15.5, weight: .bold))
-                .foregroundStyle(primary)
+                .font(.geist(level == 1 ? 19 : level == 2 ? 17 : 15.5, .semibold))
+                .foregroundStyle(strong)
                 .padding(.top, 2)
 
         case let .paragraph(text):
             inline(text)
-                .font(.system(size: 14.5))
+                .font(.geist(14.5))
                 .foregroundStyle(primary)
 
         case let .bullets(items):
@@ -61,7 +65,7 @@ struct MarkdownText: View {
                         // line rather than the decoration.
                         Text("•").foregroundStyle(faint)
                         inline(item)
-                            .font(.system(size: 14.5))
+                            .font(.geist(14.5))
                             .foregroundStyle(primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -73,10 +77,10 @@ struct MarkdownText: View {
                 ForEach(Array(items.enumerated()), id: \.offset) { index, item in
                     HStack(alignment: .firstTextBaseline, spacing: 7) {
                         Text("\(index + 1).")
-                            .font(.system(size: 13.5, weight: .medium))
+                            .font(.geist(13.5, .medium))
                             .foregroundStyle(faint)
                         inline(item)
-                            .font(.system(size: 14.5))
+                            .font(.geist(14.5))
                             .foregroundStyle(primary)
                             .frame(maxWidth: .infinity, alignment: .leading)
                     }
@@ -88,13 +92,15 @@ struct MarkdownText: View {
             // read, and agents send diffs and stack traces where the column matters.
             ScrollView(.horizontal, showsIndicators: false) {
                 Text(marked(AttributedString(text)))
-                    .font(.system(size: 12.5, design: .monospaced))
-                    .foregroundStyle(secondary)
+                    .font(.geistMono(12.5))
+                    .foregroundStyle(onDark ? Theme.Mine.panelText : Theme.Code.text)
                     .textSelection(.enabled)
             }
-            .padding(8)
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(panel, in: RoundedRectangle(cornerRadius: 7))
+            .background(panel, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(panelStroke, lineWidth: 1))
 
         case let .table(header, alignments, rows):
             // Scrolling sideways, for the reason the code block does: a table's width is its
@@ -123,8 +129,8 @@ struct MarkdownText: View {
                         }
                     }
                 }
-                .clipShape(RoundedRectangle(cornerRadius: 7))
-                .overlay(RoundedRectangle(cornerRadius: 7).stroke(panel, lineWidth: 1))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(panelStroke, lineWidth: 1))
                 .padding(.bottom, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -135,13 +141,13 @@ struct MarkdownText: View {
                     .fill(faint)
                     .frame(width: 3)
                 inline(text)
-                    .font(.system(size: 14))
+                    .font(.geist(14))
                     .foregroundStyle(secondary)
             }
 
         case .rule:
             Rectangle()
-                .fill(onDark ? Color.white.opacity(0.25) : Theme.rule)
+                .fill(onDark ? Theme.Mine.rule : Theme.stroke)
                 .frame(height: 1)
                 .padding(.vertical, 1)
         }
@@ -162,8 +168,8 @@ struct MarkdownText: View {
     /// one, so the ideal width the `Grid` measures is still the text's.
     private func cell(_ text: String, align: Alignment, isHeader: Bool, shaded: Bool = false) -> some View {
         inline(text)
-            .font(.system(size: 13.5, weight: isHeader ? .semibold : .regular))
-            .foregroundStyle(isHeader ? primary : secondary)
+            .font(.geist(13.5, isHeader ? .semibold : .regular))
+            .foregroundStyle(isHeader ? strong : secondary)
             .padding(.horizontal, 9)
             .padding(.vertical, 5)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: align)

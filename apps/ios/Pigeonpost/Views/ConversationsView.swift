@@ -159,6 +159,8 @@ struct ConversationsView: View {
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
                 .toolbar { toolbar }
+                .toolbarBackground(Theme.sidebar, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
         } detail: {
             if let selection, inbox.conversation(with: selection) != nil {
                 ThreadView(peer: selection)
@@ -181,13 +183,15 @@ struct ConversationsView: View {
         List(selection: $selection) {
             if inbox.offline {
                 Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
-                    .font(.system(size: 12.5))
+                    .font(.geist(12.5))
                     .foregroundStyle(Theme.muted)
                     .listRowBackground(Theme.wash)
             }
             ForEach(inbox.visible) { conversation in
                 ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
                     .tag(conversation.peer)
+                    .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+                    .listRowSeparatorTint(Theme.rule)
                     .swipeActions(edge: .trailing) {
                         Button {
                             Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
@@ -199,6 +203,8 @@ struct ConversationsView: View {
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.sidebar)
         .overlay { emptyState }
         .refreshable { await inbox.loadAll() }
     }
@@ -225,13 +231,13 @@ struct ConversationsView: View {
         ToolbarItem(placement: .topBarLeading) {
             Button { sheet = .identities } label: {
                 HStack(spacing: 7) {
-                    Avatar(peer: account.me?.key, size: 26)
+                    Avatar(peer: account.me?.key, size: 28)
                     Text(actingName)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
+                        .font(.geist(11, .semibold))
+                        .foregroundStyle(Theme.secondary)
                 }
             }
             .accessibilityLabel("Acting as \(actingName). Change mailbox")
@@ -248,11 +254,11 @@ struct ConversationsView: View {
         // button that presents a sheet is one fewer presentation to go wrong than a menu that
         // presents a sheet.
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .new } label: { Image(systemName: "square.and.pencil") }
+            Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
                 .accessibilityLabel("New conversation")
         }
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .settings } label: { Image(systemName: "gearshape") }
+            Button { sheet = .settings } label: { Image(systemName: "gearshape").foregroundStyle(Theme.secondary) }
                 .accessibilityLabel("Settings")
         }
     }
@@ -266,31 +272,29 @@ struct ConversationsView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
-    /// A selected row is filled with the tint, which is the navy this app is drawn in. Text that
-    /// stays dark on it is unreadable, and SwiftUI cannot invert it for us — it does that only for
-    /// text whose colour it chose, and every colour here is chosen deliberately.
+    /// A selected row sits on a quiet grey card (see the list), so its text keeps its colours.
     var isSelected: Bool = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Avatar(peer: conversation.peer)
+        HStack(alignment: .center, spacing: 12) {
+            Avatar(peer: conversation.peer, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)
-                        .font(.system(size: 15.5, weight: .semibold))
-                        .foregroundStyle(isSelected ? Color.white : Theme.ink)
+                        .font(.geistMono(14.5, .semibold))
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Theme.muted)
+                            .font(.geist(11.5))
+                            .foregroundStyle(Theme.muted)
                     }
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(preview)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Theme.body)
+                        .font(.geist(13.5))
+                        .foregroundStyle(Theme.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }

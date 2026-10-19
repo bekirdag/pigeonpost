@@ -67,8 +67,10 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         var config = UIButton.Configuration.filled()
         config.image = UIImage(systemName: "arrow.down")
         config.cornerStyle = .capsule
-        config.baseBackgroundColor = .secondarySystemBackground
-        config.baseForegroundColor = .label
+        config.baseBackgroundColor = UIColor(Theme.ground)
+        config.baseForegroundColor = UIColor(Theme.ink)
+        config.background.strokeColor = UIColor(Theme.strokeStrong)
+        config.background.strokeWidth = 1
         config.contentInsets = NSDirectionalEdgeInsets(top: 12, leading: 14, bottom: 12, trailing: 14)
         latestButton.configuration = config
         latestButton.accessibilityLabel = "Latest messages"
@@ -121,6 +123,9 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         let message = rows[indexPath.row]
         cell.accessibilityIdentifier = "message:" + message.id
         let showDay = dayBreaks.contains(message.id)
+        // The desktop layout an iPad uses gives the conversation the conversation design's margins
+        // and its centred column; a phone keeps every point of its width.
+        let wide = traitCollection.horizontalSizeClass == .regular
         if let account, let inbox {
             cell.contentConfiguration = UIHostingConfiguration {
                 VStack(spacing: 2) {
@@ -132,8 +137,10 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
                     }
                     #endif
                 }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 1)
+                .frame(maxWidth: 860)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, wide ? 24 : 12)
+                .padding(.vertical, wide ? 8 : 5)
                 .environment(account)
                 .environment(inbox)
                 .id(message.id)
@@ -241,13 +248,5 @@ private final class BottomOriginTable: UITableView {
 
 private struct HistoryDayBreak: View {
     let label: String
-    var body: some View {
-        Text(label)
-            .font(.system(size: 11.5, weight: .medium))
-            .foregroundStyle(Theme.muted)
-            .padding(.horizontal, 10).padding(.vertical, 4)
-            .background(.ultraThinMaterial, in: Capsule())
-            .padding(.vertical, 8)
-            .frame(maxWidth: .infinity)
-    }
+    var body: some View { DayDivider(label: label) }
 }

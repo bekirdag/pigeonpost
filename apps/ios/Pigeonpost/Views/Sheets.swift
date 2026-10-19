@@ -37,10 +37,11 @@ struct IdentityPickerSheet: View {
                 }
                 Section {
                     Text("Opening a mailbox shows the mail it has received. To write *to* one of your agents, pick it from the conversation list instead.")
-                        .font(.system(size: 12.5))
+                        .font(.geist(12.5))
                         .foregroundStyle(Theme.muted)
                 }
             }
+            .sheetSurface()
             .navigationTitle("Mailboxes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -59,10 +60,10 @@ struct MailboxRow: View {
             Avatar(peer: mailbox.key)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.geistMono(14.5, .semibold))
                     .foregroundStyle(Theme.ink)
                 Text(sub)
-                    .font(.system(size: 12.5))
+                    .font(.geist(12.5))
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -107,7 +108,7 @@ struct NewConversationSheet: View {
                         }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .font(.system(size: 15, design: .monospaced))
+                        .font(.geistMono(15))
                 } header: {
                     Text("Their address")
                 } footer: {
@@ -121,10 +122,11 @@ struct NewConversationSheet: View {
 
                 if let error {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(.geist(13))
                         .foregroundStyle(Theme.Pill.blockedText)
                 }
             }
+            .sheetSurface()
             .navigationTitle("New conversation")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {

@@ -66,11 +66,13 @@ struct SettingsSheet: View {
                     destination(.help, icon: "questionmark.circle", detail: "Support, privacy and app information")
                 }
             }
+            .sheetSurface()
             .navigationTitle("Settings")
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .navigationDestination(for: Page.self) { page in
                 List { pageContent(page) }
+                    .sheetSurface()
                     .navigationTitle(page.rawValue)
                     .inlineTitle()
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -113,7 +115,7 @@ struct SettingsSheet: View {
         NavigationLink(value: page) {
             HStack(spacing: 14) {
                 Image(systemName: icon)
-                    .font(.system(size: 22)).foregroundStyle(.tint)
+                    .font(.geist(22)).foregroundStyle(.tint)
                     .frame(width: 30).accessibilityHidden(true)
                 VStack(alignment: .leading, spacing: 4) {
                     Text(page.rawValue).font(.body.weight(.medium))
@@ -192,13 +194,13 @@ private struct ContactRow: View {
         VStack(alignment: .leading, spacing: 3) {
             HStack(spacing: 8) {
                 Text(contact.alias?.isEmpty == false ? contact.alias! : PeerFace.displayName(contact.peer))
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.geist(15, .semibold))
                     .foregroundStyle(Theme.ink)
                 if contact.admission == "block" { PillView(text: "blocked", kind: .blocked) }
                 if contact.autonomy == "auto" { PillView(text: "auto", kind: .auto) }
             }
             Text(contact.peer)
-                .font(.system(size: 12.5, design: .monospaced))
+                .font(.geistMono(12.5))
                 .foregroundStyle(Theme.muted)
         }
         .padding(.vertical, 2)
@@ -226,7 +228,7 @@ struct ContactSheet: View {
                     TextField("/bekir/* or /bekir/agent1", text: $peer)
                         .noAutocapitalize()
                         .autocorrectionDisabled()
-                        .font(.system(size: 15, design: .monospaced))
+                        .font(.geistMono(15))
                         .disabled(existing != nil)
                     TextField("Name for them", text: $alias)
                 }
@@ -249,7 +251,7 @@ struct ContactSheet: View {
                             get: { verbs.contains(verb) },
                             set: { on in if on { verbs.insert(verb) } else { verbs.remove(verb) } }
                         ))
-                        .font(.system(size: 14, design: .monospaced))
+                        .font(.geistMono(14))
                         .disabled(autonomy != "auto")
                     }
                 } header: {
@@ -262,7 +264,7 @@ struct ContactSheet: View {
 
                 if let error {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(.geist(13))
                         .foregroundStyle(Theme.Pill.blockedText)
                 }
 
@@ -272,6 +274,7 @@ struct ContactSheet: View {
                     }
                 }
             }
+            .sheetSurface()
             .navigationTitle(existing == nil ? "Add a sender" : "Trusted sender")
             .inlineTitle()
             .toolbar {
@@ -346,7 +349,7 @@ private struct MailboxUsageSection: View {
             VStack(alignment: .leading, spacing: 7) {
                 HStack {
                     Text("\(quota.used) of \(quota.limit)")
-                        .font(.system(size: 14, weight: .medium))
+                        .font(.geist(14, .medium))
                         .foregroundStyle(Theme.ink)
                     Spacer()
                     if quota.isFull {

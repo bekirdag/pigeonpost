@@ -34,7 +34,7 @@ struct ScanView: View {
                 VStack {
                     Spacer()
                     Text(failure ?? "Point this at the code the terminal printed.")
-                        .font(.system(size: 14))
+                        .font(.geist(14))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
                         .padding(14)

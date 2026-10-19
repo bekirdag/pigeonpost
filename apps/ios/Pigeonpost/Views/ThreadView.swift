@@ -107,7 +107,10 @@ struct ThreadView: View {
         // the bar and ran under the title — but the answer to a pattern competing with a title is
         // to blur the pattern, not to hide it. A material does that and keeps the depth; painting
         // it flat threw the depth away to solve the legibility.
-        .toolbarBackground(.ultraThinMaterial, for: .navigationBar)
+        // Painted in the conversation's own ground, with the hairline under it, as the
+        // conversation design draws its header. The doodle is veiled almost to that same colour, so
+        // the bar no longer has a busy pattern to hide.
+        .toolbarBackground(Theme.wash, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
             // One button, not two. Archiving is a decision about this conversation and belongs
@@ -146,6 +149,7 @@ struct ThreadView: View {
             // Embedded, nothing chosen means the whole conversation, as it does on the Mac.
             if !embedded, subthread == nil { subthread = subthreads.first?.id }
             if Fixtures.sheet == "peer" { sheet = .info }
+            if Fixtures.sheet == "thread", !embedded { sheet = .newThread }
         }
     }
 
@@ -156,47 +160,41 @@ struct ThreadView: View {
 
     private var subjects: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
+            HStack(spacing: 4) {
                 ForEach(subthreads.count > 1 ? subthreads : []) { thread in
                     Button {
                         subthread = thread.id
                     } label: {
-                        HStack(spacing: 5) {
+                        HStack(spacing: 6) {
                             Text(thread.name)
-                                .font(.system(size: 13, weight: .medium))
+                                .font(.geist(13, .medium))
                             if thread.unread > 0 {
-                                Circle().fill(Theme.blue).frame(width: 6, height: 6)
+                                Circle().fill(Theme.accent).frame(width: 6, height: 6)
                             }
                         }
-                        .padding(.horizontal, 11)
-                        .padding(.vertical, 6)
-                        .background {
-                            if thread.id == subthread {
-                                Capsule().fill(Theme.navy)
-                            } else {
-                                Capsule().fill(.thinMaterial)
-                            }
-                        }
-                        .foregroundStyle(thread.id == subthread ? Color.white : Theme.body)
-                        .overlay(Capsule().stroke(Theme.rule, lineWidth: thread.id == subthread ? 0 : 1))
+                        .padding(.horizontal, 10)
+                        .frame(height: 30)
+                        .background(thread.id == subthread ? Theme.chip : Color.clear,
+                                    in: RoundedRectangle(cornerRadius: 7))
+                        .foregroundStyle(thread.id == subthread ? Theme.ink : Theme.secondary)
                     }
                     .buttonStyle(.plain)
                 }
                 Button { sheet = .newThread } label: {
                     HStack(spacing: 5) {
                         Image(systemName: "plus")
-                            .font(.system(size: 12, weight: .semibold))
+                            .font(.geist(12, .semibold))
                         // Named while it stands alone: a bare + above a conversation could mean
                         // anything. Once there are subjects beside it, the chips say what it adds.
                         if subthreads.count <= 1 {
-                            Text("New thread").font(.system(size: 13, weight: .medium))
+                            Text("New thread").font(.geist(13, .medium))
                         }
                     }
-                    .padding(.horizontal, 11)
-                    .padding(.vertical, 7)
-                    .background(.thinMaterial, in: Capsule())
-                    .overlay(Capsule().stroke(Theme.rule, lineWidth: 1))
-                    .foregroundStyle(Theme.body)
+                    .padding(.horizontal, 10)
+                    .frame(height: 30)
+                    .background(Theme.field, in: RoundedRectangle(cornerRadius: 7))
+                    .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.strokeStrong, lineWidth: 1))
+                    .foregroundStyle(Theme.ink)
                 }
                 .buttonStyle(.plain)
                 .accessibilityLabel("New thread")
@@ -204,8 +202,8 @@ struct ThreadView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
         }
-        .background(.ultraThinMaterial)
-        .overlay(alignment: .bottom) { Divider().background(Theme.rule) }
+        .background(Theme.wash)
+        .overlay(alignment: .bottom) { Rectangle().fill(Theme.rule).frame(height: 1) }
     }
 
     private var composer: some View {
@@ -227,9 +225,10 @@ struct ThreadView: View {
             }
             composerRow
         }
-        .padding(.vertical, 8)
-        .background(.bar)
-        .overlay(alignment: .top) { Divider().background(Theme.rule) }
+        .padding(.top, 10)
+        .padding(.bottom, 10)
+        .background(Theme.wash)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
     }
 
     private var composerRow: some View {
@@ -252,9 +251,9 @@ struct ThreadView: View {
                 }
             } label: {
                 Image(systemName: "paperclip")
-                    .font(.system(size: 17))
-                    .foregroundStyle(Theme.muted)
-                    .frame(width: 32, height: 36)
+                    .font(.geist(17, .medium))
+                    .foregroundStyle(Theme.secondary)
+                    .frame(width: 34, height: 34)
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Attach")
@@ -264,25 +263,29 @@ struct ThreadView: View {
                           enabled: !sendPending, pasteImages: pasteImages)
                 .overlay(alignment: .topLeading) {
                     if draft.isEmpty {
-                        Text("Write a message").font(.system(size: 15)).foregroundStyle(Theme.muted)
-                            .padding(.horizontal, 13).padding(.vertical, 9).allowsHitTesting(false)
+                        Text("Write a message").font(.geist(15)).foregroundStyle(Theme.muted)
+                            .padding(.horizontal, 8).padding(.vertical, 8).allowsHitTesting(false)
                     }
                 }
-                .background(Theme.wash, in: RoundedRectangle(cornerRadius: 18))
-                .overlay(RoundedRectangle(cornerRadius: 18).stroke(Theme.rule, lineWidth: 1))
                 .id(composerKey)
 
             Button(action: send) {
-                Image(systemName: "paperplane.fill")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 36, height: 36)
-                    .background(sendable ? Theme.navy : Theme.muted.opacity(0.4), in: Circle())
+                Image(systemName: "arrow.up")
+                    .font(.geist(15, .bold))
+                    .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
+                    .frame(width: 34, height: 34)
+                    .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
             }
             .disabled(!sendable)
             .accessibilityLabel("Send")
         }
-        .padding(.horizontal, 12)
+        // One card around the three, as the conversation design draws its composer.
+        .padding(6)
+        .background(Theme.composer, in: RoundedRectangle(cornerRadius: 14))
+        .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+        .frame(maxWidth: 860)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, embedded ? 24 : 12)
         // Any file the system can hand over. A file is anything really — a photo, a zip, a PDF —
         // and narrowing the list here would only mean somebody cannot send the thing they have.
         .fileImporter(

@@ -19,45 +19,82 @@ struct NewThreadSheet: View {
     @State private var error: String?
     @State private var working = false
 
+    @FocusState private var focused: Bool
+
+    private var empty: Bool { title.trimmed.isEmpty }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 18) {
             Text("New thread")
-                .font(.system(size: 15, weight: .semibold))
+                .font(.geist(17, .semibold))
+                .kerning(-0.17)
                 .foregroundStyle(Theme.ink)
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 8) {
                 Text("What is it about?")
-                    .font(.system(size: 12, weight: .medium))
-                    .foregroundStyle(Theme.muted)
+                    .font(.geist(13, .semibold))
+                    .foregroundStyle(Theme.body)
                 TextField("the deploy, the failing tests, next week's release", text: $title)
-                    .textFieldStyle(.roundedBorder)
-                    .onSubmit { if !title.trimmed.isEmpty { create() } }
-                Text("A thread keeps one subject apart from the rest. Both sides see the same name.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.muted)
+                    .textFieldStyle(.plain)
+                    .font(.geist(14.5))
+                    .foregroundStyle(Theme.ink)
+                    .focused($focused)
+                    .padding(.horizontal, 14)
+                    .frame(height: 44)
+                    .background(Theme.wash, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10)
+                        .stroke(empty ? Theme.strokeStrong : Theme.accent, lineWidth: 1))
+                    .onSubmit { if !empty { create() } }
             }
+
+            Text("A thread keeps one subject apart from the rest. Both sides see the same name.")
+                .font(.geist(13))
+                .foregroundStyle(Theme.secondary)
+                .fixedSize(horizontal: false, vertical: true)
 
             if let error {
                 Text(error)
-                    .font(.system(size: 12))
+                    .font(.geist(13))
                     .foregroundStyle(Theme.Pill.blockedText)
             }
 
-            HStack {
+            HStack(spacing: 8) {
                 Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button("Create") { create() }
-                    .keyboardShortcut(.defaultAction)
-                    .disabled(working || title.trimmed.isEmpty)
+                Button { dismiss() } label: {
+                    Text("Cancel")
+                        .font(.geist(13.5, .medium))
+                        .foregroundStyle(Theme.ink)
+                        .padding(.horizontal, 16)
+                        .frame(height: 38)
+                        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.strokeStrong, lineWidth: 1))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                Button { create() } label: {
+                    Text("Create")
+                        .font(.geist(13.5, .semibold))
+                        .foregroundStyle(empty || working ? Theme.muted : Theme.onAccent)
+                        .padding(.horizontal, 18)
+                        .frame(height: 38)
+                        .background(empty || working ? Theme.chip : Theme.accent, in: RoundedRectangle(cornerRadius: 9))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.defaultAction)
+                .disabled(working || empty)
             }
         }
-        .padding(18)
+        .padding(24)
+        .background(Theme.ground)
+        .onAppear { focused = true }
         #if os(macOS)
-        .frame(width: 420)
+        .frame(width: 480)
         #else
-        .frame(maxWidth: 480)
-        .presentationDetents([.medium])
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(Theme.ground)
+        .presentationDetents([.height(300)])
+        .presentationCornerRadius(16)
         #endif
     }
 
