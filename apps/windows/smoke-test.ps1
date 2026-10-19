@@ -707,7 +707,9 @@ public static class NativeFileDragSource {
             function Tray-Icon {
                 $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                     [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
-                @($buttons | Where-Object { $_.Current.Name -like 'Pigeonpost — *' }) | Select-Object -First 1
+                $script:trayNames = @($buttons | ForEach-Object { $_.Current.Name } | Where-Object { $_ -match 'pigeon' })
+                # The tooltip names the tray icon; the taskbar button for the window is excluded.
+                @($buttons | Where-Object { $_.Current.Name -like 'Pigeonpost*' -and $_.Current.Name -notlike '*running window*' -and $_.Current.Name -notlike 'Pigeonpost 1.*' }) | Select-Object -First 1
             }
             function Capture-Screen([string]$Name) {
                 $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
@@ -723,13 +725,13 @@ public static class NativeFileDragSource {
                 $chevron = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                     [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
                     Where-Object { $_.Current.Name -like '*hidden icons*' } | Select-Object -First 1
-                if ($chevron) { $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke(); Start-Sleep -Milliseconds 800 }
-                $icon = Tray-Icon
+                if ($chevron) { $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+                for ($n = 0; $n -lt 10 -and -not $icon; $n++) { Start-Sleep -Milliseconds 400; $icon = Tray-Icon }
                 $where = 'overflow'
             }
             Capture-Screen 'installed-notification-area.png'
             if ($where -eq 'overflow') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
-            if (-not $icon) { throw 'The Pigeonpost icon is missing from the notification area and its overflow.' }
+            if (-not $icon) { throw "The Pigeonpost icon is missing from the notification area and its overflow (buttons: $($script:trayNames -join ' | '))." }
             Write-Host "Pigeonpost icon found in the $where`: $($icon.Current.Name)"
         }
     }
