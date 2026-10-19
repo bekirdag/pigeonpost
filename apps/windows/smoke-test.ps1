@@ -749,6 +749,9 @@ public static class NativeFileDragSource {
     Write-Host 'Native Windows UI smoke passed.'
 } catch {
     if ($root -and -not $process.HasExited) { Capture 'failure.png' }
+    Write-Host "App process exited: $($process.HasExited)"
+    $appLog = "$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log"
+    if ($PackageFamilyName -and (Test-Path $appLog)) { Get-Content $appLog -Tail 40 | Write-Host }
     throw
 } finally {
     if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE, Env:PIGEONPOST_UI_SCROLL_LOG -ErrorAction SilentlyContinue }
