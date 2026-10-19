@@ -73,6 +73,9 @@ public sealed partial class MainWindow
 #endif
             Directory.CreateDirectory(CallsDataFolder);
             DesktopLog.Write("Call view starting");
+            // The page is see-through except for the call itself (a ring floats over the inbox), so
+            // the web view must not paint its own white background: set before the browser starts.
+            Environment.SetEnvironmentVariable("WEBVIEW2_DEFAULT_BACKGROUND_COLOR", "0");
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, CallsDataFolder,
                 new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
             var view = new WebView2
@@ -89,6 +92,7 @@ public sealed partial class MainWindow
             ApplyCallMode(CallMode.Hidden);
             DesktopLog.Write($"Call view environment ready ({environment.BrowserVersionString})");
             await view.EnsureCoreWebView2Async(environment);
+            view.DefaultBackgroundColor = Microsoft.UI.Colors.Transparent;
             var core = view.CoreWebView2;
             var settings = core.Settings;
             settings.AreDefaultContextMenusEnabled = false;

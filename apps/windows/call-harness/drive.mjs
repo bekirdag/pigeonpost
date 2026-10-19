@@ -154,6 +154,10 @@ try {
   check("An incoming call rings in the app and comes forward (mode full)", true);
   await sleep(800);
   capture("call-incoming-ring.png");
+  if (!simulate) {
+    const colours = Number(pwsh("-Action", "colors"));
+    check("The ring floats over the inbox (the call view is see-through)", colours > 12, { distinctColours: colours });
+  }
   await A.evaluate("document.getElementById('call-ring-accept').click()");
   await until(async () => (await inspect(B)).peers[0]?.connected && (await inspect(A)).peers[0]?.connected, 40000, 250, "incoming call connected");
   await sleep(7000);
