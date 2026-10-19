@@ -35,6 +35,9 @@ jobs:
       - run: npm test
       - name: Exercise handle checkout against the billing contract
         run: node --test ../store-adapter/test/checkout.test.mjs
+      - name: Call signaling (authorization, ringing, signals, TURN credentials)
+        working-directory: calls-service
+        run: npm test
 
   test:
     name: test (${{ matrix.os }})
