@@ -19,7 +19,8 @@ public sealed partial class MainWindow
         try
         {
             refreshTimer?.Stop();
-            await DesktopNotifications.ClearAlertsAsync();
+            DesktopLog.Write("Notification checks: clearing alerts");
+            if (packaged is null) await DesktopNotifications.ClearAlertsAsync(); // Unsupported in the elevated shell session.
             if (notificationInitializationError is not null) throw new InvalidOperationException("Notification initialization failed", notificationInitializationError);
             Check(notifications is not null, "Native notification services created");
             var shell = notifications!.ShellIconState();
@@ -52,7 +53,8 @@ public sealed partial class MainWindow
             Check(unreadState.Count == baseline + 2, "Hidden arrivals increase the account badge by two");
             Check(notifications!.UnreadCount == unreadState.Count, "Tray icon reflects the account unread count");
             Check(ViewModel.Subjects.Single(s => s.Id == "design-release").Unread == 1, "Hidden subject retains its unread marker");
-            var alerts = await AppNotificationManager.Default.GetAllAsync();
+            DesktopLog.Write("Notification checks: arrivals observed");
+            var alerts = alertsExpected ? await AppNotificationManager.Default.GetAllAsync() : new List<AppNotification>();
             if (alertsExpected) Check(alerts.Count == 2, "Windows notification center contains both native alerts");
             else checks.Add($"Alerts not asserted in this session ({setting}, {alerts.Count} in history)");
             if (packaged is not null)
@@ -73,7 +75,7 @@ public sealed partial class MainWindow
             Check(ViewModel.SelectedSubject!.Unread == 0 && ViewModel.Subjects.Single(s => s.Id == "design-general").Unread > 0,
                 "Reading notification target preserves unread mail in the other subject");
             unreadState.Clear(); notifications!.Update(0);
-            await DesktopNotifications.ClearAlertsAsync();
+            if (alertsExpected) await DesktopNotifications.ClearAlertsAsync();
             Check(unreadState.Count == 0 && (!alertsExpected || (await AppNotificationManager.Default.GetAllAsync()).Count == 0), "Sign-out cleanup clears the badge and native alerts");
             File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, identity, shell = $"0x{shell:X8}", setting = setting.ToString(), taskbarWarning = notifications.TaskbarWarning }));
         }
