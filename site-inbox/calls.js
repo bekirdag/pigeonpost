@@ -529,6 +529,7 @@
       for (const p of peers.values()) addLocalTrack(p, track, local.screenStream);
       broadcastState();
       applyBitrates();
+      showShareIndicators(track);
     } catch (err) {
       if (err && err.name !== "NotAllowedError") toast("Screen sharing couldn’t start.");
     }
@@ -540,16 +541,79 @@
     const track = local.screen;
     if (!track) return;
     for (const p of peers.values()) {
-      const sender = p.pc.getSenders().find((s) => s.track === track);
+      const sender = p.pc && p.pc.getSenders().find((s) => s.track === track);
       if (sender) { try { p.pc.removeTrack(sender); } catch (_) { /* closed */ } }
     }
     track.stop();
     local.screen = null;
     local.screenStream = null;
+    hideShareIndicators();
     broadcastState();
     applyBitrates();
     renderControls();
     renderStage();
+  }
+
+  // ---- "you are sharing" indicators ------------------------------------------------------------
+  //
+  // A web page cannot draw on the screen outside its own window, so the border goes where a page
+  // can put it: a red frame round this window, and — when a whole screen or another window is being
+  // shared — a small always-on-top floating panel (Document Picture-in-Picture, Chrome and Edge)
+  // with its own red frame and a Stop button, visible over every other app. A shared browser tab
+  // is already outlined by the browser itself.
+  let sharePip = null;
+
+  function shareSurface(track) {
+    return (track && track.getSettings && track.getSettings().displaySurface) || "monitor";
+  }
+
+  async function showShareIndicators(track) {
+    document.documentElement.dataset.sharing = shareSurface(track);
+    renderControls();
+    if (shareSurface(track) !== "browser") await openSharePip();
+  }
+
+  async function openSharePip() {
+    if (sharePip || !local.screen || !window.documentPictureInPicture) { renderControls(); return; }
+    try {
+      const pip = await documentPictureInPicture.requestWindow({ width: 360, height: 72 });
+      const doc = pip.document;
+      for (const link of document.querySelectorAll('link[rel="stylesheet"]')) {
+        const copy = doc.createElement("link");
+        copy.rel = "stylesheet";
+        copy.href = link.href;
+        doc.head.append(copy);
+      }
+      if (document.documentElement.dataset.theme) doc.documentElement.dataset.theme = document.documentElement.dataset.theme;
+      doc.title = "Sharing your screen";
+      doc.body.className = "share-pip";
+      const stop = doc.createElement("button");
+      stop.type = "button";
+      stop.className = "call-pill call-pill-danger";
+      stop.textContent = "Stop sharing";
+      stop.addEventListener("click", () => stopScreen());
+      const box = doc.createElement("div");
+      box.className = "share-pip-box";
+      const dot = doc.createElement("span");
+      dot.className = "share-pip-dot";
+      const text = doc.createElement("span");
+      text.className = "share-pip-text";
+      text.textContent = document.documentElement.dataset.sharing === "window" ? "You’re sharing a window" : "You’re sharing your screen";
+      box.append(dot, text, stop);
+      doc.body.append(box);
+      pip.addEventListener("pagehide", () => { if (sharePip === pip) sharePip = null; renderControls(); });
+      sharePip = pip;
+    } catch (_) {
+      // Browsers only open it in direct answer to a click; the banner offers that click.
+    }
+    renderControls();
+  }
+
+  function hideShareIndicators() {
+    delete document.documentElement.dataset.sharing;
+    const pip = sharePip;
+    sharePip = null;
+    try { pip?.close(); } catch (_) { /* already closed */ }
   }
 
   async function switchDevice(kind, deviceId) {
@@ -979,6 +1043,7 @@
     clearInterval(ending.statsTimer);
     if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
     for (const p of [...peers.values()]) closePeer(p);
+    hideShareIndicators();
     stopLocalMedia();
     knocks.clear();
     chatLog.length = 0;
@@ -1037,7 +1102,11 @@
           el("div", { class: "call-grid", id: "call-grid", "data-count": "0" }),
           el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
           el("div", { class: "call-self", id: "call-self" }, el("video", { id: "call-self-video", autoplay: true, playsinline: true, muted: true }), el("span", { class: "call-self-label", text: "You" })),
-          el("div", { class: "call-presenting", id: "call-presenting", hidden: true }, el("span", { text: "You’re sharing your screen" }), el("button", { type: "button", class: "call-pill", text: "Stop sharing", onclick: () => stopScreen() })),
+          el("div", { class: "call-presenting", id: "call-presenting", hidden: true },
+            el("span", { class: "share-pip-dot", "aria-hidden": "true" }),
+            el("span", { text: "You’re sharing your screen" }),
+            el("button", { type: "button", class: "call-pill", id: "call-share-pip", text: "Show floating indicator", hidden: true, onclick: () => openSharePip() }),
+            el("button", { type: "button", class: "call-pill call-pill-danger", text: "Stop sharing", onclick: () => stopScreen() })),
           controls,
         ),
         el("aside", { class: "call-panel", id: "call-panel", hidden: true, "aria-labelledby": "call-panel-title" },
@@ -1083,7 +1152,7 @@
         el("button", { id: "call-ring-accept", class: "call-btn call-accept", type: "button", "aria-label": "Accept", title: "Accept", onclick: acceptRing }, svg(ICON.phone)),
       ),
     );
-    document.body.append(ui, ringCard);
+    document.body.append(ui, ringCard, el("div", { class: "call-share-frame", id: "call-share-frame", "aria-hidden": "true" }));
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
 
     $("call-mute").addEventListener("click", toggleMute);
@@ -1209,6 +1278,7 @@
     $("call-people-badge").hidden = !knocks.size;
     $("call-people-badge").textContent = String(knocks.size);
     $("call-presenting").hidden = !local.screen;
+    $("call-share-pip").hidden = !(local.screen && !sharePip && window.documentPictureInPicture && document.documentElement.dataset.sharing !== "browser");
     $("call-share").disabled = !room || !room.id || peers.size === 0;
   }
 

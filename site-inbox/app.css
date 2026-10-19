@@ -2115,3 +2115,26 @@ body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); 
   .join-devices { grid-template-columns: 1fr; }
   .join-card { padding: 18px; }
 }
+
+/* While a screen or window is shared: a red frame round this window (a page cannot draw beyond
+   it), and the same red in the floating always-on-top indicator. */
+.call-share-frame {
+  position: fixed; inset: 0; z-index: 200; display: none; pointer-events: none;
+  border: 4px solid var(--call-end);
+}
+html[data-sharing] .call-share-frame { display: block; }
+.share-pip-dot {
+  width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--call-end);
+  animation: share-pulse 1.6s ease-in-out infinite;
+}
+@keyframes share-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .share-pip-dot { animation: none; } }
+.call-pill-danger { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); font-weight: 600; }
+.call-pill-danger:hover { background: var(--call-end-hover); border-color: var(--call-end-hover); }
+body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-ink); font-family: var(--sans); }
+.share-pip-box {
+  box-sizing: border-box; height: 100vh; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+  border: 4px solid var(--call-end);
+}
+.share-pip-text { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-presenting .call-pill[hidden] { display: none; }
