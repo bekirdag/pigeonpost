@@ -1421,14 +1421,26 @@
       let previous = null;
       for (const m of visible) {
         if (!previous || !sameDay(previous.at, m.at)) {
-          const sep = document.createElement("li"), label = document.createElement("span");
-          sep.className = "sep";
-          label.className = "daybreak";
-          label.textContent = dayLabel(m.at);
-          sep.append(label);
+          // Day separators are reused like bubbles. A fresh one on every refresh made the loop
+          // below move every message after it, and moving a node drops any text selection inside
+          // it: a reader dragging across a reply lost the selection whenever mail arrived.
+          const day = dayLabel(m.at), sepKey = "\u0000day:" + day;
+          let sep = view.cache.get(sepKey)?.row;
+          if (!sep) {
+            const label = document.createElement("span");
+            sep = document.createElement("li");
+            sep.className = "sep";
+            label.className = "daybreak";
+            label.textContent = day;
+            sep.append(label);
+          }
           rows.push(sep);
+          cache.set(sepKey, { row: sep });
         }
-        const fingerprint = JSON.stringify([m, view.query, m.id === found]);
+        // `read` flips when a message is displayed and acknowledged, and changes nothing drawn, so
+        // it must not rebuild the bubble (and lose a selection in it) a moment after it appears.
+        const { read: _read, ...drawn } = m;
+        const fingerprint = JSON.stringify([drawn, view.query, m.id === found]);
         let entry = view.cache.get(m.id);
         if (entry?.fingerprint !== fingerprint) {
           const row = messageNode(m);
@@ -1440,6 +1452,11 @@
         previous = m;
       }
       // Reuse unchanged bubbles so a refresh preserves selection and attachment/copy controls.
+      // Rows leaving the window go first: inserting in front of one that is about to go would move
+      // every row after it, and moving a node drops a text selection inside it. A followed
+      // conversation slides its window by one on every arrival, so this is the common case.
+      const keep = new Set(rows);
+      for (const child of [...list.children]) if (!keep.has(child)) child.remove();
       rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
       while (list.children.length > rows.length) list.lastElementChild.remove();
       prunePreviews();
