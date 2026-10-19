@@ -172,7 +172,7 @@ try {
   console.error(result.error);
   try { capture("call-failure.png"); } catch {}
 } finally {
-  result.appLog = appLog().filter((l) => /Call|WebView|Launch|exception/i.test(l)).map((l) => l.replace(/^\S+ \[\d+\] /, ""));
+  result.appLog = appLog().map((l) => l.replace(/^\S+ \[\d+\] /, ""));
   writeFileSync(path.join(out, "calls.json"), JSON.stringify(result, null, 1));
   A?.close?.(); B?.close?.();
   if (appProcess) try { appProcess.kill(); } catch {}

@@ -72,6 +72,7 @@ public sealed partial class MainWindow
             if (CallsDebug("BROWSER_ARGS") is { } extra) arguments += " " + extra;
 #endif
             Directory.CreateDirectory(CallsDataFolder);
+            DesktopLog.Write("Call view starting");
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, CallsDataFolder,
                 new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
             var view = new WebView2
@@ -86,6 +87,7 @@ public sealed partial class MainWindow
             Root.Children.Add(view); // Last child: above the inbox, the viewer and the account bar.
             callView = view;
             ApplyCallMode(CallMode.Hidden);
+            DesktopLog.Write($"Call view environment ready ({environment.BrowserVersionString})");
             await view.EnsureCoreWebView2Async(environment);
             var core = view.CoreWebView2;
             var settings = core.Settings;
