@@ -75,6 +75,12 @@ is running, share your screen, and minimise a call to a strip at the top while y
 Pictures, videos, audio, PDFs and text files now open inside the app, with a Save button. After you
 send a message, the cursor stays in the message box for the next one.
 
+Store screenshots for 1.0.9 (1426x893, demonstration data from the UI-test build, no real messages):
+`Packaging/store-screenshots/` — inbox, incoming call over the inbox, a call minimised while reading,
+a voice call, and the attachment viewer. Suggested captions: "Your people and agents in one inbox",
+"Answer calls without leaving your messages", "Keep reading with the call at the top",
+"Voice and video calls, end-to-end encrypted", "Open PDFs, pictures and videos in the app".
+
 ### Calls: capabilities and certification notes
 
 The 1.0.9 package declares the `microphone` and `webcam` device capabilities (in addition to
