@@ -2217,3 +2217,63 @@ body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-in
   .call-mini { left: 10px; right: 10px; bottom: auto; top: calc(10px + env(safe-area-inset-top)); }
   .call-mini-open { flex: 1; max-width: none; }
 }
+
+/* ---- attachments: open in the app, download on request -------------------------------------- */
+.file-download {
+  flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0;
+  border: 1px solid transparent; border-radius: 7px; background: none; color: var(--muted); cursor: pointer;
+}
+.file-download:hover { background: var(--hover); color: var(--ink); border-color: var(--edge); }
+.file-download:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+.file-download svg { width: 15px; height: 15px; }
+.attachment-preview.openable { cursor: zoom-in; }
+.attachment-preview.openable:hover { border-color: var(--edge-hover); }
+.attachment-preview.openable:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+
+/* The viewer: dark, like every photo and video viewer, whatever the inbox theme. */
+.viewer {
+  position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column;
+  background: var(--call-ground); color: var(--call-ink); font-family: var(--sans);
+}
+.viewer[hidden] { display: none; }
+.viewer-head {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px 12px 20px; border-bottom: 1px solid var(--call-rule); background: var(--call-tile);
+}
+.viewer-title { flex: 1; min-width: 0; }
+.viewer-title h2 { margin: 0; font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-title p { margin: 2px 0 0; font-size: 12.5px; color: var(--call-muted); }
+.viewer-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
+}
+.viewer-btn:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.viewer-btn svg { width: 16px; height: 16px; }
+.viewer-close {
+  width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px;
+  border: 1px solid transparent; background: none; color: var(--call-muted); cursor: pointer;
+}
+.viewer-close:hover { background: var(--call-btn); color: var(--call-ink); }
+.viewer-close svg { width: 18px; height: 18px; }
+.viewer-btn:focus-visible, .viewer-close:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 2px; }
+.viewer-body { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 20px; }
+.viewer-body[data-kind="pdf"], .viewer-body[data-kind="text"] { place-items: start center; }
+.viewer-media { max-width: 100%; max-height: calc(100vh - 110px); border-radius: 8px; background: var(--call-tile); }
+audio.viewer-media { width: min(560px, 100%); background: none; }
+.viewer-pages { width: min(100%, 1100px); display: flex; flex-direction: column; gap: 14px; }
+.viewer-page { width: 100%; background: var(--call-ink); border-radius: 4px; overflow: hidden; box-shadow: 0 8px 24px var(--call-shadow); }
+.viewer-page canvas { display: block; width: 100%; height: auto; }
+.viewer-text {
+  width: min(100%, 1000px); box-sizing: border-box; margin: 0; padding: 18px 20px; border-radius: 10px;
+  background: var(--call-tile); border: 1px solid var(--call-rule); color: var(--call-ink);
+  font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.viewer-loading, .viewer-note { margin: 0; font-size: 13.5px; color: var(--call-muted); text-align: center; }
+.viewer-note { margin-top: 14px; }
+.viewer-fallback { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--call-body); }
+.viewer-fallback p { margin: 0; }
+@media (max-width: 640px) {
+  .viewer-btn span { display: none; }
+  .viewer-body { padding: 10px; }
+}

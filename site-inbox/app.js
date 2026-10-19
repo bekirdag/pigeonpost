@@ -108,6 +108,7 @@
   function signOut() {
     [K.token, K.refresh, K.verifier, K.state, K.identity].forEach((k) => LS.removeItem(k));
     window.PigeonpostCalls?.stop();
+    closeViewer();
     stopLive();
     // The stream cursor and the fallback verdict belong to the account that was signed in, not to
     // the browser. Hiding a tab must keep them — resuming from the cursor is the whole point — but
@@ -511,12 +512,21 @@
     }
   }
 
-  function addPreview(parent, { name, type, bytes, load }, compact = false) {
+  function addPreview(parent, { name, type, bytes, load, onOpen }, compact = false) {
     const format = previewType(type, name);
     if (!format || !Number.isFinite(bytes) || bytes > 25 * 1024 * 1024 || bytes <= 0) return;
     const node = document.createElement("div");
     node.className = "attachment-preview" + (compact ? " compact" : "");
     node.setAttribute("aria-label", "Preview of " + name);
+    if (onOpen) {
+      // The preview is also the way in: click or Enter opens the file inside the app.
+      node.classList.add("openable");
+      node.tabIndex = 0;
+      node.setAttribute("role", "button");
+      node.setAttribute("aria-label", "Open " + name);
+      node.addEventListener("click", onOpen);
+      node.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } });
+    }
     node.textContent = "Loading preview…";
     parent.append(node);
     const record = { node, format, load, name, controller: new AbortController(), disposed: false };
@@ -609,6 +619,175 @@
     if (format.kind === "video") {
       const play = document.createElement("span"); play.className = "preview-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true"); node.append(play);
     }
+  }
+
+  // ---- opening and saving attachments --------------------------------------------------------
+  //
+  // Formats the browser can show safely open in a viewer inside the app: images, video, audio,
+  // PDF (rendered by the bundled pdf.js with script evaluation off) and plain text (as text, never
+  // markup). SVG and HTML are deliberately not among them. Everything else downloads.
+
+  const VIEWER_MAX_BYTES = 200 * 1024 * 1024;
+  const TEXT_VIEW_CHARS = 2_000_000;
+  const DOWNLOAD_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  let viewerState = null;
+
+  // Phones get the share sheet for pictures and videos, which is where "Save to Photos" lives;
+  // everything else, and every computer, gets an ordinary download into the downloads folder.
+  async function downloadAttachment(item) {
+    try {
+      const blob = await item.load();
+      if (!item.context.current()) return;
+      const format = previewType(item.type, item.name);
+      const mobile = window.matchMedia("(pointer: coarse)").matches;
+      if (mobile && format && (format.kind === "image" || format.kind === "video") && navigator.canShare) {
+        const asFile = new File([blob], item.name, { type: blob.type || format.mime });
+        if (navigator.canShare({ files: [asFile] })) {
+          try { await navigator.share({ files: [asFile] }); return; }
+          catch (e) { if (e && e.name === "AbortError") return; }
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = item.name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (_) {
+      if (item.context.current()) toast("Could not download that file.");
+    }
+  }
+
+  async function openViewer(item, format, trigger) {
+    closeViewer();
+    const viewer = $("viewer"), body = $("viewer-body");
+    const controller = new AbortController();
+    const state = viewerState = { item, controller, url: null, pdf: null, observer: null, trigger: trigger || document.activeElement };
+    $("viewer-name").textContent = item.name;
+    $("viewer-meta").textContent = [readableBytes(item.bytes), { image: "Image", video: "Video", audio: "Audio", pdf: "PDF", text: "Text" }[format.kind]].filter(Boolean).join(" · ");
+    body.dataset.kind = format.kind;
+    body.replaceChildren(Object.assign(document.createElement("p"), { className: "viewer-loading", textContent: "Opening…" }));
+    viewer.hidden = false;
+    $("viewer-close").focus({ preventScroll: true });
+    try {
+      const blob = await item.load(controller.signal);
+      if (viewerState !== state) return;
+      if (format.kind === "text") {
+        const text = await blob.text();
+        const pre = document.createElement("pre");
+        pre.className = "viewer-text";
+        pre.textContent = text.length > TEXT_VIEW_CHARS ? text.slice(0, TEXT_VIEW_CHARS) : text;
+        body.replaceChildren(pre);
+        if (text.length > TEXT_VIEW_CHARS) body.append(Object.assign(document.createElement("p"), { className: "viewer-note", textContent: "Showing the beginning of this file. Download it to see all of it." }));
+        return;
+      }
+      if (format.kind === "pdf") return renderPdf(state, blob);
+      state.url = URL.createObjectURL(new Blob([blob], { type: format.mime }));
+      let media;
+      if (format.kind === "image") {
+        media = document.createElement("img");
+        media.alt = item.name;
+        media.decoding = "async";
+      } else {
+        media = document.createElement(format.kind);
+        media.controls = true;
+        media.preload = "metadata";
+        if (format.kind === "video") media.playsInline = true;
+      }
+      media.className = "viewer-media";
+      media.addEventListener("error", () => { if (viewerState === state) body.replaceChildren(viewerFallback("This file can’t be shown here.")); }, { once: true });
+      media.src = state.url;
+      body.replaceChildren(media);
+    } catch (_) {
+      if (viewerState === state && !controller.signal.aborted) body.replaceChildren(viewerFallback("Couldn’t open this file."));
+    }
+  }
+
+  function viewerFallback(text) {
+    const box = document.createElement("div");
+    box.className = "viewer-fallback";
+    const p = document.createElement("p");
+    p.textContent = text;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "viewer-btn";
+    b.textContent = "Download instead";
+    b.addEventListener("click", () => viewerState && downloadAttachment(viewerState.item));
+    box.append(p, b);
+    return box;
+  }
+
+  // Every page, at the width of the window, drawn as it scrolls into view.
+  async function renderPdf(state, blob) {
+    const body = $("viewer-body");
+    const pdfjs = await import("./pdfjs/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("./pdfjs/pdf.worker.mjs", location.href).href;
+    const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()),
+      isEvalSupported: false, useWasm: false, disableFontFace: true,
+      standardFontDataUrl: new URL("./pdfjs/standard_fonts/", location.href).href,
+      cMapUrl: new URL("./pdfjs/cmaps/", location.href).href, cMapPacked: true });
+    state.pdf = task;
+    const pdf = await task.promise;
+    if (viewerState !== state) return;
+    const pages = document.createElement("div");
+    pages.className = "viewer-pages";
+    body.replaceChildren(pages);
+    const width = () => Math.min(pages.clientWidth || body.clientWidth || 800, 1100);
+    const count = Math.min(pdf.numPages, 500);
+    const first = await pdf.getPage(1);
+    const ratio = first.getViewport({ scale: 1 }).height / first.getViewport({ scale: 1 }).width;
+    state.observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || entry.target.dataset.drawn) continue;
+        entry.target.dataset.drawn = "1";
+        state.observer.unobserve(entry.target);
+        drawPdfPage(state, pdf, Number(entry.target.dataset.page), entry.target, width());
+      }
+    }, { root: body, rootMargin: "800px 0px" });
+    for (let n = 1; n <= count; n++) {
+      const slot = document.createElement("div");
+      slot.className = "viewer-page";
+      slot.dataset.page = String(n);
+      slot.style.aspectRatio = String(1 / ratio);
+      slot.setAttribute("aria-label", "Page " + n + " of " + pdf.numPages);
+      slot.setAttribute("role", "img");
+      pages.append(slot);
+      state.observer.observe(slot);
+    }
+    if (pdf.numPages > count) body.append(Object.assign(document.createElement("p"), { className: "viewer-note", textContent: `Showing the first ${count} of ${pdf.numPages} pages. Download the file to see the rest.` }));
+  }
+
+  async function drawPdfPage(state, pdf, n, slot, cssWidth) {
+    try {
+      const page = await pdf.getPage(n);
+      if (viewerState !== state) return;
+      const base = page.getViewport({ scale: 1 });
+      const scale = (cssWidth / base.width) * Math.min(window.devicePixelRatio || 1, 2);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      slot.style.aspectRatio = String(base.width / base.height);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      if (viewerState === state) slot.replaceChildren(canvas);
+    } catch (_) { /* a page that will not draw stays blank */ }
+  }
+
+  function closeViewer() {
+    const state = viewerState;
+    if (!state) return;
+    viewerState = null;
+    state.controller.abort();
+    state.observer?.disconnect();
+    if (state.pdf) void state.pdf.destroy();
+    const body = $("viewer-body");
+    for (const media of body.querySelectorAll("video, audio")) { media.pause(); media.removeAttribute("src"); media.load(); }
+    body.textContent = "";
+    if (state.url) URL.revokeObjectURL(state.url);
+    $("viewer").hidden = true;
+    if (state.trigger && state.trigger.isConnected) state.trigger.focus({ preventScroll: true });
   }
 
   // The bytes are the whole body; the metadata rides in headers. Not `api()` — that one sends and
@@ -1715,48 +1894,39 @@
         link.className = "file";
         link.href = cfg.postbox + "/v1/attachments/" + encodeURIComponent(file.id);
         link.textContent = file.filename || "attachment";
-        // The token cannot ride in a plain link, so this fetches with it and hands the browser a
-        // blob. Same reason the download endpoint is authenticated at all: a file is not public
-        // because its id is known.
-          link.addEventListener("click", async (event) => {
+        // The token cannot ride in a plain link, so the bytes are fetched with it. Same reason the
+        // endpoint is authenticated at all: a file is not public because its id is known.
+        const context = mailboxContext();
+        const load = async signal => {
+          if (!context.current()) throw new Error("Mailbox changed");
+          const res = await fetch(link.href, { headers: { authorization: "Bearer " + getToken(),
+            "x-pigeonpost-identity": context.address }, signal: signal || context.signal });
+          if (!res.ok || !context.current()) throw new Error("Unavailable");
+          const blob = await res.blob();
+          if (!context.current()) throw new Error("Mailbox changed");
+          return blob;
+        };
+        const item = { name: file.filename || "attachment", type: file.media_type, bytes: file.bytes, load, context };
+        const format = previewType(file.media_type, file.filename);
+        const viewable = format && Number.isFinite(file.bytes) && file.bytes > 0 && file.bytes <= VIEWER_MAX_BYTES;
+        // Something the app can show opens in the app; anything else downloads as before.
+        link.addEventListener("click", (event) => {
           event.preventDefault();
-          const context = mailboxContext();
-          try {
-            const res = await fetch(link.href, {
-              headers: {
-                authorization: "Bearer " + getToken(),
-                "x-pigeonpost-identity": context.address,
-              },
-              signal: context.signal,
-            });
-            if (!res.ok) throw new Error(String(res.status));
-            const blob = await res.blob();
-            if (!context.current()) return;
-            const url = URL.createObjectURL(blob);
-            const save = document.createElement("a");
-            save.href = url;
-            save.download = file.filename || "attachment";
-            save.click();
-            URL.revokeObjectURL(url);
-          } catch (_) {
-            if (context.current()) toast("Could not download that file.");
-          }
+          if (viewable) openViewer(item, format, link); else downloadAttachment(item);
         });
         const size = document.createElement("span");
         size.className = "file-size";
         size.textContent = readableBytes(file.bytes);
-        const context = mailboxContext();
-        addPreview(li, { name: file.filename, type: file.media_type, bytes: file.bytes, load: async signal => {
-          if (!context.current()) throw new Error("Mailbox changed");
-          const res = await fetch(link.href, { headers: { authorization: "Bearer " + getToken(),
-            "x-pigeonpost-identity": context.address }, signal });
-          if (!res.ok || !context.current()) throw new Error("Preview unavailable");
-          const blob = await res.blob();
-          if (!context.current()) throw new Error("Mailbox changed");
-          return blob;
-        }});
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "file-download";
+        save.title = "Download " + item.name;
+        save.setAttribute("aria-label", "Download " + item.name);
+        save.innerHTML = DOWNLOAD_ICON;
+        save.addEventListener("click", () => downloadAttachment(item));
+        addPreview(li, { name: file.filename, type: file.media_type, bytes: file.bytes, load, onOpen: viewable ? () => openViewer(item, format, link) : null });
         const label = document.createElement("div"); label.className = "file-label";
-        label.append(link, size); li.append(label);
+        label.append(link, size, save); li.append(label);
         files.append(li);
       }
       bubble.append(files);
@@ -3431,6 +3601,12 @@
   }
 
   function wire() {
+    $("viewer-close").addEventListener("click", closeViewer);
+    $("viewer-download").addEventListener("click", () => { if (viewerState) downloadAttachment(viewerState.item); });
+    // Capture phase, so Escape closes the viewer before anything underneath reacts to it.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && viewerState) { e.preventDefault(); e.stopPropagation(); closeViewer(); }
+    }, true);
     $("signin-btn").onclick = () => login();
     $("signout-btn").onclick = () => signOut();
 
