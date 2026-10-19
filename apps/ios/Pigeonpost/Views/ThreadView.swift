@@ -11,6 +11,18 @@ import UniformTypeIdentifiers
 
 struct ThreadView: View {
     let peer: String
+    /// The subject, when somebody else chooses it. The desktop layout an iPad uses gives subjects a
+    /// column of their own and passes its selection in here; the thread then draws neither its own
+    /// strip of subjects nor its own title, since both are already on screen beside it. `nil` — a
+    /// phone — keeps the strip, and the choice, inside the thread.
+    private let chosenSubthread: Binding<String?>?
+
+    init(peer: String, subthread: Binding<String?>? = nil) {
+        self.peer = peer
+        self.chosenSubthread = subthread
+    }
+
+    private var embedded: Bool { chosenSubthread != nil }
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
@@ -35,7 +47,13 @@ struct ThreadView: View {
     private var loadingPhotos: Int { loading[composerKey, default: 0] }
     private var sendPending: Bool { sending.contains(composerKey) }
 
-    @State private var subthread: String?
+    @State private var ownSubthread: String?
+    private var subthread: String? {
+        get { chosenSubthread?.wrappedValue ?? ownSubthread }
+        nonmutating set {
+            if let chosenSubthread { chosenSubthread.wrappedValue = newValue } else { ownSubthread = newValue }
+        }
+    }
     /// One sheet at a time. Two stacked `.sheet` modifiers on one view are not reliably both
     /// honoured — see `ConversationsView`, where the same shape lost Settings entirely.
     @State private var sheet: Sheet?
@@ -79,11 +97,11 @@ struct ThreadView: View {
         // Always, even for a peer with one conversation. The strip is where a second subject is
         // started, so hiding it until a second subject exists means there is no way to make one —
         // and the layout no longer changes shape underneath somebody the moment they do.
-        .safeAreaInset(edge: .top, spacing: 0) { subjects }
+        .safeAreaInset(edge: .top, spacing: 0) { if !embedded { subjects } }
         .safeAreaInset(edge: .bottom, spacing: 0) {
             composer.modifier(ReportsItsPlace(measure: \.minY, report: LandingReport.composer))
         }
-        .navigationTitle(conversation?.name ?? PeerFace.displayName(peer))
+        .navigationTitle(embedded ? "" : conversation?.name ?? PeerFace.displayName(peer))
         .navigationBarTitleDisplayMode(.inline)
         // Glass rather than paint. This was opaque for a while, because the doodle showed through
         // the bar and ran under the title — but the answer to a pattern competing with a title is
@@ -95,9 +113,12 @@ struct ThreadView: View {
             // One button, not two. Archiving is a decision about this conversation and belongs
             // beside the other decisions about it — known, trusted, blocked — rather than sitting
             // in the bar as a thing to hit by accident on the way to reading.
-            ToolbarItem(placement: .topBarTrailing) {
-                Button { sheet = .info } label: { Image(systemName: "info.circle") }
-                    .accessibilityLabel("About this sender")
+            // Embedded, the sender's name in the bar is already the way to this panel.
+            if !embedded {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button { sheet = .info } label: { Image(systemName: "info.circle") }
+                        .accessibilityLabel("About this sender")
+                }
             }
         }
         .sheet(item: $sheet) { which in
@@ -122,7 +143,8 @@ struct ThreadView: View {
             await push.askIfNeeded()
         }
         .onAppear {
-            if subthread == nil { subthread = subthreads.first?.id }
+            // Embedded, nothing chosen means the whole conversation, as it does on the Mac.
+            if !embedded, subthread == nil { subthread = subthreads.first?.id }
             if Fixtures.sheet == "peer" { sheet = .info }
         }
     }

@@ -22,8 +22,15 @@ struct MacRootView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.wash)
+        #if DEBUG
+        .onAppear {
+            if let look = Fixtures.appearance {
+                NSApplication.shared.appearance = NSAppearance(named: look == "dark" ? .darkAqua : .aqua)
+            }
+        }
+        #endif
         .task(id: session.status) {
-            guard session.status == .signedIn else { return }
+            guard !Fixtures.enabled, session.status == .signedIn else { return }
             await account.loadIdentities()
         }
     }

@@ -61,6 +61,15 @@ enum Fixtures {
         enabled && CommandLine.arguments.contains("-empty")
     }
 
+    /// `-appearance=dark` or `-appearance=light` pins the Mac window's appearance, so both can be
+    /// looked at without changing the whole system's. A simulator is told with `simctl ui` instead.
+    static var appearance: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-appearance=") }
+            .map { String($0.dropFirst("-appearance=".count)) }
+    }
+
     /// `-quota=near` or `-quota=full` stages the mailbox-usage section.
     static var quotaState: String? {
         guard enabled else { return nil }

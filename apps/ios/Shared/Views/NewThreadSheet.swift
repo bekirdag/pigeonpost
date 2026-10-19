@@ -1,12 +1,14 @@
 //  Starting a thread about a new subject.
 //
-//  The phone's `NewThreadSheet` is a `NavigationStack` with a `Form`, `navigationBarTitleDisplayMode`
-//  and presentation detents — four things that either do not exist on macOS or read wrong there. The
-//  words and the call it makes are the same; only the frame around them differs.
+//  One dialog for every client. The phone's used to be a `NavigationStack` around a `Form`, and the
+//  Mac's a plain stack, because the phone's leaned on modifiers a Mac does not have; the words and
+//  the call they make were always the same, and now so is the frame around them.
 
 import SwiftUI
 
-struct MacNewThreadSheet: View {
+/// A thread keeps one subject apart from the rest, so an old request does not colour a new one.
+/// Both sides see the same name.
+struct NewThreadSheet: View {
     let peer: String
     let onOpened: (String) -> Void
 
@@ -51,7 +53,12 @@ struct MacNewThreadSheet: View {
             }
         }
         .padding(18)
+        #if os(macOS)
         .frame(width: 420)
+        #else
+        .frame(maxWidth: 480)
+        .presentationDetents([.medium])
+        #endif
     }
 
     private func create() {
