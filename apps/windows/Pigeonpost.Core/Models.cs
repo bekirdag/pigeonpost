@@ -87,6 +87,10 @@ public sealed record MessageAttachment(string Id, string Filename, string MediaT
 {
     [JsonIgnore] public string SizeLabel => Bytes >= 1024 * 1024 ? $"{Bytes / (1024d * 1024):0.#} MB" : Bytes >= 1024 ? $"{Bytes / 1024d:0.#} KB" : $"{Bytes} bytes";
     [JsonIgnore] public string DownloadLabel => $"Download {Filename}";
+    [JsonIgnore] public bool CanOpen => AttachmentViewer.Kind(Filename, MediaType) != AttachmentViewKind.None;
+    // Browsable files open in the app's viewer; everything else is saved, as before.
+    [JsonIgnore] public string OpenLabel => CanOpen ? $"Open {Filename}" : $"Save {Filename}";
+    [JsonIgnore] public string ActionText => CanOpen ? "Open" : "Download file";
 }
 // Local file access stays deferred until Send; never serialize file paths or access callbacks.
 public sealed record DraftAttachment(string Id, string Filename, long Bytes, Func<CancellationToken, Task<byte[]>> ReadAsync)

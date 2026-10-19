@@ -82,6 +82,7 @@ public sealed partial class MainWindow
         refreshTimer.Start();
         ExplainAlertSetting();
         StartAccountEvents();
+        _ = StartCallsAsync();
     }
 
     private DispatcherTimer CreateRefreshTimer()
@@ -153,6 +154,7 @@ public sealed partial class MainWindow
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
             refreshTimer?.Stop();
             accountEvents?.Cancel();
+            await StopCallsAsync();
             await session.SignOutAsync(lifetime.Token);
             foreach (var cancellation in previewTasks.Values) { cancellation.Cancel(); cancellation.Dispose(); }
             previewTasks.Clear();
@@ -173,6 +175,7 @@ public sealed partial class MainWindow
             notifications?.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
             Bindings.Update();
+            UpdateCallButtons();
             InboxLayout.Visibility = AccountBar.Visibility = EmptyAccount.Visibility = Visibility.Collapsed;
             Welcome.Visibility = Visibility.Visible;
             AuthStatus.Text = "You’re signed out. Sign in to connect your account.";
@@ -181,6 +184,7 @@ public sealed partial class MainWindow
         {
             AccountStatus.Text = FriendlyAccountError(ex);
             refreshTimer?.Start();
+            _ = StartCallsAsync();
         }
         finally { dialogOpen = false; }
     }

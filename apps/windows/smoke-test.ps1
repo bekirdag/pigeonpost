@@ -283,6 +283,33 @@ try {
         $null = Wait-Element "Saved $Name."
         if ((Get-FileHash $destination).Hash -ne (Get-FileHash $Original).Hash) { throw "Attachment download changed bytes: $Name" }
     }
+    function Wait-Like([string]$Pattern) {
+        for ($n = 0; $n -lt 40; $n++) {
+            $match = @($root.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition) | Where-Object { $_.Current.Name -like $Pattern })
+            if ($match.Count -gt 0) { return $match[0] }
+            Start-Sleep -Milliseconds 250
+        }
+        throw "Native control missing: $Pattern"
+    }
+    function Assert-ComposerFocused([string]$How) {
+        for ($n = 0; $n -lt 20; $n++) {
+            $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+            if ($focused -and $focused.Current.Name -eq 'Message') { return }
+            Start-Sleep -Milliseconds 150
+        }
+        throw "The composer lost focus after sending with $How (focused: $(if ($focused) { $focused.Current.Name }))."
+    }
+    function Wait-ComposerEmpty {
+        for ($n = 0; $n -lt 40; $n++) { if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -eq '') { return }; Start-Sleep -Milliseconds 150 }
+        throw 'The message was not sent.'
+    }
+    function Open-Viewer([string]$Name, [string]$Content, [string]$Shot) {
+        Invoke-Control "Open $Name"
+        $null = Wait-Element 'Close viewer'
+        $null = Wait-Element $Content
+        Start-Sleep -Milliseconds 600
+        Capture $Shot
+    }
     function Drop-Files([string[]]$Files) {
         # Exercise OLE file drag-and-drop from another Windows app, rather than call the handler.
         $sourceScript = Join-Path $OutputDirectory 'drag-source.ps1'
@@ -388,6 +415,7 @@ public static class NativeFileDragSource {
         $null = Wait-Element 'New conversation'
         if (Element 'Find in this subject') { throw 'Search should be closed initially.' }
         Assert-DesktopColumns
+        foreach ($call in @('Voice call', 'Video call')) { if (-not (Wait-Element $call).Current.IsEnabled) { throw "$call is unavailable in an open conversation." } }
         $pin = (Wait-Element 'Pin subjects').GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern)
         if ($pin.Current.ToggleState -ne [System.Windows.Automation.ToggleState]::On) { throw 'Subjects must be pinned by default.' }
         $initialScroll = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern)
@@ -413,6 +441,32 @@ public static class NativeFileDragSource {
         if (Element 'Remove attachment-only.txt') { throw 'Successful send retained the attached draft file.' }
         Check-Download 'attachment-only.txt' $attachmentPath
         Capture 'attachment-delivered.png'
+
+        Write-Host 'Checking the in-app attachment viewer.'
+        Open-Viewer 'attachment-only.txt' 'Contents of attachment-only.txt' 'viewer-text.png'
+        $saved = Join-Path $downloadDirectory 'attachment-only.txt'
+        Remove-Item $saved -ErrorAction SilentlyContinue
+        Invoke-Control 'Save attachment'
+        $null = Wait-Like '*Saved as attachment-only.txt'
+        if ((Get-FileHash $saved).Hash -ne (Get-FileHash $attachmentPath).Hash) { throw 'Saving from the viewer changed bytes.' }
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 500
+        if (Element 'Close viewer') { throw 'Esc did not close the attachment viewer.' }
+
+        Write-Host 'Checking that the composer keeps focus after sending.'
+        (Wait-Element 'Message').SetFocus()
+        [System.Windows.Forms.SendKeys]::SendWait('Sent with the keyboard')
+        [System.Windows.Forms.SendKeys]::SendWait('^{ENTER}')
+        Wait-ComposerEmpty
+        $null = Wait-Element 'Sent with the keyboard'
+        Assert-ComposerFocused 'Ctrl+Enter'
+        Set-Text 'Message' 'Sent with the Send button'
+        $sendRect = (Wait-Element 'Send').Current.BoundingRectangle
+        $null = [NativeWindowBounds]::SetCursorPos([int]($sendRect.Left + $sendRect.Width / 2), [int]($sendRect.Top + $sendRect.Height / 2))
+        [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero); Start-Sleep -Milliseconds 60; [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Wait-ComposerEmpty
+        $null = Wait-Element 'Sent with the Send button'
+        Assert-ComposerFocused 'the Send button'
         Set-Text 'Message' 'Optional file caption'
         Invoke-Control 'Attach files…'
         $null = Wait-Element 'Remove attachment-only.txt'
@@ -510,6 +564,13 @@ public static class NativeFileDragSource {
         $downloadedImage = [System.Drawing.Bitmap]::new((Join-Path $downloadDirectory $imageName))
         try { if ($downloadedImage.GetPixel(0, 0).ToArgb() -ne [System.Drawing.Color]::HotPink.ToArgb()) { throw 'Clipboard image pixels changed.' } }
         finally { $downloadedImage.Dispose() }
+        Open-Viewer $imageName "Picture $imageName" 'viewer-image.png'
+        Invoke-Control 'Close viewer'
+        Open-Conversation '/preview/guide'
+        Open-Viewer 'desktop-checklist.pdf' 'Page 1 of 1' 'viewer-pdf.png'
+        Invoke-Control 'Close viewer'
+        if (Element 'Close viewer') { throw 'Closing the viewer failed.' }
+        Open-Conversation '/preview/team'
         $copiedFiles = [System.Collections.Specialized.StringCollection]::new()
         $copiedFiles.AddRange([string[]]@($attachmentPath, $secondAttachment))
         [System.Windows.Forms.Clipboard]::SetFileDropList($copiedFiles)

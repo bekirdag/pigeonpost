@@ -36,24 +36,7 @@ public sealed partial class MainWindow
     }
 #endif
 
-    private static string? PreviewType(string filename, string mediaType)
-    {
-        var mime = mediaType.Split(';')[0].Trim().ToLowerInvariant();
-        if (mime is "" or "application/octet-stream") mime = Path.GetExtension(filename).ToLowerInvariant() switch
-        {
-            ".png" => "image/png", ".jpg" or ".jpeg" => "image/jpeg", ".gif" => "image/gif",
-            ".webp" => "image/webp", ".bmp" => "image/bmp", ".heic" => "image/heic",
-            ".mp4" or ".m4v" => "video/mp4", ".mov" => "video/quicktime", ".webm" => "video/webm",
-            ".mp3" => "audio/mpeg", ".m4a" => "audio/mp4", ".wav" => "audio/wav",
-            ".pdf" => "application/pdf", ".txt" or ".md" or ".csv" or ".json" => "text/plain", _ => ""
-        };
-        return mime switch
-        {
-            "image/png" or "image/jpeg" or "image/gif" or "image/webp" or "image/bmp" or "image/heic" => mime,
-            "video/mp4" or "video/quicktime" or "video/webm" or "audio/mpeg" or "audio/mp4" or "audio/wav" => mime,
-            "application/pdf" or "text/plain" or "text/csv" or "text/markdown" or "application/json" => mime, _ => null
-        };
-    }
+    private static string? PreviewType(string filename, string mediaType) => AttachmentViewer.MediaType(filename, mediaType);
 
     private async void AttachmentPreview_Loaded(object sender, RoutedEventArgs e)
     {

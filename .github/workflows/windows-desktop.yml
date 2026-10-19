@@ -6,6 +6,10 @@ on:
     paths:
       - 'apps/windows/**'
       - '.github/workflows/windows-desktop.yml'
+      # The call test runs the web call client and the call service from this repository.
+      - 'site-inbox/native-call.*'
+      - 'site-inbox/calls.js'
+      - 'calls-service/**'
 
 permissions:
   contents: read
@@ -76,6 +80,14 @@ jobs:
         if: matrix.architecture == 'x64'
         shell: pwsh
         run: ./apps/windows/test-startup-tray.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        if: matrix.architecture == 'x64'
+        with:
+          node-version: '24.19.0'
+      - name: Voice and video calls with a browser peer (local call service, fake media devices)
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: ./apps/windows/test-calls.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots/calls
       - name: Install and activate the MSIX on the disposable runner
         if: matrix.architecture == 'x64'
         shell: pwsh
@@ -93,6 +105,8 @@ jobs:
             apps/windows/artifacts/screenshots/*.json
             apps/windows/artifacts/screenshots/installed/*.png
             apps/windows/artifacts/screenshots/installed/*.log
+            apps/windows/artifacts/screenshots/calls/*.png
+            apps/windows/artifacts/screenshots/calls/*.json
           if-no-files-found: warn
           retention-days: 30
       - name: Check public account and privacy pages

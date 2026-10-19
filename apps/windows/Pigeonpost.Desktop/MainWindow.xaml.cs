@@ -61,6 +61,8 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             fileDrop?.Dispose();
+            RemoveCallView();
+            CloseViewer();
             lifetime.Cancel();
             signInAttempt?.Cancel();
             refreshTimer?.Stop();
@@ -109,7 +111,7 @@ public sealed partial class MainWindow : Window
     private async Task StartAccountAsync()
     {
 #if UI_TESTS
-        if (!startedInNotificationArea) await CheckNativePreviewsAsync(); // Needs a rendered window.
+        if (!startedInNotificationArea) { await CheckNativePreviewsAsync(); await CheckViewerContentAsync(); } // Needs a rendered window.
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
@@ -180,7 +182,17 @@ public sealed partial class MainWindow : Window
         var context = ViewModel.ContextVersion;
         await ViewModel.SendDraftAsync();
         if (context == ViewModel.ContextVersion && !ViewModel.HasError && ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+        KeepComposerFocus();
     }
+
+    // Sending briefly disables the composer (and a click moves focus to Send), so put the caret
+    // back for the next message, unless the person has moved on to another field meanwhile.
+    private void KeepComposerFocus() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+    {
+        if (dialogOpen || !ViewModel.CanCompose || MessagingArea.Visibility != Visibility.Visible || callMode == CallMode.Full) return;
+        if (FocusManager.GetFocusedElement(Root.XamlRoot) is TextBox other && !ReferenceEquals(other, Composer)) return;
+        Composer.Focus(FocusState.Programmatic);
+    });
     private async void Send_Click(object sender, RoutedEventArgs e) => await SendComposerAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshAsync();
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ViewModel.ArchiveSelectedAsync();
@@ -365,6 +377,8 @@ public sealed partial class MainWindow : Window
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
+        if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) UpdateCallButtons();
+        if (e.PropertyName == nameof(InboxViewModel.SelectedMailbox)) _ = ConfigureCallsAsync();
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
