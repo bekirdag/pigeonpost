@@ -432,7 +432,7 @@
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Button Style="{StaticResource QuietIconButton}" Padding="6" AutomationProperties.Name="Account" ToolTipService.ToolTip="Account and settings">
                     <FontIcon Glyph="&#xE77B;" FontSize="16" />
-                    <Button.Flyout><MenuFlyout>
+                    <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedLeft">
                         <MenuFlyoutItem Text="Copy my address" Click="CopyAddress_Click" />
                         <MenuFlyoutItem Text="Manage account" Click="ManageAccount_Click" />
                         <MenuFlyoutItem Text="Privacy policy" Click="Privacy_Click" />
