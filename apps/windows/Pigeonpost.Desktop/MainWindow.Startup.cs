@@ -57,10 +57,15 @@ public sealed partial class MainWindow
         if (!Packaged) return;
         try
         {
-            var task = await StartupTask.GetAsync(StartupTaskId);
-            var state = task.State;
-            if (state == StartupTaskState.Disabled) state = await task.RequestEnableAsync();
-            else if (state == StartupTaskState.Enabled) { task.Disable(); state = task.State; }
+            // StartupTask ended the packaged process when called on the UI thread (CI evidence), so
+            // every call runs on a worker thread and only the result returns to the menu.
+            var state = await Task.Run(async () =>
+            {
+                var task = await StartupTask.GetAsync(StartupTaskId);
+                if (task.State == StartupTaskState.Disabled) return await task.RequestEnableAsync();
+                if (task.State == StartupTaskState.Enabled) task.Disable();
+                return task.State;
+            });
             ApplyStartupState(state);
             AccountStatus.Text = state switch
             {
