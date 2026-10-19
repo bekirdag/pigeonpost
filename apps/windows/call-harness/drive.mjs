@@ -172,6 +172,7 @@ try {
   console.error(result.error);
   try { capture("call-failure.png"); } catch {}
 } finally {
+  result.appExit = appProcess ? { exitCode: appProcess.exitCode, signal: appProcess.signalCode } : null;
   result.appLog = appLog().map((l) => l.replace(/^\S+ \[\d+\] /, ""));
   writeFileSync(path.join(out, "calls.json"), JSON.stringify(result, null, 1));
   A?.close?.(); B?.close?.();

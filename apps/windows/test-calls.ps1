@@ -15,7 +15,13 @@ Set-Content $env:PIGEONPOST_UI_ATTACHMENT_FILE 'fixture'
 $env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY = $fixtures.FullName
 try {
     & node (Join-Path $PSScriptRoot 'call-harness/drive.mjs') $repository $OutputDirectory (Resolve-Path $Executable).Path
-    if ($LASTEXITCODE -ne 0) { throw 'The Windows call test failed; see calls.json.' }
+    if ($LASTEXITCODE -ne 0) {
+        Get-WinEvent -FilterHashtable @{ LogName = 'Application'; StartTime = (Get-Date).AddMinutes(-10) } -ErrorAction SilentlyContinue |
+            Where-Object { $_.Message -like '*Pigeonpost*' -or $_.Message -like '*WebView*' } | Select-Object -First 6 |
+            ForEach-Object { Write-Host "Event $($_.Id) $($_.ProviderName): $($_.Message)" }
+        Get-Content (Join-Path $OutputDirectory 'calls.json') | Write-Host
+        throw 'The Windows call test failed; see calls.json.'
+    }
     Write-Host 'Windows calls passed.'
 } finally {
     Get-Process Pigeonpost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
