@@ -50,9 +50,9 @@ public sealed partial class MainWindow : Window
         MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         Title = BuildLabel;
+        InitializeTheme();
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
-        InitializeNotifications();
         AppWindow.Changed += Window_Changed;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         ViewModel.MessagesUpdating += Messages_Updating;
@@ -95,8 +95,21 @@ public sealed partial class MainWindow : Window
             foreach (var path in paths) items.Add(await Windows.Storage.StorageFile.GetFileFromPathAsync(path));
             return items;
         }));
+        DesktopLog.Write("Window loaded");
+        _ = RefreshStartupToggleAsync();
+        await EnsureStartedAsync();
+    }
+
+    // Account work starts once: when the window first loads, or earlier, without any window,
+    // when Windows starts Pigeonpost at sign-in.
+    private Task? started;
+    private bool startedInNotificationArea;
+    private Task EnsureStartedAsync() => started ??= StartAccountAsync();
+
+    private async Task StartAccountAsync()
+    {
 #if UI_TESTS
-        await CheckNativePreviewsAsync();
+        if (!startedInNotificationArea) await CheckNativePreviewsAsync(); // Needs a rendered window.
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
@@ -108,6 +121,19 @@ public sealed partial class MainWindow : Window
 #else
         await RestoreAccountAsync();
 #endif
+    }
+
+    public void StartInNotificationArea()
+    {
+        if (notifications?.CanHide != true)
+        {
+            DesktopLog.Write("Started at sign-in without a notification-area icon; showing the window");
+            ShowInbox();
+            return;
+        }
+        DesktopLog.Write("Started at sign-in; staying in the notification area");
+        startedInNotificationArea = true;
+        _ = EnsureStartedAsync();
     }
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)
@@ -179,7 +205,7 @@ public sealed partial class MainWindow : Window
             Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(message, "First message");
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "New conversation", Content = panel,
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "New conversation", Content = panel,
                 PrimaryButtonText = "Open", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false
             };
             void Validate(object _, TextChangedEventArgs __)
@@ -220,7 +246,7 @@ public sealed partial class MainWindow : Window
             panel.Children.Add(error);
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "New subject", Content = panel,
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "New subject", Content = panel,
                 PrimaryButtonText = "Create", CloseButtonText = "Cancel", IsPrimaryButtonEnabled = false
             };
             title.TextChanged += (_, _) => dialog.IsPrimaryButtonEnabled = !string.IsNullOrWhiteSpace(title.Text);
@@ -238,6 +264,15 @@ public sealed partial class MainWindow : Window
             await dialog.ShowAsync();
         }
         finally { dialogOpen = false; }
+    }
+
+    // Dialogs open in a popup outside Root, so they take the window's theme and the shared
+    // control styling explicitly.
+    private static ResourceDictionary DialogTheme()
+    {
+        var resources = new ResourceDictionary();
+        resources.MergedDictionaries.Add(new ResourceDictionary { Source = new Uri("ms-appx:///Themes/Controls.xaml") });
+        return resources;
     }
 
     private void Find_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { ShowFind(); args.Handled = true; }
@@ -280,7 +315,7 @@ public sealed partial class MainWindow : Window
         dialogOpen = true;
         try
         {
-            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, Title = $"Delete {ViewModel.SubjectTitle}?",
+            var dialog = new ContentDialog { XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = $"Delete {ViewModel.SubjectTitle}?",
                 Content = "This deletes the subject and its messages from this mailbox. The other side keeps its copy.",
                 PrimaryButtonText = "Delete subject", CloseButtonText = "Cancel" };
             if (await dialog.ShowAsync() == ContentDialogResult.Primary) await ViewModel.DeleteSubjectAsync();
@@ -357,6 +392,7 @@ public sealed partial class MainWindow : Window
         if (sender is not TextBlock body) return;
         if (!messageBodies.ContainsKey(body))
             messageBodies[body] = body.RegisterPropertyChangedCallback(TextBlock.TextProperty, (sender, _) => HighlightBody((TextBlock)sender));
+        UpdateBodyMenu(body);
         HighlightBody(body);
     }
 
@@ -364,6 +400,22 @@ public sealed partial class MainWindow : Window
     {
         if (sender is TextBlock body && messageBodies.Remove(body, out var token))
             body.UnregisterPropertyChangedCallback(TextBlock.TextProperty, token);
+    }
+
+    // Selectable text would otherwise open its built-in Select All menu on every right-click,
+    // hiding the message menu. With a selection, right-click offers the standard text commands
+    // (Copy); without one, the card's own menu (Copy original message, Save attachments).
+    private TextCommandBarFlyout? selectionMenu;
+    private void MessageBody_SelectionChanged(object sender, RoutedEventArgs e)
+    {
+        if (sender is TextBlock body) UpdateBodyMenu(body);
+    }
+
+    private void UpdateBodyMenu(TextBlock body)
+    {
+        if (body.SelectedText.Length > 0) { body.ContextFlyout = selectionMenu ??= new TextCommandBarFlyout(); return; }
+        for (var node = VisualTreeHelper.GetParent(body); node is not null; node = VisualTreeHelper.GetParent(node))
+            if (node is FrameworkElement { ContextFlyout: { } menu }) { body.ContextFlyout = menu; return; }
     }
 
     private void HighlightBody(TextBlock body)
@@ -401,6 +453,12 @@ public sealed partial class MainWindow : Window
 public sealed class BooleanVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
 {
     public object Convert(object value, Type targetType, object parameter, string language) => value is true ? Visibility.Visible : Visibility.Collapsed;
+    public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
+}
+
+public sealed class TextVisibilityConverter : Microsoft.UI.Xaml.Data.IValueConverter
+{
+    public object Convert(object value, Type targetType, object parameter, string language) => value is string { Length: > 0 } ? Visibility.Visible : Visibility.Collapsed;
     public object ConvertBack(object value, Type targetType, object parameter, string language) => throw new NotSupportedException();
 }
 

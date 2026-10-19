@@ -852,6 +852,57 @@ AsyncTest("Opening a conversation with files in its draft cannot send them throu
     await vm.StartConversationAsync(peer, "first message");
     Equal(files.SendCount, 0); Equal(vm.DraftAttachments.Count, 1); Check(vm.Draft.Contains("first message"), "First message lost.");
 });
+Test("Theme preference defaults to the system and survives missing, damaged or unknown files", () =>
+{
+    var directory = Path.Combine(Path.GetTempPath(), "pp-prefs-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var preferences = new AppPreferences(Path.Combine(directory, "nested", "preferences.json"));
+        Equal(preferences.LoadTheme(), AppTheme.System);
+        preferences.SaveTheme(AppTheme.Dark);
+        Equal(new AppPreferences(preferences.FilePath).LoadTheme(), AppTheme.Dark);
+        Check(File.ReadAllText(preferences.FilePath).Contains("\"theme\":\"dark\""), "Theme should be stored by name.");
+        Check(!File.Exists(preferences.FilePath + ".tmp"), "The temporary file should be replaced atomically.");
+        preferences.SaveTheme(AppTheme.Light);
+        Equal(preferences.LoadTheme(), AppTheme.Light);
+        preferences.SaveTheme(AppTheme.System);
+        Equal(preferences.LoadTheme(), AppTheme.System);
+        File.WriteAllText(preferences.FilePath, "{ not json");
+        Equal(preferences.LoadTheme(), AppTheme.System);
+        File.WriteAllText(preferences.FilePath, "{\"theme\":\"sepia\"}");
+        Equal(preferences.LoadTheme(), AppTheme.System);
+        File.WriteAllText(preferences.FilePath, "null");
+        Equal(preferences.LoadTheme(), AppTheme.System);
+        Equal(AppPreferences.ParseTheme(" DARK "), AppTheme.Dark);
+        Equal(AppPreferences.ParseTheme(null), AppTheme.System);
+    }
+    finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+});
+
+Test("The notification-area hint is remembered beside the theme and offered only when it can help", () =>
+{
+    var directory = Path.Combine(Path.GetTempPath(), "pp-hint-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var preferences = new AppPreferences(Path.Combine(directory, "preferences.json"));
+        Check(!preferences.LoadTrayHintShown(), "A new install has not shown the hint.");
+        preferences.SaveTheme(AppTheme.Dark);
+        preferences.MarkTrayHintShown();
+        var reloaded = new AppPreferences(preferences.FilePath);
+        Check(reloaded.LoadTrayHintShown() && reloaded.LoadTheme() == AppTheme.Dark, "Hint and theme must both survive.");
+        reloaded.SaveTheme(AppTheme.Light);
+        Check(reloaded.LoadTrayHintShown(), "Changing the theme must keep the hint state.");
+        File.WriteAllText(preferences.FilePath, "{ broken");
+        Check(!preferences.LoadTrayHintShown(), "A damaged file falls back to not shown.");
+    }
+    finally { if (Directory.Exists(directory)) Directory.Delete(directory, recursive: true); }
+    Equal(TrayHint.Decide(iconShown: true, alertsEnabled: true, alreadyShown: false, loggedThisRun: false), TrayHintAction.Show);
+    Equal(TrayHint.Decide(iconShown: true, alertsEnabled: true, alreadyShown: true, loggedThisRun: false), TrayHintAction.None);
+    Equal(TrayHint.Decide(iconShown: false, alertsEnabled: true, alreadyShown: false, loggedThisRun: false), TrayHintAction.None);
+    Equal(TrayHint.Decide(iconShown: true, alertsEnabled: false, alreadyShown: false, loggedThisRun: false), TrayHintAction.Log);
+    Equal(TrayHint.Decide(iconShown: true, alertsEnabled: false, alreadyShown: false, loggedThisRun: true), TrayHintAction.None);
+});
+
 Test("Message copy uses displayed text and filenames for file-only messages", () =>
 {
     var message = new ThreadMessage("copy", RequestEnvelope.Work("Visible message text"), 1, null, true);

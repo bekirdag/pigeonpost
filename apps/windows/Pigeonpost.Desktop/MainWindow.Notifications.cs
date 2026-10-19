@@ -30,7 +30,7 @@ public sealed partial class MainWindow
         {
             try
             {
-                await postbox.WatchMailAsync(() =>
+                await postbox.WatchMailAsync(log: DesktopLog.Write, changed: () =>
                 {
                     var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     if (!DispatcherQueue.TryEnqueue(async () =>
@@ -44,7 +44,7 @@ public sealed partial class MainWindow
                         finally { completion.TrySetResult(); }
                     })) completion.TrySetResult();
                     return completion.Task;
-                }, cancellation);
+                }, cancellationToken: cancellation);
             }
             catch (OperationCanceledException) { }
         }
@@ -55,14 +55,19 @@ public sealed partial class MainWindow
         && InboxLayout.Visibility == Visibility.Visible && MessagingArea.Visibility == Visibility.Visible
         && AppWindow.Presenter is OverlappedPresenter { State: not OverlappedPresenterState.Minimized };
 
-    private void InitializeNotifications()
+    // Called by App once this process is the single running instance: a second launch that only
+    // hands over must never add (and with the stable identity, replace) the running app's icon.
+    public void InitializeNotifications()
     {
         try { notifications = new(WinRT.Interop.WindowNative.GetWindowHandle(this), ShowInbox, Quit); }
         catch (Exception ex)
         {
             notificationInitializationError = ex;
+            DesktopLog.Error("Notification-area icon unavailable", ex);
             AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
         }
+        if (notifications is { CanHide: false })
+            AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
         Activated += async (_, e) =>
         {
             activeWindow = e.WindowActivationState != WindowActivationState.Deactivated;
@@ -78,6 +83,7 @@ public sealed partial class MainWindow
             e.Cancel = true;
             activeWindow = false;
             AppWindow.Hide();
+            ShowTrayHintOnce();
         };
     }
 
@@ -102,6 +108,7 @@ public sealed partial class MainWindow
     {
         if (!ReferenceEquals(sender, ViewModel)) return;
         var arrivals = unreadState.Observe(update.Mailbox.Address, update.Snapshot.Messages);
+        if (arrivals.Count > 0) DesktopLog.Write($"{arrivals.Count} new message(s) in the selected mailbox; window visible {AppWindow.IsVisible}, active {activeWindow}");
         foreach (var arrival in arrivals)
         {
             var peer = ConversationBuilder.ResolvePeer(arrival.Peer, update.Snapshot, ViewModel.Mailboxes);
@@ -132,11 +139,13 @@ public sealed partial class MainWindow
                 var messages = (await postbox.GetInboxAsync(mailbox.Address, cancellationToken: lifetime.Token)).Messages ?? [];
 #endif
                 if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel)) return;
-                foreach (var arrival in unreadState.Observe(mailbox.Address, messages)) DesktopNotifications.Announce(arrival);
+                var arrivals = unreadState.Observe(mailbox.Address, messages);
+                if (arrivals.Count > 0) DesktopLog.Write($"{arrivals.Count} new message(s) in another mailbox");
+                foreach (var arrival in arrivals) DesktopNotifications.Announce(arrival);
                 notifications?.Update(unreadState.Count);
             }
         }
-        catch (Exception) { /* Retain the last confirmed count while offline; retry next refresh. */ }
+        catch (Exception ex) { DesktopLog.Error("Checking other mailboxes failed", ex); /* Retain the last count; retry next refresh. */ }
         finally { refreshingNotifications = false; }
     }
 
@@ -168,5 +177,48 @@ public sealed partial class MainWindow
         }
         finally { openingNotification = false; pendingNotification = null; }
         await AcknowledgeVisibleAsync();
+    }
+}
+
+public sealed partial class MainWindow
+{
+    // Windows owns the alert switch; say so instead of failing silently.
+    private void ExplainAlertSetting()
+    {
+        var setting = Microsoft.Windows.AppNotifications.AppNotificationSetting.Unsupported;
+        try { setting = Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Setting; }
+        catch (Exception ex) { DesktopLog.Error("Reading the Windows alert setting failed", ex); }
+        DesktopLog.Write($"Inbox open; alerts {setting}; notification-area icon {(notifications?.CanHide == true ? "shown" : "unavailable")}");
+        if (setting is Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledForApplication
+            or Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledForUser)
+            AccountStatus.Text = "Windows notifications are off for Pigeonpost. Turn them on in Settings > System > Notifications.";
+        else if (setting is Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledByGroupPolicy)
+            AccountStatus.Text = "Windows notifications are turned off by your organization's policy.";
+    }
+}
+
+public sealed partial class MainWindow
+{
+    private bool trayHintLogged;
+
+    // Once ever: explain that closing kept Pigeonpost running beside the clock.
+    private void ShowTrayHintOnce()
+    {
+        var setting = Microsoft.Windows.AppNotifications.AppNotificationSetting.Unsupported;
+        try { setting = Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Setting; }
+        catch (Exception ex) { DesktopLog.Error("Reading the Windows alert setting failed", ex); }
+        var action = TrayHint.Decide(notifications?.CanHide == true,
+            setting == Microsoft.Windows.AppNotifications.AppNotificationSetting.Enabled, preferences.LoadTrayHintShown(), trayHintLogged);
+        if (action == TrayHintAction.Show && DesktopNotifications.ShowTrayHint())
+        {
+            try { preferences.MarkTrayHintShown(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { DesktopLog.Error("Saving the hint state failed", ex); }
+            DesktopLog.Write("Notification-area hint shown");
+        }
+        else if (action != TrayHintAction.None)
+        {
+            trayHintLogged = true;
+            DesktopLog.Write($"Notification-area hint not shown: Windows alerts {setting}");
+        }
     }
 }

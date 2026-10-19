@@ -67,7 +67,9 @@ public sealed partial class MainWindow
         Welcome.Visibility = Visibility.Collapsed;
         InboxLayout.Visibility = Visibility.Visible;
         AccountBar.Visibility = Visibility.Visible;
+        DesktopLog.Write("Opening the inbox");
         await ViewModel.InitializeAsync();
+        DesktopLog.Write($"Mailboxes loaded: {ViewModel.Mailboxes.Count}");
         EmptyAccount.Visibility = ViewModel.Mailboxes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (pendingNotification is { } target)
         {
@@ -78,6 +80,7 @@ public sealed partial class MainWindow
         await RefreshOtherNotificationsAsync();
         refreshTimer ??= CreateRefreshTimer();
         refreshTimer.Start();
+        ExplainAlertSetting();
         StartAccountEvents();
     }
 
@@ -93,7 +96,7 @@ public sealed partial class MainWindow
             var themeFile = Environment.GetEnvironmentVariable("PIGEONPOST_UI_THEME_FILE");
             if (themeFile is not null && File.Exists(themeFile))
             {
-                Root.RequestedTheme = File.ReadAllText(themeFile).Trim() == "Dark" ? ElementTheme.Dark : ElementTheme.Light;
+                ApplyTheme(File.ReadAllText(themeFile).Trim() == "Dark" ? AppTheme.Dark : AppTheme.Light); // Not persisted.
                 File.Delete(themeFile);
             }
 #endif
@@ -144,7 +147,7 @@ public sealed partial class MainWindow
         {
             var dialog = new ContentDialog
             {
-                XamlRoot = Root.XamlRoot, Title = "Sign out of Pigeonpost?", Content = "Unsent drafts in this window will be discarded.",
+                XamlRoot = Root.XamlRoot, RequestedTheme = Root.ActualTheme, Resources = DialogTheme(), Title = "Sign out of Pigeonpost?", Content = "Unsent drafts in this window will be discarded.",
                 PrimaryButtonText = "Sign out", CloseButtonText = "Cancel"
             };
             if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;

@@ -157,6 +157,125 @@ try {
         Start-Sleep -Milliseconds 200
         if ((Get-Clipboard -Raw).Trim() -ne $Text) { throw 'Copy icon did not copy the displayed message.' }
     }
+    function Select-PartialText([string]$Text) {
+        # Drag across the start of a message body with the real mouse, as a reader would,
+        # then copy with the keyboard. The row must not swallow the drag or the focus.
+        $messages = Wait-List 'Messages'
+        $bodyCondition = [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::NameProperty, $Text)
+        $body = $messages.FindFirst([System.Windows.Automation.TreeScope]::Descendants, $bodyCondition)
+        if (-not $body) { throw "Message body missing for selection: $Text" }
+        $rect = $body.Current.BoundingRectangle
+        $y = [int]($rect.Top + [Math]::Min(10, $rect.Height / 2)); $x = [int]$rect.Left + 1; $end = [int]$rect.Left + 45
+        Set-Clipboard 'selection-sentinel'
+        # Absolute moves produce real pointer updates; zero-delta relative moves can be dropped.
+        $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+        function Move-Mouse([int]$X, [int]$Y) {
+            [NativeWindowBounds]::mouse_event(0x8001, [uint32][Math]::Round($X * 65535 / ($bounds.Width - 1)), [uint32][Math]::Round($Y * 65535 / ($bounds.Height - 1)), 0, [UIntPtr]::Zero)
+        }
+        Move-Mouse $x $y
+        Start-Sleep -Milliseconds 150
+        [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 150
+        for ($step = 1; $step -le 15; $step++) {
+            Move-Mouse ([int]($x + ($end - $x) * $step / 15)) $y
+            Start-Sleep -Milliseconds 30
+        }
+        Start-Sleep -Milliseconds 100
+        [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 300
+        try {
+            $selection = $body.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).GetSelection()
+            Write-Host "Selection after drag: '$(if ($selection.Length) { $selection[0].GetText(200) })'"
+        } catch { Write-Host "Text pattern unavailable: $($_.Exception.Message)" }
+        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($focused) { Write-Host "Focused after drag: $($focused.Current.ControlType.ProgrammaticName) '$($focused.Current.Name)'" }
+        Write-Host "Drag from ($x,$y) to ($end,$y) over body $rect"
+        [System.Windows.Forms.SendKeys]::SendWait('^c')
+        Start-Sleep -Milliseconds 300
+        $copied = Get-Clipboard -Raw
+        Write-Host "Partial selection copied: '$copied'"
+        if (-not $copied -or $copied -eq 'selection-sentinel' -or $copied.Length -ge $Text.Length -or -not $Text.StartsWith($copied)) {
+            Capture 'partial-selection-failed.png'
+            throw "Dragging over a message did not copy part of its text (got '$copied')."
+        }
+        Capture 'partial-selection.png'
+        # Double-clicking a word selects just that word, again without the row taking over.
+        Set-Clipboard 'selection-sentinel'
+        Move-Mouse ($x + 20) $y
+        Start-Sleep -Milliseconds 150
+        foreach ($click in 1..2) {
+            [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+            [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+        }
+        Start-Sleep -Milliseconds 400
+        [System.Windows.Forms.SendKeys]::SendWait('^c')
+        Start-Sleep -Milliseconds 300
+        $word = Get-Clipboard -Raw
+        Write-Host "Double-click copied: '$word'"
+        if (-not $word -or $word.Trim() -ne $Text.Split(' ')[0]) {
+            Capture 'word-selection-failed.png'
+            throw "Double-clicking a word did not select it (got '$word')."
+        }
+        # Right-click on selected text offers the text menu; without a selection, the message menu.
+        [NativeWindowBounds]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(0x10, 0, 0, 0, [UIntPtr]::Zero)
+        $null = Wait-Element 'Copy'
+        if (Element 'Copy original message') { throw 'Right-clicking selected text showed the message menu instead of Copy.' }
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 300
+        Move-Mouse ($x + 80) $y
+        [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+        Start-Sleep -Milliseconds 400
+        [NativeWindowBounds]::mouse_event(8, 0, 0, 0, [UIntPtr]::Zero)
+        [NativeWindowBounds]::mouse_event(0x10, 0, 0, 0, [UIntPtr]::Zero)
+        $null = Wait-Element 'Copy original message'
+        Capture 'message-menu-over-text.png'
+        [System.Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Start-Sleep -Milliseconds 300
+    }
+    function Sample-Luminance([double]$XFraction, [int]$FromTop, [int]$FromBottom) {
+        $null = [NativeWindowBounds]::SetCursorPos($screen.Right - 2, $screen.Bottom - 2)
+        Start-Sleep -Milliseconds 300
+        $rect = [NativeWindowBounds+Rect]::new()
+        if ([NativeWindowBounds]::DwmGetWindowAttribute($process.MainWindowHandle, 9, [ref]$rect, 16) -ne 0) { throw 'Could not obtain window bounds.' }
+        $x = [int]($rect.Left + ($rect.Right - $rect.Left) * $XFraction)
+        $y = if ($FromTop -ge 0) { $rect.Top + $FromTop } else { $rect.Bottom - $FromBottom }
+        $bitmap = [System.Drawing.Bitmap]::new(1, 1)
+        $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+        try { $graphics.CopyFromScreen($x, $y, 0, 0, $bitmap.Size); $c = $bitmap.GetPixel(0, 0) }
+        finally { $graphics.Dispose(); $bitmap.Dispose() }
+        return [int](0.2126 * $c.R + 0.7152 * $c.G + 0.0722 * $c.B)
+    }
+    function Choose-Theme([string]$Name) {
+        Invoke-Control 'Account'
+        $menu = Wait-Element 'Theme'
+        try { $menu.GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() }
+        catch { $menu.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        Start-Sleep -Milliseconds 400
+        $item = Wait-Element $Name
+        try { $item.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+        catch {
+            try { $item.GetCurrentPattern([System.Windows.Automation.SelectionItemPattern]::Pattern).Select() }
+            catch { $item.GetCurrentPattern([System.Windows.Automation.TogglePattern]::Pattern).Toggle() }
+        }
+        Start-Sleep -Milliseconds 700
+        if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+        if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+    }
+    function Assert-Theme([string]$Expected, [string]$Stored) {
+        $body = Sample-Luminance 0.5 -1 22
+        $caption = Sample-Luminance 0.5 15 0
+        Write-Host "Theme $Expected`: account bar luminance $body, title bar luminance $caption"
+        $dark = $Expected -eq 'Dark'
+        if (($dark -and ($body -gt 60 -or $caption -gt 60)) -or (-not $dark -and ($body -lt 190 -or $caption -lt 190))) {
+            Capture "theme-$($Expected.ToLowerInvariant())-failed.png"
+            throw "The window or its title bar did not switch to the $Expected theme."
+        }
+        $file = Join-Path $env:LOCALAPPDATA 'Pigeonpost\preferences.json'
+        if (-not (Test-Path $file) -or -not (Get-Content $file -Raw).Contains("`"theme`":`"$Stored`"")) { throw "The $Stored theme preference was not saved." }
+    }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name
         Remove-Item $destination -ErrorAction SilentlyContinue
@@ -301,6 +420,7 @@ public static class NativeFileDragSource {
         Invoke-Control 'Send'
         $null = Wait-Element 'Optional file caption'
         Copy-Message 'Optional file caption'
+        Select-PartialText 'Optional file caption'
         Invoke-Control 'Copy address'
         if ((Get-Clipboard -Raw).Trim() -ne '/preview/design') { throw 'Peer copy did not preserve the routing address.' }
         Invoke-Control 'Account'
@@ -539,9 +659,33 @@ public static class NativeFileDragSource {
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Native theme switch was not applied.' }
         Capture 'dark-inbox.png'
+        Invoke-Control 'New subject'
+        Set-Text 'Subject title' 'Dark theme subject'
+        Capture 'dark-new-subject.png'
+        Invoke-Control 'Cancel'
         [IO.File]::WriteAllText($env:PIGEONPOST_UI_THEME_FILE, 'Light')
         for ($n = 0; $n -lt 40 -and (Test-Path $env:PIGEONPOST_UI_THEME_FILE); $n++) { Start-Sleep -Milliseconds 100 }
         if (Test-Path $env:PIGEONPOST_UI_THEME_FILE) { throw 'Restoring the light theme failed.' }
+        Write-Host 'Checking the theme choice in the account menu.'
+        Choose-Theme 'Dark'
+        Assert-Theme 'Dark' 'dark'
+        Capture 'theme-menu-dark.png'
+        Invoke-Control 'Account'
+        try { (Wait-Element 'Theme').GetCurrentPattern([System.Windows.Automation.ExpandCollapsePattern]::Pattern).Expand() } catch { }
+        Start-Sleep -Milliseconds 400
+        Capture 'theme-menu-open.png'
+        foreach ($n in 1..2) { if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 } }
+        Choose-Theme 'Light'
+        Assert-Theme 'Light' 'light'
+        Capture 'theme-menu-light.png'
+        Choose-Theme 'System'
+        Assert-Theme 'Light' 'system'
+        Write-Host 'Checking the start-at-sign-in setting in an unpackaged build.'
+        Invoke-Control 'Account'
+        $startup = Wait-Element 'Start Pigeonpost when you sign in'
+        if ($startup.Current.IsEnabled) { throw 'Unpackaged builds cannot start at sign-in, so the setting must be unavailable.' }
+        Capture 'startup-setting-unpackaged.png'
+        foreach ($n in 1..2) { if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 } }
         $filter = Wait-Element 'Conversation filter'
         $filter.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
@@ -556,10 +700,63 @@ public static class NativeFileDragSource {
         if (-not $button.Current.IsEnabled) { throw 'Sign-in button is not enabled.' }
         if (Element 'Could not access your saved account. Please try again.') { throw 'Windows credential vault could not be read.' }
         Capture 'welcome.png'
+        if ($PackageFamilyName) {
+            Write-Host 'Checking the notification-area icon of the installed package.'
+            # The app's own diagnostics record the shell's answer for this process.
+            $log = @("$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log", "$env:LOCALAPPDATA\Packages\$PackageFamilyName\LocalCache\Local\Pigeonpost\logs\desktop.log") | Where-Object { Test-Path $_ } | Select-Object -First 1
+            if (-not $log) { throw 'The installed app wrote no diagnostics log.' }
+            Copy-Item $log (Join-Path $OutputDirectory 'installed-desktop.log') -Force
+            $lines = @(Get-Content $log | Where-Object { $_.Contains("[$($process.Id)]") })
+            $lines | Write-Host
+            if (-not ($lines -like '*Launch * as WodoTeknolojiA.PigeonpostDesktop_*')) { throw 'The installed app did not run with its package identity.' }
+            if (-not ($lines -like '*Notification-area icon added*shell reports 0x00000000*')) { throw 'Windows did not accept the notification-area icon.' }
+            for ($n = 0; $n -lt 20 -and -not ($lines -like '*Start at sign-in: *'); $n++) {
+                Start-Sleep -Milliseconds 250
+                $lines = @(Get-Content $log | Where-Object { $_.Contains("[$($process.Id)]") })
+            }
+            if (-not ($lines -like '*Start at sign-in: Disabled*')) { throw "The package's sign-in startup task is missing or not off by default." }
+            function Tray-Icon {
+                $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))
+                $script:trayNames = @($buttons | ForEach-Object { $_.Current.Name } | Where-Object { $_ -match 'pigeon' })
+                # The tooltip names the tray icon; the taskbar button for the window is excluded.
+                @($buttons | Where-Object { $_.Current.Name -like 'Pigeonpost*' -and $_.Current.Name -notlike '*running window*' -and $_.Current.Name -notlike 'Pigeonpost 1.*' }) | Select-Object -First 1
+            }
+            function Capture-Screen([string]$Name) {
+                $bounds = [System.Windows.Forms.Screen]::PrimaryScreen.Bounds
+                $bitmap = [System.Drawing.Bitmap]::new($bounds.Width, $bounds.Height)
+                $graphics = [System.Drawing.Graphics]::FromImage($bitmap)
+                try { $graphics.CopyFromScreen($bounds.Left, $bounds.Top, 0, 0, $bitmap.Size); $bitmap.Save((Join-Path $OutputDirectory $Name), [System.Drawing.Imaging.ImageFormat]::Png) }
+                finally { $graphics.Dispose(); $bitmap.Dispose() }
+            }
+            $icon = Tray-Icon
+            $where = 'notification area'
+            if (-not $icon) {
+                # Windows 11 places new icons in the overflow until the user chooses to show them.
+                $chevron = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button)) |
+                    Where-Object { $_.Current.Name -like '*hidden icons*' } | Select-Object -First 1
+                if ($chevron) { $chevron.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+                for ($n = 0; $n -lt 10 -and -not $icon; $n++) { Start-Sleep -Milliseconds 400; $icon = Tray-Icon }
+                $where = 'overflow'
+            }
+            Capture-Screen 'installed-notification-area.png'
+            if ($where -eq 'overflow') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 }
+            if (-not $icon) { throw "The Pigeonpost icon is missing from the notification area and its overflow (buttons: $($script:trayNames -join ' | '))." }
+            Write-Host "Pigeonpost icon found in the $where`: $($icon.Current.Name)"
+        }
     }
     Write-Host 'Native Windows UI smoke passed.'
 } catch {
     if ($root -and -not $process.HasExited) { Capture 'failure.png' }
+    Write-Host "App process exited: $($process.HasExited)"
+    $appLog = "$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log"
+    if ($PackageFamilyName -and (Test-Path $appLog)) { Get-Content $appLog -Tail 40 | Write-Host }
+    if ($PackageFamilyName) {
+        Get-WinEvent -LogName Application -MaxEvents 60 -ErrorAction SilentlyContinue |
+            Where-Object { $_.ProviderName -in '.NET Runtime', 'Application Error', 'Windows Error Reporting' -and $_.Message -match 'Pigeonpost' } |
+            Select-Object -First 3 | ForEach-Object { Write-Host "Event $($_.Id) $($_.ProviderName): $($_.Message)" }
+    }
     throw
 } finally {
     if ($Fixture) { Remove-Item Env:PIGEONPOST_UI_ATTACHMENT_FILE, Env:PIGEONPOST_UI_DOWNLOAD_DIRECTORY, Env:PIGEONPOST_UI_ARRIVAL_FILE, Env:PIGEONPOST_UI_THEME_FILE, Env:PIGEONPOST_UI_SCROLL_LOG -ErrorAction SilentlyContinue }
