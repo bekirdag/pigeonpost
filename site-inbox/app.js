@@ -753,6 +753,37 @@
     const label = $("size-value");
     if (label) label.textContent = Math.round(scale * 100) + "%";
   }
+  // Light, dark, or whatever the device is set to. Per device like the text size, and applied by
+  // theme.js before the first paint; this is the same rule again for when it changes here (and for
+  // a page that loaded without theme.js). "system" removes the attribute so the stylesheet's
+  // prefers-color-scheme block decides.
+  const THEME_KEY = "ppi_theme";
+  const THEMES = ["system", "light", "dark"];
+  function storedTheme() {
+    let value = null;
+    try { value = window.localStorage.getItem(THEME_KEY); } catch (_) { /* storage blocked */ }
+    return THEMES.includes(value) ? value : "system";
+  }
+  function applyTheme(theme, persist = false) {
+    if (!THEMES.includes(theme)) theme = "system";
+    if (persist) {
+      try {
+        if (theme === "system") window.localStorage.removeItem(THEME_KEY);
+        else window.localStorage.setItem(THEME_KEY, theme);
+      } catch (_) { /* still applies for this visit */ }
+    }
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme === "system" ? "light dark" : theme);
+    syncThemeChoice();
+  }
+  function syncThemeChoice() {
+    const current = document.documentElement.getAttribute("data-theme") || "system";
+    for (const input of document.querySelectorAll('#theme-choice input[name="theme"]')) input.checked = input.value === current;
+  }
+  applyTheme(storedTheme());
+
   let state = freshState();
   let sessionVersion = 0;
   let identitiesRequest = 0;
@@ -3167,6 +3198,7 @@
 
   function openSettings() {
     applyMessageScale(messageScale());
+    syncThemeChoice();
     // An unnamed mailbox has no handle, and saying "—" is more honest than repeating its address
     // on the line above the one that already shows it.
     $("acct-mailbox").textContent = state.me ? (state.me.handle || "not named") : "—";
@@ -3464,6 +3496,10 @@
     wireSheet("delete-thread-sheet");
     wireColumns();
 
+    for (const input of document.querySelectorAll('#theme-choice input[name="theme"]')) {
+      input.addEventListener("change", () => { if (input.checked) applyTheme(input.value, true); });
+    }
+
     $("size-down").onclick = () =>
       applyMessageScale(Math.max(0.8, Math.round((messageScale() - 0.1) * 10) / 10));
     $("size-up").onclick = () =>
@@ -3489,7 +3525,10 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && sheetStack.length) {
         const items = [...$(sheetStack.at(-1)).querySelectorAll("button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")]
-          .filter(el => !el.closest("[hidden]"));
+          .filter(el => !el.closest("[hidden]"))
+          // Document order, which a selector list does not promise in every engine (jsdom groups
+          // the matches by selector, which put the theme radios after the footer's Done).
+          .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
         const first = items[0], last = items.at(-1);
         if (first && e.shiftKey && (document.activeElement === first || document.activeElement === $("settings-title"))) { e.preventDefault(); last.focus(); }
         else if (last && !e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }

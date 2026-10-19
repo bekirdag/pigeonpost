@@ -78,6 +78,9 @@
   --accent-row: #2563eb;
   --send-off: #e3e7ed;
   --send-off-text: #6b7480;
+  /* A segmented choice: its recessed track and the lifted segment that is on. */
+  --seg-track: #e9edf2;
+  --seg-on: #ffffff;
 
   /* Your own messages: the mockup's blue-tinted card, not a solid fill. */
   --mine-fill: #eaf1fe;
@@ -153,12 +156,14 @@
   --head-h: 64px;
 }
 
-/* Dark. The mockup's colours, exactly.
+/* Dark. The mockup's colours, exactly. Applied when the device is dark and Settings says System
+   (no data-theme), or when Settings says Dark (the explicit block after this one).
 
    Every token is overridden here and nothing else is: a rule that names a colour outside `:root`
    is a rule that will be wrong in one of the two appearances. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --find-text: #f5edff;
     --find-fill: #5c3a81;
     --find-edge: #b795e5;
@@ -200,6 +205,8 @@
     --accent-row: #8ab4ff;
     --send-off: #252b34;
     --send-off-text: #7d8590;
+    --seg-track: #0f1216;
+    --seg-on: #252b34;
 
     --mine-fill: #131c2e;
     --mine-edge: #263556;
@@ -261,6 +268,118 @@
     --doodle-veil: rgba(15, 18, 22, 0.90);
   }
 }
+
+/* The same palette when Dark is chosen in Settings, whatever the device is set to. It must stay
+   identical to the block above; a test compares the two token for token. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --find-text: #f5edff;
+  --find-fill: #5c3a81;
+  --find-edge: #b795e5;
+  --navy: #8ab4ff;
+  --navy-hover: #a5c5ff;
+  --blue: #8ab4ff;
+  --blue-hover: #b5ceff;
+  --accent-fill: #8ab4ff;
+  --accent-fill-hover: #a5c5ff;
+  --on-accent: #0d0f12;
+  --green: #7dd3a0;
+  --amber: #f0b860;
+  --ink: #e8eaed;
+  --body: #d7dce3;
+  --muted: #9aa3ae;
+  --faint: #7d8590;
+  --rule: #1f242b;
+  --wash: #0f1216;
+  --page: #0d0f12;
+  --pane-list: #111419;
+  --pane-subs: #13161b;
+  --ground: #171b21;
+  --card-edge: #262b33;
+  --card-rule: #22272f;
+  --raised: #161a20;
+  --inset: #1b1f26;
+  --field: #171b21;
+  --field-deep: #0f1216;
+  --label: #d7dce3;
+  --sel: #1c2129;
+  --hover: #191d24;
+  --hover-strong: #1f242c;
+  --tray: #171b21;
+  --tray-hover: #1f242c;
+  --tray-active: #252b34;
+  --edge: #2a3039;
+  --edge-hover: #3a414c;
+  --edge-focus: #8ab4ff;
+  --accent-row: #8ab4ff;
+  --send-off: #252b34;
+  --send-off-text: #7d8590;
+  --seg-track: #0f1216;
+  --seg-on: #252b34;
+
+  --mine-fill: #131c2e;
+  --mine-edge: #263556;
+  --mine-text: #e6ecf8;
+  --mine-sub: #c5d0e6;
+  --mine-meta: #8c9ab8;
+  --mine-rule: #1f2c47;
+  --mine-chip: #1b2740;
+
+  --code-fill: #1e232b;
+  --code-edge: #2a3039;
+  --code-text: #d7dce3;
+
+  --tone1-bg: #17263f;
+  --tone1-fg: #8db4f5;
+  --tone2-bg: #1e2140;
+  --tone2-fg: #a3a9f5;
+  --tone3-bg: #12302d;
+  --tone3-fg: #6fd6c4;
+  --tone4-bg: #2a2142;
+  --tone4-fg: #b9a2ff;
+  --tone5-bg: #33280f;
+  --tone5-fg: #f0b860;
+  --tone6-bg: #3a1a22;
+  --tone6-fg: #f29aae;
+
+  --toast-fill: #252b34;
+
+  --held-text: #f0b860;
+  --held-strong: #f6d9a6;
+  --held-fill: #2a2213;
+  --held-card: #1c1810;
+  --held-edge: #45361a;
+  --auto-text: #7dd3a0;
+  --auto-fill: #142a1f;
+  --auto-edge: #1e3f2d;
+  --blocked-text: #f29aae;
+  --blocked-fill: #2a1519;
+  --blocked-edge: #4a2029;
+
+  --danger: #f29aae;
+  --danger-fill: #2a1519;
+  --danger-edge: #4a2029;
+  --danger-edge-hover: #6b2c36;
+
+  --scrim: rgba(6, 8, 11, 0.72);
+  --stripe: rgba(255, 255, 255, .045);
+  /* A shadow on a dark ground is not a lighter grey, it is more black. */
+  --shadow-menu: rgba(0, 0, 0, .5);
+  --shadow-sheet: rgba(0, 0, 0, .45);
+  --shadow-toast: rgba(0, 0, 0, .5);
+  --shadow-bubble: rgba(0, 0, 0, 0);
+  --shadow-btn: rgba(0, 0, 0, 0);
+
+  --drop-veil: rgba(15, 18, 22, 0.72);
+
+  /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
+     the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
+  --doodle-veil: rgba(15, 18, 22, 0.90);
+}
+
+/* Light chosen in Settings: the :root palette, and native parts (scrollbars, form controls)
+   drawn light even on a dark device. */
+:root[data-theme="light"] { color-scheme: light; }
 
 
 * { box-sizing: border-box; }
@@ -1475,6 +1594,30 @@ button { font: inherit; color: inherit; }
 .setting .size-row + .field-note { margin-top: 12px; }
 .setting a { color: var(--blue); text-underline-offset: 2px; }
 .setting a:hover { color: var(--blue-hover); }
+
+/* Theme: a segmented choice, like the mockup's All / Held for review tabs. Real radio buttons,
+   so arrow keys move the choice and a screen reader announces a group of three. */
+.segmented {
+  display: flex; gap: 4px; margin: 12px 0 0; padding: 3px;
+  border-radius: 10px; background: var(--seg-track); border: 1px solid var(--card-edge);
+}
+.segmented label { flex: 1; min-width: 0; position: relative; }
+.segmented input {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+  opacity: 0; cursor: pointer;
+}
+.segmented span {
+  display: flex; align-items: center; justify-content: center;
+  height: 32px; padding: 0 10px; border-radius: 7px;
+  font-size: 13px; font-weight: 500; color: var(--muted);
+  transition: background .12s ease, color .12s ease;
+}
+.segmented label:hover span { color: var(--ink); }
+.segmented input:checked + span {
+  background: var(--seg-on); color: var(--ink); font-weight: 600;
+  box-shadow: 0 1px 2px var(--shadow-btn);
+}
+.segmented input:focus-visible + span { outline: 2px solid var(--edge-focus); outline-offset: 1px; }
 
 .size-row {
   display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
