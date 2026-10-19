@@ -523,10 +523,7 @@
       if (oldSent && oldSent !== sent) local.stream.removeTrack(oldSent);
       if (sent && !local.stream.getTracks().includes(sent)) local.stream.addTrack(sent);
     }
-    for (const p of peers.values()) {
-      const sender = p.pc && oldSent && p.pc.getSenders().find((x) => x.track === oldSent);
-      if (sender && oldSent !== sent) await sender.replaceTrack(sent).catch(() => {});
-    }
+    updateSlot("audio");
     if (oldSent && oldSent !== sent && oldSent !== raw) oldSent.stop();
     if (oldRaw && oldRaw !== raw) oldRaw.stop();
   }
@@ -594,7 +591,7 @@
         local.cam = media.getVideoTracks()[0];
         local.stream.addTrack(local.cam);
         local.cameraOff = false;
-        for (const p of peers.values()) addLocalTrack(p, local.cam, local.stream);
+        updateSlot("cam");
         room.kind = "video";
         broadcastState();
       } catch (err) {
@@ -630,7 +627,7 @@
       local.screen = track;
       local.screenStream = new MediaStream([track]);
       track.addEventListener("ended", () => { if (local.screen === track) stopScreen(); });
-      for (const p of peers.values()) addLocalTrack(p, track, local.screenStream);
+      updateSlot("screen");
       broadcastState();
       applyBitrates();
       showSelf();
@@ -645,13 +642,10 @@
   function stopScreen() {
     const track = local.screen;
     if (!track) return;
-    for (const p of peers.values()) {
-      const sender = p.pc && p.pc.getSenders().find((s) => s.track === track);
-      if (sender) { try { p.pc.removeTrack(sender); } catch (_) { /* closed */ } }
-    }
-    track.stop();
     local.screen = null;
     local.screenStream = null;
+    updateSlot("screen");
+    track.stop();
     hideShareIndicators();
     showSelf();
     broadcastState();
@@ -761,14 +755,11 @@
     const fresh = (kind === "mic" ? media.getAudioTracks() : media.getVideoTracks())[0];
     if (!fresh) return;
     if (kind === "mic") { fresh.contentHint = "speech"; fresh.enabled = !local.muted; } else fresh.enabled = !local.cameraOff;
-    for (const p of peers.values()) {
-      const sender = p.pc && p.pc.getSenders().find((x) => x.track === old);
-      if (sender) await sender.replaceTrack(fresh).catch(() => {});
-    }
     local.stream.removeTrack(old);
     local.stream.addTrack(fresh);
     old.stop();
-    if (kind === "mic") local.mic = fresh; else local.cam = fresh;
+    local.cam = fresh;
+    updateSlot("cam");
     showSelf();
     fillDevices();
   }
@@ -782,24 +773,27 @@
     return iceServers;
   }
 
-  // Perfect negotiation (W3C WebRTC §10.7): both ends may start a renegotiation — adding a camera,
-  // starting a screen share — and collisions are settled by politeness, decided by participant id.
+  // Every pair of browsers has the same three media slots — voice, camera and screen — opened once,
+  // by the side that started the pair (the newcomer). Turning a camera on, sharing a screen,
+  // switching microphone or noise mode only swaps what goes into a slot; nothing is renegotiated.
+  // And only that starting side ever makes an offer (the first one, and ICE restarts), so the two
+  // ends of a pair can never both be offering at once — the collision that left pairs stuck on
+  // slow links, where a small ICE message can overtake a large offer.
+  const SLOTS = ["audio", "cam", "screen"];
+
   function ensurePeer(info, initiator) {
     let p = peers.get(info.participant);
     if (p) return p;
     p = {
       id: info.participant, name: info.name, mailbox: info.mailbox || null, guest: Boolean(info.guest),
-      pc: null, dc: null, polite: String(room.you) < String(info.participant), makingOffer: false, ignoreOffer: false,
-      pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), audio: new MediaStream(), cameraId: null, screenId: null, streams: new Map() },
-      state: { muted: false, cameraOff: false }, security: null, connected: false, dropTimer: null, tile: null, ready: null,
+      pc: null, dc: null, tx: null, makingOffer: false, offerAgain: false,
+      pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), audio: new MediaStream() },
+      state: { muted: false, cameraOff: true, screen: false }, security: null, connected: false, dropTimer: null, ready: null,
       initiator, restarts: 0, watchdog: null, relayOnly: forceRelay,
       diag: { local: {}, remote: {}, reported: "" },
     };
     peers.set(p.id, p);
     room.size = peers.size + 1;
-    // Only the newcomer starts: everybody already in the call builds their side when the newcomer's
-    // offer arrives. Two ends both offering at once on a slow link is the collision that otherwise
-    // leaves a pair stuck half-negotiated.
     if (initiator) p.ready = createConnection(p, true);
     applyBitrates();
     renderStage();
@@ -810,7 +804,7 @@
     return (async () => {
       const pc = new RTCPeerConnection({
         iceServers: await turnServers(),
-        iceTransportPolicy: forceRelay ? "relay" : "all",
+        iceTransportPolicy: p.relayOnly ? "relay" : "all",
         bundlePolicy: "max-bundle",
         rtcpMuxPolicy: "require",
       });
@@ -825,49 +819,50 @@
       };
       pc.ontrack = (e) => onRemoteTrack(p, e);
       pc.onconnectionstatechange = () => onConnectionState(p);
-      pc.onnegotiationneeded = () => negotiate(p).catch(() => {});
+      pc.onnegotiationneeded = () => { if (p.initiator) negotiate(p).catch(() => {}); };
       if (initiator) {
-        for (const t of localTracks()) addLocalTrack(p, t.track, t.stream);
-        // A voice-only newcomer still wants to see video from anybody who has it.
-        if (!local.cam) pc.addTransceiver("video", { direction: "recvonly" });
+        p.tx = {
+          audio: pc.addTransceiver("audio", { direction: "sendrecv" }),
+          cam: pc.addTransceiver("video", { direction: "sendrecv" }),
+          screen: pc.addTransceiver("video", { direction: "sendrecv" }),
+        };
+        for (const slot of SLOTS) preferCodecs(p.tx[slot], slot === "audio" ? "audio" : "video");
+        attachSlots(p);
       }
       return pc;
     })();
   }
 
-  function localTracks() {
-    const out = [];
-    if (local.mic) out.push({ track: local.mic, stream: local.stream });
-    if (local.cam) out.push({ track: local.cam, stream: local.stream });
-    if (local.screen) out.push({ track: local.screen, stream: local.screenStream });
-    return out;
+  function slotTrack(slot) {
+    return (slot === "audio" ? local.mic : slot === "cam" ? local.cam : local.screen) || null;
   }
 
-  function addLocalTrack(p, track, stream) {
-    if (!p.pc || p.pc.getSenders().some((s) => s.track === track)) return;
-    // Reuse a transceiver the other side offered (an unused receive-only slot of the same kind)
-    // before adding a new one, so a voice call turning into video needs no extra m-line.
-    const spare = p.pc.getTransceivers().find((t) => !t.stopped && t.receiver.track.kind === track.kind && !t.sender.track && t.currentDirection !== "stopped" && !p.usedTransceivers?.has(t));
-    if (spare && track !== local.screen) {
-      (p.usedTransceivers ||= new Set()).add(spare);
-      spare.sender.replaceTrack(track);
-      spare.sender.setStreams?.(stream);
-      spare.direction = "sendrecv";
-      preferCodecs(spare, track.kind);
-    } else {
-      const sender = p.pc.addTrack(track, stream);
-      const transceiver = p.pc.getTransceivers().find((t) => t.sender === sender);
-      if (transceiver) { (p.usedTransceivers ||= new Set()).add(transceiver); preferCodecs(transceiver, track.kind); }
+  function attachSlots(p) {
+    if (!p.tx) return;
+    for (const slot of SLOTS) {
+      const sender = p.tx[slot].sender, track = slotTrack(slot);
+      if (sender.track !== track) sender.replaceTrack(track).catch(() => {});
+    }
+  }
+
+  // Swap one slot's content on every connection: no offer, no answer.
+  function updateSlot(slot) {
+    for (const p of peers.values()) {
+      if (!p.tx) continue;
+      const sender = p.tx[slot].sender, track = slotTrack(slot);
+      if (sender.track !== track) sender.replaceTrack(track).catch(() => {});
     }
   }
 
   async function negotiate(p) {
     const pc = p.pc;
-    if (!pc || pc.signalingState === "closed") return;
+    if (!pc || pc.signalingState === "closed" || !p.initiator) return;
+    // One offer in flight per pair; anything asked for meanwhile goes in the next one.
+    if (p.makingOffer || pc.signalingState !== "stable") { p.offerAgain = true; return; }
     try {
       p.makingOffer = true;
       const offer = await pc.createOffer();
-      if (pc.signalingState !== "stable") return;
+      if (pc.signalingState !== "stable") { p.offerAgain = true; return; }
       offer.sdp = tuneOpus(offer.sdp);
       await pc.setLocalDescription(offer);
       await sendSignal(p, "offer", { type: "offer", sdp: pc.localDescription.sdp });
@@ -875,14 +870,11 @@
     } finally {
       p.makingOffer = false;
     }
-    applyBitrates();
   }
 
   async function onSignal(fromId, type, data) {
     if (!room) return;
     const p = peers.get(fromId) || ensurePeer({ participant: fromId, name: "Someone" }, false);
-    if (!p.ready) p.ready = createConnection(p, false);
-    const pc = await p.ready;
     if (type === "mute") {
       if (!local.muted && local.mic) { toggleMute(); toast(displayName(p) + " muted you. Unmute when you want to speak."); }
       return;
@@ -890,24 +882,48 @@
     if (type === "ice") {
       const kind = data && /\btyp (host|srflx|prflx|relay)\b/.exec(data.candidate || "");
       if (kind) p.diag.remote[kind[1]] = (p.diag.remote[kind[1]] || 0) + 1;
-      if (!pc.remoteDescription) { p.pendingIce.push(data); return; }
-      try { await pc.addIceCandidate(data || null); } catch (err) { if (!p.ignoreOffer) console.warn("calls: ice", err && err.name); }
+      // Candidates that overtook the offer wait for it; they never create the connection.
+      if (!p.pc || !p.pc.remoteDescription) { p.pendingIce.push(data); return; }
+      try { await p.pc.addIceCandidate(data || null); } catch (_) { /* a candidate for a discarded generation */ }
       return;
     }
-    const collision = type === "offer" && (p.makingOffer || pc.signalingState !== "stable");
-    p.ignoreOffer = !p.polite && collision;
-    if (p.ignoreOffer) return;
-    await pc.setRemoteDescription(data);
-    for (const c of p.pendingIce.splice(0)) { try { await pc.addIceCandidate(c || null); } catch (_) { /* stale */ } }
     if (type === "offer") {
-      // Answering: put this end's media on the slots the offer opened.
-      for (const t of localTracks()) addLocalTrack(p, t.track, t.stream);
+      if (p.initiator) return; // the starting side never answers
+      if (!p.ready) p.ready = createConnection(p, false);
+      const pc = await p.ready;
+      await pc.setRemoteDescription(data);
+      if (!p.tx) {
+        const list = pc.getTransceivers();
+        p.tx = { audio: list[0], cam: list[1], screen: list[2] };
+        for (const slot of SLOTS) {
+          if (!p.tx[slot]) continue;
+          p.tx[slot].direction = "sendrecv";
+          preferCodecs(p.tx[slot], slot === "audio" ? "audio" : "video");
+        }
+      }
+      attachSlots(p);
+      await flushIce(p);
       const answer = await pc.createAnswer();
       answer.sdp = tuneOpus(answer.sdp);
       await pc.setLocalDescription(answer);
       await sendSignal(p, "answer", { type: "answer", sdp: pc.localDescription.sdp });
       armWatchdog(p);
       applyBitrates();
+      return;
+    }
+    if (type === "answer") {
+      const pc = p.pc;
+      if (!p.initiator || !pc || pc.signalingState !== "have-local-offer") return;
+      await pc.setRemoteDescription(data);
+      await flushIce(p);
+      applyBitrates();
+      if (p.offerAgain) { p.offerAgain = false; negotiate(p).catch(() => {}); }
+    }
+  }
+
+  async function flushIce(p) {
+    for (const c of p.pendingIce.splice(0)) {
+      try { await p.pc.addIceCandidate(c || null); } catch (_) { /* stale */ }
     }
   }
 
@@ -916,30 +932,15 @@
     return post(`/rooms/${room.id}/signal`, { session, to: p.id, type, data }).catch(() => {});
   }
 
+  // A received track is filed by its slot. Voices go to their own <audio> element; every <video>
+  // stays silent, so a person is only ever played once.
   function onRemoteTrack(p, e) {
-    const stream = e.streams[0];
-    if (stream) p.remote.streams.set(stream.id, stream);
-    placeRemoteTrack(p, e.track, stream ? stream.id : null);
-    e.track.addEventListener("ended", () => renderStage());
-    e.track.addEventListener("mute", () => renderStage());
-    e.track.addEventListener("unmute", () => renderStage());
+    const index = p.pc.getTransceivers().indexOf(e.transceiver);
+    const slot = SLOTS[index] || (e.track.kind === "audio" ? "audio" : "cam");
+    const target = slot === "audio" ? p.remote.audio : slot === "screen" ? p.remote.screen : p.remote.camera;
+    if (!target.getTracks().includes(e.track)) target.addTrack(e.track);
+    for (const ev of ["ended", "mute", "unmute"]) e.track.addEventListener(ev, () => renderStage());
     renderStage();
-  }
-
-  // Which of a person's streams is their camera and which their screen is told over the data
-  // channel; until then everything is treated as camera.
-  function placeRemoteTrack(p, track, streamId) {
-    // Voices go to their own <audio> element. Every <video> stays silent, so a person is only ever
-    // played once — and a hidden or paused video cannot take their voice with it.
-    if (track.kind === "audio") {
-      if (!p.remote.audio.getTracks().includes(track)) p.remote.audio.addTrack(track);
-      return;
-    }
-    const isScreen = streamId && p.remote.screenId === streamId;
-    const target = isScreen ? p.remote.screen : p.remote.camera;
-    const other = isScreen ? p.remote.camera : p.remote.screen;
-    if (other.getTracks().includes(track)) other.removeTrack(track);
-    if (!target.getTracks().includes(track)) target.addTrack(track);
   }
 
   // A pair that has not connected after a while gets fresh ICE candidates (and fresh relay
@@ -1028,8 +1029,7 @@
   function sendState(p) {
     if (!p.dc || p.dc.readyState !== "open") return;
     p.dc.send(JSON.stringify({
-      t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff, aec: echoCancelling(),
-      camera: local.stream ? local.stream.id : null, screen: local.screenStream ? local.screenStream.id : null,
+      t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff, screen: Boolean(local.screen), aec: echoCancelling(),
     }));
   }
   function broadcastState() { for (const p of peers.values()) sendState(p); }
@@ -1039,11 +1039,7 @@
     let m;
     try { m = JSON.parse(raw); } catch (_) { return; }
     if (m.t === "state") {
-      p.state = { muted: Boolean(m.muted), cameraOff: Boolean(m.cameraOff), aec: m.aec === false ? false : m.aec === true ? true : null };
-      p.remote.cameraId = typeof m.camera === "string" ? m.camera : null;
-      p.remote.screenId = typeof m.screen === "string" ? m.screen : null;
-      // Re-file tracks now that it is known which stream is which.
-      for (const [id, stream] of p.remote.streams) for (const track of stream.getTracks()) placeRemoteTrack(p, track, id);
+      p.state = { muted: Boolean(m.muted), cameraOff: Boolean(m.cameraOff), screen: Boolean(m.screen), aec: m.aec === false ? false : m.aec === true ? true : null };
       renderStage();
     } else if (m.t === "chat" && typeof m.text === "string") {
       const text = m.text.slice(0, CHAT_CHARS);
@@ -1121,20 +1117,21 @@
     const camera = Math.max(MIN_VIDEO_BPS, Math.floor(local.screen ? videoBudget * 0.35 : videoBudget));
     const screen = Math.max(MIN_VIDEO_BPS, Math.floor(videoBudget * 0.65));
     for (const p of peers.values()) {
-      if (!p.pc) continue;
-      for (const sender of p.pc.getSenders()) {
-        if (!sender.track) continue;
+      if (!p.tx) continue;
+      for (const slot of SLOTS) {
+        const sender = p.tx[slot] && p.tx[slot].sender;
+        if (!sender) continue;
         const params = sender.getParameters();
         if (!params.encodings || !params.encodings.length) continue;
         const enc = params.encodings[0];
-        if (sender.track === local.screen) {
+        if (slot === "screen") {
           enc.maxBitrate = screen; enc.maxFramerate = 15; params.degradationPreference = "maintain-resolution";
-        } else if (sender.track.kind === "video") {
+        } else if (slot === "cam") {
           enc.maxBitrate = camera; enc.maxFramerate = 30; params.degradationPreference = "balanced";
         } else {
           enc.maxBitrate = AUDIO_BPS;
         }
-        enc.priority = sender.track.kind === "audio" ? "high" : "medium";
+        enc.priority = slot === "audio" ? "high" : "medium";
         enc.networkPriority = enc.priority;
         sender.setParameters(params).catch(() => {});
       }
@@ -1557,7 +1554,8 @@
     const views = [];
     for (const p of list) {
       views.push({ id: p.id + ":cam", kind: "cam", p });
-      if (p.remote.screen.getVideoTracks().some((t) => t.readyState === "live")) views.push({ id: p.id + ":screen", kind: "screen", p });
+      // The screen slot always exists; it is a view only while that person says they are sharing.
+      if (p.state.screen && p.remote.screen.getVideoTracks().some((t) => t.readyState === "live")) views.push({ id: p.id + ":screen", kind: "screen", p });
     }
     return views;
   }
@@ -2065,7 +2063,7 @@
       pinned: room && room.pinned, layout: room && (room.layout || "auto"), fullscreen: isFullscreen(),
       local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: (local.rawMic || local.mic)?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
-      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), polite: p.polite, pendingIce: p.pendingIce.length }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
+      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), initiator: p.initiator, pendingIce: p.pendingIce.length }, remoteCamera: p.state.cameraOff ? 0 : p.remote.camera.getVideoTracks().filter((t) => t.readyState === "live").length, remoteScreen: p.state.screen ? p.remote.screen.getVideoTracks().filter((t) => t.readyState === "live").length : 0 })),
     }),
   };
 
