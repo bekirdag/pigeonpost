@@ -1,0 +1,13 @@
+{
+  "name": "pigeonpost-calls",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Signaling and short-lived TURN credentials for one-to-one Pigeonpost web calls. Media never passes through it.",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.mjs"
+  },
+  "engines": { "node": ">=22" }
+}

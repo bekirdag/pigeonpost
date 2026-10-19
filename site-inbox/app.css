@@ -154,6 +154,30 @@
   --list-w: 320px;
   --subs-w: 240px;
   --head-h: 64px;
+
+  /* The call screen: dark in either appearance (see the calls section). */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
 }
 
 /* Dark. The mockup's colours, exactly. Applied when the device is dark and Settings says System
@@ -266,6 +290,29 @@
     /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
        the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
     --doodle-veil: rgba(15, 18, 22, 0.90);
+    /* The call screen is the same dark in both appearances. */
+    --call-ground: #0d0f12;
+    --call-ink: #e8eaed;
+    --call-muted: #9aa3ae;
+    --call-body: #c3c9d1;
+    --call-edge: #2a3039;
+    --call-secure: #7dd3a0;
+    --call-tile: #171b21;
+    --call-rule: #1f242b;
+    --call-btn: #1e232b;
+    --call-btn-hover: #262b33;
+    --call-btn-edge-hover: #3a414c;
+    --call-end: #e5484d;
+    --call-end-hover: #cf3c41;
+    --call-on-solid: #fff;
+    --call-accept: #3fbf7f;
+    --call-accept-hover: #33a86d;
+    --call-focus: #8ab4ff;
+    --call-scrim-top: rgba(13, 15, 18, .86);
+    --call-scrim-clear: rgba(13, 15, 18, 0);
+    --call-chip: rgba(23, 27, 33, .88);
+    --call-shadow: rgba(0, 0, 0, .45);
+    --call-dock: rgba(17, 20, 25, .82);
   }
 }
 
@@ -375,6 +422,29 @@
   /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
      the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
   --doodle-veil: rgba(15, 18, 22, 0.90);
+  /* The call screen is the same dark in both appearances. */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
 }
 
 /* Light chosen in Settings: the :root palette, and native parts (scrollbars, form controls)
@@ -1739,3 +1809,107 @@ button { font: inherit; color: inherit; }
   white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.4 var(--mono); color: var(--ink); }
 .attachment-preview.compact { width: 72px; height: 54px; flex: 0 0 72px; }
 .preview-play { position: absolute; padding: 5px 8px; border-radius: 50%; background: var(--scrim); color: white; }
+
+/* ---- calls ------------------------------------------------------------------------------------
+   The call screen is dark in either appearance, like every video call: faces and video read best
+   against a dark ground, and a white frame around a camera image glares. Its colours are the
+   mockup's dark palette. The incoming-call card sits over the inbox, so it follows the theme. */
+.call-ui {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--call-ground); color: var(--call-ink);
+  font-family: var(--sans);
+}
+.call-stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
+.call-remote {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  object-fit: contain; background: var(--call-ground);
+}
+/* Kept playing while hidden: a voice call's audio arrives through the same element. */
+.call-stage[data-remote-video="false"] .call-remote { visibility: hidden; }
+.call-peer { position: absolute; inset: 0; display: grid; place-items: center; }
+.call-stage[data-remote-video="true"] .call-peer { display: none; }
+.call-avatar.avatar { width: 112px; height: 112px; border-radius: 50%; font-size: 38px; font-weight: 600; }
+.call-top {
+  position: absolute; top: 0; left: 0; right: 0;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 20px 24px 40px;
+  background: linear-gradient(var(--call-scrim-top), var(--call-scrim-clear));
+}
+.call-who { min-width: 0; }
+.call-who h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--call-ink); }
+.call-handle {
+  margin: 2px 0 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-status { margin: 6px 0 0; font-size: 13px; color: var(--call-body); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+.call-quality {
+  font-family: var(--mono); font-size: 11.5px; color: var(--call-muted);
+  border: 1px solid var(--call-edge); border-radius: 6px; padding: 1px 6px;
+}
+.call-quality:empty { display: none; }
+.call-sas {
+  flex: none; margin: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-radius: 9px;
+  background: var(--call-chip); border: 1px solid var(--call-edge);
+  font-size: 12.5px; color: var(--call-body);
+}
+.call-sas svg { width: 14px; height: 14px; color: var(--call-secure); }
+.call-sas strong { font-family: var(--mono); font-size: 13.5px; font-weight: 600; letter-spacing: .08em; color: var(--call-ink); }
+.call-self {
+  position: absolute; right: 20px; bottom: 104px;
+  width: min(26vw, 280px); aspect-ratio: 16 / 9; object-fit: cover;
+  border-radius: 12px; border: 1px solid var(--call-edge); background: var(--call-tile);
+  box-shadow: 0 12px 32px var(--call-shadow);
+  /* A mirror, as every camera preview is: raising your right hand moves the hand on the right. */
+  transform: scaleX(-1);
+}
+.call-stage[data-local-video="false"] .call-self { display: none; }
+.call-controls {
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
+  display: flex; gap: 16px; padding: 10px 14px;
+  background: var(--call-dock); border: 1px solid var(--call-rule); border-radius: 999px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.call-btn {
+  width: 52px; height: 52px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.call-btn:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-btn svg { width: 22px; height: 22px; }
+.call-btn .slash { display: none; }
+.call-btn[aria-pressed="true"] { background: var(--call-ink); color: var(--call-ground); border-color: var(--call-ink); }
+.call-btn[aria-pressed="true"] .slash { display: block; }
+.call-btn.call-end { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); }
+.call-btn.call-end:hover { background: var(--call-end-hover); border-color: var(--call-end-hover); }
+.call-btn.call-accept { background: var(--call-accept); border-color: var(--call-accept); color: var(--call-on-solid); }
+.call-btn.call-accept:hover { background: var(--call-accept-hover); border-color: var(--call-accept-hover); }
+.call-btn:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+
+.call-incoming {
+  position: fixed; top: 16px; right: 16px; z-index: 55;
+  width: min(392px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px 14px 16px;
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 24px 60px var(--shadow-sheet);
+}
+.call-incoming .avatar { flex: none; }
+.call-incoming-text { flex: 1; min-width: 0; }
+.call-incoming-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-incoming-title { font-size: 12px; font-weight: 500; color: var(--muted); }
+.call-incoming-from { margin-top: 1px !important; font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.call-incoming-note { margin-top: 2px !important; font-size: 12px; color: var(--faint); }
+.call-incoming-actions { flex: none; display: flex; gap: 10px; }
+.call-incoming .call-btn { width: 44px; height: 44px; }
+.call-incoming .call-btn svg { width: 20px; height: 20px; }
+
+@media (max-width: 640px) {
+  .call-top { padding: 16px 16px 36px; flex-direction: column; }
+  .call-self { width: 34vw; right: 14px; bottom: 112px; }
+  .call-controls { bottom: 22px; gap: 14px; }
+  .call-incoming { top: 10px; right: 10px; width: calc(100vw - 20px); }
+}
