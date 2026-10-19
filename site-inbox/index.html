@@ -21,7 +21,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261019-theme"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261019-callux">
+<link rel="stylesheet" href="app.css?v=20261019-viewer">
 </head>
 <body>
 
@@ -407,9 +407,23 @@
   </div>
 </div>
 
+<div class="viewer" id="viewer" role="dialog" aria-modal="true" aria-labelledby="viewer-name" hidden>
+  <header class="viewer-head">
+    <div class="viewer-title"><h2 id="viewer-name"></h2><p id="viewer-meta"></p></div>
+    <button id="viewer-download" class="viewer-btn" type="button">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      <span>Download</span>
+    </button>
+    <button id="viewer-close" class="viewer-close" type="button" aria-label="Close" title="Close">
+      <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+    </button>
+  </header>
+  <div class="viewer-body" id="viewer-body"></div>
+</div>
+
 <script src="config.js"></script>
 <script src="handle.js"></script>
-<script src="app.js?v=20261019-callux"></script>
-<script src="calls.js?v=20261019-callux"></script>
+<script src="app.js?v=20261019-viewer"></script>
+<script src="calls.js?v=20261019-viewer"></script>
 </body>
 </html>
