@@ -105,7 +105,7 @@ public sealed partial class MainWindow
             {
                 if (!CallBridge.SameOrigin(ParseUri(e.Uri), callPage)) e.Cancel = true;
             };
-            core.NewWindowRequested += (_, e) =>
+            core.NewWindowRequested += (sender, e) =>
             {
                 e.Handled = true;
                 if (CallBridge.IsExternalLink(ParseUri(e.Uri))) _ = Launcher.LaunchUriAsync(new Uri(e.Uri));
