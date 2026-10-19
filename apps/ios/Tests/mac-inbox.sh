@@ -21,8 +21,9 @@ swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-in
   Shared/Config.swift Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Model/Inbox.swift Shared/Model/Conversation.swift Shared/Model/StagedFile.swift \
   Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Platform.swift Shared/Design/Time.swift \
-  Shared/Views/Markdown.swift Shared/Views/Components.swift Shared/Views/MessageBubble.swift \
-  Shared/Views/AttachmentViews.swift Shared/Views/AttachmentPreview.swift PigeonpostMac/MacInboxView.swift PigeonpostMac/MacThreadView.swift \
+  Shared/Views/Markdown.swift Shared/Views/SelectableText.swift Shared/Views/Components.swift Shared/Views/MessageBubble.swift \
+  Shared/Views/AttachmentViews.swift Shared/Views/AttachmentPreview.swift Shared/Views/Desktop/DesktopInboxView.swift Shared/Views/NewThreadSheet.swift \
+  PigeonpostMac/MacInboxView.swift PigeonpostMac/MacThreadView.swift \
   PigeonpostMac/MacMessageEditor.swift
 # Run as a normal macOS app and keep its output. `open` does not propagate the app's exit
 # status, so require its explicit successful-completion line after it terminates.

@@ -39,11 +39,6 @@ struct MacNewConversationSheet: View {
     let started: (String) -> Void
     var body: some View { Text("New conversation") }
 }
-struct MacNewThreadSheet: View {
-    let peer: String
-    let started: (String) -> Void
-    var body: some View { Text("New thread") }
-}
 extension Notification.Name {
     static let newConversation = Notification.Name("pigeonpost.newConversation")
     static let refreshInbox = Notification.Name("pigeonpost.refreshInbox")
@@ -308,10 +303,10 @@ extension Notification.Name {
             let target = index.isMultiple(of: 2) ? InboxLoadingTests.b : InboxLoadingTests.a
             let currentLabel = PeerFace.displayName(account.me!.key)
             print("Picker cycle \(index): opening \(currentLabel)")
-            await click(x: 40, y: 14, window: window, host: host)
+            await click(x: 40, y: 35, window: window, host: host)
             await settle()
             snapshot(host, name: "mac-inbox-picker-open")
-            await click(x: 70, y: target.address == InboxLoadingTests.a.address ? 44 : 74, window: window, host: host)
+            await click(x: 70, y: target.address == InboxLoadingTests.a.address ? 88 : 124, window: window, host: host)
             await InboxLoadingTests.wait("picker selects \(target.key)") { account.me?.address == target.address }
             await InboxLoadingTests.pending(target.address, count: 5)
             InboxLoadingTests.check(inbox.loading && !inbox.hasLoaded, "picker switch shows loading without stale data")
@@ -319,10 +314,10 @@ extension Notification.Name {
             InboxLoadingTests.finish(target.address, marker: marker, inboxBody: stressMessages(marker))
             await InboxLoadingTests.wait("picker data ready") { inbox.hasLoaded && !inbox.loading }
             await settle()
-            await click(x: 90, y: 54, window: window, host: host)
+            await click(x: 90, y: 100, window: window, host: host)
             if index.isMultiple(of: 2) { await settle() }
             InboxLoadingTests.check(inbox.reading == "/test/peer", "conversation opens through the native List")
-            await click(x: 350, y: 73, window: window, host: host)
+            await click(x: 350, y: 92, window: window, host: host)
             if index.isMultiple(of: 2) {
                 await settle()
                 InboxLoadingTests.check(hasVisibleMessage(in: host), "long subject renders message bubbles instead of a blank viewport")

@@ -1,8 +1,10 @@
 //  The conversations, and the thread beside them.
 //
-//  A split view rather than a stack: on a phone it is one pane at a time, exactly as the web app is,
-//  and on an iPad it is the two-pane messenger the web app becomes on a wide screen. The same view
-//  code either way — the platform makes that decision better than a width check would.
+//  Two shapes. A phone — and an iPad squeezed into a compact slice of the screen — gets the split
+//  view that collapses to one pane at a time, exactly as the web app is on a narrow screen. An iPad
+//  with room for it gets the desktop app's three columns: `DesktopInboxView`, the same code the Mac
+//  runs. The size class decides, not the device, so an iPad dragged into Split View moves between
+//  the two without losing what was open.
 
 import SwiftUI
 
@@ -12,7 +14,14 @@ struct ConversationsView: View {
     @Environment(PushService.self) private var push
     @Environment(\.scenePhase) private var scenePhase
 
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
     @State private var selection: String?
+    /// The subject chosen in the desktop layout's middle column. The phone keeps its own, inside
+    /// the thread.
+    @State private var subthread: String?
+    /// A mailbox chosen from a sender's panel, switched to once that panel has gone.
+    @State private var pendingMailbox: Mailbox?
     /// One sheet at a time, named.
     ///
     /// This was four separate `.sheet(isPresented:)` modifiers stacked on the same view, and SwiftUI
@@ -23,30 +32,35 @@ struct ConversationsView: View {
     @State private var sheet: Sheet?
     @State private var didStageFixtures = false
 
-    private enum Sheet: String, Identifiable {
+    private enum Sheet: Identifiable {
         case identities, settings, new, scanner
-        var id: String { rawValue }
+        case peer(Conversation)
+
+        init?(staged: String) {
+            switch staged {
+            case "identities": self = .identities
+            case "settings": self = .settings
+            case "new": self = .new
+            case "scanner": self = .scanner
+            default: return nil
+            }
+        }
+
+        var id: String {
+            switch self {
+            case .identities: return "identities"
+            case .settings: return "settings"
+            case .new: return "new"
+            case .scanner: return "scanner"
+            case .peer(let conversation): return "peer:" + conversation.peer
+            }
+        }
     }
 
     var body: some View {
         @Bindable var inbox = inbox
 
-        NavigationSplitView {
-            list
-                .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
-                .navigationBarTitleDisplayMode(.inline)
-                .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
-                .toolbar { toolbar }
-        } detail: {
-            if let selection, inbox.conversation(with: selection) != nil {
-                ThreadView(peer: selection)
-                    .id(selection)
-            } else {
-                ContentUnavailableView("Pick a conversation", systemImage: "tray")
-                    .background { DoodleBackground() }
-            }
-        }
-        .navigationSplitViewStyle(.balanced)
+        layout
         // What is on screen is not news — the inbox drops arrivals for it rather than announcing
         // them, and until this was set that guard had never once been true on the phone.
         .onChange(of: selection, initial: true) { _, picked in
@@ -67,7 +81,7 @@ struct ConversationsView: View {
                 IOSUXFixtures.apply(account: account, inbox: inbox)
                 #endif
                 if let peer = Fixtures.openPeer, selection == nil { selection = peer }
-                if let staged = Fixtures.sheet { sheet = Sheet(rawValue: staged) }
+                if let staged = Fixtures.sheet { sheet = Sheet(staged: staged) }
             }
             guard !Fixtures.enabled else { return }
             guard scenePhase == .active, account.me != nil else { return }
@@ -87,21 +101,76 @@ struct ConversationsView: View {
             selection = peer
             push.pendingPeer = nil
         }
-        .sheet(item: $sheet) { which in
+        .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
             case .identities:
-                IdentityPickerSheet { mailbox in
-                    guard mailbox.address != account.me?.address else { return }
-                    selection = nil
-                    inbox.reset()
-                    account.act(as: mailbox)
-                }
+                IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
             case .scanner: ScanView()
             case .new: NewConversationSheet { peer in selection = peer }
+            case .peer(let conversation):
+                PeerInfoSheet(conversation: conversation) { mailbox in
+                    pendingMailbox = mailbox
+                    sheet = nil
+                }
             }
         }
         .toast($inbox.toast)
+    }
+
+    @ViewBuilder
+    private var layout: some View {
+        if sizeClass == .regular {
+            DesktopInboxView(
+                peer: $selection,
+                subthread: $subthread,
+                newConversation: { sheet = .new },
+                openSettings: { sheet = .settings },
+                showPeer: { sheet = .peer($0) },
+                visit: visit
+            )
+        } else {
+            phone
+        }
+    }
+
+    /// Reading as another of this account's mailboxes. Whatever was open belongs to the old one.
+    private func visit(_ mailbox: Mailbox) {
+        guard mailbox.address != account.me?.address else { return }
+        selection = nil
+        subthread = nil
+        inbox.reset()
+        account.act(as: mailbox)
+    }
+
+    private func finishMailboxVisit() {
+        guard let mailbox = pendingMailbox else { return }
+        pendingMailbox = nil
+        guard account.mailboxes.contains(where: { $0.address == mailbox.address }) else { return }
+        visit(mailbox)
+    }
+
+    private var phone: some View {
+        @Bindable var inbox = inbox
+
+        return NavigationSplitView {
+            list
+                .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
+                .navigationBarTitleDisplayMode(.inline)
+                .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")
+                .toolbar { toolbar }
+                .toolbarBackground(Theme.sidebar, for: .navigationBar)
+                .toolbarBackground(.visible, for: .navigationBar)
+        } detail: {
+            if let selection, inbox.conversation(with: selection) != nil {
+                ThreadView(peer: selection)
+                    .id(selection)
+            } else {
+                ContentUnavailableView("Pick a conversation", systemImage: "tray")
+                    .background { DoodleBackground() }
+            }
+        }
+        .navigationSplitViewStyle(.balanced)
     }
 
     /// What the live task is keyed on. Either changing means the old poll is wrong.
@@ -114,13 +183,15 @@ struct ConversationsView: View {
         List(selection: $selection) {
             if inbox.offline {
                 Label("Not connected. Showing what was last loaded.", systemImage: "wifi.slash")
-                    .font(.system(size: 12.5))
+                    .font(.geist(12.5))
                     .foregroundStyle(Theme.muted)
                     .listRowBackground(Theme.wash)
             }
             ForEach(inbox.visible) { conversation in
                 ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
                     .tag(conversation.peer)
+                    .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+                    .listRowSeparatorTint(Theme.rule)
                     .swipeActions(edge: .trailing) {
                         Button {
                             Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
@@ -132,6 +203,8 @@ struct ConversationsView: View {
             }
         }
         .listStyle(.plain)
+        .scrollContentBackground(.hidden)
+        .background(Theme.sidebar)
         .overlay { emptyState }
         .refreshable { await inbox.loadAll() }
     }
@@ -158,13 +231,13 @@ struct ConversationsView: View {
         ToolbarItem(placement: .topBarLeading) {
             Button { sheet = .identities } label: {
                 HStack(spacing: 7) {
-                    Avatar(peer: account.me?.key, size: 26)
+                    Avatar(peer: account.me?.key, size: 28)
                     Text(actingName)
-                        .font(.system(size: 15, weight: .semibold))
+                        .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
                     Image(systemName: "chevron.down")
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Theme.muted)
+                        .font(.geist(11, .semibold))
+                        .foregroundStyle(Theme.secondary)
                 }
             }
             .accessibilityLabel("Acting as \(actingName). Change mailbox")
@@ -181,11 +254,11 @@ struct ConversationsView: View {
         // button that presents a sheet is one fewer presentation to go wrong than a menu that
         // presents a sheet.
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .new } label: { Image(systemName: "square.and.pencil") }
+            Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
                 .accessibilityLabel("New conversation")
         }
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .settings } label: { Image(systemName: "gearshape") }
+            Button { sheet = .settings } label: { Image(systemName: "gearshape").foregroundStyle(Theme.secondary) }
                 .accessibilityLabel("Settings")
         }
     }
@@ -199,31 +272,29 @@ struct ConversationsView: View {
 
 struct ConversationRow: View {
     let conversation: Conversation
-    /// A selected row is filled with the tint, which is the navy this app is drawn in. Text that
-    /// stays dark on it is unreadable, and SwiftUI cannot invert it for us — it does that only for
-    /// text whose colour it chose, and every colour here is chosen deliberately.
+    /// A selected row sits on a quiet grey card (see the list), so its text keeps its colours.
     var isSelected: Bool = false
 
     var body: some View {
-        HStack(alignment: .top, spacing: 11) {
-            Avatar(peer: conversation.peer)
+        HStack(alignment: .center, spacing: 12) {
+            Avatar(peer: conversation.peer, size: 40)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)
-                        .font(.system(size: 15.5, weight: .semibold))
-                        .foregroundStyle(isSelected ? Color.white : Theme.ink)
+                        .font(.geistMono(14.5, .semibold))
+                        .foregroundStyle(Theme.ink)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.last > 0 {
                         Text(Time.listTime(conversation.last))
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(isSelected ? Color.white.opacity(0.75) : Theme.muted)
+                            .font(.geist(11.5))
+                            .foregroundStyle(Theme.muted)
                     }
                 }
-                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                HStack(alignment: .center, spacing: 8) {
                     Text(preview)
-                        .font(.system(size: 13.5))
-                        .foregroundStyle(isSelected ? Color.white.opacity(0.85) : Theme.body)
+                        .font(.geist(13.5))
+                        .foregroundStyle(Theme.secondary)
                         .lineLimit(1)
                     Spacer(minLength: 0)
                     if conversation.held > 0 { PillView(text: "held", kind: .held) }

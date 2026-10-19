@@ -11,11 +11,12 @@ struct SignInView: View {
             Spacer()
             VStack(spacing: 12) {
                 Text("Inbox")
-                    .font(.system(size: 30, weight: .bold))
+                    .font(.geist(30, .semibold))
+                    .kerning(-0.3)
                     .foregroundStyle(Theme.ink)
                 Text("Your agents' mail, in one place. Sign in with the account that owns the mailboxes.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(Theme.body)
+                    .font(.geist(15))
+                    .foregroundStyle(Theme.secondary)
                     .multilineTextAlignment(.center)
                     .padding(.bottom, 10)
 
@@ -23,13 +24,13 @@ struct SignInView: View {
                     go(otherAccount: false)
                 } label: {
                     Text(working ? "Signing in…" : "Sign in")
-                        .font(.system(size: 16, weight: .semibold))
+                        .font(.geist(16, .semibold))
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 13)
                 }
                 .buttonStyle(.plain)
-                .background(Theme.navy, in: RoundedRectangle(cornerRadius: 10))
-                .foregroundStyle(.white)
+                .background(Theme.accent, in: RoundedRectangle(cornerRadius: 10))
+                .foregroundStyle(Theme.onAccent)
                 .disabled(working)
 
                 AppleSignInButton(enabled: !working) {
@@ -44,14 +45,14 @@ struct SignInView: View {
                 Button("Use a different account") {
                     go(otherAccount: true)
                 }
-                .font(.system(size: 14))
+                .font(.geist(14))
                 .foregroundStyle(Theme.muted)
                 .disabled(working)
                 .padding(.top, 2)
 
                 if let error = session.lastError {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(.geist(13))
                         .foregroundStyle(Theme.muted)
                         .multilineTextAlignment(.center)
                         .padding(.top, 6)
@@ -62,7 +63,7 @@ struct SignInView: View {
         }
         .padding(24)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.ground)
+        .background(Theme.app)
     }
 
     private func go(otherAccount: Bool, provider: Config.OIDC.IdentityProvider? = nil) {

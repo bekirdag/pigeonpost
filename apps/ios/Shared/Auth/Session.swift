@@ -66,8 +66,9 @@ final class Session {
         // Through locals, and `status` first: @Observable turns these into computed properties over
         // its registrar, so reading one back before every stored property is initialized is
         // touching `self` too early.
-        let access = Keychain.read(Key.access)
-        let refresh = Keychain.read(Key.refresh)
+        // A fixture launch is a demo mailbox and must not pick up, or later act on, a real session.
+        let access = Fixtures.enabled ? nil : Keychain.read(Key.access)
+        let refresh = Fixtures.enabled ? nil : Keychain.read(Key.refresh)
         // A stored refresh token is a session even when the access token beside it is spent: the
         // first call will renew it. Only the absence of both is signed out.
         status = (refresh != nil || access != nil) ? .signedIn : .signedOut
@@ -174,8 +175,12 @@ final class Session {
         refreshTask = nil
         accessToken = nil
         refreshToken = nil
-        Keychain.delete(Key.access)
-        Keychain.delete(Key.refresh)
+        // A fixture launch never read these, so it has no business removing them either — on a
+        // Mac the demo window shares the Keychain with the real app.
+        if !Fixtures.enabled {
+            Keychain.delete(Key.access)
+            Keychain.delete(Key.refresh)
+        }
         status = .signedOut
     }
 

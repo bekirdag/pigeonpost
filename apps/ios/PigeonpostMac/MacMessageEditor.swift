@@ -16,14 +16,17 @@ struct MacMessageEditor: NSViewRepresentable {
         scroll.drawsBackground = false
         scroll.hasVerticalScroller = true
         scroll.autohidesScrollers = true
+        // Overlay scrollers whatever the system setting: a legacy scroller is a white bar beside a
+        // one-line field, and the field scrolls only once a draft is taller than the composer.
+        scroll.scrollerStyle = .overlay
         let editor = AttachmentTextView()
         editor.isRichText = false
         editor.importsGraphics = false
         editor.drawsBackground = false
-        editor.font = .systemFont(ofSize: 13)
+        editor.font = Typeface.platform(14.5)
         editor.textColor = NSColor(Theme.ink)
-        editor.insertionPointColor = NSColor(Theme.ink)
-        editor.textContainerInset = NSSize(width: 5, height: 7)
+        editor.insertionPointColor = NSColor(Theme.accent)
+        editor.textContainerInset = NSSize(width: 0, height: 7)
         editor.isVerticallyResizable = true
         editor.isHorizontallyResizable = false
         editor.autoresizingMask = [.width]
@@ -75,8 +78,8 @@ final class AttachmentTextView: NSTextView {
         // change the live, width-tracking text container here: forcing its layout resizes the
         // NSTextView and retiles its NSScrollView while SwiftUI is still measuring (Sonoma hang).
         let width = max(0, proposedWidth.flatMap { $0.isFinite ? $0 : nil } ?? 300)
-        guard width > 0 else { return CGSize(width: 0, height: 32) }
-        let font = self.font ?? .systemFont(ofSize: 13)
+        guard width > 0 else { return CGSize(width: 0, height: 34) }
+        let font = self.font ?? .systemFont(ofSize: 14.5)
         let paragraph = defaultParagraphStyle ?? .default
         let padding = textContainer?.lineFragmentPadding ?? 5
         if measuredText != string || measuredFont != font || measuredParagraph != paragraph
@@ -114,7 +117,7 @@ final class AttachmentTextView: NSTextView {
         } else {
             // Include the insertion line after a trailing newline, which has no glyph of its own.
             let used = max(layout.usedRect(for: container).maxY, layout.extraLineFragmentRect.maxY)
-            height = min(maximumHeight, max(32, ceil(used + verticalInset)))
+            height = min(maximumHeight, max(34, ceil(used + verticalInset)))
         }
         let size = CGSize(width: width, height: height)
         // Remember SwiftUI's few width probes, without growing a cache throughout window resizing.

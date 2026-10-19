@@ -15,6 +15,10 @@ struct PigeonpostApp: App {
         _session = State(initialValue: session)
         _account = State(initialValue: account)
         _inbox = State(initialValue: inbox)
+        // The bars UIKit draws for SwiftUI's navigation titles, in the app's own type.
+        let bar = UINavigationBar.appearance()
+        bar.titleTextAttributes = [.font: Typeface.platform(16, .semibold)]
+        bar.largeTitleTextAttributes = [.font: Typeface.platform(30, .semibold)]
         #if DEBUG
         if Fixtures.enabled {
             Fixtures.apply(session: session, account: account, inbox: inbox)
@@ -32,6 +36,7 @@ struct PigeonpostApp: App {
                 .environment(account)
                 .environment(inbox)
                 .environment(push)
+                .appliesAppearanceChoice()
                 .task {
                     push.attach(to: account)
                     // And the inbox, which is what the notification delegate consults before it

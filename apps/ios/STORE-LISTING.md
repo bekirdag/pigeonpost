@@ -124,8 +124,9 @@ A third is worth adding and needs two taps rather than a launch flag: **Settings
 Trusted senders**, which is the screen that makes the product's argument about admission and
 autonomy. `Screenshots/README.md` has the exact commands.
 
-Upload them under **6.9" Display**. iPad shots are not needed: the app ships iPhone-only
-(`TARGETED_DEVICE_FAMILY = 1`).
+Upload them under **6.9" Display**. The app also runs natively on iPad
+(`TARGETED_DEVICE_FAMILY = 1,2`, the desktop three-column layout in a regular width), so a release
+needs **13" iPad** screenshots too — the same `-fixtures` launch on an iPad Pro 13-inch simulator.
 
 ## App Review Information — the part that gets apps rejected
 

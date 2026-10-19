@@ -37,10 +37,11 @@ struct IdentityPickerSheet: View {
                 }
                 Section {
                     Text("Opening a mailbox shows the mail it has received. To write *to* one of your agents, pick it from the conversation list instead.")
-                        .font(.system(size: 12.5))
+                        .font(.geist(12.5))
                         .foregroundStyle(Theme.muted)
                 }
             }
+            .sheetSurface()
             .navigationTitle("Mailboxes")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -59,10 +60,10 @@ struct MailboxRow: View {
             Avatar(peer: mailbox.key)
             VStack(alignment: .leading, spacing: 2) {
                 Text(name)
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.geistMono(14.5, .semibold))
                     .foregroundStyle(Theme.ink)
                 Text(sub)
-                    .font(.system(size: 12.5))
+                    .font(.geist(12.5))
                     .foregroundStyle(Theme.muted)
                     .lineLimit(1)
                     .truncationMode(.middle)
@@ -107,7 +108,7 @@ struct NewConversationSheet: View {
                         }
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .font(.system(size: 15, design: .monospaced))
+                        .font(.geistMono(15))
                 } header: {
                     Text("Their address")
                 } footer: {
@@ -121,10 +122,11 @@ struct NewConversationSheet: View {
 
                 if let error {
                     Text(error)
-                        .font(.system(size: 13))
+                        .font(.geist(13))
                         .foregroundStyle(Theme.Pill.blockedText)
                 }
             }
+            .sheetSurface()
             .navigationTitle("New conversation")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -152,66 +154,6 @@ struct NewConversationSheet: View {
                 self.error = "Could not reach the postbox."
             }
             sending = false
-        }
-    }
-}
-
-/// A thread keeps one subject apart from the rest, so an old request does not colour a new one.
-/// Both sides see the same name.
-struct NewThreadSheet: View {
-    let peer: String
-    let onOpened: (String) -> Void
-
-    @Environment(Inbox.self) private var inbox
-    @Environment(\.dismiss) private var dismiss
-
-    @State private var title = ""
-    @State private var error: String?
-    @State private var working = false
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    TextField("the deploy, the failing tests, next week's release", text: $title)
-                } header: {
-                    Text("What is it about?")
-                } footer: {
-                    Text("A thread keeps one subject apart from the rest. Both sides see the same name.")
-                }
-                if let error {
-                    Text(error)
-                        .font(.system(size: 13))
-                        .foregroundStyle(Theme.Pill.blockedText)
-                }
-            }
-            .navigationTitle("New thread")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button("Create") { create() }
-                        .disabled(working || title.trimmed.isEmpty)
-                }
-            }
-        }
-        .presentationDetents([.medium])
-    }
-
-    private func create() {
-        working = true
-        error = nil
-        Task {
-            do {
-                let id = try await inbox.openThread(with: peer, title: title.trimmed)
-                onOpened(id)
-                dismiss()
-            } catch let failure as APIError {
-                error = failure.errorDescription
-            } catch {
-                self.error = "Could not open the thread."
-            }
-            working = false
         }
     }
 }

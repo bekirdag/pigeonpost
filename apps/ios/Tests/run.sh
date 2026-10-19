@@ -14,7 +14,7 @@ swiftc -O -o "$out/thread-model" \
   Shared/Model/Conversation.swift \
   Shared/Design/PeerFace.swift \
   Shared/Design/Theme.swift \
-  Shared/Views/Markdown.swift
+  Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
 "$out/thread-model"
 swiftc -O -o "$out/handles" \
   Tests/HandleStoreTests.swift Shared/API/Models.swift Shared/API/APIError.swift \
@@ -24,7 +24,7 @@ swiftc -O -parse-as-library -o "$out/inbox-loading" \
   Tests/InboxLoadingTests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Model/Inbox.swift Shared/Model/Conversation.swift \
-  Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Views/Markdown.swift
+  Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
 "$out/inbox-loading"
 swiftc -O -o "$out/ios-navigation" Tests/IOSNavigationTests.swift Shared/API/Models.swift \
   Pigeonpost/Views/MailboxOrder.swift Pigeonpost/Views/HistoryWindow.swift

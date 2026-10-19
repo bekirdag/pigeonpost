@@ -116,9 +116,9 @@ struct PeerInfoSheet: View {
                 if conversation.mine, let identity = conversation.identity {
                     Section {
                         Button("Open this mailbox") { onOpenMailbox(identity) }
-                            .font(.system(size: 15, weight: .semibold))
+                            .font(.geist(15, .semibold))
                         Text(note)
-                            .font(.system(size: 12.5))
+                            .font(.geist(12.5))
                             .foregroundStyle(Theme.muted)
                     }
                 }
@@ -135,6 +135,7 @@ struct PeerInfoSheet: View {
                     }
                 }
             }
+            .sheetSurface()
             .navigationTitle(conversation.name)
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
@@ -163,11 +164,11 @@ struct PeerInfoSheet: View {
     private func row(_ term: String, _ value: String, mono: Bool = false) -> some View {
         HStack(alignment: .firstTextBaseline) {
             Text(term)
-                .font(.system(size: 13))
+                .font(.geist(13))
                 .foregroundStyle(Theme.muted)
             Spacer(minLength: 12)
             Text(value)
-                .font(.system(size: 13, design: mono ? .monospaced : .default))
+                .font(mono ? .geistMono(13) : .geist(13))
                 .foregroundStyle(Theme.body)
                 .multilineTextAlignment(.trailing)
                 .textSelection(.enabled)
