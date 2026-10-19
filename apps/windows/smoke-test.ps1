@@ -199,6 +199,24 @@ try {
             throw "Dragging over a message did not copy part of its text (got '$copied')."
         }
         Capture 'partial-selection.png'
+        # Double-clicking a word selects just that word, again without the row taking over.
+        Set-Clipboard 'selection-sentinel'
+        Move-Mouse ($x + 20) $y
+        Start-Sleep -Milliseconds 150
+        foreach ($click in 1..2) {
+            [NativeWindowBounds]::mouse_event(2, 0, 0, 0, [UIntPtr]::Zero)
+            [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
+            Start-Sleep -Milliseconds 60
+        }
+        Start-Sleep -Milliseconds 400
+        [System.Windows.Forms.SendKeys]::SendWait('^c')
+        Start-Sleep -Milliseconds 300
+        $word = Get-Clipboard -Raw
+        Write-Host "Double-click copied: '$word'"
+        if (-not $word -or $word.Trim() -ne $Text.Split(' ')[0]) {
+            Capture 'word-selection-failed.png'
+            throw "Double-clicking a word did not select it (got '$word')."
+        }
     }
     function Check-Download([string]$Name, [string]$Original) {
         $destination = Join-Path $downloadDirectory $Name
