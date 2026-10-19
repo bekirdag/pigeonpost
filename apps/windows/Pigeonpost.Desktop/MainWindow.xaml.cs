@@ -96,8 +96,20 @@ public sealed partial class MainWindow : Window
             foreach (var path in paths) items.Add(await Windows.Storage.StorageFile.GetFileFromPathAsync(path));
             return items;
         }));
+        _ = RefreshStartupToggleAsync();
+        await EnsureStartedAsync();
+    }
+
+    // Account work starts once: when the window first loads, or earlier, without any window,
+    // when Windows starts Pigeonpost at sign-in.
+    private Task? started;
+    private bool startedInNotificationArea;
+    private Task EnsureStartedAsync() => started ??= StartAccountAsync();
+
+    private async Task StartAccountAsync()
+    {
 #if UI_TESTS
-        await CheckNativePreviewsAsync();
+        if (!startedInNotificationArea) await CheckNativePreviewsAsync(); // Needs a rendered window.
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
@@ -109,6 +121,19 @@ public sealed partial class MainWindow : Window
 #else
         await RestoreAccountAsync();
 #endif
+    }
+
+    public void StartInNotificationArea()
+    {
+        if (notifications?.CanHide != true)
+        {
+            DesktopLog.Write("Started at sign-in without a notification-area icon; showing the window");
+            ShowInbox();
+            return;
+        }
+        DesktopLog.Write("Started at sign-in; staying in the notification area");
+        startedInNotificationArea = true;
+        _ = EnsureStartedAsync();
     }
 
     private void Window_Changed(AppWindow sender, AppWindowChangedEventArgs args)

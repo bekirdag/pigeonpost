@@ -4,7 +4,8 @@
          xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
          xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
          xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
-         IgnorableNamespaces="uap rescap com desktop">
+         xmlns:uap5="http://schemas.microsoft.com/appx/manifest/uap/windows10/5"
+         IgnorableNamespaces="uap rescap com desktop uap5">
   <!-- Microsoft Store product 9N0NWJ9L8XDP. Microsoft signs accepted Store packages. -->
   <Identity Name="WodoTeknolojiA.PigeonpostDesktop" Publisher="CN=D850EB9E-D10B-4265-83A3-AC88170D8C6D" Version="1.0.8.0" ProcessorArchitecture="__ARCH__" />
   <Properties>
@@ -26,6 +27,10 @@
         <desktop:Extension Category="windows.toastNotificationActivation">
           <desktop:ToastNotificationActivation ToastActivatorCLSID="C879AF76-2C6D-47BE-82FA-089F77156685" />
         </desktop:Extension>
+        <!-- Opt-in start at sign-in (off until the person turns it on in the account menu). -->
+        <uap5:Extension Category="windows.startupTask" Executable="Pigeonpost.exe" EntryPoint="Windows.FullTrustApplication">
+          <uap5:StartupTask TaskId="PigeonpostStartup" Enabled="false" DisplayName="Pigeonpost Desktop" />
+        </uap5:Extension>
         <com:Extension Category="windows.comServer">
           <com:ComServer>
             <com:ExeServer Executable="Pigeonpost.exe" Arguments="----AppNotificationActivated:" DisplayName="Pigeonpost Desktop">

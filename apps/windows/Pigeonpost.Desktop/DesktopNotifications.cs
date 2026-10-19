@@ -74,6 +74,18 @@ internal sealed class DesktopNotifications : IDisposable
         catch (Exception ex) { DesktopLog.Error("Showing an alert failed", ex); return false; }
     }
 
+    public static bool ShowTrayHint()
+    {
+        try
+        {
+            var notification = new AppNotificationBuilder().AddText("Pigeonpost is still running in the notification area").BuildNotification();
+            notification.Tag = "tray-hint";
+            AppNotificationManager.Default.Show(notification);
+            return notification.Id != 0;
+        }
+        catch (Exception ex) { DesktopLog.Error("Showing the notification-area hint failed", ex); return false; }
+    }
+
     internal static string NotificationKey(string value) => Convert.ToHexString(
         System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))[..16];
 

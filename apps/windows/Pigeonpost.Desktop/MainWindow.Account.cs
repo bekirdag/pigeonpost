@@ -67,7 +67,9 @@ public sealed partial class MainWindow
         Welcome.Visibility = Visibility.Collapsed;
         InboxLayout.Visibility = Visibility.Visible;
         AccountBar.Visibility = Visibility.Visible;
+        DesktopLog.Write("Opening the inbox");
         await ViewModel.InitializeAsync();
+        DesktopLog.Write($"Mailboxes loaded: {ViewModel.Mailboxes.Count}");
         EmptyAccount.Visibility = ViewModel.Mailboxes.Count == 0 ? Visibility.Visible : Visibility.Collapsed;
         if (pendingNotification is { } target)
         {

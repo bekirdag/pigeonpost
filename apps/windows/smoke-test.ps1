@@ -680,6 +680,12 @@ public static class NativeFileDragSource {
         Capture 'theme-menu-light.png'
         Choose-Theme 'System'
         Assert-Theme 'Light' 'system'
+        Write-Host 'Checking the start-at-sign-in setting in an unpackaged build.'
+        Invoke-Control 'Account'
+        $startup = Wait-Element 'Start Pigeonpost when you sign in'
+        if ($startup.Current.IsEnabled) { throw 'Unpackaged builds cannot start at sign-in, so the setting must be unavailable.' }
+        Capture 'startup-setting-unpackaged.png'
+        foreach ($n in 1..2) { if (Element 'Copy my address') { [System.Windows.Forms.SendKeys]::SendWait('{ESC}'); Start-Sleep -Milliseconds 300 } }
         $filter = Wait-Element 'Conversation filter'
         $filter.SetFocus()
         [System.Windows.Forms.SendKeys]::SendWait('%{DOWN}{HOME}{DOWN}{ENTER}')
@@ -704,6 +710,11 @@ public static class NativeFileDragSource {
             $lines | Write-Host
             if (-not ($lines -like '*Launch * as WodoTeknolojiA.PigeonpostDesktop_*')) { throw 'The installed app did not run with its package identity.' }
             if (-not ($lines -like '*Notification-area icon added*shell reports 0x00000000*')) { throw 'Windows did not accept the notification-area icon.' }
+            for ($n = 0; $n -lt 20 -and -not ($lines -like '*Start at sign-in: *'); $n++) {
+                Start-Sleep -Milliseconds 250
+                $lines = @(Get-Content $log | Where-Object { $_.Contains("[$($process.Id)]") })
+            }
+            if (-not ($lines -like '*Start at sign-in: Disabled*')) { throw "The package's sign-in startup task is missing or not off by default." }
             function Tray-Icon {
                 $buttons = [System.Windows.Automation.AutomationElement]::RootElement.FindAll([System.Windows.Automation.TreeScope]::Descendants,
                     [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::ControlTypeProperty, [System.Windows.Automation.ControlType]::Button))

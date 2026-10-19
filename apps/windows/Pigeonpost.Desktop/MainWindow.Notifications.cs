@@ -81,6 +81,7 @@ public sealed partial class MainWindow
             e.Cancel = true;
             activeWindow = false;
             AppWindow.Hide();
+            ShowTrayHintOnce();
         };
     }
 
@@ -191,5 +192,31 @@ public sealed partial class MainWindow
             AccountStatus.Text = "Windows notifications are off for Pigeonpost. Turn them on in Settings > System > Notifications.";
         else if (setting is Microsoft.Windows.AppNotifications.AppNotificationSetting.DisabledByGroupPolicy)
             AccountStatus.Text = "Windows notifications are turned off by your organization's policy.";
+    }
+}
+
+public sealed partial class MainWindow
+{
+    private bool trayHintLogged;
+
+    // Once ever: explain that closing kept Pigeonpost running beside the clock.
+    private void ShowTrayHintOnce()
+    {
+        var setting = Microsoft.Windows.AppNotifications.AppNotificationSetting.Unsupported;
+        try { setting = Microsoft.Windows.AppNotifications.AppNotificationManager.Default.Setting; }
+        catch (Exception ex) { DesktopLog.Error("Reading the Windows alert setting failed", ex); }
+        var action = TrayHint.Decide(notifications?.CanHide == true,
+            setting == Microsoft.Windows.AppNotifications.AppNotificationSetting.Enabled, preferences.LoadTrayHintShown(), trayHintLogged);
+        if (action == TrayHintAction.Show && DesktopNotifications.ShowTrayHint())
+        {
+            try { preferences.MarkTrayHintShown(); }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { DesktopLog.Error("Saving the hint state failed", ex); }
+            DesktopLog.Write("Notification-area hint shown");
+        }
+        else if (action != TrayHintAction.None)
+        {
+            trayHintLogged = true;
+            DesktopLog.Write($"Notification-area hint not shown: Windows alerts {setting}");
+        }
     }
 }

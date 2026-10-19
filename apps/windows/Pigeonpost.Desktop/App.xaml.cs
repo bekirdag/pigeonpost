@@ -65,7 +65,12 @@ public partial class App : Application
         var initialActivation = AppInstance.GetCurrent().GetActivatedEventArgs();
         // COM launches deliver their target through NotificationInvoked. Wait for it
         // before activating, so the previously selected subject is not acknowledged.
-        if (initialActivation.Kind == ExtendedActivationKind.AppNotification
+        var startedAtSignIn = initialActivation.Kind == ExtendedActivationKind.StartupTask;
+#if UI_TESTS
+        startedAtSignIn |= Environment.GetEnvironmentVariable("PIGEONPOST_UI_STARTUP") == "1";
+#endif
+        if (startedAtSignIn) window.StartInNotificationArea(); // No window at sign-in; alerts keep running.
+        else if (initialActivation.Kind == ExtendedActivationKind.AppNotification
             || !args.Arguments.Contains("----AppNotificationActivated:", StringComparison.Ordinal))
             HandleActivation(initialActivation);
     }
