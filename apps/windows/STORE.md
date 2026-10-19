@@ -8,7 +8,7 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`, Windows 11, x64 and ARM64
+- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`; prepared next: `1.0.8.0` (not yet submitted), Windows 11, x64 and ARM64
 
 ## Listing copy
 
@@ -61,6 +61,12 @@ different from Explorer's account, so the taskbar overlay API is denied there; t
 disabling the tray or native alerts. Overlay display in a normal same-user Explorer session was not
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
+
+### Version 1.0.8 release notes
+
+A refreshed look: new typography, message cards, conversation rows, composer and dialogs, in both
+dark and light themes. Select any part of a message and copy it; right-clicking selected text now
+offers Copy, while right-clicking elsewhere on a message keeps the message menu.
 
 ### Version 1.0.7 release notes
 
