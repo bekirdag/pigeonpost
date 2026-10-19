@@ -82,5 +82,8 @@ try {
         Get-Process Pigeonpost -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Remove-AppxPackage -Package $installed.PackageFullName
     }
+    # The unpackaged release smoke in the same session logs here; keep it as evidence too.
+    $releaseLog = "$env:LOCALAPPDATA\Pigeonpost\logs\desktop.log"
+    if ($Mode -eq 'shell' -and (Test-Path $releaseLog)) { Copy-Item $releaseLog (Join-Path $OutputDirectory 'release-session-desktop.log') -Force; Get-Content $releaseLog | Write-Host }
     Remove-Item (Join-Path $signals 'packaged-notifications.request') -ErrorAction SilentlyContinue
 }

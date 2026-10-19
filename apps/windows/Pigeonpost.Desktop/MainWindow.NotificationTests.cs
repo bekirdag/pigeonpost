@@ -21,8 +21,13 @@ public sealed partial class MainWindow
             refreshTimer?.Stop();
             await DesktopNotifications.ClearAlertsAsync();
             if (notificationInitializationError is not null) throw new InvalidOperationException("Notification initialization failed", notificationInitializationError);
-            Check(notifications?.CanHide == true, "Native tray icon created");
+            Check(notifications is not null, "Native notification services created");
             var shell = notifications!.ShellIconState();
+            // Only the taskbar owner's session can hold the icon: a standard user beside the runner's
+            // elevated Explorer is blocked by Windows (UIPI), which never happens on a real PC.
+            var trayExpected = packaged?.Mode == "shell";
+            if (trayExpected) Check(notifications.CanHide, "Shell added the notification-area icon");
+            else checks.Add($"Notification-area icon {(notifications.CanHide ? "added" : "not available to this session")} (0x{shell:X8})");
             var setting = AppNotificationManager.Default.Setting;
             var identity = DesktopLog.PackageIdentity();
             var alertsExpected = packaged is null || packaged.Mode == "alerts";
@@ -34,9 +39,13 @@ public sealed partial class MainWindow
             }
             var baseline = unreadState.Count;
             // Exercise the actual close-to-tray path and poll using the release integration.
-            SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE, as the title-bar button sends
-            await Task.Delay(200);
-            Check(!AppWindow.IsVisible && !lifetime.IsCancellationRequested, "Close keeps the signed-in app running in the tray");
+            if (notifications.CanHide)
+            {
+                SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE, as the title-bar button sends
+                await Task.Delay(200);
+                Check(!AppWindow.IsVisible && !lifetime.IsCancellationRequested, "Close keeps the signed-in app running in the tray");
+            }
+            else { AppWindow.Hide(); await Task.Delay(200); checks.Add("Window hidden directly (closing without an icon exits, by design)"); }
             preview.ReceiveForUiTest();
             preview.ReceiveForUiTest("design-release");
             await ViewModel.RefreshAsync();
