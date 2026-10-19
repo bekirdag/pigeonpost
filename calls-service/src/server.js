@@ -1,18 +1,18 @@
-// Pigeonpost calls — signaling and relay credentials for one-to-one web calls.
+// Pigeonpost calls — signaling and relay credentials for web calls.
 //
-// What this service is: a rendezvous. It tells a mailbox that another mailbox is ringing it, carries
-// the WebRTC offer/answer and ICE candidates between the two browsers, and mints short-lived TURN
-// credentials. What it is not: a media path. Audio and video travel browser to browser (or through
-// the TURN relay) encrypted with DTLS-SRTP keys that never leave the two endpoints; nothing here can
-// read them, and the clients show a security code derived from both endpoints' DTLS fingerprints so
-// two people can confirm that this service did not put itself in the middle.
+// What this service is: a rendezvous. It rings a mailbox, admits people who knock on a meeting link,
+// carries WebRTC setup messages between browsers and mints short-lived TURN credentials. What it is
+// not: a media path. Every pair of browsers in a call holds its own DTLS-SRTP keys; audio, video,
+// screens and in-call chat travel between them directly or through the TURN relay, which forwards
+// ciphertext. Each screen shows, per person, a security code derived from both browsers' DTLS
+// fingerprints, so people can confirm that this service did not put itself in the middle.
 //
-// Who may do what is decided by the postbox, not here. Every request carries the member's own token;
-// this service asks the postbox which mailboxes that token's account owns (`/v1/identities`, then
-// `/v1/whoami` for each mailbox's handle) and acts only within that set. It holds no account data of
-// its own and keeps every call in memory for its lifetime only.
+// Members are authorised by the postbox, not here: every member request carries the member's own
+// token, and this service asks the postbox which mailboxes that token's account owns. Guests — people
+// opening a meeting link without a Pigeonpost account — get an anonymous session that can do exactly
+// one thing: ask to join. Somebody already in the call decides.
 //
-// Dependency-free on purpose: Node's http, crypto and timers are the whole runtime.
+// Everything is in memory for the life of a call. Dependency-free on purpose.
 
 import http from "node:http";
 import crypto from "node:crypto";
@@ -20,45 +20,58 @@ import crypto from "node:crypto";
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
   return {
-    port: Number(env.CALLS_PORT || 8791),
+    port: Number(env.CALLS_PORT || 8795),
     host: env.CALLS_HOST || "127.0.0.1",
     postbox: (env.CALLS_POSTBOX_URL || "https://postbox.pigeonpost.dev").replace(/\/+$/, ""),
     turnSecret: env.CALLS_TURN_SECRET || "",
     turnUrls,
     // Long enough to outlast a long call: coturn re-checks the credential on every allocation
-    // refresh, so a credential that expires mid-call drops the relayed media with it.
+    // refresh, so a credential that expires mid-call drops relayed media with it.
     turnTtlSeconds: Number(env.CALLS_TURN_TTL_SECONDS || 6 * 3600),
     allowedOrigins: (env.CALLS_ALLOWED_ORIGINS || "https://inbox.pigeonpost.dev").split(/[\s,]+/).filter(Boolean),
     ringMs: Number(env.CALLS_RING_MS || 45_000),
+    knockMs: Number(env.CALLS_KNOCK_MS || 120_000),
+    // Behind nginx (and Cloudflare in front of that), the socket address is the proxy's. Only then
+    // is a forwarded client address worth believing.
+    trustProxy: (env.CALLS_TRUST_PROXY || "1") === "1",
   };
 }
 
-const LIMITS = {
+export const LIMITS = {
   bodyBytes: 128 * 1024,
   sdpChars: 100_000,
   candidateChars: 1_000,
   tokenChars: 8_192,
+  nameChars: 60,
+  participants: 6,
   sessionsPerAccount: 12,
   sessionsTotal: 5_000,
-  callsTotal: 2_000,
+  roomsTotal: 2_000,
   callsPerMinute: 6,
   callsPerHour: 60,
-  signalsPerMinute: 400,
+  guestsPerIpHour: 30,
+  knocksPerIpHour: 40,
+  missedCodesPerIp10Min: 10,
+  pendingKnocksPerRoom: 10,
+  signalsPerMinute: 600,
   authCacheEntries: 10_000,
   authCacheMs: 60_000,
   heartbeatMs: 20_000,
   resumeGraceMs: 20_000,
-  maxCallMs: 4 * 3600_000,
+  maxRoomMs: 8 * 3600_000,
   endedRetentionMs: 60_000,
 };
 
 const ADDRESS = /^\/[A-Za-z0-9._~\-/]{1,200}$/;
+// No 0/O, 1/I/L: a meeting code is read aloud and typed from memory.
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+const CODE = /^[A-Za-z0-9]{6}$/;
 const KINDS = new Set(["audio", "video"]);
 const SIGNALS = new Set(["offer", "answer", "ice"]);
 
 class HttpError extends Error {
-  constructor(status, code, message) {
-    super(message || code);
+  constructor(status, code) {
+    super(code);
     this.status = status;
     this.code = code;
   }
@@ -68,17 +81,50 @@ const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
 const newId = () => crypto.randomBytes(16).toString("base64url");
 const norm = (address) => String(address).toLowerCase();
 
+function cleanName(value) {
+  const name = String(value || "").normalize("NFC").replace(/[\u0000-\u001f\u007f​-‏‪-‮⁦-⁩]/g, "").replace(/\s+/g, " ").trim();
+  return name.slice(0, LIMITS.nameChars);
+}
+
 export function createCallsService(cfg, deps = {}) {
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
+  const randomCode = deps.randomCode || (() => {
+    const bytes = crypto.randomBytes(6);
+    return [...bytes].map((b) => CODE_ALPHABET[b % CODE_ALPHABET.length]).join("");
+  });
 
-  const authCache = new Map(); // sha256(token) -> { account, mailboxes, names, expires }
+  const authCache = new Map(); // sha256(token) -> member auth
+  const guests = new Map(); // sha256(guest token) -> guest auth
   const sessions = new Map(); // session id -> session
   const sessionsByName = new Map(); // normalized address/handle -> Set<session>
-  const calls = new Map(); // call id -> call
-  const callRate = new Map(); // account -> number[] (timestamps)
+  const rooms = new Map(); // room id -> room
+  const roomsByCode = new Map(); // code -> room
+  const buckets = new Map(); // rate-limit key -> number[]
 
-  // ---- authentication: the postbox decides which mailboxes a token may act as ----------------
+  // ---- rate limits ------------------------------------------------------------------------------
+
+  function limited(key, max, windowMs) {
+    const t = now();
+    const recent = (buckets.get(key) || []).filter((x) => t - x < windowMs);
+    if (recent.length >= max) { buckets.set(key, recent); return true; }
+    recent.push(t);
+    buckets.set(key, recent);
+    if (buckets.size > 50_000) buckets.delete(buckets.keys().next().value);
+    return false;
+  }
+
+  function clientIp(req) {
+    if (cfg.trustProxy) {
+      const cf = req.headers["cf-connecting-ip"];
+      if (typeof cf === "string" && cf.length < 64) return cf;
+      const xff = req.headers["x-forwarded-for"];
+      if (typeof xff === "string") return xff.split(",")[0].trim().slice(0, 64);
+    }
+    return req.socket.remoteAddress || "unknown";
+  }
+
+  // ---- authentication ---------------------------------------------------------------------------
 
   async function postboxJson(path, token) {
     const res = await fetchImpl(cfg.postbox + path, {
@@ -91,6 +137,12 @@ export function createCallsService(cfg, deps = {}) {
 
   async function authenticate(req) {
     const header = req.headers.authorization || "";
+    const guest = /^Guest ([A-Za-z0-9_-]{20,100})$/.exec(header);
+    if (guest) {
+      const entry = guests.get(sha256(guest[1]));
+      if (!entry) throw new HttpError(401, "unauthorized");
+      return entry;
+    }
     const match = /^Bearer ([A-Za-z0-9._~+/=-]+)$/.exec(header);
     if (!match || match[1].length > LIMITS.tokenChars) throw new HttpError(401, "unauthorized");
     const token = match[1];
@@ -119,12 +171,20 @@ export function createCallsService(cfg, deps = {}) {
       names.add(norm(m.address));
       if (m.handle) names.add(norm(m.handle));
     }
-    // An account is identified by the set of mailboxes it owns. Nothing else about it is known here.
     const account = sha256(owned.map((m) => m.address).sort().join("\n")).slice(0, 32);
-    const entry = { account, mailboxes: owned, names, expires: now() + LIMITS.authCacheMs };
+    const entry = { guest: false, account, mailboxes: owned, names, expires: now() + LIMITS.authCacheMs };
     if (authCache.size >= LIMITS.authCacheEntries) authCache.delete(authCache.keys().next().value);
     authCache.set(key, entry);
     return entry;
+  }
+
+  function createGuest(req) {
+    const ip = clientIp(req);
+    if (limited("guest:" + ip, LIMITS.guestsPerIpHour, 3600_000)) throw new HttpError(429, "rate_limited");
+    const token = crypto.randomBytes(24).toString("base64url");
+    const id = newId();
+    guests.set(sha256(token), { guest: true, account: "guest:" + id, mailboxes: [], names: new Set(), ip, createdAt: now() });
+    return { guest_token: token };
   }
 
   function mailboxFor(auth, address) {
@@ -132,7 +192,7 @@ export function createCallsService(cfg, deps = {}) {
     return auth.mailboxes.find((m) => norm(m.address) === n || (m.handle && norm(m.handle) === n)) || null;
   }
 
-  // ---- event streams ---------------------------------------------------------------------------
+  // ---- event streams ----------------------------------------------------------------------------
 
   function send(session, event, data) {
     if (!session || session.closed) return false;
@@ -156,13 +216,13 @@ export function createCallsService(cfg, deps = {}) {
       "x-accel-buffering": "no",
       connection: "keep-alive",
     });
-    const session = { id: newId(), account: auth.account, names: auth.names, mailboxes: auth.mailboxes, res, closed: false };
+    const session = { id: newId(), account: auth.account, guest: auth.guest, names: auth.names, mailboxes: auth.mailboxes, res, closed: false };
     sessions.set(session.id, session);
     for (const name of session.names) {
       if (!sessionsByName.has(name)) sessionsByName.set(name, new Set());
       sessionsByName.get(name).add(session);
     }
-    send(session, "ready", { session: session.id, mailboxes: auth.mailboxes });
+    send(session, "ready", { session: session.id, mailboxes: auth.mailboxes, guest: auth.guest });
     const beat = setInterval(() => {
       try { res.write(": keepalive\n\n"); } catch (_) { /* closed below */ }
     }, LIMITS.heartbeatMs);
@@ -188,40 +248,89 @@ export function createCallsService(cfg, deps = {}) {
     return session;
   }
 
-  // ---- calls -------------------------------------------------------------------------------------
+  // ---- rooms ------------------------------------------------------------------------------------
 
-  function publicCall(call) {
-    return { call: call.id, kind: call.kind, from: call.from, to: call.to, state: call.state };
+  function participantView(p) {
+    return { participant: p.id, name: p.name, mailbox: p.mailbox, guest: p.guest };
   }
 
-  function rateLimited(account) {
-    const t = now();
-    const recent = (callRate.get(account) || []).filter((x) => t - x < 3600_000);
-    callRate.set(account, recent);
-    const lastMinute = recent.filter((x) => t - x < 60_000).length;
-    if (lastMinute >= LIMITS.callsPerMinute || recent.length >= LIMITS.callsPerHour) return true;
-    recent.push(t);
-    return false;
+  function roomView(room, you) {
+    return {
+      room: room.id, code: room.code, kind: room.kind, state: room.state,
+      you: you ? you.id : undefined,
+      participants: [...room.participants.values()].map(participantView),
+    };
   }
 
-  function isEngaged(name) {
-    for (const call of calls.values()) {
-      if (call.state === "ended") continue;
-      if (norm(call.from.address) === name || (call.from.handle && norm(call.from.handle) === name)) return true;
-      if (call.callee && (norm(call.callee.address) === name || (call.callee.handle && norm(call.callee.handle) === name))) return true;
-      if (call.toName === name && call.state !== "ringing") return true;
+  function broadcast(room, event, data, exceptPid) {
+    for (const p of room.participants.values()) {
+      if (p.id !== exceptPid) send(sessions.get(p.sessionId), event, data);
+    }
+  }
+
+  function newCode() {
+    for (let i = 0; i < 20; i++) {
+      const code = randomCode();
+      if (!roomsByCode.has(code)) return code;
+    }
+    throw new HttpError(503, "busy");
+  }
+
+  function makeRoom(kind) {
+    if (rooms.size >= LIMITS.roomsTotal) throw new HttpError(503, "busy");
+    const room = {
+      id: newId(), code: newCode(), kind, state: "ringing", createdAt: now(),
+      participants: new Map(), knocks: new Map(), ring: null, timers: [],
+    };
+    rooms.set(room.id, room);
+    roomsByCode.set(room.code, room);
+    const cap = setTimeout(() => endRoom(room, "max_duration"), LIMITS.maxRoomMs);
+    cap.unref?.();
+    room.timers.push(cap);
+    return room;
+  }
+
+  function addParticipant(room, session, { name, mailbox, guest }) {
+    if (room.participants.size >= LIMITS.participants) throw new HttpError(409, "room_full");
+    const p = { id: newId(), sessionId: session.id, account: session.account, name, mailbox: mailbox || null, guest: Boolean(guest), joinedAt: now(), grace: null };
+    room.participants.set(p.id, p);
+    return p;
+  }
+
+  function participantFor(room, auth, sessionId) {
+    const session = liveSession(auth, sessionId);
+    for (const p of room.participants.values()) if (p.sessionId === session.id) return p;
+    throw new HttpError(403, "not_in_room");
+  }
+
+  function sessionInRoom(session) {
+    for (const room of rooms.values()) {
+      if (room.state === "ended") continue;
+      for (const p of room.participants.values()) if (p.sessionId === session.id) return room;
+    }
+    return null;
+  }
+
+  function mailboxEngaged(name) {
+    for (const room of rooms.values()) {
+      if (room.state === "ended") continue;
+      for (const p of room.participants.values()) {
+        if (p.mailbox && (norm(p.mailbox.address) === name || (p.mailbox.handle && norm(p.mailbox.handle) === name))) return true;
+      }
     }
     return false;
   }
 
-  function sessionInCall(session) {
-    for (const call of calls.values()) {
-      if (call.state !== "ended" && (call.callerSession === session.id || call.calleeSession === session.id)) return true;
-    }
-    return false;
+  function roomFor(id) {
+    const room = rooms.get(String(id || ""));
+    if (!room || room.state === "ended") throw new HttpError(404, "no_call");
+    return room;
   }
 
+  // A ring: a member calls one mailbox from one of theirs. The room exists from the first ring, so
+  // its meeting link can be shared before anybody answers.
   function startCall(auth, body) {
+    if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
     const kind = KINDS.has(body.kind) ? body.kind : null;
     if (!kind) throw new HttpError(400, "bad_kind");
@@ -229,100 +338,220 @@ export function createCallsService(cfg, deps = {}) {
     if (!from) throw new HttpError(403, "not_your_mailbox");
     const to = String(body.to || "");
     if (!ADDRESS.test(to)) throw new HttpError(400, "bad_recipient");
-    if (mailboxFor(auth, to) && norm(mailboxFor(auth, to).address) === norm(from.address)) {
-      throw new HttpError(400, "cannot_call_self");
+    const own = mailboxFor(auth, to);
+    if (own && norm(own.address) === norm(from.address)) throw new HttpError(400, "cannot_call_self");
+    if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
+    if (limited("calls-min:" + auth.account, LIMITS.callsPerMinute, 60_000) || limited("calls-hour:" + auth.account, LIMITS.callsPerHour, 3600_000)) {
+      throw new HttpError(429, "rate_limited");
     }
-    if (sessionInCall(session)) throw new HttpError(409, "already_in_call");
-    if (calls.size >= LIMITS.callsTotal) throw new HttpError(503, "busy");
-    if (rateLimited(auth.account)) throw new HttpError(429, "rate_limited");
 
+    const room = makeRoom(kind);
+    const caller = addParticipant(room, session, { name: from.handle || from.address, mailbox: from });
+    ring(room, caller, to);
+    return roomView(room, caller);
+  }
+
+  // Busy and offline both look like an unanswered call from the outside: the caller learns nothing
+  // about whether the other mailbox is online until somebody there picks up.
+  function ring(room, caller, to) {
     const toName = norm(to);
-    const call = {
-      id: newId(), kind, from, to, toName, state: "ringing",
-      callerAccount: auth.account, callerSession: session.id,
-      callee: null, calleeAccount: null, calleeSession: null,
-      ringing: new Set(), createdAt: now(), timers: [], grace: null,
-    };
-    calls.set(call.id, call);
-
-    // Busy and offline both look like an unanswered call from the outside: the caller learns
-    // nothing about whether the other mailbox is online until somebody there picks up.
-    if (!isEngagedOtherThan(toName, call)) {
+    room.ring = { to, toName, from: caller.mailbox, ringing: new Set() };
+    if (!mailboxEngaged(toName)) {
       for (const target of sessionsByName.get(toName) || []) {
-        if (target.id === session.id) continue;
-        if (sessionInCall(target)) continue;
-        call.ringing.add(target.id);
-        send(target, "incoming", publicCall(call));
+        if (target.id === caller.sessionId || sessionInRoom(target)) continue;
+        room.ring.ringing.add(target.id);
+        send(target, "incoming", { room: room.id, code: room.code, kind: room.kind, from: caller.mailbox, to });
       }
     }
-    call.timers.push(setTimeout(() => end(call, "no_answer"), cfg.ringMs));
-    call.timers.push(setTimeout(() => end(call, "max_duration"), LIMITS.maxCallMs));
-    for (const t of call.timers) t.unref?.();
-    return publicCall(call);
+    const t = setTimeout(() => {
+      if (room.state !== "ringing") return;
+      stopRinging(room, "no_answer");
+      if (room.participants.size < 2) endRoom(room, "no_answer");
+    }, cfg.ringMs);
+    t.unref?.();
+    room.ring.timer = t;
   }
 
-  function isEngagedOtherThan(name, call) {
-    const saved = call.state;
-    call.state = "ended";
-    try { return isEngaged(name); } finally { call.state = saved; }
+  function stopRinging(room, reason, exceptSession) {
+    if (!room.ring) return;
+    clearTimeout(room.ring.timer);
+    for (const id of room.ring.ringing) if (id !== exceptSession) send(sessions.get(id), "ring_ended", { room: room.id, reason });
+    room.ring = null;
   }
 
-  function callFor(id) {
-    const call = calls.get(String(id || ""));
-    if (!call) throw new HttpError(404, "no_call");
-    return call;
-  }
-
-  function accept(auth, call, body) {
+  function accept(auth, room, body) {
+    if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
-    if (call.state !== "ringing") throw new HttpError(409, "not_ringing");
-    if (!call.ringing.has(session.id)) throw new HttpError(403, "not_your_call");
-    const callee = mailboxFor(auth, call.to);
+    if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
+    const callee = mailboxFor(auth, room.ring.to);
     if (!callee) throw new HttpError(403, "not_your_call");
-    call.state = "connecting";
-    call.callee = callee;
-    call.calleeAccount = auth.account;
-    call.calleeSession = session.id;
-    clearTimeout(call.timers[0]);
-    for (const id of call.ringing) {
-      if (id !== session.id) send(sessions.get(id), "ended", { call: call.id, reason: "answered_elsewhere" });
+    if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
+    stopRinging(room, "answered_elsewhere", session.id);
+    const p = addParticipant(room, session, { name: callee.handle || callee.address, mailbox: callee });
+    room.state = "active";
+    admitted(room, p);
+    return roomView(room, p);
+  }
+
+  function decline(auth, room, body) {
+    const session = liveSession(auth, body.session);
+    if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
+    const reason = body.reason === "busy" ? "busy" : "declined";
+    room.ring.ringing.delete(session.id);
+    // Another device of the same mailbox may still answer; the call only ends when nothing rings.
+    if (!room.ring.ringing.size || reason === "declined") {
+      stopRinging(room, reason, session.id);
+      if (room.participants.size < 2) endRoom(room, reason, null);
+      else broadcast(room, "ring_ended", { room: room.id, reason });
     }
-    call.ringing.clear();
-    send(sessions.get(call.callerSession), "accepted", { call: call.id, callee });
-    return publicCall(call);
+    return { room: room.id, state: room.state };
   }
 
-  function decline(auth, call, body) {
-    const session = liveSession(auth, body.session);
-    if (call.state !== "ringing" || !call.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
-    end(call, body.reason === "busy" ? "busy" : "declined", session.id);
-    return { call: call.id, state: "ended" };
+  function admitted(room, p) {
+    // The newcomer offers to everyone already present; everyone else just answers. One rule, so
+    // no pair ever negotiates twice at the same time.
+    broadcast(room, "participant_joined", { room: room.id, ...participantView(p) }, p.id);
+    send(sessions.get(p.sessionId), "joined", roomView(room, p));
   }
 
-  function hangUp(auth, call, body) {
+  function leave(auth, room, body) {
     const session = liveSession(auth, body.session);
-    const party = call.callerSession === session.id || call.calleeSession === session.id;
-    if (!party) throw new HttpError(403, "not_your_call");
-    end(call, call.state === "ringing" ? "cancelled" : "ended", session.id);
-    return { call: call.id, state: "ended" };
+    let found = null;
+    for (const p of room.participants.values()) if (p.sessionId === session.id) found = p;
+    if (!found) throw new HttpError(403, "not_in_room");
+    removeParticipant(room, found, "left");
+    return { room: room.id, state: room.state };
   }
 
-  function signal(auth, call, body) {
+  function removeParticipant(room, p, reason) {
+    clearTimeout(p.grace);
+    room.participants.delete(p.id);
+    broadcast(room, "participant_left", { room: room.id, participant: p.id, reason });
+    if (room.state === "ringing" && room.participants.size === 0) {
+      stopRinging(room, "cancelled");
+      endRoom(room, "cancelled");
+    } else if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) {
+      endRoom(room, "ended");
+    }
+  }
+
+  function endRoom(room, reason, exceptSession) {
+    if (room.state === "ended") return;
+    room.state = "ended";
+    for (const t of room.timers) clearTimeout(t);
+    stopRinging(room, reason);
+    for (const p of room.participants.values()) {
+      clearTimeout(p.grace);
+      if (p.sessionId !== exceptSession) send(sessions.get(p.sessionId), "ended", { room: room.id, reason });
+    }
+    for (const k of room.knocks.values()) {
+      clearTimeout(k.timer);
+      send(sessions.get(k.sessionId), "knock_result", { room: room.id, knock: k.id, admitted: false, reason: "ended" });
+    }
+    room.knocks.clear();
+    roomsByCode.delete(room.code);
+    const cleanup = setTimeout(() => rooms.delete(room.id), LIMITS.endedRetentionMs);
+    cleanup.unref?.();
+  }
+
+  // ---- meeting links ----------------------------------------------------------------------------
+
+  function lookup(req, codeValue) {
+    const code = String(codeValue || "").toUpperCase();
+    const room = CODE.test(code) ? roomsByCode.get(code) : null;
+    if (!room || room.state === "ended") {
+      if (limited("miss:" + clientIp(req), LIMITS.missedCodesPerIp10Min, 600_000)) throw new HttpError(429, "rate_limited");
+      throw new HttpError(404, "no_meeting");
+    }
+    return room;
+  }
+
+  function meetingInfo(req, code) {
+    const room = lookup(req, code);
+    return { code: room.code, kind: room.kind, participants: room.participants.size, full: room.participants.size >= LIMITS.participants };
+  }
+
+  function knock(req, auth, body) {
     const session = liveSession(auth, body.session);
-    if (call.state !== "connecting" && call.state !== "active") throw new HttpError(409, "not_connected");
-    const fromCaller = call.callerSession === session.id;
-    const fromCallee = call.calleeSession === session.id;
-    if (!fromCaller && !fromCallee) throw new HttpError(403, "not_your_call");
+    const room = lookup(req, body.code);
+    if (limited("knock:" + clientIp(req), LIMITS.knocksPerIpHour, 3600_000)) throw new HttpError(429, "rate_limited");
+    if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
+    if (room.participants.size >= LIMITS.participants) throw new HttpError(409, "room_full");
+    if (room.knocks.size >= LIMITS.pendingKnocksPerRoom) throw new HttpError(429, "too_many_requests");
+    for (const k of room.knocks.values()) if (k.sessionId === session.id) throw new HttpError(409, "already_waiting");
+    // A signed-in member knocks as one of their own mailboxes, which everyone inside sees as
+    // verified. A guest's name is only what they typed, and is shown as such.
+    let mailbox = null, name;
+    if (!auth.guest && body.as) {
+      mailbox = mailboxFor(auth, body.as);
+      if (!mailbox) throw new HttpError(403, "not_your_mailbox");
+      name = mailbox.handle || mailbox.address;
+    } else {
+      name = cleanName(body.name);
+      if (!name) throw new HttpError(400, "name_required");
+    }
+    const k = { id: newId(), sessionId: session.id, account: auth.account, name, mailbox, guest: auth.guest, at: now(), timer: null };
+    room.knocks.set(k.id, k);
+    k.timer = setTimeout(() => resolveKnock(room, k, false, "timeout"), cfg.knockMs);
+    k.timer.unref?.();
+    broadcast(room, "knock", { room: room.id, knock: k.id, name: k.name, mailbox: k.mailbox, guest: k.guest });
+    return { room: room.id, knock: k.id, state: "waiting" };
+  }
+
+  function answerKnock(auth, room, knockId, body) {
+    const decider = participantFor(room, auth, body.session);
+    const k = room.knocks.get(String(knockId || ""));
+    if (!k) throw new HttpError(404, "no_request");
+    resolveKnock(room, k, body.admit === true, body.admit === true ? "admitted" : "denied", decider);
+    return { ok: true };
+  }
+
+  function resolveKnock(room, k, admit, reason, decider) {
+    if (!room.knocks.has(k.id)) return;
+    room.knocks.delete(k.id);
+    clearTimeout(k.timer);
+    broadcast(room, "knock_resolved", { room: room.id, knock: k.id, admitted: admit, by: decider ? decider.id : null, reason });
+    const knocker = sessions.get(k.sessionId);
+    if (!admit || !knocker || room.state === "ended") {
+      send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: false, reason });
+      if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) endRoom(room, "ended");
+      return;
+    }
+    if (room.participants.size >= LIMITS.participants) {
+      send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: false, reason: "room_full" });
+      return;
+    }
+    const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest });
+    if (room.state === "ringing" && room.participants.size >= 2) room.state = "active";
+    send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: true });
+    admitted(room, p);
+  }
+
+  function withdrawKnock(auth, body) {
+    const session = liveSession(auth, body.session);
+    for (const room of rooms.values()) {
+      for (const k of room.knocks.values()) {
+        if (k.sessionId === session.id && k.id === body.knock) {
+          resolveKnock(room, k, false, "withdrawn");
+          return { ok: true };
+        }
+      }
+    }
+    throw new HttpError(404, "no_request");
+  }
+
+  // ---- signals between two participants ---------------------------------------------------------
+
+  function signal(auth, room, body) {
+    const from = participantFor(room, auth, body.session);
+    const to = room.participants.get(String(body.to || ""));
+    if (!to || to.id === from.id) throw new HttpError(404, "no_participant");
     if (!SIGNALS.has(body.type)) throw new HttpError(400, "bad_signal");
     const data = validSignal(body.type, body.data);
-    const counter = fromCaller ? "callerSignals" : "calleeSignals";
-    const t = now();
-    call[counter] = (call[counter] || []).filter((x) => t - x < 60_000);
-    if (call[counter].length >= LIMITS.signalsPerMinute) throw new HttpError(429, "rate_limited");
-    call[counter].push(t);
-    if (body.type === "answer" && fromCallee) call.state = "active";
-    const peer = sessions.get(fromCaller ? call.calleeSession : call.callerSession);
-    if (!send(peer, "signal", { call: call.id, type: body.type, data })) throw new HttpError(409, "peer_unreachable");
+    if (limited("sig:" + from.id, LIMITS.signalsPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
+    if (!send(sessions.get(to.sessionId), "signal", { room: room.id, from: from.id, type: body.type, data })) {
+      throw new HttpError(409, "peer_unreachable");
+    }
     return { ok: true };
   }
 
@@ -333,79 +562,64 @@ export function createCallsService(cfg, deps = {}) {
       }
       return { type, sdp: data.sdp };
     }
-    if (data === null) return null; // end of candidates
+    if (data === null) return null;
     if (!data || typeof data.candidate !== "string" || data.candidate.length > LIMITS.candidateChars) {
       throw new HttpError(400, "bad_signal");
     }
     const out = { candidate: data.candidate };
     if (typeof data.sdpMid === "string" && data.sdpMid.length <= 64) out.sdpMid = data.sdpMid;
-    if (Number.isInteger(data.sdpMLineIndex) && data.sdpMLineIndex >= 0 && data.sdpMLineIndex < 16) {
-      out.sdpMLineIndex = data.sdpMLineIndex;
-    }
+    if (Number.isInteger(data.sdpMLineIndex) && data.sdpMLineIndex >= 0 && data.sdpMLineIndex < 64) out.sdpMLineIndex = data.sdpMLineIndex;
     return out;
   }
 
-  // A page reload or a dropped event stream gives the browser a new session. Media between the two
-  // browsers does not depend on this service, so the call stays up for a short grace period and the
-  // same mailbox may take it back over.
-  function resume(auth, call, body) {
+  // ---- reconnecting -------------------------------------------------------------------------------
+
+  // A page reload or a dropped event stream gives the browser a new session. Media between browsers
+  // does not depend on this service, so a participant stays in the room for a grace period and the
+  // same account may take its place back.
+  function resume(auth, room, body) {
     const session = liveSession(auth, body.session);
-    if (call.state === "ended" || call.state === "ringing") throw new HttpError(409, "not_connected");
-    let role = null;
-    if (call.callerAccount === auth.account) role = "caller";
-    else if (call.calleeAccount === auth.account) role = "callee";
-    if (!role) throw new HttpError(403, "not_your_call");
-    call[role === "caller" ? "callerSession" : "calleeSession"] = session.id;
-    clearTimeout(call.grace);
-    call.grace = null;
-    return { ...publicCall(call), role };
+    const p = room.participants.get(String(body.participant || ""));
+    if (!p || p.account !== auth.account) throw new HttpError(403, "not_in_room");
+    p.sessionId = session.id;
+    clearTimeout(p.grace);
+    p.grace = null;
+    return roomView(room, p);
   }
 
   function sessionGone(session) {
-    for (const call of calls.values()) {
-      if (call.state === "ended") continue;
-      if (call.ringing.delete(session.id) && call.state === "ringing") continue;
-      if (call.callerSession === session.id && call.state === "ringing") {
-        end(call, "cancelled", session.id);
-        continue;
+    for (const room of rooms.values()) {
+      if (room.state === "ended") continue;
+      if (room.ring && room.ring.ringing.delete(session.id) && !room.ring.ringing.size && room.state === "ringing") {
+        // Every ringing device went away: let it time out as an unanswered call.
       }
-      if (call.callerSession === session.id || call.calleeSession === session.id) {
-        clearTimeout(call.grace);
-        call.grace = setTimeout(() => {
-          const caller = sessions.get(call.callerSession), callee = sessions.get(call.calleeSession);
-          if (!caller || !callee) end(call, "disconnected");
+      for (const k of [...room.knocks.values()]) if (k.sessionId === session.id) resolveKnock(room, k, false, "withdrawn");
+      for (const p of [...room.participants.values()]) {
+        if (p.sessionId !== session.id) continue;
+        if (room.state === "ringing") { removeParticipant(room, p, "left"); continue; }
+        clearTimeout(p.grace);
+        p.grace = setTimeout(() => {
+          if (!sessions.has(p.sessionId) && room.participants.has(p.id)) removeParticipant(room, p, "disconnected");
         }, LIMITS.resumeGraceMs);
-        call.grace.unref?.();
+        p.grace.unref?.();
       }
     }
   }
 
-  function end(call, reason, bySession) {
-    if (call.state === "ended") return;
-    call.state = "ended";
-    call.reason = reason;
-    for (const t of call.timers) clearTimeout(t);
-    clearTimeout(call.grace);
-    const notify = new Set([call.callerSession, call.calleeSession, ...call.ringing]);
-    for (const id of notify) {
-      if (id && id !== bySession) send(sessions.get(id), "ended", { call: call.id, reason });
-    }
-    call.ringing.clear();
-    const cleanup = setTimeout(() => calls.delete(call.id), LIMITS.endedRetentionMs);
-    cleanup.unref?.();
-  }
+  // ---- TURN credentials (coturn "use-auth-secret": HMAC-SHA1 over "<expiry>:<user>") -------------
 
-  // ---- TURN credentials (RFC 8489 long-term credential, coturn "use-auth-secret" form) ----------
-
-  function turnCredentials(auth) {
+  function turnCredentials(auth, sessionId) {
+    const session = liveSession(auth, sessionId);
+    // A guest gets relay credentials only once somebody has let them in.
+    if (auth.guest && !sessionInRoom(session)) throw new HttpError(403, "not_in_room");
     if (!cfg.turnSecret || !cfg.turnUrls.length) return { iceServers: [], ttl: 0 };
     const expires = Math.floor(now() / 1000) + cfg.turnTtlSeconds;
-    const username = `${expires}:${auth.account.slice(0, 12)}`;
+    const username = `${expires}:${sha256(auth.account).slice(0, 12)}`;
     const credential = crypto.createHmac("sha1", cfg.turnSecret).update(username).digest("base64");
     return { iceServers: [{ urls: cfg.turnUrls, username, credential }], ttl: cfg.turnTtlSeconds };
   }
 
-  // ---- HTTP --------------------------------------------------------------------------------------
+  // ---- HTTP ---------------------------------------------------------------------------------------
 
   async function readJson(req) {
     const type = req.headers["content-type"] || "";
@@ -436,27 +650,36 @@ export function createCallsService(cfg, deps = {}) {
     const path = url.pathname.replace(/^\/calls(?=\/)/, "");
     try {
       if (req.method === "GET" && path === "/v1/health") {
-        return json(res, 200, { ok: true, sessions: sessions.size, calls: calls.size });
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size });
       }
       if (req.method === "POST") {
-        // Bearer tokens already defeat cross-site forgery; the origin check keeps it that way if a
-        // cookie is ever introduced.
         const origin = req.headers.origin;
         if (origin && !cfg.allowedOrigins.includes(origin)) throw new HttpError(403, "bad_origin");
       }
+      if (req.method === "POST" && path === "/v1/guests") {
+        await readJson(req);
+        return json(res, 200, createGuest(req));
+      }
+      const meeting = /^\/v1\/meetings\/([A-Za-z0-9]{6})$/.exec(path);
+      if (req.method === "GET" && meeting) return json(res, 200, meetingInfo(req, meeting[1]));
+
       const auth = await authenticate(req);
       if (req.method === "GET" && path === "/v1/events") return openStream(req, res, auth);
-      if (req.method === "GET" && path === "/v1/turn") {
-        liveSession(auth, url.searchParams.get("session"));
-        return json(res, 200, turnCredentials(auth));
-      }
+      if (req.method === "GET" && path === "/v1/turn") return json(res, 200, turnCredentials(auth, url.searchParams.get("session")));
       if (req.method === "POST" && path === "/v1/calls") return json(res, 200, startCall(auth, await readJson(req)));
-      const m = /^\/v1\/calls\/([A-Za-z0-9_-]{10,64})\/(accept|decline|end|signal|resume)$/.exec(path);
+      if (req.method === "POST" && path === "/v1/knocks") return json(res, 200, knock(req, auth, await readJson(req)));
+      if (req.method === "POST" && path === "/v1/knocks/withdraw") return json(res, 200, withdrawKnock(auth, await readJson(req)));
+      const knockAnswer = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/knocks\/([A-Za-z0-9_-]{10,64})$/.exec(path);
+      if (req.method === "POST" && knockAnswer) {
+        const body = await readJson(req);
+        return json(res, 200, answerKnock(auth, roomFor(knockAnswer[1]), knockAnswer[2], body));
+      }
+      const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume)$/.exec(path);
       if (req.method === "POST" && m) {
         const body = await readJson(req);
-        const call = callFor(m[1]);
-        const action = { accept, decline, end: hangUp, signal, resume }[m[2]];
-        return json(res, 200, action(auth, call, body));
+        const room = roomFor(m[1]);
+        const action = { accept, decline, leave, signal, resume }[m[2]];
+        return json(res, 200, action(auth, room, body));
       }
       throw new HttpError(404, "not_found");
     } catch (err) {
@@ -469,7 +692,7 @@ export function createCallsService(cfg, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, calls, authCache } };
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests } };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

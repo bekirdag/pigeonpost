@@ -1812,35 +1812,31 @@ button { font: inherit; color: inherit; }
 
 /* ---- calls ------------------------------------------------------------------------------------
    The call screen is dark in either appearance, like every video call: faces and video read best
-   against a dark ground, and a white frame around a camera image glares. Its colours are the
-   mockup's dark palette. The incoming-call card sits over the inbox, so it follows the theme. */
+   against a dark ground. Its colours are the mockup's dark palette (the --call-* tokens). The ring
+   card and the meeting-link page sit over the inbox or stand alone, so they follow the theme. */
 .call-ui {
   position: fixed; inset: 0; z-index: 60;
   background: var(--call-ground); color: var(--call-ink);
   font-family: var(--sans);
 }
-.call-stage { position: relative; width: 100%; height: 100%; overflow: hidden; }
-.call-remote {
-  position: absolute; inset: 0; width: 100%; height: 100%;
-  object-fit: contain; background: var(--call-ground);
-}
-/* Kept playing while hidden: a voice call's audio arrives through the same element. */
-.call-stage[data-remote-video="false"] .call-remote { visibility: hidden; }
-.call-peer { position: absolute; inset: 0; display: grid; place-items: center; }
-.call-stage[data-remote-video="true"] .call-peer { display: none; }
-.call-avatar.avatar { width: 112px; height: 112px; border-radius: 50%; font-size: 38px; font-weight: 600; }
+.call-stage { position: relative; display: flex; width: 100%; height: 100%; overflow: hidden; }
+.call-main { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+
 .call-top {
-  position: absolute; top: 0; left: 0; right: 0;
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
   padding: 20px 24px 40px;
   background: linear-gradient(var(--call-scrim-top), var(--call-scrim-clear));
+  pointer-events: none;
 }
+.call-top > * { pointer-events: auto; }
 .call-who { min-width: 0; }
 .call-who h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--call-ink); }
 .call-handle {
   margin: 2px 0 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+.call-handle:empty { display: none; }
 .call-status { margin: 6px 0 0; font-size: 13px; color: var(--call-body); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
 .call-quality {
   font-family: var(--mono); font-size: 11.5px; color: var(--call-muted);
@@ -1854,42 +1850,191 @@ button { font: inherit; color: inherit; }
   background: var(--call-chip); border: 1px solid var(--call-edge);
   font-size: 12.5px; color: var(--call-body);
 }
-.call-sas svg { width: 14px; height: 14px; color: var(--call-secure); }
+.call-sas svg, .call-person-code svg { width: 14px; height: 14px; color: var(--call-secure); flex: none; }
 .call-sas strong { font-family: var(--mono); font-size: 13.5px; font-weight: 600; letter-spacing: .08em; color: var(--call-ink); }
-.call-self {
-  position: absolute; right: 20px; bottom: 104px;
-  width: min(26vw, 280px); aspect-ratio: 16 / 9; object-fit: cover;
-  border-radius: 12px; border: 1px solid var(--call-edge); background: var(--call-tile);
-  box-shadow: 0 12px 32px var(--call-shadow);
-  /* A mirror, as every camera preview is: raising your right hand moves the hand on the right. */
-  transform: scaleX(-1);
+
+/* People: one tile each, tiled to fill the space. Whoever shares a screen takes the stage. */
+.call-grid {
+  position: absolute; inset: 0; padding: 100px 20px 108px;
+  display: grid; gap: 12px;
+  grid-template-columns: 1fr; grid-auto-rows: 1fr;
 }
-.call-stage[data-local-video="false"] .call-self { display: none; }
+.call-grid[data-count="1"] { padding: 0; gap: 0; }
+.call-grid[data-count="2"] { grid-template-columns: 1fr 1fr; }
+.call-grid[data-count="3"], .call-grid[data-count="4"] { grid-template-columns: 1fr 1fr; }
+.call-grid[data-count="5"], .call-grid[data-count="6"] { grid-template-columns: 1fr 1fr 1fr; }
+/* With two people the shared screen simply fills the call; with more, the others line up beside it. */
+.call-grid[data-presenting="true"]:not([data-count="1"]) { grid-template-columns: 1fr 220px; grid-auto-rows: minmax(0, 1fr); }
+.call-grid[data-presenting="true"]:not([data-count="1"]) .call-tile-presenter { grid-column: 1; grid-row: 1 / span 6; }
+.call-grid[data-presenting="true"]:not([data-count="1"]) .call-tile:not(.call-tile-presenter) { grid-column: 2; max-height: 150px; align-self: start; }
+
+.call-tile {
+  position: relative; margin: 0; min-height: 0; overflow: hidden;
+  display: grid; place-items: center;
+  background: var(--call-tile); border: 1px solid var(--call-rule); border-radius: 14px;
+}
+.call-grid[data-count="1"] .call-tile { border: 0; border-radius: 0; background: var(--call-ground); }
+.call-tile-video, .call-tile-screen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.call-grid:not([data-count="1"]) .call-tile-video { object-fit: cover; }
+/* Kept playing while hidden: a person's voice arrives on the camera element. */
+.call-tile[data-video="false"] .call-tile-video { visibility: hidden; }
+.call-tile-screen { visibility: hidden; }
+.call-tile[data-screen="true"] .call-tile-screen { visibility: visible; object-fit: contain; background: var(--call-ground); }
+.call-tile[data-screen="true"] .call-tile-video { inset: 12px 12px auto auto; width: 22%; height: auto; aspect-ratio: 16 / 9; border-radius: 10px; z-index: 1; object-fit: cover; }
+.call-tile-face.avatar { width: 88px; height: 88px; border-radius: 50%; font-size: 30px; font-weight: 600; }
+.call-grid[data-count="1"] .call-tile-face.avatar { width: 112px; height: 112px; font-size: 38px; }
+.call-tile[data-video="true"] .call-tile-face, .call-tile[data-screen="true"] .call-tile-face { display: none; }
+.call-tile[data-connected="false"] .call-tile-face { opacity: .55; }
+.call-tile-name {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 20px);
+  padding: 4px 9px; border-radius: 7px; background: var(--call-chip);
+  font-size: 12.5px; color: var(--call-ink);
+}
+.call-grid[data-count="1"] .call-tile-name { display: none; }
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-tile-video { inset: 96px 20px auto auto; width: min(22%, 260px); }
+.call-tile-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-tile-muted svg { width: 13px; height: 13px; color: var(--call-end); display: block; }
+.call-tile-muted .slash { display: block; }
+
+.call-waiting { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.call-waiting[hidden] { display: none; }
+.call-avatar.avatar { width: 112px; height: 112px; border-radius: 50%; font-size: 38px; font-weight: 600; }
+
+.call-self {
+  position: absolute; right: 20px; bottom: 104px; z-index: 4;
+  width: min(24vw, 260px); aspect-ratio: 16 / 9;
+  border-radius: 12px; border: 1px solid var(--call-edge); background: var(--call-tile); overflow: hidden;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-self[hidden] { display: none; }
+/* A mirror, as every camera preview is: raising your right hand moves the hand on the right. */
+.call-self video { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.call-self-label { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: var(--call-ink); padding: 1px 6px; border-radius: 6px; background: var(--call-chip); }
+
+.call-presenting {
+  position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 7px 8px 7px 14px; border-radius: 999px;
+  background: var(--call-dock); border: 1px solid var(--call-rule); font-size: 13px; color: var(--call-body);
+}
+.call-presenting[hidden] { display: none; }
+
 .call-controls {
-  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%);
-  display: flex; gap: 16px; padding: 10px 14px;
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
   background: var(--call-dock); border: 1px solid var(--call-rule); border-radius: 999px;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
 }
+.call-chat-wrap { position: relative; display: inline-flex; }
+.call-badge {
+  position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: var(--call-focus); color: var(--call-ground); font-size: 11px; font-weight: 600;
+}
+.call-badge[hidden] { display: none; }
 .call-btn {
-  width: 52px; height: 52px; border-radius: 50%;
+  width: 50px; height: 50px; border-radius: 50%;
   display: grid; place-items: center;
   border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
   cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
 }
-.call-btn:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
-.call-btn svg { width: 22px; height: 22px; }
+.call-btn:hover:not(:disabled) { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-btn:disabled { opacity: .45; cursor: default; }
+.call-btn[hidden] { display: none; }
+.call-btn svg { width: 21px; height: 21px; }
 .call-btn .slash { display: none; }
 .call-btn[aria-pressed="true"] { background: var(--call-ink); color: var(--call-ground); border-color: var(--call-ink); }
 .call-btn[aria-pressed="true"] .slash { display: block; }
+/* Sharing and open panels are "on" states, not "off" ones: they get the accent, not the slash. */
+#call-share[aria-pressed="true"], .call-btn[aria-expanded="true"] { background: var(--call-focus); color: var(--call-ground); border-color: var(--call-focus); }
 .call-btn.call-end { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); }
 .call-btn.call-end:hover { background: var(--call-end-hover); border-color: var(--call-end-hover); }
 .call-btn.call-accept { background: var(--call-accept); border-color: var(--call-accept); color: var(--call-on-solid); }
 .call-btn.call-accept:hover { background: var(--call-accept-hover); border-color: var(--call-accept-hover); }
-.call-btn:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+.call-btn:focus-visible, .call-pill:focus-visible, .call-icon-btn:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
 
-.call-incoming {
-  position: fixed; top: 16px; right: 16px; z-index: 55;
+.call-pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.call-pill:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-pill svg { width: 15px; height: 15px; }
+.call-pill-primary { background: var(--call-focus); border-color: var(--call-focus); color: var(--call-ground); font-weight: 600; }
+.call-pill-primary:hover { background: var(--call-ink); border-color: var(--call-ink); }
+.call-icon-btn {
+  width: 32px; height: 32px; display: grid; place-items: center; flex: none;
+  border: 1px solid transparent; border-radius: 8px; background: none; color: var(--call-muted); cursor: pointer;
+}
+.call-icon-btn:hover { background: var(--call-btn); color: var(--call-ink); }
+.call-icon-btn svg { width: 17px; height: 17px; }
+
+/* Someone at the door. Large enough not to miss, never covering the faces in the middle. */
+.call-knocks { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; gap: 8px; width: min(480px, calc(100% - 32px)); }
+.call-knock {
+  display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px;
+  background: var(--call-tile); border: 1px solid var(--call-edge); border-radius: 12px;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-knock .avatar { width: 34px; height: 34px; flex: none; }
+.call-knock-text { flex: 1; min-width: 0; }
+.call-knock-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-knock-name { font-size: 14px; font-weight: 600; color: var(--call-ink); }
+.call-knock-note { font-size: 12px; color: var(--call-muted); }
+.call-knock-inline { box-shadow: none; padding: 8px; }
+.call-stage[data-panel-view="people"] .call-knocks { display: none; }
+
+/* The side panel: chat, people and devices, sharing one column on the right. */
+.call-panel {
+  flex: none; width: 340px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--call-tile); border-left: 1px solid var(--call-rule);
+}
+.call-panel[hidden] { display: none; }
+.call-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 12px 10px 18px; }
+.call-panel-head h3 { margin: 0; font-size: 15px; font-weight: 650; color: var(--call-ink); }
+.call-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 4px 18px 18px; overflow-y: auto; }
+.call-panel-body[hidden] { display: none; }
+.call-panel-label { display: block; margin: 0 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--call-muted); }
+.call-panel-note { margin: 0; font-size: 12px; color: var(--call-muted); line-height: 1.45; }
+.call-link-row { display: flex; align-items: center; gap: 8px; }
+.call-link-row code {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 12.5px; color: var(--call-ink);
+  padding: 7px 9px; border-radius: 8px; background: var(--call-ground); border: 1px solid var(--call-edge); user-select: all;
+}
+.call-invite { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--call-rule); }
+.call-knock-list, .call-people-list, .call-chat-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.call-knock-list:empty { display: none; }
+.call-person { display: flex; align-items: center; gap: 10px; }
+.call-person .avatar { width: 32px; height: 32px; flex: none; }
+.call-person-text { flex: 1; min-width: 0; }
+.call-person-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-person-name { font-size: 13.5px; font-weight: 600; color: var(--call-ink); }
+.call-person-note { font-size: 12px; color: var(--call-muted); font-family: var(--mono); }
+.call-person-code { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 12.5px; color: var(--call-body); }
+
+.call-chat-log { flex: 1; overflow-y: auto; gap: 10px; }
+.call-chat-item { max-width: 88%; padding: 8px 11px; border-radius: 12px; background: var(--call-btn); border: 1px solid var(--call-rule); align-self: flex-start; }
+.call-chat-mine { align-self: flex-end; background: var(--call-ground); border-color: var(--call-edge); }
+.call-chat-meta { margin: 0 0 2px; display: flex; gap: 8px; font-size: 11.5px; color: var(--call-muted); }
+.call-chat-who { font-weight: 600; color: var(--call-body); }
+.call-chat-text { margin: 0; font-size: 13.5px; color: var(--call-ink); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.call-chat-form { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border-radius: 12px; background: var(--call-ground); border: 1px solid var(--call-edge); }
+.call-chat-form textarea {
+  flex: 1; min-height: 22px; max-height: 120px; resize: none; border: 0; outline: none; background: transparent;
+  color: var(--call-ink); font: inherit; font-size: 13.5px; line-height: 1.45; padding: 4px 4px;
+}
+.call-chat-send { color: var(--call-focus); }
+.call-field { display: flex; flex-direction: column; }
+.call-select {
+  width: 100%; height: 36px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--call-edge); background: var(--call-ground); color: var(--call-ink); font: inherit; font-size: 13.5px;
+}
+
+/* An incoming ring, over the inbox: follows the theme. */
+.call-ring {
+  position: fixed; top: 16px; right: 16px; z-index: 65;
   width: min(392px, calc(100vw - 32px));
   display: flex; align-items: center; gap: 12px;
   padding: 14px 14px 14px 16px;
@@ -1897,19 +2042,76 @@ button { font: inherit; color: inherit; }
   border: 1px solid var(--edge); border-radius: 14px;
   box-shadow: 0 24px 60px var(--shadow-sheet);
 }
-.call-incoming .avatar { flex: none; }
-.call-incoming-text { flex: 1; min-width: 0; }
-.call-incoming-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.call-incoming-title { font-size: 12px; font-weight: 500; color: var(--muted); }
-.call-incoming-from { margin-top: 1px !important; font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); }
-.call-incoming-note { margin-top: 2px !important; font-size: 12px; color: var(--faint); }
-.call-incoming-actions { flex: none; display: flex; gap: 10px; }
-.call-incoming .call-btn { width: 44px; height: 44px; }
-.call-incoming .call-btn svg { width: 20px; height: 20px; }
+.call-ring[hidden] { display: none; }
+.call-ring .avatar { flex: none; }
+.call-ring-text { flex: 1; min-width: 0; }
+.call-ring-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-ring-title { font-size: 12px; font-weight: 500; color: var(--muted); }
+.call-ring-from { margin-top: 1px !important; font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.call-ring-note { margin-top: 2px !important; font-size: 12px; color: var(--faint); }
+.call-ring-actions { flex: none; display: flex; gap: 10px; }
+.call-ring .call-btn { width: 44px; height: 44px; }
+.call-ring .call-btn svg { width: 20px; height: 20px; }
 
-@media (max-width: 640px) {
-  .call-top { padding: 16px 16px 36px; flex-direction: column; }
-  .call-self { width: 34vw; right: 14px; bottom: 112px; }
-  .call-controls { bottom: 22px; gap: 14px; }
-  .call-incoming { top: 10px; right: 10px; width: calc(100vw - 20px); }
+/* ---- the meeting-link page ------------------------------------------------------------------ */
+body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); color: var(--ink); font-family: var(--sans); }
+.join { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; box-sizing: border-box; }
+.join[hidden] { display: none; }
+.join-card {
+  width: 100%; max-width: 520px; box-sizing: border-box; padding: 24px;
+  background: var(--ground); border: 1px solid var(--edge); border-radius: 16px; box-shadow: 0 24px 60px var(--shadow-sheet);
+  display: flex; flex-direction: column; gap: 16px;
+}
+.join-head { display: flex; align-items: center; gap: 12px; }
+.join-head h1 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.join-mark { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--accent-fill); color: var(--on-accent); }
+.join-mark svg { width: 20px; height: 20px; }
+.join-meta { margin: 2px 0 0; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px; }
+.join-meta code { font-family: var(--mono); color: var(--ink); }
+.join-form { display: flex; flex-direction: column; gap: 14px; }
+.join-form[hidden] { display: none; }
+.join-preview { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: var(--call-ground); display: grid; place-items: center; }
+.join-preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.join-preview[data-video="false"] video { visibility: hidden; }
+.join-preview-off { margin: 0; font-size: 13px; color: var(--call-muted); }
+.join-preview[data-video="true"] .join-preview-off { display: none; }
+.join-toggles { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 10px; }
+.join-toggles .call-btn { width: 44px; height: 44px; }
+.join-devices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.join-devices .call-field:last-child { grid-column: 1 / -1; }
+.join .call-panel-label { color: var(--muted); }
+.join .call-select, .join-input {
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 11px; border-radius: 9px;
+  border: 1px solid var(--edge); background: var(--field-deep); color: var(--ink); font: inherit; font-size: 14px;
+}
+.join-input:focus, .join .call-select:focus { outline: 2px solid var(--edge-focus); outline-offset: 1px; }
+.join .call-field[hidden] { display: none; }
+.join-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.join-actions { display: flex; justify-content: flex-end; }
+.join-waiting, .join-done { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; text-align: center; }
+.join-waiting[hidden], .join-done[hidden] { display: none; }
+.join-waiting p, .join-done p { margin: 0; font-size: 14px; color: var(--body); }
+.join-spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--edge); border-top-color: var(--accent-fill); animation: join-spin 1s linear infinite; }
+@keyframes join-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .join-spinner { animation: none; } }
+.join-error { margin: 0; }
+.join-error[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .call-top { padding: 16px 16px 36px; flex-direction: column; gap: 8px; }
+  .call-grid { padding: 120px 10px 100px; gap: 8px; }
+  .call-grid[data-count="2"] { grid-template-columns: 1fr; }
+  .call-grid[data-count="3"], .call-grid[data-count="4"], .call-grid[data-count="5"], .call-grid[data-count="6"] { grid-template-columns: 1fr 1fr; }
+  .call-grid[data-presenting="true"] { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr); grid-auto-rows: minmax(0, 1fr); }
+  .call-grid[data-presenting="true"] .call-tile-presenter { grid-column: 1; grid-row: 1; }
+  .call-grid[data-presenting="true"] .call-tile:not(.call-tile-presenter) { grid-column: 1; max-height: none; }
+  .call-self { width: 30vw; right: 12px; bottom: 96px; }
+  .call-controls { bottom: 16px; gap: 6px; padding: 8px 10px; max-width: calc(100vw - 16px); }
+  .call-btn { width: 42px; height: 42px; }
+  .call-btn svg { width: 19px; height: 19px; }
+  /* On a phone the panel covers the call rather than squeezing it. */
+  .call-panel { position: absolute; inset: 0; z-index: 8; width: auto; border-left: 0; }
+  .call-ring { top: 10px; right: 10px; width: calc(100vw - 20px); }
+  .join-devices { grid-template-columns: 1fr; }
+  .join-card { padding: 18px; }
 }

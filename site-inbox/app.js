@@ -3655,7 +3655,14 @@
       autosize();
       sendMessage(text).finally(() => {
         sendingDrafts.delete(key);
-        if (composerKey() === key) { compose.disabled = false; autosize(); }
+        if (composerKey() === key) {
+          compose.disabled = false;
+          autosize();
+          // Disabling the box while it sends drops the focus; give it back so the next message can
+          // be typed straight away — unless the person has since moved somewhere else on purpose.
+          const away = document.activeElement;
+          if (!away || away === document.body || away === compose || away === $("send-btn")) compose.focus({ preventScroll: true });
+        }
       });
     });
 
