@@ -71,6 +71,8 @@
     gear: '<circle cx="10" cy="10" r="2.6" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M10 2.8v2M10 15.2v2M2.8 10h2M15.2 10h2M4.9 4.9l1.4 1.4M13.7 13.7l1.4 1.4M4.9 15.1l1.4-1.4M13.7 6.3l1.4-1.4" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     end: '<path d="M2.4 11.6c-.4-.5-.4-1.2.1-1.7C5 7.6 7.4 6.8 10 6.8s5 .8 7.5 3.1c.5.5.5 1.2.1 1.7l-1.2 1.4c-.4.4-1 .5-1.5.3l-2-1c-.5-.2-.8-.7-.8-1.2V9.7a8.6 8.6 0 0 0-4.2 0v1.4c0 .5-.3 1-.8 1.2l-2 1c-.5.2-1.1.1-1.5-.3Z" fill="currentColor"/>',
     phone: '<path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="currentColor"/>',
+    back: '<path d="M12.5 4 6 10l6.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
+    expand: '<path d="M11.5 3.5h5v5M8.5 16.5h-5v-5M16.5 3.5 11 9M3.5 16.5 9 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
     lock: '<rect x="4" y="9" width="12" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.8 9V6.5a3.2 3.2 0 0 1 6.4 0V9" fill="none" stroke="currentColor" stroke-width="1.5"/>',
     close: '<path d="M5 5l10 10M15 5 5 15" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>',
     send: '<path d="M3.5 10 16.5 3.8 13 16.2 9.4 11.1Z M9.4 11.1 16.5 3.8" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>',
@@ -100,9 +102,11 @@
     return m.name || "Guest";
   }
 
+  // While the call screen is up it covers the inbox's own toast, so messages show inside the call.
   function toast(message) {
-    if (host()?.toast) return host().toast(message);
-    const t = $("call-toast");
+    const inCall = $("call-ui") && !$("call-ui").hidden;
+    if (!inCall && host()?.toast) return host().toast(message);
+    const t = inCall ? $("call-inner-toast") : $("call-toast");
     if (!t) return;
     t.textContent = message;
     t.hidden = false;
@@ -284,7 +288,12 @@
         if (room && room.id === data.room) onSignal(data.from, data.type, data.data).catch((err) => console.warn("calls: signal", err && err.name));
         return;
       case "knock":
-        if (room && room.id === data.room) { knocks.set(data.knock, data); renderKnocks(); startTone("knock", 1); }
+        if (room && room.id === data.room) {
+          knocks.set(data.knock, data);
+          renderKnocks();
+          startTone("knock", 1);
+          if (room.minimized) toast(displayName(data) + " wants to join your call. Return to the call to let them in.");
+        }
         return;
       case "knock_resolved":
         if (room && room.id === data.room) {
@@ -425,9 +434,11 @@
 
   // A chosen device is asked for *exactly*. As a mere preference it competes with the resolution
   // preference, and a 720p webcam loses to a 1080p built-in camera — the choice silently ignored.
+  // Echo cancellation, noise suppression and gain control, and nothing that pins the capture format:
+  // asking for a channel count or sample rate can steer the browser onto a capture path where its
+  // echo canceller is bypassed.
   const AUDIO_CONSTRAINTS = (id) => Object.assign({
     echoCancellation: true, noiseSuppression: true, autoGainControl: true,
-    channelCount: { ideal: 1 }, sampleRate: { ideal: 48_000 },
   }, id ? { deviceId: { exact: id } } : {});
   const VIDEO_CONSTRAINTS = (id) => Object.assign({
     width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 },
@@ -472,8 +483,17 @@
     if (local.cam) local.stream.addTrack(local.cam);
     local.muted = false;
     local.cameraOff = false;
+    warnIfNoEchoCancellation();
     showSelf();
     renderControls();
+  }
+
+  function echoCancelling() {
+    const settings = local.mic && local.mic.getSettings ? local.mic.getSettings() : {};
+    return "echoCancellation" in settings ? Boolean(settings.echoCancellation) : null;
+  }
+  function warnIfNoEchoCancellation() {
+    if (echoCancelling() === false) toast("Your browser isn’t cancelling echo on this microphone. Use headphones so the others don’t hear themselves.");
   }
 
   function stopLocalMedia() {
@@ -512,6 +532,7 @@
     local.muted = !local.muted;
     local.mic.enabled = !local.muted;
     broadcastState();
+    showSelf();
     renderControls();
   }
 
@@ -529,6 +550,7 @@
       for (const p of peers.values()) addLocalTrack(p, track, local.screenStream);
       broadcastState();
       applyBitrates();
+      showSelf();
       showShareIndicators(track);
     } catch (err) {
       if (err && err.name !== "NotAllowedError") toast("Screen sharing couldn’t start.");
@@ -548,6 +570,7 @@
     local.screen = null;
     local.screenStream = null;
     hideShareIndicators();
+    showSelf();
     broadcastState();
     applyBitrates();
     renderControls();
@@ -619,8 +642,7 @@
   async function switchDevice(kind, deviceId) {
     if (kind === "speaker") {
       prefs.speaker = deviceId || null;
-      for (const v of document.querySelectorAll(".call-ui video, .call-ui audio")) {
-        if (v.muted) continue;
+      for (const v of document.querySelectorAll(".call-ui audio")) {
         v.setSinkId?.(deviceId || "").catch(() => {});
       }
       return;
@@ -674,7 +696,7 @@
     p = {
       id: info.participant, name: info.name, mailbox: info.mailbox || null, guest: Boolean(info.guest),
       pc: null, dc: null, polite: String(room.you) < String(info.participant), makingOffer: false, ignoreOffer: false,
-      pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), cameraId: null, screenId: null, streams: new Map() },
+      pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), audio: new MediaStream(), cameraId: null, screenId: null, streams: new Map() },
       state: { muted: false, cameraOff: false }, security: null, connected: false, dropTimer: null, tile: null, ready: null,
       initiator, restarts: 0, watchdog: null,
     };
@@ -803,6 +825,12 @@
   // Which of a person's streams is their camera and which their screen is told over the data
   // channel; until then everything is treated as camera.
   function placeRemoteTrack(p, track, streamId) {
+    // Voices go to their own <audio> element. Every <video> stays silent, so a person is only ever
+    // played once — and a hidden or paused video cannot take their voice with it.
+    if (track.kind === "audio") {
+      if (!p.remote.audio.getTracks().includes(track)) p.remote.audio.addTrack(track);
+      return;
+    }
     const isScreen = streamId && p.remote.screenId === streamId;
     const target = isScreen ? p.remote.screen : p.remote.camera;
     const other = isScreen ? p.remote.camera : p.remote.screen;
@@ -860,7 +888,8 @@
     clearTimeout(p.watchdog);
     try { p.dc?.close(); } catch (_) { /* closed */ }
     try { p.pc?.close(); } catch (_) { /* closed */ }
-    for (const t of [...p.remote.camera.getTracks(), ...p.remote.screen.getTracks()]) t.stop();
+    for (const t of [...p.remote.camera.getTracks(), ...p.remote.screen.getTracks(), ...p.remote.audio.getTracks()]) t.stop();
+    if (p.audioEl) { p.audioEl.srcObject = null; p.audioEl.remove(); }
     p.tile?.remove();
     peers.delete(p.id);
     if (room) room.size = peers.size + 1;
@@ -872,7 +901,7 @@
   function sendState(p) {
     if (!p.dc || p.dc.readyState !== "open") return;
     p.dc.send(JSON.stringify({
-      t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff,
+      t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff, aec: echoCancelling(),
       camera: local.stream ? local.stream.id : null, screen: local.screenStream ? local.screenStream.id : null,
     }));
   }
@@ -883,7 +912,7 @@
     let m;
     try { m = JSON.parse(raw); } catch (_) { return; }
     if (m.t === "state") {
-      p.state = { muted: Boolean(m.muted), cameraOff: Boolean(m.cameraOff) };
+      p.state = { muted: Boolean(m.muted), cameraOff: Boolean(m.cameraOff), aec: m.aec === false ? false : m.aec === true ? true : null };
       p.remote.cameraId = typeof m.camera === "string" ? m.camera : null;
       p.remote.screenId = typeof m.screen === "string" ? m.screen : null;
       // Re-file tracks now that it is known which stream is which.
@@ -1052,6 +1081,7 @@
     if (ui) {
       for (const v of ui.querySelectorAll("video")) { v.pause?.(); v.srcObject = null; }
       ui.hidden = true;
+      if ($("call-mini")) $("call-mini").hidden = true;
       $("call-panel").hidden = true;
       $("call-grid").textContent = "";
       $("call-knocks").textContent = "";
@@ -1090,6 +1120,7 @@
       el("section", { class: "call-stage", id: "call-stage", role: "dialog", "aria-modal": "true", "aria-labelledby": "call-name" },
         el("div", { class: "call-main" },
           el("header", { class: "call-top" },
+            host() ? el("button", { class: "call-back", id: "call-minimize", type: "button", title: "Back to the inbox — the call keeps going", "aria-label": "Back to the inbox (the call keeps going)", onclick: () => minimize() }, svg(ICON.back), el("span", { text: "Inbox" })) : null,
             el("div", { class: "call-who" },
               el("h2", { id: "call-name" }),
               el("p", { class: "call-handle", id: "call-handle" }),
@@ -1101,7 +1132,13 @@
           el("div", { class: "call-knocks", id: "call-knocks", "aria-live": "polite" }),
           el("div", { class: "call-grid", id: "call-grid", "data-count": "0" }),
           el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
-          el("div", { class: "call-self", id: "call-self" }, el("video", { id: "call-self-video", autoplay: true, playsinline: true, muted: true }), el("span", { class: "call-self-label", text: "You" })),
+          el("div", { class: "call-self", id: "call-self", "data-screen": "false" },
+            el("video", { id: "call-self-screen", class: "call-self-screen", autoplay: true, playsinline: true, muted: true }),
+            el("video", { id: "call-self-video", class: "call-self-camera", autoplay: true, playsinline: true, muted: true }),
+            el("span", { class: "call-mute-badge call-self-mute", id: "call-self-mute", hidden: true, title: "You’re muted", "aria-label": "You’re muted" }, svg(ICON.mic + ICON.slash)),
+            el("span", { class: "call-self-label", id: "call-self-label", text: "You" })),
+          el("div", { class: "call-audio", id: "call-audio", "aria-hidden": "true" }),
+          el("div", { class: "call-inner-toast", id: "call-inner-toast", role: "status", "aria-live": "polite", hidden: true }),
           el("div", { class: "call-presenting", id: "call-presenting", hidden: true },
             el("span", { class: "share-pip-dot", "aria-hidden": "true" }),
             el("span", { text: "You’re sharing your screen" }),
@@ -1152,7 +1189,7 @@
         el("button", { id: "call-ring-accept", class: "call-btn call-accept", type: "button", "aria-label": "Accept", title: "Accept", onclick: acceptRing }, svg(ICON.phone)),
       ),
     );
-    document.body.append(ui, ringCard, el("div", { class: "call-share-frame", id: "call-share-frame", "aria-hidden": "true" }));
+    document.body.append(ui, ringCard, miniBar());
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
 
     $("call-mute").addEventListener("click", toggleMute);
@@ -1230,7 +1267,14 @@
   async function copyLink() {
     const link = meetingLink();
     if (!link) return;
-    try { await navigator.clipboard.writeText(link); toast("Invite link copied."); }
+    try {
+      await navigator.clipboard.writeText(link);
+      toast("Copied to clipboard.");
+      const label = $("call-link-copy").querySelector("span");
+      label.textContent = "Copied";
+      clearTimeout(copyLink.timer);
+      copyLink.timer = setTimeout(() => { label.textContent = "Copy"; }, 2000);
+    }
     catch (_) {
       const range = document.createRange();
       range.selectNodeContents($("call-link"));
@@ -1238,6 +1282,63 @@
       getSelection().addRange(range);
       toast("Select and copy the link.");
     }
+  }
+
+  // ---- back to the inbox during a call ----------------------------------------------------------
+
+  function miniBar() {
+    if (!host()) return null;
+    const btn = (id, label, icon, cls = "") => el("button", { id, class: "call-mini-btn " + cls, type: "button", "aria-label": label, title: label }, svg(icon));
+    const bar = el("div", { class: "call-mini", id: "call-mini", role: "region", "aria-label": "Call in progress", hidden: true },
+      el("button", { class: "call-mini-open", id: "call-mini-open", type: "button", title: "Return to the call", onclick: () => restore() },
+        el("span", { class: "avatar", id: "call-mini-face", "aria-hidden": "true" }),
+        el("span", { class: "call-mini-text" }, el("span", { class: "call-mini-name", id: "call-mini-name" }), el("span", { class: "call-mini-status", id: "call-mini-status" })),
+        el("span", { class: "call-badge", id: "call-mini-badge", hidden: true }),
+      ),
+      btn("call-mini-mute", "Mute microphone", ICON.mic + ICON.slash),
+      btn("call-mini-expand", "Return to the call", ICON.expand),
+      btn("call-mini-end", "Leave call", ICON.end, "call-mini-end"),
+    );
+    bar.querySelector("#call-mini-mute").addEventListener("click", toggleMute);
+    bar.querySelector("#call-mini-expand").addEventListener("click", () => restore());
+    bar.querySelector("#call-mini-end").addEventListener("click", leave);
+    return bar;
+  }
+
+  function minimize() {
+    if (!room || !host()) return;
+    room.minimized = true;
+    $("call-ui").hidden = true;
+    $("call-mini").hidden = false;
+    renderMini();
+    $("call-mini-open").focus({ preventScroll: true });
+  }
+
+  function restore() {
+    if (!room) return;
+    room.minimized = false;
+    $("call-mini").hidden = true;
+    $("call-ui").hidden = false;
+    showSelf();
+    renderStage();
+    $("call-hangup").focus({ preventScroll: true });
+  }
+
+  function renderMini() {
+    const bar = $("call-mini");
+    if (!bar || !room) return;
+    const list = [...peers.values()];
+    const title = list.length > 1 ? (list.length + 1) + " people" : list.length === 1 ? displayName(list[0]) : $("call-name").textContent;
+    $("call-mini-name").textContent = title;
+    $("call-mini-status").textContent = (room.startedAt ? clock(Date.now() - room.startedAt) : $("call-status").textContent) + (local.muted ? " · muted" : "") + (local.screen ? " · sharing" : "");
+    paintFace($("call-mini-face"), list.length === 1 ? (list[0].mailbox ? (list[0].mailbox.handle || list[0].mailbox.address) : list[0].name) : title);
+    const m = $("call-mini-mute");
+    m.setAttribute("aria-pressed", String(local.muted));
+    m.setAttribute("aria-label", local.muted ? "Unmute microphone" : "Mute microphone");
+    m.title = m.getAttribute("aria-label");
+    const waiting = knocks.size + (room.unread || 0);
+    $("call-mini-badge").hidden = !waiting;
+    $("call-mini-badge").textContent = String(waiting);
   }
 
   function openRoomUI({ title, sub, face, status }) {
@@ -1248,19 +1349,32 @@
     $("call-quality").textContent = "";
     $("call-sas").hidden = true;
     $("call-ui").hidden = false;
+    if ($("call-mini")) $("call-mini").hidden = true;
     setStatus(status || "");
     renderControls();
     renderHead();
     $("call-hangup").focus({ preventScroll: true });
   }
 
+  // Your own view: your camera, and while you share, the screen the others are seeing.
   function showSelf() {
     const v = $("call-self-video");
     if (!v) return;
     v.muted = true;
-    v.srcObject = local.stream;
-    v.play().catch(() => {});
-    $("call-self").hidden = !(local.cam && !local.cameraOff);
+    if (v.srcObject !== local.stream) v.srcObject = local.stream;
+    if (v.paused) v.play().catch(() => {});
+    const sv = $("call-self-screen");
+    sv.muted = true;
+    const screen = local.screenStream || null;
+    if (sv.srcObject !== screen) sv.srcObject = screen;
+    if (screen && sv.paused) sv.play().catch(() => {});
+    const camOn = Boolean(local.cam && !local.cameraOff);
+    const box = $("call-self");
+    box.dataset.screen = String(Boolean(screen));
+    box.dataset.camera = String(camOn);
+    box.hidden = !(camOn || screen);
+    $("call-self-label").textContent = screen ? "Your screen — what the others see" : "You";
+    $("call-self-mute").hidden = !local.muted;
   }
 
   function renderControls() {
@@ -1280,10 +1394,11 @@
     $("call-presenting").hidden = !local.screen;
     $("call-share-pip").hidden = !(local.screen && !sharePip && window.documentPictureInPicture && document.documentElement.dataset.sharing !== "browser");
     $("call-share").disabled = !room || !room.id || peers.size === 0;
+    if (room && room.minimized) renderMini();
   }
 
   function setStatus(text) { const s = $("call-status"); if (s) s.textContent = text; }
-  function renderClock() { if (room && room.startedAt) setStatus(clock(Date.now() - room.startedAt)); }
+  function renderClock() { if (room && room.startedAt) setStatus(clock(Date.now() - room.startedAt)); if (room && room.minimized) renderMini(); }
 
   // Tiles: one per person. Whoever is sharing a screen takes the big space; everyone else shrinks
   // into a strip beside it.
@@ -1302,15 +1417,29 @@
           el("video", { class: "call-tile-video", autoplay: true, playsinline: true }),
           el("video", { class: "call-tile-screen", autoplay: true, playsinline: true, muted: true }),
           el("span", { class: "avatar call-tile-face", "aria-hidden": "true" }),
-          el("figcaption", { class: "call-tile-name" }, el("span", { class: "call-tile-label" }), el("span", { class: "call-tile-muted", hidden: true }, svg(ICON.mic + ICON.slash))),
+          el("span", { class: "call-mute-badge", hidden: true, title: "Muted", "aria-label": "Muted" }, svg(ICON.mic + ICON.slash)),
+          el("figcaption", { class: "call-tile-name" }, el("span", { class: "call-tile-label" })),
         );
         p.tile.dataset.pid = p.id;
         grid.append(p.tile);
       }
+      if (!p.audioEl) {
+        p.audioEl = el("audio", { autoplay: true });
+        $("call-audio").append(p.audioEl);
+      }
+      if (p.audioEl.srcObject !== p.remote.audio) {
+        p.audioEl.srcObject = p.remote.audio;
+        if (prefs.speaker) p.audioEl.setSinkId?.(prefs.speaker).catch(() => {});
+      }
+      if (p.audioEl.paused) p.audioEl.play().catch(() => {});
       const video = p.tile.querySelector(".call-tile-video");
       const screen = p.tile.querySelector(".call-tile-screen");
-      if (video.srcObject !== p.remote.camera) { video.srcObject = p.remote.camera; video.play().catch(() => {}); if (prefs.speaker) video.setSinkId?.(prefs.speaker).catch(() => {}); }
-      if (screen.srcObject !== p.remote.screen) { screen.srcObject = p.remote.screen; screen.play().catch(() => {}); }
+      video.muted = true;
+      if (video.srcObject !== p.remote.camera) video.srcObject = p.remote.camera;
+      if (screen.srcObject !== p.remote.screen) screen.srcObject = p.remote.screen;
+      // Browsers pause silent videos that were hidden; start them again whenever the call is shown.
+      if (video.paused) video.play().catch(() => {});
+      if (screen.paused) screen.play().catch(() => {});
       const camLive = p.remote.camera.getVideoTracks().some((t) => t.readyState === "live" && !t.muted) && !p.state.cameraOff;
       const screenLive = p === presenter;
       p.tile.dataset.video = String(camLive);
@@ -1319,7 +1448,7 @@
       p.tile.classList.toggle("call-tile-presenter", screenLive);
       paintFace(p.tile.querySelector(".call-tile-face"), p.mailbox ? (p.mailbox.handle || p.mailbox.address) : p.name);
       p.tile.querySelector(".call-tile-label").textContent = displayName(p) + (p.guest ? " · guest" : "") + (p.connected ? "" : " · connecting");
-      p.tile.querySelector(".call-tile-muted").hidden = !p.state.muted;
+      p.tile.querySelector(".call-mute-badge").hidden = !p.state.muted;
     }
     for (const tile of [...grid.children]) if (!peers.has(tile.dataset.pid)) tile.remove();
     // The header names the call: the other person, or how many are in it.
@@ -1377,10 +1506,15 @@
         code ? el("span", { class: "call-person-code", title: "Security code with this person. If they read the same code, your connection is end-to-end encrypted." }, svg(ICON.lock), el("span", { text: code })) : null);
     };
     const me = host()?.mailbox?.();
-    list.append(row("You", me ? (me.handle || me.address) : (Join.name || "Guest"), null, me ? (me.handle || me.address) : Join.name));
+    list.append(row("You", (me ? (me.handle || me.address) : (Join.name || "Guest")) + (local.muted ? " · muted" : "") + (echoCancelling() === false ? " · no echo cancellation — use headphones" : ""), null, me ? (me.handle || me.address) : Join.name));
     for (const p of peers.values()) {
       const key = p.mailbox ? (p.mailbox.handle || p.mailbox.address) : p.name;
-      list.append(row(displayName(p), (p.guest ? "Guest · name not verified" : key) + (p.connected ? (p.stats?.route === "relay" ? " · relayed" : "") : " · connecting"), p.security?.code, key));
+      const notes = [p.guest ? "Guest · name not verified" : key];
+      if (!p.connected) notes.push("connecting");
+      else if (p.stats?.route === "relay") notes.push("relayed");
+      if (p.state.muted) notes.push("muted");
+      if (p.state.aec === false) notes.push("no echo cancellation — ask them to use headphones");
+      list.append(row(displayName(p), notes.join(" · "), p.security?.code, key));
     }
   }
 
@@ -1635,6 +1769,7 @@
       local.cameraOff = false;
       $("join").hidden = true;
       openRoomUI({ title: "Call", sub: "", face: this.name, status: "Connecting…" });
+      warnIfNoEchoCancellation();
       showSelf();
       renderControls();
     },
@@ -1674,9 +1809,10 @@
       call: room && { id: room.id, state: room.state === "active" && [...peers.values()].some((p) => p.connected) ? "active" : room.state },
       ring: ring && { room: ring.room, kind: ring.kind },
       knocks: [...knocks.keys()],
+      minimized: Boolean(room && room.minimized), aec: echoCancelling(),
       local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: local.mic?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
-      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), polite: p.polite, pendingIce: p.pendingIce.length }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
+      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), polite: p.polite, pendingIce: p.pendingIce.length }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
     }),
   };
 
