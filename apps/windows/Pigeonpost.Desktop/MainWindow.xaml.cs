@@ -111,7 +111,10 @@ public sealed partial class MainWindow : Window
     private async Task StartAccountAsync()
     {
 #if UI_TESTS
-        if (!startedInNotificationArea) { await CheckNativePreviewsAsync(); await CheckViewerContentAsync(); } // Needs a rendered window.
+        // Needs a rendered window. The call test runs in the runner's own (administrator) session,
+        // where the shell cannot thumbnail video; the standard-user smoke covers previews.
+        if (!startedInNotificationArea && Environment.GetEnvironmentVariable("PIGEONPOST_CALLS_PAGE") is null)
+        { await CheckNativePreviewsAsync(); await CheckViewerContentAsync(); }
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
