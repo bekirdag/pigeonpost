@@ -78,17 +78,14 @@ struct MacThreadView: View {
         VStack(spacing: 0) {
             ScrollViewReader { scroller in
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: 16) {
                         ForEach(Array(messages.enumerated()), id: \.element.id) { index, message in
                             // A lazy row has one stable child, including its optional day label.
                             // Flattening the label and bubble makes row counts change during a
                             // scroll and forces the stack to measure off-screen message bodies.
-                            VStack(spacing: 2) {
+                            VStack(spacing: 8) {
                                 if index == 0 || !Time.sameDay(messages[index - 1].at, message.at) {
-                                    Text(Time.dayLabel(message.at))
-                                        .font(.system(size: 11, weight: .medium))
-                                        .foregroundStyle(Theme.muted)
-                                        .padding(.vertical, 6)
+                                    DayDivider(label: Time.dayLabel(message.at))
                                 }
                                 MessageBubble(
                                     message: message,
@@ -100,8 +97,13 @@ struct MacThreadView: View {
                         }
                         Color.clear.frame(height: 1).id(Self.floor)
                     }
-                    .padding(.horizontal, 14)
-                    .padding(.vertical, 10)
+                    // The conversation design's column: centred, never wider than a line can be
+                    // read across, with its margins.
+                    .frame(maxWidth: 860)
+                    .frame(maxWidth: .infinity)
+                    .padding(.horizontal, 24)
+                    .padding(.top, 16)
+                    .padding(.bottom, 24)
                 }
                 // Behind the messages and not behind the composer, which is where the phone puts it
                 // too. The pattern is the paper a conversation is written on; the composer is a
@@ -139,7 +141,6 @@ struct MacThreadView: View {
             // A different subject needs fresh lazy layout measurements. The composer and its
             // draft stay outside this identity boundary.
             .id(scrollContext)
-            Divider()
             composer
         }
         .background(Theme.wash)
@@ -190,13 +191,13 @@ struct MacThreadView: View {
     private var findBar: some View {
         HStack(spacing: 6) {
             Image(systemName: "magnifyingglass")
-                .font(.system(size: 11))
+                .font(.geist(12, .medium))
                 .foregroundStyle(Theme.muted)
                 .fixedSize()
 
             TextField("Search this conversation", text: $find)
                 .textFieldStyle(.plain)
-                .font(.system(size: 12))
+                .font(.geist(13))
                 .foregroundStyle(Theme.ink)
                 .frame(width: 190)
                 .onExitCommand { find = "" }
@@ -205,7 +206,7 @@ struct MacThreadView: View {
                 Text(matches.isEmpty
                      ? "none"
                      : "\(min(matchIndex, matches.count - 1) + 1) of \(matches.count)")
-                    .font(.system(size: 11).monospacedDigit())
+                    .font(.geist(11).monospacedDigit())
                     .foregroundStyle(Theme.muted)
                     .fixedSize()
 
@@ -214,17 +215,17 @@ struct MacThreadView: View {
                 findStep("xmark.circle.fill", "Clear") { find = "" }
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .background(Theme.ground, in: RoundedRectangle(cornerRadius: 7))
-        .overlay(RoundedRectangle(cornerRadius: 7).stroke(Theme.rule, lineWidth: 1))
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(Theme.column, in: RoundedRectangle(cornerRadius: 9))
+        .overlay(RoundedRectangle(cornerRadius: 9).stroke(Theme.strokeStrong, lineWidth: 1))
     }
 
     /// Tapped images rather than buttons, for the same reason the columns use them: a `Button` in a
     /// bar like this one has repeatedly cost the list beside it its width.
     private func findStep(_ symbol: String, _ label: String, action: @escaping () -> Void) -> some View {
         Image(systemName: symbol)
-            .font(.system(size: 11, weight: .semibold))
+            .font(.geist(11, .semibold))
             .foregroundStyle(matches.isEmpty && symbol != "xmark.circle.fill" ? Theme.rule : Theme.muted)
             .frame(width: 14, height: 14)
             .contentShape(Rectangle())
@@ -246,43 +247,58 @@ struct MacThreadView: View {
                     .padding(.horizontal, 12)
                 }
             }
-            // Centred on the field.
-            //
-            // `.bottom` lines up the *frames*, and those are not comparable: a button's frame
-            // carries its own hit-target padding, the field's carries 7pt of text inset. The
-            // paperclip ended up floating above the words it sits beside. `.lastTextBaseline` put
-            // it further out still, because a padded field's baseline is not where a bare glyph's
-            // is. Centre is the one alignment that means the same thing for both, and for a field
-            // that is one line almost always, it is also what it should look like.
-            HStack(alignment: .center, spacing: 8) {
-                Button { pick() } label: { Image(systemName: "paperclip") }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(Theme.muted)
-                    .help("Attach a file")
+            // Bottom-aligned, and that only works because the three share one height: the
+            // paperclip and the send button are 34pt squares and a one-line field is 34pt too, so
+            // they line up exactly on one line and the buttons stay on the last line as it grows.
+            HStack(alignment: .bottom, spacing: 8) {
+                Button { pick() } label: {
+                    Image(systemName: "paperclip")
+                        .font(.geist(16, .medium))
+                        .frame(width: 34, height: 34)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .foregroundStyle(Theme.secondary)
+                .help("Attach a file")
 
                 MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sending.contains(composerKey) { staged.append(contentsOf: $0) } },
                                  reportError: { inbox.toast = $0 }, send: send)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
                             Text("Write a message")
-                                .font(.system(size: 13))
+                                .font(.geist(14.5))
                                 .foregroundStyle(Theme.muted)
-                                .padding(.horizontal, 10).padding(.vertical, 7)
+                                .padding(.horizontal, 5).padding(.vertical, 8)
                                 .allowsHitTesting(false)
                         }
                     }
-                    .background(Theme.ground, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.rule, lineWidth: 1))
 
-                Button(action: send) { Image(systemName: "paperplane.fill") }
-                    .keyboardShortcut(.return, modifiers: .command)
-                    .disabled(!sendable)
-                    .help("Send")
+                Button(action: send) {
+                    Image(systemName: "arrow.up")
+                        .font(.geist(14, .bold))
+                        .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
+                        .frame(width: 34, height: 34)
+                        .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!sendable)
+                .help("Send")
+                .accessibilityLabel("Send")
             }
-            .padding(.horizontal, 12)
+            // One card around the three, as the conversation design draws its composer.
+            .padding(6)
+            .background(Theme.composer, in: RoundedRectangle(cornerRadius: 14))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(Theme.strokeStrong, lineWidth: 1))
+            .frame(maxWidth: 860)
+            .frame(maxWidth: .infinity)
+            .padding(.horizontal, 24)
         }
-        .padding(.vertical, 8)
-        .background(.bar)
+        .padding(.top, 12)
+        .padding(.bottom, 16)
+        .background(Theme.wash)
+        .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
         .disabled(sending.contains(composerKey))
     }
 

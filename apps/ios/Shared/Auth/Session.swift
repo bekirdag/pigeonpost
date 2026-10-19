@@ -66,8 +66,9 @@ final class Session {
         // Through locals, and `status` first: @Observable turns these into computed properties over
         // its registrar, so reading one back before every stored property is initialized is
         // touching `self` too early.
-        let access = Keychain.read(Key.access)
-        let refresh = Keychain.read(Key.refresh)
+        // A fixture launch is a demo mailbox and must not pick up, or later act on, a real session.
+        let access = Fixtures.enabled ? nil : Keychain.read(Key.access)
+        let refresh = Fixtures.enabled ? nil : Keychain.read(Key.refresh)
         // A stored refresh token is a session even when the access token beside it is spent: the
         // first call will renew it. Only the absence of both is signed out.
         status = (refresh != nil || access != nil) ? .signedIn : .signedOut
@@ -110,6 +111,9 @@ final class Session {
     /// an ephemeral browser guarantees it by carrying no cookie any provider could recognise.
     func signIn(otherAccount: Bool = false, provider: Config.OIDC.IdentityProvider? = nil) async {
         lastError = nil
+        #if os(iOS)
+        if provider == .apple, !otherAccount, await signInWithAppleNatively() { return }
+        #endif
         do {
             let verifier = Self.randomToken(64)
             let expectedState = Self.randomToken(16)
@@ -137,6 +141,54 @@ final class Session {
             lastError = error.localizedDescription
         }
     }
+
+    #if os(iOS)
+    /// Sign in with Apple through the system sheet, then trade Apple's identity token for realm
+    /// tokens (token exchange on `pigeonpost-mobile`). The realm stays the issuer, so the account —
+    /// and every token the postbox sees — is the same one the web flow reaches.
+    ///
+    /// Returns false when the web flow should take over instead: chiefly an existing account with
+    /// the same contact address that has not been linked to Apple yet. Linking needs proof the person owns that
+    /// account, and only the realm's own pages can ask for it.
+    private func signInWithAppleNatively() async -> Bool {
+        let credential: ASAuthorizationAppleIDCredential
+        do {
+            credential = try await appleAuthorization.perform()
+        } catch let error as ASAuthorizationError where error.code == .canceled {
+            return true
+        } catch {
+            // No Apple ID on the device, or the system sheet could not run: the web flow still can.
+            return false
+        }
+        guard let tokenData = credential.identityToken, let identityToken = String(data: tokenData, encoding: .utf8) else {
+            return false
+        }
+        var form = [
+            "grant_type": "urn:ietf:params:oauth:grant-type:token-exchange",
+            "client_id": Config.OIDC.clientId,
+            "subject_issuer": "apple",
+            "subject_token_type": "urn:ietf:params:oauth:token-type:id_token",
+            "subject_token": identityToken,
+            "scope": Config.OIDC.scope,
+        ]
+        // Apple tells the app the person's name only the first time; the token never carries it.
+        if let name = credential.fullName, name.givenName != nil || name.familyName != nil {
+            let profile: [String: Any] = ["name": ["firstName": name.givenName ?? "", "lastName": name.familyName ?? ""]]
+            if let json = try? JSONSerialization.data(withJSONObject: profile) {
+                form["user_profile"] = String(data: json, encoding: .utf8)
+            }
+        }
+        do {
+            adopt(try await exchange(form))
+            status = .signedIn
+            return true
+        } catch {
+            return false
+        }
+    }
+
+    private let appleAuthorization = AppleAuthorization()
+    #endif
 
     /// Sign out for real: end the session at the realm, then forget it here.
     ///
@@ -174,8 +226,12 @@ final class Session {
         refreshTask = nil
         accessToken = nil
         refreshToken = nil
-        Keychain.delete(Key.access)
-        Keychain.delete(Key.refresh)
+        // A fixture launch never read these, so it has no business removing them either — on a
+        // Mac the demo window shares the Keychain with the real app.
+        if !Fixtures.enabled {
+            Keychain.delete(Key.access)
+            Keychain.delete(Key.refresh)
+        }
         status = .signedOut
     }
 
@@ -363,6 +419,61 @@ private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentatio
         }
     }
 }
+
+#if os(iOS)
+/// One Sign in with Apple request through the system sheet, as an async call.
+@MainActor
+private final class AppleAuthorization: NSObject, ASAuthorizationControllerDelegate,
+                                        ASAuthorizationControllerPresentationContextProviding {
+    private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
+    private var controller: ASAuthorizationController?
+
+    func perform() async throws -> ASAuthorizationAppleIDCredential {
+        let request = ASAuthorizationAppleIDProvider().createRequest()
+        request.requestedScopes = [.fullName, .email]
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation?.resume(throwing: ASAuthorizationError(.canceled))
+            self.continuation = continuation
+            let controller = ASAuthorizationController(authorizationRequests: [request])
+            controller.delegate = self
+            controller.presentationContextProvider = self
+            self.controller = controller
+            controller.performRequests()
+        }
+    }
+
+    nonisolated func authorizationController(controller: ASAuthorizationController,
+                                             didCompleteWithAuthorization authorization: ASAuthorization) {
+        MainActor.assumeIsolated {
+            if let credential = authorization.credential as? ASAuthorizationAppleIDCredential {
+                finish(.success(credential))
+            } else {
+                finish(.failure(ASAuthorizationError(.unknown)))
+            }
+        }
+    }
+
+    nonisolated func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
+        MainActor.assumeIsolated { finish(.failure(error)) }
+    }
+
+    nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
+        MainActor.assumeIsolated {
+            UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+        }
+    }
+
+    private func finish(_ result: Result<ASAuthorizationAppleIDCredential, Error>) {
+        controller = nil
+        let continuation = self.continuation
+        self.continuation = nil
+        continuation?.resume(with: result)
+    }
+}
+#endif
 
 extension Data {
     var base64URLEncoded: String {

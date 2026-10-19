@@ -107,6 +107,8 @@
 
   function signOut() {
     [K.token, K.refresh, K.verifier, K.state, K.identity].forEach((k) => LS.removeItem(k));
+    window.PigeonpostCalls?.stop();
+    closeViewer();
     stopLive();
     // The stream cursor and the fallback verdict belong to the account that was signed in, not to
     // the browser. Hiding a tab must keep them — resuming from the cursor is the whole point — but
@@ -510,12 +512,21 @@
     }
   }
 
-  function addPreview(parent, { name, type, bytes, load }, compact = false) {
+  function addPreview(parent, { name, type, bytes, load, onOpen }, compact = false) {
     const format = previewType(type, name);
     if (!format || !Number.isFinite(bytes) || bytes > 25 * 1024 * 1024 || bytes <= 0) return;
     const node = document.createElement("div");
     node.className = "attachment-preview" + (compact ? " compact" : "");
     node.setAttribute("aria-label", "Preview of " + name);
+    if (onOpen) {
+      // The preview is also the way in: click or Enter opens the file inside the app.
+      node.classList.add("openable");
+      node.tabIndex = 0;
+      node.setAttribute("role", "button");
+      node.setAttribute("aria-label", "Open " + name);
+      node.addEventListener("click", onOpen);
+      node.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } });
+    }
     node.textContent = "Loading preview…";
     parent.append(node);
     const record = { node, format, load, name, controller: new AbortController(), disposed: false };
@@ -608,6 +619,175 @@
     if (format.kind === "video") {
       const play = document.createElement("span"); play.className = "preview-play"; play.textContent = "▶"; play.setAttribute("aria-hidden", "true"); node.append(play);
     }
+  }
+
+  // ---- opening and saving attachments --------------------------------------------------------
+  //
+  // Formats the browser can show safely open in a viewer inside the app: images, video, audio,
+  // PDF (rendered by the bundled pdf.js with script evaluation off) and plain text (as text, never
+  // markup). SVG and HTML are deliberately not among them. Everything else downloads.
+
+  const VIEWER_MAX_BYTES = 200 * 1024 * 1024;
+  const TEXT_VIEW_CHARS = 2_000_000;
+  const DOWNLOAD_ICON = '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3v9.5M6 9l4 4 4-4M4 16.5h12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+  let viewerState = null;
+
+  // Phones get the share sheet for pictures and videos, which is where "Save to Photos" lives;
+  // everything else, and every computer, gets an ordinary download into the downloads folder.
+  async function downloadAttachment(item) {
+    try {
+      const blob = await item.load();
+      if (!item.context.current()) return;
+      const format = previewType(item.type, item.name);
+      const mobile = window.matchMedia("(pointer: coarse)").matches;
+      if (mobile && format && (format.kind === "image" || format.kind === "video") && navigator.canShare) {
+        const asFile = new File([blob], item.name, { type: blob.type || format.mime });
+        if (navigator.canShare({ files: [asFile] })) {
+          try { await navigator.share({ files: [asFile] }); return; }
+          catch (e) { if (e && e.name === "AbortError") return; }
+        }
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = item.name;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 30_000);
+    } catch (_) {
+      if (item.context.current()) toast("Could not download that file.");
+    }
+  }
+
+  async function openViewer(item, format, trigger) {
+    closeViewer();
+    const viewer = $("viewer"), body = $("viewer-body");
+    const controller = new AbortController();
+    const state = viewerState = { item, controller, url: null, pdf: null, observer: null, trigger: trigger || document.activeElement };
+    $("viewer-name").textContent = item.name;
+    $("viewer-meta").textContent = [readableBytes(item.bytes), { image: "Image", video: "Video", audio: "Audio", pdf: "PDF", text: "Text" }[format.kind]].filter(Boolean).join(" · ");
+    body.dataset.kind = format.kind;
+    body.replaceChildren(Object.assign(document.createElement("p"), { className: "viewer-loading", textContent: "Opening…" }));
+    viewer.hidden = false;
+    $("viewer-close").focus({ preventScroll: true });
+    try {
+      const blob = await item.load(controller.signal);
+      if (viewerState !== state) return;
+      if (format.kind === "text") {
+        const text = await blob.text();
+        const pre = document.createElement("pre");
+        pre.className = "viewer-text";
+        pre.textContent = text.length > TEXT_VIEW_CHARS ? text.slice(0, TEXT_VIEW_CHARS) : text;
+        body.replaceChildren(pre);
+        if (text.length > TEXT_VIEW_CHARS) body.append(Object.assign(document.createElement("p"), { className: "viewer-note", textContent: "Showing the beginning of this file. Download it to see all of it." }));
+        return;
+      }
+      if (format.kind === "pdf") return renderPdf(state, blob);
+      state.url = URL.createObjectURL(new Blob([blob], { type: format.mime }));
+      let media;
+      if (format.kind === "image") {
+        media = document.createElement("img");
+        media.alt = item.name;
+        media.decoding = "async";
+      } else {
+        media = document.createElement(format.kind);
+        media.controls = true;
+        media.preload = "metadata";
+        if (format.kind === "video") media.playsInline = true;
+      }
+      media.className = "viewer-media";
+      media.addEventListener("error", () => { if (viewerState === state) body.replaceChildren(viewerFallback("This file can’t be shown here.")); }, { once: true });
+      media.src = state.url;
+      body.replaceChildren(media);
+    } catch (_) {
+      if (viewerState === state && !controller.signal.aborted) body.replaceChildren(viewerFallback("Couldn’t open this file."));
+    }
+  }
+
+  function viewerFallback(text) {
+    const box = document.createElement("div");
+    box.className = "viewer-fallback";
+    const p = document.createElement("p");
+    p.textContent = text;
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "viewer-btn";
+    b.textContent = "Download instead";
+    b.addEventListener("click", () => viewerState && downloadAttachment(viewerState.item));
+    box.append(p, b);
+    return box;
+  }
+
+  // Every page, at the width of the window, drawn as it scrolls into view.
+  async function renderPdf(state, blob) {
+    const body = $("viewer-body");
+    const pdfjs = await import("./pdfjs/pdf.mjs");
+    pdfjs.GlobalWorkerOptions.workerSrc = new URL("./pdfjs/pdf.worker.mjs", location.href).href;
+    const task = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()),
+      isEvalSupported: false, useWasm: false, disableFontFace: true,
+      standardFontDataUrl: new URL("./pdfjs/standard_fonts/", location.href).href,
+      cMapUrl: new URL("./pdfjs/cmaps/", location.href).href, cMapPacked: true });
+    state.pdf = task;
+    const pdf = await task.promise;
+    if (viewerState !== state) return;
+    const pages = document.createElement("div");
+    pages.className = "viewer-pages";
+    body.replaceChildren(pages);
+    const width = () => Math.min(pages.clientWidth || body.clientWidth || 800, 1100);
+    const count = Math.min(pdf.numPages, 500);
+    const first = await pdf.getPage(1);
+    const ratio = first.getViewport({ scale: 1 }).height / first.getViewport({ scale: 1 }).width;
+    state.observer = new IntersectionObserver((entries) => {
+      for (const entry of entries) {
+        if (!entry.isIntersecting || entry.target.dataset.drawn) continue;
+        entry.target.dataset.drawn = "1";
+        state.observer.unobserve(entry.target);
+        drawPdfPage(state, pdf, Number(entry.target.dataset.page), entry.target, width());
+      }
+    }, { root: body, rootMargin: "800px 0px" });
+    for (let n = 1; n <= count; n++) {
+      const slot = document.createElement("div");
+      slot.className = "viewer-page";
+      slot.dataset.page = String(n);
+      slot.style.aspectRatio = String(1 / ratio);
+      slot.setAttribute("aria-label", "Page " + n + " of " + pdf.numPages);
+      slot.setAttribute("role", "img");
+      pages.append(slot);
+      state.observer.observe(slot);
+    }
+    if (pdf.numPages > count) body.append(Object.assign(document.createElement("p"), { className: "viewer-note", textContent: `Showing the first ${count} of ${pdf.numPages} pages. Download the file to see the rest.` }));
+  }
+
+  async function drawPdfPage(state, pdf, n, slot, cssWidth) {
+    try {
+      const page = await pdf.getPage(n);
+      if (viewerState !== state) return;
+      const base = page.getViewport({ scale: 1 });
+      const scale = (cssWidth / base.width) * Math.min(window.devicePixelRatio || 1, 2);
+      const viewport = page.getViewport({ scale });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(viewport.width);
+      canvas.height = Math.ceil(viewport.height);
+      slot.style.aspectRatio = String(base.width / base.height);
+      await page.render({ canvasContext: canvas.getContext("2d"), viewport }).promise;
+      if (viewerState === state) slot.replaceChildren(canvas);
+    } catch (_) { /* a page that will not draw stays blank */ }
+  }
+
+  function closeViewer() {
+    const state = viewerState;
+    if (!state) return;
+    viewerState = null;
+    state.controller.abort();
+    state.observer?.disconnect();
+    if (state.pdf) void state.pdf.destroy();
+    const body = $("viewer-body");
+    for (const media of body.querySelectorAll("video, audio")) { media.pause(); media.removeAttribute("src"); media.load(); }
+    body.textContent = "";
+    if (state.url) URL.revokeObjectURL(state.url);
+    $("viewer").hidden = true;
+    if (state.trigger && state.trigger.isConnected) state.trigger.focus({ preventScroll: true });
   }
 
   // The bytes are the whole body; the metadata rides in headers. Not `api()` — that one sends and
@@ -753,6 +933,37 @@
     const label = $("size-value");
     if (label) label.textContent = Math.round(scale * 100) + "%";
   }
+  // Light, dark, or whatever the device is set to. Per device like the text size, and applied by
+  // theme.js before the first paint; this is the same rule again for when it changes here (and for
+  // a page that loaded without theme.js). "system" removes the attribute so the stylesheet's
+  // prefers-color-scheme block decides.
+  const THEME_KEY = "ppi_theme";
+  const THEMES = ["system", "light", "dark"];
+  function storedTheme() {
+    let value = null;
+    try { value = window.localStorage.getItem(THEME_KEY); } catch (_) { /* storage blocked */ }
+    return THEMES.includes(value) ? value : "system";
+  }
+  function applyTheme(theme, persist = false) {
+    if (!THEMES.includes(theme)) theme = "system";
+    if (persist) {
+      try {
+        if (theme === "system") window.localStorage.removeItem(THEME_KEY);
+        else window.localStorage.setItem(THEME_KEY, theme);
+      } catch (_) { /* still applies for this visit */ }
+    }
+    const root = document.documentElement;
+    if (theme === "system") root.removeAttribute("data-theme");
+    else root.setAttribute("data-theme", theme);
+    document.querySelector('meta[name="color-scheme"]')?.setAttribute("content", theme === "system" ? "light dark" : theme);
+    syncThemeChoice();
+  }
+  function syncThemeChoice() {
+    const current = document.documentElement.getAttribute("data-theme") || "system";
+    for (const input of document.querySelectorAll('#theme-choice input[name="theme"]')) input.checked = input.value === current;
+  }
+  applyTheme(storedTheme());
+
   let state = freshState();
   let sessionVersion = 0;
   let identitiesRequest = 0;
@@ -1259,6 +1470,7 @@
     const open = Boolean(state.openPeer);
     $("pane-thread").dataset.open = String(open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length));
     $("thread-head").hidden = !open;
+    window.PigeonpostCalls?.renderHead();
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
     if (!(open && state.showInfo) && !$("peer-info-sheet").hidden) closeSheet("peer-info-sheet");
@@ -1421,14 +1633,26 @@
       let previous = null;
       for (const m of visible) {
         if (!previous || !sameDay(previous.at, m.at)) {
-          const sep = document.createElement("li"), label = document.createElement("span");
-          sep.className = "sep";
-          label.className = "daybreak";
-          label.textContent = dayLabel(m.at);
-          sep.append(label);
+          // Day separators are reused like bubbles. A fresh one on every refresh made the loop
+          // below move every message after it, and moving a node drops any text selection inside
+          // it: a reader dragging across a reply lost the selection whenever mail arrived.
+          const day = dayLabel(m.at), sepKey = "\u0000day:" + day;
+          let sep = view.cache.get(sepKey)?.row;
+          if (!sep) {
+            const label = document.createElement("span");
+            sep = document.createElement("li");
+            sep.className = "sep";
+            label.className = "daybreak";
+            label.textContent = day;
+            sep.append(label);
+          }
           rows.push(sep);
+          cache.set(sepKey, { row: sep });
         }
-        const fingerprint = JSON.stringify([m, view.query, m.id === found]);
+        // `read` flips when a message is displayed and acknowledged, and changes nothing drawn, so
+        // it must not rebuild the bubble (and lose a selection in it) a moment after it appears.
+        const { read: _read, ...drawn } = m;
+        const fingerprint = JSON.stringify([drawn, view.query, m.id === found]);
         let entry = view.cache.get(m.id);
         if (entry?.fingerprint !== fingerprint) {
           const row = messageNode(m);
@@ -1440,6 +1664,11 @@
         previous = m;
       }
       // Reuse unchanged bubbles so a refresh preserves selection and attachment/copy controls.
+      // Rows leaving the window go first: inserting in front of one that is about to go would move
+      // every row after it, and moving a node drops a text selection inside it. A followed
+      // conversation slides its window by one on every arrival, so this is the common case.
+      const keep = new Set(rows);
+      for (const child of [...list.children]) if (!keep.has(child)) child.remove();
       rows.forEach((row, index) => { if (list.children[index] !== row) list.insertBefore(row, list.children[index] || null); });
       while (list.children.length > rows.length) list.lastElementChild.remove();
       prunePreviews();
@@ -1665,48 +1894,39 @@
         link.className = "file";
         link.href = cfg.postbox + "/v1/attachments/" + encodeURIComponent(file.id);
         link.textContent = file.filename || "attachment";
-        // The token cannot ride in a plain link, so this fetches with it and hands the browser a
-        // blob. Same reason the download endpoint is authenticated at all: a file is not public
-        // because its id is known.
-          link.addEventListener("click", async (event) => {
+        // The token cannot ride in a plain link, so the bytes are fetched with it. Same reason the
+        // endpoint is authenticated at all: a file is not public because its id is known.
+        const context = mailboxContext();
+        const load = async signal => {
+          if (!context.current()) throw new Error("Mailbox changed");
+          const res = await fetch(link.href, { headers: { authorization: "Bearer " + getToken(),
+            "x-pigeonpost-identity": context.address }, signal: signal || context.signal });
+          if (!res.ok || !context.current()) throw new Error("Unavailable");
+          const blob = await res.blob();
+          if (!context.current()) throw new Error("Mailbox changed");
+          return blob;
+        };
+        const item = { name: file.filename || "attachment", type: file.media_type, bytes: file.bytes, load, context };
+        const format = previewType(file.media_type, file.filename);
+        const viewable = format && Number.isFinite(file.bytes) && file.bytes > 0 && file.bytes <= VIEWER_MAX_BYTES;
+        // Something the app can show opens in the app; anything else downloads as before.
+        link.addEventListener("click", (event) => {
           event.preventDefault();
-          const context = mailboxContext();
-          try {
-            const res = await fetch(link.href, {
-              headers: {
-                authorization: "Bearer " + getToken(),
-                "x-pigeonpost-identity": context.address,
-              },
-              signal: context.signal,
-            });
-            if (!res.ok) throw new Error(String(res.status));
-            const blob = await res.blob();
-            if (!context.current()) return;
-            const url = URL.createObjectURL(blob);
-            const save = document.createElement("a");
-            save.href = url;
-            save.download = file.filename || "attachment";
-            save.click();
-            URL.revokeObjectURL(url);
-          } catch (_) {
-            if (context.current()) toast("Could not download that file.");
-          }
+          if (viewable) openViewer(item, format, link); else downloadAttachment(item);
         });
         const size = document.createElement("span");
         size.className = "file-size";
         size.textContent = readableBytes(file.bytes);
-        const context = mailboxContext();
-        addPreview(li, { name: file.filename, type: file.media_type, bytes: file.bytes, load: async signal => {
-          if (!context.current()) throw new Error("Mailbox changed");
-          const res = await fetch(link.href, { headers: { authorization: "Bearer " + getToken(),
-            "x-pigeonpost-identity": context.address }, signal });
-          if (!res.ok || !context.current()) throw new Error("Preview unavailable");
-          const blob = await res.blob();
-          if (!context.current()) throw new Error("Mailbox changed");
-          return blob;
-        }});
+        const save = document.createElement("button");
+        save.type = "button";
+        save.className = "file-download";
+        save.title = "Download " + item.name;
+        save.setAttribute("aria-label", "Download " + item.name);
+        save.innerHTML = DOWNLOAD_ICON;
+        save.addEventListener("click", () => downloadAttachment(item));
+        addPreview(li, { name: file.filename, type: file.media_type, bytes: file.bytes, load, onOpen: viewable ? () => openViewer(item, format, link) : null });
         const label = document.createElement("div"); label.className = "file-label";
-        label.append(link, size); li.append(label);
+        label.append(link, size, save); li.append(label);
         files.append(li);
       }
       bubble.append(files);
@@ -2816,6 +3036,7 @@
   }
 
   function startLive() {
+    window.PigeonpostCalls?.start();
     if (liveWanted || !state.me) return;
     liveWanted = true;
     if (pollFallback) { startPolling(); return; }
@@ -3150,6 +3371,7 @@
 
   function openSettings() {
     applyMessageScale(messageScale());
+    syncThemeChoice();
     // An unnamed mailbox has no handle, and saying "—" is more honest than repeating its address
     // on the line above the one that already shows it.
     $("acct-mailbox").textContent = state.me ? (state.me.handle || "not named") : "—";
@@ -3379,6 +3601,12 @@
   }
 
   function wire() {
+    $("viewer-close").addEventListener("click", closeViewer);
+    $("viewer-download").addEventListener("click", () => { if (viewerState) downloadAttachment(viewerState.item); });
+    // Capture phase, so Escape closes the viewer before anything underneath reacts to it.
+    document.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && viewerState) { e.preventDefault(); e.stopPropagation(); closeViewer(); }
+    }, true);
     $("signin-btn").onclick = () => login();
     $("signout-btn").onclick = () => signOut();
 
@@ -3447,6 +3675,10 @@
     wireSheet("delete-thread-sheet");
     wireColumns();
 
+    for (const input of document.querySelectorAll('#theme-choice input[name="theme"]')) {
+      input.addEventListener("change", () => { if (input.checked) applyTheme(input.value, true); });
+    }
+
     $("size-down").onclick = () =>
       applyMessageScale(Math.max(0.8, Math.round((messageScale() - 0.1) * 10) / 10));
     $("size-up").onclick = () =>
@@ -3472,7 +3704,10 @@
     document.addEventListener("keydown", (e) => {
       if (e.key === "Tab" && sheetStack.length) {
         const items = [...$(sheetStack.at(-1)).querySelectorAll("button:not(:disabled), a[href], input:not(:disabled), textarea:not(:disabled), select:not(:disabled)")]
-          .filter(el => !el.closest("[hidden]"));
+          .filter(el => !el.closest("[hidden]"))
+          // Document order, which a selector list does not promise in every engine (jsdom groups
+          // the matches by selector, which put the theme radios after the footer's Done).
+          .sort((a, b) => (a.compareDocumentPosition(b) & Node.DOCUMENT_POSITION_FOLLOWING ? -1 : 1));
         const first = items[0], last = items.at(-1);
         if (first && e.shiftKey && (document.activeElement === first || document.activeElement === $("settings-title"))) { e.preventDefault(); last.focus(); }
         else if (last && !e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
@@ -3596,7 +3831,14 @@
       autosize();
       sendMessage(text).finally(() => {
         sendingDrafts.delete(key);
-        if (composerKey() === key) { compose.disabled = false; autosize(); }
+        if (composerKey() === key) {
+          compose.disabled = false;
+          autosize();
+          // Disabling the box while it sends drops the focus; give it back so the next message can
+          // be typed straight away — unless the person has since moved somewhere else on purpose.
+          const away = document.activeElement;
+          if (!away || away === document.body || away === compose || away === $("send-btn")) compose.focus({ preventScroll: true });
+        }
       });
     });
 
@@ -3702,6 +3944,20 @@
       render();
     }
   }
+
+  // What calls.js may ask of the inbox: who is signed in as which mailbox, who is open, and how to
+  // say something. It gets no access to message bodies.
+  window.PigeonpostCallsHost = {
+    signedIn: () => Boolean(getToken() && state.me),
+    token: () => getToken(),
+    renew: () => renewSession(),
+    mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    peer: () => state.openPeer || null,
+    knownPeer: (peer) => Boolean(peer && (contactFor(peer) || state.inbound.some((m) => peerKeyOf(m) === peer))),
+    displayName,
+    paintAvatar,
+    toast,
+  };
 
   async function boot() {
     wire();

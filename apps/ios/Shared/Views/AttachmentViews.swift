@@ -1,7 +1,9 @@
 //  Files, on the way out and on the way in.
 //
-//  Static system thumbnails identify supported media; opening or sharing stays explicit.
+//  Static system thumbnails identify supported media. On iPhone and iPad a tap opens pictures,
+//  video, sound, PDFs and text in place; other files are shared, as before.
 
+import QuickLook
 import SwiftUI
 import UniformTypeIdentifiers
 #if canImport(UIKit)
@@ -20,17 +22,17 @@ struct StagedFileChip: View {
             AttachmentPreview(name: file.name, mediaType: file.mediaType, bytes: file.data.count,
                               cacheKey: "draft:\(file.id)", compact: true) { file.data }
             Text(file.name)
-                .font(.system(size: 12.5))
+                .font(.geist(12.5))
                 .foregroundStyle(Theme.ink)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .frame(maxWidth: 150)
             Text(file.readableSize)
-                .font(.system(size: 11.5))
+                .font(.geist(11.5))
                 .foregroundStyle(Theme.muted)
             Button(action: remove) {
                 Image(systemName: "xmark")
-                    .font(.system(size: 10, weight: .semibold))
+                    .font(.geist(10, .semibold))
                     .foregroundStyle(Theme.muted)
                     .frame(width: 18, height: 18)
                     .contentShape(Rectangle())
@@ -40,8 +42,8 @@ struct StagedFileChip: View {
         .padding(.leading, 9)
         .padding(.trailing, 3)
         .padding(.vertical, 4)
-        .background(Theme.wash, in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.rule, lineWidth: 1))
+        .background(Theme.field, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Theme.strokeStrong, lineWidth: 1))
     }
 }
 
@@ -54,6 +56,8 @@ struct AttachmentList: View {
     @Environment(Inbox.self) private var inbox
     @State private var downloading: String?
     @State private var saved: URL?
+    /// A file the app can show itself, opened in place; its Share button is the download.
+    @State private var previewing: URL?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -74,26 +78,24 @@ struct AttachmentList: View {
                                 .frame(width: 16)
                         } else {
                             Image(systemName: file.symbol)
-                                .font(.system(size: 13))
+                                .font(.geist(13))
                                 .frame(width: 16)
                         }
                         Text(file.filename)
-                            .font(.system(size: 13.5, weight: .medium))
+                            .font(.geist(13.5, .medium))
                             .lineLimit(1)
                             .truncationMode(.middle)
                         Text(file.readableSize)
-                            .font(.system(size: 11.5))
-                            .foregroundStyle(isMine ? Color.white.opacity(0.7) : Theme.muted)
+                            .font(.geist(11.5))
+                            .foregroundStyle(isMine ? Theme.Mine.meta : Theme.muted)
                         Spacer(minLength: 0)
                         }
                     }
-                    .foregroundStyle(isMine ? Color.white : Theme.navy)
-                    .padding(.horizontal, 9)
-                    .padding(.vertical, 7)
-                    .background(
-                        isMine ? Color.white.opacity(0.14) : Theme.wash,
-                        in: RoundedRectangle(cornerRadius: 8)
-                    )
+                    .foregroundStyle(isMine ? Theme.Mine.text : Theme.ink)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 8)
+                    .background(isMine ? Theme.Mine.panel : Theme.Code.fill, in: RoundedRectangle(cornerRadius: 10))
+                    .overlay(RoundedRectangle(cornerRadius: 10).stroke(isMine ? Theme.Mine.stroke : Theme.Code.stroke, lineWidth: 1))
                 }
                 .buttonStyle(.plain)
                 .disabled(downloading != nil)
@@ -106,6 +108,9 @@ struct AttachmentList: View {
         // puts the file somewhere and shows you where.
         #if canImport(UIKit)
         .sheet(item: $saved) { url in ShareSheet(url: url) }
+        // Pictures, video, sound, PDFs and plain text open inside the app (Quick Look), as on the
+        // web; its share button saves to Photos or Files. Anything else is handed over as before.
+        .quickLookPreview($previewing)
         #elseif canImport(AppKit)
         .onChange(of: saved) { _, url in
             guard let url else { return }
@@ -113,6 +118,13 @@ struct AttachmentList: View {
             saved = nil
         }
         #endif
+    }
+
+    /// Media and documents only — never markup (HTML, SVG) that could carry active content.
+    static func viewable(_ url: URL) -> Bool {
+        guard let type = UTType(filenameExtension: url.pathExtension) else { return false }
+        if type.conforms(to: .html) || type.conforms(to: .svg) || type.conforms(to: .xml) { return false }
+        return [UTType.image, .movie, .audiovisualContent, .audio, .pdf, .plainText].contains { type.conforms(to: $0) }
     }
 
     private func fetch(_ file: MessageAttachment) {
@@ -129,7 +141,11 @@ struct AttachmentList: View {
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent(name.isEmpty ? "attachment" : name)
                 try data.write(to: url, options: .atomic)
+                #if canImport(UIKit)
+                if Self.viewable(url) { previewing = url } else { saved = url }
+                #else
                 saved = url
+                #endif
             } catch let failure as APIError {
                 inbox.toast = failure.errorDescription ?? "Could not download that file."
             } catch {

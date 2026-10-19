@@ -87,6 +87,8 @@ all.
 
 ```
 ./Tests/run.sh
+./Tests/mac-inbox.sh       # the Mac inbox window, hosted natively (needs an unlocked desktop)
+./Tests/mac-selection.sh   # message text can be partly selected and copied on the Mac
 ```
 
 `swiftc` over the pure model files and a fixture set copied from the web app's tests — no simulator,

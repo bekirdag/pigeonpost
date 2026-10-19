@@ -1,152 +1,455 @@
-/* Pigeonpost inbox — one stylesheet, no dependencies, no fonts to fetch.
-   Tokens are the site's (site/style.css) so this reads as the same product: white ground, navy
-   accent, the same rule and wash greys. The layout is the only new idea here — a two-pane
+/* Pigeonpost inbox — one stylesheet, no dependencies.
+   The design language is the conversation-view mockup: Geist and Geist Mono, quiet layered greys,
+   soft-cornered cards, one light-blue accent. Dark uses the mockup's colours exactly; light is the
+   same shapes, type and spacing with counterpart colours chosen for daylight. The layout is a
    messenger that collapses to one pane on a phone. */
 
+/* Geist and Geist Mono, self-hosted (SIL Open Font License; see fonts/OFL.txt). Variable fonts,
+   so one file per face covers every weight used here. `swap` so text is never invisible. */
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Italic-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
 :root {
-  --navy: #16326b;
-  --navy-hover: #1d4185;
-  --blue: #2563eb;
-  --blue-hover: #1d4fd8;
+  color-scheme: light dark;
+  /* The accent. `--navy` and `--blue` keep their old roles (filled marks, and links / primary
+     actions) and now both sit in the mockup's one blue family. */
+  --navy: #2563eb;
+  --navy-hover: #1d4fd8;
+  --blue: #2457d6;
+  --blue-hover: #1d48b8;
+  --accent-fill: #2563eb;
+  --accent-fill-hover: #1d4fd8;
+  /* What sits on an accent fill: white on the deep light-mode blue, near-black on the pale dark-mode
+     blue, which is what the mockup's Send button does. */
+  --on-accent: #ffffff;
   --green: #22c55e;
-  --amber: #b45309;
-  --ink: #14181f;
-  --body: #444c58;
-  --muted: #6b7480;
-  --rule: #e6e9ee;
-  --wash: #f7f9fb;
+  --amber: #8a5208;
+  --ink: #12161c;
+  --body: #343c47;
+  --muted: #59626e;
+  --faint: #636c78;
+  --rule: #e4e7ec;
+  --wash: #f4f6f8;
 
-  /* The raised surfaces — a pane, a bubble, the composer, a sheet — as against `--wash`, the
-     recessed ground they sit on. It was `#fff` written out thirty times, which is the same thing
-     until the page has to be dark, and then it is thirty separate bugs. */
-  --ground: #fff;
-  --sel: #eef2f9;
-  --hover: #f2f5f9;
-  --hover-strong: #e8edf3;
-  --tray: #f7f7f7;
-  --tray-hover: #eceff3;
-  --tray-active: #e2e6ec;
-  --edge: #c9cfd8;
-  --edge-hover: #aab3bf;
-  --edge-focus: #cfd5de;
-  --accent-row: #2f6feb;
-  --send-off: #c3cbd8;
+  /* Three panes, three slightly different grounds, as in the mockup: the mailbox column, the
+     threads column and the conversation each read as their own surface without a heavy rule. */
+  --page: #f4f6f8;
+  --pane-list: #fafbfc;
+  --pane-subs: #f6f7f9;
 
-  /* The toast carries white text in both appearances, so its fill cannot be `--ink`: in the dark
-     that token is nearly white, and white on white is a message nobody reads. */
-  --toast-fill: #14181f;
+  /* The raised surfaces — a bubble, a sheet, a menu — as against `--wash`, the recessed ground they
+     sit on. */
+  --ground: #ffffff;
+  --card-edge: #e1e5ea;
+  --card-rule: #eceef2;
+  --raised: #ffffff;
+  --inset: #f6f7f9;
+  --field: #eef1f4;
+  --field-deep: #ffffff;
+  --label: #252c35;
+  --sel: #e6ebf3;
+  --hover: #eef1f5;
+  --hover-strong: #e4e9f0;
+  --tray: #ffffff;
+  --tray-hover: #f0f3f7;
+  --tray-active: #e4e9f0;
+  --edge: #d5dae1;
+  --edge-hover: #b8c0cb;
+  --edge-focus: #2563eb;
+  --accent-row: #2563eb;
+  --send-off: #e3e7ed;
+  --send-off-text: #6b7480;
+  /* A segmented choice: its recessed track and the lifted segment that is on. */
+  --seg-track: #e9edf2;
+  --seg-on: #ffffff;
 
-  --held-text: #b45309;
-  --held-fill: #fff8ee;
-  --held-edge: #fcd9a4;
-  --auto-text: #15803d;
-  --auto-fill: #f0fdf4;
-  --auto-edge: #bbf7d0;
-  --blocked-text: #9f1239;
-  --blocked-fill: #fff1f2;
-  --blocked-edge: #fecdd3;
+  /* Your own messages: the mockup's blue-tinted card, not a solid fill. */
+  --mine-fill: #eaf1fe;
+  --mine-edge: #c8d9fa;
+  --mine-text: #13203b;
+  --mine-sub: #31446a;
+  --mine-meta: #4a5b80;
+  --mine-rule: #d3e0fa;
+  --mine-chip: #dae6fc;
+
+  /* Inline and block code. */
+  --code-fill: #f0f2f5;
+  --code-edge: #dfe3e8;
+  --code-text: #262d37;
+
+  /* Avatar tones: a tinted ground and a strong letter, so a peer's face is the same hue in either
+     appearance without being a shout of saturated colour in a list of them. */
+  --tone1-bg: #e1eafb;
+  --tone1-fg: #1d4690;
+  --tone2-bg: #e6e7fb;
+  --tone2-fg: #3a40ad;
+  --tone3-bg: #dbf2ee;
+  --tone3-fg: #0d6458;
+  --tone4-bg: #ece6fd;
+  --tone4-fg: #5735b0;
+  --tone5-bg: #faefd9;
+  --tone5-fg: #7f4b06;
+  --tone6-bg: #fbe3e9;
+  --tone6-fg: #9c2240;
+
+  /* The toast carries white text in both appearances, so its fill cannot be `--ink`. */
+  --toast-fill: #1a1f27;
+
+  --held-text: #8a5208;
+  --held-strong: #6a3f05;
+  --held-fill: #fdf3e1;
+  --held-card: #fffaf0;
+  --held-edge: #f0d6a4;
+  --auto-text: #17703d;
+  --auto-fill: #e5f5eb;
+  --auto-edge: #bfe5cc;
+  --blocked-text: #a3243f;
+  --blocked-fill: #fdecef;
+  --blocked-edge: #f5c2cc;
 
   --danger: #b42318;
-  --danger-fill: #fdf3f2;
-  --danger-edge: #e6a9a3;
-  --danger-edge-hover: #d98b83;
+  --danger-fill: #fdf0ef;
+  --danger-edge: #ebb3ad;
+  --danger-edge-hover: #db8f86;
 
-  --scrim: rgba(20, 24, 31, 0.45);
-  --stripe: rgba(20, 24, 31, .025);
-  --shadow-menu: rgba(20, 24, 31, .12);
-  --shadow-sheet: rgba(20, 24, 31, 0.25);
-  --shadow-toast: rgba(20, 24, 31, .22);
-  --shadow-bubble: rgba(20, 24, 31, .03);
-  --shadow-btn: rgba(20, 24, 31, .04);
-  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
-  --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --scrim: rgba(18, 22, 28, 0.42);
+  --stripe: rgba(18, 22, 28, .03);
+  --shadow-menu: rgba(18, 22, 28, .12);
+  --shadow-sheet: rgba(18, 22, 28, 0.22);
+  --shadow-toast: rgba(18, 22, 28, .22);
+  --shadow-bubble: rgba(18, 22, 28, .04);
+  --shadow-btn: rgba(18, 22, 28, .05);
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 
-  /* Laid over the conversation while a file is being dragged onto it. Light enough to read the
-     thread through — the point is where the file lands, not hiding what it lands on. */
-  --drop-veil: rgba(247, 249, 251, 0.72);
+  /* Laid over the conversation while a file is being dragged onto it. */
+  --drop-veil: rgba(244, 246, 248, 0.72);
 
-  /* The layer over the chat doodle. Alpha is its strength: 0.94 hid it entirely, 0.80 reads as a
-     faint pattern you notice only if you look for it. */
-  --doodle-veil: rgba(240, 244, 249, 0.80);
+  /* The layer over the chat doodle. Alpha is its strength: high enough that the pattern is a
+     texture you notice only if you look for it, so the cards read as sitting on a flat ground. */
+  --doodle-veil: rgba(244, 246, 248, 0.90);
 
   --find-text: #31205f;
   --find-fill: #eadfff;
   --find-edge: #9563d7;
-  --list-w: 360px;
-  --subs-w: 260px;
-  --head-h: 60px;
+  --list-w: 320px;
+  --subs-w: 240px;
+  --head-h: 64px;
+
+  /* The call screen: dark in either appearance (see the calls section). */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
 }
 
-/* Dark. The values are the light ones re-derived rather than inverted — the greys keep their
-   order and their spacing, and the navy lifts to a blue that survives on a dark ground instead
-   of disappearing into it. They are the phone's, from `apps/ios/Pigeonpost/Design/Theme.swift`,
-   so the two clients are the same product in either appearance.
+/* Dark. The mockup's colours, exactly. Applied when the device is dark and Settings says System
+   (no data-theme), or when Settings says Dark (the explicit block after this one).
 
    Every token is overridden here and nothing else is: a rule that names a colour outside `:root`
    is a rule that will be wrong in one of the two appearances. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
     --find-text: #f5edff;
     --find-fill: #5c3a81;
     --find-edge: #b795e5;
-    --navy: #4a73d6;
-    --navy-hover: #5f85e0;
-    --blue: #6c9bff;
-    --blue-hover: #85aeff;
-    --green: #34d06a;
-    --amber: #e9a23b;
-    --ink: #f4f6f9;
-    --body: #c6ccd6;
-    --muted: #949ba6;
-    --rule: #2c313a;
-    --wash: #0b0d11;
-    --ground: #16191f;
-    --sel: #23304a;
-    --hover: #1d2129;
-    --hover-strong: #242932;
-    --tray: #1d2129;
-    --tray-hover: #242932;
-    --tray-active: #2c313a;
-    --edge: #3a404b;
-    --edge-hover: #4a515e;
-    --edge-focus: #454c58;
-    --accent-row: #4a73d6;
-    --send-off: #3a404b;
-    --toast-fill: #2e333b;
+    --navy: #8ab4ff;
+    --navy-hover: #a5c5ff;
+    --blue: #8ab4ff;
+    --blue-hover: #b5ceff;
+    --accent-fill: #8ab4ff;
+    --accent-fill-hover: #a5c5ff;
+    --on-accent: #0d0f12;
+    --green: #7dd3a0;
+    --amber: #f0b860;
+    --ink: #e8eaed;
+    --body: #d7dce3;
+    --muted: #9aa3ae;
+    --faint: #7d8590;
+    --rule: #1f242b;
+    --wash: #0f1216;
+    --page: #0d0f12;
+    --pane-list: #111419;
+    --pane-subs: #13161b;
+    --ground: #171b21;
+    --card-edge: #262b33;
+    --card-rule: #22272f;
+    --raised: #161a20;
+    --inset: #1b1f26;
+    --field: #171b21;
+    --field-deep: #0f1216;
+    --label: #d7dce3;
+    --sel: #1c2129;
+    --hover: #191d24;
+    --hover-strong: #1f242c;
+    --tray: #171b21;
+    --tray-hover: #1f242c;
+    --tray-active: #252b34;
+    --edge: #2a3039;
+    --edge-hover: #3a414c;
+    --edge-focus: #8ab4ff;
+    --accent-row: #8ab4ff;
+    --send-off: #252b34;
+    --send-off-text: #7d8590;
+    --seg-track: #0f1216;
+    --seg-on: #252b34;
 
-    --held-text: #e9a23b;
-    --held-fill: #2a2318;
-    --held-edge: #4a3a1e;
-    --auto-text: #4ade80;
-    --auto-fill: #16281c;
-    --auto-edge: #26492f;
-    --blocked-text: #fda4af;
-    --blocked-fill: #2a171b;
-    --blocked-edge: #4c2028;
+    --mine-fill: #131c2e;
+    --mine-edge: #263556;
+    --mine-text: #e6ecf8;
+    --mine-sub: #c5d0e6;
+    --mine-meta: #8c9ab8;
+    --mine-rule: #1f2c47;
+    --mine-chip: #1b2740;
 
-    --danger: #fda4af;
-    --danger-fill: #2a171b;
-    --danger-edge: #4c2028;
+    --code-fill: #1e232b;
+    --code-edge: #2a3039;
+    --code-text: #d7dce3;
+
+    --tone1-bg: #17263f;
+    --tone1-fg: #8db4f5;
+    --tone2-bg: #1e2140;
+    --tone2-fg: #a3a9f5;
+    --tone3-bg: #12302d;
+    --tone3-fg: #6fd6c4;
+    --tone4-bg: #2a2142;
+    --tone4-fg: #b9a2ff;
+    --tone5-bg: #33280f;
+    --tone5-fg: #f0b860;
+    --tone6-bg: #3a1a22;
+    --tone6-fg: #f29aae;
+
+    --toast-fill: #252b34;
+
+    --held-text: #f0b860;
+    --held-strong: #f6d9a6;
+    --held-fill: #2a2213;
+    --held-card: #1c1810;
+    --held-edge: #45361a;
+    --auto-text: #7dd3a0;
+    --auto-fill: #142a1f;
+    --auto-edge: #1e3f2d;
+    --blocked-text: #f29aae;
+    --blocked-fill: #2a1519;
+    --blocked-edge: #4a2029;
+
+    --danger: #f29aae;
+    --danger-fill: #2a1519;
+    --danger-edge: #4a2029;
     --danger-edge-hover: #6b2c36;
 
-    --scrim: rgba(0, 0, 0, 0.62);
+    --scrim: rgba(6, 8, 11, 0.72);
     --stripe: rgba(255, 255, 255, .045);
     /* A shadow on a dark ground is not a lighter grey, it is more black. */
-    --shadow-menu: rgba(0, 0, 0, .55);
-    --shadow-sheet: rgba(0, 0, 0, .6);
+    --shadow-menu: rgba(0, 0, 0, .5);
+    --shadow-sheet: rgba(0, 0, 0, .45);
     --shadow-toast: rgba(0, 0, 0, .5);
-    --shadow-bubble: rgba(0, 0, 0, .25);
-    --shadow-btn: rgba(0, 0, 0, .3);
+    --shadow-bubble: rgba(0, 0, 0, 0);
+    --shadow-btn: rgba(0, 0, 0, 0);
 
-    --drop-veil: rgba(11, 13, 17, 0.72);
+    --drop-veil: rgba(15, 18, 22, 0.72);
 
-    /* Stronger than the light veil, as on the phone. The artwork is near-black strokes and CSS
-       cannot recolour a background image the way `colorInvert` does on the phone, so here the
-       pattern reads as a faint texture rather than as light strokes. That is the one place the
-       two clients differ, and it is a decoration. */
-    --doodle-veil: rgba(11, 13, 17, 0.82);
+    /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
+       the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
+    --doodle-veil: rgba(15, 18, 22, 0.90);
+    /* The call screen is the same dark in both appearances. */
+    --call-ground: #0d0f12;
+    --call-ink: #e8eaed;
+    --call-muted: #9aa3ae;
+    --call-body: #c3c9d1;
+    --call-edge: #2a3039;
+    --call-secure: #7dd3a0;
+    --call-tile: #171b21;
+    --call-rule: #1f242b;
+    --call-btn: #1e232b;
+    --call-btn-hover: #262b33;
+    --call-btn-edge-hover: #3a414c;
+    --call-end: #e5484d;
+    --call-end-hover: #cf3c41;
+    --call-on-solid: #fff;
+    --call-accept: #3fbf7f;
+    --call-accept-hover: #33a86d;
+    --call-focus: #8ab4ff;
+    --call-scrim-top: rgba(13, 15, 18, .86);
+    --call-scrim-clear: rgba(13, 15, 18, 0);
+    --call-chip: rgba(23, 27, 33, .88);
+    --call-shadow: rgba(0, 0, 0, .45);
+    --call-dock: rgba(17, 20, 25, .82);
   }
 }
+
+/* The same palette when Dark is chosen in Settings, whatever the device is set to. It must stay
+   identical to the block above; a test compares the two token for token. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --find-text: #f5edff;
+  --find-fill: #5c3a81;
+  --find-edge: #b795e5;
+  --navy: #8ab4ff;
+  --navy-hover: #a5c5ff;
+  --blue: #8ab4ff;
+  --blue-hover: #b5ceff;
+  --accent-fill: #8ab4ff;
+  --accent-fill-hover: #a5c5ff;
+  --on-accent: #0d0f12;
+  --green: #7dd3a0;
+  --amber: #f0b860;
+  --ink: #e8eaed;
+  --body: #d7dce3;
+  --muted: #9aa3ae;
+  --faint: #7d8590;
+  --rule: #1f242b;
+  --wash: #0f1216;
+  --page: #0d0f12;
+  --pane-list: #111419;
+  --pane-subs: #13161b;
+  --ground: #171b21;
+  --card-edge: #262b33;
+  --card-rule: #22272f;
+  --raised: #161a20;
+  --inset: #1b1f26;
+  --field: #171b21;
+  --field-deep: #0f1216;
+  --label: #d7dce3;
+  --sel: #1c2129;
+  --hover: #191d24;
+  --hover-strong: #1f242c;
+  --tray: #171b21;
+  --tray-hover: #1f242c;
+  --tray-active: #252b34;
+  --edge: #2a3039;
+  --edge-hover: #3a414c;
+  --edge-focus: #8ab4ff;
+  --accent-row: #8ab4ff;
+  --send-off: #252b34;
+  --send-off-text: #7d8590;
+  --seg-track: #0f1216;
+  --seg-on: #252b34;
+
+  --mine-fill: #131c2e;
+  --mine-edge: #263556;
+  --mine-text: #e6ecf8;
+  --mine-sub: #c5d0e6;
+  --mine-meta: #8c9ab8;
+  --mine-rule: #1f2c47;
+  --mine-chip: #1b2740;
+
+  --code-fill: #1e232b;
+  --code-edge: #2a3039;
+  --code-text: #d7dce3;
+
+  --tone1-bg: #17263f;
+  --tone1-fg: #8db4f5;
+  --tone2-bg: #1e2140;
+  --tone2-fg: #a3a9f5;
+  --tone3-bg: #12302d;
+  --tone3-fg: #6fd6c4;
+  --tone4-bg: #2a2142;
+  --tone4-fg: #b9a2ff;
+  --tone5-bg: #33280f;
+  --tone5-fg: #f0b860;
+  --tone6-bg: #3a1a22;
+  --tone6-fg: #f29aae;
+
+  --toast-fill: #252b34;
+
+  --held-text: #f0b860;
+  --held-strong: #f6d9a6;
+  --held-fill: #2a2213;
+  --held-card: #1c1810;
+  --held-edge: #45361a;
+  --auto-text: #7dd3a0;
+  --auto-fill: #142a1f;
+  --auto-edge: #1e3f2d;
+  --blocked-text: #f29aae;
+  --blocked-fill: #2a1519;
+  --blocked-edge: #4a2029;
+
+  --danger: #f29aae;
+  --danger-fill: #2a1519;
+  --danger-edge: #4a2029;
+  --danger-edge-hover: #6b2c36;
+
+  --scrim: rgba(6, 8, 11, 0.72);
+  --stripe: rgba(255, 255, 255, .045);
+  /* A shadow on a dark ground is not a lighter grey, it is more black. */
+  --shadow-menu: rgba(0, 0, 0, .5);
+  --shadow-sheet: rgba(0, 0, 0, .45);
+  --shadow-toast: rgba(0, 0, 0, .5);
+  --shadow-bubble: rgba(0, 0, 0, 0);
+  --shadow-btn: rgba(0, 0, 0, 0);
+
+  --drop-veil: rgba(15, 18, 22, 0.72);
+
+  /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
+     the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
+  --doodle-veil: rgba(15, 18, 22, 0.90);
+  /* The call screen is the same dark in both appearances. */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
+}
+
+/* Light chosen in Settings: the :root palette, and native parts (scrollbars, form controls)
+   drawn light even on a dark device. */
+:root[data-theme="light"] { color-scheme: light; }
 
 
 * { box-sizing: border-box; }
@@ -161,10 +464,11 @@ html {
 body {
   margin: 0;
   height: 100%;
-  background: var(--ground);
+  background: var(--page);
   color: var(--body);
-  font: 15px/1.55 var(--sans);
+  font: 14px/1.45 var(--sans);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
   overscroll-behavior: none;
   /* Nothing in this layout is ever meant to scroll sideways: the panes scroll vertically and wide
      content ellipsises. A horizontal scroll here is always a bug, and one that hides the right-hand
@@ -175,6 +479,9 @@ body {
 [hidden] { display: none !important; }
 
 button { font: inherit; color: inherit; }
+
+/* One visible focus ring everywhere, in the accent. */
+:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
 
 /* ---- signed out --------------------------------------------------------------------------- */
 
@@ -192,27 +499,28 @@ button { font: inherit; color: inherit; }
   line-height: 1.18;
   letter-spacing: -0.022em;
   color: var(--ink);
-  font-weight: 700;
+  font-weight: 650;
   margin: 0 0 12px;
 }
-.signin-card p { margin: 0 0 22px; color: var(--body); }
-.signin-note { font-size: 13px; color: var(--muted); margin-top: 18px !important; }
+.signin-card p { margin: 0 0 22px; color: var(--muted); font-size: 14.5px; }
+.signin-note { font-size: 13px; color: var(--faint); margin-top: 18px !important; }
 
 .btn {
   display: inline-flex;
   align-items: center;
   gap: 9px;
-  padding: 11px 20px;
-  border-radius: 8px;
-  font-size: 15px;
-  font-weight: 550;
+  height: 40px;
+  padding: 0 20px;
+  border-radius: 9px;
+  font-size: 14px;
+  font-weight: 600;
   text-decoration: none;
   border: 1px solid transparent;
   cursor: pointer;
   transition: background .15s ease, border-color .15s ease;
 }
-.btn-primary { background: var(--navy); color: #fff; }
-.btn-primary:hover { background: var(--navy-hover); }
+.btn-primary { background: var(--accent-fill); color: var(--on-accent); }
+.btn-primary:hover { background: var(--accent-fill-hover); }
 
 /* ---- app frame ---------------------------------------------------------------------------- */
 
@@ -238,7 +546,7 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--ground);
+  background: var(--pane-list);
 }
 
 .app[data-subs="true"] {
@@ -252,63 +560,79 @@ button { font: inherit; color: inherit; }
   flex-direction: column;
   min-height: 0;
   min-width: 0;
-  background: var(--ground);
+  background: var(--pane-subs);
 }
 
 .subs-head {
   border-bottom: 1px solid var(--rule);
-  padding: 10px 12px;
+  height: var(--head-h);
+  padding: 0 12px 0 18px;
   flex: none;
   display: flex;
   align-items: center;
   gap: 8px;
 }
 
-.subs-who { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-.subs-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.subs-sub { font-size: 12px; color: var(--muted); }
+/* The column label sits above the peer's address, as a small caption over a value. */
+.subs-who { min-width: 0; flex: 1; display: flex; flex-direction: column-reverse; line-height: 1.35; }
+.subs-name {
+  font-family: var(--mono); font-size: 12.5px; font-weight: 500; color: var(--body);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.subs-sub { font-size: 11px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; }
 
 /* The one control in this pane, so it carries a surface of its own rather than only appearing on
    hover — a `+` that is invisible until you happen to touch it is the button people cannot find. */
 #subs-new {
+  width: 32px; height: 32px;
   background: var(--tray);
-  border-color: var(--rule);
+  border-color: var(--edge);
   color: var(--ink);
 }
-#subs-new:hover { background: var(--tray-hover); border-color: var(--edge); }
+#subs-new svg { width: 16px; height: 16px; }
+#subs-new:hover { background: var(--tray-hover); border-color: var(--edge-hover); }
 #subs-new:active { background: var(--tray-active); }
 
-.subs { list-style: none; margin: 0; padding: 6px 0; overflow-y: auto; flex: 1; min-height: 0; }
+.subs { list-style: none; margin: 0; padding: 10px 8px; overflow-y: auto; flex: 1; min-height: 0; }
+.subs li + li { margin-top: 2px; }
 
 .sub-row {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  padding: 10px 14px;
+  padding: 9px 10px;
   border: 0;
+  border-radius: 9px;
   background: none;
   text-align: left;
   cursor: pointer;
   font: inherit;
-  color: inherit;
+  color: var(--ink);
 }
-.sub-row:hover { background: var(--wash); }
+.sub-row:hover { background: var(--hover); }
 .sub-row[aria-current="true"] { background: var(--sel); }
-.sub-title { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sub-title {
+  flex: 1; min-width: 0;
+  font-weight: 500; font-size: 13.5px; color: var(--ink);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 /* The default thread has no name because nobody opened it. Saying so in the row rather than
    inventing a title keeps it honest, and italic marks it as a description not a name. */
-.sub-title.is-default { font-weight: 500; font-style: italic; color: var(--muted); }
-.sub-meta { font-size: 12px; color: var(--muted); display: flex; gap: 8px; align-items: center; }
+.sub-title.is-default { font-weight: 400; font-style: italic; color: var(--muted); }
+.sub-meta { flex: none; font-size: 11.5px; color: var(--faint); display: flex; gap: 8px; align-items: center; }
 .sub-unread {
   margin-left: auto;
   background: var(--accent, var(--accent-row));
-  color: #fff;
+  color: var(--on-accent);
   border-radius: 999px;
   font-size: 11px;
+  font-weight: 600;
   min-width: 18px;
-  padding: 1px 6px;
-  text-align: center;
+  height: 18px;
+  padding: 0 5px;
+  display: inline-grid;
+  place-items: center;
 }
 
 .pane-thread {
@@ -325,37 +649,41 @@ button { font: inherit; color: inherit; }
 /* ---- list header -------------------------------------------------------------------------- */
 
 .list-head {
-  border-bottom: 1px solid var(--rule);
-  padding: 10px 12px 12px;
+  padding: 14px 12px 10px;
   flex: none;
   position: relative;
 }
 
-.me { display: flex; align-items: center; gap: 6px; }
+.me { display: flex; align-items: center; gap: 4px; }
 
+/* The mailbox switcher: a bordered card, as in the mockup. */
 .identity {
   flex: 1;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 10px;
-  padding: 6px 8px;
-  border: 1px solid transparent;
-  border-radius: 8px;
-  background: none;
+  margin-right: 4px;
+  padding: 7px 10px;
+  border: 1px solid var(--card-edge);
+  border-radius: 10px;
+  background: var(--raised);
+  color: var(--ink);
   cursor: pointer;
   text-align: left;
 }
-.identity:hover { background: var(--wash); }
-.me-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
+.identity:hover { background: var(--hover); border-color: var(--edge); }
+.identity .avatar { width: 30px; height: 30px; font-size: 11px; }
+.me-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .me-name {
   color: var(--ink);
-  font-weight: 600;
-  font-size: 14.5px;
+  font-family: var(--mono);
+  font-weight: 500;
+  font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .me-sub {
-  color: var(--muted);
+  color: var(--faint);
   font-size: 12px;
   font-family: var(--mono);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -364,16 +692,20 @@ button { font: inherit; color: inherit; }
 
 .icon-btn {
   flex: none;
-  width: 34px; height: 34px;
+  width: 32px; height: 32px;
   display: grid; place-items: center;
   border: 1px solid transparent;
   border-radius: 8px;
   background: none;
   color: var(--muted);
   cursor: pointer;
+  transition: background .12s ease, color .12s ease, border-color .12s ease;
 }
-.icon-btn:hover { background: var(--wash); color: var(--ink); }
-.icon-btn svg { width: 19px; height: 19px; }
+.icon-btn:hover { background: var(--hover); color: var(--ink); }
+/* A few icon buttons carry a text glyph (×, ↑, ↓) rather than an SVG; size it to match the icons. */
+.icon-btn { font-size: 17px; line-height: 1; }
+.sheet-head .icon-btn { font-size: 21px; }
+.icon-btn svg { width: 17px; height: 17px; }
 .post-address { display: flex; align-items: center; gap: 4px; min-width: 0; }
 .post-address > span { flex: 1; min-width: 0; overflow-wrap: anywhere; user-select: text; }
 .list-head > .post-address { padding-left: 8px; }
@@ -383,13 +715,13 @@ button { font: inherit; color: inherit; }
 .identity-menu {
   position: absolute;
   z-index: 20;
-  top: 52px; left: 12px; right: 12px;
+  top: 62px; left: 12px; right: 12px;
   margin: 0; padding: 5px;
   list-style: none;
   background: var(--ground);
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  box-shadow: 0 8px 28px var(--shadow-menu);
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px var(--shadow-menu);
   max-height: 60vh; overflow-y: auto;
 }
 .identity-menu li { margin: 0; display: flex; align-items: center; gap: 2px; }
@@ -397,29 +729,31 @@ button { font: inherit; color: inherit; }
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 10px;
   padding: 8px 9px;
-  border: 0; border-radius: 7px;
+  border: 0; border-radius: 8px;
   background: none; cursor: pointer; text-align: left;
 }
-.identity-menu button:hover { background: var(--wash); }
-.identity-menu .mi-name { color: var(--ink); font-weight: 550; font-size: 14px; }
-.identity-menu .mi-sub { color: var(--muted); font-size: 12px; font-family: var(--mono); }
+.identity-menu button:hover { background: var(--hover); }
+.identity-menu .mi-name { color: var(--ink); font-weight: 500; font-size: 13.5px; }
+.identity-menu .mi-sub { color: var(--faint); font-size: 12px; font-family: var(--mono); }
 .identity-menu .mi-text { min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
 .identity-menu .mi-text span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.identity-menu [aria-pressed="true"] { background: var(--wash); }
+.identity-menu [aria-pressed="true"] { background: var(--sel); }
 
-.search { margin-top: 10px; }
+.search { margin-top: 12px; }
 .search input {
   width: 100%;
-  padding: 8px 12px;
+  height: 36px;
+  padding: 0 12px;
   font: inherit;
-  font-size: 14px;
+  font-size: 13.5px;
   color: var(--ink);
-  background: var(--wash);
-  border: 1px solid var(--rule);
-  border-radius: 8px;
+  background: var(--field);
+  border: 1px solid transparent;
+  border-radius: 9px;
   outline: none;
 }
-.search input:focus { border-color: var(--edge-focus); background: var(--ground); }
+.search input::placeholder { color: var(--faint); }
+.search input:focus { border-color: var(--edge-focus); }
 
 /* ---- avatars ------------------------------------------------------------------------------ */
 
@@ -428,26 +762,26 @@ button { font: inherit; color: inherit; }
   width: 38px; height: 38px;
   border-radius: 50%;
   display: grid; place-items: center;
-  background: var(--navy);
-  color: #fff;
-  font-size: 13.5px;
-  font-weight: 600;
-  letter-spacing: .01em;
+  background: var(--tone1-bg);
+  color: var(--tone1-fg);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: .02em;
   text-transform: uppercase;
   user-select: none;
 }
-.avatar[data-tone="1"] { background: #16326b; }
-.avatar[data-tone="2"] { background: #2563eb; }
-.avatar[data-tone="3"] { background: #0f766e; }
-.avatar[data-tone="4"] { background: #7c3aed; }
-.avatar[data-tone="5"] { background: #b45309; }
-.avatar[data-tone="6"] { background: #be123c; }
+.avatar[data-tone="1"] { background: var(--tone1-bg); color: var(--tone1-fg); }
+.avatar[data-tone="2"] { background: var(--tone2-bg); color: var(--tone2-fg); }
+.avatar[data-tone="3"] { background: var(--tone3-bg); color: var(--tone3-fg); }
+.avatar[data-tone="4"] { background: var(--tone4-bg); color: var(--tone4-fg); }
+.avatar[data-tone="5"] { background: var(--tone5-bg); color: var(--tone5-fg); }
+.avatar[data-tone="6"] { background: var(--tone6-bg); color: var(--tone6-fg); }
 
 /* ---- thread list -------------------------------------------------------------------------- */
 
 .threads {
   list-style: none;
-  margin: 0; padding: 4px 0 20px;
+  margin: 0; padding: 0 8px 20px;
   overflow-y: auto;
   overflow-x: hidden;
   flex: 1;
@@ -455,48 +789,53 @@ button { font: inherit; color: inherit; }
   -webkit-overflow-scrolling: touch;
 }
 .threads li { margin: 0; min-width: 0; }
+.threads li + li { margin-top: 2px; }
 
 /* Section heading inside the list. Your own agents sit above everyone else. */
 .group-head {
-  padding: 14px 14px 5px;
+  padding: 14px 10px 6px;
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 500;
   letter-spacing: .06em;
   text-transform: uppercase;
-  color: var(--muted);
-  background: var(--ground);
+  color: var(--faint);
+  background: var(--pane-list);
   position: sticky;
   top: 0;
   z-index: 1;
 }
-.group-head + .thread-row { border-top: 1px solid var(--rule); }
 
 .thread-row {
   width: 100%;
   display: flex;
   align-items: center;
   gap: 11px;
-  padding: 10px 14px;
+  padding: 10px;
   border: 0;
+  border-radius: 10px;
   background: none;
   cursor: pointer;
   text-align: left;
-  border-bottom: 1px solid var(--rule);
+  color: var(--ink);
 }
-.thread-row:hover { background: var(--wash); }
+.thread-row:hover { background: var(--hover); }
 .thread-row[aria-current="true"] { background: var(--sel); }
+/* The quietest grey loses too much contrast on a lit row, so it steps up one shade there. */
+.thread-row:hover .tr-time, .thread-row[aria-current="true"] .tr-time,
+.sub-row:hover .sub-meta, .sub-row[aria-current="true"] .sub-meta { color: var(--muted); }
 
-.tr-text { flex: 1; min-width: 0; }
+.tr-text { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .tr-top { display: flex; align-items: baseline; gap: 8px; }
 .tr-name {
   flex: 1; min-width: 0;
   color: var(--ink);
+  font-family: var(--mono);
   font-weight: 600;
-  font-size: 14.5px;
+  font-size: 13px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.tr-time { flex: none; color: var(--muted); font-size: 11.5px; }
-.tr-bottom { display: flex; align-items: center; gap: 8px; margin-top: 1px; }
+.tr-time { flex: none; color: var(--faint); font-size: 11.5px; }
+.tr-bottom { display: flex; align-items: center; gap: 8px; }
 .tr-preview {
   flex: 1; min-width: 0;
   color: var(--muted);
@@ -509,24 +848,34 @@ button { font: inherit; color: inherit; }
   min-width: 18px; height: 18px;
   padding: 0 5px;
   border-radius: 9px;
-  background: var(--navy);
-  color: #fff;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   font-size: 11px;
-  font-weight: 650;
+  font-weight: 600;
   display: grid; place-items: center;
 }
 .pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 18px;
   font-size: 10.5px;
   font-weight: 600;
-  letter-spacing: .02em;
+  letter-spacing: .04em;
   text-transform: uppercase;
-  padding: 2px 6px;
+  padding: 0 6px;
   border-radius: 5px;
   border: 1px solid;
 }
-.pill-held { color: var(--amber); border-color: var(--held-edge); background: var(--held-fill); }
-.pill-auto { color: var(--auto-text); border-color: var(--auto-edge); background: var(--auto-fill); }
-.pill-blocked { color: var(--blocked-text); border-color: var(--blocked-edge); background: var(--blocked-fill); }
+.pill::before {
+  content: "";
+  width: 5px; height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.pill-held { color: var(--held-text); border-color: var(--held-fill); background: var(--held-fill); }
+.pill-auto { color: var(--auto-text); border-color: var(--auto-fill); background: var(--auto-fill); }
+.pill-blocked { color: var(--blocked-text); border-color: var(--blocked-fill); background: var(--blocked-fill); }
 
 .empty {
   color: var(--muted);
@@ -542,23 +891,32 @@ button { font: inherit; color: inherit; }
   height: var(--head-h);
   display: flex;
   align-items: center;
-  gap: 11px;
-  padding: 0 12px;
-  background: var(--ground);
+  gap: 12px;
+  padding: 0 20px 0 24px;
+  background: var(--wash);
   border-bottom: 1px solid var(--rule);
 }
 .thread-head .back { display: none; }
-.thread-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.3; }
-.thread-who { border: 0; border-radius: 6px; padding: 5px 6px; margin: -5px -6px; background: none; text-align: left; cursor: pointer; }
-.thread-who:hover { background: var(--wash); }
+.thread-head > .avatar { width: 36px; height: 36px; }
+.thread-head .icon-btn {
+  width: 34px; height: 34px;
+  border-radius: 9px;
+  border-color: var(--card-edge);
+  background: var(--pane-subs);
+}
+.thread-head .icon-btn:hover { border-color: var(--edge-hover); background: var(--hover-strong); }
+.thread-head .icon-btn svg { width: 16px; height: 16px; }
+.thread-who { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.thread-who { border: 0; border-radius: 8px; padding: 5px 6px; margin: -5px -6px; background: none; text-align: left; cursor: pointer; }
+.thread-who:hover { background: var(--hover); }
 .thread-who:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
 .thread-who > span { max-width: 100%; }
 .thread-name {
-  color: var(--ink); font-weight: 600; font-size: 15px;
+  color: var(--ink); font-family: var(--mono); font-weight: 600; font-size: 15px; letter-spacing: -0.01em;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .thread-sub {
-  color: var(--muted); font-size: 12px;
+  color: var(--muted); font-size: 12.5px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 
@@ -570,24 +928,20 @@ button { font: inherit; color: inherit; }
      turns the conversation into something you have to drag sideways to read. */
   overflow-x: hidden;
   -webkit-overflow-scrolling: touch;
-  padding: 18px 0 8px;
+  padding: 24px 0 24px;
   /* A tiled doodle behind the conversation. The artwork is near-black strokes on transparency, so
      what sets its strength is the flat layer of colour laid over it: a background image has no
      opacity of its own, and a pseudo-element would only cover a scroller's visible box rather than
-     the whole conversation.
-     `--doodle-veil` is that layer, and its alpha is the one number worth touching. Lower shows
-     more of the pattern; higher fades it towards the plain background. Slightly blue-grey rather
-     than the flat page colour, so the strokes read as ink on paper instead of dirt on white. */
+     the whole conversation. `--doodle-veil` is that layer, and its alpha is the one number worth
+     touching. */
   background-color: var(--wash);
   background-image:
     linear-gradient(var(--doodle-veil), var(--doodle-veil)),
     url("doodle_bg.png");
   background-repeat: repeat;
   background-size: auto, 300px 300px;
-  /* `scroll`, not `local`. On a scrolling element the two are opposites: `local` pins the pattern
-     to the content so it slides away as you read, `scroll` pins it to the element so it stays put
-     underneath. Not `fixed` either — that anchors to the viewport, which iOS Safari handles badly
-     and which would make one pattern drift across all three panes. */
+  /* `scroll`, not `local`: the pattern stays put underneath as you read. Not `fixed` either — that
+     anchors to the viewport, which iOS Safari handles badly. */
   background-attachment: scroll;
 }
 /* The ask sits above the message, on its own row, so it is visible before you type rather than
@@ -603,12 +957,12 @@ button { font: inherit; color: inherit; }
 .ask select {
   font: inherit; font-size: 12.5px;
   padding: 3px 6px; border-radius: 7px;
-  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
+  border: 1px solid var(--edge); background: var(--ground); color: var(--ink);
 }
 .ask-branch {
   font: inherit; font-size: 12.5px; width: 130px;
   padding: 3px 8px; border-radius: 7px;
-  border: 1px solid var(--rule); background: var(--ground); color: var(--ink);
+  border: 1px solid var(--edge); background: var(--ground); color: var(--ink);
 }
 
 .thread-empty {
@@ -623,11 +977,11 @@ button { font: inherit; color: inherit; }
   list-style: none;
   width: 100%;
   margin: 0 auto;
-  padding: 0 16px 10px;
-  max-width: 760px;
+  padding: 0 24px 10px;
+  max-width: 860px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 14px;
 }
 /* `> li`, not `li`. A message row is a flex container, and a rendered body is nested inside one:
    `.messages > li > .bubble > .text > .md-list > li`. As a descendant selector this rule caught the
@@ -637,39 +991,58 @@ button { font: inherit; color: inherit; }
 .messages > li { margin: 0; display: flex; min-width: 0; }
 .messages > li.mine { justify-content: flex-end; }
 
+/* A message is a card: a soft-cornered surface with its body, then a footer strip for the copy
+   control and the time. */
 .bubble {
   min-width: 0;
-  max-width: min(78%, 560px);
-  padding: 8px 12px 6px;
-  border-radius: 12px;
+  max-width: min(78%, 620px);
+  padding: 12px 16px 0;
+  border-radius: 14px;
   background: var(--ground);
-  border: 1px solid var(--rule);
-  box-shadow: 0 1px 1px var(--shadow-bubble);
+  border: 1px solid var(--card-edge);
+  box-shadow: 0 1px 2px var(--shadow-bubble);
+  color: var(--body);
 }
 .mine .bubble {
-  background: var(--navy);
-  border-color: var(--navy);
-  color: #fff;
+  background: var(--mine-fill);
+  border-color: var(--mine-edge);
+  color: var(--mine-text);
+}
+/* A received request still waiting on you is the one card that should stop the eye. */
+.messages > li:not(.mine) .bubble:has(.decision .pill-held) {
+  background: var(--held-card);
+  border-color: var(--held-edge);
 }
 .bubble .text {
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  color: var(--ink);
+  color: var(--body);
   font-size: 14.5px;
   line-height: 1.5;
 }
-.mine .bubble .text { color: #fff; }
+/* Message text is for reading and for taking elsewhere: selectable in part, on every platform. */
+.bubble .text, .bubble .request {
+  -webkit-user-select: text;
+  user-select: text;
+  cursor: text;
+}
+.mine .bubble .text { color: var(--mine-text); }
+.bubble .text strong, .bubble .text b { color: var(--ink); font-weight: 650; }
+.mine .bubble .text strong, .mine .bubble .text b { color: var(--mine-text); }
 
 .bubble .meta {
-  margin-top: 3px;
+  margin: 12px -16px 0;
+  padding: 7px 12px 7px 14px;
+  border-top: 1px solid var(--card-rule);
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  gap: 6px;
-  font-size: 11px;
-  color: var(--muted);
+  gap: 8px;
+  font-size: 12px;
+  color: var(--faint);
 }
-.mine .bubble .meta { color: rgba(255, 255, 255, .72); }
+.mine .bubble .meta { color: var(--mine-meta); border-top-color: var(--mine-rule); }
+.messages > li:not(.mine) .bubble:has(.decision .pill-held) .meta { border-top-color: var(--held-edge); }
 .bubble .meta .failed { color: var(--blocked-text); font-weight: 600; }
 
 /* Copy sits in the meta row, quiet until the pointer is near it. It is a real button so it is
@@ -677,40 +1050,44 @@ button { font: inherit; color: inherit; }
 .bubble .meta .copy {
   appearance: none;
   border: 0;
+  border-radius: 6px;
   background: none;
-  padding: 0 2px;
+  width: 26px; height: 26px;
+  display: inline-grid; place-items: center;
+  padding: 0;
   margin-right: auto;
   font: inherit;
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  color: var(--muted);
-  opacity: 0.55;
+  color: var(--faint);
   cursor: pointer;
-  transition: opacity 0.12s ease, color 0.12s ease;
+  transition: background 0.12s ease, color 0.12s ease;
 }
 .bubble .meta .copy:hover,
-.bubble .meta .copy:focus-visible { opacity: 1; }
-.bubble .meta .copy.copied { color: var(--auto-text); opacity: 1; }
-.mine .bubble .meta .copy { color: rgba(255, 255, 255, 0.8); }
+.bubble .meta .copy:focus-visible { color: var(--ink); background: var(--hover-strong); }
+.bubble .meta .copy.copied { color: var(--auto-text); }
+.mine .bubble .meta .copy { color: var(--mine-meta); }
+.mine .bubble .meta .copy:hover,
+.mine .bubble .meta .copy:focus-visible { color: var(--mine-text); background: var(--mine-chip); }
 
 /* Attachments ------------------------------------------------------------------------------- */
 
-/* The same height as the send button, because the composer aligns its row to `flex-end` and a
-   button only as tall as its 20px glyph would hang off the bottom of it — level with the field's
-   last line rather than with the send button opposite. */
+/* The same height as the send button, so the composer's controls line up. */
 .composer .attach {
   appearance: none;
   border: 0;
+  border-radius: 8px;
   background: none;
-  height: 38px;
-  padding: 0 6px;
+  width: 34px;
+  height: 34px;
+  padding: 0;
   color: var(--muted);
   cursor: pointer;
-  display: flex;
-  align-items: center;
+  display: grid;
+  place-items: center;
 }
-.composer .attach:hover, .composer .attach:focus-visible { color: var(--ink); }
-.composer .attach svg { width: 20px; height: 20px; }
+.composer .attach:hover, .composer .attach:focus-visible { color: var(--ink); background: var(--hover-strong); }
+.composer .attach svg { width: 18px; height: 18px; }
 
 /* Chosen but not yet sent. Full width above the field, so what is about to leave the mailbox is
    readable before it does. */
@@ -719,7 +1096,7 @@ button { font: inherit; color: inherit; }
   flex-basis: 100%;
   list-style: none;
   margin: 0;
-  padding: 0;
+  padding: 2px 4px;
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -729,14 +1106,16 @@ button { font: inherit; color: inherit; }
   align-items: center;
   gap: 6px;
   max-width: 100%;
-  padding: 4px 6px 4px 9px;
-  border: 1px solid var(--rule);
-  border-radius: 999px;
-  background: var(--wash);
+  height: 28px;
+  padding: 0 6px 0 10px;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: var(--inset);
+  color: var(--body);
   font-size: 12.5px;
 }
 .pending-files .pf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 220px; }
-.pending-files .pf-size { color: var(--muted); }
+.pending-files .pf-size { color: var(--faint); }
 .pending-files .pf-drop {
   appearance: none;
   border: 0;
@@ -750,19 +1129,20 @@ button { font: inherit; color: inherit; }
 .pending-files .pf-drop:hover { color: var(--blocked-text); }
 
 /* Received. A link that downloads, never a preview: these bytes are another agent's. */
-.bubble .files { list-style: none; margin: 6px 0 0; padding: 0; display: grid; gap: 4px; }
+.bubble .files { list-style: none; margin: 10px 0 0; padding: 0; display: grid; gap: 6px; }
 .bubble .files li { display: flex; align-items: baseline; gap: 8px; }
-.bubble .files .file { font-size: 13.5px; font-weight: 600; text-decoration: none; }
+.bubble .files .file { font-size: 13.5px; font-weight: 600; text-decoration: none; color: var(--blue); }
 .bubble .files .file:hover { text-decoration: underline; }
-.bubble .files .file-size { font-size: 12px; color: var(--muted); }
-.mine .bubble .files .file { color: #fff; }
-.mine .bubble .files .file-size { color: rgba(255, 255, 255, .72); }
+.bubble .files .file-size { font-size: 12px; color: var(--faint); }
+.mine .bubble .files .file { color: var(--blue); }
+.mine .bubble .files .file-size { color: var(--mine-meta); }
 
 /* Rendered markdown. Sized to sit inside a bubble rather than to look like a document: the first
    block never adds a top margin, or every message would start with a gap. */
-.bubble .text .md-p { margin: 0 0 7px; }
+.bubble .text .md-p { margin: 0 0 10px; }
 .bubble .text > :last-child { margin-bottom: 0; }
-.bubble .text .md-h { font-weight: 700; margin: 10px 0 5px; line-height: 1.3; }
+.bubble .text .md-h { font-weight: 650; margin: 12px 0 6px; line-height: 1.3; color: var(--ink); letter-spacing: -0.01em; }
+.mine .bubble .text .md-h { color: var(--mine-text); }
 .bubble .text > .md-h:first-child { margin-top: 0; }
 .bubble .text .md-h1 { font-size: 1.18em; }
 .bubble .text .md-h2 { font-size: 1.08em; }
@@ -770,47 +1150,66 @@ button { font: inherit; color: inherit; }
 /* The marker is named rather than left to the browser: this list is nested inside `ul.messages`,
    which is two levels deep, so the default would be a hollow circle, and `.messages`' own
    `list-style: none` is inherited besides. */
-.bubble .text ul.md-list { margin: 0 0 7px; padding-left: 20px; list-style: disc; }
-.bubble .text ol.md-list { margin: 0 0 7px; padding-left: 20px; list-style: decimal; }
+.bubble .text ul.md-list { margin: 0 0 10px; padding-left: 20px; list-style: disc; }
+.bubble .text ol.md-list { margin: 0 0 10px; padding-left: 20px; list-style: decimal; }
 .bubble .text .md-list li { margin: 2px 0; display: list-item; }
+.bubble .text .md-list li::marker { color: var(--faint); }
 .bubble .text .md-code {
-  margin: 0 0 7px;
-  padding: 8px 9px;
-  border-radius: 7px;
-  background: var(--wash);
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.86em;
-  line-height: 1.45;
+  margin: 0 0 10px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--code-edge);
+  background: var(--code-fill);
+  color: var(--code-text);
+  font-family: var(--mono);
+  font-size: 0.84em;
+  line-height: 1.5;
   /* Wrapped code is a different program to read, and agents send diffs where the column matters. */
   overflow-x: auto;
   white-space: pre;
 }
 .bubble .text code {
-  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 0.88em;
-  padding: 1px 4px;
-  border-radius: 4px;
-  background: var(--wash);
+  font-family: var(--mono);
+  font-size: 0.86em;
+  padding: 1px 5px;
+  border-radius: 5px;
+  border: 1px solid var(--code-edge);
+  background: var(--code-fill);
+  color: var(--code-text);
 }
+.bubble .text .md-code code { padding: 0; border: 0; background: none; font-size: inherit; }
 .bubble .text .md-quote {
-  margin: 0 0 7px;
-  padding-left: 10px;
-  border-left: 3px solid var(--rule);
+  margin: 0 0 10px;
+  padding-left: 12px;
+  border-left: 3px solid var(--edge);
   color: var(--muted);
 }
-.bubble .text hr { border: 0; border-top: 1px solid var(--rule); margin: 9px 0; }
+.bubble .text hr { border: 0; border-top: 1px solid var(--card-rule); margin: 10px 0; }
 
-/* A table is the one block whose width is decided by its content rather than by the bubble, and the
-   bubble is 560px at the widest. So it gets a block of its own that scrolls. Letting it shrink
-   instead squeezes every column until the cells wrap to a word a line, which is a table with the
-   only property it has — things lining up — taken off it; and anything still too wide is clipped by
-   `.messages`, which hides horizontal overflow on purpose so one wide message cannot pan the whole
-   conversation sideways. */
+/* A table is the one block whose width is decided by its content rather than by the bubble. So it
+   gets a block of its own that scrolls, rather than squeezing every column until the cells wrap to
+   a word a line. */
 .bubble .text .md-table-wrap {
-  margin: 0 0 7px;
+  margin: 0 0 10px;
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+/* Every other scroller (lists, threads, conversation, sheets) gets a slim bar in the theme's edge
+   colours instead of the platform default, which is a bright grey slab in dark mode. The track stays
+   transparent so the bar reads as part of the surface it scrolls. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--edge-hover);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--edge-hover) transparent; }
 }
 /* A bar that is drawn and stays drawn, not the overlay one macOS fades in mid-gesture and hides
    again: a table wider than its bubble has to *say* it is wider, or nobody thinks to move it.
@@ -827,8 +1226,7 @@ button { font: inherit; color: inherit; }
 }
 /* Firefox has no such pseudo-element and draws a real bar regardless — so it gets the standard
    properties instead. They cannot go in the rule above: from Chrome 121 `scrollbar-width` wins
-   outright and switches the `::-webkit-scrollbar` styling above back off, which is how this first
-   shipped with a table that scrolled and no scrollbar to say so. */
+   outright and switches the `::-webkit-scrollbar` styling above back off. */
 @supports not selector(::-webkit-scrollbar) {
   .bubble .text .md-table-wrap {
     scrollbar-width: thin;
@@ -836,100 +1234,98 @@ button { font: inherit; color: inherit; }
   }
 }
 .bubble .text .md-table {
-  /* `auto`, never `100%`: the columns decide the width, and stretching them back to the bubble is
-     exactly the squeeze the wrapper exists to avoid. */
+  /* `auto`, never `100%`: the columns decide the width. */
   width: auto;
   border-collapse: collapse;
   font-size: 0.92em;
 }
 .bubble .text .md-table th,
 .bubble .text .md-table td {
-  border: 1px solid var(--rule);
-  padding: 4px 9px;
+  border: 1px solid var(--code-edge);
+  padding: 5px 10px;
   text-align: left;
   /* Cells are labels and numbers, and `.text` sets `pre-wrap` for prose. Wrapping them is what
      makes a narrow table unreadable; the wrapper scrolls instead. */
   white-space: nowrap;
 }
-.bubble .text .md-table th { font-weight: 700; background: var(--wash); }
-.bubble .text .md-table tbody tr:nth-child(even) td { background: var(--wash); }
+.bubble .text .md-table th { font-weight: 600; background: var(--code-fill); color: var(--ink); }
+.bubble .text .md-table tbody tr:nth-child(even) td { background: var(--inset); }
+/* The unattended-reply caption is the card's header strip, as in the mockup. */
 .bubble .text .auto-caption {
-  font-size: 12px;
+  margin: -12px -16px 12px;
+  padding: 9px 16px;
+  border-bottom: 1px solid var(--card-rule);
+  font-size: 12.5px;
   color: var(--muted);
-  margin-bottom: 6px;
+  white-space: normal;
 }
-/* On the sent bubble the panels have to lift off a dark ground rather than sit on paper. */
+/* On your own card the panels take the blue tint rather than the grey one. */
 .mine .bubble .text .md-code,
-.mine .bubble .text code { background: rgba(255, 255, 255, 0.16); }
-.mine .bubble .text .md-quote { border-left-color: rgba(255, 255, 255, 0.35); color: rgba(255, 255, 255, 0.85); }
-.mine .bubble .text .auto-caption { color: rgba(255, 255, 255, 0.75); }
+.mine .bubble .text code { background: var(--mine-chip); border-color: var(--mine-edge); color: var(--mine-text); }
+.mine .bubble .text .md-code code { background: none; }
+.mine .bubble .text .md-quote { border-left-color: var(--mine-edge); color: var(--mine-sub); }
+.mine .bubble .text .auto-caption { color: var(--mine-meta); border-bottom-color: var(--mine-rule); }
 .mine .bubble .text .md-table th,
-.mine .bubble .text .md-table td { border-color: rgba(255, 255, 255, 0.28); }
+.mine .bubble .text .md-table td { border-color: var(--mine-edge); }
 .mine .bubble .text .md-table th,
-.mine .bubble .text .md-table tbody tr:nth-child(even) td { background: rgba(255, 255, 255, 0.16); }
-.mine .bubble .text .md-table-wrap::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.5); }
+.mine .bubble .text .md-table tbody tr:nth-child(even) td { background: var(--mine-chip); }
+.mine .bubble .text .md-table-wrap::-webkit-scrollbar-thumb { background: var(--mine-meta); }
 @supports not selector(::-webkit-scrollbar) {
-  .mine .bubble .text .md-table-wrap { scrollbar-color: rgba(255, 255, 255, 0.5) transparent; }
+  .mine .bubble .text .md-table-wrap { scrollbar-color: var(--mine-meta) transparent; }
 }
 
-.mine .bubble .meta .failed { color: #fecdd3; }
+.mine .bubble .meta .failed { color: var(--blocked-text); }
 
-/* A day separator, so a thread spanning weeks reads as one. */
+/* A day separator: a label between two hairlines, so a thread spanning weeks reads as one. */
 .daybreak {
-  align-self: center;
-  margin: 10px 0 2px;
-  font-size: 11.5px;
-  color: var(--muted);
-  background: var(--ground);
-  border: 1px solid var(--rule);
-  border-radius: 20px;
-  padding: 3px 12px;
+  flex: none;
+  font-size: 12px;
+  color: var(--faint);
 }
-.messages > li.sep { justify-content: center; }
+.messages > li.sep { justify-content: center; align-items: center; gap: 12px; margin: 4px 0 0; }
+.messages > li.sep::before,
+.messages > li.sep::after { content: ""; flex: 1; height: 1px; background: var(--rule); }
 
 /* A scoped request is an envelope, not prose — render it as the structured thing it is. */
 .request {
-  margin-top: 6px;
-  border-top: 1px solid var(--rule);
-  padding-top: 6px;
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .request .verb {
-  font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: 14.5px;
   color: var(--ink);
   font-weight: 600;
 }
 .request .args {
   font-family: var(--mono);
   font-size: 12px;
-  color: var(--body);
+  line-height: 1.5;
+  color: var(--code-text);
+  background: var(--code-fill);
+  border: 1px solid var(--code-edge);
+  border-radius: 8px;
+  padding: 8px 10px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  margin: 4px 0 0;
+  margin: 0;
 }
-.request .why { font-size: 12.5px; color: var(--muted); margin: 4px 0 0; }
-.decision { display: flex; align-items: center; gap: 6px; margin-top: 6px; }
-.decision .reason { font-size: 11.5px; color: var(--muted); }
+.request .why { font-size: 14.5px; line-height: 1.5; color: var(--body); margin: 0; }
+.decision { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 2px; }
+.decision .pill { height: 22px; padding: 0 8px; border-radius: 6px; font-size: 11px; }
+.decision .reason { font-size: 12.5px; color: var(--muted); }
+.messages > li:not(.mine) .bubble:has(.decision .pill-held) .verb { color: var(--held-strong); }
 
-/* The same block on your own bubble, which is navy.
-   These colours were written when only received requests were rendered, so every one of them
-   assumed a white background: ink on navy is unreadable, and the args block was near-invisible.
-   A request you sent has to be as legible as one you were sent. */
-.mine .request { border-top-color: rgba(255, 255, 255, .22); }
-.mine .request .verb { color: #fff; }
+/* The same block on your own card. */
+.mine .request .verb { color: var(--mine-text); }
 .mine .request .args {
-  color: rgba(255, 255, 255, .92);
-  background: rgba(0, 0, 0, .22);
-  border-radius: 6px;
-  padding: 6px 8px;
+  color: var(--mine-text);
+  background: var(--mine-chip);
+  border-color: var(--mine-edge);
 }
-.mine .request .why { color: rgba(255, 255, 255, .82); }
-.mine .decision .reason { color: rgba(255, 255, 255, .72); }
-/* The pills carry their own light backgrounds, which read fine on navy — but the held one is the
-   most important word in the bubble, so it gets a border that survives the darker ground. */
-.mine .pill-held { border-color: #f0b45f; }
-.mine .pill-auto { border-color: #86efac; }
-.mine .pill-blocked { border-color: #fda4af; }
+.mine .request .why { color: var(--mine-sub); }
+.mine .decision .reason { color: var(--mine-meta); }
 
 /* ---- sender info -------------------------------------------------------------------------- */
 
@@ -940,65 +1336,79 @@ button { font: inherit; color: inherit; }
   margin: 0;
   display: grid;
   grid-template-columns: max-content minmax(0, 1fr);
-  gap: 4px 14px;
+  gap: 5px 14px;
   max-width: 760px;
 }
 .peer-info dt { color: var(--muted); }
 .peer-info dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
 .peer-info .mono { font-family: var(--mono); font-size: 12px; }
 .peer-info .note { color: var(--muted); margin: 10px 0 0; max-width: 70ch; }
-.peer-info .open-mailbox { margin-top: 12px; padding: 8px 15px; font-size: 14px; }
+.peer-info .open-mailbox { margin-top: 12px; }
 .peer-section { border-top: 1px solid var(--rule); margin-top: 18px; padding-top: 14px; }
-.peer-section h3 { margin: 0 0 8px; color: var(--ink); font-size: 14px; }
-.peer-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; cursor: pointer; }
-.peer-toggle input { width: 20px; height: 20px; margin: 0; accent-color: var(--blue); flex: none; }
+.peer-section h3 { margin: 0 0 8px; color: var(--ink); font-size: 14px; font-weight: 600; }
+.peer-toggle { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 44px; cursor: pointer; color: var(--ink); }
+.peer-toggle input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent-fill); flex: none; }
 .peer-toggle:has(input:disabled) { color: var(--muted); cursor: default; }
-.peer-action { display: block; width: 100%; min-height: 44px; text-align: left; margin-top: 4px; }
+.peer-action { display: block; width: 100%; min-height: 44px; text-align: left; margin-top: 6px; }
 #peer-info-title, #peer-block-title { overflow-wrap: anywhere; min-width: 0; }
 #peer-info-sheet .sheet, #peer-block-sheet .sheet { max-height: min(88dvh, 760px); }
 
 /* ---- composer ----------------------------------------------------------------------------- */
 
+/* One bordered card: the field across the top, the paperclip at the bottom left and Send at the
+   bottom right, as in the mockup. */
 .composer {
   flex: none;
   display: flex;
-  /* Wraps so the staged-file list can take a row of its own. Without this the list's
-     `flex-basis: 100%` is a claim on the *same* row as the field, and the message box is squeezed
-     to nothing the moment a file is chosen. */
+  /* Wraps so the field and the staged-file list each take a row of their own. Without this the
+     list's `flex-basis: 100%` is a claim on the *same* row as the field, and the message box is
+     squeezed to nothing the moment a file is chosen. */
   flex-wrap: wrap;
-  align-items: flex-end;
-  gap: 8px;
-  padding: 10px 12px calc(10px + env(safe-area-inset-bottom));
-  background: var(--ground);
-  border-top: 1px solid var(--rule);
+  align-items: center;
+  gap: 4px 8px;
+  width: calc(100% - 48px);
+  max-width: 860px;
+  margin: 12px auto calc(18px + env(safe-area-inset-bottom));
+  padding: 8px;
+  background: var(--raised);
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  transition: border-color .12s ease;
 }
+.composer:focus-within { border-color: var(--edge-hover); }
 .composer textarea {
-  flex: 1;
+  flex: 1 1 100%;
+  min-width: 0;
   resize: none;
   max-height: 40vh;
-  padding: 9px 13px;
+  padding: 6px 6px 4px;
   font: inherit;
   font-size: 14.5px;
   line-height: 1.5;
   color: var(--ink);
-  background: var(--wash);
-  border: 1px solid var(--rule);
-  border-radius: 18px;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
   outline: none;
 }
-.composer textarea:focus { border-color: var(--edge-focus); background: var(--ground); }
+.composer textarea::placeholder { color: var(--faint); }
+.composer .attach { order: 1; }
 .send {
+  order: 2;
   flex: none;
-  width: 38px; height: 38px;
+  width: 38px; height: 34px;
+  margin-left: auto;
   border: 0;
-  border-radius: 50%;
-  background: var(--navy);
-  color: #fff;
+  border-radius: 9px;
+  background: var(--accent-fill);
+  color: var(--on-accent);
   display: grid; place-items: center;
   cursor: pointer;
+  transition: background .12s ease;
 }
-.send:disabled { background: var(--send-off); cursor: default; }
-.send svg { width: 18px; height: 18px; margin-left: -1px; }
+.send:hover:not(:disabled) { background: var(--accent-fill-hover); }
+.send:disabled { background: var(--send-off); color: var(--send-off-text); cursor: default; }
+.send svg { width: 16px; height: 16px; margin-left: -1px; }
 
 /* ---- drop target ---------------------------------------------------------------------------
    Covers the whole conversation, composer included, so the answer to "where do I let go" is the
@@ -1045,7 +1455,7 @@ button { font: inherit; color: inherit; }
   color: #fff;
   font-size: 13.5px;
   padding: 10px 15px;
-  border-radius: 9px;
+  border-radius: 10px;
   box-shadow: 0 8px 28px var(--shadow-toast);
 }
 
@@ -1076,6 +1486,7 @@ button { font: inherit; color: inherit; }
     visibility: visible;
     transition: transform .22s ease, visibility 0s;
   }
+  .subs-head { padding-left: 8px; }
   .subs-head .back { display: grid; }
 
   /* The thread rides over the list and slides in, which is what makes back feel like back.
@@ -1101,7 +1512,9 @@ button { font: inherit; color: inherit; }
 
   .thread-head .back { display: grid; }
 
-  .bubble { max-width: 86%; }
+  .messages { padding-inline: 12px; gap: 12px; }
+  .bubble { max-width: 88%; }
+  .composer { width: calc(100% - 20px); margin: 8px auto calc(10px + env(safe-area-inset-bottom)); }
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -1118,37 +1531,41 @@ button { font: inherit; color: inherit; }
 
 /* ---- archive banner -------------------------------------------------------------------------- */
 .account-facts {
-  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 14px;
+  margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 6px 14px;
   font-size: 13px; align-items: baseline;
 }
 .account-facts dt { color: var(--muted); }
 /* A /k/ address is 28 characters of base32 with no word breaks in it, and it must not be the
    reason the dialog grows a sideways scrollbar. */
 .account-facts dd { margin: 0; color: var(--ink); word-break: break-all; }
+.account-facts .mono, .account-facts dd.mono { font-family: var(--mono); font-size: 12.5px; }
 
 /* Quiet on purpose. Losing the network is common and temporary, and a banner that shouts about
    it is read once and resented after that. */
 .offline-banner {
-  margin: 0 12px 8px;
+  margin: 10px 0 0;
   padding: 7px 12px;
-  background: var(--held-fill); border: 1px solid var(--held-edge); border-radius: 8px;
+  background: var(--held-fill); border: 1px solid var(--held-edge); border-radius: 9px;
   font-size: 12.5px; color: var(--held-text);
 }
 
 .archive-banner {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 8px 14px; margin: 0 12px 8px;
-  background: var(--wash); border: 1px solid var(--rule); border-radius: 8px;
+  padding: 8px 12px; margin: 10px 0 0;
+  background: var(--inset); border: 1px solid var(--card-edge); border-radius: 9px;
   font-size: 12.5px; color: var(--body);
 }
 .linkish {
   border: 0; background: none; padding: 0; cursor: pointer;
   color: var(--blue); font: inherit; text-decoration: underline;
+  text-underline-offset: 2px;
 }
+.linkish:hover { color: var(--blue-hover); }
 
 /* ---- sheets (new conversation, settings, contact) --------------------------------------------
-   One overlay pattern for all three. Fixed, not absolute: on a phone the composer and the URL bar
-   both move, and an absolutely positioned dialog follows them off-screen. */
+   One overlay pattern for all of them, styled as the mockup's dialog: a 16px-cornered card with
+   no rules between its parts. Fixed, not absolute: on a phone the composer and the URL bar both
+   move, and an absolutely positioned dialog follows them off-screen. */
 .sheet-wrap {
   position: fixed; inset: 0; z-index: 40;
   display: flex; align-items: center; justify-content: center;
@@ -1156,52 +1573,65 @@ button { font: inherit; color: inherit; }
   background: var(--scrim);
 }
 .sheet {
-  width: 100%; max-width: 440px;
+  width: 100%; max-width: 480px;
   max-height: min(88vh, 720px);
   display: flex; flex-direction: column;
-  background: var(--ground); border-radius: 14px;
-  box-shadow: 0 18px 48px var(--shadow-sheet);
+  background: var(--ground);
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px var(--shadow-sheet);
+  color: var(--ink);
   overflow: hidden;
 }
 .sheet-wide { max-width: 560px; }
 .sheet-head {
-  display: flex; align-items: center; justify-content: space-between; gap: 10px;
-  padding: 14px 12px 14px 18px; border-bottom: 1px solid var(--rule);
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  padding: 20px 16px 6px 24px;
 }
-.sheet-head h2 { margin: 0; font-size: 16px; font-weight: 650; color: var(--ink); }
+.sheet-head h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--ink); }
+.sheet-head .icon-btn { color: var(--muted); }
 /* The one scroller in the dialog, so a long contact list never scrolls the page behind it. */
-.sheet-body { padding: 16px 18px; overflow-y: auto; min-height: 0; background: var(--ground); }
+.sheet-body { padding: 14px 24px 8px; overflow-y: auto; min-height: 0; background: var(--ground); color: var(--body); }
+.sheet-body > p { margin: 0 0 12px; font-size: 13.5px; }
 .sheet-foot {
   display: flex; align-items: center; justify-content: flex-end; gap: 8px;
-  padding: 12px 14px; border-top: 1px solid var(--rule); background: var(--wash);
+  padding: 14px 24px 24px; background: var(--ground);
 }
 .foot-spacer { flex: 1; }
 
 .field { display: block; margin: 0 0 14px; }
-.field > span, .field > legend { display: block; font-size: 12px; color: var(--muted); margin-bottom: 5px; }
+.field > span, .field > legend { display: block; font-size: 13px; font-weight: 600; color: var(--label); margin-bottom: 8px; }
 .field input[type="text"], .field textarea, .field select {
-  width: 100%; padding: 9px 10px;
-  border: 1px solid var(--rule); border-radius: 8px;
-  font: inherit; color: var(--ink); background: var(--ground);
+  width: 100%; min-height: 44px; padding: 10px 14px;
+  border: 1px solid var(--edge); border-radius: 10px;
+  font: inherit; color: var(--ink); background: var(--field-deep);
   /* 16px stops iOS Safari zooming the whole page when a field takes focus — which with
      user-scalable=no would otherwise leave it zoomed with no way back. */
   font-size: 16px;
+  outline: none;
+  transition: border-color .12s ease;
 }
+.field input[type="text"]::placeholder, .field textarea::placeholder { color: var(--faint); }
+.field input[type="text"]:focus, .field textarea:focus, .field select:focus { border-color: var(--edge-focus); }
 .field textarea { resize: vertical; min-height: 72px; }
-.field-note { margin: -8px 0 14px; font-size: 12px; color: var(--muted); line-height: 1.5; }
-.field-note code { font-family: var(--mono); font-size: 11.5px; }
+.field-note { margin: -6px 0 14px; font-size: 13px; color: var(--muted); line-height: 1.5; }
+.field-note code, .sheet-body code {
+  font-family: var(--mono); font-size: 12px;
+  padding: 1px 5px; border-radius: 5px;
+  background: var(--code-fill); border: 1px solid var(--code-edge); color: var(--code-text);
+}
 .sheet-error { margin: 6px 0 0; font-size: 12.5px; color: var(--danger); }
 
-.verbs { border: 1px solid var(--rule); border-radius: 10px; padding: 12px 13px; margin: 0 0 14px; }
-.verbs legend { padding: 0 4px; font-size: 12.5px; font-weight: 600; color: var(--ink); }
+.verbs { border: 1px solid var(--edge); border-radius: 10px; padding: 12px 13px; margin: 0 0 14px; }
+.verbs legend { padding: 0 4px; font-size: 13px; font-weight: 600; color: var(--label); }
 .verbs label {
   display: flex; align-items: center; gap: 9px;
-  font-size: 13px; color: var(--ink);
+  color: var(--ink);
   padding: 6px 8px; margin: 2px -4px; border-radius: 7px;
   font-family: var(--mono); font-size: 12.5px;
 }
-.verbs label:hover { background: var(--wash); }
-.verbs input { margin: 0; width: 15px; height: 15px; accent-color: var(--blue); }
+.verbs label:hover { background: var(--hover); }
+.verbs input { margin: 0; width: 15px; height: 15px; accent-color: var(--accent-fill); }
 /* A verb nobody can grant should not look like one you have simply not ticked yet. */
 .verbs .never {
   color: var(--muted);
@@ -1212,27 +1642,52 @@ button { font: inherit; color: inherit; }
 .verbs .never:hover { background: repeating-linear-gradient(
     135deg, transparent, transparent 6px, var(--stripe) 6px, var(--stripe) 12px); }
 
-/* Each setting is a card rather than a run of text. Grey-on-white headings with nothing between
-   them made the dialog read as one paragraph, so it was never obvious where one control ended and
-   the next began — or that some of the words were buttons. */
+/* Each setting is a card rather than a run of text, so it is obvious where one control ends and
+   the next begins — and that some of the words are buttons. */
 .setting {
-  margin: 0 0 14px;
-  padding: 14px 15px;
-  border: 1px solid var(--rule);
-  border-radius: 10px;
-  background: var(--wash);
+  margin: 0 0 12px;
+  padding: 14px 16px;
+  border: 1px solid var(--card-edge);
+  border-radius: 12px;
+  background: var(--inset);
 }
 .setting:last-child { margin-bottom: 4px; }
 .setting h3 {
   margin: 0 0 4px;
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 600;
   color: var(--ink);
 }
-/* Darker than `--muted`: explanatory text still has to be readable, and this sits on a tinted
-   card where the old grey lost most of its contrast. */
+/* Darker than `--muted`: explanatory text still has to be readable on a tinted card. */
 .setting .field-note { margin: 0 0 10px; color: var(--body); }
 .setting .field-note:last-child { margin-bottom: 0; }
+.setting .size-row + .field-note { margin-top: 12px; }
+.setting a { color: var(--blue); text-underline-offset: 2px; }
+.setting a:hover { color: var(--blue-hover); }
+
+/* Theme: a segmented choice, like the mockup's All / Held for review tabs. Real radio buttons,
+   so arrow keys move the choice and a screen reader announces a group of three. */
+.segmented {
+  display: flex; gap: 4px; margin: 12px 0 0; padding: 3px;
+  border-radius: 10px; background: var(--seg-track); border: 1px solid var(--card-edge);
+}
+.segmented label { flex: 1; min-width: 0; position: relative; }
+.segmented input {
+  position: absolute; inset: 0; width: 100%; height: 100%; margin: 0;
+  opacity: 0; cursor: pointer;
+}
+.segmented span {
+  display: flex; align-items: center; justify-content: center;
+  height: 32px; padding: 0 10px; border-radius: 7px;
+  font-size: 13px; font-weight: 500; color: var(--muted);
+  transition: background .12s ease, color .12s ease;
+}
+.segmented label:hover span { color: var(--ink); }
+.segmented input:checked + span {
+  background: var(--seg-on); color: var(--ink); font-weight: 600;
+  box-shadow: 0 1px 2px var(--shadow-btn);
+}
+.segmented input:focus-visible + span { outline: 2px solid var(--edge-focus); outline-offset: 1px; }
 
 .size-row {
   display: flex; align-items: center; gap: 10px; margin: 12px 0 0;
@@ -1241,81 +1696,86 @@ button { font: inherit; color: inherit; }
   font-size: 13px; font-weight: 600; color: var(--ink);
   font-variant-numeric: tabular-nums;
   min-width: 52px; text-align: center;
-  padding: 6px 8px; border-radius: 8px;
-  background: var(--ground); border: 1px solid var(--rule);
+  padding: 7px 10px; border-radius: 9px;
+  background: var(--ground); border: 1px solid var(--edge);
 }
 
+/* The mockup's dialog buttons: 38px tall, 9px corners. */
 .btn-primary, .btn-ghost, .btn-danger {
-  border-radius: 8px; padding: 9px 15px; font: inherit; font-size: 13px; font-weight: 550;
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  min-height: 38px; border-radius: 9px; padding: 0 16px;
+  font: inherit; font-size: 13.5px; font-weight: 500; line-height: 1.2;
   cursor: pointer; border: 1px solid transparent;
   transition: background .12s ease, border-color .12s ease, color .12s ease;
 }
-.btn-primary { background: var(--blue); color: #fff; border-color: var(--blue); }
-.btn-primary:hover:not(:disabled) { background: var(--blue-hover); border-color: var(--blue-hover); }
-/* A visible surface and a real border. White on white with a hairline read as text, not a
-   control, which is why the dialog looked like it had fewer buttons than it has. */
+.btn-primary { background: var(--accent-fill); color: var(--on-accent); border-color: var(--accent-fill); font-weight: 600; padding: 0 18px; }
+.btn-primary:hover:not(:disabled) { background: var(--accent-fill-hover); border-color: var(--accent-fill-hover); }
+/* A visible edge, so the secondary action still reads as a control and not as text. */
 .btn-ghost {
-  background: var(--ground); color: var(--ink); border-color: var(--edge);
+  background: transparent; color: var(--ink); border-color: var(--edge);
   box-shadow: 0 1px 0 var(--shadow-btn);
 }
 .btn-ghost:hover { background: var(--hover); border-color: var(--edge-hover); }
 .btn-ghost:active { background: var(--hover-strong); }
-.btn-danger { background: var(--ground); color: var(--danger); border-color: var(--danger-edge); }
+.btn-danger { background: transparent; color: var(--danger); border-color: var(--danger-edge); }
 .btn-danger:hover { background: var(--danger-fill); border-color: var(--danger-edge-hover); }
-.btn-primary:disabled { opacity: 0.55; cursor: default; }
+.btn-primary:disabled { background: var(--send-off); border-color: var(--send-off); color: var(--send-off-text); cursor: default; }
+.peer-action { justify-content: flex-start; }
 /* Keyboard users get the same visible edge everyone else gets on hover. */
 .btn-primary:focus-visible, .btn-ghost:focus-visible, .btn-danger:focus-visible,
 .icon-btn:focus-visible {
-  outline: 2px solid var(--blue); outline-offset: 2px;
+  outline: 2px solid var(--edge-focus); outline-offset: 2px;
 }
 
 .contact-list { list-style: none; margin: 0 0 12px; padding: 0; }
 .contact-list li {
   display: flex; align-items: center; gap: 10px;
-  padding: 9px 0; border-bottom: 1px solid var(--rule);
+  padding: 9px 0; border-bottom: 1px solid var(--card-edge);
 }
 .contact-list .cl-who { min-width: 0; flex: 1; }
-.contact-list .cl-peer { display: block; font-family: var(--mono); font-size: 12px; color: var(--ink);
+.contact-list .cl-peer { display: block; font-family: var(--mono); font-size: 12.5px; color: var(--ink);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.contact-list .cl-terms { display: block; font-size: 11.5px; color: var(--muted); margin-top: 2px; }
+.contact-list .cl-terms { display: block; font-size: 12px; color: var(--muted); margin-top: 2px; }
 .contact-list .cl-empty { color: var(--muted); font-size: 12.5px; padding: 8px 0; }
 
 /* Focused Settings pages share the native apps' concise menu. */
 #settings-title { flex: 1; }
-#settings-sheet .sheet-body { padding: 20px; }
+#settings-sheet .sheet-body { padding: 14px 24px 8px; }
 .settings-row {
   width: 100%; display: flex; align-items: center; gap: 14px;
-  min-height: 76px; padding: 14px; margin-bottom: 10px;
-  border: 1px solid var(--rule); border-radius: 12px;
-  background: var(--wash); color: var(--ink); text-align: left; font: inherit;
+  min-height: 72px; padding: 14px 16px; margin-bottom: 8px;
+  border: 1px solid var(--card-edge); border-radius: 12px;
+  background: var(--inset); color: var(--ink); text-align: left; font: inherit;
   cursor: pointer;
+  transition: background .12s ease, border-color .12s ease;
 }
-.settings-row:hover { background: var(--ground); }
-.settings-row > svg { flex: 0 0 24px; width: 24px; height: 24px; fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
+.settings-row:hover { background: var(--hover-strong); border-color: var(--edge); }
+.settings-row > svg { flex: 0 0 22px; width: 22px; height: 22px; fill: none; stroke: var(--blue); stroke-width: 1.5; stroke-linecap: round; stroke-linejoin: round; }
 .settings-row > span:not(.settings-chevron) { flex: 1; min-width: 0; }
-.settings-row strong { display: block; font-size: 15px; font-weight: 600; }
-.settings-row small { display: block; margin-top: 4px; color: var(--muted); font-size: 13px; line-height: 1.4; }
-.settings-chevron { color: var(--muted); font-size: 24px; }
-#settings-sheet .field-note { font-size: 14px; }
+.settings-row strong { display: block; font-size: 14.5px; font-weight: 600; }
+.settings-row small { display: block; margin-top: 3px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+.settings-chevron { color: var(--faint); font-size: 22px; }
+#settings-sheet .field-note { font-size: 13.5px; }
 #settings-sheet .account-facts dd { overflow-wrap: anywhere; }
 .settings-links { display: flex; align-items: flex-start; flex-direction: column; gap: 12px; }
 .settings-links a { padding: 8px 0; }
 
 /* Desktop conversation controls, with the same focus and touch targets as the rest of the inbox. */
-.inbox-status { display: flex; gap: 8px; align-items: center; margin: 8px 0 0; font-size: 13px; color: var(--muted); }
-.spinner { width: 14px; height: 14px; border: 2px solid var(--rule); border-top-color: var(--navy); border-radius: 50%; animation: inbox-spin 1s linear infinite; flex: none; }
+.inbox-status { display: flex; gap: 8px; align-items: center; margin: 10px 0 0; font-size: 13px; color: var(--muted); }
+.spinner { width: 14px; height: 14px; border: 2px solid var(--edge); border-top-color: var(--navy); border-radius: 50%; animation: inbox-spin 1s linear infinite; flex: none; }
 @keyframes inbox-spin { to { transform: rotate(360deg); } }
 .column-resizer { position: absolute; z-index: 5; top: 0; bottom: 0; right: -4px; width: 8px; cursor: col-resize; touch-action: none; }
 .column-resizer:hover, .column-resizer:focus-visible { background: var(--navy); opacity: .45; outline: 0; }
-.find-bar { display: flex; align-items: center; gap: 4px; padding: 8px 12px; border-bottom: 1px solid var(--rule); background: var(--ground); flex: none; }
-.find-bar input { min-width: 0; flex: 1; border: 1px solid var(--rule); border-radius: 7px; padding: 7px 9px; background: var(--wash); color: var(--ink); font: inherit; font-size: 13px; }
+.find-bar { display: flex; align-items: center; gap: 4px; padding: 8px 20px 8px 24px; border-bottom: 1px solid var(--rule); background: var(--wash); flex: none; }
+.find-bar input { min-width: 0; flex: 1; height: 34px; border: 1px solid var(--card-edge); border-radius: 9px; padding: 0 10px; background: var(--pane-subs); color: var(--ink); font: inherit; font-size: 13px; outline: none; }
+.find-bar input:focus { border-color: var(--edge-focus); }
 #find-count { font-size: 12px; color: var(--muted); white-space: nowrap; }
 .messages mark { color: var(--find-text); background: var(--find-fill); border-radius: 2px; }
 .found-message .bubble { outline: 2px solid var(--find-edge); outline-offset: 2px; }
-.history-button { display: block; margin: 12px auto 0; }
-.jump-latest { align-self: center; flex: none; margin: 6px; background: var(--ground); box-shadow: 0 2px 8px var(--shadow-btn); }
+.history-button { display: flex; margin: 0 auto 14px; }
+.jump-latest { align-self: center; flex: none; margin: 6px; background: var(--ground); box-shadow: 0 4px 14px var(--shadow-menu); border-radius: 999px; }
 .thread-scroll { overflow-anchor: none; scroll-behavior: auto; }
-.icon-btn:focus-visible, .identity-option:focus-visible, .sub-row:focus-visible { outline: 2px solid var(--navy); outline-offset: -2px; }
+.icon-btn:focus-visible, .identity-option:focus-visible, .sub-row:focus-visible, .thread-row:focus-visible, .identity:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: -2px; }
 .icon-btn:disabled { opacity: .45; cursor: default; }
 @media (min-width: 781px) {
   .app { grid-template-columns: var(--list-w) minmax(0, 1fr); }
@@ -1329,8 +1789,9 @@ button { font: inherit; color: inherit; }
   .column-resizer { display: none; }
 }
 @media (max-width: 780px) {
-  .thread-head { gap: 4px; padding-inline: 8px; }
+  .thread-head { gap: 6px; padding-inline: 8px 10px; }
   .thread-head > .avatar { display: none; }
+  .thread-head .icon-btn { width: 32px; height: 32px; border-color: transparent; background: none; }
   .find-bar { padding-inline: 8px; }
   .find-bar .icon-btn { width: 32px; }
 }
@@ -1342,9 +1803,527 @@ button { font: inherit; color: inherit; }
 .files li { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
 .file-label { display: flex; align-items: center; gap: 8px; max-width: 100%; }
 .attachment-preview { position: relative; display: grid; place-items: center; width: 220px; height: 150px;
-  max-width: 100%; overflow: hidden; border-radius: 8px; background: var(--wash); color: var(--muted); font-size: 12px; }
+  max-width: 100%; overflow: hidden; border-radius: 10px; border: 1px solid var(--code-edge); background: var(--code-fill); color: var(--muted); font-size: 12px; }
 .attachment-preview canvas { display: block; max-width: 100%; max-height: 100%; object-fit: contain; }
 .attachment-preview pre { margin: 0; padding: 8px; width: 100%; height: 100%; overflow: hidden;
-  white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.4 monospace; color: var(--ink); }
+  white-space: pre-wrap; overflow-wrap: anywhere; font: 10px/1.4 var(--mono); color: var(--ink); }
 .attachment-preview.compact { width: 72px; height: 54px; flex: 0 0 72px; }
-.preview-play { position: absolute; padding: 5px 8px; border-radius: 50%; background: #0009; color: white; }
+.preview-play { position: absolute; padding: 5px 8px; border-radius: 50%; background: var(--scrim); color: white; }
+
+/* ---- calls ------------------------------------------------------------------------------------
+   The call screen is dark in either appearance, like every video call: faces and video read best
+   against a dark ground. Its colours are the mockup's dark palette (the --call-* tokens). The ring
+   card and the meeting-link page sit over the inbox or stand alone, so they follow the theme. */
+.call-ui {
+  position: fixed; inset: 0; z-index: 60;
+  background: var(--call-ground); color: var(--call-ink);
+  font-family: var(--sans);
+}
+.call-stage { position: relative; display: flex; width: 100%; height: 100%; overflow: hidden; }
+.call-main { position: relative; flex: 1; min-width: 0; overflow: hidden; }
+
+.call-top {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+  display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
+  padding: 20px 24px 40px;
+  background: linear-gradient(var(--call-scrim-top), var(--call-scrim-clear));
+  pointer-events: none;
+}
+.call-top > * { pointer-events: auto; }
+.call-who { min-width: 0; flex: 1; }
+.call-who h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--call-ink); }
+.call-handle {
+  margin: 2px 0 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.call-handle:empty { display: none; }
+.call-status { margin: 6px 0 0; font-size: 13px; color: var(--call-body); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
+.call-quality {
+  font-family: var(--mono); font-size: 11.5px; color: var(--call-muted);
+  border: 1px solid var(--call-edge); border-radius: 6px; padding: 1px 6px;
+}
+.call-quality:empty { display: none; }
+.call-sas {
+  flex: none; margin: 0;
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 11px; border-radius: 9px;
+  background: var(--call-chip); border: 1px solid var(--call-edge);
+  font-size: 12.5px; color: var(--call-body);
+}
+.call-sas svg, .call-person-code svg { width: 14px; height: 14px; color: var(--call-secure); flex: none; }
+.call-sas strong { font-family: var(--mono); font-size: 13.5px; font-weight: 600; letter-spacing: .08em; color: var(--call-ink); }
+
+/* People: one tile each, tiled to fill the space. Whoever shares a screen takes the stage. */
+.call-grid {
+  position: absolute; inset: 0; padding: 100px 20px 108px;
+  display: grid; gap: 12px;
+  grid-template-columns: 1fr; grid-auto-rows: 1fr;
+}
+.call-grid[data-count="1"] { padding: 0; gap: 0; }
+.call-grid[data-count="2"] { grid-template-columns: 1fr 1fr; }
+.call-grid[data-count="3"], .call-grid[data-count="4"] { grid-template-columns: 1fr 1fr; }
+.call-grid[data-count="5"], .call-grid[data-count="6"] { grid-template-columns: 1fr 1fr 1fr; }
+/* With two people the shared screen simply fills the call; with more, the others line up beside it. */
+.call-grid[data-presenting="true"]:not([data-count="1"]) { grid-template-columns: 1fr 220px; grid-auto-rows: minmax(0, 1fr); }
+.call-grid[data-presenting="true"]:not([data-count="1"]) .call-tile-presenter { grid-column: 1; grid-row: 1 / span 6; }
+.call-grid[data-presenting="true"]:not([data-count="1"]) .call-tile:not(.call-tile-presenter) { grid-column: 2; max-height: 150px; align-self: start; }
+
+.call-tile {
+  position: relative; margin: 0; min-height: 0; overflow: hidden;
+  display: grid; place-items: center;
+  background: var(--call-tile); border: 1px solid var(--call-rule); border-radius: 14px;
+}
+.call-grid[data-count="1"] .call-tile { border: 0; border-radius: 0; background: var(--call-ground); }
+.call-tile-video, .call-tile-screen { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: transparent; }
+.call-grid:not([data-count="1"]) .call-tile-video { object-fit: cover; }
+/* Kept playing while hidden: a person's voice arrives on the camera element. */
+.call-tile[data-video="false"] .call-tile-video { visibility: hidden; }
+.call-tile-screen { visibility: hidden; }
+.call-tile[data-screen="true"] .call-tile-screen { visibility: visible; object-fit: contain; background: var(--call-ground); }
+.call-tile[data-screen="true"] .call-tile-video { inset: 12px 12px auto auto; width: 22%; height: auto; aspect-ratio: 16 / 9; border-radius: 10px; z-index: 1; object-fit: cover; }
+.call-tile-face.avatar { width: 88px; height: 88px; border-radius: 50%; font-size: 30px; font-weight: 600; }
+.call-grid[data-count="1"] .call-tile-face.avatar { width: 112px; height: 112px; font-size: 38px; }
+.call-tile[data-video="true"] .call-tile-face, .call-tile[data-screen="true"] .call-tile-face { display: none; }
+.call-tile[data-connected="false"] .call-tile-face { opacity: .55; }
+.call-tile-name {
+  position: absolute; left: 10px; bottom: 10px; z-index: 2;
+  display: inline-flex; align-items: center; gap: 6px; max-width: calc(100% - 20px);
+  padding: 4px 9px; border-radius: 7px; background: var(--call-chip);
+  font-size: 12.5px; color: var(--call-ink);
+}
+.call-grid[data-count="1"] .call-tile-name { display: none; }
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-tile-video { inset: 96px 20px auto auto; width: min(22%, 260px); }
+.call-tile-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-tile-muted svg { width: 13px; height: 13px; color: var(--call-end); display: block; }
+.call-tile-muted .slash { display: block; }
+
+.call-waiting { position: absolute; inset: 0; display: grid; place-items: center; pointer-events: none; }
+.call-waiting[hidden] { display: none; }
+.call-avatar.avatar { width: 112px; height: 112px; border-radius: 50%; font-size: 38px; font-weight: 600; }
+
+.call-self {
+  position: absolute; right: 20px; bottom: 104px; z-index: 4;
+  width: min(24vw, 260px); aspect-ratio: 16 / 9;
+  border-radius: 12px; border: 1px solid var(--call-edge); background: var(--call-tile); overflow: hidden;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-self[hidden] { display: none; }
+/* A mirror, as every camera preview is: raising your right hand moves the hand on the right. */
+.call-self-label { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: var(--call-ink); padding: 1px 6px; border-radius: 6px; background: var(--call-chip); }
+
+.call-presenting {
+  position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 4;
+  display: inline-flex; align-items: center; gap: 12px;
+  padding: 7px 8px 7px 14px; border-radius: 999px;
+  background: var(--call-dock); border: 1px solid var(--call-rule); font-size: 13px; color: var(--call-body);
+}
+.call-presenting[hidden] { display: none; }
+
+.call-controls {
+  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 5;
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: var(--call-dock); border: 1px solid var(--call-rule); border-radius: 999px;
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+}
+.call-chat-wrap { position: relative; display: inline-flex; }
+.call-badge {
+  position: absolute; top: -3px; right: -3px; min-width: 18px; height: 18px; padding: 0 5px;
+  display: grid; place-items: center; border-radius: 999px;
+  background: var(--call-focus); color: var(--call-ground); font-size: 11px; font-weight: 600;
+}
+.call-badge[hidden] { display: none; }
+.call-btn {
+  width: 50px; height: 50px; border-radius: 50%;
+  display: grid; place-items: center;
+  border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  cursor: pointer; transition: background .12s ease, color .12s ease, border-color .12s ease;
+}
+.call-btn:hover:not(:disabled) { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-btn:disabled { opacity: .45; cursor: default; }
+.call-btn[hidden] { display: none; }
+.call-btn svg { width: 21px; height: 21px; }
+.call-btn .slash { display: none; }
+.call-btn[aria-pressed="true"] { background: var(--call-ink); color: var(--call-ground); border-color: var(--call-ink); }
+.call-btn[aria-pressed="true"] .slash { display: block; }
+/* Sharing and open panels are "on" states, not "off" ones: they get the accent, not the slash. */
+#call-share[aria-pressed="true"], .call-btn[aria-expanded="true"] { background: var(--call-focus); color: var(--call-ground); border-color: var(--call-focus); }
+.call-btn.call-end { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); }
+.call-btn.call-end:hover { background: var(--call-end-hover); border-color: var(--call-end-hover); }
+.call-btn.call-accept { background: var(--call-accept); border-color: var(--call-accept); color: var(--call-on-solid); }
+.call-btn.call-accept:hover { background: var(--call-accept-hover); border-color: var(--call-accept-hover); }
+.call-btn:focus-visible, .call-pill:focus-visible, .call-icon-btn:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+
+.call-pill {
+  display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.call-pill:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-pill svg { width: 15px; height: 15px; }
+.call-pill-primary { background: var(--call-focus); border-color: var(--call-focus); color: var(--call-ground); font-weight: 600; }
+.call-pill-primary:hover { background: var(--call-ink); border-color: var(--call-ink); }
+.call-icon-btn {
+  width: 32px; height: 32px; display: grid; place-items: center; flex: none;
+  border: 1px solid transparent; border-radius: 8px; background: none; color: var(--call-muted); cursor: pointer;
+}
+.call-icon-btn:hover { background: var(--call-btn); color: var(--call-ink); }
+.call-icon-btn svg { width: 17px; height: 17px; }
+
+/* Someone at the door. Large enough not to miss, never covering the faces in the middle. */
+.call-knocks { position: absolute; top: 76px; left: 50%; transform: translateX(-50%); z-index: 6; display: flex; flex-direction: column; gap: 8px; width: min(480px, calc(100% - 32px)); }
+.call-knock {
+  display: flex; align-items: center; gap: 10px; padding: 10px 10px 10px 12px;
+  background: var(--call-tile); border: 1px solid var(--call-edge); border-radius: 12px;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-knock .avatar { width: 34px; height: 34px; flex: none; }
+.call-knock-text { flex: 1; min-width: 0; }
+.call-knock-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-knock-name { font-size: 14px; font-weight: 600; color: var(--call-ink); }
+.call-knock-note { font-size: 12px; color: var(--call-muted); }
+.call-knock-inline { box-shadow: none; padding: 8px; }
+.call-stage[data-panel-view="people"] .call-knocks { display: none; }
+
+/* The side panel: chat, people and devices, sharing one column on the right. */
+.call-panel {
+  flex: none; width: 340px; display: flex; flex-direction: column; min-height: 0;
+  background: var(--call-tile); border-left: 1px solid var(--call-rule);
+}
+.call-panel[hidden] { display: none; }
+.call-panel-head { display: flex; align-items: center; justify-content: space-between; padding: 16px 12px 10px 18px; }
+.call-panel-head h3 { margin: 0; font-size: 15px; font-weight: 650; color: var(--call-ink); }
+.call-panel-body { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 12px; padding: 4px 18px 18px; overflow-y: auto; }
+.call-panel-body[hidden] { display: none; }
+.call-panel-label { display: block; margin: 0 0 6px; font-size: 11.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--call-muted); }
+.call-panel-note { margin: 0; font-size: 12px; color: var(--call-muted); line-height: 1.45; }
+.call-link-row { display: flex; align-items: center; gap: 8px; }
+.call-link-row code {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-family: var(--mono); font-size: 12.5px; color: var(--call-ink);
+  padding: 7px 9px; border-radius: 8px; background: var(--call-ground); border: 1px solid var(--call-edge); user-select: all;
+}
+.call-invite { display: flex; flex-direction: column; gap: 8px; padding-bottom: 14px; border-bottom: 1px solid var(--call-rule); }
+.call-knock-list, .call-people-list, .call-chat-log { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.call-knock-list:empty { display: none; }
+.call-person { display: flex; align-items: center; gap: 10px; }
+.call-person .avatar { width: 32px; height: 32px; flex: none; }
+.call-person-text { flex: 1; min-width: 0; }
+.call-person-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-person-name { font-size: 13.5px; font-weight: 600; color: var(--call-ink); }
+.call-person-note { font-size: 12px; color: var(--call-muted); font-family: var(--mono); }
+.call-person-code { display: inline-flex; align-items: center; gap: 5px; font-family: var(--mono); font-size: 12.5px; color: var(--call-body); }
+
+.call-chat-log { flex: 1; overflow-y: auto; gap: 10px; }
+.call-chat-item { max-width: 88%; padding: 8px 11px; border-radius: 12px; background: var(--call-btn); border: 1px solid var(--call-rule); align-self: flex-start; }
+.call-chat-mine { align-self: flex-end; background: var(--call-ground); border-color: var(--call-edge); }
+.call-chat-meta { margin: 0 0 2px; display: flex; gap: 8px; font-size: 11.5px; color: var(--call-muted); }
+.call-chat-who { font-weight: 600; color: var(--call-body); }
+.call-chat-text { margin: 0; font-size: 13.5px; color: var(--call-ink); white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.call-chat-form { display: flex; align-items: flex-end; gap: 8px; padding: 8px; border-radius: 12px; background: var(--call-ground); border: 1px solid var(--call-edge); }
+.call-chat-form textarea {
+  flex: 1; min-height: 22px; max-height: 120px; resize: none; border: 0; outline: none; background: transparent;
+  color: var(--call-ink); font: inherit; font-size: 13.5px; line-height: 1.45; padding: 4px 4px;
+}
+.call-chat-send { color: var(--call-focus); }
+.call-field { display: flex; flex-direction: column; }
+.call-select {
+  width: 100%; height: 36px; padding: 0 10px; border-radius: 9px;
+  border: 1px solid var(--call-edge); background: var(--call-ground); color: var(--call-ink); font: inherit; font-size: 13.5px;
+}
+
+/* An incoming ring, over the inbox: follows the theme. */
+.call-ring {
+  position: fixed; top: 16px; right: 16px; z-index: 65;
+  width: min(392px, calc(100vw - 32px));
+  display: flex; align-items: center; gap: 12px;
+  padding: 14px 14px 14px 16px;
+  background: var(--ground); color: var(--ink);
+  border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 24px 60px var(--shadow-sheet);
+}
+.call-ring[hidden] { display: none; }
+.call-ring .avatar { flex: none; }
+.call-ring-text { flex: 1; min-width: 0; }
+.call-ring-text p { margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-ring-title { font-size: 12px; font-weight: 500; color: var(--muted); }
+.call-ring-from { margin-top: 1px !important; font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--ink); }
+.call-ring-note { margin-top: 2px !important; font-size: 12px; color: var(--faint); }
+.call-ring-actions { flex: none; display: flex; gap: 10px; }
+.call-ring .call-btn { width: 44px; height: 44px; }
+.call-ring .call-btn svg { width: 20px; height: 20px; }
+
+/* ---- the meeting-link page ------------------------------------------------------------------ */
+body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); color: var(--ink); font-family: var(--sans); }
+.join { min-height: 100vh; display: grid; place-items: center; padding: 24px 16px; box-sizing: border-box; }
+.join[hidden] { display: none; }
+.join-card {
+  width: 100%; max-width: 520px; box-sizing: border-box; padding: 24px;
+  background: var(--ground); border: 1px solid var(--edge); border-radius: 16px; box-shadow: 0 24px 60px var(--shadow-sheet);
+  display: flex; flex-direction: column; gap: 16px;
+}
+.join-head { display: flex; align-items: center; gap: 12px; }
+.join-head h1 { margin: 0; font-size: 19px; font-weight: 650; letter-spacing: -0.01em; }
+.join-mark { width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 10px; background: var(--accent-fill); color: var(--on-accent); }
+.join-mark svg { width: 20px; height: 20px; }
+.join-meta { margin: 2px 0 0; font-size: 13px; color: var(--muted); display: flex; flex-wrap: wrap; gap: 8px; }
+.join-meta code { font-family: var(--mono); color: var(--ink); }
+.join-form { display: flex; flex-direction: column; gap: 14px; }
+.join-form[hidden] { display: none; }
+.join-preview { position: relative; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: var(--call-ground); display: grid; place-items: center; }
+.join-preview video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); }
+.join-preview[data-video="false"] video { visibility: hidden; }
+.join-preview-off { margin: 0; font-size: 13px; color: var(--call-muted); }
+.join-preview[data-video="true"] .join-preview-off { display: none; }
+.join-toggles { position: absolute; left: 50%; bottom: 12px; transform: translateX(-50%); display: flex; gap: 10px; }
+.join-toggles .call-btn { width: 44px; height: 44px; }
+.join-devices { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.join-devices .call-field:last-child { grid-column: 1 / -1; }
+.join .call-panel-label { color: var(--muted); }
+.join .call-select, .join-input {
+  width: 100%; box-sizing: border-box; height: 38px; padding: 0 11px; border-radius: 9px;
+  border: 1px solid var(--edge); background: var(--field-deep); color: var(--ink); font: inherit; font-size: 14px;
+}
+.join-input:focus, .join .call-select:focus { outline: 2px solid var(--edge-focus); outline-offset: 1px; }
+.join .call-field[hidden] { display: none; }
+.join-note { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.45; }
+.join-actions { display: flex; justify-content: flex-end; }
+.join-waiting, .join-done { display: flex; flex-direction: column; align-items: center; gap: 12px; padding: 12px 0; text-align: center; }
+.join-waiting[hidden], .join-done[hidden] { display: none; }
+.join-waiting p, .join-done p { margin: 0; font-size: 14px; color: var(--body); }
+.join-spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--edge); border-top-color: var(--accent-fill); animation: join-spin 1s linear infinite; }
+@keyframes join-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .join-spinner { animation: none; } }
+.join-error { margin: 0; }
+.join-error[hidden] { display: none; }
+
+@media (max-width: 760px) {
+  .call-top { padding: 16px 16px 36px; flex-direction: column; gap: 8px; }
+  .call-grid { padding: 120px 10px 100px; gap: 8px; }
+  .call-grid[data-count="2"] { grid-template-columns: 1fr; }
+  .call-grid[data-count="3"], .call-grid[data-count="4"], .call-grid[data-count="5"], .call-grid[data-count="6"] { grid-template-columns: 1fr 1fr; }
+  .call-grid[data-presenting="true"] { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr); grid-auto-rows: minmax(0, 1fr); }
+  .call-grid[data-presenting="true"] .call-tile-presenter { grid-column: 1; grid-row: 1; }
+  .call-grid[data-presenting="true"] .call-tile:not(.call-tile-presenter) { grid-column: 1; max-height: none; }
+  .call-self { width: 30vw; right: 12px; bottom: 96px; }
+  .call-controls { bottom: 16px; gap: 6px; padding: 8px 10px; max-width: calc(100vw - 16px); }
+  .call-btn { width: 42px; height: 42px; }
+  .call-btn svg { width: 19px; height: 19px; }
+  /* On a phone the panel covers the call rather than squeezing it. */
+  .call-panel { position: absolute; inset: 0; z-index: 8; width: auto; border-left: 0; }
+  .call-ring { top: 10px; right: 10px; width: calc(100vw - 20px); }
+  .join-devices { grid-template-columns: 1fr; }
+  .join-card { padding: 18px; }
+}
+
+/* The red of "you are sharing": the floating always-on-top indicator and the banner dot. */
+.share-pip-dot {
+  width: 10px; height: 10px; flex: none; border-radius: 50%; background: var(--call-end);
+  animation: share-pulse 1.6s ease-in-out infinite;
+}
+@keyframes share-pulse { 50% { opacity: .35; } }
+@media (prefers-reduced-motion: reduce) { .share-pip-dot { animation: none; } }
+.call-pill-danger { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); font-weight: 600; }
+.call-pill-danger:hover { background: var(--call-end-hover); border-color: var(--call-end-hover); }
+body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-ink); font-family: var(--sans); }
+.share-pip-box {
+  box-sizing: border-box; height: 100vh; display: flex; align-items: center; gap: 10px; padding: 0 12px;
+  border: 4px solid var(--call-end);
+}
+.share-pip-text { flex: 1; min-width: 0; font-size: 13.5px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.call-presenting .call-pill[hidden] { display: none; }
+
+/* Back to the inbox while the call keeps going. */
+.call-back {
+  flex: none; display: inline-flex; align-items: center; gap: 4px; height: 34px; padding: 0 12px 0 8px; margin-right: 4px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-chip); color: var(--call-ink);
+  font: inherit; font-size: 13px; font-weight: 500; cursor: pointer;
+}
+.call-back:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-back svg { width: 16px; height: 16px; }
+.call-back:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+
+/* Muted: a red mic on the person's picture — in the corner of their video, or beside their face
+   in a voice call — and on your own view. */
+.call-mute-badge {
+  position: absolute; z-index: 3; width: 30px; height: 30px; display: grid; place-items: center;
+  border-radius: 50%; background: var(--call-end); color: var(--call-on-solid);
+  box-shadow: 0 4px 12px var(--call-shadow);
+}
+.call-mute-badge[hidden] { display: none; }
+.call-mute-badge svg { width: 16px; height: 16px; }
+.call-mute-badge .slash { display: block; }
+.call-tile .call-mute-badge { top: 12px; right: 12px; }
+.call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 18px); right: auto; left: calc(50% + 18px); }
+.call-grid[data-count="1"] .call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 28px); left: calc(50% + 28px); width: 34px; height: 34px; }
+.call-grid[data-count="1"] .call-tile[data-video="true"] .call-mute-badge,
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-mute-badge { top: 96px; right: 24px; }
+.call-self .call-mute-badge { top: 8px; left: 8px; width: 26px; height: 26px; }
+.call-self .call-mute-badge svg { width: 14px; height: 14px; }
+
+/* Your own view, and while sharing, the screen the others see (with your camera in its corner). */
+.call-self-screen { display: none; }
+.call-self[data-screen="true"] { width: min(34vw, 420px); }
+.call-self[data-screen="true"] .call-self-screen { display: block; width: 100%; height: 100%; object-fit: contain; background: var(--call-ground); }
+.call-self[data-screen="true"] .call-self-camera { position: absolute; right: 8px; top: 8px; width: 28%; height: auto; aspect-ratio: 16 / 9; border-radius: 8px; border: 1px solid var(--call-edge); }
+.call-self[data-camera="false"] .call-self-camera { display: none; }
+.call-self .call-self-camera { width: 100%; height: 100%; object-fit: cover; transform: scaleX(-1); display: block; }
+.call-audio { display: none; }
+
+.call-inner-toast {
+  position: absolute; left: 50%; bottom: 112px; transform: translateX(-50%); z-index: 9;
+  max-width: min(520px, calc(100% - 32px)); padding: 9px 14px; border-radius: 10px;
+  background: var(--call-ink); color: var(--call-ground); font-size: 13.5px; font-weight: 500;
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-inner-toast[hidden] { display: none; }
+
+/* The call, shrunk to a bar over the inbox. Follows the inbox theme. */
+.call-mini {
+  /* Bottom-left, over the end of the conversation list: the composer and its send button own the
+     bottom-right. */
+  position: fixed; left: 16px; bottom: 16px; z-index: 59;
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px 6px 6px;
+  background: var(--ground); color: var(--ink); border: 1px solid var(--edge); border-radius: 14px;
+  box-shadow: 0 24px 60px var(--shadow-sheet);
+}
+.call-mini[hidden] { display: none; }
+.call-mini-open {
+  position: relative; display: flex; align-items: center; gap: 10px; min-width: 0; max-width: 240px;
+  padding: 4px 8px 4px 4px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; cursor: pointer; text-align: left;
+}
+.call-mini-open:hover { background: var(--hover); }
+.call-mini-open .avatar { width: 36px; height: 36px; flex: none; }
+.call-mini-text { display: flex; flex-direction: column; min-width: 0; }
+.call-mini-name { font-size: 13.5px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-mini-status { font-size: 12px; color: var(--auto-text); font-variant-numeric: tabular-nums; }
+.call-mini .call-badge { top: 0; right: 2px; }
+.call-mini-btn {
+  width: 38px; height: 38px; flex: none; display: grid; place-items: center; border-radius: 50%;
+  border: 1px solid var(--edge); background: var(--ground); color: var(--ink); cursor: pointer;
+}
+.call-mini-btn:hover { background: var(--hover); }
+.call-mini-btn svg { width: 18px; height: 18px; }
+.call-mini-btn .slash { display: none; }
+.call-mini-btn[aria-pressed="true"] { background: var(--ink); color: var(--ground); border-color: var(--ink); }
+.call-mini-btn[aria-pressed="true"] .slash { display: block; }
+.call-mini-btn.call-mini-end { background: var(--call-end); border-color: var(--call-end); color: var(--call-on-solid); }
+.call-mini-btn.call-mini-end:hover { background: var(--call-end-hover); }
+.call-mini-btn:focus-visible, .call-mini-open:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+@media (max-width: 760px) {
+  .call-back span { display: none; }
+  .call-back { padding: 0 8px; }
+  .call-self[data-screen="true"] { width: 46vw; }
+  .call-mini { left: 10px; right: 10px; bottom: auto; top: calc(10px + env(safe-area-inset-top)); }
+  .call-mini-open { flex: 1; max-width: none; }
+}
+
+/* ---- attachments: open in the app, download on request -------------------------------------- */
+.file-download {
+  flex: none; width: 26px; height: 26px; display: grid; place-items: center; padding: 0;
+  border: 1px solid transparent; border-radius: 7px; background: none; color: var(--muted); cursor: pointer;
+}
+.file-download:hover { background: var(--hover); color: var(--ink); border-color: var(--edge); }
+.file-download:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+.file-download svg { width: 15px; height: 15px; }
+.attachment-preview.openable { cursor: zoom-in; }
+.attachment-preview.openable:hover { border-color: var(--edge-hover); }
+.attachment-preview.openable:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
+
+/* The viewer: dark, like every photo and video viewer, whatever the inbox theme. */
+.viewer {
+  position: fixed; inset: 0; z-index: 70; display: flex; flex-direction: column;
+  background: var(--call-ground); color: var(--call-ink); font-family: var(--sans);
+}
+.viewer[hidden] { display: none; }
+.viewer-head {
+  flex: none; display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px 12px 20px; border-bottom: 1px solid var(--call-rule); background: var(--call-tile);
+}
+.viewer-title { flex: 1; min-width: 0; }
+.viewer-title h2 { margin: 0; font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.viewer-title p { margin: 2px 0 0; font-size: 12.5px; color: var(--call-muted); }
+.viewer-btn {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 12px;
+  border-radius: 9px; border: 1px solid var(--call-edge); background: var(--call-btn); color: var(--call-ink);
+  font: inherit; font-size: 13.5px; font-weight: 500; cursor: pointer;
+}
+.viewer-btn:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.viewer-btn svg { width: 16px; height: 16px; }
+.viewer-close {
+  width: 34px; height: 34px; display: grid; place-items: center; border-radius: 9px;
+  border: 1px solid transparent; background: none; color: var(--call-muted); cursor: pointer;
+}
+.viewer-close:hover { background: var(--call-btn); color: var(--call-ink); }
+.viewer-close svg { width: 18px; height: 18px; }
+.viewer-btn:focus-visible, .viewer-close:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 2px; }
+.viewer-body { flex: 1; min-height: 0; overflow: auto; display: grid; place-items: center; padding: 20px; }
+.viewer-body[data-kind="pdf"], .viewer-body[data-kind="text"] { place-items: start center; }
+.viewer-media { max-width: 100%; max-height: calc(100vh - 110px); border-radius: 8px; background: var(--call-tile); }
+audio.viewer-media { width: min(560px, 100%); background: none; }
+.viewer-pages { width: min(100%, 1100px); display: flex; flex-direction: column; gap: 14px; }
+.viewer-page { width: 100%; background: var(--call-ink); border-radius: 4px; overflow: hidden; box-shadow: 0 8px 24px var(--call-shadow); }
+.viewer-page canvas { display: block; width: 100%; height: auto; }
+.viewer-text {
+  width: min(100%, 1000px); box-sizing: border-box; margin: 0; padding: 18px 20px; border-radius: 10px;
+  background: var(--call-tile); border: 1px solid var(--call-rule); color: var(--call-ink);
+  font-family: var(--mono); font-size: 13px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text;
+}
+.viewer-loading, .viewer-note { margin: 0; font-size: 13.5px; color: var(--call-muted); text-align: center; }
+.viewer-note { margin-top: 14px; }
+.viewer-fallback { display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--call-body); }
+.viewer-fallback p { margin: 0; }
+@media (max-width: 640px) {
+  .viewer-btn span { display: none; }
+  .viewer-body { padding: 10px; }
+}
+
+/* ---- call layout: grid, or one view on the stage with the rest in a strip --------------------- */
+.call-top-right { display: flex; align-items: center; gap: 8px; flex: none; }
+.call-top-btn { color: var(--call-ink); background: var(--call-chip); border: 1px solid var(--call-edge); width: 34px; height: 34px; }
+.call-top-btn:hover { background: var(--call-btn-hover); }
+.call-back[hidden] { display: none; }
+.call-strip { display: none; }
+.call-grid[data-layout="spotlight"] {
+  display: flex; gap: 12px; padding: 76px 16px 104px;
+}
+.call-grid[data-layout="spotlight"] > .call-tile { flex: 1; min-width: 0; }
+.call-grid[data-layout="spotlight"] > .call-strip {
+  display: flex; flex-direction: column; gap: 10px; width: 232px; flex: none; overflow-y: auto; padding-bottom: 4px;
+}
+.call-strip .call-tile { flex: none; aspect-ratio: 16 / 9; cursor: pointer; }
+.call-strip .call-tile .call-tile-face.avatar { width: 44px; height: 44px; font-size: 16px; }
+.call-strip .call-tile .call-tile-video { object-fit: cover; }
+.call-grid[data-layout="spotlight"] > .call-tile .call-tile-video { object-fit: contain; }
+.call-tile[data-kind="screen"] .call-tile-video { background: var(--call-ground); }
+.call-tile[data-kind="screen"][data-main="true"] { border-color: var(--call-edge); }
+/* Full screen: the shared screen as big as the display allows. */
+.call-ui:fullscreen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; }
+.call-ui:-webkit-full-screen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; }
+
+/* Pin and mute, on each tile: shown on hover or focus, always for whatever is pinned. */
+.call-tile-acts { position: absolute; top: 10px; left: 10px; z-index: 4; display: flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
+.call-tile:hover .call-tile-acts, .call-tile:focus-within .call-tile-acts { opacity: 1; }
+.call-tile[data-pinned="true"] .call-tile-acts { opacity: 1; }
+@media (hover: none) { .call-tile-acts { opacity: 1; } }
+.call-tile-act {
+  width: 30px; height: 30px; display: grid; place-items: center; padding: 0; border-radius: 8px;
+  border: 1px solid var(--call-edge); background: var(--call-chip); color: var(--call-ink); cursor: pointer;
+}
+.call-tile-act:hover { background: var(--call-btn-hover); }
+.call-tile-act svg { width: 15px; height: 15px; }
+.call-tile-act .slash { display: block; }
+.call-tile-act[hidden] { display: none; }
+.call-pin[aria-pressed="true"] { background: var(--call-focus); border-color: var(--call-focus); color: var(--call-ground); }
+.call-tile-act:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 2px; }
+.call-strip .call-tile-act { width: 26px; height: 26px; }
+
+.call-person-mute { flex: none; height: 28px; padding: 0 10px; font-size: 12.5px; }
+.call-person-mute:disabled { opacity: .55; cursor: default; }
+.call-chat-missed { margin: 4px 0 0; font-size: 11.5px; color: var(--call-muted); }
+
+@media (max-width: 760px) {
+  .call-grid[data-layout="spotlight"] { flex-direction: column; padding: 120px 8px 96px; }
+  .call-grid[data-layout="spotlight"] > .call-strip { flex-direction: row; width: auto; height: 92px; overflow-x: auto; overflow-y: hidden; }
+  .call-strip .call-tile { height: 100%; width: auto; }
+  .call-top-right .call-back span { display: none; }
+}

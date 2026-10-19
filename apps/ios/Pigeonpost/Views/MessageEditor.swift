@@ -14,10 +14,11 @@ struct MessageEditor: UIViewRepresentable {
     func makeUIView(context: Context) -> PasteTextView {
         let view = PasteTextView()
         view.delegate = context.coordinator
-        view.font = .systemFont(ofSize: 15)
+        view.font = Typeface.platform(15)
         view.backgroundColor = .clear
         view.textColor = UIColor(Theme.ink)
-        view.textContainerInset = UIEdgeInsets(top: 9, left: 8, bottom: 9, right: 8)
+        view.tintColor = UIColor(Theme.accent)
+        view.textContainerInset = UIEdgeInsets(top: 8, left: 3, bottom: 8, right: 3)
         view.accessibilityLabel = "Write a message"
         view.accessibilityIdentifier = "messageComposer"
         view.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -38,7 +39,7 @@ struct MessageEditor: UIViewRepresentable {
     }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: PasteTextView, context: Context) -> CGSize? {
         guard let width = proposal.width else { return nil }
-        return CGSize(width: width, height: min(120, max(38, uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)))
+        return CGSize(width: width, height: min(120, max(34, uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)))
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MessageEditor

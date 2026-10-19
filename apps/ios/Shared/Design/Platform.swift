@@ -155,6 +155,13 @@ extension View {
         #endif
     }
 
+    /// A sheet's list or form, on the app's own ground rather than the system's grouped grey, so a
+    /// sheet reads as part of the same app as the window behind it.
+    func sheetSurface() -> some View {
+        scrollContentBackground(.hidden)
+            .background(Theme.app)
+    }
+
     /// What the keyboard's return key should say. There is no software keyboard on a Mac.
     @ViewBuilder
     func doneKey() -> some View {

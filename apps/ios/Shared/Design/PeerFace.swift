@@ -67,6 +67,11 @@ enum PeerFace {
     static func tone(_ peer: String?) -> Color {
         Theme.tones[toneIndex(peer) - 1]
     }
+
+    /// The initials' colour on that tone: the same hue, lighter in the dark and deeper in the light.
+    static func toneInk(_ peer: String?) -> Color {
+        Theme.toneInk[toneIndex(peer) - 1]
+    }
 }
 
 struct Avatar: View {
@@ -79,8 +84,9 @@ struct Avatar: View {
             .frame(width: size, height: size)
             .overlay(
                 Text(PeerFace.initials(peer))
-                    .font(.system(size: size * 0.355, weight: .semibold))
-                    .foregroundStyle(.white)
+                    .font(.geist(size * 0.32, .bold))
+                    .kerning(size * 0.32 * 0.02)
+                    .foregroundStyle(PeerFace.toneInk(peer))
             )
             .accessibilityHidden(true)
     }

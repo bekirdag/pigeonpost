@@ -33,7 +33,7 @@ enum Fixtures {
     }
 
     /// `-sheet=settings` opens a sheet straight away, so the screens that need two taps to reach can
-    /// be looked at — and screenshotted — without any. `settings`, `new`, `identities`, or `peer`
+    /// be looked at — and screenshotted — without any. `settings`, `new`, `identities`, `thread` (the new-thread dialog), or `peer`
     /// (which needs `-open=` as well, since a sender panel is about somebody).
     static var sheet: String? {
         guard enabled else { return nil }
@@ -59,6 +59,15 @@ enum Fixtures {
     /// only be in once, and the one that used to leave the app on a spinner for ever.
     static var emptyAccount: Bool {
         enabled && CommandLine.arguments.contains("-empty")
+    }
+
+    /// `-appearance=dark` or `-appearance=light` pins the app's appearance for screenshots, without
+    /// changing the system's or the saved Settings choice. See `AppearanceChoice`.
+    static var appearance: String? {
+        guard enabled else { return nil }
+        return CommandLine.arguments
+            .first { $0.hasPrefix("-appearance=") }
+            .map { String($0.dropFirst("-appearance=".count)) }
     }
 
     /// `-quota=near` or `-quota=full` stages the mailbox-usage section.

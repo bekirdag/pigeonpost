@@ -23,5 +23,8 @@
 	     compliance question we already know the answer to. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Geist and Geist Mono (SIL OFL 1.1, Geist-OFL.txt), loaded from Contents/Resources. -->
+	<key>ATSApplicationFontsPath</key>
+	<string>.</string>
 </dict>
 </plist>

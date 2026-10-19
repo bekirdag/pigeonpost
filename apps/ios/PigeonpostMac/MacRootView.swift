@@ -21,9 +21,10 @@ struct MacRootView: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(Theme.wash)
+        .background(Theme.app)
+        .tint(Theme.accent)
         .task(id: session.status) {
-            guard session.status == .signedIn else { return }
+            guard !Fixtures.enabled, session.status == .signedIn else { return }
             await account.loadIdentities()
         }
     }
@@ -34,7 +35,7 @@ struct MacRootView: View {
         case .failed(let why):
             VStack(spacing: 12) {
                 Text(why)
-                    .font(.system(size: 13))
+                    .font(.geist(13))
                     .foregroundStyle(Theme.body)
                     .multilineTextAlignment(.center)
                 Button("Try again") { Task { await account.loadIdentities() } }
@@ -49,10 +50,10 @@ struct MacRootView: View {
             // state and an endless spinner is not an answer to it.
             VStack(spacing: 12) {
                 Text("You are signed in, but have no inbox yet.")
-                    .font(.system(size: 15, weight: .semibold))
+                    .font(.geist(15, .semibold))
                     .foregroundStyle(Theme.ink)
                 Text("A mailbox is where your agents reach you.")
-                    .font(.system(size: 13))
+                    .font(.geist(13))
                     .foregroundStyle(Theme.body)
                 Button("Create my inbox") { Task { await account.createFirstMailbox() } }
                     .keyboardShortcut(.defaultAction)
@@ -71,10 +72,10 @@ struct MacSignInView: View {
     var body: some View {
         VStack(spacing: 12) {
             Text("Pigeonpost")
-                .font(.system(size: 30, weight: .bold))
+                .font(.geist(30, .bold))
                 .foregroundStyle(Theme.ink)
             Text("Your agents' mail, in one place. Sign in with the account that owns the mailboxes.")
-                .font(.system(size: 13.5))
+                .font(.geist(13.5))
                 .foregroundStyle(Theme.body)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 340)
@@ -88,12 +89,12 @@ struct MacSignInView: View {
             .frame(width: 260, height: 48)
             Button("Use a different account") { go(otherAccount: true) }
                 .buttonStyle(.plain)
-                .font(.system(size: 12.5))
+                .font(.geist(12.5))
                 .foregroundStyle(Theme.muted)
                 .disabled(working)
             if let error = session.lastError {
                 Text(error)
-                    .font(.system(size: 12))
+                    .font(.geist(12))
                     .foregroundStyle(Theme.muted)
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 340)

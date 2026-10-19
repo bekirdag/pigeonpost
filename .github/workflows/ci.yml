@@ -35,6 +35,9 @@ jobs:
       - run: npm test
       - name: Exercise handle checkout against the billing contract
         run: node --test ../store-adapter/test/checkout.test.mjs
+      - name: Call signaling (authorization, ringing, signals, TURN credentials)
+        working-directory: calls-service
+        run: npm test
 
   test:
     name: test (${{ matrix.os }})
@@ -181,6 +184,7 @@ jobs:
           # with and be given a handle named after it. The claim's key is the spec's spelling, and
           # a serde field cannot be renamed around a word.
           # App Store Connect invitation tooling also uses Apple's fixed transport enum.
+          # So does Sign in with Apple's requested-scope enum in the iOS session.
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           # The private deletion-queue notifier imports Python's standard transport module.
@@ -200,6 +204,7 @@ jobs:
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/fcm.rs' \
               ':(exclude)apps/ios/Tests/main.swift' \
+    ':(exclude)apps/ios/Shared/Auth/Session.swift' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)CLA.md'; then
