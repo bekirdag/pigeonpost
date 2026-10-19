@@ -8,6 +8,10 @@ struct MacMessageEditor: NSViewRepresentable {
     let attach: ([StagedFile]) -> Void
     let reportError: (String) -> Void
     let send: () -> Void
+    /// Bumped by the thread when a send has finished: the field takes the keyboard back, so the
+    /// next message can be typed straight away, as on the web — whether Return or the Send button
+    /// sent this one, and although the field was disabled while it went.
+    var refocus = 0
 
     func makeCoordinator() -> Coordinator { Coordinator(self) }
 
@@ -46,6 +50,13 @@ struct MacMessageEditor: NSViewRepresentable {
         editor.attach = attach
         editor.reportError = reportError
         editor.send = send
+        if refocus != editor.refocused {
+            editor.refocused = refocus
+            DispatchQueue.main.async { [weak editor] in
+                guard let editor, editor.isEditable, let window = editor.window else { return }
+                window.makeFirstResponder(editor)
+            }
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: NSScrollView, context: Context) -> CGSize? {
@@ -66,6 +77,7 @@ final class AttachmentTextView: NSTextView {
     var attach: ([StagedFile]) -> Void = { _ in }
     var reportError: (String) -> Void = { _ in }
     var send: () -> Void = {}
+    var refocused = 0
     private var measuredText = ""
     private var measuredFont: NSFont?
     private var measuredParagraph: NSParagraphStyle?

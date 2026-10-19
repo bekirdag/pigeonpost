@@ -111,9 +111,7 @@ final class Session {
     /// an ephemeral browser guarantees it by carrying no cookie any provider could recognise.
     func signIn(otherAccount: Bool = false, provider: Config.OIDC.IdentityProvider? = nil) async {
         lastError = nil
-        #if os(iOS)
         if provider == .apple, !otherAccount, await signInWithAppleNatively() { return }
-        #endif
         do {
             let verifier = Self.randomToken(64)
             let expectedState = Self.randomToken(16)
@@ -142,7 +140,6 @@ final class Session {
         }
     }
 
-    #if os(iOS)
     /// Sign in with Apple through the system sheet, then trade Apple's identity token for realm
     /// tokens (token exchange on `pigeonpost-mobile`). The realm stays the issuer, so the account —
     /// and every token the postbox sees — is the same one the web flow reaches.
@@ -188,7 +185,6 @@ final class Session {
     }
 
     private let appleAuthorization = AppleAuthorization()
-    #endif
 
     /// Sign out for real: end the session at the realm, then forget it here.
     ///
@@ -420,8 +416,8 @@ private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentatio
     }
 }
 
-#if os(iOS)
-/// One Sign in with Apple request through the system sheet, as an async call.
+/// One Sign in with Apple request through the system sheet, as an async call — on the Mac, the sheet
+/// attached to the app's window.
 @MainActor
 private final class AppleAuthorization: NSObject, ASAuthorizationControllerDelegate,
                                         ASAuthorizationControllerPresentationContextProviding {
@@ -459,10 +455,17 @@ private final class AppleAuthorization: NSObject, ASAuthorizationControllerDeleg
 
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {
         MainActor.assumeIsolated {
-            UIApplication.shared.connectedScenes
+            #if canImport(UIKit)
+            return UIApplication.shared.connectedScenes
                 .compactMap { $0 as? UIWindowScene }
                 .flatMap(\.windows)
                 .first { $0.isKeyWindow } ?? ASPresentationAnchor()
+            #else
+            return NSApplication.shared.keyWindow
+                ?? NSApplication.shared.mainWindow
+                ?? NSApplication.shared.windows.first { $0.isVisible }
+                ?? ASPresentationAnchor()
+            #endif
         }
     }
 
@@ -473,7 +476,6 @@ private final class AppleAuthorization: NSObject, ASAuthorizationControllerDeleg
         continuation?.resume(with: result)
     }
 }
-#endif
 
 extension Data {
     var base64URLEncoded: String {

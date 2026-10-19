@@ -24,7 +24,7 @@ swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-in
   Shared/Views/Markdown.swift Shared/Views/SelectableText.swift Shared/Views/Components.swift Shared/Views/MessageBubble.swift \
   Shared/Views/AttachmentViews.swift Shared/Views/AttachmentPreview.swift Shared/Views/Desktop/DesktopInboxView.swift Shared/Views/NewThreadSheet.swift \
   PigeonpostMac/MacInboxView.swift PigeonpostMac/MacThreadView.swift \
-  PigeonpostMac/MacMessageEditor.swift
+  PigeonpostMac/MacMessageEditor.swift Shared/Calls/CallHost.swift
 # Run as a normal macOS app and keep its output. `open` does not propagate the app's exit
 # status, so require its explicit successful-completion line after it terminates.
 open -n -W --stdout "$out/stdout" --stderr "$out/stderr" \

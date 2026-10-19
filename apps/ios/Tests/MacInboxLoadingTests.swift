@@ -4,6 +4,7 @@ import AppKit
 import ApplicationServices
 import SwiftUI
 import Observation
+import WebKit
 
 @MainActor @Observable final class PushService {
     var pendingPeer: String?
@@ -65,7 +66,8 @@ extension Notification.Name {
         let (account, inbox) = InboxLoadingTests.make()
         account.mailboxes.append(Mailbox(address: "/k/peer", handle: "/test/peer", label: "Peer"))
         let push = PushService()
-        let view = MacInboxView().environment(account).environment(inbox).environment(push)
+        let calls = CallHost()
+        let view = MacInboxView().environment(account).environment(inbox).environment(push).environment(calls)
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1100, height: 720),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
@@ -123,12 +125,31 @@ extension Notification.Name {
             await visitsFromDetails(window: window, host: host, account: account, inbox: inbox)
             await clipboardMessages(window: window, account: account, inbox: inbox)
             await composerSizing(window: window, account: account, inbox: inbox)
+            await idleCallOverlay(window: window)
             print("Mac inbox integration: \(InboxLoadingTests.checks) checks, \(InboxLoadingTests.failures) failures")
             watchdog.cancel()
             window.orderOut(nil)
             exit(InboxLoadingTests.failures == 0 ? 0 : 1)
         }
         app.run()
+    }
+
+    /// An idle call stays loaded over the window but must never take a click meant for the mail.
+    static func idleCallOverlay(window: NSWindow) async {
+        let calls = CallHost()
+        let host = NSHostingView(rootView: Color.gray
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .overlay { CallOverlay() }
+            .environment(calls))
+        window.contentView = host
+        await settle()
+        func hasWebView(_ view: NSView) -> Bool { view is WKWebView || view.subviews.contains(where: hasWebView) }
+        InboxLoadingTests.check(hasWebView(host), "the call view stays loaded while idle")
+        let center = NSPoint(x: host.bounds.midX, y: host.bounds.midY)
+        var hit = host.hitTest(center)
+        var underCall = false
+        while let view = hit { if view is WKWebView { underCall = true; break }; hit = view.superview }
+        InboxLoadingTests.check(calls.mode == .hidden && !underCall, "an idle call view does not take clicks")
     }
 
     static func settle() async {
@@ -139,7 +160,7 @@ extension Notification.Name {
     static func composerSizing(window: NSWindow, account: Account, inbox: Inbox) async {
         print("Starting native composer sizing regression")
         let host = NSHostingView(rootView: MacThreadView(peer: "/test/peer", subthread: nil)
-            .environment(account).environment(inbox))
+            .environment(account).environment(inbox).environment(CallHost()))
         window.contentView = host
         window.setContentSize(NSSize(width: 760, height: 640))
         await settle()
@@ -198,7 +219,7 @@ extension Notification.Name {
 
     static func clipboardMessages(window: NSWindow, account: Account, inbox: Inbox) async {
         let host = NSHostingView(rootView: MacThreadView(peer: "/test/peer", subthread: nil)
-            .environment(account).environment(inbox))
+            .environment(account).environment(inbox).environment(CallHost()))
         window.contentView = host
         await settle()
         func findEditor(_ view: NSView) -> AttachmentTextView? {
@@ -270,6 +291,8 @@ extension Notification.Name {
             ControlledURLProtocol.complete("/v1/attachments", identity: account.me!.address,
                 body: "{\"id\":\"pasted-\(index)\",\"filename\":\"image.png\",\"media_type\":\"image/png\",\"bytes\":\(png.count)}", status: 201)
         }
+        // As if the Send button had been clicked with full keyboard access on, which moves focus.
+        window.makeFirstResponder(nil)
         await InboxLoadingTests.wait("file-only send") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/send" } }
         let request = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/send" }!
         var data = request.httpBody ?? Data()
@@ -288,6 +311,9 @@ extension Notification.Name {
         InboxLoadingTests.check(envelope["note"] as? String == "", "Mac sends attachments without requiring text")
         ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"clipboard-sent\"}", status: 201)
         await settle()
+        await InboxLoadingTests.wait("composer re-enabled after send") { editor.isEditable }
+        await settle()
+        InboxLoadingTests.check(window.firstResponder === editor, "the composer keeps focus after Return sends")
         board.clearContents()
         board.setString("ordinary text", forType: .string)
         InboxLoadingTests.check(!editor.pasteAttachments(from: board), "text paste remains with AppKit")

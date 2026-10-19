@@ -4,7 +4,20 @@
 `13-inch-ipad/` — 2752×2064, iPad Pro 13-inch (M4) simulator, landscape. Required since the app runs
 natively on iPad.
 
-Both are taken by one UI test, in the dark appearance, with the status bar pinned to 9:41:
+`mac/` — 2880×1800, the Mac app's window at 1440×900 points on a Retina screen, dark, from the
+same fixtures. A Debug build (`-window=1440x900` sizes the window; it is Debug-only):
+
+```
+APP="<DerivedData>/Build/Products/Debug/Pigeonpost Desktop.app/Contents/MacOS/Pigeonpost Desktop"
+"$APP" -fixtures -appearance=dark -window=1440x900 "-open=/bekir/agent1" &   # store-1-conversation
+"$APP" -fixtures -appearance=dark -window=1440x900 -sheet=settings &          # store-2-settings
+screencapture -x -o -l<window id of that process> out.png
+```
+
+The capture has transparent rounded corners; flatten it onto an opaque background (no alpha
+channel, same pixel size) before uploading.
+
+The iPhone and iPad sets are taken by one UI test, in the dark appearance, with the status bar pinned to 9:41:
 
 ```
 xcrun simctl status_bar <udid> override --time 9:41 --batteryState charged --batteryLevel 100
