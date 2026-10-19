@@ -6,9 +6,14 @@
 //  line is the important half: a renderer that silently drops what it cannot parse loses somebody's
 //  message.
 //
-//  Nothing here is interactive. Links are styled but not tappable, and no markup can cause the app
-//  to fetch, execute, or navigate anywhere. A message body is another agent's text, and rendering
-//  it must not turn it into instructions to this app — the same rule the plain-text path followed.
+//  Nothing here acts on its own. No markup can cause the app to fetch, execute, or navigate
+//  anywhere: a link is shown as a link and opens only when the person taps or clicks it, exactly as
+//  `Text` treated markdown links before. A message body is another agent's text, and rendering it
+//  must not turn it into instructions to this app — the same rule the plain-text path followed.
+//
+//  Prose — headings, paragraphs, lists, quotes — is drawn by `SelectableText`, the platform's own
+//  read-only text view, so any part of a message can be selected and copied rather than all of it
+//  or none. Consecutive prose blocks share one text view, so a selection can run across them.
 
 import SwiftUI
 
@@ -33,68 +38,31 @@ struct MarkdownText: View {
     private var panel: Color { onDark ? Theme.Mine.panel : Theme.Code.fill }
     private var panelStroke: Color { onDark ? Theme.Mine.stroke : Theme.Code.stroke }
 
+    private var style: MarkdownStyle {
+        MarkdownStyle(mine: onDark, highlight: highlight, isCurrentMatch: isCurrentMatch)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            ForEach(Array(Markdown.blocks(of: raw).enumerated()), id: \.offset) { _, block in
-                view(for: block)
+            ForEach(Array(MarkdownSegment.segments(of: Markdown.blocks(of: raw)).enumerated()), id: \.offset) { _, segment in
+                view(for: segment)
             }
         }
-        .textSelection(.enabled)
+        .frame(maxWidth: .infinity, alignment: .leading)
         .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
-    private func view(for block: Markdown.Block) -> some View {
-        switch block {
-        case let .heading(level, text):
-            inline(text)
-                .font(.geist(level == 1 ? 19 : level == 2 ? 17 : 15.5, .semibold))
-                .foregroundStyle(strong)
-                .padding(.top, 2)
+    private func view(for segment: MarkdownSegment) -> some View {
+        switch segment {
+        case let .prose(blocks):
+            SelectableText(text: style.prose(blocks))
 
-        case let .paragraph(text):
-            inline(text)
-                .font(.geist(14.5))
-                .foregroundStyle(primary)
-
-        case let .bullets(items):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { _, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        // A bullet that is not part of the text, so selecting the line copies the
-                        // line rather than the decoration.
-                        Text("•").foregroundStyle(faint)
-                        inline(item)
-                            .font(.geist(14.5))
-                            .foregroundStyle(primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-
-        case let .numbered(items):
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(items.enumerated()), id: \.offset) { index, item in
-                    HStack(alignment: .firstTextBaseline, spacing: 7) {
-                        Text("\(index + 1).")
-                            .font(.geist(13.5, .medium))
-                            .foregroundStyle(faint)
-                        inline(item)
-                            .font(.geist(14.5))
-                            .foregroundStyle(primary)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    }
-                }
-            }
-
-        case let .code(text, _):
+        case let .code(text):
             // Horizontal scrolling rather than wrapping: wrapped code is a different program to
             // read, and agents send diffs and stack traces where the column matters.
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(marked(AttributedString(text)))
-                    .font(.geistMono(12.5))
-                    .foregroundStyle(onDark ? Theme.Mine.panelText : Theme.Code.text)
-                    .textSelection(.enabled)
+                SelectableText(text: style.code(text), wraps: false)
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
@@ -134,15 +102,15 @@ struct MarkdownText: View {
                 .padding(.bottom, 2)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
+            // A cell is short; selecting one copies it.
+            .textSelection(.enabled)
 
         case let .quote(text):
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .top, spacing: 10) {
                 RoundedRectangle(cornerRadius: 1.5)
                     .fill(faint)
                     .frame(width: 3)
-                inline(text)
-                    .font(.geist(14))
-                    .foregroundStyle(secondary)
+                SelectableText(text: style.quote(text))
             }
 
         case .rule:
@@ -164,8 +132,6 @@ struct MarkdownText: View {
     /// their own size — so a background applied without this fills the words rather than the cell,
     /// and the banding comes out as loose blocks with white gaps between the columns instead of
     /// stripes. Filling first, aligning inside the fill second, is what makes it read as a grid.
-    /// The column widths are unaffected: `maxWidth` only accepts a proposal, it does not ask for
-    /// one, so the ideal width the `Grid` measures is still the text's.
     private func cell(_ text: String, align: Alignment, isHeader: Bool, shaded: Bool = false) -> some View {
         inline(text)
             .font(.geist(13.5, isHeader ? .semibold : .regular))
@@ -196,15 +162,7 @@ struct MarkdownText: View {
         return Text(marked(AttributedString(text)))
     }
 
-    /// Mark every occurrence of the find term.
-    ///
-    /// On the text itself rather than on the message around it. A whole bubble tinted purple says
-    /// "the word is somewhere in these forty lines", which on the messages this app carries is
-    /// barely narrower than not having searched.
-    ///
-    /// Case-insensitive, and it walks the string rather than marking only the first: a paragraph
-    /// that says the word four times has four hits in it, and marking one of them would be a
-    /// different lie from marking none.
+    /// Mark every occurrence of the find term in a table cell. Prose is marked by `MarkdownStyle`.
     func marked(_ attributed: AttributedString) -> AttributedString {
         let needle = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !needle.isEmpty else { return attributed }
@@ -215,10 +173,206 @@ struct MarkdownText: View {
             out[found].backgroundColor = isCurrentMatch
                 ? Theme.found
                 : Theme.found.opacity(0.28)
-            // White on the strong fill, because the found colour is dark enough in the light
-            // appearance to swallow ink-coloured text.
             if isCurrentMatch { out[found].foregroundColor = .white }
             searchFrom = found.upperBound
+        }
+        return out
+    }
+}
+
+/// How the blocks are drawn: prose runs that share a text view, and the blocks that need a frame
+/// of their own.
+enum MarkdownSegment: Equatable {
+    case prose([Markdown.Block])
+    case code(String)
+    case table(header: [String], alignments: [Markdown.Column], rows: [[String]])
+    case quote(String)
+    case rule
+
+    static func segments(of blocks: [Markdown.Block]) -> [MarkdownSegment] {
+        var out: [MarkdownSegment] = []
+        var prose: [Markdown.Block] = []
+        func flush() {
+            if !prose.isEmpty { out.append(.prose(prose)); prose = [] }
+        }
+        for block in blocks {
+            switch block {
+            case .heading, .paragraph, .bullets, .numbered:
+                prose.append(block)
+            case let .code(text, _):
+                flush(); out.append(.code(text))
+            case let .table(header, alignments, rows):
+                flush(); out.append(.table(header: header, alignments: alignments, rows: rows))
+            case let .quote(text):
+                flush(); out.append(.quote(text))
+            case .rule:
+                flush(); out.append(.rule)
+            }
+        }
+        flush()
+        return out
+    }
+}
+
+#if canImport(UIKit)
+private typealias PlatformColor = UIColor
+#elseif canImport(AppKit)
+private typealias PlatformColor = NSColor
+#endif
+
+/// The attributed text a message's prose is drawn with: the theme's faces and colours, inline
+/// emphasis and code chips, links, and the find bar's marks.
+struct MarkdownStyle {
+    var mine = false
+    var highlight = ""
+    var isCurrentMatch = false
+
+    static let bodySize: CGFloat = 14.5
+
+    private var strong: PlatformColor { PlatformColor(mine ? Theme.Mine.text : Theme.ink) }
+    private var primary: PlatformColor { PlatformColor(mine ? Theme.Mine.text : Theme.body) }
+    private var secondary: PlatformColor { PlatformColor(mine ? Theme.Mine.secondary : Theme.body) }
+    private var faint: PlatformColor { PlatformColor(mine ? Theme.Mine.meta : Theme.muted) }
+    private var codeFill: PlatformColor { PlatformColor(mine ? Theme.Mine.panel : Theme.Code.fill) }
+    private var codeText: PlatformColor { PlatformColor(mine ? Theme.Mine.panelText : Theme.Code.text) }
+
+    /// Headings, paragraphs and lists, as one text.
+    func prose(_ blocks: [Markdown.Block]) -> NSAttributedString {
+        let out = NSMutableAttributedString()
+        for (index, block) in blocks.enumerated() {
+            let last = index == blocks.count - 1
+            switch block {
+            case let .heading(level, text):
+                let size: CGFloat = level == 1 ? 19 : level == 2 ? 17 : 15.5
+                out.append(inline(text, size: size, weight: .semibold, color: strong,
+                                  paragraph: paragraph(after: last ? 0 : 8, before: index == 0 ? 0 : 4)))
+            case let .paragraph(text):
+                out.append(inline(text, size: Self.bodySize, color: primary, paragraph: paragraph(after: last ? 0 : 10)))
+            case let .bullets(items):
+                for (n, item) in items.enumerated() {
+                    out.append(listItem(marker: "•", text: item, after: n == items.count - 1 ? (last ? 0 : 10) : 4))
+                    if n < items.count - 1 { out.append(NSAttributedString(string: "\n")) }
+                }
+            case let .numbered(items):
+                for (n, item) in items.enumerated() {
+                    out.append(listItem(marker: "\(n + 1).", text: item, after: n == items.count - 1 ? (last ? 0 : 10) : 4))
+                    if n < items.count - 1 { out.append(NSAttributedString(string: "\n")) }
+                }
+            default:
+                continue
+            }
+            if !last { out.append(NSAttributedString(string: "\n")) }
+        }
+        return marked(out)
+    }
+
+    func quote(_ text: String) -> NSAttributedString {
+        marked(inline(text, size: 14, color: secondary, paragraph: paragraph(after: 0)))
+    }
+
+    func code(_ text: String) -> NSAttributedString {
+        let style = NSMutableParagraphStyle()
+        style.lineSpacing = 3
+        style.lineBreakMode = .byClipping
+        return marked(NSAttributedString(string: text, attributes: [
+            .font: Typeface.platform(12.5, mono: true),
+            .foregroundColor: codeText,
+            .paragraphStyle: style,
+        ]))
+    }
+
+    private func paragraph(after: CGFloat, before: CGFloat = 0, indent: CGFloat = 0) -> NSParagraphStyle {
+        let style = NSMutableParagraphStyle()
+        // The design's line height is 1.45; Geist's own line box is about 1.26.
+        style.lineSpacing = 3
+        style.paragraphSpacing = after
+        style.paragraphSpacingBefore = before
+        if indent > 0 {
+            style.headIndent = indent
+            style.tabStops = [NSTextTab(textAlignment: .left, location: indent)]
+            style.defaultTabInterval = indent
+        }
+        return style
+    }
+
+    private func listItem(marker: String, text: String, after: CGFloat) -> NSAttributedString {
+        let indent: CGFloat = marker == "•" ? 16 : 22
+        let style = paragraph(after: after, indent: indent)
+        let line = NSMutableAttributedString(string: marker + "\t", attributes: [
+            .font: Typeface.platform(marker == "•" ? Self.bodySize : 13.5, marker == "•" ? .regular : .medium),
+            .foregroundColor: faint,
+            .paragraphStyle: style,
+        ])
+        line.append(inline(text, size: Self.bodySize, color: primary, paragraph: style))
+        return line
+    }
+
+    /// Inline emphasis, via the system parser. On anything it refuses, the literal text is shown —
+    /// an unparseable line is still somebody's sentence.
+    private func inline(_ text: String, size: CGFloat, weight: Font.Weight = .regular,
+                        color: PlatformColor, paragraph: NSParagraphStyle) -> NSAttributedString {
+        let base: [NSAttributedString.Key: Any] = [
+            .font: Typeface.platform(size, weight), .foregroundColor: color, .paragraphStyle: paragraph,
+        ]
+        guard let parsed = try? AttributedString(
+            markdown: text,
+            options: .init(interpretedSyntax: .inlineOnlyPreservingWhitespace)
+        ) else {
+            return NSAttributedString(string: text, attributes: base)
+        }
+        let out = NSMutableAttributedString()
+        for run in parsed.runs {
+            let piece = String(parsed[run.range].characters)
+            var attributes = base
+            let intent = run.inlinePresentationIntent ?? []
+            if intent.contains(.code) {
+                attributes[.font] = Typeface.platform(size * 0.86, mono: true)
+                attributes[.foregroundColor] = codeText
+                attributes[.backgroundColor] = codeFill
+            } else {
+                let bold = intent.contains(.stronglyEmphasized)
+                let italic = intent.contains(.emphasized)
+                attributes[.font] = Typeface.platform(size, bold ? .semibold : weight, italic: italic && !bold)
+                if bold { attributes[.foregroundColor] = strong }
+            }
+            if intent.contains(.strikethrough) {
+                attributes[.strikethroughStyle] = NSUnderlineStyle.single.rawValue
+            }
+            if let link = run.link {
+                attributes[.link] = link
+                attributes[.foregroundColor] = PlatformColor(Theme.accent)
+                attributes[.font] = Typeface.platform(size, .semibold)
+            }
+            out.append(NSAttributedString(string: piece, attributes: attributes))
+        }
+        return out
+    }
+
+    /// Mark every occurrence of the find term.
+    ///
+    /// On the text itself rather than on the message around it. A whole bubble tinted purple says
+    /// "the word is somewhere in these forty lines", which on the messages this app carries is
+    /// barely narrower than not having searched.
+    ///
+    /// Case-insensitive, and it walks the string rather than marking only the first: a paragraph
+    /// that says the word four times has four hits in it, and marking one of them would be a
+    /// different lie from marking none.
+    private func marked(_ text: NSAttributedString) -> NSAttributedString {
+        let needle = highlight.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !needle.isEmpty else { return text }
+        let out = NSMutableAttributedString(attributedString: text)
+        let string = out.string as NSString
+        var from = 0
+        while from < string.length {
+            let found = string.range(of: needle, options: [.caseInsensitive],
+                                     range: NSRange(location: from, length: string.length - from))
+            guard found.location != NSNotFound, found.length > 0 else { break }
+            let fill = PlatformColor(Theme.found)
+            out.addAttribute(.backgroundColor, value: isCurrentMatch ? fill : fill.withAlphaComponent(0.28), range: found)
+            // White on the strong fill, because the found colour is dark enough in the light
+            // appearance to swallow ink-coloured text.
+            if isCurrentMatch { out.addAttribute(.foregroundColor, value: PlatformColor.white, range: found) }
+            from = NSMaxRange(found)
         }
         return out
     }

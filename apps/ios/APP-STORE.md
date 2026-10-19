@@ -45,7 +45,7 @@ The public version has two uploaded, checksum-verified screenshots in **COMPLETE
 | Inbox | `Screenshots/6.9-inch/store-1-list.png` | 1320 × 2868 |
 | Conversation and held request | `Screenshots/6.9-inch/store-2-thread.png` | 1320 × 2868 |
 
-They show the running native app with fictional fixture messages. Never substitute personal mailbox content. The app targets iPhone (`TARGETED_DEVICE_FAMILY = 1`); a future iPad release requires layout validation and its own screenshots. See [Apple's screenshot instructions](https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/).
+They show the running native app with fictional fixture messages. Never substitute personal mailbox content. The app targets iPhone and iPad (`TARGETED_DEVICE_FAMILY = 1,2`); an iPad in a regular width uses the Mac app's three-column layout, so a release needs 13" iPad screenshots as well. See [Apple's screenshot instructions](https://developer.apple.com/help/app-store-connect/manage-app-information/upload-app-previews-and-screenshots/).
 
 The app icon is supplied through the asset catalog. The listing uses Productivity as its primary category and Developer Tools as secondary; the audience override is 18+. Recheck the questionnaire whenever content or audience changes.
 

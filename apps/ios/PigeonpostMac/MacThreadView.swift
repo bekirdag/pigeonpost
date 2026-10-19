@@ -114,10 +114,21 @@ struct MacThreadView: View {
                 // for another mailbox. A cancelled task must not touch its old scroll proxy.
                 .task(id: scrollRequest) {
                     await Task.yield()
-                    guard !Task.isCancelled, !messages.isEmpty,
-                          account.me?.address == scrollContext.mailbox,
-                          inbox.reading == peer else { return }
-                    scroller.scrollTo(Self.floor, anchor: .bottom)
+                    // Once now, and again after the rows that scroll brought on screen have been
+                    // built and measured. Message text is a real `NSTextView` (so it can be partly
+                    // selected), and the lazy stack only learns the true height of rows it builds:
+                    // the first jump lands where its estimates said the end was, and the second
+                    // lands on the end itself. Both live in this one cancellable task, so a newer
+                    // request or another mailbox still cancels them together.
+                    for pause in [0, 60, 240, 600] {
+                        if pause > 0 {
+                            do { try await Task.sleep(for: .milliseconds(pause)) } catch { return }
+                        }
+                        guard !Task.isCancelled, !messages.isEmpty,
+                              account.me?.address == scrollContext.mailbox,
+                              inbox.reading == peer else { return }
+                        scroller.scrollTo(Self.floor, anchor: .bottom)
+                    }
                 }
                 // Typing restarts the walk. Keeping the old index would land you in the middle of
                 // the results for a word you have only just finished typing.

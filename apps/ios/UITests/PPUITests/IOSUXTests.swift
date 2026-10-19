@@ -120,6 +120,32 @@ final class IOSUXTests: XCTestCase {
         XCTAssertTrue(newest.exists)
     }
 
+    /// Part of a message, not all of it: a double tap selects one word, the system's edit menu
+    /// offers Copy, and what lands on the pasteboard is that word alone — checked by pasting it into
+    /// the composer, since the test runner itself is not allowed to read the pasteboard.
+    func testMessageTextSelectsAndCopiesPartially() {
+        open(["-ios-history"])
+        let newest = history.cells["message:history-44"]
+        XCTAssertTrue(newest.waitForExistence(timeout: 8))
+        let text = newest.staticTexts["History message 44"]
+        XCTAssertTrue(text.waitForExistence(timeout: 5), newest.debugDescription)
+        // The first word of "History message 44".
+        text.coordinate(withNormalizedOffset: CGVector(dx: 0, dy: 0.5)).withOffset(CGVector(dx: 14, dy: 0)).doubleTap()
+        let copy = app.menuItems["Copy"]
+        XCTAssertTrue(copy.waitForExistence(timeout: 4), app.debugDescription)
+        screenshot("partial-selection")
+        copy.tap()
+
+        let composer = app.textViews["messageComposer"]
+        composer.tap()
+        composer.tap()
+        let paste = app.menuItems["Paste"]
+        XCTAssertTrue(paste.waitForExistence(timeout: 4), app.debugDescription)
+        paste.tap()
+        XCTAssertEqual(composer.value as? String, "History", "Only the selected word was copied")
+        screenshot("partial-selection-pasted")
+    }
+
     func testMailboxOrderDoesNotFollowCurrentSelection() {
         app.launchArguments = ["-fixtures", "-ios-mailboxes", "-sheet=identities"]
         app.launch()
