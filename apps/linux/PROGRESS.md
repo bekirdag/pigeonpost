@@ -22,6 +22,14 @@
 - Deployed the Linux downloads at [pigeonpost.dev/download](https://pigeonpost.dev/download) with ARM64 detection, all alternatives and installation guidance. All 61 website tests pass. The homepage retains one Download link. The guarded deployment verifies previous/new hashes and keeps the original files in `/var/backups/pigeonpost/linux-downloads-20260913`.
 - Docdex's test runner assumes Cargo targets in this workspace and rejects Python/Node targets. Those tests use their native runners; Docdex impact analysis and staged-change hooks remain in use. A local Docdex model drafted desktop metadata; its incomplete Rust draft was rejected during validation.
 
+## 2026-10-19 — 1.0.8 parity with web, iOS and Mac
+
+- Restyled to the conversation design (Theme.swift tokens through GTK CSS and libadwaita named colours; bundled Geist/Geist Mono registered with fontconfig for the process). No buttons or elements were added or removed apart from the two call buttons.
+- Message text can be partly selected and copied; the selection's menu keeps Copy message, Delete message and Report spam. Appearance choice (System/Light/Dark) persisted outside the keyring. The composer regains focus after Send or Enter.
+- In-app viewer for pictures, video, sound, PDF (Poppler, first 60 pages) and plain text, with Save. Markup types and extensions are refused; pictures decode only with their declared type's loader.
+- Calls: WebKitGTK probed in containers on raijin — Ubuntu 24.04/26.04 (2.52.6), Debian 13 (2.54.0) and the Flathub GNOME 50 runtime (2.54.1) have `getUserMedia` but no `RTCPeerConnection`, so the embedded call page cannot work. Call buttons open the web inbox with the address copied.
+- 26 core and 21 GTK tests pass on Ubuntu 24.04 under Xvfb (new: theme persistence, viewer gating and viewing, composer focus, partial selection, call fallback). Screenshots from fixture data are in `data/screenshots`.
+
 ## Release notes and limits
 
 - [PR #13](https://github.com/bekirdag/pigeonpost/pull/13) merged the implementation and server repair. Release source is tag `linux-desktop-1.0.0` (`b2edd5c`). Later documentation updates do not change packaged runtime files.
