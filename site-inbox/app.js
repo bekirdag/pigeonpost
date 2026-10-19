@@ -107,6 +107,7 @@
 
   function signOut() {
     [K.token, K.refresh, K.verifier, K.state, K.identity].forEach((k) => LS.removeItem(k));
+    window.PigeonpostCalls?.stop();
     stopLive();
     // The stream cursor and the fallback verdict belong to the account that was signed in, not to
     // the browser. Hiding a tab must keep them — resuming from the cursor is the whole point — but
@@ -1290,6 +1291,7 @@
     const open = Boolean(state.openPeer);
     $("pane-thread").dataset.open = String(open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length));
     $("thread-head").hidden = !open;
+    window.PigeonpostCalls?.renderHead();
     $("composer").hidden = !open;
     $("thread-empty").hidden = open;
     if (!(open && state.showInfo) && !$("peer-info-sheet").hidden) closeSheet("peer-info-sheet");
@@ -2864,6 +2866,7 @@
   }
 
   function startLive() {
+    window.PigeonpostCalls?.start();
     if (liveWanted || !state.me) return;
     liveWanted = true;
     if (pollFallback) { startPolling(); return; }
@@ -3758,6 +3761,20 @@
       render();
     }
   }
+
+  // What calls.js may ask of the inbox: who is signed in as which mailbox, who is open, and how to
+  // say something. It gets no access to message bodies.
+  window.PigeonpostCallsHost = {
+    signedIn: () => Boolean(getToken() && state.me),
+    token: () => getToken(),
+    renew: () => renewSession(),
+    mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    peer: () => state.openPeer || null,
+    knownPeer: (peer) => Boolean(peer && (contactFor(peer) || state.inbound.some((m) => peerKeyOf(m) === peer))),
+    displayName,
+    paintAvatar,
+    toast,
+  };
 
   async function boot() {
     wire();
