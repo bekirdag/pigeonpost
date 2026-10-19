@@ -34,7 +34,7 @@ Maintain working credentials in App Store Connect's sign-in fields; never copy c
 
 For the optional scanner, open [the review sign-in page](https://postbox.pigeonpost.dev/review-sign-in) on another screen and generate a fresh QR. In the app choose **Settings → Scan for login**, scan, sign in and approve. Tap Done on the success page. Codes last ten minutes; generating a fresh code avoids expired attachments. The demonstration discards its device credential and never retrieves an account token. A live generated QR was decoded and successfully approved using the reviewer account.
 
-Sign-in uses `ASWebAuthenticationSession` with PKCE. Sign in with Apple is offered alongside the other social providers.
+Sign-in uses `ASWebAuthenticationSession` with PKCE. Sign in with Apple uses the system sheet on iPhone and iPad (identity token exchanged at the realm; see su_iam docs/pigeonpost-apple-login.md) and the realm’s Apple page on the Mac.
 
 ## Screenshots and presentation
 
