@@ -53,7 +53,6 @@ public sealed partial class MainWindow : Window
         InitializeTheme();
         AppWindow.Resize(new SizeInt32(1100, 720));
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "Pigeonpost.ico"));
-        InitializeNotifications();
         AppWindow.Changed += Window_Changed;
         ViewModel.PropertyChanged += ViewModel_PropertyChanged;
         ViewModel.MessagesUpdating += Messages_Updating;

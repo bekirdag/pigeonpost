@@ -56,6 +56,7 @@ public partial class App : Application
             Exit();
             return;
         }
+        window.InitializeNotifications();
         instance.Activated += (_, activation) => HandleActivation(activation);
         window.Closed += (_, _) =>
         {

@@ -55,7 +55,9 @@ public sealed partial class MainWindow
         && InboxLayout.Visibility == Visibility.Visible && MessagingArea.Visibility == Visibility.Visible
         && AppWindow.Presenter is OverlappedPresenter { State: not OverlappedPresenterState.Minimized };
 
-    private void InitializeNotifications()
+    // Called by App once this process is the single running instance: a second launch that only
+    // hands over must never add (and with the stable identity, replace) the running app's icon.
+    public void InitializeNotifications()
     {
         try { notifications = new(WinRT.Interop.WindowNative.GetWindowHandle(this), ShowInbox, Quit); }
         catch (Exception ex)
