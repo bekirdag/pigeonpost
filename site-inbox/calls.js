@@ -580,7 +580,17 @@
     };
     peers.set(p.id, p);
     room.size = peers.size + 1;
-    p.ready = (async () => {
+    // Only the newcomer starts: everybody already in the call builds their side when the newcomer's
+    // offer arrives. Two ends both offering at once on a slow link is the collision that otherwise
+    // leaves a pair stuck half-negotiated.
+    if (initiator) p.ready = createConnection(p, true);
+    applyBitrates();
+    renderStage();
+    return p;
+  }
+
+  function createConnection(p, initiator) {
+    return (async () => {
       const pc = new RTCPeerConnection({
         iceServers: await turnServers(),
         iceTransportPolicy: forceRelay ? "relay" : "all",
@@ -603,9 +613,6 @@
       }
       return pc;
     })();
-    applyBitrates();
-    renderStage();
-    return p;
   }
 
   function localTracks() {
@@ -653,6 +660,7 @@
   async function onSignal(fromId, type, data) {
     if (!room) return;
     const p = peers.get(fromId) || ensurePeer({ participant: fromId, name: "Someone" }, false);
+    if (!p.ready) p.ready = createConnection(p, false);
     const pc = await p.ready;
     if (type === "ice") {
       if (!pc.remoteDescription) { p.pendingIce.push(data); return; }
@@ -1542,7 +1550,7 @@
       knocks: [...knocks.keys()],
       local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: local.mic?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
-      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
+      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), polite: p.polite, pendingIce: p.pendingIce.length }, remoteCamera: p.remote.camera.getVideoTracks().length, remoteScreen: p.remote.screen.getVideoTracks().length })),
     }),
   };
 
