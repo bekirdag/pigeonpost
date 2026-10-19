@@ -86,7 +86,10 @@ the `rsync --delete` above.
 The direct download must use **Developer ID Application** signing, hardened runtime, both
 `arm64` and `x86_64`, and an Apple notarization ticket. App Store signing and ad-hoc signatures
 do not satisfy the website distribution requirement. Use `.github/workflows/mac-notarize.yml`
-on a draft release, then download its final, stapled ZIP and validate it on a Mac:
+on a draft release, then download its final, stapled ZIP and validate it on a Mac. Archive it with
+`CODE_SIGN_ENTITLEMENTS=PigeonpostMac/PigeonpostMac-DeveloperID.entitlements`: the default file
+claims Sign in with Apple, which only the Mac App Store profile can grant, and a Developer ID app
+claiming it is killed at launch (the verifier rejects it):
 
 ```bash
 python3 deploy/sites/verify-mac-download.py /path/to/Pigeonpost-Desktop-1.0-30.zip \

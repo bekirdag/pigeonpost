@@ -1,7 +1,8 @@
 //  Files, on the way out and on the way in.
 //
-//  Static system thumbnails identify supported media. On iPhone and iPad a tap opens pictures,
-//  video, sound, PDFs and text in place; other files are shared, as before.
+//  Static system thumbnails identify supported media. A tap opens pictures, video, sound, PDFs and
+//  text in place (Quick Look); other files are shared on a phone and saved on a Mac. On the Mac each
+//  file also has its own download button.
 
 import QuickLook
 import SwiftUI
@@ -56,7 +57,7 @@ struct AttachmentList: View {
     @Environment(Inbox.self) private var inbox
     @State private var downloading: String?
     @State private var saved: URL?
-    /// A file the app can show itself, opened in place; its Share button is the download.
+    /// A file the app can show itself, opened in place (Quick Look).
     @State private var previewing: URL?
 
     var body: some View {
@@ -90,6 +91,9 @@ struct AttachmentList: View {
                             .foregroundStyle(isMine ? Theme.Mine.meta : Theme.muted)
                         Spacer(minLength: 0)
                         }
+                        #if os(macOS)
+                        .padding(.trailing, 26)  // room for the download button
+                        #endif
                     }
                     .foregroundStyle(isMine ? Theme.Mine.text : Theme.ink)
                     .padding(.horizontal, 10)
@@ -99,6 +103,25 @@ struct AttachmentList: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(downloading != nil)
+                #if os(macOS)
+                // Download, beside open: a picture can be looked at here *and* kept, and keeping
+                // it should not need opening it first.
+                .overlay(alignment: .bottomTrailing) {
+                    Button { fetch(file, keep: true) } label: {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.geist(15, .medium))
+                            .foregroundStyle(isMine ? Theme.Mine.meta : Theme.secondary)
+                            .frame(width: 30, height: 30)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(downloading != nil)
+                    .padding(.trailing, 4)
+                    .padding(.bottom, 2)
+                    .help("Download \(file.filename)")
+                    .accessibilityLabel("Download \(file.filename)")
+                }
+                #endif
             }
         }
         .padding(.top, 4)
@@ -112,10 +135,14 @@ struct AttachmentList: View {
         // web; its share button saves to Photos or Files. Anything else is handed over as before.
         .quickLookPreview($previewing)
         #elseif canImport(AppKit)
+        // The same in-app viewer on the Mac (the Quick Look panel), for the same files.
+        .quickLookPreview($previewing)
+        // Anything else, or a download asked for, goes where the person says — the save panel,
+        // opening on Downloads — and is then shown in the Finder.
         .onChange(of: saved) { _, url in
             guard let url else { return }
-            NSWorkspace.shared.activateFileViewerSelecting([url])
             saved = nil
+            keep(url)
         }
         #endif
     }
@@ -127,7 +154,25 @@ struct AttachmentList: View {
         return [UTType.image, .movie, .audiovisualContent, .audio, .pdf, .plainText].contains { type.conforms(to: $0) }
     }
 
-    private func fetch(_ file: MessageAttachment) {
+    #if os(macOS)
+    /// Copy a downloaded file to where the person chooses.
+    private func keep(_ url: URL) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = url.lastPathComponent
+        panel.directoryURL = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+        panel.canCreateDirectories = true
+        guard panel.runModal() == .OK, let target = panel.url else { return }
+        do {
+            if FileManager.default.fileExists(atPath: target.path) { try FileManager.default.removeItem(at: target) }
+            try FileManager.default.copyItem(at: url, to: target)
+            NSWorkspace.shared.activateFileViewerSelecting([target])
+        } catch {
+            inbox.toast = "Could not save that file."
+        }
+    }
+    #endif
+
+    private func fetch(_ file: MessageAttachment, keep: Bool = false) {
         guard let me = account.me else { return }
         downloading = file.id
         Task {
@@ -141,11 +186,7 @@ struct AttachmentList: View {
                 let url = FileManager.default.temporaryDirectory
                     .appendingPathComponent(name.isEmpty ? "attachment" : name)
                 try data.write(to: url, options: .atomic)
-                #if canImport(UIKit)
-                if Self.viewable(url) { previewing = url } else { saved = url }
-                #else
-                saved = url
-                #endif
+                if Self.viewable(url), !keep { previewing = url } else { saved = url }
             } catch let failure as APIError {
                 inbox.toast = failure.errorDescription ?? "Could not download that file."
             } catch {

@@ -23,6 +23,12 @@
 	     compliance question we already know the answer to. -->
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
+	<!-- Calls only. Sent only to the people in the call, encrypted end to end; nothing is recorded
+	     or kept. -->
+	<key>NSCameraUsageDescription</key>
+	<string>For video calls.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>So the people you call can hear you.</string>
 	<!-- Geist and Geist Mono (SIL OFL 1.1, Geist-OFL.txt), loaded from Contents/Resources. -->
 	<key>ATSApplicationFontsPath</key>
 	<string>.</string>

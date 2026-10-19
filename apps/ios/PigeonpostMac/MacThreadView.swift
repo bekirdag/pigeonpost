@@ -29,6 +29,8 @@ struct MacThreadView: View {
         nonmutating set { drafts[composerKey, default: ComposerDraft()].files = newValue }
     }
     @State private var dropping = false
+    /// Counts finished sends; the composer takes focus back on each.
+    @State private var sent = 0
     /// What the toolbar's search field is looking for, inside this conversation.
     @State private var find = ""
     /// Which hit is being shown, as an index into `matches`.
@@ -173,6 +175,8 @@ struct MacThreadView: View {
         // the two chevrons sit *in* the bar where they belong instead of beside it.
         .toolbar {
             ToolbarItem(placement: .primaryAction) { findBar }
+            // Voice and video, beside the find bar: what you do *with* this conversation.
+            ToolbarItem(placement: .primaryAction) { CallButtons(peer: peer) }
         }
         .task(id: taskKey) {
             guard scenePhase == .active else { return }
@@ -262,7 +266,7 @@ struct MacThreadView: View {
                 .help("Attach a file")
 
                 MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sending.contains(composerKey) { staged.append(contentsOf: $0) } },
-                                 reportError: { inbox.toast = $0 }, send: send)
+                                 reportError: { inbox.toast = $0 }, send: send, refocus: sent)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
                             Text("Write a message")
@@ -349,6 +353,7 @@ struct MacThreadView: View {
             defer { sending.remove(key) }
             guard account.me?.address == key.mailbox else { return }
             if await inbox.send(text, to: peer, threadId: threadId, files: files) { drafts[key] = nil }
+            sent += 1
         }
     }
 }

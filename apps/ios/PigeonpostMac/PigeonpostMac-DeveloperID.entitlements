@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- The website (Developer ID) build's entitlements: PigeonpostMac.entitlements without Sign in
+	     with Apple, which Apple grants to Mac App Store profiles only — a Developer ID profile for
+	     this App ID comes back without it, and a signed app claiming an entitlement its profile
+	     lacks is killed at launch. The Apple button there falls back to the realm's web flow.
+	     Keep the two files otherwise identical. -->
+	<!-- Sandboxed from the first build rather than retrofitted: what the app may reach is easier to
+	     keep narrow than to make narrow later, and the App Store requires it. -->
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- The postbox and the realm. Nothing here listens. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+	<!-- Attachments: chosen by the person through the system picker, and written where they say. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- Voice and video calls, and nothing else: the call runs in the app's web view, and the
+	     microphone and camera are granted to the call page's own origin only (CallHost). Media goes
+	     straight to the people in the call, encrypted end to end. -->
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+	<key>com.apple.security.device.camera</key>
+	<true/>
+</dict>
+</plist>

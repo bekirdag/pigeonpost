@@ -204,7 +204,7 @@ jobs:
               ':(exclude)crates/pigeonpost-postbox/src/googleplay.rs' \
               ':(exclude)crates/pigeonpost-postbox/src/fcm.rs' \
               ':(exclude)apps/ios/Tests/main.swift' \
-    ':(exclude)apps/ios/Shared/Auth/Session.swift' \
+              ':(exclude)apps/ios/Shared/Auth/Session.swift' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)CLA.md'; then

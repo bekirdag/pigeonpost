@@ -1,9 +1,9 @@
 import AuthenticationServices
 import SwiftUI
 
-/// Apple's own control draws and localizes the branding. On iPhone and iPad it opens the system
-/// Sign in with Apple sheet; on the Mac, the realm's Apple page. Either way the realm issues the
-/// tokens, so an Apple login reaches the same Pigeonpost account.
+/// Apple's own control draws and localizes the branding. It opens the system Sign in with Apple
+/// sheet (falling back to the realm's Apple page when that cannot finish). Either way the realm
+/// issues the tokens, so an Apple login reaches the same Pigeonpost account.
 #if canImport(UIKit)
 struct AppleSignInButton: UIViewRepresentable {
     var enabled = true

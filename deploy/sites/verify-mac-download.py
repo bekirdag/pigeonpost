@@ -47,6 +47,9 @@ def verify(archive, expected_sha256, version, build):
             entitlements = plistlib.loads(run("codesign", "-d", "--entitlements", "-", "--xml", "--arch", arch, str(app)))
             if entitlements.get("com.apple.security.get-task-allow"):
                 raise ValueError(f"{arch}: distribution app permits debugging")
+            if "com.apple.developer.applesignin" in entitlements:
+                # Developer ID profiles cannot carry it; the app would be killed at launch.
+                raise ValueError(f"{arch}: Sign in with Apple entitlement in a Developer ID build")
         run("xcrun", "stapler", "validate", str(app))
         run("spctl", "--assess", "--type", "execute", str(app))
         return {

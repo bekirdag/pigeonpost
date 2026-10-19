@@ -94,8 +94,21 @@ is what the machine the agent fleet runs on has.
 - `com.apple.security.files.user-selected.read-write` — attachments, chosen through the system
   picker and written where the person says.
 
+- `com.apple.security.device.audio-input` and `com.apple.security.device.camera` — voice and video
+  calls (`Shared/Calls/CallHost.swift`), granted inside the app to the call page's own origin only,
+  with `NSMicrophoneUsageDescription` / `NSCameraUsageDescription` in `Info.plist`.
+- `com.apple.developer.applesignin` — Sign in with Apple through the system sheet, as on iOS. It is
+  a restricted entitlement, so the `MAC_APP_STORE` profile must include it: a profile pins the App
+  ID's capabilities when it is made, and one made before the capability was added goes INVALID and
+  has to be recreated (same name, certificate and App ID), then `APPLE_MAC_PROFILE` updated.
+
 Nothing else. Adding an entitlement is a review question, so the answer to "do we need this" should
 stay no.
+
+The website (Developer ID) build cannot carry Sign in with Apple — a `MAC_APP_DIRECT` profile for
+this App ID comes back without it — so it is archived with
+`PigeonpostMac/PigeonpostMac-DeveloperID.entitlements` (the same minus that key; see
+`deploy/sites/README.md`), and there the Apple button uses the realm's web flow.
 
 ## Notifications
 

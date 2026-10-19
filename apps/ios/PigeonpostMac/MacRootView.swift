@@ -6,6 +6,7 @@ struct MacRootView: View {
     @Environment(Session.self) private var session
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(CallHost.self) private var calls
 
     var body: some View {
         Group {
@@ -23,10 +24,32 @@ struct MacRootView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.app)
         .tint(Theme.accent)
+        // A minimised call is a strip along the top of the window; the inbox moves down for it
+        // rather than sliding under it.
+        .padding(.top, calls.mode == .mini ? 64 : 0)
+        // Calls sit over everything, the sign-in included, so ending one is never hidden behind a
+        // screen change.
+        .overlay { CallOverlay() }
+        // A call on screen has the whole window: the inbox's toolbar would otherwise sit over it,
+        // offering to compose or search mail underneath a call.
+        .toolbar(calls.mode == .full ? .hidden : .automatic, for: .windowToolbar)
+        .task(id: callIdentity) {
+            if Fixtures.enabled && !CallHost.debugEnabled { return }
+            if session.status == .signedIn, account.me != nil {
+                calls.attach(session: session, account: account, inbox: inbox)
+            } else {
+                calls.detach()
+            }
+        }
         .task(id: session.status) {
             guard !Fixtures.enabled, session.status == .signedIn else { return }
             await account.loadIdentities()
         }
+    }
+
+    /// Who the call client should be: a change of mailbox, or signing out, re-tells it.
+    private var callIdentity: String {
+        session.status == .signedIn ? (account.me?.address ?? "") : ""
     }
 
     @ViewBuilder
