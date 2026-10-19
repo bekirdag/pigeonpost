@@ -909,6 +909,62 @@ Test("Message copy uses displayed text and filenames for file-only messages", ()
     Equal(message.CopyText, "Visible message text");
     Equal((message with { Body = "", Attachments = [new("a", "one.txt", "text/plain", 1), new("b", "two.pdf", "application/pdf", 2)] }).CopyText, "one.txt · two.pdf");
 });
+Test("Attachment viewer opens images, media, PDF and plain text, and never markup", () =>
+{
+    Equal(AttachmentViewer.Kind("photo.png", "image/png"), AttachmentViewKind.Image);
+    Equal(AttachmentViewer.Kind("photo.JPG", "application/octet-stream"), AttachmentViewKind.Image);
+    Equal(AttachmentViewer.Kind("clip.mp4", ""), AttachmentViewKind.Video);
+    Equal(AttachmentViewer.Kind("voice.m4a", "audio/mp4"), AttachmentViewKind.Audio);
+    Equal(AttachmentViewer.Kind("report.pdf", "application/pdf; charset=binary"), AttachmentViewKind.Pdf);
+    Equal(AttachmentViewer.Kind("notes.txt", "text/plain; charset=utf-8"), AttachmentViewKind.Text);
+    Equal(AttachmentViewer.Kind("data.json", "application/json"), AttachmentViewKind.Text);
+    foreach (var (name, type) in new[] { ("page.html", "text/html"), ("page.html", "application/octet-stream"), ("logo.svg", "image/svg+xml"),
+        ("logo.svg", ""), ("photo.png", "text/html"), ("feed.xml", "application/xml"), ("app.exe", "application/octet-stream"), ("x.js", "text/javascript") })
+        Equal(AttachmentViewer.Kind(name, type), AttachmentViewKind.None);
+    var file = new MessageAttachment("a", "notes.txt", "text/plain", 12);
+    Check(file.CanOpen && file.OpenLabel == "Open notes.txt" && file.DownloadLabel == "Download notes.txt", "Browsable file labels changed.");
+    var page = new MessageAttachment("b", "page.html", "text/html", 12);
+    Check(!page.CanOpen && page.OpenLabel == "Save page.html", "Markup must stay save-only.");
+    Equal(AttachmentViewer.SafeFileName("..\\evil/../a:b?.txt"), "a_b_.txt");
+    Equal(AttachmentViewer.SafeFileName("  ..  "), "attachment");
+    Equal(AttachmentViewer.Text(System.Text.Encoding.UTF8.GetBytes("\uFEFFhello <b>x</b>"), out var cut), "hello <b>x</b>");
+    Check(!cut, "Short text was marked truncated.");
+    AttachmentViewer.Text(new byte[AttachmentViewer.MaxTextCharacters + 10], out cut);
+    Check(cut, "Long text was not truncated.");
+});
+Test("Call page messages parse strictly and scripts carry JSON-encoded values only", () =>
+{
+    Equal(CallBridge.Parse("{\"type\":\"ready\"}"), new CallPageMessage("ready"));
+    Equal(CallBridge.Parse("{\"type\":\"mode\",\"mode\":\"full\"}")!.Mode, CallMode.Full);
+    Equal(CallBridge.Parse("{\"type\":\"mode\",\"mode\":\"mini\"}")!.Mode, CallMode.Mini);
+    Equal(CallBridge.Parse("{\"type\":\"mode\",\"mode\":\"weird\"}")!.Mode, CallMode.Hidden);
+    Equal(CallBridge.Parse("{\"type\":\"toast\",\"text\":\"Call ended\"}")!.Text, "Call ended");
+    Check(CallBridge.Parse("{\"type\":\"ring\",\"ringing\":true}")!.Ringing, "A ring was not reported.");
+    Check(!CallBridge.Parse("{\"type\":\"ring\",\"ringing\":\"yes\"}")!.Ringing, "A malformed ring flag counted as ringing.");
+    foreach (var bad in new[] { null, "", "nope", "[]", "\"ready\"", "{\"type\":1}", "{\"type\":\"eval\"}", "{\"type\":\"toast\"}", "{\"type\":\"toast\",\"text\":\" \"}" })
+        Check(CallBridge.Parse(bad) is null, "Accepted an invalid page message: " + bad);
+    var script = CallBridge.CallScript("/bob\");alert(1);//", video: true);
+    Check(script.Contains("PigeonpostNative.call(\"/bob\\u0022);alert(1);//\", \"video\")") || script.Contains("PigeonpostNative.call(\"/bob\\\");alert(1);//\", \"video\")"), "Peer was not JSON-encoded: " + script);
+    Equal(CallBridge.CallScript("/bob", video: false), "window.PigeonpostNative && PigeonpostNative.call(\"/bob\", \"audio\")");
+    Equal(CallBridge.RenewedScript(null), "window.PigeonpostNative && PigeonpostNative.renewed(null)");
+    var configure = CallBridge.ConfigureScript("tok</script>", new Mailbox("/k/abc", "/me"), [new Conversation("/bob", "Bob", [], false, null)]);
+    Check(!configure.Contains("</script>"), "Token was not escaped for script context.");
+    using (var options = JsonDocument.Parse(configure[(configure.IndexOf("configure(", StringComparison.Ordinal) + 10)..^1]))
+    {
+        Equal(options.RootElement.GetProperty("token").GetString(), "tok</script>");
+        Equal(options.RootElement.GetProperty("mailbox").GetProperty("address").GetString(), "/k/abc");
+        Equal(options.RootElement.GetProperty("mailbox").GetProperty("handle").GetString(), "/me");
+        Equal(options.RootElement.GetProperty("known").GetProperty("/bob").GetString(), "Bob");
+    }
+    var page = CallBridge.ProductionPage;
+    Check(CallBridge.IsPage(new Uri("https://inbox.pigeonpost.dev/native-call.html"), page), "The call page was refused.");
+    foreach (var other in new[] { "https://inbox.pigeonpost.dev/", "https://evil.example/native-call.html", "http://inbox.pigeonpost.dev/native-call.html",
+        "https://inbox.pigeonpost.dev:8443/native-call.html", "https://inbox.pigeonpost.dev.evil.example/native-call.html" })
+        Check(!CallBridge.IsPage(new Uri(other), page), "Navigation allowed away from the call page: " + other);
+    Check(CallBridge.SameOrigin(new Uri("https://inbox.pigeonpost.dev/anything"), page), "Same-origin media was refused.");
+    Check(!CallBridge.SameOrigin(new Uri("https://pigeonpost.dev/"), page), "Another origin may not use the microphone.");
+    Check(CallBridge.IsExternalLink(new Uri("https://pigeonpost.dev/help")) && !CallBridge.IsExternalLink(new Uri("file:///C:/x")), "External links are https/http only.");
+});
 tests.AddRange(AccountTests.All());
 var failed = 0;
 foreach (var test in tests)

@@ -61,6 +61,8 @@ public sealed partial class MainWindow : Window
         Closed += (_, _) =>
         {
             fileDrop?.Dispose();
+            RemoveCallView();
+            CloseViewer();
             lifetime.Cancel();
             signInAttempt?.Cancel();
             refreshTimer?.Stop();
@@ -109,7 +111,13 @@ public sealed partial class MainWindow : Window
     private async Task StartAccountAsync()
     {
 #if UI_TESTS
-        if (!startedInNotificationArea) await CheckNativePreviewsAsync(); // Needs a rendered window.
+        // Needs a rendered window. The call test runs in the runner's own (administrator) session,
+        // where the shell cannot thumbnail video; the standard-user smoke covers previews.
+        if (!startedInNotificationArea && Environment.GetEnvironmentVariable("PIGEONPOST_CALLS_PAGE") is null)
+        { await CheckNativePreviewsAsync(); await CheckViewerContentAsync(); }
+        // Fixture data loads synchronously; let the first layout finish before the inbox appears,
+        // as a real sign-in's network round trip always does.
+        else await Task.Delay(500);
         await OpenInboxAsync();
         if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_RESULT") is { } notificationResult)
         {
@@ -180,7 +188,17 @@ public sealed partial class MainWindow : Window
         var context = ViewModel.ContextVersion;
         await ViewModel.SendDraftAsync();
         if (context == ViewModel.ContextVersion && !ViewModel.HasError && ViewModel.Messages.LastOrDefault() is { } last) QueueScroll(last);
+        KeepComposerFocus();
     }
+
+    // Sending briefly disables the composer (and a click moves focus to Send), so put the caret
+    // back for the next message, unless the person has moved on to another field meanwhile.
+    private void KeepComposerFocus() => DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () =>
+    {
+        if (dialogOpen || !ViewModel.CanCompose || MessagingArea.Visibility != Visibility.Visible || callMode == CallMode.Full) return;
+        if (FocusManager.GetFocusedElement(Root.XamlRoot) is TextBox other && !ReferenceEquals(other, Composer)) return;
+        Composer.Focus(FocusState.Programmatic);
+    });
     private async void Send_Click(object sender, RoutedEventArgs e) => await SendComposerAsync();
     private async void Refresh_Click(object sender, RoutedEventArgs e) => await ViewModel.RefreshAsync();
     private async void Archive_Click(object sender, RoutedEventArgs e) => await ViewModel.ArchiveSelectedAsync();
@@ -287,8 +305,18 @@ public sealed partial class MainWindow : Window
     private async void Refresh_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args) { args.Handled = true; await ViewModel.RefreshAsync(); }
     private async void Send_Invoked(KeyboardAccelerator sender, KeyboardAcceleratorInvokedEventArgs args)
     {
-        if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer)) return;
+        if (!ReferenceEquals(FocusManager.GetFocusedElement(Root.XamlRoot), Composer) || ViewModel.IsSending) return;
         args.Handled = true;
+        await SendComposerAsync();
+    }
+
+    // Ctrl+Enter sends from the composer itself: a multi-line text box would otherwise take the
+    // Enter as a new line before the window's accelerator sees it.
+    private async void Composer_PreviewKeyDown(object sender, KeyRoutedEventArgs e)
+    {
+        if (e.Key != Windows.System.VirtualKey.Enter || !Microsoft.UI.Input.InputKeyboardSource.GetKeyStateForCurrentThread(Windows.System.VirtualKey.Control)
+            .HasFlag(Windows.UI.Core.CoreVirtualKeyStates.Down)) return;
+        e.Handled = true;
         await SendComposerAsync();
     }
 
@@ -365,6 +393,8 @@ public sealed partial class MainWindow : Window
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
+        if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) UpdateCallButtons();
+        if (e.PropertyName == nameof(InboxViewModel.SelectedMailbox)) _ = ConfigureCallsAsync();
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)

@@ -6,7 +6,7 @@
          xmlns:desktop="http://schemas.microsoft.com/appx/manifest/desktop/windows10"
          IgnorableNamespaces="uap rescap com desktop">
   <!-- Microsoft Store product 9N0NWJ9L8XDP. Microsoft signs accepted Store packages. -->
-  <Identity Name="WodoTeknolojiA.PigeonpostDesktop" Publisher="CN=D850EB9E-D10B-4265-83A3-AC88170D8C6D" Version="1.0.8.0" ProcessorArchitecture="__ARCH__" />
+  <Identity Name="WodoTeknolojiA.PigeonpostDesktop" Publisher="CN=D850EB9E-D10B-4265-83A3-AC88170D8C6D" Version="1.0.9.0" ProcessorArchitecture="__ARCH__" />
   <Properties>
     <DisplayName>Pigeonpost Desktop</DisplayName>
     <PublisherDisplayName>Wodo Teknoloji A.Ş.</PublisherDisplayName>
@@ -40,5 +40,11 @@
       </Extensions>
     </Application>
   </Applications>
-  <Capabilities><rescap:Capability Name="runFullTrust" /></Capabilities>
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+    <!-- Voice and video calls (the web call client in WebView2, MainWindow.Calls.cs). Windows asks
+         once and lists the app under Settings > Privacy > Microphone / Camera. -->
+    <DeviceCapability Name="microphone" />
+    <DeviceCapability Name="webcam" />
+  </Capabilities>
 </Package>

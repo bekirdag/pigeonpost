@@ -40,6 +40,8 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
     public event EventHandler<InboxUpdate>? InboxUpdated;
     public Mailbox? SelectedMailbox { get; private set; }
     public ObservableCollection<Conversation> Conversations { get; } = [];
+    // Every conversation of the mailbox, regardless of the search filter (the call client's names).
+    public IReadOnlyList<Conversation> AllConversations => allConversations;
     public Conversation? SelectedConversation { get; private set; }
     public ObservableCollection<Subject> Subjects { get; } = [];
     public Subject? SelectedSubject { get; private set; }

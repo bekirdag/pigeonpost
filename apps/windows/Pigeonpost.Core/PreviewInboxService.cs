@@ -23,9 +23,9 @@ public sealed class PreviewInboxService : IInboxService
             Received("engineering-1", "/preview/engineering", "The same postbox will serve all three clients. The API contract tests are ready for the Windows port.", "engineering-general", Epoch - 600, false),
             Received("engineering-2", "/preview/engineering", "{\"v\":1,\"verb\":\"run_tests\",\"args\":{\"suite\":\"desktop\"},\"note\":\"Please check the desktop build before release.\"}", "engineering-general", Epoch - 500, false) with { Autonomy = "review", Verb = "run_tests", HeldBecause = "verb_denied" },
             Received("welcome-1", "/preview/guide", "Welcome to Pigeonpost for Windows.\n\nThis is a sample inbox. Try switching mailboxes, searching, creating a subject, or writing a message. Everything here stays in this preview and resets when you close it.", "guide-general", Epoch - 3600, true),
-            Received("file-1", "/preview/guide", "Attachments will appear alongside their messages. This example shows the file metadata; downloading files is part of the live client milestone.", "guide-general", Epoch - 3500, true) with
+            Received("file-1", "/preview/guide", "Here is the release checklist. Pictures, PDFs, videos and text files open right here; the download button saves a copy.", "guide-general", Epoch - 3500, true) with
             {
-                Attachments = [new MessageAttachment("preview-attachment", "desktop-checklist.pdf", "application/pdf", 18432)]
+                Attachments = [new MessageAttachment("preview-attachment", "desktop-checklist.pdf", "application/pdf", 40373)]
             }
         };
         if (longHistory)

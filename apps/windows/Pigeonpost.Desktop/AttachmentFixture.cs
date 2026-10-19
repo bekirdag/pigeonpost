@@ -22,6 +22,9 @@ internal sealed class AttachmentFixtureHandler(PreviewInboxService preview) : Ht
         if (request.Method == HttpMethod.Get && request.RequestUri!.AbsolutePath.StartsWith("/v1/attachments/"))
         {
             var id = request.RequestUri.Segments.Last();
+            // The preview inbox's own sample document (demonstration content, not a message).
+            if (id == "preview-attachment")
+                return new(HttpStatusCode.OK) { Content = new ByteArrayContent(await File.ReadAllBytesAsync(Path.Combine(AppContext.BaseDirectory, "PreviewFixtures", "desktop-checklist.pdf"), token)) };
             var identity = request.Headers.GetValues("x-pigeonpost-identity").Single();
             if (!readers.TryGetValue(id, out var permitted) || !permitted.Contains(identity)) throw new InvalidOperationException("Download used the wrong mailbox.");
             return new(HttpStatusCode.OK) { Content = new ByteArrayContent(uploaded[id].Data) };

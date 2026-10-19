@@ -8,7 +8,9 @@ Product: **Pigeonpost Desktop** (the shorter Pigeonpost name was unavailable).
 - Publisher display name: `Wodo Teknoloji A.Ş.`
 - Package family: `WodoTeknolojiA.PigeonpostDesktop_80zy2mk5xaxza`
 - First submission: `1152921505702010327`
-- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`; prepared next: `1.0.8.0` (not yet submitted), Windows 11, x64 and ARM64
+- Current public package: `1.0.6.0`; update in certification: `1.0.7.0`; prepared: `1.0.8.0` (design refresh) and
+  `1.0.9.0` (calls, attachment viewer), Windows 11, x64 and ARM64. 1.0.9.0 contains everything in 1.0.8.0: if 1.0.8.0 was
+  never uploaded, submit 1.0.9.0 alone; if it was, 1.0.9.0 replaces it in a new submission.
 
 ## Listing copy
 
@@ -20,7 +22,9 @@ Pigeonpost Desktop brings your conversations with people and agents to Windows. 
 Pigeonpost account, switch between your mailboxes, and keep each conversation organized by subject.
 
 Search conversations, find text inside a subject, send messages and files, and keep track of unread
-messages and requests needing review. The Subjects column is visible by default alongside conversations and messages. Switch subjects
+messages and requests needing review. Call anyone you talk with, by voice or with video, straight from
+the conversation, and keep reading your messages with the call minimised at the top of the window.
+Pictures, videos, audio, PDFs and text files open inside the app, ready to save. The Subjects column is visible by default alongside conversations and messages. Switch subjects
 from the column or conversation header, and hide or restore the column when needed. The layout
 adapts to smaller windows with simple back navigation.
 
@@ -40,6 +44,8 @@ The app displays messages and server-reported request permissions. It does not e
 - Native Windows inbox with conversations, subjects and messages visible together by default.
 - Access your existing Pigeonpost mailboxes and create a first free mailbox.
 - Send text and staged files together, with clipboard paste, drag and drop, and attachment previews.
+- Voice and video calls, end-to-end encrypted, with screen sharing; incoming calls ring while the app runs.
+- Open pictures, videos, audio, PDFs and text files in the app and save them with one click.
 - Search senders and find messages inside a subject.
 - Archive conversations, change contact names and block senders.
 - Browser sign-in and secure Windows credential storage.
@@ -61,6 +67,32 @@ different from Explorer's account, so the taskbar overlay API is denied there; t
 disabling the tray or native alerts. Overlay display in a normal same-user Explorer session was not
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
+
+### Version 1.0.9 release notes
+
+Voice and video calls: call anyone from the conversation header, answer incoming calls while the app
+is running, share your screen, and minimise a call to a strip at the top while you keep reading.
+Pictures, videos, audio, PDFs and text files now open inside the app, with a Save button. After you
+send a message, the cursor stays in the message box for the next one.
+
+Store screenshots for 1.0.9 (1426x893, demonstration data from the UI-test build, no real messages):
+`Packaging/store-screenshots/` — inbox, incoming call over the inbox, a call minimised while reading,
+a voice call, and the attachment viewer. Suggested captions: "Your people and agents in one inbox",
+"Answer calls without leaving your messages", "Keep reading with the call at the top",
+"Voice and video calls, end-to-end encrypted", "Open PDFs, pictures and videos in the app".
+
+### Calls: capabilities and certification notes
+
+The 1.0.9 package declares the `microphone` and `webcam` device capabilities (in addition to
+`runFullTrust`). Windows asks once and lists Pigeonpost Desktop under Settings > Privacy & security >
+Microphone and Camera. Calls run in Microsoft Edge WebView2 against https://inbox.pigeonpost.dev; audio
+and video travel peer to peer, encrypted (DTLS-SRTP), and are never recorded or stored. Store policy
+(10.5) requires the privacy policy to cover microphone and camera use: https://pigeonpost.dev/privacy
+must say that calls use them only while a call is active. As of October 19, 2026 that page does not
+mention the microphone or camera (only site/app-privacy.html does): update it, or point the listing's
+privacy URL at a page that covers calls, before submitting 1.0.9. Suggested certification note: "Calls: open a
+conversation, press the phone or camera icon in the header; the other side needs a second Pigeonpost
+account (web inbox at https://inbox.pigeonpost.dev). Windows will ask for microphone/camera access."
 
 ### Version 1.0.8 release notes
 

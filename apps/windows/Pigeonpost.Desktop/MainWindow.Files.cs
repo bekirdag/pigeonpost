@@ -263,20 +263,9 @@ public sealed partial class MainWindow
         {
             foreach (var attachment in attachments)
             {
-                var safeName = Path.GetFileName(attachment.Filename.Replace('\\', '/'));
-                foreach (var c in Path.GetInvalidFileNameChars()) safeName = safeName.Replace(c, '_');
-                if (string.IsNullOrWhiteSpace(safeName)) safeName = "attachment";
-#if UI_TESTS
-                var folder = await StorageFolder.GetFolderFromPathAsync(Environment.GetEnvironmentVariable("PIGEONPOST_UI_DOWNLOAD_DIRECTORY")!);
-                var destination = await folder.CreateFileAsync(safeName, CreationCollisionOption.ReplaceExisting);
-#else
-                var picker = new FileSavePicker { SuggestedFileName = safeName };
-                var extension = Path.GetExtension(safeName);
-                if (extension.Length is < 2 or > 20 || !extension[1..].All(char.IsAsciiLetterOrDigit)) extension = ".bin";
-                picker.FileTypeChoices.Add("File", new List<string> { extension });
-                WinRT.Interop.InitializeWithWindow.Initialize(picker, WinRT.Interop.WindowNative.GetWindowHandle(this));
-                var destination = await picker.PickSaveFileAsync();
-#endif
+                var safeName = AttachmentViewer.SafeFileName(attachment.Filename);
+                var destination = await SaveDestinationAsync(safeName,
+                    AttachmentViewer.Kind(attachment.Filename, attachment.MediaType) == AttachmentViewKind.Image);
                 if (destination is null) break;
                 AccountStatus.Text = $"Downloading {safeName}…";
                 var bytes = await postbox.DownloadAsync(mailbox.Address, attachment.Id, lifetime.Token);

@@ -68,15 +68,22 @@
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
-                                        <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
-                                                Margin="0,10,0,0" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
-                                            <StackPanel Spacing="4">
-                                                <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
-                                                <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" />
-                                                <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                                <TextBlock Text="Download file" FontSize="12" Foreground="{ThemeResource AccentBrush}" />
-                                            </StackPanel>
-                                        </Button>
+                                        <!-- Browsable files open in the viewer; every file has its own download button. -->
+                                        <Grid Margin="0,10,0,0">
+                                            <Button Tag="{x:Bind}" Click="OpenAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
+                                                    Padding="12,10" AutomationProperties.Name="{x:Bind OpenLabel}" ToolTipService.ToolTip="{x:Bind OpenLabel}">
+                                                <StackPanel Spacing="4">
+                                                    <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
+                                                    <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" Margin="0,0,36,0" />
+                                                    <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{x:Bind ActionText}" FontSize="12" Foreground="{ThemeResource AccentBrush}" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Tag="{x:Bind}" Click="SaveAttachment_Click" Style="{StaticResource FooterIconButton}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                    Margin="0,0,8,8" Width="30" Height="30" AutomationProperties.Name="{x:Bind DownloadLabel}" ToolTipService.ToolTip="Download">
+                                                <FontIcon Glyph="&#xE896;" FontSize="14" />
+                                            </Button>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -112,15 +119,22 @@
                             <ItemsControl ItemsSource="{x:Bind Attachments}" IsEnabled="{x:Bind CanDownloadAttachments}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:MessageAttachment">
-                                        <Button Tag="{x:Bind}" Click="SaveAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
-                                                Margin="0,10,0,0" Padding="12,10" AutomationProperties.Name="{x:Bind DownloadLabel}">
-                                            <StackPanel Spacing="4">
-                                                <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
-                                                <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" />
-                                                <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
-                                                <TextBlock Text="Download file" FontSize="12" Foreground="{ThemeResource AccentBrush}" />
-                                            </StackPanel>
-                                        </Button>
+                                        <!-- Browsable files open in the viewer; every file has its own download button. -->
+                                        <Grid Margin="0,10,0,0">
+                                            <Button Tag="{x:Bind}" Click="OpenAttachment_Click" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Style="{StaticResource AttachmentButton}"
+                                                    Padding="12,10" AutomationProperties.Name="{x:Bind OpenLabel}" ToolTipService.ToolTip="{x:Bind OpenLabel}">
+                                                <StackPanel Spacing="4">
+                                                    <Border Tag="{x:Bind}" Width="220" Height="150" CornerRadius="8" Loaded="AttachmentPreview_Loaded" Unloaded="AttachmentPreview_Unloaded" />
+                                                    <TextBlock Text="{x:Bind Filename}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" FontWeight="Medium" TextWrapping="Wrap" Margin="0,0,36,0" />
+                                                    <TextBlock Text="{x:Bind SizeLabel}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                                                    <TextBlock Text="{x:Bind ActionText}" FontSize="12" Foreground="{ThemeResource AccentBrush}" />
+                                                </StackPanel>
+                                            </Button>
+                                            <Button Tag="{x:Bind}" Click="SaveAttachment_Click" Style="{StaticResource FooterIconButton}" HorizontalAlignment="Right" VerticalAlignment="Bottom"
+                                                    Margin="0,0,8,8" Width="30" Height="30" AutomationProperties.Name="{x:Bind DownloadLabel}" ToolTipService.ToolTip="Download">
+                                                <FontIcon Glyph="&#xE896;" FontSize="14" />
+                                            </Button>
+                                        </Grid>
                                     </DataTemplate>
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
@@ -154,13 +168,15 @@
             <KeyboardAccelerator Key="Enter" Modifiers="Control" Invoked="Send_Invoked" />
         </Grid.KeyboardAccelerators>
         <Grid.RowDefinitions>
+            <!-- A call minimised to a strip while reading mail (MainWindow.Calls.cs). -->
+            <RowDefinition x:Name="CallRow" Height="0" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
-        <InfoBar Grid.Row="0" IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}" IsClosable="False"
+        <InfoBar Grid.Row="1" IsOpen="{x:Bind ViewModel.HasError, Mode=OneWay}" IsClosable="False"
                  Severity="Error" Message="{x:Bind ViewModel.Error, Mode=OneWay}" />
-        <Grid x:Name="InboxLayout" Grid.Row="1" Visibility="Collapsed">
+        <Grid x:Name="InboxLayout" Grid.Row="2" Visibility="Collapsed">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition x:Name="SenderColumn" Width="304" />
                 <ColumnDefinition x:Name="SenderDividerColumn" Width="5" />
@@ -285,6 +301,8 @@
                                 </Grid>
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                <Button x:Name="VoiceCallButton" Click="VoiceCall_Click" Style="{StaticResource ToolbarIconButton}" IsEnabled="False" AutomationProperties.Name="Voice call" ToolTipService.ToolTip="Voice call"><FontIcon Glyph="&#xE717;" FontSize="14" /></Button>
+                                <Button x:Name="VideoCallButton" Click="VideoCall_Click" Style="{StaticResource ToolbarIconButton}" IsEnabled="False" AutomationProperties.Name="Video call" ToolTipService.ToolTip="Video call"><FontIcon Glyph="&#xE714;" FontSize="14" /></Button>
                                 <Button x:Name="FindButton" Click="Find_Click" Style="{StaticResource ToolbarIconButton}" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" AutomationProperties.Name="Find messages" ToolTipService.ToolTip="Find in this subject (Ctrl+F)"><FontIcon Glyph="&#xE721;" FontSize="14" /></Button>
                                 <Button Style="{StaticResource ToolbarIconButton}" AutomationProperties.Name="Conversation actions" ToolTipService.ToolTip="Conversation actions">
                                     <FontIcon Glyph="&#xE712;" FontSize="14" />
@@ -376,7 +394,7 @@
                         </ScrollViewer>
                         <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
                                  AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="14.5" Padding="6,6,6,4"
-                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste">
+                                 IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste" PreviewKeyDown="Composer_PreviewKeyDown">
                             <TextBox.Resources>
                                 <!-- The card is the field: keep the inner editor flat in every state. -->
                                 <SolidColorBrush x:Key="TextControlBackgroundPointerOver" Color="Transparent" />
@@ -402,7 +420,7 @@
                 </Border>
             </Grid>
         </Grid>
-        <StackPanel x:Name="Welcome" Grid.RowSpan="3" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" Margin="32">
+        <StackPanel x:Name="Welcome" Grid.Row="1" Grid.RowSpan="3" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" Margin="32">
             <Image Source="ms-appx:///Assets/Logo.png" Width="80" Height="80" AutomationProperties.Name="Pigeonpost" />
             <TextBlock Text="Your agents, in one place" FontSize="30" FontWeight="SemiBold" CharacterSpacing="-20" TextAlignment="Center" TextWrapping="Wrap" Foreground="{ThemeResource TextPrimaryBrush}" />
             <TextBlock Text="Conversations with your people and agents, organized by mailbox and subject." TextWrapping="Wrap" TextAlignment="Center" FontSize="15" LineHeight="22" Foreground="{ThemeResource TextSecondaryBrush}" />
@@ -419,7 +437,7 @@
             <Button x:Name="CancelSignIn" Content="Cancel sign-in" Click="CancelSignIn_Click" HorizontalAlignment="Center" Visibility="Collapsed" Style="{StaticResource SecondaryActionButton}" />
             <HyperlinkButton Content="Privacy policy" Click="Privacy_Click" HorizontalAlignment="Center" FontSize="13" Foreground="{ThemeResource AccentBrush}" />
         </StackPanel>
-        <Border x:Name="EmptyAccount" Grid.Row="1" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" Padding="32">
+        <Border x:Name="EmptyAccount" Grid.Row="2" Visibility="Collapsed" Background="{ThemeResource AppBackgroundBrush}" Padding="32">
             <StackPanel MaxWidth="480" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="16">
                 <TextBlock Text="Connect your first mailbox" FontSize="26" FontWeight="SemiBold" CharacterSpacing="-20" TextWrapping="Wrap" Foreground="{ThemeResource TextPrimaryBrush}" />
                 <TextBlock Text="Create a free mailbox to start conversations with your people and agents. Already have a mailbox? Refresh to load it." TextWrapping="Wrap" FontSize="14" LineHeight="21" Foreground="{ThemeResource TextSecondaryBrush}" />
@@ -427,7 +445,7 @@
                 <Button Content="Refresh mailboxes" Click="ReloadAccount_Click" Style="{StaticResource SecondaryActionButton}" MinHeight="38" />
             </StackPanel>
         </Border>
-        <Border x:Name="AccountBar" Grid.Row="2" Visibility="Collapsed" Background="{ThemeResource NavigationSurfaceBrush}" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="12,6,16,6">
+        <Border x:Name="AccountBar" Grid.Row="3" Visibility="Collapsed" Background="{ThemeResource NavigationSurfaceBrush}" BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,1,0,0" Padding="12,6,16,6">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                 <Button Style="{StaticResource QuietIconButton}" Padding="6" AutomationProperties.Name="Account" ToolTipService.ToolTip="Account and settings">
@@ -455,5 +473,28 @@
                 <TextBlock x:Name="AccountStatus" Grid.Column="2" Text="Connected" MaxWidth="220" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
             </Grid>
         </Border>
+        <!-- In-app viewer for images, video, audio, PDF and plain text (MainWindow.Viewer.cs). It
+             never renders markup: HTML, SVG and other types are only saved. -->
+        <Grid x:Name="ViewerOverlay" Grid.Row="1" Grid.RowSpan="3" Visibility="Collapsed" Background="#F70D0F12" RequestedTheme="Dark" TabFocusNavigation="Cycle">
+            <Grid.KeyboardAccelerators>
+                <KeyboardAccelerator Key="Escape" Invoked="ViewerClose_Invoked" />
+                <KeyboardAccelerator Key="S" Modifiers="Control" Invoked="ViewerSave_Invoked" />
+            </Grid.KeyboardAccelerators>
+            <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+            <Grid Padding="24,14,16,14" ColumnSpacing="10">
+                <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                <StackPanel VerticalAlignment="Center" Spacing="2">
+                    <TextBlock x:Name="ViewerTitle" FontFamily="{StaticResource MonoFont}" FontSize="14" FontWeight="SemiBold" Foreground="#E8EAED" TextTrimming="CharacterEllipsis" />
+                    <TextBlock x:Name="ViewerDetail" FontSize="12" Foreground="#9AA1AB" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+                <Button x:Name="ViewerSave" Grid.Column="1" Click="ViewerSave_Click" Style="{StaticResource PrimaryActionButton}" IsEnabled="False"
+                        AutomationProperties.Name="Save attachment" ToolTipService.ToolTip="Save a copy (Ctrl+S)">
+                    <StackPanel Orientation="Horizontal" Spacing="8"><FontIcon Glyph="&#xE896;" FontSize="14" /><TextBlock Text="Save" /></StackPanel>
+                </Button>
+                <Button x:Name="ViewerClose" Grid.Column="2" Click="ViewerClose_Click" Style="{StaticResource QuietIconButton}" Foreground="#E8EAED"
+                        AutomationProperties.Name="Close viewer" ToolTipService.ToolTip="Close (Esc)"><SymbolIcon Symbol="Cancel" /></Button>
+            </Grid>
+            <Grid x:Name="ViewerContent" Grid.Row="1" Margin="24,0,24,24" />
+        </Grid>
     </Grid>
 </Window>
