@@ -162,4 +162,66 @@ final class IOSUXTests: XCTestCase {
         XCTAssertEqual(app.buttons["mailbox:/bekir/main"].value as? String, "Selected")
         XCTAssertLessThan(app.buttons["mailbox:/bekir/main"].frame.minY, app.buttons["mailbox:/lidya/main"].frame.minY)
     }
+
+    /// iPad: the conversations column can be hidden, and brought back from the thread's bar.
+    func testIPadSidebarCanBeHiddenAndShownAgain() throws {
+        try XCTSkipUnless(UIDevice.current.userInterfaceIdiom == .pad, "iPad only")
+        XCUIDevice.shared.orientation = .landscapeLeft
+        app.launchArguments = ["-fixtures", "-open=/bekir/agent1"]
+        app.launch()
+        let hide = app.buttons["hideSidebar"], show = app.buttons["showSidebar"]
+        XCTAssertTrue(hide.waitForExistence(timeout: 10))
+        hide.tap()
+        XCTAssertTrue(show.waitForExistence(timeout: 5))
+        XCTAssertTrue(show.isHittable)
+        screenshot("sidebar-hidden")
+        show.tap()
+        XCTAssertTrue(hide.waitForExistence(timeout: 5))
+        XCTAssertTrue(hide.isHittable)
+        screenshot("sidebar-shown")
+    }
+
+    /// A call can be minimised to a strip over the inbox and brought back. Needs the local call
+    /// harness (stand-in postbox, call service, page server on :8460); skipped otherwise.
+    func testCallMinimisesToAStripAndComesBack() throws {
+        try XCTSkipUnless(ProcessInfo.processInfo.environment["PP_CALL_HARNESS"] == "1", "needs the call harness")
+        app.launchArguments = ["-fixtures", "-calls-page", "http://127.0.0.1:8460/native-call.html",
+                               "-calls-token", "tok-alice", "-calls-mailbox", "/k/alice0000000000000000000a",
+                               "-calls-handle", "/alice", "-call", "/bob:audio"]
+        app.launch()
+        let back = app.webViews.buttons["Back to the inbox (the call keeps going)"]
+        XCTAssertTrue(back.waitForExistence(timeout: 20))
+        screenshot("call-full")
+        back.tap()
+        let open = app.webViews.buttons["Return to the call"].firstMatch
+        XCTAssertTrue(open.waitForExistence(timeout: 5))
+        XCTAssertLessThan(open.frame.maxY, 140, "the strip sits at the top")
+        screenshot("call-mini")
+        open.tap()
+        XCTAssertTrue(back.waitForExistence(timeout: 5))
+        app.webViews.buttons["Leave call"].firstMatch.tap()
+    }
+
+    /// App Store screenshots from the fixture mailbox: `TEST_RUNNER_PP_STORE_SHOTS=<directory>`.
+    /// iPad in landscape, iPhone in portrait. Skipped otherwise.
+    func testStoreScreenshots() throws {
+        let path = ProcessInfo.processInfo.environment["PP_STORE_SHOTS"] ?? ""
+        try XCTSkipIf(path.isEmpty, "set PP_STORE_SHOTS to take store screenshots")
+        let directory = URL(fileURLWithPath: path)
+        let pad = UIDevice.current.userInterfaceIdiom == .pad
+        XCUIDevice.shared.orientation = pad ? .landscapeLeft : .portrait
+        let scenes: [(String, [String])] = pad
+            ? [("1-conversation", ["-open=/bekir/agent1"]),
+               ("2-first-contact", ["-open=/k/eeee5555ffff6666gggg7777hh"]),
+               ("3-settings", ["-open=/bekir/agent1", "-sheet=settings"])]
+            : [("1-list", []), ("2-thread", ["-open=/bekir/agent1"])]
+        for (name, extra) in scenes {
+            app.terminate()
+            app.launchArguments = ["-fixtures", "-appearance=dark"] + extra
+            app.launch()
+            sleep(4)
+            let shot = XCUIScreen.main.screenshot()
+            try shot.pngRepresentation.write(to: directory.appendingPathComponent("store-\(name).png"))
+        }
+    }
 }

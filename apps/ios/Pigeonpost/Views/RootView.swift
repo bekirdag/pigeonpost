@@ -3,6 +3,8 @@ import SwiftUI
 struct RootView: View {
     @Environment(Session.self) private var session
     @Environment(Account.self) private var account
+    @Environment(Inbox.self) private var inbox
+    @Environment(CallHost.self) private var calls
 
     var body: some View {
         Group {
@@ -18,11 +20,31 @@ struct RootView: View {
             }
         }
         .tint(Theme.navy)
+        // A minimised call is a strip at the top; the app moves down for it rather than under it.
+        // Padding rather than a safe-area inset: the split view's UIKit bars take their safe area
+        // from the window and ignore SwiftUI's.
+        .padding(.top, calls.mode == .mini ? 64 : 0)
+        // Calls sit over everything, the sign-in included, so ending one is never hidden behind a
+        // screen change.
+        .overlay { CallOverlay() }
+        .task(id: callIdentity) {
+            if Fixtures.enabled && !CallHost.debugEnabled { return }
+            if session.status == .signedIn, account.me != nil {
+                calls.attach(session: session, account: account, inbox: inbox)
+            } else {
+                calls.detach()
+            }
+        }
         .task(id: session.status) {
             guard !Fixtures.enabled else { return }
             guard session.status == .signedIn, account.me == nil else { return }
             await account.loadIdentities()
         }
+    }
+
+    /// Who the call client should be: a change of mailbox, or signing out, re-tells it.
+    private var callIdentity: String {
+        session.status == .signedIn ? (account.me?.address ?? "") : ""
     }
 
     /// The seconds between a token and a mailbox. It is two calls — the account's mailboxes, then

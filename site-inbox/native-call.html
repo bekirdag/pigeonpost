@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<!-- Calls inside the iPhone and iPad app. The app keeps this page in an embedded web view while
+     signed in, so the same call client as the inbox rings, answers and runs calls; the app hands it
+     the member token and asks it to call whoever is open (native-call.js). Nothing here works in a
+     browser on its own. -->
+<title>Pigeonpost — Calls</title>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css?v=20261019-native">
+<link rel="stylesheet" href="/native-call.css?v=20261019-native">
+</head>
+<body data-page="native">
+<div hidden>
+  <button id="call-audio-btn" type="button">Voice call</button>
+  <button id="call-video-btn" type="button">Video call</button>
+</div>
+<script src="/native-call.js?v=20261019-native"></script>
+<script src="/calls.js?v=20261019-native"></script>
+</body>
+</html>

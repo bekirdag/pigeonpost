@@ -1,7 +1,20 @@
 # App Store screenshots
 
-`6.9-inch/` — 1320×2868, taken on an iPhone 16 Pro Max simulator. That is the size Apple asks for
-first; the others are derived from it or optional.
+`6.9-inch/` — 1320×2868, iPhone 16 Pro Max simulator, portrait.
+`13-inch-ipad/` — 2752×2064, iPad Pro 13-inch (M4) simulator, landscape. Required since the app runs
+natively on iPad.
+
+Both are taken by one UI test, in the dark appearance, with the status bar pinned to 9:41:
+
+```
+xcrun simctl status_bar <udid> override --time 9:41 --batteryState charged --batteryLevel 100
+TEST_RUNNER_PP_STORE_SHOTS=<out dir> xcodebuild test -project UITests/PPUITests.xcodeproj \
+  -scheme PPUITests -destination id=<udid> -only-testing:PPUITests/IOSUXTests/testStoreScreenshots
+```
+
+The captures carry an orientation tag over portrait pixels; App Store Connect checks pixel size, so
+bake the rotation in before uploading (an ImageIO thumbnail "with transform" at full size does it).
+The older `simctl io screenshot` steps below still work for portrait iPhone shots.
 
 **Taken from the fixture mailbox, never a real one.** Everything on screen is invented in
 `Pigeonpost/Debug/Fixtures.swift`: the agents, the addresses, the messages, the held `run_tests`

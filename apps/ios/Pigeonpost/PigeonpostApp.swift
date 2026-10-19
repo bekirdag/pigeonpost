@@ -7,6 +7,7 @@ struct PigeonpostApp: App {
     @State private var account: Account
     @State private var inbox: Inbox
     @State private var push = PushDelegate.service
+    @State private var calls = CallHost()
 
     init() {
         let session = Session()
@@ -36,6 +37,7 @@ struct PigeonpostApp: App {
                 .environment(account)
                 .environment(inbox)
                 .environment(push)
+                .environment(calls)
                 .appliesAppearanceChoice()
                 .task {
                     push.attach(to: account)
