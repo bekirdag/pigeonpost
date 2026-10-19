@@ -57,7 +57,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
 
     // One account event stream wakes the desktop for every mailbox. Periodic refresh remains
     // the fallback for read-state changes and networks that block long-lived connections.
-    public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken)
+    public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken, Action<string>? log = null)
     {
         long? cursor = null;
         while (!cancellationToken.IsCancellationRequested)
@@ -75,6 +75,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
                 {
                     response.EnsureSuccessStatusCode();
                     if (response.Content.Headers.ContentType?.MediaType != "text/event-stream") throw new IOException("Invalid event stream.");
+                    log?.Invoke("Account event stream connected");
                     using var stream = await response.Content.ReadAsStreamAsync(cancellationToken).ConfigureAwait(false);
                     using var reader = new StreamReader(stream);
                     using var idle = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -88,7 +89,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
                         if (line.Length > 16384) throw new IOException("Event exceeds the supported size.");
                         if (line.Length == 0)
                         {
-                            if (eventName == "mail") await changed().ConfigureAwait(false);
+                            if (eventName == "mail") { log?.Invoke("Account event: new mail"); await changed().ConfigureAwait(false); }
                             if (eventId is { } next) cursor = next;
                             eventName = null; eventId = null;
                         }
@@ -97,7 +98,11 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
                     }
                 }
             }
-            catch (Exception) when (!cancellationToken.IsCancellationRequested) { /* Offline: reconnect with the last processed cursor. */ }
+            catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
+            {
+                // Offline: reconnect with the last processed cursor.
+                log?.Invoke($"Account event stream interrupted: {ex.GetType().Name} {(ex as HttpRequestException)?.StatusCode}");
+            }
             if (!cancellationToken.IsCancellationRequested)
                 await Task.Delay(TimeSpan.FromSeconds(5), cancellationToken).ConfigureAwait(false);
         }

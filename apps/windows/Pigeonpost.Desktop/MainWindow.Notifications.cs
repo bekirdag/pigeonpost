@@ -30,7 +30,7 @@ public sealed partial class MainWindow
         {
             try
             {
-                await postbox.WatchMailAsync(() =>
+                await postbox.WatchMailAsync(log: DesktopLog.Write, changed: () =>
                 {
                     var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
                     if (!DispatcherQueue.TryEnqueue(async () =>
@@ -44,7 +44,7 @@ public sealed partial class MainWindow
                         finally { completion.TrySetResult(); }
                     })) completion.TrySetResult();
                     return completion.Task;
-                }, cancellation);
+                }, cancellationToken: cancellation);
             }
             catch (OperationCanceledException) { }
         }
@@ -61,6 +61,7 @@ public sealed partial class MainWindow
         catch (Exception ex)
         {
             notificationInitializationError = ex;
+            DesktopLog.Error("Notification-area icon unavailable", ex);
             AccountStatus.Text = "The notification-area icon is unavailable. Keep this window open for new-message alerts.";
         }
         Activated += async (_, e) =>
@@ -102,6 +103,7 @@ public sealed partial class MainWindow
     {
         if (!ReferenceEquals(sender, ViewModel)) return;
         var arrivals = unreadState.Observe(update.Mailbox.Address, update.Snapshot.Messages);
+        if (arrivals.Count > 0) DesktopLog.Write($"{arrivals.Count} new message(s) in the selected mailbox; window visible {AppWindow.IsVisible}, active {activeWindow}");
         foreach (var arrival in arrivals)
         {
             var peer = ConversationBuilder.ResolvePeer(arrival.Peer, update.Snapshot, ViewModel.Mailboxes);
@@ -132,11 +134,13 @@ public sealed partial class MainWindow
                 var messages = (await postbox.GetInboxAsync(mailbox.Address, cancellationToken: lifetime.Token)).Messages ?? [];
 #endif
                 if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel)) return;
-                foreach (var arrival in unreadState.Observe(mailbox.Address, messages)) DesktopNotifications.Announce(arrival);
+                var arrivals = unreadState.Observe(mailbox.Address, messages);
+                if (arrivals.Count > 0) DesktopLog.Write($"{arrivals.Count} new message(s) in another mailbox");
+                foreach (var arrival in arrivals) DesktopNotifications.Announce(arrival);
                 notifications?.Update(unreadState.Count);
             }
         }
-        catch (Exception) { /* Retain the last confirmed count while offline; retry next refresh. */ }
+        catch (Exception ex) { DesktopLog.Error("Checking other mailboxes failed", ex); /* Retain the last count; retry next refresh. */ }
         finally { refreshingNotifications = false; }
     }
 

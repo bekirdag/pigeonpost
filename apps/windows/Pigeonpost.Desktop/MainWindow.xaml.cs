@@ -104,6 +104,12 @@ public sealed partial class MainWindow : Window
             await RunNotificationTestsAsync(notificationResult);
             return;
         }
+        // An MSIX launched by Explorer does not inherit the test's environment; it reads a fixed file.
+        if (PackagedNotificationTest.Load() is { } packagedTest)
+        {
+            await RunNotificationTestsAsync(packagedTest.Result, packagedTest);
+            return;
+        }
         refreshTimer!.Interval = TimeSpan.FromMilliseconds(400);
         AccountStatus.Text = "Demonstration account";
 #else

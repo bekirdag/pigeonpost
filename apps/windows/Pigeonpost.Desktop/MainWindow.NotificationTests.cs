@@ -8,7 +8,7 @@ public sealed partial class MainWindow
 {
     [System.Runtime.InteropServices.DllImport("user32.dll")]
     private static extern IntPtr SendMessage(IntPtr window, uint message, IntPtr wParam, IntPtr lParam);
-    private async Task RunNotificationTestsAsync(string resultPath)
+    private async Task RunNotificationTestsAsync(string resultPath, PackagedNotificationTest? packaged = null)
     {
         var checks = new List<string>();
         void Check(bool condition, string message)
@@ -22,6 +22,15 @@ public sealed partial class MainWindow
             await DesktopNotifications.ClearAlertsAsync();
             if (notificationInitializationError is not null) throw new InvalidOperationException("Notification initialization failed", notificationInitializationError);
             Check(notifications?.CanHide == true, "Native tray icon created");
+            var shell = notifications!.ShellIconState();
+            var setting = AppNotificationManager.Default.Setting;
+            var identity = DesktopLog.PackageIdentity();
+            if (packaged is not null)
+            {
+                Check(identity != "unpackaged", "Runs with the installed package identity");
+                Check(shell == 0, $"Windows shell holds the notification-area icon (0x{shell:X8})");
+                Check(setting == AppNotificationSetting.Enabled, $"Windows allows Pigeonpost alerts ({setting})");
+            }
             var baseline = unreadState.Count;
             // Exercise the actual close-to-tray path and poll using the release integration.
             SendMessage(WinRT.Interop.WindowNative.GetWindowHandle(this), 0x0010, IntPtr.Zero, IntPtr.Zero); // WM_CLOSE, as the title-bar button sends
@@ -35,6 +44,12 @@ public sealed partial class MainWindow
             Check(ViewModel.Subjects.Single(s => s.Id == "design-release").Unread == 1, "Hidden subject retains its unread marker");
             var alerts = await AppNotificationManager.Default.GetAllAsync();
             Check(alerts.Count == 2, "Windows notification center contains both native alerts");
+            if (packaged is not null)
+            {
+                // Let the harness photograph the banner and notification area while they are shown.
+                File.WriteAllText(Path.Combine(packaged.Signals, "alerts.ready"), "");
+                for (var n = 0; n < 150 && !File.Exists(Path.Combine(packaged.Signals, "alerts.captured")); n++) await Task.Delay(100);
+            }
             await ViewModel.RefreshAsync();
             Check((await AppNotificationManager.Default.GetAllAsync()).Count == 2, "Repeated refresh does not duplicate native alerts");
             var snapshot = await preview.LoadAsync(ViewModel.SelectedMailbox!.Address, lifetime.Token);
@@ -49,13 +64,22 @@ public sealed partial class MainWindow
             unreadState.Clear(); notifications!.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
             Check(unreadState.Count == 0 && (await AppNotificationManager.Default.GetAllAsync()).Count == 0, "Sign-out cleanup clears the badge and native alerts");
-            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, taskbarWarning = notifications.TaskbarWarning }));
+            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, identity, shell = $"0x{shell:X8}", setting = setting.ToString(), taskbarWarning = notifications.TaskbarWarning }));
         }
         catch (Exception ex)
         {
-            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = false, checks, error = ex.ToString() }));
+            DesktopLog.Error("Notification integration failed", ex);
+            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = false, checks, identity = DesktopLog.PackageIdentity(), error = ex.ToString() }));
         }
         finally { Quit(); }
     }
+}
+
+internal sealed record PackagedNotificationTest(string Result, string Signals)
+{
+    private const string Folder = @"C:\PigeonpostUiTest";
+    public static PackagedNotificationTest? Load() =>
+        File.Exists(Path.Combine(Folder, "packaged-notifications.request"))
+            ? new(Path.Combine(Folder, "packaged-notifications.json"), Folder) : null;
 }
 #endif
