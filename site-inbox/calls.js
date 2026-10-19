@@ -43,6 +43,10 @@
     for (const [k, v] of Object.entries(attrs || {})) {
       if (v == null || v === false) continue;
       if (k === "class") node.className = v;
+      // The `muted` attribute only mutes an element the HTML parser created. One made here would
+      // play its stream out loud — for the self view that is your own microphone, which the
+      // microphone then picks up again: an echo for everybody. Set the property.
+      else if (k === "muted") { node.muted = true; node.defaultMuted = true; node.setAttribute("muted", ""); }
       else if (k === "text") node.textContent = v;
       else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
       else node.setAttribute(k, v === true ? "" : v);
@@ -419,23 +423,46 @@
 
   // ---- local media -----------------------------------------------------------------------------
 
-  const AUDIO_CONSTRAINTS = () => Object.assign({
+  // A chosen device is asked for *exactly*. As a mere preference it competes with the resolution
+  // preference, and a 720p webcam loses to a 1080p built-in camera — the choice silently ignored.
+  const AUDIO_CONSTRAINTS = (id) => Object.assign({
     echoCancellation: true, noiseSuppression: true, autoGainControl: true,
     channelCount: { ideal: 1 }, sampleRate: { ideal: 48_000 },
-  }, prefs.mic ? { deviceId: { ideal: prefs.mic } } : {});
-  const VIDEO_CONSTRAINTS = () => Object.assign({
+  }, id ? { deviceId: { exact: id } } : {});
+  const VIDEO_CONSTRAINTS = (id) => Object.assign({
     width: { ideal: 1920 }, height: { ideal: 1080 }, frameRate: { ideal: 30, max: 30 },
-  }, prefs.cam ? { deviceId: { ideal: prefs.cam } } : { facingMode: "user" });
+  }, id ? { deviceId: { exact: id } } : { facingMode: "user" });
+
+  // The saved choice, if that device is still plugged in.
+  async function chosen(kind) {
+    const id = kind === "mic" ? prefs.mic : prefs.cam;
+    if (!id) return null;
+    try {
+      const list = await navigator.mediaDevices.enumerateDevices();
+      return list.some((d) => d.deviceId === id) ? id : null;
+    } catch (_) { return null; }
+  }
+
+  // getUserMedia with the chosen devices, falling back to the defaults if a chosen one has gone.
+  async function capture({ audio, video }) {
+    const [micId, camId] = await Promise.all([audio ? chosen("mic") : null, video ? chosen("cam") : null]);
+    const ask = (m, c) => navigator.mediaDevices.getUserMedia({ audio: audio ? AUDIO_CONSTRAINTS(m) : false, video: video ? VIDEO_CONSTRAINTS(c) : false });
+    try { return await ask(micId, camId); }
+    catch (err) {
+      if ((err.name === "OverconstrainedError" || err.name === "NotFoundError") && (micId || camId)) return ask(null, null);
+      throw err;
+    }
+  }
 
   async function startLocalMedia(withVideo) {
     let media;
     try {
-      media = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS(), video: withVideo ? VIDEO_CONSTRAINTS() : false });
+      media = await capture({ audio: true, video: withVideo });
     } catch (err) {
       // No camera, or the camera refused: still a call, just a voice one. A refused microphone ends
       // it — nobody can hear you.
       if (!withVideo) throw err;
-      media = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS(), video: false });
+      media = await capture({ audio: true, video: false });
       toast("No camera available — joining with audio only.");
     }
     local.stream = new MediaStream();
@@ -460,7 +487,7 @@
     if (!room) return;
     if (!local.cam) {
       try {
-        const media = await navigator.mediaDevices.getUserMedia({ video: VIDEO_CONSTRAINTS() });
+        const media = await capture({ audio: false, video: true });
         local.cam = media.getVideoTracks()[0];
         local.stream.addTrack(local.cam);
         local.cameraOff = false;
@@ -539,23 +566,31 @@
     if (!local.stream) return;
     const old = kind === "mic" ? local.mic : local.cam;
     if (!old) return;
+    const open = (id) => navigator.mediaDevices.getUserMedia(kind === "mic" ? { audio: AUDIO_CONSTRAINTS(id) } : { video: VIDEO_CONSTRAINTS(id) });
+    let media;
+    // Exactly the device picked. Release the old camera first: many cameras will not open twice,
+    // and asking for a second while the first is held is what quietly lands back on the built-in.
+    if (kind === "cam") old.stop();
     try {
-      const constraints = kind === "mic" ? { audio: AUDIO_CONSTRAINTS() } : { video: VIDEO_CONSTRAINTS() };
-      const media = await navigator.mediaDevices.getUserMedia(constraints);
-      const fresh = (kind === "mic" ? media.getAudioTracks() : media.getVideoTracks())[0];
-      if (kind === "mic") { fresh.contentHint = "speech"; fresh.enabled = !local.muted; } else fresh.enabled = !local.cameraOff;
-      for (const p of peers.values()) {
-        const sender = p.pc.getSenders().find((s) => s.track === old);
-        if (sender) await sender.replaceTrack(fresh);
-      }
-      local.stream.removeTrack(old);
-      local.stream.addTrack(fresh);
-      old.stop();
-      if (kind === "mic") local.mic = fresh; else local.cam = fresh;
-      showSelf();
+      media = await open(deviceId || null);
     } catch (err) {
       toast(mediaMessage(err, kind === "mic" ? "audio" : "video"));
+      if (kind !== "cam") return;
+      try { media = await open(null); } catch (_) { return; }
     }
+    const fresh = (kind === "mic" ? media.getAudioTracks() : media.getVideoTracks())[0];
+    if (!fresh) return;
+    if (kind === "mic") { fresh.contentHint = "speech"; fresh.enabled = !local.muted; } else fresh.enabled = !local.cameraOff;
+    for (const p of peers.values()) {
+      const sender = p.pc && p.pc.getSenders().find((x) => x.track === old);
+      if (sender) await sender.replaceTrack(fresh).catch(() => {});
+    }
+    local.stream.removeTrack(old);
+    local.stream.addTrack(fresh);
+    old.stop();
+    if (kind === "mic") local.mic = fresh; else local.cam = fresh;
+    showSelf();
+    fillDevices();
   }
 
   // ---- connections to the others ---------------------------------------------------------------
@@ -577,6 +612,7 @@
       pc: null, dc: null, polite: String(room.you) < String(info.participant), makingOffer: false, ignoreOffer: false,
       pendingIce: [], remote: { camera: new MediaStream(), screen: new MediaStream(), cameraId: null, screenId: null, streams: new Map() },
       state: { muted: false, cameraOff: false }, security: null, connected: false, dropTimer: null, tile: null, ready: null,
+      initiator, restarts: 0, watchdog: null,
     };
     peers.set(p.id, p);
     room.size = peers.size + 1;
@@ -651,6 +687,7 @@
       offer.sdp = tuneOpus(offer.sdp);
       await pc.setLocalDescription(offer);
       await sendSignal(p, "offer", { type: "offer", sdp: pc.localDescription.sdp });
+      armWatchdog(p);
     } finally {
       p.makingOffer = false;
     }
@@ -679,6 +716,7 @@
       answer.sdp = tuneOpus(answer.sdp);
       await pc.setLocalDescription(answer);
       await sendSignal(p, "answer", { type: "answer", sdp: pc.localDescription.sdp });
+      armWatchdog(p);
       applyBitrates();
     }
   }
@@ -708,12 +746,28 @@
     if (!target.getTracks().includes(track)) target.addTrack(track);
   }
 
+  // A pair that has not connected after a while gets fresh ICE candidates (and fresh relay
+  // allocations) rather than sitting on "connecting" for ever. Only the side that started the
+  // connection restarts, so the two never both renegotiate at once.
+  function armWatchdog(p) {
+    if (p.watchdog || p.connected) return;
+    const check = () => {
+      p.watchdog = null;
+      if (!peers.has(p.id) || p.connected || !p.pc || p.pc.signalingState === "closed") return;
+      if (p.initiator && p.restarts < 3) { p.restarts += 1; p.pc.restartIce?.(); }
+      p.watchdog = setTimeout(check, 12_000);
+    };
+    p.watchdog = setTimeout(check, 12_000);
+  }
+
   function onConnectionState(p) {
     if (!p.pc) return;
     const s = p.pc.connectionState;
     if (s === "connected") {
       clearTimeout(p.dropTimer);
+      clearTimeout(p.watchdog);
       p.dropTimer = null;
+      p.watchdog = null;
       if (!p.connected) {
         p.connected = true;
         if (!room.startedAt) {
@@ -728,7 +782,7 @@
       return;
     }
     if (s === "disconnected" || s === "failed") {
-      if (s === "failed" && !p.polite && !p.restarted) { p.restarted = true; p.pc.restartIce?.(); }
+      if (p.initiator && p.restarts < 3 && (s === "failed" || !p.connected)) { p.restarts += 1; p.pc.restartIce?.(); }
       if (!p.dropTimer) p.dropTimer = setTimeout(() => {
         // Gone for good: drop this connection. The call service decides whether the call goes on.
         if (p.pc && p.pc.connectionState !== "connected") { closePeer(p); renderStage(); if (!peers.size && room?.state === "active") leave(); }
@@ -739,6 +793,7 @@
 
   function closePeer(p) {
     clearTimeout(p.dropTimer);
+    clearTimeout(p.watchdog);
     try { p.dc?.close(); } catch (_) { /* closed */ }
     try { p.pc?.close(); } catch (_) { /* closed */ }
     for (const t of [...p.remote.camera.getTracks(), ...p.remote.screen.getTracks()]) t.stop();
@@ -1133,6 +1188,7 @@
   function showSelf() {
     const v = $("call-self-video");
     if (!v) return;
+    v.muted = true;
     v.srcObject = local.stream;
     v.play().catch(() => {});
     $("call-self").hidden = !(local.cam && !local.cameraOff);
@@ -1415,8 +1471,8 @@
     },
     async preview() {
       try {
-        const media = await navigator.mediaDevices.getUserMedia({ audio: AUDIO_CONSTRAINTS(), video: this.wantCam ? VIDEO_CONSTRAINTS() : false });
         this.previewStream?.getTracks().forEach((t) => t.stop());
+        const media = await capture({ audio: true, video: this.wantCam });
         this.previewStream = media;
         const v = $("join-preview");
         v.srcObject = media;
