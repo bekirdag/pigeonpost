@@ -1,28 +1,13 @@
 #Requires -Version 7.0
-# Installs the signed UI-test MSIX for the current user and runs the notification checks with
-# package identity. Mode "shell" runs in the runner's interactive session (the taskbar owner) and
-# proves the notification-area icon; mode "alerts" runs as a standard user, where Windows supports
-# app alerts, and proves they reach notification history. Disposable runners only.
-param([Parameter(Mandatory)][string]$Package, [Parameter(Mandatory)][ValidateSet('shell', 'alerts')][string]$Mode, [Parameter(Mandatory)][string]$OutputDirectory)
+# Installs the signed UI-test MSIX and lets Explorer start it in the runner's interactive session
+# (the taskbar owner), as a user's Start menu does. Proves package identity, the shell's
+# notification-area icon and close-to-tray. Windows refuses app alerts to this elevated session
+# and package activation to non-interactive accounts, so alert delivery is proven by the
+# standard-user run of the same code (run-ui-as-user.ps1). Disposable runners only.
+param([Parameter(Mandatory)][string]$Package, [ValidateSet('shell')][string]$Mode = 'shell', [Parameter(Mandatory)][string]$OutputDirectory)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes, System.Drawing, System.Windows.Forms
-Add-Type @'
-using System;
-using System.Runtime.InteropServices;
-[ComImport, Guid("2e941141-7f97-4756-ba1d-9decde894a3d"), InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
-interface IApplicationActivationManager {
-    [PreserveSig] int ActivateApplication([MarshalAs(UnmanagedType.LPWStr)] string appUserModelId, [MarshalAs(UnmanagedType.LPWStr)] string arguments, int options, out uint processId);
-}
-[ComImport, Guid("45BA127D-10A8-46EA-8AB7-56EA9078943C")] class ApplicationActivationManager { }
-public static class PackagedLauncher {
-    public static uint Activate(string aumid) {
-        uint id; int hr = ((IApplicationActivationManager)new ApplicationActivationManager()).ActivateApplication(aumid, "", 0, out id);
-        if (hr != 0) Marshal.ThrowExceptionForHR(hr);
-        return id;
-    }
-}
-'@
 $signals = 'C:\PigeonpostUiTest'
 $OutputDirectory = (New-Item -ItemType Directory -Force $OutputDirectory).FullName
 $installed = $null
@@ -47,8 +32,7 @@ try {
     $principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     Write-Host "Mode $Mode as $env:USERNAME (administrator: $($principal.IsInRole('Administrators')))"
     $aumid = "$($installed.PackageFamilyName)!App"
-    if ($Mode -eq 'shell') { Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$aumid" } # As a user starts it.
-    else { Write-Host "Activated process $([PackagedLauncher]::Activate($aumid))" }
+    Start-Process explorer.exe -ArgumentList "shell:AppsFolder\$aumid" # As a user starts it.
 
     $ready = Join-Path $signals 'alerts.ready'
     $result = Join-Path $signals "packaged-notifications-$Mode.json"

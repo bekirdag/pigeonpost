@@ -72,7 +72,7 @@ jobs:
           dotnet publish apps/windows/Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -c Release -r win-x64 -p:Platform=x64 -p:DefineConstants=UI_TESTS --self-contained true -o apps/windows/artifacts/ui-tests
           if ($LASTEXITCODE -ne 0) { throw 'UI-test build failed.' }
           ./apps/windows/package-ui-tests.ps1 -UiTestDirectory apps/windows/artifacts/ui-tests -ReleaseArtifacts apps/windows/artifacts/x64 -Output "$PWD/apps/windows/artifacts/ui-tests-package/Pigeonpost-ui-tests.msix"
-          ./apps/windows/run-ui-as-user.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots -PackagedNotifications "$PWD/apps/windows/artifacts/ui-tests-package/Pigeonpost-ui-tests.msix"
+          ./apps/windows/run-ui-as-user.ps1 -Executable "$PWD/apps/windows/artifacts/ui-tests/Pigeonpost.exe" -OutputDirectory apps/windows/artifacts/screenshots
       - name: Install and activate the MSIX on the disposable runner
         if: matrix.architecture == 'x64'
         shell: pwsh

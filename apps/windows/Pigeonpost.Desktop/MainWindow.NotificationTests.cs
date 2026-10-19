@@ -86,8 +86,8 @@ public sealed partial class MainWindow
     }
 }
 
-// Mode "shell": the taskbar owner's (elevated) runner session, which proves the icon; Windows does
-// not support alerts for elevated apps, so the alert checks run in mode "alerts" as a standard user.
+// Mode "shell": the taskbar owner's (elevated) runner session, which proves identity and the icon.
+// Windows does not support alerts for elevated apps; the standard-user run proves alert delivery.
 internal sealed record PackagedNotificationTest(string Mode, string Result, string Signals)
 {
     private const string Folder = @"C:\PigeonpostUiTest";

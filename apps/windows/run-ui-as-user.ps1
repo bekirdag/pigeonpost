@@ -1,5 +1,5 @@
 #Requires -Version 7.0
-param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$OutputDirectory, [string]$PackagedNotifications)
+param([Parameter(Mandatory)][string]$Executable, [Parameter(Mandatory)][string]$OutputDirectory)
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This helper is only for disposable GitHub Windows runners.' }
@@ -74,9 +74,6 @@ try {
     if (-not `$notificationResult.passed) { throw 'Native notification integration failed.' }
     Remove-Item Env:PIGEONPOST_NOTIFICATION_TEST_RESULT
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
-    if ($(Literal ([string]$PackagedNotifications))) {
-        & $(Literal (Join-Path $PSScriptRoot 'test-packaged-notifications.ps1')) -Package $(Literal ([string]$PackagedNotifications)) -Mode alerts -OutputDirectory $(Literal $directory)
-    }
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }
 finally { Stop-Transcript | Out-Null }
