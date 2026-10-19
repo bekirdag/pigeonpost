@@ -177,6 +177,13 @@ try {
         }
         [NativeWindowBounds]::mouse_event(4, 0, 0, 0, [UIntPtr]::Zero)
         Start-Sleep -Milliseconds 300
+        try {
+            $selection = $body.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).GetSelection()
+            Write-Host "Selection after drag: '$(if ($selection.Length) { $selection[0].GetText(200) })'"
+        } catch { Write-Host "Text pattern unavailable: $($_.Exception.Message)" }
+        $focused = [System.Windows.Automation.AutomationElement]::FocusedElement
+        if ($focused) { Write-Host "Focused after drag: $($focused.Current.ControlType.ProgrammaticName) '$($focused.Current.Name)'" }
+        Write-Host "Drag from ($x,$y) to ($end,$y) over body $rect"
         [System.Windows.Forms.SendKeys]::SendWait('^c')
         Start-Sleep -Milliseconds 300
         $copied = Get-Clipboard -Raw
