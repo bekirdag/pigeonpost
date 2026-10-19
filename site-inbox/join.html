@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<!-- Served for /XXXXXX meeting links. Nobody needs to be signed in to ask to join. -->
+<title>Pigeonpost — Join a call</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+<script src="/theme.js?v=20261019-theme"></script>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css?v=20261019-rooms">
+</head>
+<body data-page="join">
+
+<main class="join" id="join">
+  <div class="join-card">
+    <header class="join-head">
+      <span class="join-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m3 7 9 6 9-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </span>
+      <div>
+        <h1>Join the call</h1>
+        <p class="join-meta"><span>Meeting <code id="join-code"></code></span> <span id="join-meta"></span></p>
+      </div>
+    </header>
+
+    <form class="join-form" id="join-form" hidden>
+      <div class="join-preview" id="join-preview-wrap" data-video="false">
+        <video id="join-preview" autoplay playsinline muted></video>
+        <p class="join-preview-off">Camera off</p>
+        <div class="join-toggles">
+          <button class="call-btn" id="join-mic" type="button" aria-pressed="false" aria-label="Mute microphone">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="2.5" width="6" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="slash" d="M3.5 3.5l13 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+          <button class="call-btn" id="join-cam" type="button" aria-pressed="false" aria-label="Turn camera off">
+            <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="11" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13.5 9 4-2.3v6.6l-4-2.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path class="slash" d="M3.5 3.5l13 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg>
+          </button>
+        </div>
+      </div>
+
+      <div class="join-devices">
+        <label class="call-field" for="join-device-mic"><span class="call-panel-label">Microphone</span><select class="call-select" id="join-device-mic"></select></label>
+        <label class="call-field" for="join-device-cam"><span class="call-panel-label">Camera</span><select class="call-select" id="join-device-cam"></select></label>
+        <label class="call-field" for="join-device-speaker"><span class="call-panel-label">Speaker</span><select class="call-select" id="join-device-speaker"></select></label>
+      </div>
+
+      <label class="call-field" id="join-name-row" for="join-name">
+        <span class="call-panel-label">Your name</span>
+        <input class="join-input" id="join-name" type="text" maxlength="60" autocomplete="name" placeholder="How the others will see you">
+      </label>
+      <label class="call-field" id="join-as-row" for="join-as" hidden>
+        <span class="call-panel-label">Join as</span>
+        <select class="call-select" id="join-as"></select>
+      </label>
+
+      <p class="join-note">Someone already in the call has to let you in. Audio and video go straight between the people in the call, encrypted end to end.</p>
+      <div class="join-actions">
+        <button class="btn-primary" id="join-submit" type="submit" disabled>Ask to join</button>
+      </div>
+    </form>
+
+    <div class="join-waiting" id="join-waiting" hidden>
+      <span class="join-spinner" aria-hidden="true"></span>
+      <p id="join-waiting-text" role="status">Waiting for someone in the call to let you in…</p>
+      <button class="btn-ghost" id="join-cancel" type="button">Cancel</button>
+    </div>
+
+    <div class="join-done" id="join-done" hidden>
+      <p id="join-done-text" role="status"></p>
+      <a class="btn-ghost" href="/">Open the Pigeonpost inbox</a>
+    </div>
+
+    <p class="join-error sheet-error" id="join-error" role="alert" hidden></p>
+  </div>
+</main>
+
+<script src="/calls.js?v=20261019-rooms"></script>
+</body>
+</html>

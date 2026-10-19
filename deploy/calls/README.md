@@ -1,14 +1,18 @@
 # Web calls — deployment
 
-One-to-one voice and video calls in the web inbox. Three parts:
+Voice and video calls in the web inbox: one-to-one from a conversation, or up to six people via a
+meeting link (`inbox.pigeonpost.dev/ABC234`, served by `join.html`). Three parts:
 
 | Part | Where | What it does |
 | --- | --- | --- |
-| `site-inbox/calls.js` | the inbox's static files | UI, `RTCPeerConnection`, media, security code |
+| `site-inbox/calls.js`, `join.html` | the inbox's static files | UI, one `RTCPeerConnection` per pair of people, media, chat, security codes |
 | `calls-service/` | next to the inbox, behind `/calls/` on the same origin | rings mailboxes, relays offer/answer/ICE, mints TURN credentials |
 | coturn | a dedicated relay host | forwards encrypted media when two browsers cannot reach each other directly |
 
-Media is DTLS-SRTP between the two browsers; the service and the relay only see ciphertext. Each
+Group calls are a mesh: every pair of browsers has its own connection, so media is DTLS-SRTP end to
+end between each pair and the upload budget is divided between them. Anyone with a meeting link can
+ask to join (a guest name, or a verified mailbox if signed in); somebody already in the call admits
+them. Media is DTLS-SRTP between browsers; the service and the relay only see ciphertext. Each
 screen shows a six-digit security code computed from both browsers' DTLS certificate fingerprints;
 matching codes mean the signaling path did not substitute a certificate. The service decides
 nothing about identity itself: it asks the postbox (`/v1/identities`, `/v1/whoami`) which mailboxes
@@ -34,7 +38,7 @@ before RTP/UDP/IP (and TURN) overhead. Video adapts down on weaker links; 1080p 
 2. `/etc/pigeonpost-calls/calls.env` from `calls.env.example` (0640 root:pigeonpost-calls), with the
    relay's secret copied host to host — never through the repository.
 3. Install `pigeonpost-calls.service`, `systemctl enable --now pigeonpost-calls`.
-4. Add `nginx-inbox-calls.conf` inside the inbox server block, `nginx -t`, reload.
+4. Add both blocks of `nginx-inbox-calls.conf` inside the inbox server block, `nginx -t`, reload.
 5. `curl https://inbox.pigeonpost.dev/calls/v1/health` → `{"ok":true,…}`.
 
 Deploy the service before the inbox files: without `/calls/` the inbox simply hides the call buttons.

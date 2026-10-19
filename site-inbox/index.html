@@ -21,7 +21,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261019-theme"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261019-calls">
+<link rel="stylesheet" href="app.css?v=20261019-rooms">
 </head>
 <body>
 
@@ -407,48 +407,9 @@
   </div>
 </div>
 
-<div class="call-ui" id="call-ui" hidden>
-  <section class="call-stage" id="call-stage" role="dialog" aria-modal="true" aria-labelledby="call-name" aria-describedby="call-status" data-kind="video" data-remote-video="false" data-local-video="false">
-    <video id="call-remote-video" class="call-remote" autoplay playsinline></video>
-    <div class="call-peer">
-      <span class="avatar call-avatar" id="call-avatar" aria-hidden="true"></span>
-    </div>
-    <header class="call-top">
-      <div class="call-who">
-        <h2 id="call-name"></h2>
-        <p class="call-handle" id="call-handle"></p>
-        <p class="call-status"><span id="call-status" aria-live="polite"></span><span class="call-quality" id="call-quality"></span></p>
-      </div>
-      <p class="call-sas" id="call-sas" title="Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." hidden>
-        <svg viewBox="0 0 20 20" aria-hidden="true"><rect x="4" y="9" width="12" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.8 9V6.5a3.2 3.2 0 0 1 6.4 0V9" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>
-        <span>Security code</span> <strong id="call-sas-code"></strong>
-      </p>
-    </header>
-    <video id="call-local-video" class="call-self" autoplay playsinline muted></video>
-    <footer class="call-controls">
-      <button id="call-mute" class="call-btn" type="button" aria-pressed="false" aria-label="Mute microphone" title="Mute microphone"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="2.5" width="6" height="10" rx="3" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M4.5 9.5a5.5 5.5 0 0 0 11 0M10 15v2.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/><path class="slash" d="M3.5 3.5l13 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
-      <button id="call-camera" class="call-btn" type="button" aria-pressed="false" aria-label="Turn camera off" title="Turn camera off"><svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="11" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="m13.5 9 4-2.3v6.6l-4-2.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path class="slash" d="M3 3.5l14 13" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
-      <button id="call-hangup" class="call-btn call-end" type="button" aria-label="End call" title="End call"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.4 11.6c-.4-.5-.4-1.2.1-1.7C5 7.6 7.4 6.8 10 6.8s5 .8 7.5 3.1c.5.5.5 1.2.1 1.7l-1.2 1.4c-.4.4-1 .5-1.5.3l-2-1c-.5-.2-.8-.7-.8-1.2V9.7a8.6 8.6 0 0 0-4.2 0v1.4c0 .5-.3 1-.8 1.2l-2 1c-.5.2-1.1.1-1.5-.3Z" fill="currentColor"/></svg></button>
-    </footer>
-  </section>
-</div>
-
-<div class="call-incoming" id="call-incoming" role="alertdialog" aria-labelledby="call-incoming-title" aria-describedby="call-incoming-from call-incoming-note" hidden>
-  <span class="avatar" id="call-incoming-avatar" aria-hidden="true"></span>
-  <div class="call-incoming-text">
-    <p class="call-incoming-title" id="call-incoming-title"></p>
-    <p class="call-incoming-from" id="call-incoming-from"></p>
-    <p class="call-incoming-note" id="call-incoming-note"></p>
-  </div>
-  <div class="call-incoming-actions">
-    <button id="call-decline" class="call-btn call-end" type="button" aria-label="Decline" title="Decline"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2.4 11.6c-.4-.5-.4-1.2.1-1.7C5 7.6 7.4 6.8 10 6.8s5 .8 7.5 3.1c.5.5.5 1.2.1 1.7l-1.2 1.4c-.4.4-1 .5-1.5.3l-2-1c-.5-.2-.8-.7-.8-1.2V9.7a8.6 8.6 0 0 0-4.2 0v1.4c0 .5-.3 1-.8 1.2l-2 1c-.5.2-1.1.1-1.5-.3Z" fill="currentColor"/></svg></button>
-    <button id="call-accept" class="call-btn call-accept" type="button" aria-label="Accept" title="Accept"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="currentColor"/></svg></button>
-  </div>
-</div>
-
 <script src="config.js"></script>
 <script src="handle.js"></script>
-<script src="app.js?v=20261019-calls"></script>
-<script src="calls.js?v=20261019-calls"></script>
+<script src="app.js?v=20261019-rooms"></script>
+<script src="calls.js?v=20261019-rooms"></script>
 </body>
 </html>
