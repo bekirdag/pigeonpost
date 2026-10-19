@@ -40,14 +40,31 @@ import SwiftUI
         let host = NSHostingView(rootView: root)
         let window = NSWindow(contentRect: NSRect(x: 200, y: 200, width: 520, height: 420), styleMask: [.titled], backing: .buffered, defer: false)
         window.contentView = host
+        window.acceptsMouseMovedEvents = true
         window.makeKeyAndOrderFront(nil)
         app.activate(ignoringOtherApps: true)
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
-            let views = find(ReadOnlyTextView.self, in: host)
             window.makeFirstResponder(nil)
-            check(views.count >= 3, "message prose is drawn by read-only NSTextViews (\(views.count))")
+            // At rest the words are drawn by SwiftUI: a lazy stack of AppKit views does not build
+            // the rows a jump lands on (see SelectableText), so none may exist yet.
+            check(find(ReadOnlyTextView.self, in: host).isEmpty, "at rest, no message holds an AppKit text view")
+            // Pointing at the second message brings its text view in.
+            // Hovering is what brings a text view in, and SwiftUI reports a hover only for the real
+            // pointer, which this test does not move. The second window keeps its views in place.
+            let live = NSHostingView(rootView: root.environment(\.selectableTextStaysLive, true))
+            let liveWindow = NSWindow(contentRect: NSRect(x: 260, y: 160, width: 520, height: 420), styleMask: [.titled],
+                                      backing: .buffered, defer: false)
+            liveWindow.contentView = live
+            liveWindow.makeKeyAndOrderFront(nil)
+            try? await Task.sleep(for: .seconds(1.5))
+            let window = liveWindow, host = live
+            window.makeFirstResponder(nil)
+            let views = find(ReadOnlyTextView.self, in: host)
+            check(views.count >= 3, "message prose becomes read-only NSTextViews (\(views.count))")
             guard let tv = views.first(where: { $0.string.hasPrefix("The fixture") }) else { finish(); return }
+            // One layout pass for the view that just took the canvas's place.
+            try? await Task.sleep(for: .milliseconds(300))
             check(tv.frame.height > 40 && tv.isSelectable && !tv.isEditable, "text view is selectable, read-only and sized (\(tv.frame.size))")
             // Lay out and find the window points of characters 4 ("fixture") and 20 ("was").
             let lm = tv.layoutManager!, tc = tv.textContainer!

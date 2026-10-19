@@ -13,6 +13,13 @@
 //  - macOS: click-drag, double- and triple-click select, ⌘C copies. A right-click on a selection
 //    is the text's own menu (Copy, Look Up…); a right-click anywhere else is the message's menu.
 //  Links stay links on both, and scrolling over the text scrolls the conversation.
+//
+//  On the Mac the text view exists only while it is being used. A lazy stack whose rows hold
+//  AppKit views does not build the rows at an offset it jumps to — opening a long conversation
+//  showed a blank pane with the scroller at the bottom — so at rest the words are drawn by a SwiftUI
+//  `Canvas`, with the same TextKit layout the text view uses, and the `NSTextView` takes its place
+//  when the pointer comes over the text, staying while it holds a selection. The two draw the same
+//  glyphs in the same places, so the swap is invisible.
 
 import SwiftUI
 #if canImport(UIKit)
@@ -26,11 +33,34 @@ struct SelectableText: View {
     /// `false` for code: one line per line, as wide as its longest line, inside a sideways scroller.
     var wraps: Bool = true
 
+    #if canImport(UIKit)
     var body: some View {
         MeasuredByText(text: text, wraps: wraps) {
             SelectableTextView(text: text, wraps: wraps)
         }
     }
+    #elseif canImport(AppKit)
+    @State private var hovering = false
+    @State private var selecting = false
+    @Environment(\.selectableTextStaysLive) private var staysLive
+
+    var body: some View {
+        MeasuredByText(text: text, wraps: wraps) {
+            if hovering || selecting || staysLive {
+                SelectableTextView(text: text, wraps: wraps, selecting: $selecting)
+            } else {
+                TextCanvas(text: text, wraps: wraps)
+            }
+        }
+        .onHover { hovering = $0 }
+    }
+    #endif
+}
+
+extension EnvironmentValues {
+    /// Keep the Mac's text views in place rather than swapping them in on hover. For the selection
+    /// test, which cannot move the real pointer and so cannot make SwiftUI report a hover.
+    @Entry var selectableTextStaysLive = false
 }
 
 /// Sizes its one child from the attributed string alone, never by asking the platform view.
@@ -138,7 +168,14 @@ private struct SelectableTextView: UIViewRepresentable {
     }
 
     func updateUIView(_ view: ReadOnlyTextView, context: Context) {
-        if view.attributedText != text { view.attributedText = text }
+        if view.attributedText != text {
+            // Dynamic theme colours compare by identity, so an equal text can arrive as unequal;
+            // keep the selection when the words themselves have not changed.
+            let unchanged = view.attributedText?.string == text.string
+            let selection = view.selectedRange
+            view.attributedText = text
+            if unchanged { view.selectedRange = selection }
+        }
     }
 
     func makeCoordinator() -> TextMeasureCache { TextMeasureCache() }
@@ -193,6 +230,8 @@ final class ReadOnlyTextView: UITextView {
 private struct SelectableTextView: NSViewRepresentable {
     let text: NSAttributedString
     let wraps: Bool
+    /// Whether this text holds a selection, so the view stays after the pointer leaves.
+    @Binding var selecting: Bool
 
     func makeNSView(context: Context) -> ReadOnlyTextView {
         // TextKit 1, explicitly: `TextMeasure` sizes the view with TextKit 1 metrics, and TextKit 2
@@ -204,6 +243,7 @@ private struct SelectableTextView: NSViewRepresentable {
         let container = NSTextContainer(size: NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude))
         layout.addTextContainer(container)
         let view = ReadOnlyTextView(frame: .zero, textContainer: container)
+        view.delegate = context.coordinator
         view.isEditable = false
         view.isSelectable = true
         view.isRichText = true
@@ -222,16 +262,77 @@ private struct SelectableTextView: NSViewRepresentable {
     }
 
     func updateNSView(_ view: ReadOnlyTextView, context: Context) {
+        context.coordinator.selecting = $selecting
         if view.textStorage?.isEqual(to: text) == false {
+            // The theme's colours are dynamic and compare by identity, so a re-render hands over
+            // an equal text that is not `isEqual`. Re-applying it must not drop what the person
+            // has selected in the same words.
+            let unchanged = view.string == text.string
+            let selection = view.selectedRanges
             view.textStorage?.setAttributedString(text)
+            if unchanged { view.selectedRanges = selection }
         }
     }
 
-    func makeCoordinator() -> TextMeasureCache { TextMeasureCache() }
+    func makeCoordinator() -> Coordinator { Coordinator(selecting: $selecting) }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView: ReadOnlyTextView, context: Context) -> CGSize? {
         let width = proposal.width.flatMap { $0.isFinite ? $0 : nil }
-        return context.coordinator.size(text, width: width, wraps: wraps)
+        return context.coordinator.measure.size(text, width: width, wraps: wraps)
+    }
+
+    static func dismantleNSView(_ view: ReadOnlyTextView, coordinator: Coordinator) {
+        view.delegate = nil
+    }
+
+    final class Coordinator: NSObject, NSTextViewDelegate {
+        var selecting: Binding<Bool>
+        let measure = TextMeasureCache()
+        init(selecting: Binding<Bool>) { self.selecting = selecting }
+
+        func textViewDidChangeSelection(_ notification: Notification) {
+            guard let view = notification.object as? NSTextView else { return }
+            let has = view.selectedRange().length > 0
+            let binding = selecting
+            // After the event that changed it, not inside it: a state change re-renders the
+            // message while AppKit is still tracking the click.
+            DispatchQueue.main.async { if binding.wrappedValue != has { binding.wrappedValue = has } }
+        }
+    }
+}
+
+/// The words at rest: drawn by SwiftUI, with exactly the TextKit 1 layout the text view uses, so
+/// a lazy stack of messages holds no AppKit views until one is pointed at.
+private struct TextCanvas: View {
+    let text: NSAttributedString
+    let wraps: Bool
+    @Environment(\.colorScheme) private var scheme
+
+    var body: some View {
+        Canvas { context, size in
+            context.withCGContext { cg in
+                let appearance = NSAppearance(named: scheme == .dark ? .darkAqua : .aqua) ?? NSAppearance.currentDrawing()
+                appearance.performAsCurrentDrawingAppearance {
+                    NSGraphicsContext.saveGraphicsState()
+                    NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+                    let storage = NSTextStorage(attributedString: text)
+                    let layout = NSLayoutManager()
+                    storage.addLayoutManager(layout)
+                    let container = NSTextContainer(size: NSSize(width: wraps ? size.width : 100_000,
+                                                                 height: CGFloat.greatestFiniteMagnitude))
+                    container.lineFragmentPadding = 0
+                    layout.addTextContainer(container)
+                    let glyphs = layout.glyphRange(for: container)
+                    layout.drawBackground(forGlyphRange: glyphs, at: .zero)
+                    layout.drawGlyphs(forGlyphRange: glyphs, at: .zero)
+                    NSGraphicsContext.restoreGraphicsState()
+                }
+            }
+        }
+        // Read as the words, as the text view and the `Text` before it were.
+        .accessibilityElement()
+        .accessibilityLabel(text.string)
+        .accessibilityAddTraits(.isStaticText)
     }
 }
 
