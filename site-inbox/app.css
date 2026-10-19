@@ -29,6 +29,7 @@
 }
 
 :root {
+  color-scheme: light dark;
   /* The accent. `--navy` and `--blue` keep their old roles (filled marks, and links / primary
      actions) and now both sit in the mockup's one blue family. */
   --navy: #2563eb;
@@ -1004,6 +1005,22 @@ button { font: inherit; color: inherit; }
   max-width: 100%;
   overflow-x: auto;
   -webkit-overflow-scrolling: touch;
+}
+/* Every other scroller (lists, threads, conversation, sheets) gets a slim bar in the theme's edge
+   colours instead of the platform default, which is a bright grey slab in dark mode. The track stays
+   transparent so the bar reads as part of the surface it scrolls. */
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner { background: transparent; }
+*::-webkit-scrollbar-thumb {
+  background: var(--edge-hover);
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover { background: var(--muted); background-clip: padding-box; }
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--edge-hover) transparent; }
 }
 /* A bar that is drawn and stays drawn, not the overlay one macOS fades in mid-gesture and hides
    again: a table wider than its bubble has to *say* it is wider, or nobody thinks to move it.
