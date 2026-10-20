@@ -1,6 +1,7 @@
 package dev.pigeonpost.inbox
 
 import android.app.Application
+import android.content.Context
 import android.content.Intent
 import dev.pigeonpost.core.*
 import dev.pigeonpost.inbox.auth.SessionState
@@ -36,6 +37,34 @@ object Development {
 
     /** A screenshot run may pin light or dark without touching the saved setting. */
     fun appearance(intent: Intent): String? = intent.getStringExtra("pigeonpost.appearance")
+
+    private val harness = listOf("pigeonpost.fixtures", "pigeonpost.calls.page", "pigeonpost.calls.token", "pigeonpost.calls.mailbox", "pigeonpost.calls.handle")
+
+    /**
+     * Incoming-call tests start with the app killed, so a launch with the call harness is remembered:
+     * a test push (DebugPushReceiver) then rings for the harness mailbox against the harness origin, and
+     * answering reopens the app into the same harness. An ordinary launch forgets it.
+     */
+    fun rememberHarness(context: Context, intent: Intent) {
+        val preferences = context.getSharedPreferences("debug-calls", Context.MODE_PRIVATE)
+        val page = intent.getStringExtra("pigeonpost.calls.page")
+        if (page == null) { if (intent.action == Intent.ACTION_MAIN) preferences.edit().clear().apply(); return }
+        val uri = android.net.Uri.parse(page)
+        preferences.edit().clear().apply {
+            harness.forEach { key -> intent.getStringExtra(key)?.let { putString(key, it) } }
+            putString("identity", intent.getStringExtra("pigeonpost.calls.mailbox"))
+            putString("origin", "${uri.scheme}://${uri.authority}")
+        }.apply()
+    }
+
+    /** The remembered harness, on an intent that reopens the app (answering a call). */
+    fun harnessExtras(context: Context, intent: Intent): Intent {
+        val preferences = context.getSharedPreferences("debug-calls", Context.MODE_PRIVATE)
+        harness.forEach { key -> preferences.getString(key, null)?.let { intent.putExtra(key, it) } }
+        return intent
+    }
+    fun callIdentity(context: Context): String? = context.getSharedPreferences("debug-calls", Context.MODE_PRIVATE).getString("identity", null)
+    fun callsOrigin(context: Context): String? = context.getSharedPreferences("debug-calls", Context.MODE_PRIVATE).getString("origin", null)
 
     /** Lets the call page be inspected from the computer (chrome://inspect) in debug builds. */
     fun started() { android.webkit.WebView.setWebContentsDebuggingEnabled(true) }

@@ -6,4 +6,10 @@
         <item name="android:windowActionModeOverlay">true</item>
         <item name="android:colorAccent">#16326B</item>
     </style>
+    <!-- The incoming-call screen: dark from the first frame, as the call page is. -->
+    <style name="Theme.Pigeonpost.Call" parent="android:style/Theme.Material.NoActionBar">
+        <item name="android:fontFamily">sans</item>
+        <item name="android:windowBackground">#0D0F12</item>
+        <item name="android:windowLightStatusBar">false</item>
+    </style>
 </resources>

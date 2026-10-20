@@ -12,6 +12,7 @@ import dev.pigeonpost.core.displayName
 import dev.pigeonpost.core.validAddress
 import dev.pigeonpost.inbox.MainActivity
 import dev.pigeonpost.inbox.R
+import dev.pigeonpost.inbox.calls.IncomingCalls
 
 class PigeonpostMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -19,7 +20,10 @@ class PigeonpostMessagingService : FirebaseMessagingService() {
             PushNotifications.enqueue(this)
     }
 
-    override fun onMessageReceived(message: RemoteMessage) = displayPush(this, message.data)
+    // Calls first: a call push carries no `peer`/`message_id` and never reaches the mail notice.
+    override fun onMessageReceived(message: RemoteMessage) {
+        if (!IncomingCalls.push(this, message.data)) displayPush(this, message.data)
+    }
 }
 
 internal fun displayPush(context: Context, data: Map<String, String>) {

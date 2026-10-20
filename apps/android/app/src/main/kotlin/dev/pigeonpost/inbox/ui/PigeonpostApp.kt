@@ -50,7 +50,7 @@ val WideLayoutWidth = 700.dp
 @Composable
 fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, chooseFile: () -> Unit,
     choosePhoto: () -> Unit, scan: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
-    notificationSettings: () -> Unit = {}) {
+    notificationSettings: () -> Unit = {}, fullScreenCalls: () -> (() -> Unit)? = { null }) {
     val session by model.session.state.collectAsStateWithLifecycle()
     val state by model.inbox.state.collectAsStateWithLifecycle()
     val handleState by model.handles.state.collectAsStateWithLifecycle()
@@ -139,6 +139,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
                 signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings,
+                fullScreenCalls = fullScreenCalls(),
                 appearance = appearance, chooseAppearance = model::chooseAppearance)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
