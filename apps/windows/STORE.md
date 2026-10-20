@@ -94,6 +94,25 @@ privacy URL at a page that covers calls, before submitting 1.0.9. Suggested cert
 conversation, press the phone or camera icon in the header; the other side needs a second Pigeonpost
 account (web inbox at https://inbox.pigeonpost.dev). Windows will ask for microphone/camera access."
 
+### Incoming calls with the app closed (WNS)
+
+The app already creates and registers its Windows push channel (README, Incoming calls). To make
+calls ring while it is closed, the postbox needs the Store app's WNS credentials, which only Partner
+Center shows (they are not stored anywhere in this repository):
+
+1. Partner Center > Apps and games > Pigeonpost Desktop > Product management > **WNS/MPNS**
+   (it links to the app registration). Copy the **Package SID** (`ms-app://S-1-15-2-…`) and create or
+   copy an application **client secret**.
+2. On the postbox host, set `PIGEONPOST_WNS_PACKAGE_SID` and `PIGEONPOST_WNS_CLIENT_SECRET` (or
+   `PIGEONPOST_WNS_CLIENT_SECRET_FILE` pointing at a root-only file), restart the postbox, and check its
+   log for `WNS configured`.
+3. Turn on `CALLS_RING_PUSH=1` in the calls service and the `call_push` feature flag
+   (`docs/call-alerting.md`). Then sign in on a Windows PC with the Store build, quit it from the
+   notification-area icon, and call that account: the incoming-call toast should appear bottom right.
+
+Push channels need a package whose identity matches the Partner Center app (the Store build, or a
+sideloaded package with the same identity); ZIP and fixture builds ring only while running.
+
 ### Version 1.0.8 release notes
 
 A refreshed look: new typography, message cards, conversation rows, composer and dialogs, in both

@@ -19,7 +19,7 @@
     } catch (_) { /* app gone */ }
   }
 
-  let token = null, me = null, peer = null, names = {};
+  let token = null, me = null, peer = null, names = {}, nativeRing = false;
   let renewing = null, settle = null;
 
   window.PigeonpostCallsHost = {
@@ -37,6 +37,12 @@
     knownPeer: (key) => Boolean(key && Object.prototype.hasOwnProperty.call(names, key)),
     displayName: (key) => (key && names[key]) || key,
     toast: (text) => tell({ type: "toast", text: String(text || "") }),
+    // Phase 1c (docs/call-alerting.md). With `nativeRing`, the app shows incoming calls itself
+    // (CallKit, a system notification) and the page shows no ring screen of its own.
+    ring: (data) => { tell(Object.assign({ type: "ring" }, data)); return nativeRing; },
+    ringEnded: (data) => tell(Object.assign({ type: "ring_ended" }, data)),
+    callState: (data) => tell(Object.assign({ type: "call" }, data)),
+    muted: (muted) => tell({ type: "muted", muted: Boolean(muted) }),
   };
 
   const calls = () => window.PigeonpostCalls;
@@ -46,6 +52,7 @@
     configure(options) {
       token = options.token || null;
       names = options.known || {};
+      nativeRing = options.nativeRing === true;
       const next = options.mailbox || null;
       const changed = !me || !next || me.address !== next.address;
       me = next;
@@ -64,6 +71,12 @@
       const button = document.getElementById(kind === "video" ? "call-video-btn" : "call-audio-btn");
       if (button) button.click();
     },
+    // Phase 1c: act on a ring the app showed itself. `ringToken` comes from the push, or is null for
+    // a ring the page reported.
+    answer(room, ringToken) { if (calls()) calls().answer(room, ringToken || null); },
+    decline(room, ringToken) { if (calls()) calls().decline(room, ringToken || null); },
+    setMuted(muted) { if (calls()) calls().setMuted(Boolean(muted)); },
+    hangUp() { if (calls()) calls().hangUp(); },
     signOut() {
       token = null; me = null; peer = null;
       if (calls()) calls().stop();

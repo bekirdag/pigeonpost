@@ -146,6 +146,16 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
             WithIdentity("/v1/threads/" + Uri.EscapeDataString(threadId), identity), null, cancellationToken).ConfigureAwait(false);
     }
 
+    // Incoming-call alerts while the app is closed (docs/call-alerting.md): the WNS channel URI is the
+    // device token. The postbox wakes devices of the mailbox or of the account that owns it.
+    public Task RegisterDeviceAsync(string identity, string token, string platform, string os, CancellationToken cancellationToken, string kind = "alert") =>
+        WriteWithoutResponseAsync(HttpMethod.Post, "/v1/devices", new { token, platform, kind, os, identity }, cancellationToken);
+
+    public async Task UnregisterDeviceAsync(string token, CancellationToken cancellationToken)
+    {
+        using var response = await RequestAsync(HttpMethod.Delete, "/v1/devices/" + Uri.EscapeDataString(token), null, cancellationToken).ConfigureAwait(false);
+    }
+
     public async Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken cancellationToken)
     {
         if (bytes.Length is 0 or > MaxAttachmentBytes) throw new ArgumentException("Choose a file between 1 byte and 25 MB.");

@@ -2394,14 +2394,23 @@ paths:
                   type: string
                 platform:
                   type: string
-                  enum: [apns, fcm]
+                  enum: [apns, fcm, wns]
                   default: apns
+                  description: '`wns` tokens are channel URIs on `*.notify.windows.com`.'
                 environment:
                   type: string
                   enum: [production, sandbox]
                   default: production
                 identity:
                   type: string
+                kind:
+                  type: string
+                  enum: [alert, voip]
+                  default: alert
+                  description: '`voip` (apns only) is a PushKit token used for incoming calls only.'
+                os:
+                  type: string
+                  enum: [ios, ipados, macos, android, windows, linux]
       responses:
         '200':
           description: Registered.
@@ -2410,7 +2419,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/Ok'
         '400':
-          description: '`unknown_platform`, `invalid_device_token`, `no_identity`, `identity_required`'
+          description: '`unknown_platform`, `unknown_kind`, `unknown_os`, `invalid_device_token`, `no_identity`, `identity_required`'
           content:
             application/json:
               schema:
@@ -3672,6 +3681,12 @@ paths:
         Blocks, the callee's filtering settings, caller reputation and a per-pair attempt limit,
         combined `block > silence > ring`. `reason` is for the calls service's logs only; the caller
         always experiences an ordinary unanswered call.
+  /internal/v1/call-ring:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCallRing
+      summary: Push an incoming call to the callee's devices (Phase 1c, docs/call-alerting.md)
       security:
         - serviceToken: []
       requestBody:
@@ -3754,6 +3769,20 @@ paths:
                 event:
                   type: string
                   enum: [ring, answer, join, decline, busy, missed, cancelled, filtered, end]
+              required: [room_id, kind, ring_token, from, to, expires_at]
+              properties:
+                room_id:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{10,64}$'
+                code:
+                  type: string
+                  pattern: '^[A-Za-z0-9]{6}$'
+                kind:
+                  type: string
+                  enum: [audio, video]
+                ring_token:
+                  type: string
+                  pattern: '^[A-Za-z0-9_-]{43}$'
                 from:
                   type: object
                   required: [address]
@@ -3779,6 +3808,18 @@ paths:
       responses:
         '200':
           description: Accepted.
+                    display:
+                      type: string
+                      description: Cut to 60 characters; the handle is looked up by the postbox.
+                to:
+                  type: string
+                  description: The handle or address that was called.
+                expires_at:
+                  type: integer
+                  description: Unix seconds when the ring ends (capped at now + 120).
+      responses:
+        '200':
+          description: What was decided and how many devices are being woken.
           content:
             application/json:
               schema:
@@ -3790,6 +3831,15 @@ paths:
                     type: boolean
         '400':
           description: '`bad_request`'
+                required: [decision, devices]
+                properties:
+                  decision:
+                    type: string
+                    enum: [ring, silence, block, disabled, unknown, expired]
+                  devices:
+                    type: integer
+        '400':
+          description: Malformed body.
           content:
             application/json:
               schema:
@@ -3835,6 +3885,42 @@ paths:
       responses:
         '200':
           description: Removed.
+  /internal/v1/call-ring-cancel:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCallRingCancel
+      summary: Take a ring off the callee's devices once it has ended
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [room_id, to, reason]
+              properties:
+                room_id:
+                  type: string
+                to:
+                  type: string
+                reason:
+                  type: string
+                  enum: [answered_elsewhere, declined, busy, no_answer, cancelled, ended]
+                kind:
+                  type: string
+                  enum: [audio, video]
+                from:
+                  type: object
+                  properties:
+                    address:
+                      type: string
+                    display:
+                      type: string
+      responses:
+        '200':
+          description: How many devices are being told.
           content:
             application/json:
               schema:
@@ -3844,6 +3930,16 @@ paths:
                     type: boolean
         '404':
           $ref: '#/components/responses/NotFound'
+                required: [devices]
+                properties:
+                  devices:
+                    type: integer
+        '400':
+          description: Malformed body.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
         '401':
           $ref: '#/components/responses/InvalidServiceToken'
         '403':

@@ -20,8 +20,9 @@ namespace Pigeonpost.Desktop;
 //  The app owns sign-in. The page (native-call.html + native-call.js) is handed the member token and
 //  the mailbox in use, asks the app when the token needs renewing, and says how much of the window
 //  the call needs: all of it, a 64px strip while the person reads mail during a call, or none. While
-//  idle it stays loaded, invisible and click-through, so an incoming call rings while the app runs
-//  (including from the notification area: a ring brings the window back).
+//  idle it stays loaded, invisible and click-through, so an incoming call rings while the app runs.
+//  With the window in front the page rings in it; otherwise the app shows a Windows incoming-call
+//  alert instead (CallAlerts.cs).
 public sealed partial class MainWindow
 {
     private WebView2? callView;
@@ -50,6 +51,7 @@ public sealed partial class MainWindow
     private Task StartCallsAsync()
     {
         callsSignedIn = true;
+        HookCallAlerts();
         UpdateCallButtons();
         if (callView is not null) return ConfigureCallsAsync();
         if (CallsStarting) return callsStarting!;
@@ -175,6 +177,7 @@ public sealed partial class MainWindow
                 callRestarts = 0;
                 DesktopLog.Write("Call page ready");
                 await ConfigureCallsAsync();
+                await AnswerPendingCallAsync();
                 if (pendingCall is { } call) { pendingCall = null; await PlaceCallAsync(call.Peer, call.Video); }
 #if DEBUG || UI_TESTS
                 if (CallsDebug("CALL") is { } auto && auto.LastIndexOf(':') is > 0 and var colon)
@@ -187,9 +190,18 @@ public sealed partial class MainWindow
             case { Type: "mode", Mode: var mode }:
                 ApplyCallMode(mode);
                 break;
-            case { Type: "ring", Ringing: var ringing }:
+            case { Type: "ring_card", Ringing: var ringing }:
                 callRinging = ringing;
                 ApplyCallMode(callMode);
+                break;
+            case { Type: "ring", Ring: { } ring }:
+                CallPage_Ring(ring);
+                break;
+            case { Type: "ring_ended", Room: { } ended }:
+                CallPage_RingEnded(ended);
+                break;
+            case { Type: "call", State: var state, Room: var room }:
+                CallPage_Call(state, room);
                 break;
             case { Type: "renew" }:
                 await RenewCallTokenAsync();
@@ -233,7 +245,9 @@ public sealed partial class MainWindow
     private async Task ConfigureCallsAsync()
     {
         if (!callReady || !callsSignedIn || await CallIdentityAsync() is not { } identity) return;
-        await RunCallScriptAsync(CallBridge.ConfigureScript(identity.Token, identity.Mailbox, ViewModel.AllConversations));
+        var nativeRing = WantNativeRing;
+        await RunCallScriptAsync(CallBridge.ConfigureScript(identity.Token, identity.Mailbox, ViewModel.AllConversations, nativeRing));
+        configuredNativeRing = nativeRing;
     }
 
     private async Task RenewCallTokenAsync()
@@ -328,6 +342,7 @@ public sealed partial class MainWindow
     {
         callsSignedIn = false;
         pendingCall = null;
+        await StopCallAlertsAsync();
         await RunCallScriptAsync(CallBridge.SignOutScript);
         ApplyCallMode(CallMode.Hidden);
     }

@@ -24,6 +24,8 @@ public partial class App : Application
         void HandleNotification(AppNotificationActivatedEventArgs activation) =>
             dispatcher.TryEnqueue(async () =>
             {
+                // An incoming-call alert (the app's own or a WNS push): Answer, Decline or the body.
+                if (CallLaunch.Parse(activation.Argument) is { } call) { await window.HandleCallLaunchAsync(call); return; }
                 var values = activation.Arguments;
                 if (values.TryGetValue("mailbox", out var mailbox) && values.TryGetValue("peer", out var peer)
                     && values.TryGetValue("message", out var message))

@@ -219,13 +219,22 @@ struct PostboxClient {
     }
 
     /// Register this device against the acting mailbox, so the postbox can wake it.
-    func registerDevice(identity: String, token: String, environment: String) async throws {
-        _ = try await sendRaw("/v1/devices", method: "POST", json: [
+    ///
+    /// `kind` is `alert` (mail notices; on a Mac also call notifications) or `voip` (an iPhone or
+    /// iPad's PushKit token, which only ever carries rings). `os` is `ios`, `ipados` or `macos`: the
+    /// postbox sends call alerts to a Mac's alert token but not to a phone's, which rings through its
+    /// VoIP token instead. Both are optional to the postbox; nil leaves them out.
+    func registerDevice(identity: String, token: String, environment: String,
+                        kind: String? = nil, os: String? = nil) async throws {
+        var body: [String: Any] = [
             "token": token,
             "platform": "apns",
             "environment": environment,
             "identity": identity,
-        ])
+        ]
+        if let kind { body["kind"] = kind }
+        if let os { body["os"] = os }
+        _ = try await sendRaw("/v1/devices", method: "POST", json: body)
     }
 
     /// Stop waking this device — on sign-out, so a phone handed on does not ring for somebody

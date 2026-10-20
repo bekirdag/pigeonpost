@@ -124,6 +124,12 @@ impl Fcm {
     /// Only an explicit UNREGISTERED response retires a token. Payload/configuration failures
     /// must not erase an otherwise valid device registration.
     pub async fn deliver(&self, device: &Device, note: &Notification) -> bool {
+        self.send(payload(device, note)).await
+    }
+
+    /// Send one prepared `{"message": …}` body (Phase 1c: call rings and their ends). Returns
+    /// `true` when the token is retired.
+    pub async fn send(&self, body: Value) -> bool {
         let url = format!(
             "https://fcm.googleapis.com/v1/projects/{}/messages:send",
             self.project
@@ -140,7 +146,7 @@ impl Fcm {
                 .client
                 .post(&url)
                 .bearer_auth(token)
-                .json(&payload(device, note))
+                .json(&body)
                 .send()
                 .await
             {
@@ -202,6 +208,8 @@ mod tests {
             mailbox: "/k/receiver".into(),
             platform: "fcm".into(),
             environment: "production".into(),
+            kind: "alert".into(),
+            os: None,
         };
         let note = Notification {
             title: "/bekir/main".into(),

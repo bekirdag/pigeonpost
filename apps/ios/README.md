@@ -115,6 +115,29 @@ Phases 1-3 of `docs/planning/mobile-apps-plan-2026-08-20.md`, and most of 4:
 
 Not yet: push (Phase 5, which is postbox work first), dark mode, VoiceOver passes, TestFlight.
 
+## Incoming calls (Phase 1c, `docs/call-alerting.md`)
+
+- **iPhone and iPad** — `Pigeonpost/Calls/CallAlerts.swift`. PushKit (`.voIP`) registers in
+  `application(_:didFinishLaunchingWithOptions:)`, and its token goes to `/v1/devices` as `kind: voip`.
+  Every VoIP push is reported to CallKit before anything else is checked; one that is late, malformed
+  or for another account is reported and ended at once. The system draws the call screen on the lock
+  screen and as a banner over other apps, and lists the call in Recents. Answer signs the call page
+  in (from the Keychain, with no window if the app was woken in the background) and calls
+  `PigeonpostNative.answer` once CallKit has activated the audio session. Decline uses the ring token
+  over HTTP; a ring that ends elsewhere is noticed by polling the ring every 2 s. In the foreground the
+  page runs with `nativeRing: true` and its rings go to CallKit too; the room id is the dedupe key.
+- **Mac** — `PigeonpostMac/MacCallAlerts.swift`. A `CALL_RING` notification with Answer and Decline,
+  from an alert push when the app is closed (Mac App Store build only — it alone has the push
+  entitlement), or posted locally when the app runs but is not in front. Identifier `call-<room>`
+  either way, so the two replace each other.
+- **Testing in the simulator.** It receives no VoIP pushes and has no call screen: iOS 18's simulator
+  ends every incoming CallKit call within a quarter of a second ("there wont be a UI to host the
+  call"). DEBUG builds take `-simulate-voip '<payload JSON>'` (the handler PushKit calls; `"expires_at":
+  "+45"` means 45 s from now) and, in the simulator only, `-callkit-stand-in YES` with
+  `-callkit-script "answer@4,mute@14,unmute@20,end@30"`, which records the report instead of making it
+  and plays those taps through the same handlers CallKit's actions call. Everything else is checked on
+  a real phone.
+
 ## Where this deliberately differs from the web app
 
 **A peer's several subjects are a strip along the top of the thread, not a pane of their own.** The

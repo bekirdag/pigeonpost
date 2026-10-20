@@ -456,6 +456,50 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(opened, ["https://inbox.pigeonpost.dev/"])
         self.assertEqual(self.clipboard_text(), "/alex/main")
 
+    def test_incoming_call_notification_and_lifecycle(self):
+        from pigeonpost.ui import CallNotifier, Gio, Window as AppWindow
+        sent, withdrawn = [], []
+        class StubApp:
+            def send_notification(self, ident, notification):
+                sent.append((ident, notification))
+            def withdraw_notification(self, ident):
+                withdrawn.append(ident)
+        notifier = CallNotifier(StubApp())
+        notifier.show("AbCdEfGhIjKlMnOpQrStUv", "Incoming video call", "Alex (/alex)")
+        notifier.withdraw("AbCdEfGhIjKlMnOpQrStUv")
+        self.assertEqual(sent[0][0], "call-AbCdEfGhIjKlMnOpQrStUv")
+        self.assertIsInstance(sent[0][1], Gio.Notification)
+        self.assertEqual(withdrawn, ["call-AbCdEfGhIjKlMnOpQrStUv"])
+
+        class FakeCalls:
+            def __init__(self):
+                self.events = []
+            def start(self):
+                self.events.append("start")
+            def stop(self):
+                self.events.append("stop")
+            def answer(self, room):
+                self.events.append(("answer", room))
+                return True
+            def decline(self, room):
+                self.events.append(("decline", room))
+        calls = FakeCalls()
+        window = AppWindow(self.app, api=self.api, restore=False, preferences=self.preferences, calls=calls)
+        window.account_loaded(self.api.identities())
+        pump(lambda: window.known_ids is not None)
+        self.assertEqual(window.caller_name("/k/x", "/alex/main"), "Alex (/alex)")
+        self.assertEqual(window.caller_name("/k/stranger", None), "/k/stranger")
+        window.answer_call("AbCdEfGhIjKlMnOpQrStUv")
+        window.decline_call("AbCdEfGhIjKlMnOpQrStUv")
+        # What closing the window runs; called directly because a window that was never presented
+        # does not emit close-request on every GTK build.
+        window.on_close()
+        window.destroy()
+        pump(timeout=0.05)
+        self.assertEqual(calls.events, ["start", ("answer", "AbCdEfGhIjKlMnOpQrStUv"),
+                                        ("decline", "AbCdEfGhIjKlMnOpQrStUv"), "stop"])
+        self.assertIsNone(self.window.calls)  # injected APIs never open a live calls stream
+
     def test_visual_evidence(self):
         if not os.environ.get("PIGEONPOST_SCREENSHOT_DIR"):
             self.skipTest("Screenshot capture requested only in GUI CI")

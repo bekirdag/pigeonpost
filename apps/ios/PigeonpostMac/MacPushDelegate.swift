@@ -6,6 +6,7 @@
 
 import AppKit
 import SwiftUI
+import UserNotifications
 
 // `NSApplicationDelegate` carries no actor isolation of its own, unlike its UIKit counterpart, and
 // `PushService` is main-actor bound. Saying so here is the difference between this compiling and
@@ -13,6 +14,15 @@ import SwiftUI
 @MainActor
 final class MacPushDelegate: NSObject, NSApplicationDelegate {
     static let service = PushService()
+
+    /// Before launch finishes, because a click on a notification's Answer button can be what launched
+    /// the app, and the system hands that click to whichever delegate is set by then. Set later (when
+    /// a view appears) and the click is lost. The call buttons are registered here for the same reason.
+    func applicationWillFinishLaunching(_ notification: Notification) {
+        UNUserNotificationCenter.current().delegate = Self.service
+        Self.service.calls = MacCallAlerts.shared
+        MacCallAlerts.shared.start()
+    }
 
     func application(
         _ application: NSApplication,

@@ -27,6 +27,7 @@ import crypto from "node:crypto";
 import { createPostboxInternal } from "./postbox-internal.js"; // Phase 1b
 import { readFileSync } from "node:fs";
 import { createGroupCalls } from "./group-calls.js"; // Phase 3a
+import { createRingAlerts, newRingToken, ringTokenMatches } from "./ring-alerts.js"; // Phase 1c
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -47,6 +48,8 @@ export function configFromEnv(env = process.env) {
     trustProxy: (env.CALLS_TRUST_PROXY || "1") === "1",
     // Phase 1b: the postbox's internal API (call admission, call history), over a private path.
     // Unset = ring without asking and report nothing, as before.
+    // Phase 1c: push rings to the callee's devices through the postbox's internal API.
+    ringPush: env.CALLS_RING_PUSH === "1",
     postboxInternalUrl: env.POSTBOX_INTERNAL_URL || "",
     postboxServiceToken: env.POSTBOX_SERVICE_TOKEN || "",
     // Calls stay a mesh up to this many people; beyond it they move to the media server.
@@ -180,6 +183,10 @@ export function createCallsService(cfgIn, deps = {}) {
   const roomsByCode = new Map(); // code -> room
   const buckets = new Map(); // rate-limit key -> number[]
   const sfuApi = deps.sfuApi || defaultSfuApi;
+  // Phase 1c: rings pushed to devices, and the ring tokens those devices act with.
+  const alerts = deps.ringAlerts || createRingAlerts({
+    enabled: cfg.ringPush, url: cfg.postboxInternalUrl, token: cfg.postboxServiceToken, fetch: fetchImpl,
+  });
 
   // ---- Phase 1b: postbox admission + call history reporting ---------------------------------------
   const internal = deps.postboxInternal || createPostboxInternal({
@@ -326,6 +333,7 @@ export function createCallsService(cfgIn, deps = {}) {
       sessionsByName.get(name).add(session);
     }
     send(session, "ready", { session: session.id, mailboxes: auth.mailboxes, guest: auth.guest });
+    if (!auth.guest) ringLateSession(session);
     const beat = setInterval(() => {
       try { res.write(": keepalive\n\n"); } catch (_) { /* closed below */ }
     }, LIMITS.heartbeatMs);
@@ -575,7 +583,8 @@ export function createCallsService(cfgIn, deps = {}) {
   // about whether the other mailbox is online until somebody there picks up.
   function ring(room, caller, to, decision = "ring") {
     const toName = norm(to);
-    room.ring = { to, toName, from: caller.mailbox, ringing: new Set(), decision: decision === "ring" ? "ring" : "quiet" };
+    const minted = newRingToken(); // Phase 1c
+    room.ring = { to, toName, from: caller.mailbox, ringing: new Set(), decision: decision === "ring" ? "ring" : "quiet", tokenHash: minted.hash, expiresAt: now() + cfg.ringMs, live: false, callerSession: caller.sessionId };
     // Phase 1b: `silence` files a filtered entry for the callee; `block` records nothing about them.
     // Either way nothing rings and the timer below gives the caller the normal no-answer.
     // The caller's own entry is written the same way in all three cases (ring, then missed), so
@@ -583,11 +592,18 @@ export function createCallsService(cfgIn, deps = {}) {
     if (decision === "ring") reportCall(room, "ring");
     else reportCall(room, "ring", { to: [] });
     if (decision === "silence") reportCall(room, "filtered");
+    // Phase 1c: only a ring that admission allowed reaches sessions, late sessions or devices.
     if (decision === "ring" && !mailboxEngaged(toName)) {
+      room.ring.live = true;
       for (const target of sessionsByName.get(toName) || []) {
         if (target.id === caller.sessionId || sessionInRoom(target)) continue;
         room.ring.ringing.add(target.id);
         send(target, "incoming", { room: room.id, code: room.code, kind: room.kind, from: caller.mailbox, to });
+      }
+      // Phase 1c: and every device of the callee's, through the postbox.
+      if (alerts.configured) {
+        room.ring.pushed = true;
+        alerts.ring({ room: room.id, code: room.code, kind: room.kind, from: caller.mailbox, to, token: minted.token, expiresAt: room.ring.expiresAt });
       }
     }
     const t = setTimeout(() => {
@@ -604,14 +620,59 @@ export function createCallsService(cfgIn, deps = {}) {
     if (!room.ring) return;
     clearTimeout(room.ring.timer);
     for (const id of room.ring.ringing) if (id !== exceptSession) send(sessions.get(id), "ring_ended", { room: room.id, reason });
+    // Phase 1c: a device woken by a push may still ask about this ring; it learns how it ended.
+    room.lastRing = { tokenHash: room.ring.tokenHash, reason };
+    if (room.ring.pushed) alerts.cancel({ room: room.id, to: room.ring.to, kind: room.kind, from: room.ring.from }, reason);
     room.ring = null;
+  }
+
+  // Phase 1c: a session opened while its mailbox is being rung — an app launched by a push, or a tab
+  // opened late — joins the ring.
+  function ringLateSession(session) {
+    for (const room of rooms.values()) {
+      const r = room.ring;
+      if (room.state !== "ringing" || !r || !r.live || !session.names.has(r.toName)) continue;
+      if (session.id === r.callerSession || r.ringing.has(session.id) || sessionInRoom(session)) continue;
+      r.ringing.add(session.id);
+      send(session, "incoming", { room: room.id, code: room.code, kind: room.kind, from: r.from, to: r.to });
+    }
+  }
+
+  // Phase 1c: what a ring token may do without a member token — learn whether the ring is live,
+  // and decline it.
+  function ringFor(req, roomId, presented) {
+    if (limited("ringtok:" + clientIp(req), 120, 60_000)) throw new HttpError(429, "rate_limited");
+    const room = rooms.get(String(roomId || ""));
+    if (room && room.ring && ringTokenMatches(room.ring.tokenHash, presented)) return { room, live: true };
+    if (room && room.lastRing && ringTokenMatches(room.lastRing.tokenHash, presented)) return { room, live: false };
+    throw new HttpError(404, "no_ring");
+  }
+
+  function ringState(req, roomId, presented) {
+    const { room, live } = ringFor(req, roomId, presented);
+    if (live && room.state === "ringing") return { state: "ringing", kind: room.kind, expires_at: Math.floor(room.ring.expiresAt / 1000) };
+    return { state: "ended", reason: (room.lastRing && room.lastRing.reason) || "ended" };
+  }
+
+  function declineByToken(req, roomId, body) {
+    const { room, live } = ringFor(req, roomId, body.ring_token);
+    if (!live) return { ok: true, state: "ended" };
+    const reason = body.reason === "busy" ? "busy" : "declined";
+    // Phase 1b history: the same event a session's decline reports.
+    const by = (room.targets && room.targets[0]) || null;
+    reportCall(room, reason === "busy" ? "busy" : "decline", by ? { by } : {});
+    stopRinging(room, reason);
+    if (room.participants.size < 2) endRoom(room, reason, null);
+    else broadcast(room, "ring_ended", { room: room.id, reason });
+    return { ok: true, state: room.state };
   }
 
   function accept(auth, room, body) {
     if (room.group_id) return groupCalls.accept(auth, room, body); // Phase 3a
     if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
-    if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
+    // Phase 1c: a session opened after the ring started may answer with the ring token.
+    if (!room.ring || !(room.ring.ringing.has(session.id) || ringTokenMatches(room.ring.tokenHash, body.ring_token))) throw new HttpError(409, "not_ringing");
     const callee = mailboxFor(auth, room.ring.to);
     if (!callee) throw new HttpError(403, "not_your_call");
     if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
@@ -933,7 +994,7 @@ export function createCallsService(cfgIn, deps = {}) {
       if (req.method === "GET" && path === "/v1/health") {
         let large = 0;
         for (const r of rooms.values()) if (r.state !== "ended" && r.topology === "sfu") large++;
-        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled() });
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled(), ring_push: alerts.health() });
       }
       if (req.method === "POST") {
         const origin = req.headers.origin;
@@ -942,6 +1003,14 @@ export function createCallsService(cfgIn, deps = {}) {
       if (req.method === "POST" && path === "/v1/guests") {
         await readJson(req);
         return json(res, 200, createGuest(req));
+      }
+      // Phase 1c: ring-token endpoints, for devices woken by a push (no member token needed).
+      const ringPath = /^\/v1\/rings\/([A-Za-z0-9_-]{10,64})(\/decline)?$/.exec(path);
+      if (ringPath && req.method === "GET" && !ringPath[2]) {
+        return json(res, 200, ringState(req, ringPath[1], String(req.headers["x-ring-token"] || "")));
+      }
+      if (ringPath && req.method === "POST" && ringPath[2]) {
+        return json(res, 200, declineByToken(req, ringPath[1], await readJson(req)));
       }
       const meeting = /^\/v1\/meetings\/([A-Za-z0-9]{6})$/.exec(path);
       if (req.method === "GET" && meeting) return json(res, 200, meetingInfo(req, meeting[1]));

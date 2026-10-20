@@ -19,6 +19,14 @@
 	<true/>
 	<key>com.apple.security.device.camera</key>
 	<true/>
+	<!-- Remote notifications: mail notices, and a call ringing with the app closed (an Answer and
+	     Decline banner; see MacCallAlerts). `development` here, as on the iPhone: the Mac App Store
+	     archive is signed against the "Pigeonpost Desktop Mac App Store" profile, which carries
+	     `production` (checked 2026-10-20 through the App Store Connect API: the App ID has
+	     PUSH_NOTIFICATIONS and that profile lists com.apple.developer.aps-environment = production).
+	     Mac App Store only: PigeonpostMac-DeveloperID.entitlements must not carry it. -->
+	<key>com.apple.developer.aps-environment</key>
+	<string>development</string>
 	<!-- Sign in with Apple through the system sheet, as on the iPhone. Same App ID, so the same
 	     Apple user id as the phone and the realm's web flow. -->
 	<key>com.apple.developer.applesignin</key>

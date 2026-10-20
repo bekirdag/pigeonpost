@@ -62,6 +62,9 @@ mod billing_internal;
 #[cfg(test)]
 mod billing_tests;
 mod blobs;
+mod call_alerts;
+#[cfg(test)]
+mod call_alerts_tests;
 mod calllog;
 mod capabilities;
 mod chatgpt;
@@ -93,6 +96,7 @@ mod tester_handles;
 mod vault;
 mod verbs;
 mod web_plan;
+mod wns;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
 const POW_TTL_SECS: u64 = 120;
@@ -126,6 +130,8 @@ struct AppState {
     /// exactly as it did before push existed.
     apns: Option<Arc<push::Apns>>,
     fcm: Option<Arc<fcm::Fcm>>,
+    /// Windows push, for incoming calls (Phase 1c). `None` without Partner Center credentials.
+    wns: Option<Arc<wns::Wns>>,
     /// Raised whenever any message is enqueued, to release long-polling `GET /v1/inbox?wait=N`
     /// callers the moment their mail lands instead of on their next timer.
     ///
@@ -492,6 +498,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         inbox_signal: Arc::new(tokio::sync::Notify::new()),
         apns: push::Apns::from_env(),
         fcm: fcm::Fcm::from_env(),
+        wns: wns::Wns::from_env(),
         reserved_names: load_reserved_names(),
         github: github::Github::from_env().map(Arc::new),
         appstore: appstore::AppStore::from_env(),
@@ -3983,6 +3990,12 @@ struct DeviceReq {
     environment: Option<String>,
     #[serde(default)]
     identity: Option<String>,
+    /// `alert` (default) or `voip` — a PushKit token, used for incoming calls only (Phase 1c).
+    #[serde(default)]
+    kind: Option<String>,
+    /// Which system registered the token: `ios`, `ipados`, `macos`, `android` or `windows`.
+    #[serde(default)]
+    os: Option<String>,
 }
 
 /// `POST /v1/devices` — wake this device when the acting mailbox receives mail.
@@ -4002,11 +4015,36 @@ async fn register_device(
     let platform = match req.platform.as_deref().unwrap_or("apns") {
         "apns" => "apns".to_string(),
         "fcm" => "fcm".to_string(),
+        "wns" => "wns".to_string(),
         _ => {
             return err_response(
                 StatusCode::BAD_REQUEST,
                 "unknown_platform",
-                Some("expected apns or fcm"),
+                Some("expected apns, fcm or wns"),
+            )
+        }
+    };
+    let kind = match req.kind.as_deref().unwrap_or("alert") {
+        "alert" => "alert".to_string(),
+        "voip" if platform == "apns" => "voip".to_string(),
+        _ => {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                "unknown_kind",
+                Some("kind is alert, or voip for an apns token"),
+            )
+        }
+    };
+    let os = match req.os.as_deref() {
+        None => None,
+        Some(os @ ("ios" | "ipados" | "macos" | "android" | "windows" | "linux")) => {
+            Some(os.to_string())
+        }
+        Some(_) => {
+            return err_response(
+                StatusCode::BAD_REQUEST,
+                "unknown_os",
+                Some("os is ios, ipados, macos, android, windows or linux"),
             )
         }
     };
@@ -4023,12 +4061,16 @@ async fn register_device(
     };
     match state
         .store
-        .upsert_device(
-            token,
-            me.address.clone(),
-            me.account_id.clone(),
-            platform,
-            environment,
+        .register_device(
+            store::DeviceRegistration {
+                token,
+                mailbox: me.address.clone(),
+                account: me.account_id.clone(),
+                platform,
+                environment,
+                kind,
+                os,
+            },
             now_unix(),
         )
         .await
@@ -5942,6 +5984,7 @@ mod tests {
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             fcm: None,
+            wns: None,
             reserved_names: None,
             appstore: None,
             googleplay: None,
@@ -8648,6 +8691,7 @@ mod tests {
             inbox_signal: Arc::new(tokio::sync::Notify::new()),
             apns: None,
             fcm: None,
+            wns: None,
             reserved_names: None,
             appstore: None,
             googleplay: None,

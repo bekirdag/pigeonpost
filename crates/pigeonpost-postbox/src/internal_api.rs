@@ -52,6 +52,8 @@ pub(crate) enum Endpoint {
     ModerateAvatars,
     /// `POST /internal/v1/group-call-admission` (Phase 3a).
     GroupCallAdmission,
+    /// `POST /internal/v1/call-ring` and `/call-ring-cancel` (Phase 1c).
+    CallRing,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -66,6 +68,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::CallAdmission,
             Endpoint::CallEvents,
             Endpoint::GroupCallAdmission,
+            Endpoint::CallRing,
         ],
     ),
     (
@@ -257,6 +260,11 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/internal/v1/avatars/{id}/remove",
             post(crate::avatars::moderate_remove),
+        )
+        .route("/internal/v1/call-ring", post(crate::call_alerts::ring))
+        .route(
+            "/internal/v1/call-ring-cancel",
+            post(crate::call_alerts::cancel),
         )
         .fallback(|| async { err_response(StatusCode::NOT_FOUND, "not_found", None) })
         .with_state(state)

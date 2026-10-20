@@ -8,6 +8,9 @@
 import Foundation
 import Observation
 import UserNotifications
+#if canImport(UIKit)
+import UIKit
+#endif
 
 @MainActor
 @Observable
@@ -27,7 +30,13 @@ final class PushService: NSObject {
     /// The last token the system issued, kept so a mailbox switch can re-register without waiting
     /// for the system to hand it over again.
     private var deviceToken: String?
+    /// The iPhone or iPad's PushKit token, which wakes the app for incoming calls only. Registered
+    /// and unregistered alongside the alert token, against the same mailbox. Never set on a Mac.
+    private var voipToken: String?
     private weak var account: Account?
+    /// Shows and acts on call notifications (a Mac's `CALL_RING` banner). Without one, a call
+    /// notification just opens the app, which then rings in the window.
+    weak var calls: CallNotificationHandling?
     /// The mailbox on screen, so a notification about something it is already showing can be left
     /// unposted and said in the app instead.
     private weak var inbox: Inbox?
@@ -83,6 +92,16 @@ final class PushService: NSObject {
         UNUserNotificationCenter.current().delegate = self
     }
 
+    /// What kind of device this is, as the postbox records it. iPadOS is told apart from iOS for the
+    /// owner's own device list; the postbox treats both the same.
+    static var deviceOS: String {
+        #if os(macOS)
+        return "macos"
+        #else
+        return UIDevice.current.userInterfaceIdiom == .pad ? "ipados" : "ios"
+        #endif
+    }
+
     /// Which inbox is on screen. Held weakly and only read from the delegate below, which needs to
     /// know what is already being looked at before it decides to interrupt it.
     func attach(to inbox: Inbox) {
@@ -136,27 +155,51 @@ final class PushService: NSObject {
         await register()
     }
 
-    /// Re-register the held token — after a mailbox switch, so the phone rings for what is being
+    /// PushKit handed over a VoIP token (or withdrew one: nil). Registered as `kind: voip`.
+    ///
+    /// A VoIP token needs no notification permission — a call screen is not a notification — so
+    /// unlike the alert token it is asked for at every launch and registered as soon as there is a
+    /// mailbox to register it against.
+    func adopt(voipToken data: Data?) async {
+        guard let data else {
+            if let old = voipToken, let account { try? await account.client.unregisterDevice(token: old) }
+            voipToken = nil
+            return
+        }
+        voipToken = data.map { String(format: "%02x", $0) }.joined()
+        await register()
+    }
+
+    /// Re-register the held tokens — after a mailbox switch, so the phone rings for what is being
     /// watched rather than for whatever was open when the token arrived.
     func register() async {
-        guard let account, let me = account.me, let token = deviceToken else { return }
-        do {
-            try await account.client.registerDevice(
-                identity: me.address,
-                token: token,
-                environment: Self.environment
+        // A demo mailbox has no session to register with; trying would spend the session it pretends
+        // to have and sign the app out. (PushKit hands even the simulator a VoIP token.)
+        guard !Fixtures.enabled, let account, let me = account.me else { return }
+        // Not fatal and not worth a toast: mail still arrives, the app still polls while it is open,
+        // and the next launch tries again.
+        if let token = deviceToken {
+            try? await account.client.registerDevice(
+                identity: me.address, token: token, environment: Self.environment,
+                kind: "alert", os: Self.deviceOS
             )
-        } catch {
-            // Not fatal and not worth a toast: mail still arrives, the app still polls while it is
-            // open, and the next launch tries again.
+        }
+        if let token = voipToken {
+            try? await account.client.registerDevice(
+                identity: me.address, token: token, environment: Self.environment,
+                kind: "voip", os: Self.deviceOS
+            )
         }
     }
 
-    /// Stop this device ringing for a mailbox it no longer holds.
+    /// Stop this device ringing for a mailbox it no longer holds — mail and calls both.
     func unregister() async {
-        guard let account, let token = deviceToken else { return }
-        try? await account.client.unregisterDevice(token: token)
+        guard let account else { return }
+        if let token = deviceToken { try? await account.client.unregisterDevice(token: token) }
+        if let token = voipToken { try? await account.client.unregisterDevice(token: token) }
         deviceToken = nil
+        // The VoIP token stays known to this process (PushKit will not hand it over again until it
+        // changes) but unregistered; the next sign-in registers it afresh.
         clearBadge()
     }
 
@@ -185,6 +228,15 @@ extension PushService: UNUserNotificationCenterDelegate {
     ) async -> UNNotificationPresentationOptions {
         let content = notification.request.content
         let info = content.userInfo
+        // A call is not mail: it has its own rules about when to show (see `CallNotificationHandling`)
+        // and must never be turned into a line about a message.
+        if let type = info["type"] as? String, type.hasPrefix("call") {
+            let ring = CallRing(push: info)
+            return await MainActor.run {
+                guard let ring, let calls = self.calls else { return [] }
+                return calls.presentation(for: ring)
+            }
+        }
         let peer = info["peer"] as? String
         let messageId = info["message_id"] as? String ?? notification.request.identifier
         await MainActor.run {
@@ -210,10 +262,33 @@ extension PushService: UNUserNotificationCenterDelegate {
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse
     ) async {
-        let peer = response.notification.request.content.userInfo["peer"] as? String
+        let info = response.notification.request.content.userInfo
+        if let type = info["type"] as? String, type.hasPrefix("call") {
+            let ring = CallRing(push: info)
+            let action = response.actionIdentifier
+            await MainActor.run {
+                // Tapping a missed-call notice, or a ring with nobody to hand it to, just opens the
+                // app; the window is enough.
+                guard let ring, let calls = self.calls else { return }
+                calls.respond(to: ring, action: action)
+            }
+            return
+        }
+        let peer = info["peer"] as? String
         await MainActor.run {
             self.pendingPeer = peer
             self.clearBadge()
         }
     }
+}
+
+/// Call notifications, as opposed to mail ones. The Mac implements it (`MacCallAlerts`); the phone
+/// rings through CallKit and never posts one.
+@MainActor
+protocol CallNotificationHandling: AnyObject {
+    /// How a ring notification shows while the app is running.
+    func presentation(for ring: CallRing) -> UNNotificationPresentationOptions
+    /// The person answered (`CALL_ANSWER`), declined (`CALL_DECLINE`) or just clicked the banner
+    /// (`UNNotificationDefaultActionIdentifier`).
+    func respond(to ring: CallRing, action: String)
 }

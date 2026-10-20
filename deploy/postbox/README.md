@@ -174,6 +174,27 @@ With none of it set the postbox logs nothing, sends nothing, and behaves exactly
 push existed. `POST /v1/devices` still accepts registrations, so phones already in the field start
 being woken the moment a key is added — no app update needed.
 
+## Incoming calls on phones and computers (Phase 1c)
+
+`docs/call-alerting.md` is the design. The calls service calls `POST /internal/v1/call-ring` (and
+`/call-ring-cancel`) with its service token; the postbox pushes to the callee's devices only when the
+`call_push` feature flag is on for the callee's account (or globally):
+
+```
+curl -s -X PUT http://127.0.0.1:8991/internal/v1/features/call_push \
+  -H "authorization: Bearer $(cat /opt/pigeonpost-postbox/ops-service-token)" \
+  -H 'content-type: application/json' -d '{"scope":"global","enabled":true}'
+```
+
+- **iPhone/iPad** get PushKit VoIP pushes with the same APNs key, on topic `PIGEONPOST_APNS_TOPIC`
+  plus `.voip` (override with `PIGEONPOST_APNS_VOIP_TOPIC`). A `TopicDisallowed` warning in the log
+  means the App ID's push capability does not cover VoIP.
+- **Mac** gets a time-sensitive alert with category `CALL_RING`; **Android** a high-priority FCM data
+  message (`type=call_ring` / `call_cancel`).
+- **Windows** needs WNS credentials from Partner Center (Product management → WNS/MPNS):
+  `PIGEONPOST_WNS_PACKAGE_SID=ms-app://S-1-15-2-…` and `PIGEONPOST_WNS_CLIENT_SECRET` (or
+  `PIGEONPOST_WNS_CLIENT_SECRET_FILE`). Unset, Windows rings only while the app runs.
+
 ## Android push notifications (FCM)
 
 Set `PIGEONPOST_FCM_SERVICE_ACCOUNT_FILE` to a service-account JSON file mounted read-only in the postbox container. Keep it outside Git, owned/readable by UID 65532, and enable FCM HTTP v1 for its Firebase project. Use the Firebase Cloud Messaging API Admin role for a dedicated sender service account. The Android client key is separate and must be injected through `PIGEONPOST_FIREBASE_API_KEY` at build time; it is not a server credential.

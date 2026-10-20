@@ -322,6 +322,11 @@ CREATE TABLE IF NOT EXISTS inbox_policy (
 // afterwards, once their columns are guaranteed to exist. (SQLite unique indexes treat NULLs as
 // distinct, so many API-key accounts can share a NULL oidc_sub.)
 const MIGRATIONS: &[&str] = &[
+    // Phase 1c (docs/call-alerting.md): what a device token is for — `alert` (mail notices, and call
+    // alerts on a Mac) or `voip` (PushKit, calls only) — and which system registered it.
+    "ALTER TABLE devices ADD COLUMN kind TEXT NOT NULL DEFAULT 'alert'",
+    "ALTER TABLE devices ADD COLUMN os TEXT",
+    "CREATE INDEX IF NOT EXISTS devices_by_account ON devices(account)",
     "ALTER TABLE namespaces ADD COLUMN release_at INTEGER",
     "ALTER TABLE namespaces ADD COLUMN provider_ref TEXT",
     "UPDATE namespaces SET provider_ref=(SELECT original_transaction_id FROM apple_subscriptions s
@@ -689,6 +694,35 @@ pub struct Device {
     pub mailbox: String,
     pub platform: String,
     pub environment: String,
+    /// `alert` or `voip` (Phase 1c).
+    pub kind: String,
+    /// `ios`, `ipados`, `macos`, `android`, `windows`, or `None` for builds that did not say.
+    pub os: Option<String>,
+}
+
+/// One device registration as `POST /v1/devices` writes it.
+#[derive(Debug, Clone)]
+pub struct DeviceRegistration {
+    pub token: String,
+    pub mailbox: String,
+    pub account: Option<String>,
+    pub platform: String,
+    pub environment: String,
+    pub kind: String,
+    pub os: Option<String>,
+}
+
+const DEVICE_COLS: &str = "token, mailbox, platform, environment, kind, os";
+
+fn map_device_row(row: &rusqlite::Row) -> rusqlite::Result<Device> {
+    Ok(Device {
+        token: row.get(0)?,
+        mailbox: row.get(1)?,
+        platform: row.get(2)?,
+        environment: row.get(3)?,
+        kind: row.get(4)?,
+        os: row.get(5)?,
+    })
 }
 
 /// A peer an inbox knows, and the terms it knows them on.
@@ -2717,6 +2751,7 @@ impl Store {
     ///
     /// Keyed on the token rather than on (mailbox, token): iOS hands the same token to the app
     /// whichever mailbox it is reading, so two rows would mean two notifications for one message.
+    #[cfg(test)]
     pub async fn upsert_device(
         &self,
         token: String,
@@ -2726,21 +2761,61 @@ impl Store {
         environment: String,
         now: u64,
     ) -> Result<(), StoreError> {
+        self.register_device(
+            DeviceRegistration {
+                token,
+                mailbox,
+                account,
+                platform,
+                environment,
+                kind: "alert".into(),
+                os: None,
+            },
+            now,
+        )
+        .await
+    }
+
+    /// [`Store::upsert_device`] with the Phase 1c fields.
+    pub async fn register_device(&self, d: DeviceRegistration, now: u64) -> Result<(), StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
             let conn = conn.lock().expect("store lock");
             conn.execute(
-                "INSERT INTO devices (token, mailbox, account, platform, environment, updated_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                "INSERT INTO devices (token, mailbox, account, platform, environment, kind, os, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
                  ON CONFLICT(token) DO UPDATE SET
                      mailbox = excluded.mailbox,
                      account = excluded.account,
                      platform = excluded.platform,
                      environment = excluded.environment,
+                     kind = excluded.kind,
+                     os = excluded.os,
                      updated_at = excluded.updated_at",
-                params![token, mailbox, account, platform, environment, now],
+                params![d.token, d.mailbox, d.account, d.platform, d.environment, d.kind, d.os, now],
             )?;
             Ok(())
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Every device that should ring for a call to `mailbox`: those registered for the mailbox
+    /// itself and those registered for any mailbox of the account that owns it (Phase 1c).
+    pub async fn devices_for_call(
+        &self,
+        mailbox: String,
+        account: Option<String>,
+    ) -> Result<Vec<Device>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<Vec<Device>, StoreError> {
+            let conn = conn.lock().expect("store lock");
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {DEVICE_COLS} FROM devices
+                 WHERE mailbox = ?1 OR (?2 IS NOT NULL AND account = ?2)"
+            ))?;
+            let rows = stmt.query_map(params![mailbox, account], map_device_row)?;
+            Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -2751,17 +2826,10 @@ impl Store {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<Device>, StoreError> {
             let conn = conn.lock().expect("store lock");
-            let mut stmt = conn.prepare(
-                "SELECT token, mailbox, platform, environment FROM devices WHERE mailbox = ?1",
-            )?;
-            let rows = stmt.query_map(params![mailbox], |row| {
-                Ok(Device {
-                    token: row.get(0)?,
-                    mailbox: row.get(1)?,
-                    platform: row.get(2)?,
-                    environment: row.get(3)?,
-                })
-            })?;
+            let mut stmt = conn.prepare(&format!(
+                "SELECT {DEVICE_COLS} FROM devices WHERE mailbox = ?1"
+            ))?;
+            let rows = stmt.query_map(params![mailbox], map_device_row)?;
             Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
         })
         .await

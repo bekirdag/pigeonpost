@@ -13,6 +13,17 @@ import UIKit
 final class PushDelegate: NSObject, UIApplicationDelegate {
     static let service = PushService()
 
+    /// The earliest point the app runs, including a launch in the background by a VoIP push with no
+    /// window coming. PushKit only hands that push over once a registry exists, so it is made here
+    /// rather than by any view. See `CallAlerts`.
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        MainActor.assumeIsolated { CallAlerts.shared.start() }
+        return true
+    }
+
     func application(
         _ application: UIApplication,
         didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data

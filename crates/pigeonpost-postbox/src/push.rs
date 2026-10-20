@@ -32,6 +32,8 @@ pub fn valid_device_token(platform: &str, token: &str) -> bool {
         "apns" => {
             !token.is_empty() && token.len() <= 200 && token.bytes().all(|c| c.is_ascii_hexdigit())
         }
+        // Phase 1c: a Windows push channel is a URL, and the postbox will only ever POST to Microsoft.
+        "wns" => crate::wns::valid_channel_uri(token),
         "fcm" => {
             !token.is_empty()
                 && token.len() <= 4096
@@ -48,6 +50,8 @@ pub struct Apns {
     key_id: String,
     team_id: String,
     topic: String,
+    /// PushKit's topic: the bundle id plus `.voip` (Phase 1c). Same token-based key.
+    voip_topic: String,
     /// Whether the message itself travels in the payload. See the plan: this ships on, because a
     /// notification that says only "a message arrived" makes people open the app to find out
     /// whether it mattered.
@@ -127,12 +131,15 @@ impl Apns {
             .map(|v| !matches!(v.trim(), "0" | "false" | "no"))
             .unwrap_or(true);
 
-        tracing::info!(%topic, preview, "APNs configured");
+        let voip_topic =
+            non_empty("PIGEONPOST_APNS_VOIP_TOPIC").unwrap_or_else(|| format!("{topic}.voip"));
+        tracing::info!(%topic, %voip_topic, preview, "APNs configured");
         Some(Arc::new(Self {
             key,
             key_id,
             team_id,
             topic,
+            voip_topic,
             preview,
             http,
             bearer: Mutex::new(None),
@@ -189,6 +196,22 @@ impl Apns {
 
     /// Deliver to one device. Returns `true` when the token is dead and its row should go.
     pub async fn deliver(&self, device: &Device, note: &Notification) -> bool {
+        self.send(
+            device,
+            ApnsPush {
+                push_type: "alert",
+                voip: false,
+                priority: "10",
+                expiration: None,
+                collapse_id: None,
+                payload: self.payload(note),
+            },
+        )
+        .await
+    }
+
+    /// Send one push of any type. Returns `true` when the token is dead and its row should go.
+    pub async fn send(&self, device: &Device, push: ApnsPush) -> bool {
         let bearer = match self.bearer().await {
             Ok(token) => token,
             Err(e) => {
@@ -205,17 +228,26 @@ impl Apns {
             "https://api.push.apple.com"
         };
         let url = format!("{host}/3/device/{}", device.token);
+        let topic = if push.voip {
+            &self.voip_topic
+        } else {
+            &self.topic
+        };
 
-        let sent = self
+        let mut request = self
             .http
             .post(&url)
             .bearer_auth(bearer)
-            .header("apns-topic", &self.topic)
-            .header("apns-push-type", "alert")
-            .header("apns-priority", "10")
-            .json(&self.payload(note))
-            .send()
-            .await;
+            .header("apns-topic", topic)
+            .header("apns-push-type", push.push_type)
+            .header("apns-priority", push.priority);
+        if let Some(expiration) = push.expiration {
+            request = request.header("apns-expiration", expiration.to_string());
+        }
+        if let Some(collapse) = &push.collapse_id {
+            request = request.header("apns-collapse-id", collapse.as_str());
+        }
+        let sent = request.json(&push.payload).send().await;
 
         match sent {
             Ok(response) => {
@@ -229,7 +261,7 @@ impl Apns {
                 // a dead address forever.
                 let dead = status.as_u16() == 410 || detail.contains("BadDeviceToken");
                 if dead {
-                    tracing::info!(%status, "APNs token retired");
+                    tracing::info!(%status, push_type = push.push_type, "APNs token retired");
                 } else if detail.contains("BadEnvironmentKeyInToken") {
                     // Reads like a generic refusal and is not: the key was created restricted to
                     // one APNs environment and this device belongs to the other. It cost two
@@ -247,6 +279,12 @@ impl Apns {
                          PIGEONPOST_APNS_TEAM_ID, and that the key is an APNs key rather than an \
                          App Store Connect API key. Both download as AuthKey_*.p8."
                     );
+                } else if detail.contains("TopicDisallowed") || detail.contains("BadTopic") {
+                    tracing::warn!(
+                        %status, %topic,
+                        "APNs refused the topic — VoIP needs Push Notifications on the App ID and \
+                         the topic must be the bundle id plus .voip"
+                    );
                 } else {
                     tracing::warn!(%status, detail = %detail, "APNs refused a notification");
                 }
@@ -260,6 +298,20 @@ impl Apns {
             }
         }
     }
+}
+
+/// One APNs request beyond the plain mail alert (Phase 1c: VoIP rings and Mac call alerts).
+pub struct ApnsPush {
+    /// `alert` or `voip`.
+    pub push_type: &'static str,
+    /// Send on the VoIP topic rather than the app's own.
+    pub voip: bool,
+    pub priority: &'static str,
+    /// Unix seconds after which Apple should drop it rather than deliver it late.
+    pub expiration: Option<u64>,
+    /// Replaces an earlier notification with the same id (a ring with its "missed" line).
+    pub collapse_id: Option<String>,
+    pub payload: serde_json::Value,
 }
 
 /// Notify every device watching one mailbox, and forget the ones Apple says are gone.
@@ -282,6 +334,11 @@ pub async fn fan_out(
         }
     };
     for device in devices {
+        // Mail notices go to alert tokens only: a VoIP token must never carry one (iOS ends an app
+        // for a VoIP push that is not a call), and a Windows channel is for calls.
+        if device.kind != "alert" {
+            continue;
+        }
         let retired = match device.platform.as_str() {
             "apns" => {
                 if let Some(apns) = &apns {
