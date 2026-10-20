@@ -289,7 +289,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
     }
 
     companion object {
-        const val PRODUCTION = "https://inbox.pigeonpost.dev/native-call.html?v=20261020-android"
+        const val PRODUCTION = "https://inbox.pigeonpost.dev/native-call.html?v=20261020-ring"
         /** The calls service is `/calls/v1` on the page's own origin. */
         const val PRODUCTION_ORIGIN = "https://inbox.pigeonpost.dev"
         private fun quote(value: String) = JSONObject.quote(value)
