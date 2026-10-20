@@ -55,6 +55,10 @@ tags:
     description: Operator-only routes authenticated by shared secrets.
   - name: internal
     description: Served only on the separate internal listener, never on the public one.
+  - name: groups
+    description: End-to-end-encrypted groups (ciphertext and routing metadata only; docs/groups.md).
+  - name: mls
+    description: MLS delivery service for groups (devices, key packages, commits, Welcomes; docs/group-e2ee.md).
 
 paths:
   /:
@@ -1221,8 +1225,9 @@ paths:
 
         * `mail` — legacy format, unchanged. The `id:` line is the message cursor (a decimal
           integer). Data: `{event_id: integer, mailbox, message_id, sender, created_at}`.
-        * Typed events — sent only when the `account_events` feature flag is enabled for the
-          account. The `id:` line is `"<mail_cursor>.<event_seq>"`. Data:
+        * Typed events — sent when the `account_events` feature flag is enabled for the
+          account, or when the client asks with `typed=1` (Phase 3a: `group.*`, `mls.*`,
+          `message.expired`, `thread.settings`; see docs/groups.md §4). The `id:` line is `"<mail_cursor>.<event_seq>"`. Data:
           `{event_id: string, type: string, mailbox: string|null, data: object}`. Initial type:
           `features.changed` with data `{feature, enabled}`.
         * `resync_required` — no `id:` line. Data
@@ -1235,6 +1240,11 @@ paths:
         - memberToken: []
         - apiKey: []
       parameters:
+        - name: typed
+          in: query
+          description: '`1` opts this client into typed events (ids like `"<mail>.<n>"`). Group events are re-authorized against current membership at delivery.'
+          schema:
+            type: string
         - name: last_event_id
           in: query
           description: Resume cursor, for clients that cannot set headers. Either a mail cursor (`"123"`) or a typed cursor (`"123.4"`).
@@ -1868,7 +1878,8 @@ paths:
     patch:
       tags: [threads]
       operationId: patchThread
-      summary: Rename or archive one thread in this mailbox only
+      summary: Rename or archive one thread in this mailbox only, or set its disappearing timer on both sides
+      description: '`ephemeral_secs` (null, 300, 3600, 28800, 86400, 604800, 2419200) needs the `disappearing` flag; it applies to both sides of the thread and only to new messages (SDS §17).'
       security:
         - capToken: []
         - apiKey: []
@@ -1888,6 +1899,8 @@ paths:
                   maxLength: 200
                 archived:
                   type: boolean
+                ephemeral_secs:
+                  type: [integer, 'null']
                 identity:
                   type: string
       responses:
@@ -3835,6 +3848,1543 @@ paths:
           $ref: '#/components/responses/InvalidServiceToken'
         '403':
           $ref: '#/components/responses/EndpointNotAllowed'
+  /v1/groups:
+    post:
+      tags: [groups]
+      operationId: createGroup
+      summary: Create a group (starts provisioning)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, name]
+              properties:
+                request_key:
+                  type: string
+                name:
+                  type: string
+                description:
+                  type: string
+                join_policy:
+                  type: string
+                post_policy:
+                  type: string
+                visibility:
+                  type: string
+                members_can_invite:
+                  type: boolean
+                members_can_change_timer:
+                  type: boolean
+                ephemeral_secs:
+                  type: integer
+                invite:
+                  type: array
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    get:
+      tags: [groups]
+      operationId: listGroups
+      summary: Groups the acting mailbox belongs to or is invited to
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/resolve:
+    post:
+      tags: [groups]
+      operationId: resolveGroup
+      summary: Preview a group from an id and optional link token
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id]
+              properties:
+                group_id:
+                  type: string
+                link_token:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}:
+    get:
+      tags: [groups]
+      operationId: getGroup
+      summary: Group details and the caller's membership
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    patch:
+      tags: [groups]
+      operationId: updateGroup
+      summary: Change group settings (owner/admins; human only)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_revision]
+              properties:
+                expected_revision:
+                  type: integer
+                name:
+                  type: string
+                description:
+                  type: string
+                join_policy:
+                  type: string
+                post_policy:
+                  type: string
+                visibility:
+                  type: string
+                members_can_invite:
+                  type: boolean
+                members_can_change_timer:
+                  type: boolean
+                ephemeral_secs:
+                  type: integer
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    delete:
+      tags: [groups]
+      operationId: deleteGroup
+      summary: Delete a group (owner; soft delete)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/members:
+    get:
+      tags: [groups]
+      operationId: listGroupMembers
+      summary: Members with roles and states
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [groups]
+      operationId: inviteGroupMembers
+      summary: Invite mailboxes (admins, or members when allowed)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, invite]
+              properties:
+                request_key:
+                  type: string
+                invite:
+                  type: array
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/members/{address}:
+    patch:
+      tags: [groups]
+      operationId: updateGroupMember
+      summary: Change a member's role or remove/ban them
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [expected_revision]
+              properties:
+                expected_revision:
+                  type: integer
+                role:
+                  type: string
+                state:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/bans/{address}:
+    delete:
+      tags: [groups]
+      operationId: unbanGroupMember
+      summary: Lift a ban (admins)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/invitation:
+    post:
+      tags: [groups]
+      operationId: respondToGroupInvitation
+      summary: Accept or decline an invitation
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [accept]
+              properties:
+                accept:
+                  type: boolean
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/join:
+    post:
+      tags: [groups]
+      operationId: joinGroup
+      summary: Join a public group (listed, or with the current link token)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                link_token:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/leave:
+    post:
+      tags: [groups]
+      operationId: leaveGroup
+      summary: Leave a group
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/transfer:
+    post:
+      tags: [groups]
+      operationId: transferGroupOwnership
+      summary: Transfer ownership to an active admin
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, expected_revision]
+              properties:
+                to:
+                  type: string
+                expected_revision:
+                  type: integer
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/link:
+    post:
+      tags: [groups]
+      operationId: resetGroupLink
+      summary: Create, reset or disable the join link (shown once)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [enabled]
+              properties:
+                enabled:
+                  type: boolean
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/messages:
+    get:
+      tags: [groups]
+      operationId: listGroupMessages
+      summary: Ciphertext, commits and notices in sequence order
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: after_seq
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: before_seq
+          in: query
+          required: false
+          schema:
+            type: integer
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [groups]
+      operationId: postGroupMessage
+      summary: Post one client-encrypted application message
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, client_message_id, epoch, enc_scheme, ciphertext, envelope_signature]
+              properties:
+                request_key:
+                  type: string
+                client_message_id:
+                  type: string
+                epoch:
+                  type: integer
+                enc_scheme:
+                  type: string
+                ciphertext:
+                  type: string
+                envelope_signature:
+                  type: string
+                attachments:
+                  type: array
+                reply_to:
+                  type: integer
+                edit_of:
+                  type: integer
+                mentions:
+                  type: array
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/messages/{seq}:
+    delete:
+      tags: [groups]
+      operationId: deleteGroupMessage
+      summary: Delete for everyone (sender within 24 h, or admin)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: seq
+          in: path
+          required: true
+          schema:
+            type: integer
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/read:
+    post:
+      tags: [groups]
+      operationId: markGroupRead
+      summary: Move the read cursor forward
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [seq]
+              properties:
+                seq:
+                  type: integer
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/notifications:
+    put:
+      tags: [groups]
+      operationId: setGroupNotifications
+      summary: Notification and mute settings
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [notify]
+              properties:
+                notify:
+                  type: string
+                muted_until:
+                  type: integer
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/attachments:
+    post:
+      tags: [groups]
+      operationId: uploadGroupAttachment
+      summary: Upload a sealed attachment (raw bytes)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/attachments/{att}:
+    get:
+      tags: [groups]
+      operationId: downloadGroupAttachment
+      summary: Download a sealed attachment the caller may see
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: att
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Sealed bytes.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/key-packages/claim:
+    post:
+      tags: [mls]
+      operationId: claimGroupKeyPackages
+      summary: Claim key packages for pending adds
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, mailboxes]
+              properties:
+                request_key:
+                  type: string
+                mailboxes:
+                  type: array
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/commits:
+    post:
+      tags: [mls]
+      operationId: postGroupCommit
+      summary: Submit an MLS commit (first valid commit per epoch wins)
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, epoch, commit_id, commit, envelope_signature, expected_revision]
+              properties:
+                request_key:
+                  type: string
+                epoch:
+                  type: integer
+                commit_id:
+                  type: string
+                commit:
+                  type: string
+                envelope_signature:
+                  type: string
+                welcome:
+                  type: string
+                adds:
+                  type: array
+                removes:
+                  type: array
+                expected_revision:
+                  type: integer
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/epoch-ack:
+    post:
+      tags: [mls]
+      operationId: ackGroupEpoch
+      summary: Highest epoch this device has processed
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [epoch]
+              properties:
+                epoch:
+                  type: integer
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/crypto:
+    get:
+      tags: [mls]
+      operationId: getGroupCryptoState
+      summary: Epoch, revision and pending tree operations
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/resync:
+    post:
+      tags: [mls]
+      operationId: resyncGroupDevice
+      summary: This device lost its group state; re-add it
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key]
+              properties:
+                request_key:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/rooms:
+    get:
+      tags: [groups]
+      operationId: listRooms
+      summary: Listed public groups
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/devices:
+    post:
+      tags: [mls]
+      operationId: registerMlsDevice
+      summary: Register an MLS device; the postbox attests it for hosted mailboxes
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_id, signature_key]
+              properties:
+                device_id:
+                  type: string
+                signature_key:
+                  type: string
+                attestation:
+                  type: string
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    get:
+      tags: [mls]
+      operationId: listMlsDevices
+      summary: Active devices of a mailbox the caller shares a group with
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: mailbox
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/devices/{device_id}:
+    delete:
+      tags: [mls]
+      operationId: revokeMlsDevice
+      summary: Revoke one of the mailbox's devices
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: device_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/key-packages:
+    post:
+      tags: [mls]
+      operationId: uploadKeyPackages
+      summary: Upload key packages from the acting device
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key]
+              properties:
+                request_key:
+                  type: string
+                key_packages:
+                  type: array
+                last_resort:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/key-packages/count:
+    get:
+      tags: [mls]
+      operationId: countKeyPackages
+      summary: Unclaimed key packages of the acting device
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/welcomes:
+    get:
+      tags: [mls]
+      operationId: listWelcomes
+      summary: Pending Welcomes for the acting device
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/mls/welcomes/{welcome_id}/ack:
+    post:
+      tags: [mls]
+      operationId: ackWelcome
+      summary: Report whether the device could join
+      description: See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: welcome_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+        - $ref: '#/components/parameters/MlsDevice'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [request_key, joined]
+              properties:
+                request_key:
+                  type: string
+                joined:
+                  type: boolean
+                error_code:
+                  type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /internal/v1/group-call-admission:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalGroupCallAdmission
+      summary: May this mailbox start or join a group call, and whom to ring (calls service)
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [group_id, from, kind]
+              properties:
+                group_id:
+                  type: string
+                from:
+                  type: object
+                  properties:
+                    mailbox:
+                      type: string
+                kind:
+                  type: string
+                  enum: [audio, video]
+                join:
+                  type: boolean
+      responses:
+        '200':
+          description: '`{allowed, reason?, group_name, members:[{address, handle, decision}]}`'
+          content:
+            application/json:
+              schema:
+                type: object
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
 components:
   securitySchemes:
     capToken:
@@ -3872,6 +5422,13 @@ components:
       in: query
       required: false
       description: Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.
+      schema:
+        type: string
+    MlsDevice:
+      name: x-pigeonpost-device
+      in: header
+      required: true
+      description: A registered, unrevoked MLS device of the acting mailbox.
       schema:
         type: string
     ThreadId:
@@ -4400,6 +5957,12 @@ components:
           enum: [cursor_expired]
 
   responses:
+    GroupError:
+      description: 'A group refusal: `{error, detail, message}` with codes from docs/groups.md (`not_member`, `not_admin`, `owner_only`, `posting_restricted`, `banned`, `group_full`, `invalid_link`, `invite_required`, `already_member`, `human_required`, `group_deleted`, `revision_conflict`, `epoch_conflict`, `key_activation_pending`, `idempotency_conflict`, `feature_disabled`, …).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     Unauthorized:
       description: '`unauthorized` — missing, unknown, revoked or invalid credential.'
       content:

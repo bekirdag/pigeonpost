@@ -1,0 +1,1452 @@
+//! End-to-end tests for Phase 3a groups over real sockets, with real MLS devices
+//! (`pigeonpost-groupcrypto`) as the clients: the server only ever sees ciphertext.
+
+use crate::*;
+use pigeonpost_groupcrypto::{Device, DeviceRef, Incoming};
+use reqwest::Client;
+use serde_json::{json, Value};
+
+const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
+const CALLS: &str = "svc_calls_0123456789abcdef0123456789abcdef";
+const ISSUER: &str = "https://auth.example/realms/x";
+
+struct Server {
+    public: String,
+    internal: String,
+    http: Client,
+    state: AppState,
+}
+
+async fn serve() -> Server {
+    let mut state = crate::tests::test_state();
+    state.service_tokens = Arc::new(internal_api::tokens_for_test(&[
+        ("POSTBOX_SVC_TOKEN_OPS", OPS),
+        ("POSTBOX_SVC_TOKEN_CALLS", CALLS),
+    ]));
+    state.blobs = Some(Arc::new(blobs::Blobs::for_test("groups-e2e")));
+    let public = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let internal = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let public_url = format!("http://{}", public.local_addr().unwrap());
+    let internal_url = format!("http://{}", internal.local_addr().unwrap());
+    let app =
+        build_router(state.clone()).into_make_service_with_connect_info::<std::net::SocketAddr>();
+    let internal_app = internal_api::router(state.clone())
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move { axum::serve(public, app).await.unwrap() });
+    tokio::spawn(async move { axum::serve(internal, internal_app).await.unwrap() });
+    Server {
+        public: public_url,
+        internal: internal_url,
+        http: Client::new(),
+        state,
+    }
+}
+
+fn enc(s: &str) -> String {
+    s.replace('/', "%2F")
+}
+
+impl Server {
+    #[allow(clippy::too_many_arguments)]
+    async fn call(
+        &self,
+        method: reqwest::Method,
+        path: &str,
+        token: &str,
+        mailbox: Option<&str>,
+        device: Option<&str>,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        let base = if path.starts_with("/internal/") {
+            &self.internal
+        } else {
+            &self.public
+        };
+        let mut req = self
+            .http
+            .request(method, format!("{base}{path}"))
+            .bearer_auth(token);
+        if let Some(m) = mailbox {
+            req = req.header("x-pigeonpost-identity", m);
+        }
+        if let Some(d) = device {
+            req = req.header("x-pigeonpost-device", d);
+        }
+        if let Some(b) = body {
+            req = req.json(&b);
+        }
+        let resp = req.send().await.unwrap();
+        let status = resp.status().as_u16();
+        let text = resp.text().await.unwrap();
+        (status, serde_json::from_str(&text).unwrap_or(Value::Null))
+    }
+
+    async fn flag(&self, name: &str, account: &str) {
+        let (status, _) = self
+            .call(
+                reqwest::Method::PUT,
+                &format!("/internal/v1/features/{name}"),
+                OPS,
+                None,
+                None,
+                Some(json!({ "scope": "account", "account_id": account, "enabled": true })),
+            )
+            .await;
+        assert_eq!(status, 200, "flag {name}");
+    }
+}
+
+/// A person (member session) with one hosted mailbox and one MLS device.
+struct Member {
+    token: String,
+    api_key: String,
+    address: String,
+    device: Device,
+    device_id: String,
+    cursor: std::collections::HashMap<String, i64>,
+    received: Vec<String>,
+}
+
+async fn member(srv: &Server, name: &str) -> Member {
+    let account = format!("acct_{name}");
+    let sub = format!("sub-{name}");
+    srv.state
+        .store
+        .account_for_sub(sub.clone(), account.clone(), now_unix())
+        .await
+        .unwrap();
+    let (api_key, key) = new_api_key();
+    srv.state
+        .store
+        .add_api_key(account.clone(), key, now_unix())
+        .await
+        .unwrap();
+    let v = do_create_identity(&srv.state, Some(account.clone()), None, None)
+        .await
+        .unwrap();
+    let address = v["address"].as_str().unwrap().to_string();
+    srv.flag("groups", &account).await;
+    srv.flag("disappearing", &account).await;
+    srv.flag("account_events", &account).await;
+    let token = oidc::test_member_token(ISSUER, &sub);
+    let device_id = format!("dev-{name}");
+    let device = enroll(srv, &token, &address, &device_id).await;
+    Member {
+        token,
+        api_key,
+        address,
+        device,
+        device_id,
+        cursor: Default::default(),
+        received: Vec::new(),
+    }
+}
+
+async fn enroll(srv: &Server, token: &str, address: &str, device_id: &str) -> Device {
+    let mut device = Device::new(address, device_id).unwrap();
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            "/v1/mls/devices",
+            token,
+            Some(address),
+            None,
+            Some(json!({ "device_id": device_id, "signature_key": b64_encode(&device.signature_public_key()) })),
+        )
+        .await;
+    assert_eq!(s, 201, "register device: {v}");
+    device
+        .install_attestation(
+            &b64_decode(v["mailbox_public_key"].as_str().unwrap()).unwrap(),
+            &b64_decode(v["attestation"].as_str().unwrap()).unwrap(),
+        )
+        .unwrap();
+    let kps: Vec<String> = device
+        .generate_key_packages(5)
+        .unwrap()
+        .iter()
+        .map(|k| b64_encode(k))
+        .collect();
+    let lr = b64_encode(&device.generate_last_resort_key_package().unwrap());
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            "/v1/mls/key-packages",
+            token,
+            Some(address),
+            Some(device_id),
+            Some(json!({ "request_key": format!("kp-{}", rand_hex(4)), "key_packages": kps, "last_resort": lr })),
+        )
+        .await;
+    assert_eq!(s, 200, "upload key packages: {v}");
+    assert_eq!(v["unclaimed"], 5);
+    device
+}
+
+impl Member {
+    async fn req(
+        &self,
+        srv: &Server,
+        method: reqwest::Method,
+        path: &str,
+        body: Option<Value>,
+    ) -> (u16, Value) {
+        srv.call(
+            method,
+            path,
+            &self.token,
+            Some(&self.address),
+            Some(&self.device_id),
+            body,
+        )
+        .await
+    }
+
+    async fn create(&mut self, srv: &Server, name: &str, extra: Value) -> String {
+        let mut body = json!({ "request_key": rand_hex(6), "name": name });
+        if let Value::Object(m) = extra {
+            for (k, v) in m {
+                body[k] = v;
+            }
+        }
+        let (s, v) = self
+            .req(srv, reqwest::Method::POST, "/v1/groups", Some(body))
+            .await;
+        assert_eq!(s, 201, "create: {v}");
+        let gid = v["group"]["id"].as_str().unwrap().to_string();
+        assert_eq!(v["group"]["activation_state"], "provisioning");
+        self.device.create_group(&gid).unwrap();
+        // Activation: the creator's first commit (a self-update when nobody else is ready).
+        self.process_pending(srv, &gid).await;
+        let (s, v) = self
+            .req(
+                srv,
+                reqwest::Method::GET,
+                &format!("/v1/groups/{gid}"),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200);
+        assert_eq!(v["activation_state"], "active", "{v}");
+        self.cursor
+            .insert(gid.clone(), v["last_seq"].as_i64().unwrap());
+        gid
+    }
+
+    async fn member_revision(&self, srv: &Server, gid: &str, who: &str) -> Value {
+        let (_, v) = self
+            .req(
+                srv,
+                reqwest::Method::GET,
+                &format!("/v1/groups/{gid}/members"),
+                None,
+            )
+            .await;
+        v["members"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|m| m["address"] == who)
+            .unwrap()["revision"]
+            .clone()
+    }
+
+    async fn post_commit(
+        &self,
+        srv: &Server,
+        gid: &str,
+        crypto: &Value,
+        bundle: &pigeonpost_groupcrypto::CommitBundle,
+        rk: &str,
+    ) -> (u16, Value) {
+        self.req(
+            srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/commits"),
+            Some(json!({
+                "request_key": rk, "epoch": crypto["epoch"], "commit_id": bundle.commit_id,
+                "commit": b64_encode(&bundle.commit), "envelope_signature": b64_encode(&bundle.envelope_signature),
+                "adds": [], "removes": [], "expected_revision": crypto["revision"],
+            })),
+        )
+        .await
+    }
+
+    async fn group(&self, srv: &Server, gid: &str) -> Value {
+        self.req(
+            srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}"),
+            None,
+        )
+        .await
+        .1
+    }
+
+    /// Claim key packages for pending adds, commit adds and removes; returns the status.
+    async fn process_pending(&mut self, srv: &Server, gid: &str) -> u16 {
+        let (s, crypto) = self
+            .req(
+                srv,
+                reqwest::Method::GET,
+                &format!("/v1/groups/{gid}/crypto"),
+                None,
+            )
+            .await;
+        assert_eq!(s, 200, "crypto: {crypto}");
+        let pending = crypto["pending"].as_array().cloned().unwrap_or_default();
+        let mailboxes: Vec<String> = pending
+            .iter()
+            .filter(|p| p["kind"] == "add")
+            .map(|p| p["mailbox"].as_str().unwrap().to_string())
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        let mut kps = Vec::new();
+        let mut adds = Vec::new();
+        if !mailboxes.is_empty() {
+            let (s, v) = self
+                .req(
+                    srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/groups/{gid}/key-packages/claim"),
+                    Some(json!({ "request_key": rand_hex(6), "mailboxes": mailboxes })),
+                )
+                .await;
+            assert_eq!(s, 200, "claim: {v}");
+            for c in v["claims"].as_array().unwrap() {
+                kps.push(b64_decode(c["key_package"].as_str().unwrap()).unwrap());
+                adds.push(json!({ "mailbox": c["mailbox"], "device_id": c["device_id"], "key_package_ref": c["key_package_ref"] }));
+            }
+        }
+        let removes: Vec<DeviceRef> = pending
+            .iter()
+            .filter(|p| p["kind"] == "remove")
+            .map(|p| DeviceRef {
+                mailbox: p["mailbox"].as_str().unwrap().into(),
+                device_id: p["device_id"].as_str().unwrap().into(),
+            })
+            .collect();
+        let bundle = self.device.commit(gid, &kps, &removes).unwrap();
+        let (s, v) = self
+            .req(
+                srv,
+                reqwest::Method::POST,
+                &format!("/v1/groups/{gid}/commits"),
+                Some(json!({
+                    "request_key": rand_hex(6),
+                    "epoch": crypto["epoch"],
+                    "commit_id": bundle.commit_id,
+                    "commit": b64_encode(&bundle.commit),
+                    "envelope_signature": b64_encode(&bundle.envelope_signature),
+                    "welcome": bundle.welcome.as_ref().map(|w| b64_encode(w)),
+                    "adds": adds,
+                    "removes": removes.iter().map(|r| json!({ "mailbox": r.mailbox, "device_id": r.device_id })).collect::<Vec<_>>(),
+                    "expected_revision": crypto["revision"],
+                })),
+            )
+            .await;
+        if s == 201 {
+            self.device.confirm_commit(gid).unwrap();
+            self.cursor.insert(gid.into(), v["seq"].as_i64().unwrap());
+        } else {
+            self.device.discard_commit(gid).unwrap();
+        }
+        s
+    }
+
+    async fn accept_welcomes(&mut self, srv: &Server) {
+        let (s, v) = self
+            .req(srv, reqwest::Method::GET, "/v1/mls/welcomes", None)
+            .await;
+        assert_eq!(s, 200, "{v}");
+        for w in v["welcomes"].as_array().unwrap() {
+            let joined = self
+                .device
+                .join_from_welcome(&b64_decode(w["welcome"].as_str().unwrap()).unwrap())
+                .unwrap();
+            self.cursor
+                .insert(joined.group_id.clone(), w["seq"].as_i64().unwrap());
+            let (s, _) = self
+                .req(
+                    srv,
+                    reqwest::Method::POST,
+                    &format!("/v1/mls/welcomes/{}/ack", w["welcome_id"].as_str().unwrap()),
+                    Some(json!({ "request_key": rand_hex(6), "joined": true })),
+                )
+                .await;
+            assert_eq!(s, 200);
+        }
+    }
+
+    async fn send(&mut self, srv: &Server, gid: &str, text: &str) -> (u16, Value) {
+        let cmid = rand_hex(8);
+        let out = self
+            .device
+            .encrypt_message(gid, &cmid, text.as_bytes(), &[])
+            .unwrap();
+        self.post_raw(
+            srv,
+            gid,
+            &cmid,
+            out.epoch as i64,
+            &out.ciphertext,
+            &out.envelope_signature,
+        )
+        .await
+    }
+
+    async fn post_raw(
+        &self,
+        srv: &Server,
+        gid: &str,
+        cmid: &str,
+        epoch: i64,
+        ct: &[u8],
+        sig: &[u8],
+    ) -> (u16, Value) {
+        self.req(
+            srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/messages"),
+            Some(json!({
+                "request_key": format!("rk-{cmid}"),
+                "client_message_id": cmid,
+                "epoch": epoch,
+                "enc_scheme": pigeonpost_groupcrypto::ENC_SCHEME,
+                "ciphertext": b64_encode(ct),
+                "envelope_signature": b64_encode(sig),
+            })),
+        )
+        .await
+    }
+
+    /// Fetch and process everything after the cursor; returns the status of the fetch.
+    async fn sync(&mut self, srv: &Server, gid: &str) -> u16 {
+        let after = *self.cursor.get(gid).unwrap_or(&0);
+        let (s, v) = self
+            .req(
+                srv,
+                reqwest::Method::GET,
+                &format!("/v1/groups/{gid}/messages?after_seq={after}&limit=100"),
+                None,
+            )
+            .await;
+        if s != 200 {
+            return s;
+        }
+        for item in v["items"].as_array().unwrap() {
+            let seq = item["seq"].as_i64().unwrap();
+            let bytes = match item["type"].as_str().unwrap() {
+                "application" => item["ciphertext"].as_str().map(|c| b64_decode(c).unwrap()),
+                "commit" => Some(b64_decode(item["commit"].as_str().unwrap()).unwrap()),
+                _ => None,
+            };
+            if let Some(bytes) = bytes {
+                match self.device.process_incoming(gid, &bytes).unwrap() {
+                    Incoming::Message(m) => self.received.push(String::from_utf8(m.body).unwrap()),
+                    Incoming::Commit(_) | Incoming::OwnCommitConfirmed(_) | Incoming::Own => {}
+                    Incoming::HistoryOffer(_) => {}
+                }
+            }
+            self.cursor.insert(gid.into(), seq);
+        }
+        s
+    }
+}
+
+/// Alice creates and activates; Bob and Carol are invited, Bob accepts and is added by Alice's
+/// device, Carol declines.
+async fn three(srv: &Server) -> (Member, Member, Member, String) {
+    let mut alice = member(srv, &format!("alice{}", rand_hex(3))).await;
+    let mut bob = member(srv, &format!("bob{}", rand_hex(3))).await;
+    let carol = member(srv, &format!("carol{}", rand_hex(3))).await;
+    let gid = alice
+        .create(
+            srv,
+            "crew",
+            json!({ "invite": [bob.address, carol.address] }),
+        )
+        .await;
+    // Invitations became visible at activation.
+    let (s, v) = bob
+        .req(srv, reqwest::Method::GET, "/v1/groups?state=invited", None)
+        .await;
+    assert_eq!(s, 200);
+    assert_eq!(v["groups"][0]["my"]["state"], "invited", "{v}");
+    assert!(
+        v["groups"][0].get("epoch").is_none(),
+        "invitees see a preview only"
+    );
+    let (s, v) = bob
+        .req(
+            srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/invitation"),
+            Some(json!({ "accept": true })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["group"]["my"]["state"], "keying");
+    let (s, _) = carol
+        .req(
+            srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/invitation"),
+            Some(json!({ "accept": false })),
+        )
+        .await;
+    assert_eq!(s, 200);
+    // Keying members get no history.
+    let (s, v) = bob
+        .req(
+            srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 409, "{v}");
+    assert_eq!(v["error"], "key_activation_pending");
+    assert_eq!(alice.process_pending(srv, &gid).await, 201);
+    bob.accept_welcomes(srv).await;
+    assert_eq!(bob.group(srv, &gid).await["my"]["state"], "active");
+    (alice, bob, carol, gid)
+}
+
+#[tokio::test]
+async fn create_invite_activate_chat_round_trip() {
+    let srv = serve().await;
+    let (mut alice, mut bob, carol, gid) = three(&srv).await;
+    let (s, v) = alice.send(&srv, &gid, "hello bob").await;
+    assert_eq!(s, 201, "{v}");
+    let (s, _) = bob.send(&srv, &gid, "hi alice").await;
+    assert_eq!(s, 201);
+    assert_eq!(bob.sync(&srv, &gid).await, 200);
+    assert_eq!(alice.sync(&srv, &gid).await, 200);
+    assert_eq!(bob.received, vec!["hello bob"]);
+    assert_eq!(alice.received, vec!["hi alice"]);
+    // The member list is right for everyone; Carol has no relationship left.
+    let (_, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/members"),
+            None,
+        )
+        .await;
+    let states: Vec<(String, String)> = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| {
+            (
+                m["address"].as_str().unwrap().to_string(),
+                m["state"].as_str().unwrap().to_string(),
+            )
+        })
+        .collect();
+    assert_eq!(states.len(), 2, "{v}");
+    let (s, _) = carol
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404);
+    // Unread counts follow the read cursor.
+    let g = bob.group(&srv, &gid).await;
+    assert_eq!(g["my"]["unread"], 1, "{g}");
+    let last = g["last_seq"].as_i64().unwrap();
+    bob.req(
+        &srv,
+        reqwest::Method::POST,
+        &format!("/v1/groups/{gid}/read"),
+        Some(json!({ "seq": last })),
+    )
+    .await;
+    assert_eq!(bob.group(&srv, &gid).await["my"]["unread"], 0);
+    // The server stored ciphertext only.
+    let stored: Vec<Vec<u8>> = srv
+        .state
+        .store
+        .group_read(
+            move |c: &rusqlite::Connection| -> groups::GResult<Vec<Vec<u8>>> {
+                let mut st =
+                    c.prepare("SELECT body_blob FROM group_messages WHERE body_blob IS NOT NULL")?;
+                let rows = st.query_map([], |r| r.get(0))?;
+                Ok(rows.collect::<Result<_, _>>()?)
+            },
+        )
+        .await
+        .unwrap();
+    assert!(stored
+        .iter()
+        .all(|b| !String::from_utf8_lossy(b).contains("hello bob")));
+}
+
+#[tokio::test]
+async fn authorization_matrix() {
+    let srv = serve().await;
+    let (mut alice, mut bob, carol, gid) = three(&srv).await;
+    let rev = alice.group(&srv, &gid).await["revision"].clone();
+    // Agents and API keys never change settings (human_required).
+    let (s, v) = srv
+        .call(
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            &alice.api_key,
+            Some(&alice.address),
+            None,
+            Some(json!({ "expected_revision": rev, "post_policy": "admins" })),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (403, Some("human_required")),
+        "{v}"
+    );
+    // A member is not an admin.
+    let (s, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            Some(json!({ "expected_revision": rev, "post_policy": "admins" })),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("not_admin")));
+    // Stale revision.
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            Some(json!({ "expected_revision": 1, "post_policy": "admins" })),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("revision_conflict")));
+    // Announcement mode.
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            Some(json!({ "expected_revision": rev, "post_policy": "admins" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = bob.send(&srv, &gid, "may I?").await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("posting_restricted")));
+    // Non-members see nothing, even with the id.
+    let (s, _) = carol
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    let (s, v) = carol
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/join"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("invite_required")));
+    // Members cannot invite unless allowed; promote Bob, then he can.
+    let (s, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/members"),
+            Some(json!({ "request_key": "i1", "invite": [carol.address] })),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("not_admin")));
+    let r = alice.member_revision(&srv, &gid, &bob.address).await;
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}/members/{}", enc(&bob.address)),
+            Some(json!({ "expected_revision": r, "role": "admin" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/members"),
+            Some(json!({ "request_key": "i2", "invite": [carol.address] })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["results"][0]["status"], "invited");
+    // Admins cannot demote the owner or other admins; only the owner demotes (D-07).
+    let (s, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}/members/{}", enc(&alice.address)),
+            Some(json!({ "expected_revision": 1, "role": "member" })),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("owner_only")));
+    // Ownership transfer to the admin, under a revision check.
+    let rev = alice.group(&srv, &gid).await["revision"].clone();
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/transfer"),
+            Some(json!({ "to": bob.address, "expected_revision": rev })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(bob.group(&srv, &gid).await["my"]["role"], "owner");
+    // A non-owner cannot delete; the owner can, and everything stops.
+    let (s, _) = alice
+        .req(
+            &srv,
+            reqwest::Method::DELETE,
+            &format!("/v1/groups/{gid}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    let (s, _) = bob
+        .req(
+            &srv,
+            reqwest::Method::DELETE,
+            &format!("/v1/groups/{gid}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 200);
+    let (s, v) = alice.send(&srv, &gid, "anyone?").await;
+    assert_eq!((s, v["error"].as_str()), (410, Some("group_deleted")));
+    let _ = &mut alice;
+    let _ = &mut bob;
+}
+
+#[tokio::test]
+async fn removal_stops_access_and_requires_a_key_update() {
+    let srv = serve().await;
+    let (mut alice, mut bob, _carol, gid) = three(&srv).await;
+    alice.send(&srv, &gid, "before").await;
+    bob.sync(&srv, &gid).await;
+    let (_, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/members"),
+            None,
+        )
+        .await;
+    let r = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["address"] == bob.address.as_str())
+        .unwrap()["revision"]
+        .clone();
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}/members/{}", enc(&bob.address)),
+            Some(json!({ "expected_revision": r, "state": "removed" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    // Server access stops at once.
+    let (s, _) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    // Application sends pause until the removal is committed.
+    let (s, v) = alice.send(&srv, &gid, "too early").await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (409, Some("key_activation_pending"))
+    );
+    assert_eq!(alice.process_pending(&srv, &gid).await, 201);
+    let (s, v) = alice.send(&srv, &gid, "after").await;
+    assert_eq!(s, 201, "{v}");
+    // Even holding the ciphertext, Bob's device cannot read the new epoch.
+    let ct: Vec<u8> = {
+        let gid2 = gid.clone();
+        srv.state
+            .store
+            .group_read(move |c: &rusqlite::Connection| -> groups::GResult<Vec<u8>> {
+                Ok(c.query_row("SELECT body_blob FROM group_messages WHERE group_id = ?1 ORDER BY seq DESC LIMIT 1", [gid2], |r| r.get(0))?)
+            })
+            .await
+            .unwrap()
+    };
+    assert!(bob.device.process_incoming(&gid, &ct).is_err());
+    // A removed member's device can no longer post either.
+    let (s, _) = bob.send(&srv, &gid, "still here?").await;
+    assert_eq!(s, 403);
+    assert!(bob.received.iter().all(|m| m != "after"));
+}
+
+#[tokio::test]
+async fn commit_races_replays_and_epochs() {
+    let srv = serve().await;
+    let (mut alice, mut bob, _carol, gid) = three(&srv).await;
+    // Both build a self-update on the same epoch; the first wins.
+    let crypto = alice
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/crypto"),
+            None,
+        )
+        .await
+        .1;
+    let a = alice.device.self_update(&gid).unwrap();
+    let b = bob.device.self_update(&gid).unwrap();
+    let (s1, _) = alice.post_commit(&srv, &gid, &crypto, &a, "ra").await;
+    let (s2, v2) = bob.post_commit(&srv, &gid, &crypto, &b, "rb").await;
+    assert_eq!(s1, 201);
+    assert_eq!((s2, v2["error"].as_str()), (409, Some("revision_conflict")));
+    assert!(v2["current_epoch"].is_number());
+    alice.device.confirm_commit(&gid).unwrap();
+    bob.device.discard_commit(&gid).unwrap();
+    assert_eq!(bob.sync(&srv, &gid).await, 200);
+    // A message encrypted for the old epoch is refused with the current epoch.
+    let cmid = "stale-1";
+    let old = bob.device.encrypt_message(&gid, cmid, b"x", &[]).unwrap();
+    // Alice moves the epoch again before Bob posts.
+    assert_eq!(alice.process_pending(&srv, &gid).await, 201);
+    let (s, v) = bob
+        .post_raw(
+            &srv,
+            &gid,
+            cmid,
+            old.epoch as i64,
+            &old.ciphertext,
+            &old.envelope_signature,
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (409, Some("epoch_conflict")),
+        "{v}"
+    );
+    bob.sync(&srv, &gid).await;
+    let fresh = bob.device.encrypt_message(&gid, cmid, b"x", &[]).unwrap();
+    let (s, v) = bob
+        .post_raw(
+            &srv,
+            &gid,
+            cmid,
+            fresh.epoch as i64,
+            &fresh.ciphertext,
+            &fresh.envelope_signature,
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    // Replay of the same request returns the original; a different body under the same id is refused.
+    let (s2, v2) = bob
+        .post_raw(
+            &srv,
+            &gid,
+            cmid,
+            fresh.epoch as i64,
+            &fresh.ciphertext,
+            &fresh.envelope_signature,
+        )
+        .await;
+    assert_eq!((s2, &v2["seq"]), (201, &v["seq"]));
+    let other = bob.device.encrypt_message(&gid, cmid, b"y", &[]).unwrap();
+    let (s3, v3) = bob
+        .req(&srv, reqwest::Method::POST, &format!("/v1/groups/{gid}/messages"), Some(json!({
+            "request_key": "another-key", "client_message_id": cmid, "epoch": other.epoch,
+            "enc_scheme": pigeonpost_groupcrypto::ENC_SCHEME, "ciphertext": b64_encode(&other.ciphertext),
+            "envelope_signature": b64_encode(&other.envelope_signature),
+        })))
+        .await;
+    assert_eq!(
+        (s3, v3["error"].as_str()),
+        (409, Some("idempotency_conflict"))
+    );
+    // A ciphertext signed by one device cannot be posted as another mailbox.
+    let forged = alice
+        .device
+        .encrypt_message(&gid, "forge-1", b"z", &[])
+        .unwrap();
+    let (s4, _) = bob
+        .post_raw(
+            &srv,
+            &gid,
+            "forge-1",
+            forged.epoch as i64,
+            &forged.ciphertext,
+            &forged.envelope_signature,
+        )
+        .await;
+    assert_eq!(s4, 400);
+}
+
+#[tokio::test]
+async fn links_public_join_and_second_device() {
+    let srv = serve().await;
+    let mut alice = member(&srv, &format!("al{}", rand_hex(3))).await;
+    let mut dave = member(&srv, &format!("da{}", rand_hex(3))).await;
+    let gid = alice
+        .create(&srv, "open", json!({ "join_policy": "public" }))
+        .await;
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/link"),
+            Some(json!({ "enabled": true })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let token = v["link_token"].as_str().unwrap().to_string();
+    // Unlisted: no link, no join.
+    let (s, v) = dave
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/join"),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("invalid_link")));
+    let (s, v) = dave
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            "/v1/groups/resolve",
+            Some(json!({ "group_id": gid, "link_token": token })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["can_join"], true);
+    // Reset: the old token stops working.
+    let (_, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/link"),
+            Some(json!({ "enabled": true })),
+        )
+        .await;
+    let fresh = v["link_token"].as_str().unwrap().to_string();
+    let (s, v) = dave
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/join"),
+            Some(json!({ "link_token": token })),
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (403, Some("invalid_link")));
+    let (s, v) = dave
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/join"),
+            Some(json!({ "link_token": fresh })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(alice.process_pending(&srv, &gid).await, 201);
+    dave.accept_welcomes(&srv).await;
+    alice.send(&srv, &gid, "welcome dave").await;
+    dave.sync(&srv, &gid).await;
+    assert_eq!(dave.received, vec!["welcome dave"]);
+    // A second device for Dave: an API key may not add it, a person may; it gets no history.
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            "/v1/mls/devices",
+            &dave.api_key,
+            Some(&dave.address),
+            None,
+            Some(json!({ "device_id": "dev-2", "signature_key": b64_encode(&[7u8; 32]) })),
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (403, Some("human_required")),
+        "{v}"
+    );
+    let second = enroll(&srv, &dave.token, &dave.address, "dave-phone").await;
+    let mut dave2 = Member {
+        token: dave.token.clone(),
+        api_key: dave.api_key.clone(),
+        address: dave.address.clone(),
+        device: second,
+        device_id: "dave-phone".into(),
+        cursor: Default::default(),
+        received: Vec::new(),
+    };
+    // Co-members see the device change as a notice.
+    let (_, page) = alice
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?after_seq=0"),
+            None,
+        )
+        .await;
+    assert!(
+        page["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|i| i["kind"] == "device_added"),
+        "{page}"
+    );
+    assert_eq!(alice.process_pending(&srv, &gid).await, 201);
+    dave2.accept_welcomes(&srv).await;
+    dave2.sync(&srv, &gid).await;
+    assert!(dave2.received.is_empty(), "a new device gets no history");
+    alice.send(&srv, &gid, "both devices").await;
+    dave.sync(&srv, &gid).await;
+    dave2.sync(&srv, &gid).await;
+    assert_eq!(dave2.received, vec!["both devices"]);
+}
+
+#[tokio::test]
+async fn disappearing_messages_expire_for_groups_and_threads() {
+    let srv = serve().await;
+    let (mut alice, mut bob, _carol, gid) = three(&srv).await;
+    let rev = alice.group(&srv, &gid).await["revision"].clone();
+    let (s, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}"),
+            Some(json!({ "expected_revision": rev, "ephemeral_secs": 300 })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (s, v) = alice.send(&srv, &gid, "gone soon").await;
+    assert_eq!(s, 201);
+    assert!(v["expires_at"].as_i64().unwrap() > now_unix() as i64);
+    // Run the worker as if six minutes passed.
+    let later = now_unix() + 360;
+    let swept: groups::GResult<groups::Sweep> = srv
+        .state
+        .store
+        .group_tx(move |tx| groups::sweep_in(tx, later, 1000))
+        .await;
+    assert_eq!(swept.unwrap().expired_messages, 1);
+    bob.sync(&srv, &gid).await;
+    assert!(bob.received.is_empty(), "expired content is never served");
+    // Direct thread timer: set by one side, applies to both, and expires.
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            "/v1/send",
+            &alice.api_key,
+            Some(&alice.address),
+            None,
+            Some(json!({ "to": bob.address, "body": "dm one", "from": alice.address })),
+        )
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let (_, threads) = srv
+        .call(
+            reqwest::Method::GET,
+            &format!("/v1/threads?identity={}", enc(&bob.address)),
+            &bob.api_key,
+            None,
+            None,
+            None,
+        )
+        .await;
+    let tid = threads["threads"][0]["thread_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let (s, v) = srv
+        .call(
+            reqwest::Method::PATCH,
+            &format!("/v1/threads/{tid}"),
+            &bob.api_key,
+            None,
+            None,
+            Some(json!({ "ephemeral_secs": 3600, "identity": bob.address })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    let (_, threads) = srv
+        .call(
+            reqwest::Method::GET,
+            &format!("/v1/threads?identity={}", enc(&alice.address)),
+            &alice.api_key,
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert_eq!(threads["threads"][0]["ephemeral_secs"], 3600, "{threads}");
+    srv.call(
+        reqwest::Method::POST,
+        "/v1/send",
+        &alice.api_key,
+        Some(&alice.address),
+        None,
+        Some(json!({ "to": bob.address, "body": "dm two", "from": alice.address })),
+    )
+    .await;
+    let (_, inbox) = srv
+        .call(
+            reqwest::Method::GET,
+            &format!("/v1/inbox?identity={}", enc(&bob.address)),
+            &bob.api_key,
+            None,
+            None,
+            None,
+        )
+        .await;
+    let msgs = inbox["messages"].as_array().unwrap();
+    assert!(
+        msgs.iter()
+            .any(|m| m["body"] == "dm two" && m["expires_at"].is_number()),
+        "{inbox}"
+    );
+    assert!(
+        msgs.iter()
+            .any(|m| m["body"] == "dm one" && m["expires_at"].is_null()),
+        "only new messages get the timer"
+    );
+    let done = srv
+        .state
+        .store
+        .expire_direct_messages(now_unix() + 7200, 1000)
+        .await
+        .unwrap();
+    assert_eq!(
+        done.expired.iter().map(|e| e.3.len()).sum::<usize>(),
+        2,
+        "both copies of dm two"
+    );
+    let (_, inbox) = srv
+        .call(
+            reqwest::Method::GET,
+            &format!("/v1/inbox?identity={}", enc(&bob.address)),
+            &bob.api_key,
+            None,
+            None,
+            None,
+        )
+        .await;
+    assert!(!inbox["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|m| m["body"] == "dm two"));
+    let _ = &mut alice;
+}
+
+#[tokio::test]
+async fn quota_and_attachments_are_bound_to_members() {
+    let srv = serve().await;
+    let (mut alice, mut bob, carol, gid) = three(&srv).await;
+    let sealed = pigeonpost_groupcrypto::seal_attachment(b"secret file").unwrap();
+    let resp = srv
+        .http
+        .post(format!("{}/v1/groups/{gid}/attachments", srv.public))
+        .bearer_auth(&alice.token)
+        .header("x-pigeonpost-identity", &alice.address)
+        .header("x-pigeonpost-device", &alice.device_id)
+        .body(sealed.sealed.clone())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status().as_u16(), 201);
+    let att: Value = resp.json().await.unwrap();
+    let att_id = att["id"].as_str().unwrap().to_string();
+    // Unclaimed: invisible to Bob.
+    let (s, _) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/attachments/{att_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 404);
+    let cmid = "with-file";
+    let out = alice
+        .device
+        .encrypt_message(
+            &gid,
+            cmid,
+            b"see file",
+            std::slice::from_ref(&sealed.reference),
+        )
+        .unwrap();
+    let (s, v) = alice
+        .req(&srv, reqwest::Method::POST, &format!("/v1/groups/{gid}/messages"), Some(json!({
+            "request_key": "rk-file", "client_message_id": cmid, "epoch": out.epoch,
+            "enc_scheme": pigeonpost_groupcrypto::ENC_SCHEME, "ciphertext": b64_encode(&out.ciphertext),
+            "envelope_signature": b64_encode(&out.envelope_signature), "attachments": [att_id],
+        })))
+        .await;
+    assert_eq!(s, 201, "{v}");
+    let bytes = srv
+        .http
+        .get(format!(
+            "{}/v1/groups/{gid}/attachments/{att_id}",
+            srv.public
+        ))
+        .bearer_auth(&bob.token)
+        .header("x-pigeonpost-identity", &bob.address)
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    assert_eq!(
+        pigeonpost_groupcrypto::open_attachment(&bytes, &sealed.reference).unwrap(),
+        b"secret file"
+    );
+    // A non-member cannot fetch it even with the id.
+    let (s, _) = carol
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/attachments/{att_id}"),
+            None,
+        )
+        .await;
+    assert_eq!(s, 403);
+    // Quota: fill the group past 100 MB and the next post is refused.
+    let g2 = gid.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> {
+            tx.execute(
+                "INSERT INTO group_messages (group_id, seq, id, client_message_id, sender, sender_device, kind, bytes, body_hash, created_at, epoch, enc_scheme)
+                 VALUES (?1, 100000, 'gm_fill', 'fill', 'x', 'x', 'text', 104857600, 'x', 0, 0, 'x')",
+                [g2],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (s, v) = bob.send(&srv, &gid, "over quota").await;
+    assert_eq!((s, v["error"].as_str()), (409, Some("quota_exceeded")));
+    let _ = &mut alice;
+}
+
+#[tokio::test]
+async fn events_recheck_membership_and_preflight_allows_the_device_header() {
+    let srv = serve().await;
+    let (mut alice, bob, _carol, gid) = three(&srv).await;
+    // CORS: a browser on the inbox may send x-pigeonpost-device to device routes.
+    let resp = srv
+        .http
+        .request(
+            reqwest::Method::OPTIONS,
+            format!("{}/v1/groups/{gid}/messages", srv.public),
+        )
+        .header("origin", "https://inbox.pigeonpost.dev")
+        .header("access-control-request-method", "POST")
+        .header(
+            "access-control-request-headers",
+            "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-device",
+        )
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success());
+    let allowed = resp.headers()["access-control-allow-headers"]
+        .to_str()
+        .unwrap()
+        .to_string();
+    assert!(
+        allowed.split(", ").any(|h| h == "x-pigeonpost-device"),
+        "{allowed}"
+    );
+    // Remove Bob, then post: Bob's queued group.message must not be delivered.
+    let (_, v) = alice
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/members"),
+            None,
+        )
+        .await;
+    let r = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|m| m["address"] == bob.address.as_str())
+        .unwrap()["revision"]
+        .clone();
+    alice
+        .req(
+            &srv,
+            reqwest::Method::PATCH,
+            &format!("/v1/groups/{gid}/members/{}", enc(&bob.address)),
+            Some(json!({ "expected_revision": r, "state": "removed" })),
+        )
+        .await;
+    alice.process_pending(&srv, &gid).await;
+    alice.send(&srv, &gid, "secret plans").await;
+    let mut stream = srv
+        .http
+        .get(format!(
+            "{}/v1/events?typed=1&last_event_id=0.0",
+            srv.public
+        ))
+        .bearer_auth(&bob.token)
+        .send()
+        .await
+        .unwrap();
+    let mut seen = String::new();
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_millis(800);
+    while let Ok(Ok(Some(chunk))) = tokio::time::timeout_at(deadline, stream.chunk()).await {
+        seen.push_str(&String::from_utf8_lossy(&chunk));
+    }
+    assert!(
+        seen.contains("group.member"),
+        "lifecycle notices about himself still arrive: {seen}"
+    );
+    let after_removal = seen.split("member_removed").nth(1).unwrap_or("");
+    assert!(!after_removal.contains("event: group.message"), "{seen}");
+}
+
+#[tokio::test]
+async fn group_call_admission_is_for_active_members_only() {
+    let srv = serve().await;
+    let (alice, bob, carol, gid) = three(&srv).await;
+    let (s, v) = srv
+        .call(
+            reqwest::Method::POST,
+            "/internal/v1/group-call-admission",
+            CALLS,
+            None,
+            None,
+            Some(json!({ "group_id": gid, "from": { "mailbox": alice.address }, "kind": "video" })),
+        )
+        .await;
+    assert_eq!(s, 200, "{v}");
+    assert_eq!(v["allowed"], true);
+    let members: Vec<&str> = v["members"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|m| m["address"].as_str().unwrap())
+        .collect();
+    assert_eq!(members, vec![bob.address.as_str()]);
+    let (_, v) = srv
+        .call(reqwest::Method::POST, "/internal/v1/group-call-admission", CALLS, None, None, Some(json!({ "group_id": gid, "from": { "mailbox": carol.address }, "kind": "audio", "join": true })))
+        .await;
+    assert_eq!(v["allowed"], false);
+    // Only the calls service may ask.
+    let (s, _) = srv
+        .call(
+            reqwest::Method::POST,
+            "/internal/v1/group-call-admission",
+            OPS,
+            None,
+            None,
+            Some(json!({ "group_id": gid, "from": { "mailbox": alice.address }, "kind": "audio" })),
+        )
+        .await;
+    assert_eq!(s, 403);
+}
+
+#[tokio::test]
+async fn groups_are_invisible_without_the_flag() {
+    let srv = serve().await;
+    let (api_key, key) = new_api_key();
+    srv.state
+        .store
+        .create_account("acct_noflag".into(), key, now_unix())
+        .await
+        .unwrap();
+    let v = do_create_identity(&srv.state, Some("acct_noflag".into()), None, None)
+        .await
+        .unwrap();
+    let address = v["address"].as_str().unwrap();
+    let (s, v) = srv
+        .call(
+            reqwest::Method::GET,
+            "/v1/groups",
+            &api_key,
+            Some(address),
+            None,
+            None,
+        )
+        .await;
+    assert_eq!((s, v["error"].as_str()), (404, Some("feature_disabled")));
+}
+
+#[tokio::test]
+async fn hosted_mcp_tools_carry_metadata_and_ciphertext_only() {
+    let srv = serve().await;
+    let (mut alice, bob, _carol, gid) = three(&srv).await;
+    alice.send(&srv, &gid, "for agents").await;
+    let principal = principal_for_token(&srv.state, Some(&bob.api_key))
+        .await
+        .unwrap();
+    let listed = mcp::call_tool_as(
+        &srv.state,
+        principal,
+        json!({ "name": "list_pigeonpost_groups", "arguments": { "identity": bob.address } }),
+    )
+    .await
+    .unwrap();
+    let text = listed["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(text.contains(&gid), "{listed}");
+    assert!(!text.contains("for agents"));
+    let principal = principal_for_token(&srv.state, Some(&bob.api_key))
+        .await
+        .unwrap();
+    let read = mcp::call_tool_as(
+        &srv.state,
+        principal,
+        json!({ "name": "read_pigeonpost_group", "arguments": { "identity": bob.address, "group_id": gid } }),
+    )
+    .await
+    .unwrap();
+    let text = read["content"][0]["text"]
+        .as_str()
+        .unwrap_or_default()
+        .to_string();
+    assert!(
+        text.contains("ciphertext") && !text.contains("for agents"),
+        "{read}"
+    );
+    let principal = principal_for_token(&srv.state, Some(&bob.api_key))
+        .await
+        .unwrap();
+    let sent = mcp::call_tool_as(
+        &srv.state,
+        principal,
+        json!({ "name": "send_pigeonpost_group_message", "arguments": { "identity": bob.address, "group_id": gid } }),
+    )
+    .await
+    .unwrap();
+    assert_eq!(sent["isError"], true, "{sent}");
+    assert!(sent.to_string().contains("encryption_required"));
+}

@@ -26,6 +26,7 @@ import https from "node:https";
 import crypto from "node:crypto";
 import { createPostboxInternal } from "./postbox-internal.js"; // Phase 1b
 import { readFileSync } from "node:fs";
+import { createGroupCalls } from "./group-calls.js"; // Phase 3a
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -187,6 +188,10 @@ export function createCallsService(cfgIn, deps = {}) {
   function participantName(p) {
     return p.mailbox ? p.mailbox.address : "guest:" + p.name;
   }
+  const groupCalls = createGroupCalls({ // Phase 3a
+    cfg, internal, HttpError, KINDS, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, // Phase 3a
+    addParticipant, reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted, participantName, // Phase 3a
+  }); // Phase 3a
   // One lifecycle event for the room, with a per-room increasing sequence number.
   function reportCall(room, event, extra = {}) {
     if (!room.caller) return;
@@ -194,7 +199,9 @@ export function createCallsService(cfgIn, deps = {}) {
     internal.report({
       room_id: room.id, seq: room.seq, kind: room.kind, event,
       from: room.caller, callee: (room.targets && room.targets[0]) || room.dialed || undefined,
-      to: room.targets || [], at: Math.floor(now() / 1000), ...extra,
+      to: room.targets || [], at: Math.floor(now() / 1000),
+      ...(room.group_id ? { group_id: room.group_id } : {}), // Phase 3a
+      ...extra,
     });
   }
 
@@ -528,6 +535,7 @@ export function createCallsService(cfgIn, deps = {}) {
   // A ring: a member calls one mailbox from one of theirs. The room exists from the first ring, so
   // its meeting link can be shared before anybody answers.
   async function startCall(auth, body) {
+    if (body.group_id !== undefined) return groupCalls.start(auth, body); // Phase 3a
     if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
     const kind = KINDS.has(body.kind) ? body.kind : null;
@@ -600,6 +608,7 @@ export function createCallsService(cfgIn, deps = {}) {
   }
 
   function accept(auth, room, body) {
+    if (room.group_id) return groupCalls.accept(auth, room, body); // Phase 3a
     if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
     if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
@@ -617,6 +626,7 @@ export function createCallsService(cfgIn, deps = {}) {
   }
 
   function decline(auth, room, body) {
+    if (room.group_id) return groupCalls.decline(auth, room, body); // Phase 3a
     const session = liveSession(auth, body.session);
     if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
     const reason = body.reason === "busy" ? "busy" : "declined";
@@ -657,7 +667,7 @@ export function createCallsService(cfgIn, deps = {}) {
       reportCall(room, "cancelled", room.ring && room.ring.decision === "quiet" ? { to: [] } : {}); // Phase 1b
       stopRinging(room, "cancelled");
       endRoom(room, "cancelled");
-    } else if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) {
+    } else if (room.state !== "ringing" && room.participants.size < (room.group_id ? 1 : 2) && !room.knocks.size) { // Phase 3a: a group call lives while anyone is in it
       endRoom(room, "ended");
     }
   }
@@ -845,10 +855,11 @@ export function createCallsService(cfgIn, deps = {}) {
   // A page reload or a dropped event stream gives the browser a new session. Media between browsers
   // does not depend on this service, so a participant stays in the room for a grace period and the
   // same account may take its place back.
-  function resume(auth, room, body) {
+  async function resume(auth, room, body) {
     const session = liveSession(auth, body.session);
     const p = room.participants.get(String(body.participant || ""));
     if (!p || p.account !== auth.account) throw new HttpError(403, "not_in_room");
+    await groupCalls.recheck(room, p); // Phase 3a: still a member?
     p.sessionId = session.id;
     clearTimeout(p.grace);
     p.grace = null;
@@ -939,6 +950,9 @@ export function createCallsService(cfgIn, deps = {}) {
       if (req.method === "GET" && path === "/v1/events") return openStream(req, res, auth);
       if (req.method === "GET" && path === "/v1/turn") return json(res, 200, turnCredentials(auth, url.searchParams.get("session")));
       if (req.method === "POST" && path === "/v1/calls") return json(res, 200, await startCall(auth, await readJson(req)));
+      const group = /^\/v1\/groups\/([A-Za-z0-9_]{1,80})\/(call|join)$/.exec(path); // Phase 3a
+      if (req.method === "GET" && group && group[2] === "call") return json(res, 200, await groupCalls.status(auth, group[1], url.searchParams.get("from"))); // Phase 3a
+      if (req.method === "POST" && group && group[2] === "join") return json(res, 200, await groupCalls.join(auth, group[1], await readJson(req))); // Phase 3a
       if (req.method === "POST" && path === "/v1/knocks") return json(res, 200, knock(req, auth, await readJson(req)));
       if (req.method === "POST" && path === "/v1/knocks/withdraw") return json(res, 200, withdrawKnock(auth, await readJson(req)));
       const knockAnswer = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/knocks\/([A-Za-z0-9_-]{10,64})$/.exec(path);
@@ -951,7 +965,7 @@ export function createCallsService(cfgIn, deps = {}) {
         const body = await readJson(req);
         const room = roomFor(m[1]);
         const action = { accept, decline, leave, signal, resume, report, sfu: sfuTicket, e2ee: announceKey }[m[2]];
-        return json(res, 200, action(auth, room, body));
+        return json(res, 200, await action(auth, room, body)); // Phase 3a: group accept/resume recheck membership
       }
       throw new HttpError(404, "not_found");
     } catch (err) {
@@ -959,7 +973,7 @@ export function createCallsService(cfgIn, deps = {}) {
         console.error("calls: unexpected error", err && err.name);
         err = new HttpError(500, "internal");
       }
-      if (!res.headersSent) json(res, err.status, { error: err.code });
+      if (!res.headersSent) json(res, err.status, { error: err.code, ...(err.extra || {}) }); // Phase 3a: call_in_progress carries the room
       else res.end();
     }
   }

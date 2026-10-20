@@ -184,6 +184,11 @@ impl Oidc {
     }
 
     async fn key_for_kid(&self, kid: &str) -> Result<DecodingKey, OidcError> {
+        // Tests sign member tokens with the fixed key in `tests` below (see `test_member_token`).
+        #[cfg(test)]
+        if kid == "test-kid" {
+            return DecodingKey::from_rsa_pem(tests::PUB.as_bytes()).map_err(|_| OidcError::Key);
+        }
         if let Some((n, e)) = self.keys.read().await.get(kid).cloned() {
             return DecodingKey::from_rsa_components(&n, &e).map_err(|_| OidcError::Key);
         }
@@ -266,13 +271,33 @@ impl Claims {
     }
 }
 
+/// A member (interactive person) token for `sub`, valid for an hour, signed with the test key that
+/// [`Oidc::validate`] accepts under test.
+#[cfg(test)]
+pub(crate) fn test_member_token(issuer: &str, sub: &str) -> String {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    let mut h = Header::new(Algorithm::RS256);
+    h.kid = Some("test-kid".into());
+    let now = crate::now_unix();
+    let claims = serde_json::json!({
+        "sub": sub, "iss": issuer, "exp": now + 3600, "iat": now, "auth_time": now,
+        "azp": "pigeonpost-web", "typ": "Bearer",
+    });
+    encode(
+        &h,
+        &claims,
+        &EncodingKey::from_rsa_pem(tests::PRIV.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use jsonwebtoken::{encode, EncodingKey, Header};
     use std::time::{SystemTime, UNIX_EPOCH};
 
-    const PRIV: &str = "-----BEGIN PRIVATE KEY-----
+    pub(crate) const PRIV: &str = "-----BEGIN PRIVATE KEY-----
 MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDak6176XTrm5oT
 Hfo6ke+fUgrQhhoaU0YxUy8sf23hhFE2QYoV1/Vfbs0dqFBz9Qmqq0t/Vsh8VqIX
 V4G41qp5ELhGOeFan8SNXPXYBDwUudMHaJSHxtcKJCAEY8zMDmoyO2uuamwS+gzm
@@ -302,7 +327,7 @@ XRAUj4P7Zv9S/s0JuVDaSovG50QIpxt8Sp/aXPB0Kf9AlSe78b2haunlalnMpxDh
 -----END PRIVATE KEY-----
 ";
 
-    const PUB: &str = "-----BEGIN PUBLIC KEY-----
+    pub(crate) const PUB: &str = "-----BEGIN PUBLIC KEY-----
 MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2pOte+l065uaEx36OpHv
 n1IK0IYaGlNGMVMvLH9t4YRRNkGKFdf1X27NHahQc/UJqqtLf1bIfFaiF1eBuNaq
 eRC4RjnhWp/EjVz12AQ8FLnTB2iUh8bXCiQgBGPMzA5qMjtrrmpsEvoM5kPe+7aW

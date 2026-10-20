@@ -7,6 +7,7 @@
 mod agentd_cmd;
 mod directory_cmd;
 mod executor;
+mod group_cmd;
 mod handle_cmd;
 mod install_cmd;
 mod loft_cmd;
@@ -253,6 +254,9 @@ enum Command {
         #[command(subcommand)]
         action: PostboxAction,
     },
+
+    /// End-to-end encrypted groups from a hosted mailbox: create, invite, join, send, read.
+    Group(group_cmd::GroupArgs),
 }
 
 #[derive(Subcommand)]
@@ -1393,6 +1397,11 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         _ => {}
     }
 
+    // Groups act as a hosted mailbox too, so they never mint a local identity either.
+    if let Command::Group(args) = &cli.command {
+        return group_cmd::run(&home, args, cli.json).await;
+    }
+
     // Hosted mailboxes are independent of the local agent key, so — like the read-only commands
     // above — they must not mint an identity in someone's home as a side effect.
     if let Command::Postbox { action } = &cli.command {
@@ -2140,6 +2149,7 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
         Command::Registry { .. }
         | Command::Install { .. }
         | Command::Postbox { .. }
+        | Command::Group(_)
         | Command::Login { .. }
         | Command::Whoami
         | Command::Logout => {

@@ -62,6 +62,14 @@ pub(crate) enum Action {
     CallEvents,
     /// `/internal/v1/avatar-reports`, `/internal/v1/avatars/{id}/remove`.
     ModerateAvatars,
+    /// Take part in a group as one's own mailbox: read, post, leave, own keys (SDS §4.4). Agents
+    /// may; a connector acting for the member may not reach E2EE content at all.
+    GroupParticipate,
+    /// Change a group's settings, roles or membership, accept a private invitation or enrol a
+    /// further device: a person only (`human_required`, SDS §4.4 "Agents in groups").
+    GroupManage,
+    /// `POST /internal/v1/group-call-admission`.
+    GroupCallAdmission,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -100,6 +108,8 @@ enum Requirement {
     Service,
     /// Any principal except a connector acting for the member.
     NotConnector,
+    /// A person signed in interactively (no step-up).
+    Human,
     /// Anyone, with or without a credential.
     Anyone,
 }
@@ -117,9 +127,12 @@ impl Action {
             Action::ManageOwnMailbox | Action::ReportAbuse => Requirement::AnyPrincipal,
             Action::RaiseTrust => Requirement::NotConnector,
             Action::ViewAvatar => Requirement::Anyone,
-            Action::CallAdmission | Action::CallEvents | Action::ModerateAvatars => {
-                Requirement::Service
-            }
+            Action::CallAdmission
+            | Action::CallEvents
+            | Action::ModerateAvatars
+            | Action::GroupCallAdmission => Requirement::Service,
+            Action::GroupParticipate => Requirement::NotConnector,
+            Action::GroupManage => Requirement::Human,
         }
     }
 }
@@ -232,6 +245,9 @@ pub(crate) fn authorize_with(
             Principal::Account(_, AccountCredential::ApiKey | AccountCredential::Member(_)) => {}
             _ => return Err(DenyReason::CredentialNotAccepted),
         },
+        (Requirement::Human, Actor::Principal(p)) => {
+            require_human(p).map_err(DenyReason::Auth)?;
+        }
         (Requirement::HumanStepUp, Actor::Principal(p)) => {
             require_human(p).map_err(DenyReason::Auth)?;
             require_step_up(

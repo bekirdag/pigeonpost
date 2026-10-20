@@ -50,6 +50,8 @@ pub(crate) enum Endpoint {
     CallEvents,
     /// Avatar reports and takedowns.
     ModerateAvatars,
+    /// `POST /internal/v1/group-call-admission` (Phase 3a).
+    GroupCallAdmission,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -63,6 +65,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::Health,
             Endpoint::CallAdmission,
             Endpoint::CallEvents,
+            Endpoint::GroupCallAdmission,
         ],
     ),
     (
@@ -246,6 +249,10 @@ pub(crate) fn router(state: AppState) -> Router {
             post(crate::filtering::call_admission),
         )
         .route("/internal/v1/call-events", post(crate::calllog::ingest))
+        .route(
+            "/internal/v1/group-call-admission",
+            post(crate::mls::group_call_admission),
+        )
         .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
         .route(
             "/internal/v1/avatars/{id}/remove",
