@@ -626,6 +626,8 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
 
 /// `(method, path)` for every `.route("…", …)` in the body of `router_fn`.
 fn routes_in(source: &str, router_fn: &str) -> Vec<(String, String)> {
+    // A Windows checkout may have CRLF line endings.
+    let source = source.replace("\r\n", "\n");
     let start = source.find(router_fn).expect("router function");
     let body = &source[start..];
     let end = body.find("\n}\n").expect("end of router function");
