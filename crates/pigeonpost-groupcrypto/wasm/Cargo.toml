@@ -1,0 +1,21 @@
+[package]
+name = "pigeonpost-groupcrypto-wasm"
+description = "wasm-bindgen binding of pigeonpost-groupcrypto for the web inbox."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+pigeonpost-groupcrypto = { path = "..", features = ["js"] }
+wasm-bindgen = "=0.2.128"
+js-sys = "0.3"
+# RustCrypto's elliptic-curve stack still links getrandom 0.2; on wasm32 it must use the
+# browser's crypto.getRandomValues (the "js" backend). Only enabled for this binding.
+getrandom_02 = { package = "getrandom", version = "0.2", features = ["js"] }

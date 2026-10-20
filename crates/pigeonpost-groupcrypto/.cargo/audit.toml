@@ -1,0 +1,9 @@
+# cargo-audit configuration for the group crypto workspace.
+[advisories]
+# RUSTSEC-2026-0330 / RUSTSEC-2026-0331 (libcrux-kem 0.0.9, hybrid KEM decoding panics).
+# libcrux-kem appears in Cargo.lock only as an optional dependency of hpke-rs-libcrux, which
+# hpke-rs enables solely through its `libcrux` feature. openmls_rust_crypto 0.6.0 does not enable
+# it, so libcrux-kem is never compiled into any target (the CI job asserts this with
+# `cargo tree -i libcrux-kem`). The pin is hpke-rs-libcrux =0.7.0 -> libcrux-kem =0.0.9; it
+# lifts when OpenMLS moves to hpke-rs 0.8. Remove these entries then.
+ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331"]
