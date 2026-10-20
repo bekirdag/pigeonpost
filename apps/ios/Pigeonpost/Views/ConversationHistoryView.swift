@@ -32,6 +32,8 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
     private var loadingOlder = false
     private var dragStartOffset: CGFloat = 0
     private var userScrolling = false
+    /// Each card's frame in its row, upright (`history-row`), for the long-press preview.
+    private var cardFrames: [String: CGRect] = [:]
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -130,7 +132,9 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
             cell.contentConfiguration = UIHostingConfiguration {
                 VStack(spacing: 2) {
                     if showDay { HistoryDayBreak(label: Time.dayLabel(message.at)) }
-                    MessageBubble(message: message)
+                    MessageBubble(message: message, showsMenu: false) { [weak self] frame in
+                        self?.cardFrames[message.id] = frame
+                    }
                     #if DEBUG
                     if Fixtures.enabled && CommandLine.arguments.contains("-history-growth") && indexPath.row == 0 {
                         HistoryFixtureGrowth()
@@ -141,6 +145,7 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, wide ? 24 : 12)
                 .padding(.vertical, wide ? 8 : 5)
+                .coordinateSpace(name: "history-row")
                 .environment(account)
                 .environment(inbox)
                 .id(message.id)
@@ -150,6 +155,103 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
             }.margins(.all, 0)
         }
         return cell
+    }
+
+    // ---- the long-press menu ------------------------------------------------------------------
+    //
+    // Presented by the table rather than by SwiftUI's `.contextMenu` on the bubble. The table is
+    // turned upside down and each row turned back, and the system's preview of a row is a snapshot
+    // taken in the table's space: the message lifted mirrored, or collapsed to a hairline, and came
+    // back flipped (screen recording, 2026-10-20). Here the preview is the row's own snapshot turned
+    // back upright, cut to the card, and placed where the card is on screen.
+
+    func tableView(_ tableView: UITableView, contextMenuConfigurationForRowAt indexPath: IndexPath,
+                   point: CGPoint) -> UIContextMenuConfiguration? {
+        guard rows.indices.contains(indexPath.row) else { return nil }
+        let message = rows[indexPath.row]
+        return UIContextMenuConfiguration(identifier: message.id as NSString, previewProvider: nil) { [weak self] _ in
+            self?.menu(for: message)
+        }
+    }
+
+    func tableView(_ tableView: UITableView,
+                   previewForHighlightingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        preview(for: configuration)
+    }
+
+    func tableView(_ tableView: UITableView,
+                   previewForDismissingContextMenuWithConfiguration configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        preview(for: configuration)
+    }
+
+    private func preview(for configuration: UIContextMenuConfiguration) -> UITargetedPreview? {
+        guard let id = configuration.identifier as? String,
+              let row = rows.firstIndex(where: { $0.id == id }),
+              let cell = table.cellForRow(at: IndexPath(row: row, section: 0)),
+              let snapshot = cell.contentView.snapshotView(afterScreenUpdates: false) else { return nil }
+        let bounds = cell.contentView.bounds
+        let upright = UIView(frame: bounds)
+        snapshot.transform = CGAffineTransform(scaleX: 1, y: -1)
+        snapshot.frame = bounds
+        upright.addSubview(snapshot)
+        let parameters = UIPreviewParameters()
+        parameters.backgroundColor = .clear
+        let card = cardFrames[id].map { $0.intersection(bounds) } ?? bounds
+        if !card.isNull, card.width > 1, card.height > 1 {
+            parameters.visiblePath = UIBezierPath(roundedRect: card, cornerRadius: 14)
+        }
+        let center = table.convert(cell.center, to: view)
+        return UITargetedPreview(view: upright, parameters: parameters, target: UIPreviewTarget(container: view, center: center))
+    }
+
+    private func menu(for message: ThreadMessage) -> UIMenu {
+        let mine = message.kind == .outgoing
+        var actions: [UIMenuElement] = [
+            UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in Clipboard.copy(message.body) },
+        ]
+        // Only inbound. Reporting your own message would report yourself.
+        if !mine {
+            actions.append(UIAction(title: "Report spam", image: UIImage(systemName: "exclamationmark.bubble"),
+                                    attributes: .destructive) { [weak self] _ in self?.confirmReport(message) })
+        }
+        // Both directions: a sent copy takes up the same room in the mailbox as a received one.
+        actions.append(UIAction(title: "Delete", image: UIImage(systemName: "trash"),
+                                attributes: .destructive) { [weak self] _ in self?.confirmDelete(message) })
+        return UIMenu(children: actions)
+    }
+
+    private func confirmReport(_ message: ThreadMessage) {
+        confirm(title: "Report this message as spam?",
+                detail: "The postbox is told which message and who sent it. It counts against that sender's standing. Nothing is deleted, and they are not told.",
+                action: "Report spam", message: message) { [weak self] in
+            Task { await self?.inbox?.reportSpam(messageId: message.id) }
+        }
+    }
+
+    private func confirmDelete(_ message: ThreadMessage) {
+        confirm(title: "Delete this message?",
+                detail: "Deleted from this mailbox and gone for good — this is not archiving, and there is no undo. The other side keeps their copy and is not told. The room it took is freed.",
+                action: "Delete", message: message) { [weak self] in
+            Task { await self?.inbox?.deleteMessage(id: message.id) }
+        }
+    }
+
+    private func confirm(title: String, detail: String, action: String, message: ThreadMessage, run: @escaping () -> Void) {
+        let alert = UIAlertController(title: title, message: detail, preferredStyle: .actionSheet)
+        alert.addAction(UIAlertAction(title: action, style: .destructive) { _ in run() })
+        alert.addAction(UIAlertAction(title: "Cancel", style: .cancel))
+        // An iPad shows an action sheet as a popover, which needs somewhere to point.
+        if let popover = alert.popoverPresentationController {
+            if let row = rows.firstIndex(where: { $0.id == message.id }),
+               let cell = table.cellForRow(at: IndexPath(row: row, section: 0)) {
+                popover.sourceView = view
+                popover.sourceRect = table.convert(cell.frame, to: view)
+            } else {
+                popover.sourceView = view
+                popover.sourceRect = CGRect(x: view.bounds.midX, y: view.bounds.midY, width: 1, height: 1)
+            }
+        }
+        present(alert, animated: true)
     }
 
     func scrollViewWillBeginDragging(_ scrollView: UIScrollView) {

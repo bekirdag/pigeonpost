@@ -5,7 +5,7 @@ html, body { background: transparent; }
 body { min-height: 0; }
 .call-mini { left: 8px; right: 8px; top: 6px; bottom: auto; justify-content: flex-start; }
 .call-mini-open { flex: 1; max-width: none; }
-/* Full screen on a phone: clear of the status bar, the Dynamic Island and the home indicator. */
-.call-top { padding-top: calc(12px + env(safe-area-inset-top)); }
-.call-controls { bottom: calc(16px + env(safe-area-inset-bottom)); }
+/* Full screen on a phone: clear of the status bar, the Dynamic Island and the home indicator. The
+   stage, the tiles and your own view follow these through --call-top-h and --call-controls-h. */
+.call-ui { --call-top-pad: calc(12px + env(safe-area-inset-top)); --call-dock-bottom: calc(16px + env(safe-area-inset-bottom)); }
 .call-ring { top: calc(10px + env(safe-area-inset-top)); }

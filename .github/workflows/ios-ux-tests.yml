@@ -78,6 +78,66 @@ jobs:
           path: ${{ runner.temp }}/ios-ux.xcresult
           retention-days: 14
 
+  native-ipad:
+    # The iPad layout audit (SDS 19.2): every screen in portrait and landscape, failing on controls
+    # drawn over one another or bar titles cut short.
+    runs-on: macos-26
+    timeout-minutes: 35
+    defaults:
+      run:
+        working-directory: apps/ios
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Select Xcode and an available iPad
+        run: |
+          python3 - <<'PY'
+          import glob, os, re, subprocess
+          candidates = []
+          for app in glob.glob('/Applications/Xcode*.app'):
+              developer = app + '/Contents/Developer'
+              version = subprocess.check_output(['xcodebuild', '-version'], env={**os.environ, 'DEVELOPER_DIR': developer}, text=True)
+              match = re.search(r'Xcode ([\d.]+)', version)
+              if match:
+                  candidates.append((tuple(map(int, match[1].split('.'))), developer))
+          selected = max(candidates)[1]
+          subprocess.run(['sudo', 'xcode-select', '-s', selected], check=True)
+          PY
+          python3 - <<'PY'
+          import json, os, subprocess
+          runtimes = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'runtimes', '--json']))['runtimes']
+          runtimes = sorted([r for r in runtimes if r.get('isAvailable') and '.iOS-' in r['identifier']],
+                            key=lambda r: tuple(map(int, r['version'].split('.'))), reverse=True)
+          devices = json.loads(subprocess.check_output(['xcrun', 'simctl', 'list', 'devices', 'available', '--json']))['devices']
+          pads = [d for r in runtimes for d in devices.get(r['identifier'], []) if 'iPad' in d['name']]
+          assert pads, 'No available iPad simulator'
+          # The smallest iPad is where the columns are tightest.
+          pads.sort(key=lambda d: (0 if 'mini' in d['name'] else 1))
+          device = pads[0]
+          with open(os.environ['GITHUB_ENV'], 'a') as out:
+              out.write('IPAD_SIM=' + device['udid'] + '\n')
+          print(device['name'], device['udid'])
+          PY
+      - name: Build and install the fixture app
+        run: |
+          xcrun simctl boot "$IPAD_SIM" || true
+          xcrun simctl bootstatus "$IPAD_SIM" -b
+          xcodebuild -project Pigeonpost.xcodeproj -scheme Pigeonpost -configuration Debug \
+            -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-app" CODE_SIGNING_ALLOWED=NO build
+          xcrun simctl install "$IPAD_SIM" "$RUNNER_TEMP/ipad-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
+      - name: iPad layout audit
+        run: |
+          xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
+            -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-tests" \
+            -resultBundlePath "$RUNNER_TEMP/ipad-layout.xcresult" \
+            -only-testing:PPUITests/IPadLayoutTests
+      - name: Preserve iPad layout evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ipad-layout-results
+          path: ${{ runner.temp }}/ipad-layout.xcresult
+          retention-days: 14
+
   native-storekit:
     # iOS 26.5's CLI StoreKit session cannot save its configuration (FB22237318).
     # Keep the current-runtime UI suite above, and verify real StoreKit transactions

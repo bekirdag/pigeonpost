@@ -1818,6 +1818,14 @@ button { font: inherit; color: inherit; }
   position: fixed; inset: 0; z-index: 60;
   background: var(--call-ground); color: var(--call-ink);
   font-family: var(--sans);
+  /* What the header and the controls dock take from the stage. The paddings and offsets are set
+     here (and in native-call.css, which adds the phone's safe areas); the content heights are
+     measured by calls.js (--call-top-content, --call-dock-h). The stage, the tiles' buttons and
+     your own view keep clear of both. */
+  --call-top-pad: 20px;
+  --call-dock-bottom: 28px;
+  --call-top-h: calc(var(--call-top-pad) + var(--call-top-content, 66px));
+  --call-controls-h: calc(var(--call-dock-bottom) + var(--call-dock-h, 72px));
 }
 .call-stage { position: relative; display: flex; width: 100%; height: 100%; overflow: hidden; }
 .call-main { position: relative; flex: 1; min-width: 0; overflow: hidden; }
@@ -1825,37 +1833,60 @@ button { font: inherit; color: inherit; }
 .call-top {
   position: absolute; top: 0; left: 0; right: 0; z-index: 3;
   display: flex; align-items: flex-start; justify-content: space-between; gap: 16px;
-  padding: 20px 24px 40px;
+  padding: var(--call-top-pad) 24px 40px;
   background: linear-gradient(var(--call-scrim-top), var(--call-scrim-clear));
   pointer-events: none;
 }
 .call-top > * { pointer-events: auto; }
-.call-who { min-width: 0; flex: 1; }
-.call-who h2 { margin: 0; font-size: 17px; font-weight: 650; letter-spacing: -0.01em; color: var(--call-ink); }
-.call-handle {
-  margin: 2px 0 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted);
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+/* Who the call is with: one compact pill (name, time, chevron) beside the way back. Its details —
+   handle, quality and route, the security code — open in a panel under it. */
+.call-who { position: relative; min-width: 0; flex: 0 1 auto; margin-right: auto; display: flex; flex-direction: column; align-items: flex-start; }
+.call-who-pill {
+  display: inline-flex; align-items: center; gap: 8px; max-width: 100%; min-width: 0; height: 34px; padding: 0 10px 0 14px;
+  border-radius: 999px; border: 1px solid var(--call-edge); background: var(--call-chip); color: var(--call-ink);
+  font: inherit; cursor: pointer;
 }
+.call-who-pill:hover { background: var(--call-btn-hover); border-color: var(--call-btn-edge-hover); }
+.call-who-pill:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
+.call-who-name { margin: 0; min-width: 0; font-size: 14.5px; font-weight: 650; letter-spacing: -0.01em; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-who-time { flex: none; font-size: 12.5px; color: var(--call-muted); font-variant-numeric: tabular-nums; }
+.call-who-time:empty { display: none; }
+.call-who-pill svg { flex: none; width: 15px; height: 15px; color: var(--call-muted); transition: transform .15s ease; }
+.call-who-pill[aria-expanded="true"] svg { transform: rotate(180deg); }
+@media (prefers-reduced-motion: reduce) { .call-who-pill svg { transition: none; } }
+.call-details {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 2;
+  width: max-content; min-width: 240px; max-width: min(360px, calc(100vw - 32px));
+  display: flex; flex-direction: column; gap: 10px; padding: 14px;
+  border-radius: 14px; border: 1px solid var(--call-edge); background: var(--call-dock);
+  backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+  box-shadow: 0 12px 32px var(--call-shadow);
+}
+.call-details[hidden] { display: none; }
+/* Open, the header sits over the stage and its tile buttons. */
+.call-top.call-top-open { z-index: 6; }
+.call-handle { margin: 0; font-family: var(--mono); font-size: 12.5px; color: var(--call-muted); overflow-wrap: anywhere; }
 .call-handle:empty { display: none; }
-.call-status { margin: 6px 0 0; font-size: 13px; color: var(--call-body); font-variant-numeric: tabular-nums; display: flex; align-items: center; gap: 8px; }
-.call-quality {
-  font-family: var(--mono); font-size: 11.5px; color: var(--call-muted);
-  border: 1px solid var(--call-edge); border-radius: 6px; padding: 1px 6px;
-}
+.call-quality { margin: 0; align-self: flex-start; font-family: var(--mono); font-size: 11.5px; color: var(--call-muted); border: 1px solid var(--call-edge); border-radius: 6px; padding: 1px 6px; }
 .call-quality:empty { display: none; }
-.call-sas {
-  flex: none; margin: 0;
-  display: inline-flex; align-items: center; gap: 7px;
-  padding: 7px 11px; border-radius: 9px;
-  background: var(--call-chip); border: 1px solid var(--call-edge);
-  font-size: 12.5px; color: var(--call-body);
-}
+.call-sas { display: flex; flex-direction: column; gap: 6px; margin: 0; padding-top: 10px; border-top: 1px solid var(--call-rule); }
+.call-sas[hidden] { display: none; }
+.call-sas-row { margin: 0; display: flex; align-items: center; gap: 7px; font-size: 12.5px; color: var(--call-body); }
 .call-sas svg, .call-person-code svg { width: 14px; height: 14px; color: var(--call-secure); flex: none; }
 .call-sas strong { font-family: var(--mono); font-size: 13.5px; font-weight: 600; letter-spacing: .08em; color: var(--call-ink); }
+.call-sas-row strong:empty { display: none; }
+.call-sas-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--call-body); }
+.call-sas-list:empty { display: none; }
+.call-sas-list li { display: flex; justify-content: space-between; gap: 12px; }
+.call-sas-note { margin: 0; font-size: 12px; line-height: 1.45; color: var(--call-muted); }
 
 /* People: one tile each, tiled to fill the space. Whoever shares a screen takes the stage. */
 .call-grid {
   position: absolute; inset: 0; padding: 100px 20px 108px;
+  /* The header's measured height (calls.js sets --call-top-h): tiles start below its buttons. */
+  padding-top: max(100px, calc(var(--call-top-h, 0px) + 12px));
+  /* …and end above the controls dock (--call-controls-h, measured with its safe area). */
+  padding-bottom: max(108px, calc(var(--call-controls-h, 0px) + 12px));
   display: grid; gap: 12px;
   grid-template-columns: 1fr; grid-auto-rows: 1fr;
 }
@@ -1892,7 +1923,7 @@ button { font: inherit; color: inherit; }
   font-size: 12.5px; color: var(--call-ink);
 }
 .call-grid[data-count="1"] .call-tile-name { display: none; }
-.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-tile-video { inset: 96px 20px auto auto; width: min(22%, 260px); }
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-tile-video { inset: calc(var(--call-top-h, 86px) + 10px) 20px auto auto; width: min(22%, 260px); }
 .call-tile-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .call-tile-muted svg { width: 13px; height: 13px; color: var(--call-end); display: block; }
 .call-tile-muted .slash { display: block; }
@@ -1902,11 +1933,25 @@ button { font: inherit; color: inherit; }
 .call-avatar.avatar { width: 112px; height: 112px; border-radius: 50%; font-size: 38px; font-weight: 600; }
 
 .call-self {
-  position: absolute; right: 20px; bottom: 104px; z-index: 4;
+  position: absolute; z-index: 4;
+  /* In the corner you put it (calls.js: drag, or the arrow keys), clear of the header and its tile
+     buttons, the controls dock and the safe areas. */
+  --self-side: 20px;
+  --self-top: calc(var(--call-top-h, 86px) + 52px);
+  --self-bottom: calc(var(--call-controls-h, 92px) + 12px);
+  right: calc(var(--self-side) + env(safe-area-inset-right)); bottom: var(--self-bottom);
   width: min(24vw, 260px); aspect-ratio: 16 / 9;
+  /* A short window (a phone on its side) has less room between the header and the dock than the
+     view is tall: it gives up height rather than slide under either. */
+  max-height: calc(100% - var(--self-top) - var(--self-bottom) - 8px);
   border-radius: 12px; border: 1px solid var(--call-edge); background: var(--call-tile); overflow: hidden;
   box-shadow: 0 12px 32px var(--call-shadow);
+  touch-action: none; cursor: grab; user-select: none; -webkit-user-select: none;
 }
+.call-self[data-corner="tl"], .call-self[data-corner="bl"] { right: auto; left: calc(var(--self-side) + env(safe-area-inset-left)); }
+.call-self[data-corner="tl"], .call-self[data-corner="tr"] { bottom: auto; top: var(--self-top); }
+.call-self.call-self-dragging { cursor: grabbing; z-index: 7; }
+.call-self:focus-visible { outline: 2px solid var(--call-focus); outline-offset: 3px; }
 .call-self[hidden] { display: none; }
 /* A mirror, as every camera preview is: raising your right hand moves the hand on the right. */
 .call-self-label { position: absolute; left: 8px; bottom: 6px; font-size: 11.5px; color: var(--call-ink); padding: 1px 6px; border-radius: 6px; background: var(--call-chip); }
@@ -1920,7 +1965,7 @@ button { font: inherit; color: inherit; }
 .call-presenting[hidden] { display: none; }
 
 .call-controls {
-  position: absolute; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 5;
+  position: absolute; left: 50%; bottom: var(--call-dock-bottom); transform: translateX(-50%); z-index: 5;
   display: flex; align-items: center; gap: 12px; padding: 10px 14px;
   background: var(--call-dock); border: 1px solid var(--call-rule); border-radius: 999px;
   backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
@@ -2097,15 +2142,19 @@ body[data-page="join"] { min-height: 100vh; margin: 0; background: var(--page); 
 .join-error[hidden] { display: none; }
 
 @media (max-width: 760px) {
-  .call-top { padding: 16px 16px 36px; flex-direction: column; gap: 8px; }
-  .call-grid { padding: 120px 10px 100px; gap: 8px; }
+  .call-ui { --call-top-pad: 16px; --call-dock-bottom: 16px; }
+  .call-top { padding: var(--call-top-pad) 16px 36px; gap: 8px; }
+  /* On a phone the details span the header's width, under it. */
+  .call-who { position: static; }
+  .call-details { left: 16px; right: 16px; top: calc(var(--call-top-h) + 6px); width: auto; min-width: 0; max-width: none; }
+  .call-grid { padding: 120px 10px 100px; padding-top: max(76px, calc(var(--call-top-h, 0px) + 12px)); padding-bottom: max(100px, calc(var(--call-controls-h, 0px) + 12px)); gap: 8px; }
   .call-grid[data-count="2"] { grid-template-columns: 1fr; }
   .call-grid[data-count="3"], .call-grid[data-count="4"], .call-grid[data-count="5"], .call-grid[data-count="6"] { grid-template-columns: 1fr 1fr; }
   .call-grid[data-presenting="true"] { grid-template-columns: 1fr; grid-template-rows: minmax(0, 3fr); grid-auto-rows: minmax(0, 1fr); }
   .call-grid[data-presenting="true"] .call-tile-presenter { grid-column: 1; grid-row: 1; }
   .call-grid[data-presenting="true"] .call-tile:not(.call-tile-presenter) { grid-column: 1; max-height: none; }
-  .call-self { width: 30vw; right: 12px; bottom: 96px; }
-  .call-controls { bottom: 16px; gap: 6px; padding: 8px 10px; max-width: calc(100vw - 16px); }
+  .call-self { width: 30vw; --self-side: 12px; }
+  .call-controls { gap: 6px; padding: 8px 10px; max-width: calc(100vw - 16px); }
   .call-btn { width: 42px; height: 42px; }
   .call-btn svg { width: 19px; height: 19px; }
   /* On a phone the panel covers the call rather than squeezing it. */
@@ -2156,7 +2205,7 @@ body.share-pip { margin: 0; background: var(--call-ground); color: var(--call-in
 .call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 18px); right: auto; left: calc(50% + 18px); }
 .call-grid[data-count="1"] .call-tile[data-video="false"][data-screen="false"] .call-mute-badge { top: calc(50% + 28px); left: calc(50% + 28px); width: 34px; height: 34px; }
 .call-grid[data-count="1"] .call-tile[data-video="true"] .call-mute-badge,
-.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-mute-badge { top: 96px; right: 24px; }
+.call-grid[data-count="1"] .call-tile[data-screen="true"] .call-mute-badge { top: calc(var(--call-top-h, 86px) + 10px); right: 24px; }
 .call-self .call-mute-badge { top: 8px; left: 8px; width: 26px; height: 26px; }
 .call-self .call-mute-badge svg { width: 14px; height: 14px; }
 
@@ -2285,6 +2334,8 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .call-strip { display: none; }
 .call-grid[data-layout="spotlight"] {
   display: flex; gap: 12px; padding: 76px 16px 104px;
+  padding-top: max(76px, calc(var(--call-top-h, 0px) + 12px));
+  padding-bottom: max(104px, calc(var(--call-controls-h, 0px) + 12px));
 }
 .call-grid[data-layout="spotlight"] > .call-tile { flex: 1; min-width: 0; }
 .call-grid[data-layout="spotlight"] > .call-strip {
@@ -2297,11 +2348,20 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .call-tile[data-kind="screen"] .call-tile-video { background: var(--call-ground); }
 .call-tile[data-kind="screen"][data-main="true"] { border-color: var(--call-edge); }
 /* Full screen: the shared screen as big as the display allows. */
-.call-ui:fullscreen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; }
-.call-ui:-webkit-full-screen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; }
+.call-ui:fullscreen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; padding-top: max(64px, calc(var(--call-top-h, 0px) + 12px)); padding-bottom: max(96px, calc(var(--call-controls-h, 0px) + 12px)); }
+.call-ui:-webkit-full-screen .call-grid[data-layout="spotlight"] { padding: 64px 12px 96px; padding-top: max(64px, calc(var(--call-top-h, 0px) + 12px)); padding-bottom: max(96px, calc(var(--call-controls-h, 0px) + 12px)); }
 
-/* Pin and mute, on each tile: shown on hover or focus, always for whatever is pinned. */
+/* "You're sharing your screen" sits just below the header, and the stage starts below it, so it
+   covers neither the header's buttons nor a tile's. */
+.call-presenting { top: calc(var(--call-top-h, 86px) + 8px); }
+.call-main:has(.call-presenting:not([hidden])) .call-grid:not([data-count="1"]) { padding-top: calc(var(--call-top-h, 86px) + 56px); }
+.call-main:has(.call-presenting:not([hidden])) .call-grid[data-count="1"] .call-tile-acts { top: calc(var(--call-top-h, 86px) + 56px); }
+
+/* Pin and mute, on each tile: shown on hover or focus, always for whatever is pinned. A tile alone
+   on the stage runs under the header, so its buttons sit just below the header's content (the
+   measured --call-top-h), in line with it, never over the "Inbox" button or the name. */
 .call-tile-acts { position: absolute; top: 10px; left: 10px; z-index: 4; display: flex; gap: 6px; opacity: 0; transition: opacity .12s ease; }
+.call-grid[data-count="1"] .call-tile-acts { top: calc(var(--call-top-h, 86px) + 10px); left: 24px; }
 .call-tile:hover .call-tile-acts, .call-tile:focus-within .call-tile-acts { opacity: 1; }
 .call-tile[data-pinned="true"] .call-tile-acts { opacity: 1; }
 @media (hover: none) { .call-tile-acts { opacity: 1; } }
@@ -2322,7 +2382,12 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .call-chat-missed { margin: 4px 0 0; font-size: 11.5px; color: var(--call-muted); }
 
 @media (max-width: 760px) {
-  .call-grid[data-layout="spotlight"] { flex-direction: column; padding: 120px 8px 96px; }
+  .call-grid[data-layout="spotlight"] { flex-direction: column; padding: 120px 8px 96px; padding-top: max(76px, calc(var(--call-top-h, 0px) + 12px)); padding-bottom: max(96px, calc(var(--call-controls-h, 0px) + 12px)); }
+  .call-grid[data-count="1"] .call-tile-acts { left: 16px; }
+  /* On a phone, without its sentence: the red dot and "Stop sharing" say it. */
+  .call-presenting { max-width: calc(100% - 16px); gap: 8px; padding-left: 12px; }
+  .call-presenting > span:not(.share-pip-dot) { display: none; }
+  .call-presenting .call-pill { white-space: nowrap; }
   .call-grid[data-layout="spotlight"] > .call-strip { flex-direction: row; width: auto; height: 92px; overflow-x: auto; overflow-y: hidden; }
   .call-strip .call-tile { height: 100%; width: auto; }
   .call-top-right .call-back span { display: none; }
@@ -2365,23 +2430,25 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .calls-tools { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0 6px; }
 .calls-filter { flex: 0 1 200px; }
 .call-log { list-style: none; margin: 0; padding: 0; }
-.call-item { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 10px; }
-.call-item + .call-item { margin-top: 2px; }
-.call-main {
+/* The Calls list (side view). Scoped to the list: the call screen has its own .call-main and
+   .call-back, drawn in the call's tokens. */
+.call-log .call-item { position: relative; display: flex; align-items: center; gap: 2px; border-radius: 10px; }
+.call-log .call-item + .call-item { margin-top: 2px; }
+.call-log .call-main {
   flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px;
   padding: 8px; border: 0; border-radius: 10px; background: none; color: var(--ink);
   font: inherit; text-align: left; cursor: pointer;
 }
-.call-main:hover { background: var(--hover); }
-.call-main:disabled { cursor: default; }
-.call-main:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: -2px; }
-.call-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
-.call-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.call-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.call-time { flex: none; font-size: 12px; color: var(--faint); }
-.call-missed .call-name, .call-missed .call-sub { color: var(--danger); }
-.call-back { color: var(--blue); }
-.call-menu:not([hidden]) {
+.call-log .call-main:hover { background: var(--hover); }
+.call-log .call-main:disabled { cursor: default; }
+.call-log .call-main:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: -2px; }
+.call-log .call-text { flex: 1; min-width: 0; display: flex; flex-direction: column; line-height: 1.35; }
+.call-log .call-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-log .call-sub { font-size: 12.5px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.call-log .call-time { flex: none; font-size: 12px; color: var(--faint); }
+.call-log .call-missed .call-name, .call-log .call-missed .call-sub { color: var(--danger); }
+.call-log .call-back { color: var(--blue); }
+.call-log .call-menu:not([hidden]) {
   position: absolute; right: 4px; top: 100%; z-index: 5; display: flex; flex-direction: column; gap: 6px;
   padding: 8px; border: 1px solid var(--card-edge); border-radius: 10px; background: var(--raised);
   box-shadow: 0 8px 24px var(--shadow-menu);

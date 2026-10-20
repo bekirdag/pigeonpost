@@ -220,9 +220,12 @@ struct ThreadView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 12)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+                // Lined up with the composer card under it — the same width limit and the same
+                // inset — rather than 12 pt from the column's edge whatever the card did.
+                .frame(maxWidth: 860, alignment: .leading)
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, embedded ? 24 : 12)
             }
             composerRow
         }

@@ -44,6 +44,12 @@ struct DesktopInboxView: View {
     /// All three columns, always. An iPad in portrait would otherwise fold the sidebar away and
     /// open on a thread with nothing beside it, which is not the desktop layout at all.
     @State private var columns = NavigationSplitViewVisibility.all
+    /// The window's width. Under 1000 pt — every iPad in portrait but the 13-inch — the subjects
+    /// column takes its narrowest width, or the conversation itself is left a 210 pt strip beside
+    /// the iPad's 320 pt sidebar (iPad mini), its title truncated and its composer wrapping word by
+    /// word.
+    @State private var windowWidth: CGFloat = 0
+    private var roomy: Bool { windowWidth == 0 || windowWidth >= 1000 }
 
     /// A peer, wrapped so `.sheet(item:)` will take it. A bare `String?` is the natural shape and
     /// the one SwiftUI will not accept.
@@ -79,6 +85,13 @@ struct DesktopInboxView: View {
                 #endif
         }
         .navigationSplitViewStyle(.balanced)
+        .background {
+            GeometryReader { geometry in
+                Color.clear
+                    .onAppear { windowWidth = geometry.size.width }
+                    .onChange(of: geometry.size.width) { _, width in windowWidth = width }
+            }
+        }
         #if os(macOS)
         // The window's bar in the conversation's own ground, as the conversation design's header
         // is, instead of the system's grey strip.
@@ -404,7 +417,7 @@ struct DesktopInboxView: View {
             .background(Theme.column)
             .overlay(alignment: .trailing) { seam }
             .onAppear { if Fixtures.sheet == "thread" { openingThread = ThreadTarget(id: peer) } }
-            .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 340)
+            .navigationSplitViewColumnWidth(min: 170, ideal: roomy ? 210 : 170, max: 340)
             #if os(iOS)
             .toolbar(.hidden, for: .navigationBar)
             #endif
@@ -414,7 +427,7 @@ struct DesktopInboxView: View {
             Color.clear
                 .background(Theme.column)
                 .overlay(alignment: .trailing) { seam }
-                .navigationSplitViewColumnWidth(min: 170, ideal: 210, max: 340)
+                .navigationSplitViewColumnWidth(min: 170, ideal: roomy ? 210 : 170, max: 340)
                 #if os(iOS)
                 .toolbar(.hidden, for: .navigationBar)
                 #endif

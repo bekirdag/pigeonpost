@@ -98,6 +98,7 @@
     pin: '<path d="M7.5 2.5h5l-.8 4.8 2.8 2.7v1.5H5.5V10l2.8-2.7Z M10 11.5v6" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>',
     end: '<path d="M2.4 11.6c-.4-.5-.4-1.2.1-1.7C5 7.6 7.4 6.8 10 6.8s5 .8 7.5 3.1c.5.5.5 1.2.1 1.7l-1.2 1.4c-.4.4-1 .5-1.5.3l-2-1c-.5-.2-.8-.7-.8-1.2V9.7a8.6 8.6 0 0 0-4.2 0v1.4c0 .5-.3 1-.8 1.2l-2 1c-.5.2-1.1.1-1.5-.3Z" fill="currentColor"/>',
     phone: '<path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="currentColor"/>',
+    chevron: '<path d="m5.5 8 4.5 4.5L14.5 8" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
     back: '<path d="M12.5 4 6 10l6.5 6" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>',
     expand: '<path d="M11.5 3.5h5v5M8.5 16.5h-5v-5M16.5 3.5 11 9M3.5 16.5 9 11" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/>',
     lock: '<rect x="4" y="9" width="12" height="8.5" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6.8 9V6.5a3.2 3.2 0 0 1 6.4 0V9" fill="none" stroke="currentColor" stroke-width="1.5"/>',
@@ -123,6 +124,14 @@
     node.dataset.tone = faceTone(name);
     // Phase 1b: the inbox may lay a profile picture over the initials (falls back to them).
     host()?.decorateAvatar?.(node, name);
+  }
+  // The name a call shows for someone. The shared naming rule ("Bob", not "/bob") is coming as a
+  // helper (Phase 1d); until it lands this is the inbox's own display name, and it is the one
+  // place the call screen asks — swap the helper in here.
+  function callName(m) {
+    const helper = window.PigeonpostNames && window.PigeonpostNames.display;
+    const name = displayName(m);
+    return helper ? helper(name) : name;
   }
   function displayName(m) {
     if (!m) return "Guest";
@@ -377,7 +386,7 @@
     if (!me || !peer || !supported) return;
     if (room || ring) { toast("Finish the current call first."); return; }
     if (!session) { toast("Calling isn’t ready yet. Try again in a moment."); start(); return; }
-    openRoomUI({ title: displayName(peer), sub: peer, face: peer, status: "Starting " + kindWord(kind) + "…" });
+    openRoomUI({ title: callName(peer), sub: peer, face: peer, status: "Starting " + kindWord(kind) + "…" });
     room = newRoom({ kind, title: displayName(peer), peerKey: peer });
     try {
       await startLocalMedia(kind === "video");
@@ -438,7 +447,7 @@
     if (!r) return;
     dismissRing();
     const peerKey = r.from.handle || r.from.address;
-    openRoomUI({ title: displayName(peerKey), sub: peerKey, face: peerKey, status: "Connecting…" });
+    openRoomUI({ title: callName(peerKey), sub: peerKey, face: peerKey, status: "Connecting…" });
     room = newRoom({ kind: r.kind, title: displayName(peerKey), peerKey, id: r.room, code: r.code });
     try {
       await startLocalMedia(r.kind === "video");
@@ -1870,6 +1879,106 @@
 
   // ---- the call screen -------------------------------------------------------------------------
 
+  // How tall the header's own content is (its buttons, the name and status) and how tall the
+  // controls dock is, as --call-top-content and --call-dock-h. The stylesheet adds the paddings and
+  // safe areas to make --call-top-h and --call-controls-h, which the stage, the tiles' pin and mute
+  // buttons and your own view keep clear of. Measured rather than assumed: they change with the
+  // width (a phone stacks the header), the font and zoom.
+  function watchLayout(ui) {
+    const top = ui.querySelector(".call-top");
+    const dock = ui.querySelector(".call-controls");
+    if (!top) return;
+    const measure = () => {
+      let bottom = 0;
+      for (const child of top.children) {
+        if (child.offsetHeight) bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
+      }
+      const pad = parseFloat(getComputedStyle(top).paddingTop) || 0;
+      if (bottom) ui.style.setProperty("--call-top-content", Math.ceil(bottom - pad) + "px");
+      if (dock && dock.offsetHeight) ui.style.setProperty("--call-dock-h", Math.ceil(dock.offsetHeight) + "px");
+    };
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure);
+      for (const node of [top, dock, ...top.children]) if (node) observer.observe(node, { box: "border-box" });
+    }
+    window.addEventListener("resize", measure);
+    measure();
+  }
+
+  // Your own view, in whichever corner you put it. Drag it (finger, pen or mouse) and it snaps to
+  // the nearest corner; with it focused, the arrow keys move it between corners. The corner is
+  // remembered on this device. The corners themselves are the stylesheet's ([data-corner]): clear
+  // of the header, the controls dock and the safe areas.
+  const CORNERS = ["tl", "tr", "bl", "br"];
+  const SELF_CORNER_KEY = "ppi_call_self_corner";
+  function savedCorner() {
+    const value = store.get(SELF_CORNER_KEY);
+    return CORNERS.includes(value) ? value : "br";
+  }
+  function placeSelf(box, corner, from) {
+    if (!CORNERS.includes(corner)) return;
+    const before = from || box.getBoundingClientRect();
+    box.dataset.corner = corner;
+    store.set(SELF_CORNER_KEY, corner);
+    // Slide from where it was to the corner: the corners are different properties (top or bottom,
+    // left or right), which cannot be transitioned, so the move is played as a transform.
+    const after = box.getBoundingClientRect();
+    const dx = before.left - after.left, dy = before.top - after.top;
+    box.classList.remove("call-self-dragging");
+    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still || (!dx && !dy)) { box.style.transform = ""; return; }
+    box.style.transition = "none";
+    box.style.transform = `translate(${dx}px, ${dy}px)`;
+    void box.offsetWidth;
+    box.style.transition = "transform .18s ease-out";
+    box.style.transform = "";
+    box.addEventListener("transitionend", () => { box.style.transition = ""; }, { once: true });
+  }
+  function movableSelf(box) {
+    const main = box.parentElement;
+    let drag = null;
+    box.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+      try { box.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      drag.moved = true;
+      box.classList.add("call-self-dragging");
+      box.style.transition = "none";
+      box.style.transform = `translate(${dx}px, ${dy}px)`;
+      e.preventDefault();
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = drag.moved;
+      drag = null;
+      try { box.releasePointerCapture(e.pointerId); } catch (_) { /* released */ }
+      if (!moved) return; // a tap: nothing more than it ever did
+      const at = box.getBoundingClientRect();
+      const area = main.getBoundingClientRect();
+      const left = at.left + at.width / 2 < area.left + area.width / 2;
+      const upper = at.top + at.height / 2 < area.top + area.height / 2;
+      placeSelf(box, (upper ? "t" : "b") + (left ? "l" : "r"), at);
+    };
+    box.addEventListener("pointerup", end);
+    box.addEventListener("pointercancel", end);
+    box.addEventListener("keydown", (e) => {
+      const corner = box.dataset.corner || "br";
+      let v = corner[0], h = corner[1];
+      if (e.key === "ArrowUp") v = "t";
+      else if (e.key === "ArrowDown") v = "b";
+      else if (e.key === "ArrowLeft") h = "l";
+      else if (e.key === "ArrowRight") h = "r";
+      else return;
+      e.preventDefault();
+      if (v + h !== corner) placeSelf(box, v + h);
+    });
+  }
+
   function buildUI() {
     if ($("call-ui")) return;
     const btn = (id, label, icon, extraClass = "") => el("button", { id, class: "call-btn " + extraClass, type: "button", "aria-label": label, title: label }, svg(icon));
@@ -1887,14 +1996,24 @@
         el("div", { class: "call-main" },
           el("header", { class: "call-top" },
             host() ? el("button", { class: "call-back", id: "call-minimize", type: "button", title: "Back to the inbox — the call keeps going", "aria-label": "Back to the inbox (the call keeps going)", onclick: () => minimize() }, svg(ICON.back), el("span", { text: "Inbox" })) : null,
+            // Who the call is with, as one compact pill: the name, the time, and a chevron. The rest —
+            // handle, quality and route, and the security code — opens under it on a tap.
             el("div", { class: "call-who" },
-              el("h2", { id: "call-name" }),
-              el("p", { class: "call-handle", id: "call-handle" }),
-              el("p", { class: "call-status" }, el("span", { id: "call-status", "aria-live": "polite" }), el("span", { class: "call-quality", id: "call-quality" })),
+              el("button", { class: "call-who-pill", id: "call-pill", type: "button", "aria-expanded": "false", "aria-controls": "call-details",
+                title: "Call details and security code", onclick: () => toggleDetails() },
+                el("h2", { class: "call-who-name", id: "call-name" }),
+                el("span", { class: "call-who-time", id: "call-status", "aria-live": "polite" }),
+                svg(ICON.chevron)),
+              el("div", { class: "call-details", id: "call-details", role: "region", "aria-label": "Call details", hidden: true },
+                el("p", { class: "call-handle", id: "call-handle" }),
+                el("p", { class: "call-quality", id: "call-quality" }),
+                el("div", { class: "call-sas", id: "call-sas", hidden: true },
+                  el("p", { class: "call-sas-row" }, svg(ICON.lock), el("span", { text: "Security code" }), el("strong", { id: "call-sas-code" })),
+                  el("ul", { class: "call-sas-list", id: "call-sas-list" }),
+                  el("p", { class: "call-sas-note", id: "call-sas-note", text: "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." })),
+              ),
             ),
             el("div", { class: "call-top-right" },
-              el("p", { class: "call-sas", id: "call-sas", hidden: true, title: "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." },
-                svg(ICON.lock), el("span", { text: "Security code" }), el("strong", { id: "call-sas-code" })),
               el("div", { class: "call-pager", id: "call-pager", role: "group", "aria-label": "Pages of people", hidden: true },
                 el("button", { class: "call-icon-btn call-top-btn", id: "call-page-prev", type: "button", "aria-label": "Previous page of people", title: "Previous page", onclick: () => turnPage(-1) }, svg(ICON.back)),
                 el("span", { class: "call-page-label", id: "call-page-label", "aria-live": "polite" }),
@@ -1906,7 +2025,8 @@
           el("div", { class: "call-knocks", id: "call-knocks", "aria-live": "polite" }),
           el("div", { class: "call-grid", id: "call-grid", "data-count": "0", "data-layout": "grid" }, el("div", { class: "call-strip", id: "call-strip" })),
           el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
-          el("div", { class: "call-self", id: "call-self", "data-screen": "false" },
+          el("div", { class: "call-self", id: "call-self", "data-screen": "false", "data-corner": savedCorner(), tabindex: "0",
+            role: "group", "aria-label": "Your video. Drag it, or use the arrow keys, to move it to another corner." },
             el("video", { id: "call-self-screen", class: "call-self-screen", autoplay: true, playsinline: true, muted: true }),
             el("video", { id: "call-self-video", class: "call-self-camera", autoplay: true, playsinline: true, muted: true }),
             el("span", { class: "call-mute-badge call-self-mute", id: "call-self-mute", hidden: true, title: "You’re muted", "aria-label": "You’re muted" }, svg(ICON.mic + ICON.slash)),
@@ -1971,6 +2091,8 @@
     );
     document.body.append(ui, ringCard, miniBar());
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
+    watchLayout(ui);
+    movableSelf($("call-self"));
 
     $("call-mute").addEventListener("click", toggleMute);
     $("call-camera").addEventListener("click", toggleCamera);
@@ -2129,6 +2251,7 @@
     paintFace($("call-face"), face || title);
     $("call-quality").textContent = "";
     $("call-sas").hidden = true;
+    toggleDetails(false);
     $("call-ui").hidden = false;
     if ($("call-mini")) $("call-mini").hidden = true;
     setStatus(status || "");
@@ -2218,6 +2341,29 @@
     room.tiles.set(view.id, tile);
     return tile;
   }
+
+  // The details under the call's name pill: open on a tap or Enter/Space (it is a button), closed by
+  // another tap, Escape or a tap anywhere else.
+  function toggleDetails(open) {
+    const pill = $("call-pill"), details = $("call-details");
+    if (!pill || !details) return;
+    const next = open === undefined ? pill.getAttribute("aria-expanded") !== "true" : Boolean(open);
+    pill.setAttribute("aria-expanded", String(next));
+    details.hidden = !next;
+    pill.closest(".call-top").classList.toggle("call-top-open", next);
+  }
+  document.addEventListener("pointerdown", (e) => {
+    const pill = $("call-pill");
+    if (!pill || pill.getAttribute("aria-expanded") !== "true") return;
+    if (e.target.closest && e.target.closest(".call-who")) return;
+    toggleDetails(false);
+  });
+  document.addEventListener("keydown", (e) => {
+    const pill = $("call-pill");
+    if (e.key !== "Escape" || !pill || pill.getAttribute("aria-expanded") !== "true") return;
+    toggleDetails(false);
+    pill.focus();
+  });
 
   function isFullscreen() { return Boolean(document.fullscreenElement || document.webkitFullscreenElement); }
   function toggleFullscreen() {
@@ -2323,22 +2469,30 @@
       if (p.audioEl.paused) p.audioEl.play().catch(() => {});
     }
 
-    // The header names the call: the other person, or how many are in it.
+    // The header names the call: the other person, or the first two and how many more.
     if (list.length > 1) {
-      $("call-name").textContent = (list.length + 1) + " people";
-      $("call-handle").textContent = list.map((p) => displayName(p)).join(", ");
+      const names = list.map((p) => callName(p));
+      $("call-name").textContent = names.slice(0, 2).join(", ") + (names.length > 2 ? " +" + (names.length - 2) : "");
+      $("call-handle").textContent = (list.length + 1) + " people: you, " + names.join(", ");
     } else if (list.length === 1 && PAGE === "join") {
-      $("call-name").textContent = displayName(list[0]);
+      $("call-name").textContent = callName(list[0]);
       $("call-handle").textContent = list[0].mailbox ? (list[0].mailbox.handle || list[0].mailbox.address) : "";
     }
     const solo = list.length === 1 ? list[0] : null;
-    // On the media server one code covers the whole room; in a mesh, the code with the one other person.
-    const code = room.topology === "sfu" ? Sfu.code() : solo && solo.security ? solo.security.code : null;
-    $("call-sas").hidden = !code;
-    if (code) $("call-sas-code").textContent = code;
-    $("call-sas").title = room.topology === "sfu"
+    // On the media server one code covers the whole room; in a mesh, the code with the one other
+    // person, or (a group in a mesh) one code per person.
+    const sfu = room.topology === "sfu";
+    const code = sfu ? Sfu.code() : solo && solo.security ? solo.security.code : null;
+    const coded = sfu ? [] : list.filter((p) => p.security);
+    $("call-sas").hidden = !(code || (!solo && coded.length));
+    $("call-sas-code").textContent = code || "";
+    const sasList = $("call-sas-list");
+    sasList.replaceChildren(...(code ? [] : coded.map((p) => el("li", {}, el("span", { text: callName(p) }), el("strong", { text: p.security.code })))));
+    $("call-sas-note").textContent = sfu
       ? "Compare this code with everyone in the call. If it is the same on every screen, the call is end-to-end encrypted between all of you."
-      : "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices.";
+      : solo
+        ? "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices."
+        : "Each person has their own code. Compare yours with each of them: if it matches on both screens, your connection to them is end-to-end encrypted.";
     renderPager();
     const layoutBtn = $("call-layout");
     layoutBtn.hidden = all.length < 2;

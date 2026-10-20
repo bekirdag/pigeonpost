@@ -145,6 +145,18 @@ extension View {
         #endif
     }
 
+    /// Detents for a sheet that is a bottom sheet on a phone. With room for a form sheet — an iPad
+    /// that is not in a narrow Split View or Stage Manager window — the sheet is the full form sheet
+    /// instead: a medium detent there drew a short card whose rows were cut off mid-sentence.
+    @ViewBuilder
+    func phoneDetents(_ detents: Set<PresentationDetent>) -> some View {
+        #if os(iOS)
+        modifier(PhoneDetents(detents: detents))
+        #else
+        self
+        #endif
+    }
+
     /// A field whose text is an address or a name, where an automatic capital is always wrong.
     @ViewBuilder
     func noAutocapitalize() -> some View {
@@ -172,3 +184,20 @@ extension View {
         #endif
     }
 }
+
+#if os(iOS)
+private struct PhoneDetents: ViewModifier {
+    let detents: Set<PresentationDetent>
+
+    /// The window's width class, not the sheet's: inside a form sheet the content is always compact.
+    @MainActor private var roomForFormSheet: Bool {
+        let windows = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }.flatMap(\.windows)
+        let window = windows.first(where: \.isKeyWindow) ?? windows.first
+        return window?.traitCollection.horizontalSizeClass == .regular
+    }
+
+    func body(content: Content) -> some View {
+        content.presentationDetents(roomForFormSheet ? [.large] : detents)
+    }
+}
+#endif

@@ -158,7 +158,7 @@ struct PeerInfoSheet: View {
                 Button("Cancel", role: .cancel) {}
             }
         }
-        .presentationDetents([.large, .medium])
+        .phoneDetents([.large, .medium])
     }
 
     private func row(_ term: String, _ value: String, mono: Bool = false) -> some View {
