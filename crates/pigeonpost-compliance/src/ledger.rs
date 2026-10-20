@@ -1291,7 +1291,7 @@ impl DisclosureLedger {
             return Ok(empty_root());
         }
         let block = PROOF_BLOCK_LEAVES as u64;
-        if start % block == 0 && count % block == 0 {
+        if start.is_multiple_of(block) && count.is_multiple_of(block) {
             let first =
                 usize::try_from(start / block).map_err(|_| ComplianceError::LimitExceeded)?;
             let blocks =

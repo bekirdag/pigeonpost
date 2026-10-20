@@ -257,7 +257,10 @@ pub fn trace_epoch_end_ms(key_id: &ComplianceKeyId) -> Result<u64, FormatError> 
         return Err(FormatError::NotTracePurpose);
     }
     key_id.validate()?;
-    if key_id.epoch_start_ms % TRACE_EPOCH_DURATION_MS != 0 {
+    if !key_id
+        .epoch_start_ms
+        .is_multiple_of(TRACE_EPOCH_DURATION_MS)
+    {
         return Err(FormatError::InvalidTraceEpoch);
     }
     key_id
@@ -298,7 +301,10 @@ pub fn attribution_epoch_end_ms(key_id: &ComplianceKeyId) -> Result<u64, FormatE
         return Err(FormatError::NotAttributionPurpose);
     }
     key_id.validate()?;
-    if key_id.epoch_start_ms % TRACE_EPOCH_DURATION_MS != 0 {
+    if !key_id
+        .epoch_start_ms
+        .is_multiple_of(TRACE_EPOCH_DURATION_MS)
+    {
         return Err(FormatError::InvalidAttributionEpoch);
     }
     let days = i64::try_from(key_id.epoch_start_ms / TRACE_EPOCH_DURATION_MS)

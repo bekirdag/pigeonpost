@@ -11,7 +11,7 @@ license = "MIT"
 repository = "https://github.com/bekirdag/pigeonpost"
 homepage = "https://pigeonpost.dev"
 authors = ["bekir dağ"]
-rust-version = "1.88"
+rust-version = "1.91"
 
 [workspace.dependencies]
 ed25519-dalek = { version = "2.1", features = ["rand_core", "zeroize"] }

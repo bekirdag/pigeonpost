@@ -896,12 +896,9 @@ fn collect_adapter_output_unix(
     let mut descendants_terminated = false;
     let mut buffer = [0u8; 8 * 1024];
     loop {
-        while stdin.is_some() && input_offset < input.len() {
-            match stdin
-                .as_mut()
-                .expect("checked as present")
-                .write(&input[input_offset..])
-            {
+        while input_offset < input.len() {
+            let Some(pipe) = stdin.as_mut() else { break };
+            match pipe.write(&input[input_offset..]) {
                 Ok(0) => {
                     terminate_adapter_tree(child);
                     return Err(OperatorError::Custody);

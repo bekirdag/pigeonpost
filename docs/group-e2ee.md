@@ -45,8 +45,9 @@ for every published OpenMLS advisory: GHSA-gc79-23g3-8g52 (High, nested-extensio
 0.8.2 / 0.9.1), GHSA-w62v-gv48-63rh and GHSA-rrmv-c79f-cf5r (Moderate, pre-auth decoding DoS; fixed
 only in 0.9.0), GHSA-8x3w-qj7j-gqhf (High, tag length validation; fixed 0.7.2) and
 GHSA-qr9h-x63w-vqfm (Moderate, secret-tree persistence; fixed 0.7.1). 0.9 requires Rust 1.91, so
-the crate is a separate Cargo workspace with its own `rust-toolchain.toml`; the rest of the
-repository stays on 1.88.
+the crate is a separate Cargo workspace with its own `rust-toolchain.toml`. Since Phase 3a the root
+workspace is on 1.91.1 too, because the postbox (server-side validation) and the CLI link this
+crate directly.
 
 **Ciphersuite.** `MLS_128_DHKEMX25519_AES128GCM_SHA256_Ed25519` (0x0001), the RFC 9420
 mandatory-to-implement suite. It is the only suite this crate creates or accepts.

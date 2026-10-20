@@ -303,7 +303,7 @@ impl WitnessPolicy {
             let verified = Checkpoint::verify_with_fresh_witnesses(
                 &receipt.note,
                 operator_key,
-                &[witness.clone()],
+                std::slice::from_ref(witness),
                 1,
                 now_secs,
                 self.max_cosignature_age_secs,

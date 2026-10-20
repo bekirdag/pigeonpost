@@ -4,7 +4,7 @@
 # headers. `ring` and bundled SQLite both compile C during the release build, so construct the
 # smallest possible derived toolchain with exact, signed Alpine packages. Exact version pins make
 # repository churn fail closed instead of silently changing release inputs.
-ARG LINUX_BUILD_IMAGE=docker.io/library/rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+ARG LINUX_BUILD_IMAGE=docker.io/library/rust:1.91.1-alpine3.22@sha256:8efbfb788786eeb127adc581394349c5fb567712156e0f8c2e499acadbc23756
 FROM ${LINUX_BUILD_IMAGE}
 
 ARG MUSL_VERSION=1.2.5-r12
