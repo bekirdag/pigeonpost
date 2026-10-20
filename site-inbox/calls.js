@@ -38,6 +38,7 @@
   const LIVEKIT_BASE = "/vendor/livekit-client/";
   const LIVEKIT_INTEGRITY = "sha384-5qI/UmLG0CvuWCt6vqjMW1oRwzXu+MNhbw4x6yo9NARdlqi94LwQfq9wvDTIcfrD";
   const E2EE_SCRIPT = "/calls-e2ee.js?v=20261020-sfu";
+  const E2EE_WORKER = "/calls-e2ee-worker.js?v=20261020-sfu";
   const PAGE = document.body?.dataset.page === "join" ? "join" : "inbox";
 
   const supported = Boolean(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
@@ -1372,12 +1373,13 @@
       const LK = L();
       class RoomKeys extends LK.BaseKeyProvider {
         constructor() { super({ sharedKey: true, ratchetWindowSize: 0, failureTolerance: -1 }); }
-        // Known for opening others' frames, not yet used for sealing ours.
+        // Known for opening others' frames, not yet used for sealing ours. `material` is the raw room
+        // key; calls-e2ee-worker.js imports it inside the worker.
         stage(material, slot) { this.emit(LK.KeyProviderEvent.SetKey, { key: material, participantIdentity: undefined, keyIndex: slot }, false); }
         use(material, slot) { this.onSetEncryptionKey(material, undefined, slot); }
       }
       mine.keys = new RoomKeys();
-      mine.worker = new Worker(LIVEKIT_BASE + "livekit-client.e2ee.worker.js");
+      mine.worker = new Worker(E2EE_WORKER);
       const lk = new LK.Room({
         adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: false, disconnectOnPageLeave: true,
         e2ee: { keyProvider: mine.keys, worker: mine.worker },
@@ -1430,7 +1432,13 @@
       clearTimeout(s.rotateTimer);
       const mine = s;
       // A moment's grace, so that several arrivals at once make one new key, not several.
-      mine.rotateTimer = setTimeout(() => { if (s === mine && active()) rotate(mine).catch((err) => console.warn("calls: key rotation failed", err && err.name)); }, 250);
+      mine.rotateTimer = setTimeout(() => { if (s === mine && active()) rotate(mine).catch((err) => note(mine, "rotate", err)); }, 250);
+    }
+
+    // The last thing that went wrong, for inspect(): names and messages only, never keys.
+    function note(mine, where, err) {
+      mine.lastError = where + ": " + String((err && (err.message || err.name)) || err).slice(0, 160);
+      console.warn("calls: " + mine.lastError);
     }
 
     async function rotate(mine) {
@@ -1463,8 +1471,8 @@
       let roomKey;
       try {
         roomKey = await E().unwrapRoomKey({ privateKey: mine.identity.privateKey, roomId: mine.roomId, from: { id: fromId, key: from.key }, to: { id: room.you, key: mine.identity.publicKey }, wrapped });
-      } catch (_) {
-        console.warn("calls: a room key from another participant did not open");
+      } catch (err) {
+        note(mine, "unwrap", err);
         return;
       }
       if (s !== mine || !active() || wrapped.epoch < mine.epoch) return;
@@ -1474,7 +1482,7 @@
 
     async function install(mine, epoch, roomKey, fromId) {
       const slot = E().slotFor(epoch);
-      const material = await L().createKeyMaterialFromBuffer(roomKey);
+      const material = roomKey.slice().buffer;
       mine.dataKeys.set(epoch, await E().dataKey(roomKey));
       for (const e of mine.dataKeys.keys()) if (e <= epoch - E().KEY_SLOTS) mine.dataKeys.delete(e);
       const first = !mine.keyed;
@@ -1541,7 +1549,7 @@
         broadcastState();
         scheduleSync();
       })().catch((err) => {
-        console.warn("calls: media server connection failed", err && (err.code || err.name));
+        note(mine, "connect", err);
         mine.connecting = null;
         if (s !== mine || !active()) return;
         if (err && err.code === "not_in_room") return;
@@ -1597,7 +1605,7 @@
         if (slot === "cam" && singleLayer) Object.assign(options, { simulcast: false, videoEncoding: { maxBitrate: 600_000, maxFramerate: 24 } });
         mine.pubs[slot] = await mine.lk.localParticipant.publishTrack(track, options);
       } catch (err) {
-        console.warn("calls: publishing " + slot + " failed", err && err.name);
+        note(mine, "publish " + slot, err);
       }
     }
 
@@ -1797,7 +1805,7 @@
     function inspect() {
       if (!s) return null;
       return {
-        connected: s.connected, epoch: s.epoch, sendEpoch: s.sendEpoch, keyFrom: s.keyFrom, code: s.code, rotations: s.rotations,
+        connected: s.connected, epoch: s.epoch, sendEpoch: s.sendEpoch, keyFrom: s.keyFrom, code: s.code, rotations: s.rotations, lastError: s.lastError || null,
         leader: room && leader() ? leader().id : null, decryptErrors: s.decryptErrors, unencrypted: s.unencrypted,
         publicKey: s.identity ? s.identity.publicKey : null,
         published: Object.keys(s.pubs).filter((k) => s.pubs[k]), singleLayer,
