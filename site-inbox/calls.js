@@ -1870,27 +1870,104 @@
 
   // ---- the call screen -------------------------------------------------------------------------
 
-  // How far down the header's own content reaches (its buttons, the name and status), published as
-  // --call-top-h so the stage and the tiles' pin and mute buttons keep clear of it. Measured rather
-  // than assumed: it changes with the width (a phone stacks the header), the font, zoom and the
-  // phone's safe area above it.
-  function watchHeader(ui) {
+  // How tall the header's own content is (its buttons, the name and status) and how tall the
+  // controls dock is, as --call-top-content and --call-dock-h. The stylesheet adds the paddings and
+  // safe areas to make --call-top-h and --call-controls-h, which the stage, the tiles' pin and mute
+  // buttons and your own view keep clear of. Measured rather than assumed: they change with the
+  // width (a phone stacks the header), the font and zoom.
+  function watchLayout(ui) {
     const top = ui.querySelector(".call-top");
+    const dock = ui.querySelector(".call-controls");
     if (!top) return;
     const measure = () => {
       let bottom = 0;
       for (const child of top.children) {
         if (child.offsetHeight) bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
       }
-      if (bottom) ui.style.setProperty("--call-top-h", Math.ceil(bottom) + "px");
+      const pad = parseFloat(getComputedStyle(top).paddingTop) || 0;
+      if (bottom) ui.style.setProperty("--call-top-content", Math.ceil(bottom - pad) + "px");
+      if (dock && dock.offsetHeight) ui.style.setProperty("--call-dock-h", Math.ceil(dock.offsetHeight) + "px");
     };
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(measure);
-      observer.observe(top);
-      for (const child of top.children) observer.observe(child);
+      for (const node of [top, dock, ...top.children]) if (node) observer.observe(node, { box: "border-box" });
     }
     window.addEventListener("resize", measure);
     measure();
+  }
+
+  // Your own view, in whichever corner you put it. Drag it (finger, pen or mouse) and it snaps to
+  // the nearest corner; with it focused, the arrow keys move it between corners. The corner is
+  // remembered on this device. The corners themselves are the stylesheet's ([data-corner]): clear
+  // of the header, the controls dock and the safe areas.
+  const CORNERS = ["tl", "tr", "bl", "br"];
+  const SELF_CORNER_KEY = "ppi_call_self_corner";
+  function savedCorner() {
+    const value = store.get(SELF_CORNER_KEY);
+    return CORNERS.includes(value) ? value : "br";
+  }
+  function placeSelf(box, corner, from) {
+    if (!CORNERS.includes(corner)) return;
+    const before = from || box.getBoundingClientRect();
+    box.dataset.corner = corner;
+    store.set(SELF_CORNER_KEY, corner);
+    // Slide from where it was to the corner: the corners are different properties (top or bottom,
+    // left or right), which cannot be transitioned, so the move is played as a transform.
+    const after = box.getBoundingClientRect();
+    const dx = before.left - after.left, dy = before.top - after.top;
+    box.classList.remove("call-self-dragging");
+    const still = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    if (still || (!dx && !dy)) { box.style.transform = ""; return; }
+    box.style.transition = "none";
+    box.style.transform = `translate(${dx}px, ${dy}px)`;
+    void box.offsetWidth;
+    box.style.transition = "transform .18s ease-out";
+    box.style.transform = "";
+    box.addEventListener("transitionend", () => { box.style.transition = ""; }, { once: true });
+  }
+  function movableSelf(box) {
+    const main = box.parentElement;
+    let drag = null;
+    box.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0 && e.pointerType === "mouse") return;
+      drag = { id: e.pointerId, x: e.clientX, y: e.clientY, moved: false };
+      try { box.setPointerCapture(e.pointerId); } catch (_) { /* not capturable */ }
+    });
+    box.addEventListener("pointermove", (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const dx = e.clientX - drag.x, dy = e.clientY - drag.y;
+      if (!drag.moved && Math.hypot(dx, dy) < 6) return;
+      drag.moved = true;
+      box.classList.add("call-self-dragging");
+      box.style.transition = "none";
+      box.style.transform = `translate(${dx}px, ${dy}px)`;
+      e.preventDefault();
+    });
+    const end = (e) => {
+      if (!drag || e.pointerId !== drag.id) return;
+      const moved = drag.moved;
+      drag = null;
+      try { box.releasePointerCapture(e.pointerId); } catch (_) { /* released */ }
+      if (!moved) return; // a tap: nothing more than it ever did
+      const at = box.getBoundingClientRect();
+      const area = main.getBoundingClientRect();
+      const left = at.left + at.width / 2 < area.left + area.width / 2;
+      const upper = at.top + at.height / 2 < area.top + area.height / 2;
+      placeSelf(box, (upper ? "t" : "b") + (left ? "l" : "r"), at);
+    };
+    box.addEventListener("pointerup", end);
+    box.addEventListener("pointercancel", end);
+    box.addEventListener("keydown", (e) => {
+      const corner = box.dataset.corner || "br";
+      let v = corner[0], h = corner[1];
+      if (e.key === "ArrowUp") v = "t";
+      else if (e.key === "ArrowDown") v = "b";
+      else if (e.key === "ArrowLeft") h = "l";
+      else if (e.key === "ArrowRight") h = "r";
+      else return;
+      e.preventDefault();
+      if (v + h !== corner) placeSelf(box, v + h);
+    });
   }
 
   function buildUI() {
@@ -1929,7 +2006,8 @@
           el("div", { class: "call-knocks", id: "call-knocks", "aria-live": "polite" }),
           el("div", { class: "call-grid", id: "call-grid", "data-count": "0", "data-layout": "grid" }, el("div", { class: "call-strip", id: "call-strip" })),
           el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
-          el("div", { class: "call-self", id: "call-self", "data-screen": "false" },
+          el("div", { class: "call-self", id: "call-self", "data-screen": "false", "data-corner": savedCorner(), tabindex: "0",
+            role: "group", "aria-label": "Your video. Drag it, or use the arrow keys, to move it to another corner." },
             el("video", { id: "call-self-screen", class: "call-self-screen", autoplay: true, playsinline: true, muted: true }),
             el("video", { id: "call-self-video", class: "call-self-camera", autoplay: true, playsinline: true, muted: true }),
             el("span", { class: "call-mute-badge call-self-mute", id: "call-self-mute", hidden: true, title: "You’re muted", "aria-label": "You’re muted" }, svg(ICON.mic + ICON.slash)),
@@ -1994,7 +2072,8 @@
     );
     document.body.append(ui, ringCard, miniBar());
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
-    watchHeader(ui);
+    watchLayout(ui);
+    movableSelf($("call-self"));
 
     $("call-mute").addEventListener("click", toggleMute);
     $("call-camera").addEventListener("click", toggleCamera);
