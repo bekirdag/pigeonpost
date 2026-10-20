@@ -37,9 +37,10 @@ sha2 = "0.10"
 hkdf = "0.12"
 zeroize = { version = "1.8", features = ["derive"] }
 thiserror = "2"
-pigeonpost-core = { path = "../pigeonpost-core" }
 
 [dev-dependencies]
+# Only to prove address derivation matches the canonical implementation (tests/address.rs).
+pigeonpost-core = { path = "../pigeonpost-core" }
 proptest = { version = "1.11", default-features = false, features = ["std"] }
 
 [profile.release]

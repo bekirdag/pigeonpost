@@ -13,11 +13,10 @@
 //! The attestation signs [`attestation_payload`], which binds the mailbox, the device id, the
 //! ciphersuite and the device's MLS signature public key (the leaf's `signature_key`). Because a
 //! `/k/` address *is* the hash of the mailbox public key, verification needs no directory: the
-//! address must equal `Address::from_pubkey(mailbox_key)` and the signature must verify. A leaf
+//! address must equal `address_for_key(mailbox_key)` and the signature must verify. A leaf
 //! is accepted only when the attested device key equals the leaf's actual signature key.
 
 use ed25519_dalek::{Signature, Signer as _, SigningKey, VerifyingKey};
-use pigeonpost_core::address::Address;
 use sha2::{Digest, Sha256, Sha512};
 
 use crate::codec::{Reader, Writer};
@@ -60,14 +59,50 @@ pub fn validate_device_id(device_id: &str) -> Result<()> {
     }
 }
 
-/// Parse a mailbox address and require its canonical `/k/` spelling.
-pub fn canonical_mailbox(mailbox: &str) -> Result<String> {
-    let parsed =
-        Address::parse(mailbox).map_err(|_| Error::invalid("mailbox must be a /k/ address"))?;
-    if parsed.as_str() != mailbox {
-        return Err(Error::invalid("mailbox address is not in canonical form"));
+const B32: &[u8; 32] = b"0123456789abcdefghjkmnpqrstvwxyz";
+
+/// `/k/` + lowercase Crockford base32 of the first 16 bytes of SHA-256(public key): the same
+/// derivation as `pigeonpost_core::address::Address::from_pubkey` (a test pins the equality).
+/// Kept local so this crate builds reproducibly without an out-of-workspace path dependency.
+pub fn address_for_key(public_key: &[u8; 32]) -> String {
+    let digest = Sha256::digest(public_key);
+    let mut out = String::from("/k/");
+    let (mut buffer, mut bits) = (0u16, 0u8);
+    for &byte in &digest[..16] {
+        buffer = (buffer << 8) | u16::from(byte);
+        bits += 8;
+        while bits >= 5 {
+            bits -= 5;
+            out.push(B32[((buffer >> bits) & 0x1f) as usize] as char);
+        }
     }
-    Ok(parsed.as_str().to_owned())
+    out.push(B32[((buffer << (5 - bits)) & 0x1f) as usize] as char);
+    out
+}
+
+/// Require a mailbox address in canonical `/k/` form (26 lowercase Crockford characters that
+/// re-encode to themselves).
+pub fn canonical_mailbox(mailbox: &str) -> Result<String> {
+    let bad = || Error::invalid("mailbox must be a canonical /k/ address");
+    let body = mailbox.strip_prefix("/k/").ok_or_else(bad)?;
+    if body.len() != 26 {
+        return Err(bad());
+    }
+    let (mut buffer, mut bits, mut bytes) = (0u32, 0u8, Vec::with_capacity(17));
+    for c in body.bytes() {
+        let v = B32.iter().position(|&a| a == c).ok_or_else(bad)? as u32;
+        buffer = (buffer << 5) | v;
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            bytes.push((buffer >> bits) as u8);
+        }
+    }
+    // 130 bits carry 16 bytes; the 2 spare bits must be zero for the spelling to be canonical.
+    if buffer & ((1 << bits) - 1) != 0 || bytes.len() != 16 {
+        return Err(bad());
+    }
+    Ok(mailbox.to_owned())
 }
 
 /// The exact bytes a mailbox identity key signs to attest one device.
@@ -103,9 +138,7 @@ pub fn sign_attestation_with_seed(identity_seed: &[u8; 32], payload: &[u8]) -> R
 /// Derive the `/k/` mailbox address for an identity seed.
 pub fn mailbox_for_seed(identity_seed: &[u8; 32]) -> String {
     let key = SigningKey::from_bytes(identity_seed);
-    Address::from_pubkey(&key.verifying_key())
-        .as_str()
-        .to_owned()
+    address_for_key(&key.verifying_key().to_bytes())
 }
 
 impl DeviceCredential {
@@ -147,7 +180,7 @@ impl DeviceCredential {
         validate_device_id(&self.device_id).map_err(|_| bad("invalid device id"))?;
         let mailbox_key = VerifyingKey::from_bytes(&self.mailbox_public_key)
             .map_err(|_| bad("invalid mailbox key"))?;
-        if Address::from_pubkey(&mailbox_key).as_str() != self.mailbox {
+        if address_for_key(&self.mailbox_public_key) != self.mailbox {
             return Err(bad("mailbox key does not match the mailbox address"));
         }
         let payload = attestation_payload(&self.mailbox, &self.device_id, leaf_signature_key)

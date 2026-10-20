@@ -17,7 +17,7 @@ MIT / Apache-2.0 / BSD / MPL-2.0 (see the doc, §1).
 CSP: works under the inbox policy `script-src 'self' 'wasm-unsafe-eval'` — same-origin modules,
 WebAssembly compilation only. Serve `.wasm` as `application/wasm`.
 
-wasm SHA-256: `c6094d8c89d2551e123fdab1c94eeb3bbccdf12897377ad92c2607d43ffc628a`
+wasm SHA-256: `23d910dd09aca1ffdc5cf62b8219a166a51d418d6aa433c0461b7044daf6aa53`
 
 ## Reproduce
 

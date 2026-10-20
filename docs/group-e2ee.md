@@ -122,7 +122,7 @@ u16 len || mailbox || u16 len || device id || u16 ciphersuite (0x0001) || u16 le
 sender):
 
 1. the address is canonical and equals `Address::from_pubkey(mailbox key)` — `/k/` addresses are
-   the hash of the key, so no directory lookup is involved (`pigeonpost-core::address`);
+   the hash of the key, so no directory lookup is involved (same derivation as `pigeonpost-core::address`, pinned by `tests/address.rs`);
 2. the attestation verifies (`verify_strict`) for exactly the leaf's MLS `signature_key`;
 3. within a group, `(mailbox, device id)` is unique;
 4. a leaf update (update proposal or commit path) must keep the same mailbox, device id **and**
@@ -457,7 +457,7 @@ application messages, commits, Welcomes and key packages. Invariants: no panic; 
 never decrypts to anything but the original; the original still decrypts afterwards; any key
 package that still verifies is still the same attested device.
 
-Local evidence (2026-10-20, macOS arm64): 8 Rust tests pass; the interop scenario passes with all
+Local evidence (2026-10-20, macOS arm64): 10 Rust tests pass; the interop scenario passes with all
 six runtimes in both orders (epoch 10, 6 devices, 5 mailboxes); `swift test` passes against the
 XCFramework; the Android AAR builds with NDK 25.1; the WASM bundle rebuilds byte-identically.
 
