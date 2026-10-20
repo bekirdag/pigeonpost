@@ -83,6 +83,13 @@ jobs:
             --tag v0.11.1+v0.31.0 --locked
       - name: Rebuild the vendored web bundle and compare byte for byte
         run: scripts/build-wasm.sh --check
+      - name: Keep the mismatching rebuild for inspection
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: groupcrypto-wasm-rebuild
+          path: crates/pigeonpost-groupcrypto/target/wasm-check
+          retention-days: 7
       - name: Check the vendored checksums
         working-directory: site-inbox/vendor/groupcrypto
         run: sha256sum -c SHA256SUMS

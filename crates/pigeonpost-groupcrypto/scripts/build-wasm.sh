@@ -39,7 +39,13 @@ if [ "${1:-}" = "--check" ]; then
       status=1
     fi
   done
-  [ $status -eq 0 ] && echo "vendored bundle is reproducible (wasm sha256 $wasm_sha)"
+  if [ $status -eq 0 ]; then
+    echo "vendored bundle is reproducible (wasm sha256 $wasm_sha)"
+  else
+    # Keep the clean rebuild for inspection (CI uploads it).
+    mkdir -p "$here/target/wasm-check" && cp "$tmp"/* "$here/target/wasm-check/"
+    cp "$CARGO_TARGET_DIR/wasm32-unknown-unknown/release/pigeonpost_groupcrypto_wasm.wasm" "$here/target/wasm-check/raw.wasm"
+  fi
   exit $status
 fi
 mkdir -p "$out"
