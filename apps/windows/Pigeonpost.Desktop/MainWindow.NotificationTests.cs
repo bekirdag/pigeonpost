@@ -50,17 +50,20 @@ public sealed partial class MainWindow
             Check(alerts.Count == 2, "Windows notification center contains both native alerts");
             var mailboxAddress = ViewModel.SelectedMailbox!.Address;
             var designGroup = MessageAlerts.GroupKey(mailboxAddress, "/preview/design");
-            foreach (var alert in alerts)
+            foreach (var raw in alerts)
             {
+                // Compare attribute values whichever quote style Windows serialises them with.
+                var alert = new { raw.Group, Payload = raw.Payload.Replace('\'', '"') };
+                checks.Add("Toast payload: " + raw.Payload);
                 // The toast Windows holds: sender's name (the contact alias), the message, an inline
                 // reply box, Mark as read, the sender's face, filed under the conversation.
                 Check(alert.Group == designGroup, "Toast is grouped under its conversation");
                 Check(alert.Payload.Contains(">Design<", StringComparison.Ordinal), "Toast names the sender: " + alert.Payload);
                 Check(alert.Payload.Contains("New message during background refresh", StringComparison.Ordinal), "Toast previews the message");
-                Check(alert.Payload.Contains("<input ", StringComparison.Ordinal) && alert.Payload.Contains("id=\"reply\"", StringComparison.Ordinal), "Toast has an inline Reply box");
-                Check(alert.Payload.Contains("content=\"Reply\"", StringComparison.Ordinal) && alert.Payload.Contains("hint-inputId=\"reply\"", StringComparison.Ordinal), "Toast has a Reply button bound to the box");
-                Check(alert.Payload.Contains("content=\"Mark as read\"", StringComparison.Ordinal), "Toast has Mark as read");
-                Check(alert.Payload.Contains("appLogoOverride", StringComparison.Ordinal) && alert.Payload.Contains("hint-crop=\"circle\"", StringComparison.Ordinal), "Toast shows the sender's face");
+                Check(alert.Payload.Contains("<input ", StringComparison.Ordinal) && alert.Payload.Contains("id=\"reply\"", StringComparison.Ordinal), "Toast has an inline Reply box: " + alert.Payload);
+                Check(alert.Payload.Contains("content=\"Reply\"", StringComparison.Ordinal) && alert.Payload.Contains("hint-inputId=\"reply\"", StringComparison.Ordinal), "Toast has a Reply button bound to the box: " + alert.Payload);
+                Check(alert.Payload.Contains("content=\"Mark as read\"", StringComparison.Ordinal), "Toast has Mark as read: " + alert.Payload);
+                Check(alert.Payload.Contains("appLogoOverride", StringComparison.Ordinal) && alert.Payload.Contains("hint-crop=\"circle\"", StringComparison.Ordinal), "Toast shows the sender's face: " + alert.Payload);
             }
             toastPayload = alerts[0].Payload;
             checks.Add($"Toast ids {string.Join(", ", alerts.Select(a => a.Id))} raised through AppNotificationManager while the window was hidden");

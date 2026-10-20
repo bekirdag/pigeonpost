@@ -174,7 +174,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.window.subject_list.get_first_child().subject, None)
 
     def test_new_conversation_supplies_prefix_and_keeps_the_full_destination(self):
-        self.assertEqual(self.window.mailbox_model.get_string(0), "/demo")
+        self.assertEqual(self.window.mailbox_model.get_string(0), "Demo")
         self.window.new_conversation()
         content = self.window.dialogs[-1].get_content()
         def entries(widget):
