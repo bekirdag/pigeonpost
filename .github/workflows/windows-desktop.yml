@@ -9,6 +9,7 @@ on:
       # The call test runs the web call client and the call service from this repository.
       - 'site-inbox/native-call.*'
       - 'site-inbox/calls.js'
+      - 'site-inbox/names.js'
       - 'calls-service/**'
 
 permissions:

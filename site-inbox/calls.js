@@ -108,8 +108,12 @@
   };
 
   // Faces: the same two letters and tone the inbox uses, so a person looks the same in both places.
+  // A handle is named first ("/bekir/main" -> "Bekir" -> "BE"), never lettered from its last segment.
   function initials(name) {
-    const base = String(name || "").split("/").filter(Boolean).pop() || String(name || "");
+    const text = String(name || "");
+    const named = text.startsWith("/") ? displayName(text) : text;
+    if (window.PigeonpostNames) return window.PigeonpostNames.initials(named);
+    const base = named.split("/").filter(Boolean).pop() || named;
     const letters = base.replace(/[^\p{L}\p{N}]/gu, "");
     return (letters.slice(0, 2) || "··").toUpperCase();
   }
@@ -135,7 +139,7 @@
   }
   function displayName(m) {
     if (!m) return "Guest";
-    if (typeof m === "string") return host()?.displayName ? host().displayName(m) : m;
+    if (typeof m === "string") return host()?.displayName ? host().displayName(m) : window.PigeonpostNames ? window.PigeonpostNames.displayName(m) : m;
     if (m.mailbox) return displayName(m.mailbox.handle || m.mailbox.address);
     return m.name || "Guest";
   }

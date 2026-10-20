@@ -52,13 +52,10 @@
 
   const sameDay = (a, b) => new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
 
-  // Default inboxes must identify their owner: /alp and /bekir are different people.
+  // Default inboxes must identify their owner: /alp and /bekir are different people. The rule
+  // itself ("/bekir/main" -> "Bekir", "/wodo/hr" -> "Wodo HR") lives in names.js, shared with calls.js.
   function displayName(peer) {
-    if (!peer) return "unknown";
-    if (peer.startsWith("/k/")) return peer.slice(0, 12) + "…";
-    const parts = peer.split("/").filter(Boolean);
-    if (parts.length === 2 && parts[1] === "main") return "/" + parts[0];
-    return parts.length > 1 ? parts[parts.length - 1] : peer;
+    return window.PigeonpostNames.displayName(peer);
   }
 
   function normaliseAddressInput(input) {
@@ -75,9 +72,14 @@
     }
   }
 
-  function initials(peer) {
-    const name = displayName(peer).replace(/[^a-z0-9]/gi, "");
-    return (name.slice(0, 2) || "··").toUpperCase();
+  // A contact's alias wins over the name derived from the handle, in text and on the face alike.
+  function peerName(peer) {
+    const contact = peer && state.contacts ? contactFor(peer) : null;
+    return (contact && contact.alias) || displayName(peer);
+  }
+
+  function initials(peer, name) {
+    return window.PigeonpostNames.initials(name || peerName(peer));
   }
 
   // Stable per-peer colour so a thread keeps its face between sessions.
@@ -87,8 +89,8 @@
     return (h % 6) + 1;
   }
 
-  function paintAvatar(el, peer) {
-    el.textContent = initials(peer);
+  function paintAvatar(el, peer, name) {
+    el.textContent = initials(peer, name);
     el.dataset.tone = String(tone(peer));
     // A profile picture, when there is one this account may see; the initials stay underneath.
     Avatars.decorate(el, peer);
@@ -1309,7 +1311,7 @@
 
       const av = document.createElement("span");
       av.className = "avatar";
-      paintAvatar(av, id.handle || id.address);
+      paintAvatar(av, id.handle || id.address, identityName(id));
       av.style.width = av.style.height = "30px";
       av.style.fontSize = "11.5px";
 
@@ -1399,7 +1401,7 @@
 
     const av = document.createElement("span");
     av.className = "avatar";
-    paintAvatar(av, t.peer);
+    paintAvatar(av, t.peer, threadName(t));
 
     const text = document.createElement("div");
     text.className = "tr-text";
@@ -1522,7 +1524,7 @@
     $("peer-name").textContent = threadName(thread);
     $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
     $("peer-sub").textContent = thread.mine ? thread.peer + " · your mailbox" : thread.peer;
-    paintAvatar($("peer-avatar"), thread.peer);
+    paintAvatar($("peer-avatar"), thread.peer, threadName(thread));
     $("delete-thread-btn").hidden = !showing?.id;
     renderMessages(thread.messages, showing?.id || "");
 
@@ -5251,7 +5253,7 @@
     mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
     peer: () => state.openPeer || null,
     knownPeer: (peer) => Boolean(peer && (contactFor(peer) || state.inbound.some((m) => peerKeyOf(m) === peer))),
-    displayName,
+    displayName: peerName,
     paintAvatar,
     // Phase 1b: lets call tiles show a profile picture over their initials.
     decorateAvatar: (el, key) => Avatars.decorate(el, key),
