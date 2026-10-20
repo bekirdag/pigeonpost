@@ -135,8 +135,10 @@ inbox origin above is the production path. Today `*.pigeonpost.dev` resolves to 
 The calls service admits a large room, or one more person into it, only while the expected upload of
 all large rooms stays within `CALLS_SFU_BUDGET_MBPS`. Otherwise it refuses with `call_busy` ("The
 call is busy … try again in a few minutes"). Per receiver it counts one large view at 1.7 Mbit/s, up
-to 15 thumbnails at 0.16 Mbit/s each, and 0.05 Mbit/s per other voice (`sfuRoomMbps`). One 30-person
-room plans ≈167 Mbit/s, one 12-person room ≈46 Mbit/s.
+to 15 thumbnails at 0.25 Mbit/s each, and 0.06 Mbit/s per other voice (`sfuRoomMbps`). These are the
+values measured on the production media server with 30 synthetic participants on 2026-10-20: it
+forwarded 160–224 Mbit/s and received 18–28 Mbit/s, at a load average of about 3 on 5 vCPUs. One
+30-person room plans ≈216 Mbit/s, one 12-person room ≈58 Mbit/s.
 
 Measured on 2026-10-20 with iperf3, 4 streams, 15 s, from the media host:
 
@@ -144,8 +146,9 @@ Measured on 2026-10-20 with iperf3, 4 streams, 15 s, from the media host:
 - to `speedtest.wtnet.de`: 1.8 Gbit/s up, 0.27–0.32 Gbit/s down.
 
 The budget is set to 400 Mbit/s: about 20% of the measured upload, which leaves headroom for coturn
-and for paths slower than these test servers. That is two full 30-person calls at once, or about
-eight of 12. Raise it only after watching real calls: `ss`/`nload` on the host, LiveKit's CPU.
+and for paths slower than these test servers. That is one full 30-person call next to smaller ones,
+or about six calls of 12. CPU is the next limit: one 30-person call put the 5-vCPU host at a load of
+about 3. Raise it only after watching real calls: `ss`/`nload` on the host, LiveKit's CPU.
 
 Clients publish three simulcast layers (180p, 360p, top at most 1.7 Mbit/s; VP8). A receiver gets
 the top layer only for the view on the stage. Some WebKit clients (the macOS app) publish a single

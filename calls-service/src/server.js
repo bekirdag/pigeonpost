@@ -74,8 +74,10 @@ export function sfuConfigFromEnv(env = process.env) {
     budgetMbps: Number(env.CALLS_SFU_BUDGET_MBPS || 0),
     model: {
       mainMbps: Number(env.CALLS_SFU_MAIN_MBPS || 1.7),
-      thumbMbps: Number(env.CALLS_SFU_THUMB_MBPS || 0.16),
-      audioMbps: Number(env.CALLS_SFU_AUDIO_MBPS || 0.05),
+      // Measured on the production media server with 30 participants (2026-10-20): about 220 Mbit/s
+      // forwarded, i.e. ~7.3 Mbit/s per receiver including RTCP, retransmission and probing.
+      thumbMbps: Number(env.CALLS_SFU_THUMB_MBPS || 0.25),
+      audioMbps: Number(env.CALLS_SFU_AUDIO_MBPS || 0.06),
       publishMbps: Number(env.CALLS_SFU_PUBLISH_MBPS || 2.4),
       thumbs: Number(env.CALLS_SFU_THUMBS || 15),
     },

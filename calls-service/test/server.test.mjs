@@ -454,10 +454,11 @@ test("the expected cost of a media-server room grows with its size and stays in 
   assert.equal(sfuRoomMbps(0, model), 0);
   assert.equal(sfuRoomMbps(1, model), 2.4); // alone: what one person sends
   // Seven people: one large view, five thumbnails and six voices each.
-  assert.ok(Math.abs(sfuRoomMbps(7, model) - 7 * (1.7 + 5 * 0.16 + 6 * 0.05)) < 1e-9);
+  assert.ok(Math.abs(sfuRoomMbps(7, model) - 7 * (1.7 + 5 * 0.25 + 6 * 0.06)) < 1e-9);
   // Thirty: thumbnails stop at fifteen (one page of sixteen views).
-  assert.ok(Math.abs(sfuRoomMbps(30, model) - 30 * (1.7 + 15 * 0.16 + 29 * 0.05)) < 1e-9);
-  assert.ok(sfuRoomMbps(30, model) < 200);
+  assert.ok(Math.abs(sfuRoomMbps(30, model) - 30 * (1.7 + 15 * 0.25 + 29 * 0.06)) < 1e-9);
+  // One full call fits the production budget of 400 Mbit/s; two do not.
+  assert.ok(sfuRoomMbps(30, model) < 400 && 2 * sfuRoomMbps(30, model) > 400);
 });
 
 test("a mesh call moves to the media server when the seventh person is let in, and stops at thirty", async () => {
