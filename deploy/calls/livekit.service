@@ -1,0 +1,31 @@
+# /etc/systemd/system/livekit.service on the media host.
+[Unit]
+Description=LiveKit media server (Pigeonpost calls of more than six; forwards encrypted frames)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=livekit
+Group=livekit
+EnvironmentFile=/etc/livekit/livekit.env
+ExecStart=/opt/livekit/current/livekit-server --config /etc/livekit/livekit.yaml
+Restart=always
+RestartSec=3
+LimitNOFILE=65536
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX AF_NETLINK
+RestrictNamespaces=true
+LockPersonality=true
+SystemCallArchitectures=native
+CapabilityBoundingSet=
+MemoryMax=3G
+
+[Install]
+WantedBy=multi-user.target

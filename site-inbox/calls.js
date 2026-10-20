@@ -10,6 +10,14 @@
 // Each person's tile can show a security code computed from both browsers' DTLS fingerprints. If two
 // people read the same code, nothing between them — this service included — is in the middle.
 //
+// A call of more than six people (up to 30) runs through a media server instead (a LiveKit SFU). Then
+// every browser encrypts each audio and video frame itself before it leaves the device, with a room
+// key that the browsers pass to each other wrapped to each one's own key pair (calls-e2ee.js); the
+// call service and the media server never hold it. The call shows one security code for the whole
+// room. Browsers that cannot encrypt their own frames are told the call needs a newer browser; there
+// is no unencrypted fallback. When a seventh person joins a mesh call, everyone moves to the media
+// server and keeps their direct connections until the media server is carrying the others.
+//
 // The same file runs inside the inbox (window.PigeonpostCallsHost is set by app.js) and on the
 // meeting-link page (join.html), where nobody needs to be signed in.
 (function () {
@@ -23,11 +31,25 @@
   const MIN_VIDEO_BPS = 450_000;
   const RECONNECT_GRACE_MS = 15_000;
   const CHAT_CHARS = 2_000;
+  // Large calls: at most this many views on screen at once, the rest a page further.
+  const PAGE_SIZE = 16;
+  // A new room key is used for sending this long after it arrives, so that everyone has it by then.
+  const KEY_SWITCH_MS = 1_500;
+  const LIVEKIT_BASE = "/vendor/livekit-client/";
+  const LIVEKIT_INTEGRITY = "sha384-5qI/UmLG0CvuWCt6vqjMW1oRwzXu+MNhbw4x6yo9NARdlqi94LwQfq9wvDTIcfrD";
+  const E2EE_SCRIPT = "/calls-e2ee.js?v=20261020-sfu";
   const PAGE = document.body?.dataset.page === "join" ? "join" : "inbox";
 
   const supported = Boolean(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   const canShareScreen = Boolean(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
   const canPickSpeaker = typeof HTMLMediaElement !== "undefined" && "setSinkId" in HTMLMediaElement.prototype;
+  // Can this browser encrypt its own media frames (needed for calls of more than six)? Chrome, Edge and
+  // their web views have encoded insertable streams; Safari, WebKit web views and Firefox have
+  // RTCRtpScriptTransform. The same test as PigeonpostCallsE2EE.frameEncryptionSupported.
+  const canEncryptFrames = Boolean(supported && (typeof window.RTCRtpScriptTransform !== "undefined"
+    || (window.RTCRtpSender && typeof RTCRtpSender.prototype.createEncodedStreams !== "undefined"))
+    && window.crypto && window.crypto.subtle && typeof Worker !== "undefined");
+  const NEEDS_NEWER = "This call has more than six people, which needs a newer browser or app — one that can encrypt your audio and video itself. Update this browser or app, or use a current Chrome, Edge, Firefox or Safari.";
   const store = {
     get(k) { try { return localStorage.getItem(k); } catch (_) { return null; } },
     set(k, v) { try { if (v == null) localStorage.removeItem(k); else localStorage.setItem(k, v); } catch (_) { /* private mode */ } },
@@ -259,7 +281,8 @@
         myMailboxes = data.mailboxes || [];
         renderHead();
         while (readyWaiters.length) readyWaiters.shift()(session);
-        if (room && room.you) post(`/rooms/${room.id}/resume`, { session, participant: room.you }).catch(() => {});
+        // Events missed while the stream was down (people leaving, keys announced) come back with the room.
+        if (room && room.you) post(`/rooms/${room.id}/resume`, { session, participant: room.you }).then(resync).catch(() => {});
         if (PAGE === "join") Join.onReady();
         return;
       case "incoming": return onIncoming(data);
@@ -277,19 +300,38 @@
         if (room && room.id === data.room) {
           room.state = "active";
           stopTone();
-          // The newcomer offers; this end prepares to answer.
+          noteMember(data);
+          // The newcomer offers; this end prepares to answer. On the media server nobody offers.
           ensurePeer(data, false);
+          if (room.topology === "sfu") Sfu.onMembers();
           renderStage();
         }
         return;
       case "participant_left":
         if (room && room.id === data.room) {
+          forgetMember(data.participant);
           const p = peers.get(data.participant);
           if (p) {
             closePeer(p);
             if (room.size > 2) toast(displayName(p) + " left the call.");
           }
+          if (room.topology === "sfu") Sfu.onMembers();
           renderStage();
+        }
+        return;
+      case "topology":
+        // The seventh person is coming in: this call moves to the media server.
+        if (room && room.id === data.room && data.topology === "sfu" && room.topology !== "sfu") {
+          room.topology = "sfu";
+          Sfu.enter();
+          renderStage();
+        }
+        return;
+      case "participant_key":
+        if (room && room.id === data.room) {
+          const m = room.members && room.members.get(data.participant);
+          if (m) Object.assign(m, { key: data.key, epoch: data.epoch || 0 });
+          Sfu.onMembers();
         }
         return;
       case "signal":
@@ -309,6 +351,7 @@
           knocks.delete(data.knock);
           renderKnocks();
           if (k && data.admitted && data.by && data.by !== room.you) toast(displayName(k) + " was let in.");
+          else if (k && !data.admitted && data.by === room.you && admissionWords[data.reason]) toast(displayName(k) + " couldn’t be let in: " + admissionWords[data.reason]);
         }
         return;
       case "knock_result":
@@ -343,9 +386,10 @@
     }
     if (!room) return;
     try {
-      const placed = await post("/calls", { session, from: me.address, to: peer, kind });
+      const placed = await post("/calls", { session, from: me.address, to: peer, kind, e2ee: canEncryptFrames });
       if (!room) { post(`/rooms/${placed.room}/leave`, { session }).catch(() => {}); return; }
-      Object.assign(room, { id: placed.room, code: placed.code, you: placed.you, state: "ringing" });
+      Object.assign(room, { id: placed.room, code: placed.code, you: placed.you, state: "ringing", topology: placed.topology || "mesh" });
+      setMembers(placed.participants);
       setStatus("Ringing…");
       startTone("ringback");
       renderStage();
@@ -404,9 +448,9 @@
     }
     if (!room) return;
     try {
-      await post(`/rooms/${r.room}/accept`, { session });
+      await post(`/rooms/${r.room}/accept`, { session, e2ee: canEncryptFrames });
     } catch (err) {
-      endRoom(err.code === "not_ringing" ? "That call has already ended." : "The call could not be answered.", { notify: false });
+      endRoom(err.code === "not_ringing" ? "That call has already ended." : err.code === "needs_e2ee" ? NEEDS_NEWER : err.code === "call_busy" ? admissionWords.call_busy : "The call could not be answered.", { notify: false });
     }
   }
 
@@ -418,8 +462,47 @@
   }
 
   function newRoom(fields) {
-    return Object.assign({ id: null, code: null, you: null, kind: "audio", state: "starting", startedAt: 0, timer: null, statsTimer: null, size: 1 }, fields);
+    return Object.assign({ id: null, code: null, you: null, kind: "audio", state: "starting", startedAt: 0, timer: null, statsTimer: null, size: 1, topology: "mesh", members: new Map(), order: [], page: 0 }, fields);
   }
+
+  // Who is in the call, as the call service lists them (in the order they came in), with the public
+  // keys they announced in a large call. The room's security code is computed over exactly this.
+  function noteMember(v) {
+    if (!room || !v || !v.participant) return;
+    const m = room.members.get(v.participant) || { id: v.participant, key: null, epoch: 0 };
+    Object.assign(m, { name: v.name, mailbox: v.mailbox || null, guest: Boolean(v.guest) });
+    if (v.key !== undefined && v.participant !== room.you) Object.assign(m, { key: v.key || null, epoch: v.epoch || 0 });
+    room.members.set(v.participant, m);
+    if (!room.order.includes(v.participant)) room.order.push(v.participant);
+  }
+  function forgetMember(id) {
+    if (!room) return;
+    room.members.delete(id);
+    room.order = room.order.filter((x) => x !== id);
+  }
+  function setMembers(list) {
+    if (!room || !Array.isArray(list)) return;
+    const keep = new Set(list.map((v) => v.participant));
+    for (const id of [...room.members.keys()]) if (!keep.has(id)) forgetMember(id);
+    for (const v of list) noteMember(v);
+    room.order.sort((a, b) => list.findIndex((v) => v.participant === a) - list.findIndex((v) => v.participant === b));
+  }
+  // After the event stream reconnects: catch up with whoever came, went or announced keys meanwhile.
+  function resync(view) {
+    if (!room || !view || view.room !== room.id) return;
+    setMembers(view.participants);
+    for (const p of [...peers.values()]) if (!room.members.has(p.id)) closePeer(p);
+    for (const v of view.participants || []) if (v.participant !== room.you) ensurePeer(v, false);
+    if (view.topology === "sfu" && room.topology !== "sfu") { room.topology = "sfu"; Sfu.enter(); }
+    Sfu.onMembers();
+    renderStage();
+  }
+
+  const admissionWords = {
+    needs_e2ee: "someone’s browser or app can’t encrypt its own audio and video, which a call of more than six needs.",
+    call_busy: "Pigeonpost’s media server is at capacity for large calls right now. Try again in a few minutes.",
+    room_full: "the call is full.",
+  };
 
   // The call service says who is here: this end has just been let in (by answering a ring, or by
   // somebody admitting a knock). The newcomer opens a connection to everyone already present.
@@ -428,13 +511,16 @@
       if (PAGE !== "join") return;
       room = newRoom({ kind: data.kind, title: "Call", id: data.room });
     }
-    Object.assign(room, { id: data.room, code: data.code, you: data.you, kind: data.kind || room.kind, state: "active" });
+    Object.assign(room, { id: data.room, code: data.code, you: data.you, kind: data.kind || room.kind, state: "active", topology: data.topology || "mesh" });
+    setMembers(data.participants);
     stopTone();
     if (PAGE === "join") Join.enter();
     for (const p of data.participants || []) {
       if (p.participant === data.you) continue;
-      ensurePeer(p, true);
+      // In a mesh the newcomer opens a connection to everyone; on the media server nobody does.
+      ensurePeer(p, room.topology !== "sfu");
     }
+    if (room.topology === "sfu") Sfu.enter();
     renderStage();
   }
 
@@ -847,13 +933,15 @@
     }
   }
 
-  // Swap one slot's content on every connection: no offer, no answer.
+  // Swap one slot's content on every connection: no offer, no answer. On the media server the slot
+  // is a published track instead.
   function updateSlot(slot) {
     for (const p of peers.values()) {
       if (!p.tx) continue;
       const sender = p.tx[slot].sender, track = slotTrack(slot);
       if (sender.track !== track) sender.replaceTrack(track).catch(() => {});
     }
+    Sfu.updateSlot(slot);
   }
 
   async function negotiate(p) {
@@ -876,6 +964,7 @@
 
   async function onSignal(fromId, type, data) {
     if (!room) return;
+    if (type === "key") return Sfu.onWrappedKey(fromId, data);
     const p = peers.get(fromId) || ensurePeer({ participant: fromId, name: "Someone" }, false);
     if (type === "mute") {
       if (!local.muted && local.mic) { toggleMute(); toast(displayName(p) + " muted you. Unmute when you want to speak."); }
@@ -1004,6 +1093,8 @@
       return;
     }
     if (s === "disconnected" || s === "failed") {
+      // Moving to the media server: the other end closed its side of the direct connection.
+      if (room && room.topology === "sfu") { Sfu.closeMesh(p); renderStage(); return; }
       if (p.initiator && p.restarts < 3 && (s === "failed" || !p.connected)) { p.restarts += 1; p.pc.restartIce?.(); }
       if (!p.dropTimer) p.dropTimer = setTimeout(() => {
         // Gone for good: drop this connection. The call service decides whether the call goes on.
@@ -1016,6 +1107,7 @@
   function closePeer(p) {
     clearTimeout(p.dropTimer);
     clearTimeout(p.watchdog);
+    clearTimeout(p.meshTimer);
     try { p.dc?.close(); } catch (_) { /* closed */ }
     try { p.pc?.close(); } catch (_) { /* closed */ }
     for (const t of [...p.remote.camera.getTracks(), ...p.remote.screen.getTracks(), ...p.remote.audio.getTracks()]) t.stop();
@@ -1028,13 +1120,15 @@
 
   // ---- what travels on the data channel ---------------------------------------------------------
 
+  const stateMessage = () => ({ t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff, screen: Boolean(local.screen), aec: echoCancelling() });
   function sendState(p) {
     if (!p.dc || p.dc.readyState !== "open") return;
-    p.dc.send(JSON.stringify({
-      t: "state", muted: local.muted, cameraOff: !local.cam || local.cameraOff, screen: Boolean(local.screen), aec: echoCancelling(),
-    }));
+    p.dc.send(JSON.stringify(stateMessage()));
   }
-  function broadcastState() { for (const p of peers.values()) sendState(p); }
+  function broadcastState() {
+    for (const p of peers.values()) sendState(p);
+    Sfu.send(stateMessage());
+  }
 
   function onPeerMessage(p, raw) {
     if (typeof raw !== "string" || raw.length > 8_000) return;
@@ -1068,11 +1162,14 @@
     const value = String(text || "").trim().slice(0, CHAT_CHARS);
     if (!value || !room) return false;
     let delivered = 0;
-    for (const p of peers.values()) {
+    // On the media server, chat goes to everyone at once, sealed with the room key.
+    const viaSfu = Sfu.ready();
+    if (viaSfu) { Sfu.send({ t: "chat", text: value }); delivered = [...peers.values()].filter((p) => p.lk).length; }
+    else for (const p of peers.values()) {
       if (p.dc && p.dc.readyState === "open") { p.dc.send(JSON.stringify({ t: "chat", text: value })); delivered++; }
     }
     if (!delivered) { toast("Nobody else is connected yet."); return false; }
-    const missed = [...peers.values()].filter((p) => !(p.dc && p.dc.readyState === "open")).map((p) => displayName(p));
+    const missed = [...peers.values()].filter((p) => (viaSfu ? !p.lk : !(p.dc && p.dc.readyState === "open"))).map((p) => displayName(p));
     chatLog.push({ who: "You", mine: true, text: value, at: Date.now(), missed });
     renderChat();
     return true;
@@ -1193,6 +1290,528 @@
     renderQuality();
   }
 
+  // ---- large calls: the media server ----------------------------------------------------------
+  //
+  // More than six people: one connection to the media server instead of one per person. Everything
+  // sent through it is encrypted in this browser first (LiveKit's frame encryption, in a worker), with
+  // a room key from calls-e2ee.js. The earliest participant holding the newest room key makes a fresh
+  // key whenever the set of participants changes and wraps it to each of the others; a new key is
+  // used for sending KEY_SWITCH_MS after it arrives, so everyone can already open it. Remote tracks
+  // that are not end-to-end encrypted are never played.
+  const Sfu = (() => {
+    let s = null;
+    const E = () => window.PigeonpostCallsE2EE;
+    const L = () => window.LivekitClient;
+    const active = () => Boolean(s && room && room.id === s.roomId && !s.left);
+    const me = () => (room && room.members.get(room.you)) || null;
+
+    function loadScript(src, integrity) {
+      return new Promise((resolve, reject) => {
+        const tag = document.createElement("script");
+        tag.src = src;
+        if (integrity) { tag.integrity = integrity; tag.crossOrigin = "anonymous"; }
+        tag.onload = () => resolve();
+        tag.onerror = () => reject(new Error("could not load " + src));
+        document.head.append(tag);
+      });
+    }
+    let libs = null;
+    function loadLibs() {
+      if (window.PigeonpostCallsE2EE && window.LivekitClient) return Promise.resolve();
+      libs ||= Promise.all([
+        window.PigeonpostCallsE2EE ? null : loadScript(E2EE_SCRIPT),
+        window.LivekitClient ? null : loadScript(LIVEKIT_BASE + "livekit-client.umd.js", LIVEKIT_INTEGRITY),
+      ]).catch((err) => { libs = null; throw err; });
+      return libs;
+    }
+
+    async function enter() {
+      if (!room || (s && s.roomId === room.id)) return;
+      s = {
+        roomId: room.id, you: room.you, identity: null, lk: null, keys: null, worker: null,
+        epoch: 0, sendEpoch: 0, keyFrom: null, keyed: false, dataKeys: new Map(), lastSet: null,
+        announced: { key: null, epoch: -1 }, rotateTimer: null, switchTimer: null, codeTimer: null, syncTimer: null,
+        code: null, connecting: null, connected: false, pubs: {}, retries: 0, decryptErrors: 0, unencrypted: 0,
+        rotations: 0, meshSweep: null, left: false,
+      };
+      const mine = s;
+      if (!canEncryptFrames) { endRoom(NEEDS_NEWER, { notify: true }); return; }
+      setStatus("Securing the call…");
+      try {
+        await loadLibs();
+        if (s !== mine || !active()) return;
+        mine.identity = await E().generateIdentity();
+      } catch (err) {
+        console.warn("calls: large-call encryption unavailable", err && err.name);
+        if (s === mine && active()) endRoom("This call couldn’t start its encryption. Check your connection and try again.", { notify: true });
+        return;
+      }
+      if (s !== mine || !active()) return;
+      const m = me();
+      if (m) Object.assign(m, { key: mine.identity.publicKey, epoch: 0 });
+      createRoom(mine);
+      await announce();
+      onMembers();
+    }
+
+    // Tell the others (through the call service) our public key and which room key we hold.
+    async function announce() {
+      if (!active() || !s.identity || !session) return;
+      const want = { key: s.identity.publicKey, epoch: s.epoch };
+      if (s.announced.key === want.key && s.announced.epoch === want.epoch) return;
+      try {
+        await post(`/rooms/${s.roomId}/e2ee`, { session, public_key: want.key, epoch: want.epoch });
+        if (active()) s.announced = want;
+      } catch (err) {
+        console.warn("calls: key announcement failed", err && err.code);
+        if (active()) setTimeout(() => announce(), 2000);
+      }
+    }
+
+    function createRoom(mine) {
+      const LK = L();
+      class RoomKeys extends LK.BaseKeyProvider {
+        constructor() { super({ sharedKey: true, ratchetWindowSize: 0, failureTolerance: -1 }); }
+        // Known for opening others' frames, not yet used for sealing ours.
+        stage(material, slot) { this.emit(LK.KeyProviderEvent.SetKey, { key: material, participantIdentity: undefined, keyIndex: slot }, false); }
+        use(material, slot) { this.onSetEncryptionKey(material, undefined, slot); }
+      }
+      mine.keys = new RoomKeys();
+      mine.worker = new Worker(LIVEKIT_BASE + "livekit-client.e2ee.worker.js");
+      const lk = new LK.Room({
+        adaptiveStream: false, dynacast: true, stopLocalTrackOnUnpublish: false, disconnectOnPageLeave: true,
+        e2ee: { keyProvider: mine.keys, worker: mine.worker },
+        publishDefaults: {
+          simulcast: true, videoSimulcastLayers: [LK.VideoPresets.h180, LK.VideoPresets.h360], videoCodec: "vp8",
+          videoEncoding: { maxBitrate: 1_700_000, maxFramerate: 30 },
+          screenShareEncoding: { maxBitrate: 2_500_000, maxFramerate: 15 },
+          dtx: false, red: false, audioPreset: { maxBitrate: 48_000 },
+        },
+      });
+      mine.lk = lk;
+      const R = LK.RoomEvent;
+      const mineOnly = (fn) => (...args) => { if (s === mine && active()) fn(...args); };
+      lk.on(R.ParticipantConnected, mineOnly((rp) => { attach(rp); scheduleState(); }))
+        .on(R.ParticipantDisconnected, mineOnly((rp) => detach(rp)))
+        .on(R.TrackPublished, mineOnly(() => scheduleSync()))
+        .on(R.TrackUnpublished, mineOnly(() => scheduleSync()))
+        .on(R.TrackSubscribed, mineOnly((track, pub, rp) => onTrack(track, pub, rp, true)))
+        .on(R.TrackUnsubscribed, mineOnly((track, pub, rp) => onTrack(track, pub, rp, false)))
+        .on(R.ActiveSpeakersChanged, mineOnly((list) => onSpeakers(list)))
+        .on(R.DataReceived, mineOnly((payload, rp) => onData(payload, rp)))
+        .on(R.EncryptionError, mineOnly(() => { mine.decryptErrors += 1; }))
+        .on(R.Reconnecting, mineOnly(() => setStatus("Reconnecting…")))
+        .on(R.Reconnected, mineOnly(() => renderClock()))
+        .on(R.Disconnected, mineOnly(() => onDisconnected(mine)));
+    }
+
+    // ---- room keys ----
+
+    // The earliest participant holding the newest room key generation; before anyone holds one, the
+    // earliest with a public key.
+    function leader() {
+      const list = room.order.map((id) => room.members.get(id)).filter((m) => m && m.key);
+      if (!list.length) return null;
+      const top = Math.max(...list.map((m) => m.epoch || 0));
+      return list.find((m) => (m.epoch || 0) === top);
+    }
+
+    function keyedSet() {
+      return room.order.filter((id) => room.members.get(id)?.key).map((id) => id + ":" + room.members.get(id).key).join("|");
+    }
+
+    function onMembers() {
+      if (!active() || !s.identity) return;
+      announce();
+      updateCode();
+      const l = leader();
+      if (!l || l.id !== room.you) return;
+      if (keyedSet() === s.lastSet) return;
+      clearTimeout(s.rotateTimer);
+      const mine = s;
+      // A moment's grace, so that several arrivals at once make one new key, not several.
+      mine.rotateTimer = setTimeout(() => { if (s === mine && active()) rotate(mine).catch((err) => console.warn("calls: key rotation failed", err && err.name)); }, 250);
+    }
+
+    async function rotate(mine) {
+      const l = leader();
+      if (!l || l.id !== room.you) return;
+      const set = keyedSet();
+      if (set === mine.lastSet) return;
+      mine.lastSet = set;
+      const epoch = mine.epoch + 1;
+      const roomKey = E().randomRoomKey();
+      const from = { id: room.you, key: mine.identity.publicKey };
+      mine.rotations += 1;
+      await install(mine, epoch, roomKey, room.you);
+      await Promise.all(room.order.filter((id) => id !== room.you).map(async (id) => {
+        const m = room.members.get(id);
+        if (!m || !m.key) return;
+        const wrapped = await E().wrapRoomKey({ privateKey: mine.identity.privateKey, roomId: mine.roomId, epoch, from, to: { id, key: m.key }, roomKey });
+        await post(`/rooms/${mine.roomId}/signal`, { session, to: id, type: "key", data: wrapped }).catch(() => {});
+      }));
+    }
+
+    async function onWrappedKey(fromId, wrapped) {
+      if (!active() || !s.identity || !wrapped) return;
+      const mine = s;
+      const from = room.members.get(fromId);
+      if (!from || !from.key) return;
+      const rank = (id) => { const i = room.order.indexOf(id); return i < 0 ? Infinity : i; };
+      // Newer generations win; two "leaders" briefly making the same generation resolve to the earlier one.
+      if (wrapped.epoch < mine.epoch || (wrapped.epoch === mine.epoch && rank(fromId) >= rank(mine.keyFrom))) return;
+      let roomKey;
+      try {
+        roomKey = await E().unwrapRoomKey({ privateKey: mine.identity.privateKey, roomId: mine.roomId, from: { id: fromId, key: from.key }, to: { id: room.you, key: mine.identity.publicKey }, wrapped });
+      } catch (_) {
+        console.warn("calls: a room key from another participant did not open");
+        return;
+      }
+      if (s !== mine || !active() || wrapped.epoch < mine.epoch) return;
+      await install(mine, wrapped.epoch, roomKey, fromId);
+      onMembers();
+    }
+
+    async function install(mine, epoch, roomKey, fromId) {
+      const slot = E().slotFor(epoch);
+      const material = await L().createKeyMaterialFromBuffer(roomKey);
+      mine.dataKeys.set(epoch, await E().dataKey(roomKey));
+      for (const e of mine.dataKeys.keys()) if (e <= epoch - E().KEY_SLOTS) mine.dataKeys.delete(e);
+      const first = !mine.keyed;
+      Object.assign(mine, { epoch, keyFrom: fromId, keyed: true });
+      const m = me();
+      if (m) m.epoch = epoch;
+      clearTimeout(mine.switchTimer);
+      if (first) {
+        mine.keys.use(material, slot);
+        mine.sendEpoch = epoch;
+      } else {
+        mine.keys.stage(material, slot);
+        mine.switchTimer = setTimeout(() => {
+          if (s !== mine || !active() || mine.epoch !== epoch) return;
+          mine.keys.use(material, slot);
+          mine.sendEpoch = epoch;
+          broadcastState();
+        }, KEY_SWITCH_MS);
+      }
+      announce();
+      updateCode();
+      if (!mine.connecting) connect(mine);
+    }
+
+    // The room's security code, recomputed whenever someone comes, goes or changes key.
+    function updateCode() {
+      if (!active()) return;
+      const mine = s;
+      clearTimeout(mine.codeTimer);
+      mine.codeTimer = setTimeout(async () => {
+        const list = room.order.map((id) => room.members.get(id)).filter(Boolean);
+        try {
+          const code = await E().securityCode(mine.roomId, list);
+          if (s !== mine || !active()) return;
+          mine.code = list.filter((m) => m.key).length >= 2 ? code : null;
+          renderStage();
+          renderPeople();
+        } catch (_) { /* recomputed on the next change */ }
+      }, 150);
+    }
+
+    // ---- the connection ----
+
+    function connect(mine) {
+      mine.connecting = (async () => {
+        await mine.lk.setE2EEEnabled(true);
+        const ticket = await post(`/rooms/${mine.roomId}/sfu`, { session });
+        const ice = await turnServers();
+        const url = /^wss?:\/\//.test(ticket.url) ? ticket.url : location.origin.replace(/^http/, "ws") + ticket.url;
+        await mine.lk.connect(url, ticket.token, { autoSubscribe: false, rtcConfig: { iceServers: ice, iceTransportPolicy: forceRelay ? "relay" : "all" } });
+        if (s !== mine || !active()) { mine.lk.disconnect(); return; }
+        mine.connected = true;
+        mine.retries = 0;
+        for (const slot of SLOTS) await publish(mine, slot);
+        for (const rp of mine.lk.remoteParticipants.values()) attach(rp);
+        if (!room.startedAt) {
+          room.startedAt = Date.now();
+          room.timer = setInterval(renderClock, 1000);
+          room.statsTimer = setInterval(sampleStats, 2000);
+        }
+        renderClock();
+        // Direct connections that the media server has not replaced within this time are closed anyway.
+        mine.meshSweep = setTimeout(() => { if (s === mine) for (const p of peers.values()) closeMesh(p); renderStage(); }, 20_000);
+        broadcastState();
+        scheduleSync();
+      })().catch((err) => {
+        console.warn("calls: media server connection failed", err && (err.code || err.name));
+        mine.connecting = null;
+        if (s !== mine || !active()) return;
+        if (err && err.code === "not_in_room") return;
+        if (++mine.retries > 4) { endRoom("Couldn’t connect to the call’s media server. Check your connection and try again.", { notify: true }); return; }
+        setTimeout(() => { if (s === mine && active() && !mine.connecting) connect(mine); }, 1500 * mine.retries);
+      });
+      return mine.connecting;
+    }
+
+    function onDisconnected(mine) {
+      mine.connected = false;
+      mine.connecting = null;
+      mine.pubs = {};
+      for (const p of peers.values()) dropSfuTracks(p);
+      renderStage();
+      // LiveKit has already tried to resume. Rejoin with a fresh ticket (same participant, same key).
+      if (++mine.retries > 4) { endRoom("Lost the connection to the call’s media server.", { notify: true }); return; }
+      setStatus("Reconnecting…");
+      setTimeout(() => { if (s === mine && active() && !mine.connecting) connect(mine); }, 1000 * mine.retries);
+    }
+
+    const SOURCE = { audio: "microphone", cam: "camera", screen: "screen_share" };
+
+    // LiveKit publishes encrypted video as simulcast only where it recognises Safari 17.2 or later
+    // (older WebKit mixed the layers; https://bugs.webkit.org/show_bug.cgi?id=257803). WebKit web
+    // views on macOS carry no Safari version in their user agent, so there it sends one layer. That
+    // layer then goes to everyone, so it is kept small: 360p at most, about 0.6 Mbit/s.
+    const singleLayer = (() => {
+      const ua = navigator.userAgent.toLowerCase();
+      if (/firefox|fxios|chrom|crios|crmo/.test(ua) || !/safari|applewebkit/.test(ua)) return false;
+      const atLeast172 = (m) => Boolean(m) && (Number(m[1]) > 17 || (Number(m[1]) === 17 && Number(m[2]) >= 2));
+      if (ua.includes("mobile/") && atLeast172(/\(.+?(\d+)_(\d+)/.exec(ua))) return false;
+      return !atLeast172(/version\/(\d+)\.(\d+)/.exec(ua));
+    })();
+    const SMALL_VIDEO = { width: { ideal: 640 }, height: { ideal: 360 }, frameRate: { ideal: 24, max: 30 } };
+
+    async function publish(mine, slot) {
+      const LK = L();
+      const track = slotTrack(slot);
+      const current = mine.pubs[slot];
+      try {
+        if (!track) {
+          if (current) { delete mine.pubs[slot]; await mine.lk.localParticipant.unpublishTrack(current.track, false); }
+          return;
+        }
+        if (slot === "cam" && singleLayer) await track.applyConstraints(SMALL_VIDEO).catch(() => {});
+        if (current && current.track) {
+          if (current.track.mediaStreamTrack !== track) await current.track.replaceTrack(track, true);
+          return;
+        }
+        const source = { audio: LK.Track.Source.Microphone, cam: LK.Track.Source.Camera, screen: LK.Track.Source.ScreenShare }[slot];
+        const options = { source, name: SOURCE[slot] };
+        if (slot === "cam" && singleLayer) Object.assign(options, { simulcast: false, videoEncoding: { maxBitrate: 600_000, maxFramerate: 24 } });
+        mine.pubs[slot] = await mine.lk.localParticipant.publishTrack(track, options);
+      } catch (err) {
+        console.warn("calls: publishing " + slot + " failed", err && err.name);
+      }
+    }
+
+    function updateSlot(slot) {
+      if (active() && s.connected) publish(s, slot);
+    }
+
+    // ---- the others ----
+
+    function attach(rp) {
+      const p = peers.get(rp.identity);
+      if (!p) return; // not (yet) in the call service's list: nothing of theirs is shown
+      p.lk = rp;
+      if (!p.pc) p.connected = true;
+      scheduleSync();
+      renderStage();
+    }
+
+    function detach(rp) {
+      const p = peers.get(rp.identity);
+      if (!p || p.lk !== rp) return;
+      p.lk = null;
+      dropSfuTracks(p);
+      if (!p.pc) p.connected = false;
+      renderStage();
+    }
+
+    function dropSfuTracks(p) {
+      if (!p.sfuTracks) return;
+      for (const [slot, t] of Object.entries(p.sfuTracks)) if (t) { streamFor(p, slot).removeTrack(t); }
+      p.sfuTracks = {};
+    }
+
+    const streamFor = (p, slot) => (slot === "audio" ? p.remote.audio : slot === "screen" ? p.remote.screen : p.remote.camera);
+    const slotOf = (source) => (source === "microphone" ? "audio" : source === "camera" ? "cam" : source === "screen_share" ? "screen" : null);
+
+    function onTrack(track, pub, rp, subscribed) {
+      const p = peers.get(rp.identity);
+      const slot = slotOf(pub.source);
+      if (!p || !slot) return;
+      p.sfuTracks ||= {};
+      if (subscribed) {
+        // Only media this browser had to decrypt is ever played. A track the media server describes
+        // as unencrypted is refused, whoever it claims to come from.
+        if (!pub.isEncrypted) {
+          s.unencrypted += 1;
+          pub.setSubscribed(false);
+          if (s.unencrypted === 1) toast("A stream that wasn’t end-to-end encrypted was refused.");
+          return;
+        }
+        p.sfuTracks[slot] = track.mediaStreamTrack;
+        for (const ev of ["ended", "mute", "unmute"]) track.mediaStreamTrack.addEventListener(ev, () => renderStage());
+        if (!p.pc) addSfuTrack(p, slot);
+        else if (slot === "audio" && s.keyed) scheduleMeshClose(p);
+      } else {
+        const t = p.sfuTracks[slot];
+        if (t) { streamFor(p, slot).removeTrack(t); delete p.sfuTracks[slot]; }
+      }
+      renderStage();
+    }
+
+    function addSfuTrack(p, slot) {
+      const t = p.sfuTracks && p.sfuTracks[slot];
+      const stream = streamFor(p, slot);
+      if (t && !stream.getTracks().includes(t)) stream.addTrack(t);
+    }
+
+    // During the move from a mesh: once someone's voice arrives through the media server, their
+    // direct connection is closed (after a moment, so their voice never stops), and the media
+    // server's tracks take over.
+    function scheduleMeshClose(p) {
+      if (p.meshTimer || !p.pc) return;
+      p.meshTimer = setTimeout(() => { p.meshTimer = null; closeMesh(p); renderStage(); }, 1500);
+    }
+
+    function closeMesh(p) {
+      if (!p.pc && !p.dc) return;
+      clearTimeout(p.dropTimer); clearTimeout(p.watchdog); clearTimeout(p.meshTimer);
+      const pc = p.pc, dc = p.dc;
+      Object.assign(p, { pc: null, dc: null, tx: null, dropTimer: null, watchdog: null, meshTimer: null, ready: null });
+      for (const stream of [p.remote.audio, p.remote.camera, p.remote.screen]) {
+        for (const t of stream.getTracks()) if (!Object.values(p.sfuTracks || {}).includes(t)) { stream.removeTrack(t); t.stop(); }
+      }
+      try { dc?.close(); } catch (_) { /* closed */ }
+      try { pc?.close(); } catch (_) { /* closed */ }
+      for (const slot of SLOTS) addSfuTrack(p, slot);
+      p.connected = Boolean(p.lk);
+    }
+
+    // Which tracks this browser receives: every voice; cameras only on the page being shown (the
+    // stage view at a high layer, the rest at the lowest); shared screens always.
+    function scheduleSync() {
+      if (!active()) return;
+      clearTimeout(s.syncTimer);
+      s.syncTimer = setTimeout(() => renderStage(), 50);
+    }
+
+    function sync(views, stage) {
+      if (!active() || !s.connected) return;
+      const LK = L();
+      const shown = new Set(views.map((v) => v.id));
+      const quality = views.length <= 2 ? LK.VideoQuality.HIGH : views.length <= 6 ? LK.VideoQuality.MEDIUM : LK.VideoQuality.LOW;
+      let adopted = false;
+      for (const rp of s.lk.remoteParticipants.values()) {
+        const p = peers.get(rp.identity);
+        // Connected to the media server before the call service told us they were in: take them in now.
+        if (p && p.lk !== rp) { p.lk = rp; if (!p.pc) p.connected = true; adopted = true; }
+        for (const pub of rp.trackPublications.values()) {
+          if (!p || !pub.isEncrypted) { if (pub.isDesired) pub.setSubscribed(false); continue; }
+          const slot = slotOf(pub.source);
+          const viewId = rp.identity + (slot === "screen" ? ":screen" : ":cam");
+          const want = slot === "audio" || slot === "screen" || (slot === "cam" && shown.has(viewId));
+          if (pub.isDesired !== want) pub.setSubscribed(want);
+          const q = stage ? (stage.id === viewId ? LK.VideoQuality.HIGH : LK.VideoQuality.LOW) : quality;
+          if (want && slot !== "audio" && pub.ppQuality !== q) { pub.ppQuality = q; pub.setVideoQuality(q); }
+        }
+      }
+      if (adopted) scheduleSync();
+    }
+
+    function onSpeakers(list) {
+      let moved = false;
+      for (const sp of list || []) if (!sp.isLocal && bringOnPage(sp.identity + ":cam")) moved = true;
+      if (moved) renderStage();
+    }
+
+    // ---- chat and status, sealed with the room key ----
+
+    let stateTimer = null;
+    function scheduleState() { clearTimeout(stateTimer); stateTimer = setTimeout(() => broadcastState(), 300); }
+
+    async function send(message) {
+      if (!active() || !s.connected || !s.sendEpoch) return false;
+      const mine = s;
+      try {
+        const key = mine.dataKeys.get(mine.sendEpoch);
+        const sealed = await E().sealData(key, { epoch: mine.sendEpoch, roomId: mine.roomId, senderId: room.you }, message);
+        await mine.lk.localParticipant.publishData(sealed, { reliable: true });
+        return true;
+      } catch (err) {
+        console.warn("calls: sending to the call failed", err && err.name);
+        return false;
+      }
+    }
+
+    async function onData(payload, rp) {
+      if (!rp) return;
+      const p = peers.get(rp.identity);
+      if (!p) return;
+      const mine = s;
+      try {
+        const { value } = await E().openData(async (epoch) => mine.dataKeys.get(epoch) || null, { roomId: mine.roomId, senderId: rp.identity }, payload);
+        onPeerMessage(p, JSON.stringify(value));
+      } catch (_) { /* not sealed with a key we hold: dropped */ }
+    }
+
+    // ---- leaving ----
+
+    function leave(ending) {
+      if (!s || !ending || s.roomId !== ending.id) return;
+      const mine = s;
+      s = null;
+      mine.left = true;
+      for (const t of [mine.rotateTimer, mine.switchTimer, mine.codeTimer, mine.syncTimer, mine.meshSweep]) clearTimeout(t);
+      try { mine.lk?.disconnect(); } catch (_) { /* gone */ }
+      setTimeout(() => { try { mine.worker?.terminate(); } catch (_) { /* gone */ } }, 1000);
+    }
+
+    async function stats() {
+      if (!s || !s.lk) return null;
+      const out = [];
+      for (const rp of s.lk.remoteParticipants.values()) {
+        for (const pub of rp.trackPublications.values()) {
+          const entry = { from: rp.identity, source: pub.source, encrypted: pub.isEncrypted, subscribed: pub.isSubscribed };
+          const receiver = pub.track && pub.track.receiver;
+          if (receiver) {
+            const report = await receiver.getStats();
+            report.forEach((r) => {
+              if (r.type === "inbound-rtp") Object.assign(entry, { bytes: r.bytesReceived, frames: r.framesDecoded, width: r.frameWidth, height: r.frameHeight, audioLevel: r.audioLevel, samples: r.totalSamplesReceived, concealed: r.concealedSamples });
+            });
+          }
+          out.push(entry);
+        }
+      }
+      // What this browser sends: one entry per simulcast layer.
+      for (const [slot, pub] of Object.entries(s.pubs)) {
+        const sender = pub && pub.track && pub.track.sender;
+        if (!sender) continue;
+        const report = await sender.getStats();
+        report.forEach((r) => {
+          if (r.type === "outbound-rtp") out.push({ from: "local", source: slot, rid: r.rid || null, bytes: r.bytesSent, frames: r.framesEncoded, width: r.frameWidth, height: r.frameHeight, fps: r.framesPerSecond, limitation: r.qualityLimitationReason || null, encoder: r.encoderImplementation || null, active: r.active });
+        });
+      }
+      return out;
+    }
+
+    function inspect() {
+      if (!s) return null;
+      return {
+        connected: s.connected, epoch: s.epoch, sendEpoch: s.sendEpoch, keyFrom: s.keyFrom, code: s.code, rotations: s.rotations,
+        leader: room && leader() ? leader().id : null, decryptErrors: s.decryptErrors, unencrypted: s.unencrypted,
+        publicKey: s.identity ? s.identity.publicKey : null,
+        published: Object.keys(s.pubs).filter((k) => s.pubs[k]), singleLayer,
+        remote: s.lk ? s.lk.remoteParticipants.size : 0,
+      };
+    }
+
+    return {
+      enter, onMembers, onWrappedKey, updateSlot, sync, send, leave, closeMesh, stats, inspect,
+      ready: () => Boolean(active() && s.connected && s.sendEpoch),
+      code: () => (active() ? s.code : null),
+    };
+  })();
+
   // ---- leaving ---------------------------------------------------------------------------------
 
   function leave() {
@@ -1207,6 +1826,7 @@
     clearInterval(ending.timer);
     clearInterval(ending.statsTimer);
     if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
+    Sfu.leave(ending);
     for (const p of [...peers.values()]) closePeer(p);
     hideShareIndicators();
     stopLocalMedia();
@@ -1267,6 +1887,10 @@
             el("div", { class: "call-top-right" },
               el("p", { class: "call-sas", id: "call-sas", hidden: true, title: "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices." },
                 svg(ICON.lock), el("span", { text: "Security code" }), el("strong", { id: "call-sas-code" })),
+              el("div", { class: "call-pager", id: "call-pager", role: "group", "aria-label": "Pages of people", hidden: true },
+                el("button", { class: "call-icon-btn call-top-btn", id: "call-page-prev", type: "button", "aria-label": "Previous page of people", title: "Previous page", onclick: () => turnPage(-1) }, svg(ICON.back)),
+                el("span", { class: "call-page-label", id: "call-page-label", "aria-live": "polite" }),
+                el("button", { class: "call-icon-btn call-top-btn call-page-next", id: "call-page-next", type: "button", "aria-label": "Next page of people", title: "Next page", onclick: () => turnPage(1) }, svg(ICON.back))),
               el("button", { class: "call-back", id: "call-layout", type: "button", hidden: true, onclick: () => toggleLayout() }, svg(ICON.people), el("span", { text: "Grid" })),
               (document.fullscreenEnabled || document.webkitFullscreenEnabled) ? el("button", { class: "call-icon-btn call-top-btn", id: "call-fullscreen", type: "button", "aria-label": "Full screen", title: "Full screen", onclick: () => toggleFullscreen() }, svg(ICON.fullscreen)) : null,
             ),
@@ -1299,13 +1923,13 @@
               el("textarea", { id: "call-chat-input", rows: "1", maxlength: String(CHAT_CHARS), placeholder: "Message everyone in the call", "aria-label": "Message everyone in the call" }),
               el("button", { class: "call-icon-btn call-chat-send", type: "submit", "aria-label": "Send", title: "Send" }, svg(ICON.send)),
             ),
-            el("p", { class: "call-panel-note", text: "Messages go straight to the others over the call’s encrypted connections. They aren’t saved." }),
+            el("p", { class: "call-panel-note", text: "Messages are end-to-end encrypted, like the call itself. They aren’t saved." }),
           ),
           el("div", { class: "call-panel-body", id: "call-panel-people" },
             el("section", { class: "call-invite" },
               el("p", { class: "call-panel-label", text: "Invite link" }),
               el("div", { class: "call-link-row" }, el("code", { id: "call-link" }), el("button", { class: "call-pill", type: "button", id: "call-link-copy" }, svg(ICON.link), el("span", { text: "Copy" }))),
-              el("p", { class: "call-panel-note", text: "Anyone with the link can ask to join. Someone in the call has to let them in. Up to 6 people." }),
+              el("p", { class: "call-panel-note", text: "Anyone with the link can ask to join. Someone in the call has to let them in. Up to 30 people." }),
             ),
             el("ul", { class: "call-knock-list", id: "call-knock-list" }),
             el("p", { class: "call-panel-label", text: "In the call" }),
@@ -1624,10 +2248,12 @@
     const grid = $("call-grid");
     const strip = $("call-strip");
     const list = [...peers.values()];
-    const views = viewsFor(list);
-    if (room.pinned && !views.some((v) => v.id === room.pinned)) room.pinned = null;
+    const all = viewsFor(list);
+    if (room.pinned && !all.some((v) => v.id === room.pinned)) room.pinned = null;
     const spotlightView = room.layout === "grid" ? null
-      : views.find((v) => v.id === room.pinned) || views.find((v) => v.kind === "screen") || null;
+      : all.find((v) => v.id === room.pinned) || all.find((v) => v.kind === "screen") || null;
+    // A large call shows one page of views at a time; the stage view is always on it.
+    const views = pageOf(all, spotlightView);
     const spotlight = Boolean(spotlightView && views.length > 1);
     grid.dataset.layout = spotlight ? "spotlight" : "grid";
     grid.dataset.count = String(views.length);
@@ -1698,16 +2324,68 @@
       $("call-handle").textContent = list[0].mailbox ? (list[0].mailbox.handle || list[0].mailbox.address) : "";
     }
     const solo = list.length === 1 ? list[0] : null;
-    $("call-sas").hidden = !(solo && solo.security);
-    if (solo && solo.security) $("call-sas-code").textContent = solo.security.code;
+    // On the media server one code covers the whole room; in a mesh, the code with the one other person.
+    const code = room.topology === "sfu" ? Sfu.code() : solo && solo.security ? solo.security.code : null;
+    $("call-sas").hidden = !code;
+    if (code) $("call-sas-code").textContent = code;
+    $("call-sas").title = room.topology === "sfu"
+      ? "Compare this code with everyone in the call. If it is the same on every screen, the call is end-to-end encrypted between all of you."
+      : "Compare this code with the other person. If it matches on both screens, the call is end-to-end encrypted between your two devices.";
+    renderPager();
     const layoutBtn = $("call-layout");
-    layoutBtn.hidden = views.length < 2;
+    layoutBtn.hidden = all.length < 2;
     layoutBtn.setAttribute("aria-pressed", String(room.layout === "grid"));
     layoutBtn.querySelector("span").textContent = room.layout === "grid" ? "Spotlight" : "Grid";
     layoutBtn.title = room.layout === "grid" ? "Put the pinned person or shared screen on the stage" : "Show everyone side by side";
     $("call-link").textContent = meetingLink();
     renderControls();
     if (!$("call-panel").hidden && $("call-panel").dataset.view === "people") renderPeople();
+    Sfu.sync(views, spotlight ? spotlightView : null);
+  }
+
+  // Large calls: which views are on screen. The order stays put as people come and go; whoever starts
+  // speaking off the page takes the place of the last view on the current one.
+  function pageOf(all, stage) {
+    room.pages = 1;
+    if (all.length <= PAGE_SIZE) { room.page = 0; return all; }
+    const rest = all.filter((v) => v !== stage);
+    const ids = new Set(rest.map((v) => v.id));
+    room.viewOrder = (room.viewOrder || []).filter((id) => ids.has(id));
+    for (const v of rest) if (!room.viewOrder.includes(v.id)) room.viewOrder.push(v.id);
+    const per = PAGE_SIZE - (stage ? 1 : 0);
+    room.pages = Math.ceil(rest.length / per);
+    room.page = Math.min(Math.max(0, room.page || 0), room.pages - 1);
+    const byId = new Map(rest.map((v) => [v.id, v]));
+    const page = room.viewOrder.slice(room.page * per, room.page * per + per).map((id) => byId.get(id));
+    return stage ? [stage, ...page] : page;
+  }
+
+  function bringOnPage(viewId) {
+    if (!room || !room.viewOrder || (room.pages || 1) < 2) return false;
+    const i = room.viewOrder.indexOf(viewId);
+    const per = PAGE_SIZE - (room.layout !== "grid" && (room.pinned || [...peers.values()].some((p) => p.state.screen)) ? 1 : 0);
+    const start = room.page * per, end = start + per;
+    if (i < 0 || (i >= start && i < end)) return false;
+    const last = Math.min(end, room.viewOrder.length) - 1;
+    [room.viewOrder[i], room.viewOrder[last]] = [room.viewOrder[last], room.viewOrder[i]];
+    return true;
+  }
+
+  function renderPager() {
+    const pager = $("call-pager");
+    if (!pager) return;
+    const pages = room ? room.pages || 1 : 1;
+    pager.hidden = pages < 2;
+    if (pages < 2) return;
+    $("call-page-label").textContent = (room.page + 1) + " / " + pages;
+    $("call-page-prev").disabled = room.page === 0;
+    $("call-page-next").disabled = room.page >= pages - 1;
+  }
+
+  function turnPage(delta) {
+    if (!room) return;
+    room.page = Math.min(Math.max(0, (room.page || 0) + delta), (room.pages || 1) - 1);
+    renderStage();
   }
 
   function renderKnocks() {
@@ -1726,6 +2404,7 @@
     const face = el("span", { class: "avatar", "aria-hidden": "true" });
     paintFace(face, who);
     const answer = (admit) => post(`/rooms/${room.id}/knocks/${k.knock}`, { session, admit }).catch((err) => { if (err.code === "room_full") toast("The call is full."); });
+    // (Whether a person who was let in fits is decided then; `knock_resolved` says why not.)
     return el("div", { class: cls, role: "group", "aria-label": who + " wants to join" },
       face,
       el("div", { class: "call-knock-text" },
@@ -1749,11 +2428,13 @@
         code ? el("span", { class: "call-person-code", title: "Security code with this person. If they read the same code, your connection is end-to-end encrypted." }, svg(ICON.lock), el("span", { text: code })) : null);
     };
     const me = host()?.mailbox?.();
-    list.append(row("You", (me ? (me.handle || me.address) : (Join.name || "Guest")) + (local.muted ? " · muted" : "") + (echoCancelling() === false ? " · no echo cancellation — use headphones" : ""), null, me ? (me.handle || me.address) : Join.name));
+    const you = row("You", (me ? (me.handle || me.address) : (Join.name || "Guest")) + (local.muted ? " · muted" : "") + (echoCancelling() === false ? " · no echo cancellation — use headphones" : ""), room && room.topology === "sfu" ? Sfu.code() : null, me ? (me.handle || me.address) : Join.name);
+    if (room && room.topology === "sfu") you.querySelector(".call-person-code")?.setAttribute("title", "Security code for the whole call. If everyone reads the same code, the call is end-to-end encrypted between all of you.");
+    list.append(you);
     for (const p of peers.values()) {
       const key = p.mailbox ? (p.mailbox.handle || p.mailbox.address) : p.name;
       const notes = [p.guest ? "Guest · name not verified" : key];
-      if (!p.connected) notes.push("connecting");
+      if (!p.connected) notes.push(room && room.topology === "sfu" && !p.lk && Sfu.ready() ? "not connected yet" : "connecting");
       else if (p.stats?.route === "relay") notes.push("relayed");
       if (p.state.muted) notes.push("muted");
       if (p.state.aec === false) notes.push("no echo cancellation — ask them to use headphones");
@@ -1911,6 +2592,7 @@
         const info = await (await fetch(BASE + "/meetings/" + this.code)).json();
         if (info.error) return this.fail(info.error === "rate_limited" ? "Too many attempts. Wait a few minutes and try again." : "This call has ended, or the link is wrong.");
         if (info.full) return this.fail("This call is full.");
+        if ((info.large || info.e2ee_required) && !canEncryptFrames) return this.fail(NEEDS_NEWER);
         $("join-meta").textContent = (info.kind === "video" ? "Video call" : "Voice call") + " · " + info.participants + (info.participants === 1 ? " person" : " people") + " in the call";
         $("join-form").hidden = false;
         this.wantCam = info.kind === "video";
@@ -1972,7 +2654,7 @@
       $("join-error").hidden = true;
       try {
         await whenReady();
-        const body = asMember ? { session, code: this.code, as: $("join-as").value } : { session, code: this.code, name };
+        const body = asMember ? { session, code: this.code, as: $("join-as").value, e2ee: canEncryptFrames } : { session, code: this.code, name, e2ee: canEncryptFrames };
         const res = await post("/knocks", body);
         this.knock = res.knock;
         $("join-form").hidden = true;
@@ -1980,7 +2662,7 @@
         $("join-cancel").focus();
       } catch (err) {
         $("join-submit").disabled = false;
-        $("join-error").textContent = { room_full: "This call is full.", no_meeting: "This call has ended.", rate_limited: "Too many attempts. Wait a few minutes and try again.", too_many_requests: "Several people are already waiting. Try again in a moment." }[err.code] || "Couldn’t ask to join. Try again.";
+        $("join-error").textContent = { room_full: "This call is full.", no_meeting: "This call has ended.", rate_limited: "Too many attempts. Wait a few minutes and try again.", too_many_requests: "Several people are already waiting. Try again in a moment.", needs_e2ee: NEEDS_NEWER, call_busy: "The call is busy: Pigeonpost’s media server is at capacity for large calls right now. Try again in a few minutes." }[err.code] || "Couldn’t ask to join. Try again.";
         $("join-error").hidden = false;
       }
     },
@@ -2001,7 +2683,7 @@
       $("join-waiting").hidden = true;
       $("join-form").hidden = false;
       $("join-submit").disabled = false;
-      $("join-error").textContent = { denied: "Someone in the call declined your request.", timeout: "Nobody answered your request. You can ask again.", ended: "This call has ended.", room_full: "This call is full." }[data.reason] || "You weren’t let in.";
+      $("join-error").textContent = { denied: "Someone in the call declined your request.", timeout: "Nobody answered your request. You can ask again.", ended: "This call has ended.", room_full: "This call is full.", call_busy: "The call is busy: Pigeonpost’s media server is at capacity for large calls right now. Try again in a few minutes.", needs_e2ee: "You were let in, but this call can’t grow past six: someone in it uses a browser or app that can’t encrypt its own audio and video." }[data.reason] || "You weren’t let in.";
       $("join-error").hidden = false;
     },
     enter() {
@@ -2053,11 +2735,15 @@
 
   window.PigeonpostCalls = {
     start, stop, renderHead,
+    // For automated checks of large calls: receive statistics of the media server's tracks.
+    sfuStats: () => Sfu.stats(),
     // For automated checks: who is connected, by which route, at what resolution and rate, and with
     // which security codes. Contains no media and no message text.
     inspect: () => ({
       session, page: PAGE,
-      room: room && { id: room.id, code: room.code, you: room.you, state: room.state, size: room.size },
+      room: room && { id: room.id, code: room.code, you: room.you, state: room.state, size: room.size, topology: room.topology, page: room.page || 0, pages: room.pages || 1, tiles: room.tiles ? room.tiles.size : 0 },
+      e2eeCapable: canEncryptFrames,
+      sfu: Sfu.inspect(),
       call: room && { id: room.id, state: room.state === "active" && [...peers.values()].some((p) => p.connected) ? "active" : room.state },
       ring: ring && { room: ring.room, kind: ring.kind },
       knocks: [...knocks.keys()],
@@ -2065,7 +2751,7 @@
       pinned: room && room.pinned, layout: room && (room.layout || "auto"), fullscreen: isFullscreen(),
       local: { mic: Boolean(local.mic), cam: Boolean(local.cam), screen: Boolean(local.screen), muted: local.muted, cameraOff: local.cameraOff, micDevice: (local.rawMic || local.mic)?.getSettings().deviceId || null, camDevice: local.cam?.getSettings().deviceId || null },
       chat: chatLog.length,
-      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), initiator: p.initiator, pendingIce: p.pendingIce.length }, remoteCamera: p.state.cameraOff ? 0 : p.remote.camera.getVideoTracks().filter((t) => t.readyState === "live").length, remoteScreen: p.state.screen ? p.remote.screen.getVideoTracks().filter((t) => t.readyState === "live").length : 0 })),
+      peers: [...peers.values()].map((p) => ({ id: p.id, name: displayName(p), guest: p.guest, connected: p.connected, security: p.security, mesh: Boolean(p.pc), sfu: Boolean(p.lk), stats: p.stats && { route: p.stats.route, rtt: p.stats.rtt, sending: p.stats.sending, receiving: p.stats.receiving }, aec: p.state.aec, muted: p.state.muted, pc: p.pc && { signaling: p.pc.signalingState, ice: p.pc.iceConnectionState, gathering: p.pc.iceGatheringState, connection: p.pc.connectionState, local: Boolean(p.pc.localDescription), remote: Boolean(p.pc.remoteDescription), initiator: p.initiator, pendingIce: p.pendingIce.length }, remoteCamera: p.state.cameraOff ? 0 : p.remote.camera.getVideoTracks().filter((t) => t.readyState === "live").length, remoteScreen: p.state.screen ? p.remote.screen.getVideoTracks().filter((t) => t.readyState === "live").length : 0 })),
     }),
   };
 

@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import http from "node:http";
 import crypto from "node:crypto";
-import { createCallsService, LIMITS } from "../src/server.js";
+import { createCallsService, LIMITS, sfuRoomMbps, sfuConfigFromEnv } from "../src/server.js";
 
 // Three accounts. Alice owns two mailboxes, Bob one, Carol one. Tokens are opaque strings; the fake
 // postbox below is the only thing that knows which mailboxes a token may act as.
@@ -36,14 +36,15 @@ async function start(overrides = {}) {
     postbox: "https://postbox.test", turnSecret: "s3cret", turnUrls: ["turn:relay.test:3478?transport=udp"],
     turnTtlSeconds: 3600, allowedOrigins: ["https://inbox.test"], ringMs: 400, knockMs: 1500, trustProxy: true, ...overrides,
   };
-  const service = createCallsService(cfg, { fetch: postbox.fetch, randomCode: () => "CODE" + String(10 + (codeSeq++ % 80)) });
+  const sfuCalls = [];
+  const service = createCallsService(cfg, { fetch: postbox.fetch, randomCode: () => "CODE" + String(10 + (codeSeq++ % 80)), sfuApi: async (sfu, method, body, token) => { sfuCalls.push({ method, body, token }); return 200; } });
   const server = http.createServer((req, res) => service.handle(req, res));
   await new Promise((r) => server.listen(0, "127.0.0.1", r));
   const base = `http://127.0.0.1:${server.address().port}`;
   const open = [];
   let ipSeq = 0;
   const t = {
-    service, postbox, base,
+    service, postbox, base, sfuCalls,
     async req(auth, method, path, body, headers = {}) {
       const authHeader = !auth ? {} : auth.startsWith("guest:") ? { authorization: "Guest " + auth.slice(6) } : { authorization: "Bearer " + auth };
       const res = await fetch(base + path, {
@@ -198,7 +199,7 @@ test("a meeting link lets a guest knock; a participant admits them and they join
     const { alice, bob, room, code, alicePid, bobPid } = await connectedPair(t);
     // Anyone can see that a meeting exists — but not who is in it.
     const info = await t.req(null, "GET", `/calls/v1/meetings/${code.toLowerCase()}`);
-    assert.deepEqual(info.body, { code, kind: "video", participants: 2, full: false });
+    assert.deepEqual(info.body, { code, kind: "video", participants: 2, full: false, large: false, e2ee_required: false });
     const g = await t.guest();
     const gs = await t.stream(g);
     // No relay credentials before admission.
@@ -263,8 +264,9 @@ test("unknown codes are rate limited per address, and a room has a participant c
     assert.equal(last.body.error, "rate_limited");
     assert.equal((await t.req(null, "GET", "/calls/v1/meetings/ZZZZZZ", null, { "cf-connecting-ip": "203.0.113.10" })).body.error, "no_meeting");
 
+    // Without a media server a call stays a mesh of six.
     const { alice, room, code } = await connectedPair(t);
-    for (let i = 0; i < LIMITS.participants - 2; i++) {
+    for (let i = 0; i < 6 - 2; i++) {
       const g = await t.guest(); const gs = await t.stream(g);
       const k = await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code, name: "Guest " + i });
       await alice.until("knock");
@@ -402,4 +404,262 @@ test("anyone in the call can mute anyone else; reports log counts only", async (
     assert.match(logs[0], /state=stalled route=- relay_only=false restarts=0 local=h2s0p0r1 remote=h0s1p0r0/);
     assert.ok(!logs[0].includes("203.0.113.5") && !logs[0].includes("secret"));
   } finally { await t.stop(); }
+});
+
+// ---- large calls on the media server ----------------------------------------------------------------
+
+const SFU_SECRET = "s".repeat(40);
+function sfuCfg(extra = {}) {
+  const base = sfuConfigFromEnv({ CALLS_SFU_URL: "wss://inbox.test/sfu", CALLS_SFU_API_URL: "https://media.test:7443", CALLS_SFU_KEY: "APIkey1", CALLS_SFU_SECRET: SFU_SECRET, CALLS_SFU_BUDGET_MBPS: "200" });
+  return { meshMax: 6, sfu: { ...base, ...extra } };
+}
+const pub = (i) => "B" + crypto.createHash("sha256").update("k" + i).digest("base64url").padEnd(86, "A").slice(0, 86);
+
+function verifyJwt(token, secret) {
+  const [h, b, sig] = token.split(".");
+  const want = crypto.createHmac("sha256", secret).update(h + "." + b).digest("base64url");
+  assert.equal(sig, want, "signature");
+  assert.deepEqual(JSON.parse(Buffer.from(h, "base64url")), { alg: "HS256", typ: "JWT" });
+  return JSON.parse(Buffer.from(b, "base64url"));
+}
+
+// Grows a two-person call by admitting guests until it has `n` people; returns everyone's streams.
+async function grow(t, pair, n, { e2ee = true } = {}) {
+  const people = [];
+  for (let i = pair.size || 2; i < n; i++) {
+    const g = await t.guest(); const gs = await t.stream(g);
+    const k = await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code: pair.code, name: "Guest " + i, e2ee });
+    assert.equal(k.status, 200, JSON.stringify(k.body));
+    await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/knocks/${k.body.knock}`, { session: pair.alice.id, admit: true });
+    const joined = await gs.until("joined");
+    people.push({ auth: g, s: gs, pid: joined.data.you, joined });
+  }
+  pair.size = n;
+  return people;
+}
+
+async function e2eePair(t) {
+  const alice = await t.stream("tok-alice");
+  const bob = await t.stream("tok-bob");
+  const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "video", e2ee: true });
+  await bob.until("incoming");
+  const accepted = await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: bob.id, e2ee: true });
+  assert.equal(accepted.status, 200);
+  const joinedBob = await bob.until("joined");
+  return { alice, bob, room: placed.body.room, code: placed.body.code, alicePid: placed.body.you, bobPid: joinedBob.data.you };
+}
+
+test("the expected cost of a media-server room grows with its size and stays in budget terms", () => {
+  const model = sfuConfigFromEnv({}).model;
+  assert.equal(sfuRoomMbps(0, model), 0);
+  assert.equal(sfuRoomMbps(1, model), 2.4); // alone: what one person sends
+  // Seven people: one large view, five thumbnails and six voices each.
+  assert.ok(Math.abs(sfuRoomMbps(7, model) - 7 * (1.7 + 5 * 0.16 + 6 * 0.05)) < 1e-9);
+  // Thirty: thumbnails stop at fifteen (one page of sixteen views).
+  assert.ok(Math.abs(sfuRoomMbps(30, model) - 30 * (1.7 + 15 * 0.16 + 29 * 0.05)) < 1e-9);
+  assert.ok(sfuRoomMbps(30, model) < 200);
+});
+
+test("a mesh call moves to the media server when the seventh person is let in, and stops at thirty", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const pair = await e2eePair(t);
+    const five = await grow(t, pair, 6);
+    assert.equal(t.service.state.rooms.get(pair.room).topology, "mesh");
+    assert.deepEqual((await t.req(null, "GET", `/calls/v1/meetings/${pair.code}`)).body, { code: pair.code, kind: "video", participants: 6, full: false, large: false, e2ee_required: true });
+    // A browser that cannot encrypt its own media is told so instead of being let in unencrypted.
+    const g = await t.guest(); const gs = await t.stream(g);
+    assert.deepEqual(await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code: pair.code, name: "Old browser" }), { status: 409, body: { error: "needs_e2ee" } });
+    // The seventh: everyone already in hears the call is moving before they hear of the newcomer.
+    const seventh = await grow(t, pair, 7);
+    const ev = await pair.bob.until("topology");
+    assert.deepEqual(ev.data, { room: pair.room, topology: "sfu" });
+    assert.equal((await five[0].s.until("topology")).data.topology, "sfu");
+    assert.equal(seventh[0].joined.data.topology, "sfu");
+    assert.equal(seventh[0].joined.data.participants.length, 7);
+    assert.equal((await t.req(null, "GET", `/calls/v1/meetings/${pair.code}`)).body.large, true);
+    await grow(t, pair, 30);
+    const g2 = await t.guest(); const gs2 = await t.stream(g2);
+    assert.equal((await t.req(g2, "POST", "/calls/v1/knocks", { session: gs2.id, code: pair.code, name: "Thirty-one", e2ee: true })).body.error, "room_full");
+    assert.equal((await t.req(null, "GET", `/calls/v1/meetings/${pair.code}`)).body.full, true);
+    // The room stays on the media server even when it shrinks.
+    await t.req("tok-bob", "POST", `/calls/v1/rooms/${pair.room}/leave`, { session: pair.bob.id });
+    assert.equal(t.service.state.rooms.get(pair.room).topology, "sfu");
+  } finally { await t.stop(); }
+});
+
+test("a mesh participant without frame encryption keeps the call at six", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const pair = await connectedPair(t); // neither says it can encrypt frames (an older page)
+    await grow(t, pair, 6);
+    const g = await t.guest(); const gs = await t.stream(g);
+    assert.equal((await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code: pair.code, name: "Seventh", e2ee: true })).body.error, "needs_e2ee");
+    assert.equal(t.service.state.rooms.get(pair.room).topology, "mesh");
+  } finally { await t.stop(); }
+});
+
+test("a knock that is let in but no longer fits is refused with the reason, and the others hear it", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const pair = await e2eePair(t);
+    await grow(t, pair, 5);
+    // Two people knock while there are five; the first takes the sixth seat in the mesh.
+    const a = await t.guest(); const as = await t.stream(a);
+    const b = await t.guest(); const bs = await t.stream(b);
+    const ka = await t.req(a, "POST", "/calls/v1/knocks", { session: as.id, code: pair.code, name: "A", e2ee: true });
+    const kb = await t.req(b, "POST", "/calls/v1/knocks", { session: bs.id, code: pair.code, name: "B" });
+    assert.equal(kb.status, 200); // five people: a mesh seat is still free when B asks
+    await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/knocks/${ka.body.knock}`, { session: pair.alice.id, admit: true });
+    await as.until("joined");
+    await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/knocks/${kb.body.knock}`, { session: pair.alice.id, admit: true });
+    assert.deepEqual((await bs.until("knock_result")).data, { room: pair.room, knock: kb.body.knock, admitted: false, reason: "needs_e2ee" });
+    let resolved;
+    do { resolved = await pair.bob.until("knock_resolved"); } while (resolved.data.knock !== kb.body.knock);
+    assert.deepEqual([resolved.data.admitted, resolved.data.reason], [false, "needs_e2ee"]);
+  } finally { await t.stop(); }
+});
+
+test("the media server's bandwidth budget refuses new large rooms and joins with 'call_busy'", async () => {
+  const model = sfuConfigFromEnv({}).model;
+  // Room for one seven-person call and a little more, not for two.
+  const t = await start(sfuCfg({ budgetMbps: sfuRoomMbps(7, model) + sfuRoomMbps(2, model) + 1 }));
+  try {
+    const one = await e2eePair(t);
+    const guests = await grow(t, one, 7);
+    assert.equal(t.service.state.rooms.get(one.room).topology, "sfu");
+    // A large call can still start (two people fit), but cannot grow next to the first.
+    const carol = await t.stream("tok-carol");
+    const alice2 = await t.stream("tok-alice");
+    const placed = await t.req("tok-carol", "POST", "/calls/v1/calls", { session: carol.id, from: "/k/carol1", to: "/alice/agent", kind: "audio", e2ee: true, large: true });
+    assert.equal(placed.status, 200);
+    assert.equal(t.service.state.rooms.get(placed.body.room).topology, "sfu");
+    await alice2.until("incoming");
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: alice2.id, e2ee: true })).status, 200);
+    const g = await t.guest(); const gs = await t.stream(g);
+    const k = await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code: placed.body.code, name: "Third", e2ee: true });
+    assert.deepEqual(k, { status: 503, body: { error: "call_busy" } });
+    // A new large call no longer fits at all; a small one is untouched by the media server's budget.
+    const bob2 = await t.stream("tok-bob");
+    assert.deepEqual(await t.req("tok-bob", "POST", "/calls/v1/calls", { session: bob2.id, from: "/bob", to: "/k/carol1", kind: "audio", e2ee: true, large: true }), { status: 503, body: { error: "call_busy" } });
+    const small = await t.req("tok-bob", "POST", "/calls/v1/calls", { session: bob2.id, from: "/bob", to: "/k/carol1", kind: "audio" });
+    assert.equal(small.status, 200);
+    // When the first large call ends, the second can grow.
+    for (const x of guests) await t.req(x.auth, "POST", `/calls/v1/rooms/${one.room}/leave`, { session: x.s.id });
+    await t.req("tok-bob", "POST", `/calls/v1/rooms/${one.room}/leave`, { session: one.bob.id });
+    assert.equal(t.service.state.rooms.get(one.room).state, "ended");
+    assert.ok(Math.abs(t.service.sfuLoadMbps() - sfuRoomMbps(2, model)) < 1e-9);
+    assert.equal((await t.req(g, "POST", "/calls/v1/knocks", { session: gs.id, code: placed.body.code, name: "Third", e2ee: true })).status, 200);
+  } finally { await t.stop(); }
+});
+
+test("media-server tickets: only for participants of a large call, scoped to that room and person, short-lived", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000, tokenTtlSeconds: 90 }));
+  try {
+    const pair = await e2eePair(t);
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: pair.alice.id })).body.error, "not_large");
+    const guests = await grow(t, pair, 7);
+    const g = guests[guests.length - 1];
+    const r = await t.req(g.auth, "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: g.s.id });
+    assert.equal(r.status, 200);
+    assert.equal(r.body.url, "wss://inbox.test/sfu");
+    const claims = verifyJwt(r.body.token, SFU_SECRET);
+    assert.equal(claims.iss, "APIkey1");
+    assert.equal(claims.sub, g.pid); // identity = the participant id, nothing else about the person
+    assert.equal(claims.name, undefined);
+    assert.ok(claims.exp - claims.nbf <= 95 && claims.exp > Date.now() / 1000);
+    assert.deepEqual(claims.video, { room: pair.room, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true, canPublishSources: ["microphone", "camera", "screen_share"], canUpdateOwnMetadata: false });
+    assert.equal(claims.video.roomAdmin, undefined);
+    assert.equal(claims.video.roomCreate, undefined);
+    // Somebody not in the call, or a guest still waiting, gets nothing.
+    const carol = await t.stream("tok-carol");
+    assert.equal((await t.req("tok-carol", "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: carol.id })).body.error, "not_in_room");
+    const w = await t.guest(); const ws = await t.stream(w);
+    await t.req(w, "POST", "/calls/v1/knocks", { session: ws.id, code: pair.code, name: "Waiting", e2ee: true });
+    assert.equal((await t.req(w, "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: ws.id })).body.error, "not_in_room");
+    // Another account cannot use someone else's session.
+    assert.equal((await t.req("tok-carol", "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: pair.alice.id })).body.error, "no_session");
+    // Tickets are rate limited per participant.
+    let last;
+    for (let i = 0; i < LIMITS.sfuTicketsPerMinute; i++) last = await t.req(g.auth, "POST", `/calls/v1/rooms/${pair.room}/sfu`, { session: g.s.id });
+    assert.equal(last.body.error, "rate_limited");
+  } finally { await t.stop(); }
+});
+
+test("public keys and key generations are announced to the others; wrapped keys pass only as opaque, sized blobs", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const pair = await e2eePair(t);
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/e2ee`, { session: pair.alice.id, public_key: pub(1) })).body.error, "not_large");
+    const keySig = { epoch: 1, iv: "A".repeat(16), key: "B".repeat(64) };
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/signal`, { session: pair.alice.id, to: pair.bobPid, type: "key", data: keySig })).body.error, "bad_signal");
+    const guests = await grow(t, pair, 7);
+    const ann = (auth, s, body) => t.req(auth, "POST", `/calls/v1/rooms/${pair.room}/e2ee`, { session: s.id, ...body });
+    assert.equal((await ann("tok-alice", pair.alice, { public_key: "not a key" })).body.error, "bad_key");
+    assert.equal((await ann("tok-alice", pair.alice, { public_key: "C" + pub(1).slice(1) })).body.error, "bad_key");
+    assert.equal((await ann("tok-alice", pair.alice, { epoch: 1 })).body.error, "no_key");
+    assert.equal((await ann("tok-alice", pair.alice, { public_key: pub(1) })).status, 200);
+    let ev = await pair.bob.until("participant_key");
+    assert.deepEqual(ev.data, { room: pair.room, participant: pair.alicePid, key: pub(1), epoch: 0 });
+    assert.equal((await ann("tok-alice", pair.alice, { epoch: 1.5 })).body.error, "bad_key");
+    assert.equal((await ann("tok-alice", pair.alice, { epoch: 3 })).status, 200);
+    ev = await pair.bob.until("participant_key");
+    assert.equal(ev.data.epoch, 3);
+    // A newcomer learns everyone's announced keys from the room itself.
+    const more = await grow(t, pair, 8);
+    const alice = more[0].joined.data.participants.find((p) => p.participant === pair.alicePid);
+    assert.deepEqual([alice.key, alice.epoch], [pub(1), 3]);
+    // Wrapped keys: well-formed ones go to exactly one participant; anything else is refused.
+    const sig = (data) => t.req("tok-alice", "POST", `/calls/v1/rooms/${pair.room}/signal`, { session: pair.alice.id, to: guests[0].pid, type: "key", data });
+    assert.equal((await sig(keySig)).status, 200);
+    assert.deepEqual((await guests[0].s.until("signal")).data, { room: pair.room, from: pair.alicePid, type: "key", data: keySig });
+    for (const bad of [{ ...keySig, epoch: 0 }, { ...keySig, iv: "A".repeat(17) }, { ...keySig, key: "B".repeat(65) }, { ...keySig, key: "B".repeat(63) + "+" }, { ...keySig, extra: 1, key: 5 }, null]) {
+      assert.equal((await sig(bad)).body.error, "bad_signal");
+    }
+  } finally { await t.stop(); }
+});
+
+test("leaving a large call removes the person from the media server; the end of the call closes the room there", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const pair = await e2eePair(t);
+    const guests = await grow(t, pair, 7);
+    assert.equal(t.sfuCalls.length, 0);
+    await t.req(guests[0].auth, "POST", `/calls/v1/rooms/${pair.room}/leave`, { session: guests[0].s.id });
+    await settle();
+    assert.equal(t.sfuCalls.length, 1);
+    assert.equal(t.sfuCalls[0].method, "RemoveParticipant");
+    assert.deepEqual(t.sfuCalls[0].body, { room: pair.room, identity: guests[0].pid });
+    const claims = verifyJwt(t.sfuCalls[0].token, SFU_SECRET);
+    assert.deepEqual(claims.video, { roomAdmin: true, room: pair.room });
+    assert.ok(claims.exp - Date.now() / 1000 <= 61);
+    for (const g of guests.slice(1)) await t.req(g.auth, "POST", `/calls/v1/rooms/${pair.room}/leave`, { session: g.s.id });
+    await t.req("tok-bob", "POST", `/calls/v1/rooms/${pair.room}/leave`, { session: pair.bob.id });
+    await settle();
+    const del = t.sfuCalls.find((c) => c.method === "DeleteRoom");
+    assert.ok(del, "room closed on the media server");
+    assert.deepEqual(del.body, { room: pair.room });
+    assert.deepEqual(verifyJwt(del.token, SFU_SECRET).video, { roomCreate: true });
+  } finally { await t.stop(); }
+});
+
+test("a large call can start on the media server; answering it needs an encrypting browser", async () => {
+  const t = await start(sfuCfg({ budgetMbps: 1000 }));
+  try {
+    const alice = await t.stream("tok-alice");
+    const bob = await t.stream("tok-bob");
+    assert.equal((await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "video", large: true })).body.error, "needs_e2ee");
+    const placed = await t.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "video", large: true, e2ee: true });
+    assert.equal(placed.body.topology, "sfu");
+    await bob.until("incoming");
+    assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: bob.id })).body.error, "needs_e2ee");
+    assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${placed.body.room}/accept`, { session: bob.id, e2ee: true })).status, 200);
+    assert.equal((await bob.until("joined")).data.topology, "sfu");
+  } finally { await t.stop(); }
+  // Without a media server configured, nothing is large.
+  const t2 = await start();
+  try {
+    const alice = await t2.stream("tok-alice");
+    assert.equal((await t2.req("tok-alice", "POST", "/calls/v1/calls", { session: alice.id, from: "/alice", to: "/bob", kind: "video", large: true, e2ee: true })).body.error, "room_full");
+  } finally { await t2.stop(); }
 });

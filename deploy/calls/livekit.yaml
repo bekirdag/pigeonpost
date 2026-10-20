@@ -1,0 +1,25 @@
+# /etc/livekit/livekit.yaml on the media host — mode 0640 root:livekit. No secrets in this file:
+# the API key and secret come from LIVEKIT_KEYS in /etc/livekit/livekit.env (0600 root).
+#
+# The media server only ever handles frames the browsers have already encrypted (see
+# docs/calls-sfu.md). It keeps no recordings (no Egress) and logs no media.
+port: 7880
+# Signaling and the admin API listen on loopback only; nginx-sfu-backhaul.conf puts TLS in front.
+bind_addresses: ["127.0.0.1"]
+rtc:
+  # ICE over TCP for networks that block UDP, and a UDP range that does not overlap coturn's
+  # relay range (49160–59999) on the same host.
+  tcp_port: 7881
+  port_range_start: 40000
+  port_range_end: 41999
+  use_external_ip: false
+  node_ip: MEDIA_HOST_IP
+room:
+  auto_create: true
+  max_participants: 30
+  empty_timeout: 120
+  departure_timeout: 20
+turn:
+  enabled: false
+logging:
+  level: info
