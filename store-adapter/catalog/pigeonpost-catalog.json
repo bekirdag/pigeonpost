@@ -11,11 +11,11 @@
  "products": {
   "cloud": {
    "name": "PP_CLOUD",
-   "provider_product_reference": null
+   "provider_product_reference": "7db10cab-3197-4bec-9309-6066341fb625"
   },
   "ent": {
    "name": "PP_ENT",
-   "provider_product_reference": null
+   "provider_product_reference": "132784df-6df6-4940-8195-137e2490ed87"
   }
  },
  "plans": {
@@ -28,8 +28,8 @@
    "editions": {
     "2026": {
      "amount": "8.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "5f547c3f-1d76-4b0e-a931-93aa6cb3d156",
+     "provider_plan_reference": "a32b3642-8ca9-449a-ac0c-748b228d2649"
     }
    }
   },
@@ -42,8 +42,8 @@
    "editions": {
     "2026": {
      "amount": "409.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "1fa137db-4c43-4a42-abbc-24de54dcb231",
+     "provider_plan_reference": "94d9406b-756c-4557-b7f5-696d5c25d06b"
     }
    }
   },
@@ -56,8 +56,8 @@
    "editions": {
     "2026": {
      "amount": "16.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "df034791-c862-4e7a-bde9-b2c6ecf63825",
+     "provider_plan_reference": "463d9a8c-bb28-4da0-86a9-7f084d8b5538"
     }
    }
   },
@@ -70,8 +70,8 @@
    "editions": {
     "2026": {
      "amount": "817.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "eb99859d-2438-4902-a181-d97d61ec67f1",
+     "provider_plan_reference": "52e86efd-4088-4e45-b1b8-20961ffeb03f"
     }
    }
   },
@@ -84,8 +84,8 @@
    "editions": {
     "2026": {
      "amount": "24.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "567ec6ff-c59b-4150-9c66-bea7afac8d79",
+     "provider_plan_reference": "78842358-98a3-4afc-b5e7-8eb7edc34990"
     }
    }
   },
@@ -98,8 +98,8 @@
    "editions": {
     "2026": {
      "amount": "1226.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "68b6e412-852f-4e40-8207-f3ba68a9d1d6",
+     "provider_plan_reference": "011c44e7-4f01-4906-9cc8-f92f67b83a32"
     }
    }
   },
@@ -112,8 +112,8 @@
    "editions": {
     "2026": {
      "amount": "32.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "6c384aec-432a-4c8e-970d-2e85c1647954",
+     "provider_plan_reference": "4726572f-2f16-41c1-b73a-d11343e3b2b1"
     }
    }
   },
@@ -126,8 +126,8 @@
    "editions": {
     "2026": {
      "amount": "1634.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "c51f53a5-295c-4d0f-9e3d-ccbaa60674ac",
+     "provider_plan_reference": "774d06af-e87c-43ac-926f-f8d239281b07"
     }
    }
   },
@@ -140,8 +140,8 @@
    "editions": {
     "2026": {
      "amount": "40.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "ccbb5acd-2ede-4e22-8864-fefeebfb5ef3",
+     "provider_plan_reference": "efe66674-64aa-402d-be4a-2516ba633f1b"
     }
    }
   },
@@ -154,8 +154,8 @@
    "editions": {
     "2026": {
      "amount": "2043.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "575cecd0-1f76-414f-ba73-dfec044b3e91",
+     "provider_plan_reference": "8a9bb1a3-da8e-4e21-99f8-068c599f083f"
     }
    }
   },
@@ -168,8 +168,8 @@
    "editions": {
     "2026": {
      "amount": "48.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "aa2bff6b-5a09-417a-9fa7-d02e77942753",
+     "provider_plan_reference": "c929dcb8-1c9f-4cb0-bb98-e019393df8b0"
     }
    }
   },
@@ -182,8 +182,8 @@
    "editions": {
     "2026": {
      "amount": "2451.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "11cc3d72-ae14-40fa-a468-62e82b7eccc9",
+     "provider_plan_reference": "7248ef0e-7552-4ad8-bf04-e95f4e24df26"
     }
    }
   },
@@ -196,8 +196,8 @@
    "editions": {
     "2026": {
      "amount": "56.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "dda39956-a88a-406b-9321-4b2595e81e00",
+     "provider_plan_reference": "9ab6ba4c-5d4f-48c7-a8b8-8dd05b3dc138"
     }
    }
   },
@@ -210,8 +210,8 @@
    "editions": {
     "2026": {
      "amount": "2860.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "2fc4e128-c4b8-49de-ad24-b8a57316c6e9",
+     "provider_plan_reference": "e3e19de5-9827-42d2-8ce9-07a9b2f7c500"
     }
    }
   },
@@ -224,8 +224,8 @@
    "editions": {
     "2026": {
      "amount": "64.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "1966dfaa-08f0-465e-8c85-332f3cafbdbc",
+     "provider_plan_reference": "ae9563ed-4260-402f-9df8-59a81f488e0f"
     }
    }
   },
@@ -238,8 +238,8 @@
    "editions": {
     "2026": {
      "amount": "3268.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "af35656f-ea55-4217-8d99-eb9cbc4466b5",
+     "provider_plan_reference": "17e2fab8-9e17-46af-be68-3a4017d3bafd"
     }
    }
   },
@@ -252,8 +252,8 @@
    "editions": {
     "2026": {
      "amount": "72.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "b20ea1be-01a9-4e79-b872-6450c9f1afeb",
+     "provider_plan_reference": "961423e7-577b-42f4-83f1-6c8efca767b5"
     }
    }
   },
@@ -266,8 +266,8 @@
    "editions": {
     "2026": {
      "amount": "3677.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "5a91cca6-88c1-4b49-981e-9cf3f1b0c41a",
+     "provider_plan_reference": "85079321-4526-420e-ab9f-306c001d3bda"
     }
    }
   },
@@ -280,8 +280,8 @@
    "editions": {
     "2026": {
      "amount": "80.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "e0cc4ea3-6d2e-4f8c-9cf9-cd6dc938a3e8",
+     "provider_plan_reference": "43f30bfd-b5b1-4b0a-b59a-2f5f90501e76"
     }
    }
   },
@@ -294,8 +294,8 @@
    "editions": {
     "2026": {
      "amount": "4085.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "2f1b1d2c-2e98-4e7b-95d2-6bbeab4a807b",
+     "provider_plan_reference": "44bb950a-ccaa-405e-93f7-c263efe5a4c2"
     }
    }
   },
@@ -310,8 +310,8 @@
    "editions": {
     "2026": {
      "amount": "30.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "2d635224-d3d3-4ede-9090-9075b38e3451",
+     "provider_plan_reference": "6c0862e1-216b-4387-96f5-0fbd468aff56"
     }
    }
   },
@@ -326,8 +326,8 @@
    "editions": {
     "2026": {
      "amount": "1532.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "819fc9f4-0179-454a-893b-bf553fa92bbb",
+     "provider_plan_reference": "f2755c81-eb24-4318-b0ff-95578e8be650"
     }
    }
   },
@@ -342,8 +342,8 @@
    "editions": {
     "2026": {
      "amount": "300.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "445c3656-53af-48be-8bf1-3f6131090275",
+     "provider_plan_reference": "eeb8b945-6e51-46cb-a89c-aa1c243ff179"
     }
    }
   },
@@ -358,8 +358,8 @@
    "editions": {
     "2026": {
      "amount": "15318.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "da2f1ad0-44e6-47a1-b9fb-8512c58bf465",
+     "provider_plan_reference": "a9f8d226-feb7-45c8-bb12-0eb985e65b7e"
     }
    }
   },
@@ -374,8 +374,8 @@
    "editions": {
     "2026": {
      "amount": "60.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "bfded62c-34d7-471a-a252-d5a416a54ceb",
+     "provider_plan_reference": "cffe8efd-faae-457b-ad87-ff9d3a654522"
     }
    }
   },
@@ -390,8 +390,8 @@
    "editions": {
     "2026": {
      "amount": "3064.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "e62ee6ea-2d15-4d10-8bcd-74a6c54963d0",
+     "provider_plan_reference": "0be0156c-043c-4318-8dfc-47c28e957772"
     }
    }
   },
@@ -406,8 +406,8 @@
    "editions": {
     "2026": {
      "amount": "600.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "a55c60f3-dff9-414e-94aa-7d7464ebd3c3",
+     "provider_plan_reference": "9b95ed4d-f7a1-412e-8201-6fe7fcfca728"
     }
    }
   },
@@ -422,8 +422,8 @@
    "editions": {
     "2026": {
      "amount": "30635.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "fdb114a5-4f2d-4d67-b6cd-a66a9e89df63",
+     "provider_plan_reference": "ea4c7ad0-fa5e-4482-9621-59285b930392"
     }
    }
   },
@@ -438,8 +438,8 @@
    "editions": {
     "2026": {
      "amount": "90.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "f8b60e61-ef70-457e-8ba0-546f216a97ae",
+     "provider_plan_reference": "605723e7-6ec8-4cd9-9bcf-fa4d26c03836"
     }
    }
   },
@@ -454,8 +454,8 @@
    "editions": {
     "2026": {
      "amount": "4596.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "ca254d7f-1ab0-473c-8da4-f83975635b45",
+     "provider_plan_reference": "c35f8e3a-2858-49d2-a853-46115000e735"
     }
    }
   },
@@ -470,8 +470,8 @@
    "editions": {
     "2026": {
      "amount": "900.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "80428127-b2d9-4b2a-a98e-160574b87059",
+     "provider_plan_reference": "729b3b7a-3a26-4158-8e46-c0e0768228ff"
     }
    }
   },
@@ -486,8 +486,8 @@
    "editions": {
     "2026": {
      "amount": "45953.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "020b5625-dbbd-46ef-822c-49c55b6ae9de",
+     "provider_plan_reference": "9351d9ba-9709-49fb-b080-1e03a1d3cf9c"
     }
    }
   },
@@ -502,8 +502,8 @@
    "editions": {
     "2026": {
      "amount": "120.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "f693f3f5-12fb-4cde-a90c-f928910e44ff",
+     "provider_plan_reference": "d657c5da-4283-466c-8e70-c7413354d712"
     }
    }
   },
@@ -518,8 +518,8 @@
    "editions": {
     "2026": {
      "amount": "6127.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "3e671296-c721-4db8-991b-2f0bf3b462f7",
+     "provider_plan_reference": "4d9b6ea2-a8af-458e-93f0-e1a119646686"
     }
    }
   },
@@ -534,8 +534,8 @@
    "editions": {
     "2026": {
      "amount": "1200.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "30cb1083-d6be-44a8-98be-acdc41c90092",
+     "provider_plan_reference": "0745e4af-6fd4-427e-b428-35fb5bb3a26d"
     }
    }
   },
@@ -550,8 +550,8 @@
    "editions": {
     "2026": {
      "amount": "61270.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "78c3e5e4-928b-428c-a7fc-fb5cd8dcbe4b",
+     "provider_plan_reference": "d27fd487-cc69-43f8-90cf-3b1e4cf4c881"
     }
    }
   },
@@ -566,8 +566,8 @@
    "editions": {
     "2026": {
      "amount": "180.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "727c1221-6f2b-48d7-bc9c-88ab06906780",
+     "provider_plan_reference": "48a64b02-35c7-4af1-ab44-e4332a8db4cf"
     }
    }
   },
@@ -582,8 +582,8 @@
    "editions": {
     "2026": {
      "amount": "9191.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "de630c7f-8ed7-469e-9ec7-3e9f4fe689ba",
+     "provider_plan_reference": "c648e275-7c9f-4e61-8d09-0103dfbdc0f7"
     }
    }
   },
@@ -598,8 +598,8 @@
    "editions": {
     "2026": {
      "amount": "1800.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "4821164f-f4a9-4aab-8927-e7899cf5be56",
+     "provider_plan_reference": "9de2f63c-0166-4dfc-9287-fb27c9d5b612"
     }
    }
   },
@@ -614,8 +614,8 @@
    "editions": {
     "2026": {
      "amount": "91905.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "214d4c6e-1f26-40de-835a-bd08f87e6c07",
+     "provider_plan_reference": "50417b34-11e5-45fa-9203-1e618973d492"
     }
    }
   },
@@ -630,8 +630,8 @@
    "editions": {
     "2026": {
      "amount": "270.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "156c1e69-d78d-4275-ac50-2db271520ccb",
+     "provider_plan_reference": "87ab488f-92d2-4808-8db5-fbd7f827ac24"
     }
    }
   },
@@ -646,8 +646,8 @@
    "editions": {
     "2026": {
      "amount": "13786.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "bcfcf728-0613-42cf-9ebe-01e4ae98de6c",
+     "provider_plan_reference": "3e284f15-7194-4bc1-8277-90bc5087d7aa"
     }
    }
   },
@@ -662,8 +662,8 @@
    "editions": {
     "2026": {
      "amount": "2700.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "ef72ae5e-d1a4-4cfb-a44e-644475f162f7",
+     "provider_plan_reference": "a23d518f-4996-4b88-a5eb-b1eeef4cd812"
     }
    }
   },
@@ -678,8 +678,8 @@
    "editions": {
     "2026": {
      "amount": "137857.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "a4924f97-95b6-4466-8687-1edb5d043bde",
+     "provider_plan_reference": "252de6e4-b7c1-4935-815e-9bd4c5e84bae"
     }
    }
   },
@@ -694,8 +694,8 @@
    "editions": {
     "2026": {
      "amount": "480.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "301c1d8c-c419-4585-be2f-3dc00f538720",
+     "provider_plan_reference": "cc8a301a-c712-419e-a036-a97fddbb0847"
     }
    }
   },
@@ -710,8 +710,8 @@
    "editions": {
     "2026": {
      "amount": "24508.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "29c94eb6-9955-4861-bcb3-c0b430938edd",
+     "provider_plan_reference": "1d94c0bb-563f-4fde-b81e-d2b2144e11a7"
     }
    }
   },
@@ -726,8 +726,8 @@
    "editions": {
     "2026": {
      "amount": "4800.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "b0a5e369-daf1-41f1-98f1-9b3ff3b900b5",
+     "provider_plan_reference": "c0bf44b7-b106-4099-8214-d5edc6433eb8"
     }
    }
   },
@@ -742,8 +742,8 @@
    "editions": {
     "2026": {
      "amount": "245079.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "3f4cd27c-dfb2-48e1-a3fd-f87dbc251284",
+     "provider_plan_reference": "8e378990-269c-4689-957b-89439bd2c1b5"
     }
    }
   },
@@ -758,8 +758,8 @@
    "editions": {
     "2026": {
      "amount": "900.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "1e261fb1-e410-49c8-9f4f-a6fca29b6bf8",
+     "provider_plan_reference": "b2cdea53-d6ba-4188-a972-d72cfbc7ae6c"
     }
    }
   },
@@ -774,8 +774,8 @@
    "editions": {
     "2026": {
      "amount": "45953.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "40ca7732-82d3-47d6-9172-548d316f3cc9",
+     "provider_plan_reference": "f9baca0f-769b-4c85-b536-66f46bc32c70"
     }
    }
   },
@@ -790,8 +790,8 @@
    "editions": {
     "2026": {
      "amount": "9000.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "92b748e9-a7b4-461c-99ae-df7999c3c4a6",
+     "provider_plan_reference": "1c56202a-9b0f-4805-bdae-5d107553cd7a"
     }
    }
   },
@@ -806,8 +806,8 @@
    "editions": {
     "2026": {
      "amount": "459524.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "ab76b597-c250-46fb-8baa-65d5050cc2ef",
+     "provider_plan_reference": "77705569-b3f1-4f2d-9352-41662908142d"
     }
    }
   },
@@ -822,8 +822,8 @@
    "editions": {
     "2026": {
      "amount": "2250.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "3840865a-2f24-4735-b5e7-d8a895c3e8e7",
+     "provider_plan_reference": "dea23292-5047-4e35-ae27-896ae2c41161"
     }
    }
   },
@@ -838,8 +838,8 @@
    "editions": {
     "2026": {
      "amount": "114881.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "4b1b238d-fe56-4f30-992b-6f6aedd813a1",
+     "provider_plan_reference": "59219caf-21f3-4c14-a429-a3bd7bff06f1"
     }
    }
   },
@@ -854,8 +854,8 @@
    "editions": {
     "2026": {
      "amount": "22500.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "e4749565-d8e7-4b99-b227-804858d4a018",
+     "provider_plan_reference": "788f989c-bfce-43b0-9b5c-ed9f5aacef9a"
     }
    }
   },
@@ -870,8 +870,8 @@
    "editions": {
     "2026": {
      "amount": "1148808.00",
-     "plan_id": null,
-     "provider_plan_reference": null
+     "plan_id": "dd9da6e3-14da-448e-89c2-1a8674c9cfa5",
+     "provider_plan_reference": "83da9620-914b-4464-9286-c474418d22f9"
     }
    }
   }
