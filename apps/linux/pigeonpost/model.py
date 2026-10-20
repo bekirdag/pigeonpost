@@ -20,8 +20,32 @@ def conversation_address_input(value):
     return value if value.startswith("/") else "/" + value
 
 
+# Short segments that read as acronyms. The same list as ACRONYMS in site-inbox/names.js.
+NAME_ACRONYMS = ("hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev")
+
+
 def display_name(value):
-    return value[:-5] if value.startswith("/") and not value.startswith("/k/") and value.endswith("/main") and value.count("/") > 1 else value
+    """A handle as a person's name: /bekir/main and /bekir are "Bekir", /wodo/hr is "Wodo HR",
+    /acme/john-doe is "Acme John Doe". Key addresses, address-style handles and GitHub logins keep
+    their old display; anything that is not a handle is returned unchanged. A contact alias wins."""
+    legacy = value[:-5] if value.startswith("/") and not value.startswith("/k/") and value.endswith("/main") and value.count("/") > 1 else value
+    parts = [p for p in value.split("/") if p]
+    if not value.startswith("/") or value.startswith("/k/") or not parts or "@" in value or parts[0] == "github":
+        return legacy
+    if len(parts) > 1 and parts[-1] == "main":
+        parts.pop()
+    words = [w for part in parts for w in re.split(r"[-_]+", part) if w]
+    name = " ".join(w.upper() if w.lower() in NAME_ACRONYMS else w[:1].upper() + w[1:].lower() for w in words)
+    return name or value
+
+
+def initials(name):
+    """Two letters from a shown name: first and last words ("Wodo HR" is "WH"), or a one-word name's first two."""
+    base = next((p for p in reversed(name.split("/")) if p), "") if "/" in name else name
+    words = [w for w in ("".join(c for c in w if c.isalnum()) for w in re.split(r"[\s\-_]+", base)) if w]
+    if not words:
+        return "··"
+    return (words[0][:1] + words[-1][:1] if len(words) > 1 else words[0][:2]).upper()
 
 
 def peer_of(message):

@@ -6,12 +6,35 @@ import org.junit.Assert.*
 class AddressTest {
 
     @Test
-    fun defaultInboxesShowTheirNamespace() {
-        assertEquals("/bekir", displayName("/bekir/main"))
-        assertEquals("/alp", displayName("/alp/main"))
-        assertEquals("main", displayName("/main"))
-        assertEquals("bekir/agent", displayName("/bekir/agent"))
+    fun handlesReadAsNames() {
+        assertEquals("Bekir", displayName("/bekir/main"))
+        assertEquals("Bekir", displayName("/bekir"))
+        assertEquals("Alp", displayName("/alp/main"))
+        assertEquals("Main", displayName("/main"))
+        assertEquals("Bekir Agent", displayName("/bekir/agent"))
+        assertEquals("Wodo HR", displayName("/wodo/hr"))
+        assertEquals("Wodo CEO", displayName("/wodo/ceo"))
+        assertEquals("Acme John Doe", displayName("/acme/john-doe"))
+        assertEquals("Acme John Doe", displayName("/acme/john_doe"))
+        assertEquals("Acme QA Bot", displayName("/acme/qa/bot"))
         assertEquals("Team inbox", displayName("Team inbox"))
+        assertEquals(listOf("hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev"), NAME_ACRONYMS)
+    }
+
+    @Test
+    fun shapesThatAreNotNamesKeepTheirDisplay() {
+        assertEquals("github/alex", displayName("/github/alex"))
+        assertEquals("alex@example.com", displayName("/alex@example.com"))
+        assertEquals("aaaa111…33dd", displayName("/k/aaaa1111bbbb2222cccc3333dd"))
+    }
+
+    @Test
+    fun initialsComeFromTheDerivedName() {
+        assertEquals("BE", initials(displayName("/bekir/main")))
+        assertEquals("WH", initials(displayName("/wodo/hr")))
+        assertEquals("AD", initials(displayName("/acme/john-doe")))
+        assertEquals("MU", initials("Mum"))
+        assertEquals("··", initials(""))
     }
 
     @Test

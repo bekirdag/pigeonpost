@@ -171,9 +171,37 @@ fun displayBody(body: String, outgoing: Boolean = false): DisplayBody {
     return DisplayBody(body)
 }
 
+/** Short segments that read as acronyms. The same list as `ACRONYMS` in site-inbox/names.js. */
+val NAME_ACRONYMS = listOf("hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev")
+
+/**
+ * A handle as a person's name: "/bekir/main" and "/bekir" are "Bekir", "/wodo/hr" is "Wodo HR",
+ * "/acme/john-doe" is "Acme John Doe". Key addresses, address-style handles and GitHub logins keep
+ * their old display, and anything that is not a handle is returned unchanged. A contact alias wins
+ * over this; callers check for one first.
+ */
 fun displayName(peer: String): String {
     if (peer.startsWith("/k/")) return peer.removePrefix("/k/").let { if (it.length > 12) it.take(7) + "…" + it.takeLast(4) else it }
-    return if (peer.startsWith('/') && peer.endsWith("/main") && peer.count { it == '/' } > 1) peer.removeSuffix("/main") else peer.trim('/')
+    val legacy = if (peer.startsWith('/') && peer.endsWith("/main") && peer.count { it == '/' } > 1) peer.removeSuffix("/main").trim('/') else peer.trim('/')
+    val parts = peer.split('/').filter { it.isNotEmpty() }.toMutableList()
+    if (!peer.startsWith('/') || parts.isEmpty()) return peer
+    if (peer.contains('@') || parts.first() == "github") return legacy
+    if (parts.size > 1 && parts.last() == "main") parts.removeAt(parts.lastIndex)
+    val name = parts.joinToString(" ") { part ->
+        part.split('-', '_').filter { it.isNotEmpty() }.joinToString(" ") { word ->
+            val lower = word.lowercase()
+            if (lower in NAME_ACRONYMS) lower.uppercase() else lower.replaceFirstChar { it.uppercase() }
+        }
+    }.trim()
+    return name.ifEmpty { peer }
+}
+
+/** Two letters from a shown name: first and last words ("Wodo HR" is "WH"), or a one-word name's first two. */
+fun initials(name: String): String {
+    val base = if ('/' in name) name.split('/').lastOrNull { it.isNotEmpty() } ?: "" else name
+    val words = base.split(' ', '-', '_', '\t').map { w -> w.filter { it.isLetterOrDigit() } }.filter { it.isNotEmpty() }
+    if (words.isEmpty()) return "··"
+    return (if (words.size > 1) words.first().take(1) + words.last().take(1) else words.first().take(2)).uppercase()
 }
 
 /** Supply the address prefix without changing the destination's spelling or internal segments. */
