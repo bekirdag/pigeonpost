@@ -2119,7 +2119,7 @@ fn tree_hash_range(conn: &Connection, start: u64, size: u64) -> Result<Hash> {
     if size == 0 {
         return Ok(log::empty_root());
     }
-    if size.is_power_of_two() && start % size == 0 {
+    if size.is_power_of_two() && start.is_multiple_of(size) {
         let level = size.trailing_zeros();
         return read_node(conn, level, start / size);
     }

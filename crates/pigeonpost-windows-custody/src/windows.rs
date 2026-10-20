@@ -324,17 +324,25 @@ fn open_at(
     lock_directory(file)
 }
 
+/// An output buffer for `GetFileInformationByHandleEx`, over-aligned. The I/O manager checks the
+/// buffer alignment per information class and fails a misaligned one with
+/// `STATUS_DATATYPE_MISALIGNMENT` (`ERROR_NOACCESS`, 998); a structure's natural Rust alignment
+/// is not a guarantee of what the kernel asks for, and stack placement varies between compiler
+/// versions (it surfaced with Rust 1.91).
+#[repr(C, align(16))]
+struct Aligned<T>(MaybeUninit<T>);
+
 fn validate_directory_handle(file: &File) -> io::Result<()> {
     validate_disk_handle(file)?;
 
-    let mut attributes = MaybeUninit::<FILE_ATTRIBUTE_TAG_INFO>::uninit();
+    let mut attributes = Aligned::<FILE_ATTRIBUTE_TAG_INFO>(MaybeUninit::uninit());
     // SAFETY: the output buffer is correctly sized and writable, and the borrowed handle remains
     // valid for the call.
     let ok = unsafe {
         GetFileInformationByHandleEx(
             file.as_raw_handle() as HANDLE,
             FileAttributeTagInfo,
-            attributes.as_mut_ptr().cast(),
+            attributes.0.as_mut_ptr().cast(),
             size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
         )
     };
@@ -342,7 +350,7 @@ fn validate_directory_handle(file: &File) -> io::Result<()> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: the successful query initialized the entire fixed-size output structure.
-    let attributes = unsafe { attributes.assume_init() };
+    let attributes = unsafe { attributes.0.assume_init() };
     if attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
@@ -365,14 +373,14 @@ fn validate_disk_handle(file: &File) -> io::Result<()> {
 }
 
 fn reject_remote_handle(file: &File) -> io::Result<()> {
-    let mut remote = MaybeUninit::<FILE_REMOTE_PROTOCOL_INFO>::uninit();
+    let mut remote = Aligned::<FILE_REMOTE_PROTOCOL_INFO>(MaybeUninit::uninit());
     // SAFETY: the output buffer is correctly sized and writable, and the borrowed handle remains
     // valid for the call.
     let ok = unsafe {
         GetFileInformationByHandleEx(
             file.as_raw_handle() as HANDLE,
             FileRemoteProtocolInfo,
-            remote.as_mut_ptr().cast(),
+            remote.0.as_mut_ptr().cast(),
             size_of::<FILE_REMOTE_PROTOCOL_INFO>() as u32,
         )
     };
@@ -392,14 +400,14 @@ fn reject_remote_handle(file: &File) -> io::Result<()> {
 }
 
 fn read_identity(file: &File) -> io::Result<FileIdentity> {
-    let mut identity = MaybeUninit::<FILE_ID_INFO>::uninit();
+    let mut identity = Aligned::<FILE_ID_INFO>(MaybeUninit::uninit());
     // SAFETY: the output buffer is correctly sized and writable, and the borrowed handle remains
     // valid for the call.
     let ok = unsafe {
         GetFileInformationByHandleEx(
             file.as_raw_handle() as HANDLE,
             FileIdInfo,
-            identity.as_mut_ptr().cast(),
+            identity.0.as_mut_ptr().cast(),
             size_of::<FILE_ID_INFO>() as u32,
         )
     };
@@ -407,7 +415,7 @@ fn read_identity(file: &File) -> io::Result<FileIdentity> {
         return Err(io::Error::last_os_error());
     }
     // SAFETY: the successful query initialized the entire fixed-size output structure.
-    let identity = unsafe { identity.assume_init() };
+    let identity = unsafe { identity.0.assume_init() };
     Ok(FileIdentity {
         volume_serial_number: identity.VolumeSerialNumber,
         file_id: identity.FileId.Identifier,

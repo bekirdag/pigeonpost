@@ -684,7 +684,7 @@ impl Registry {
                 let verified = Checkpoint::verify_with_fresh_witnesses(
                     receipt.note(),
                     &self.config.signing_key.verifying_key(),
-                    &[witness.clone()],
+                    std::slice::from_ref(witness),
                     1,
                     receipt.witnessed_at(),
                     policy.max_cosignature_age_secs(),
@@ -1652,7 +1652,7 @@ impl Registry {
         let verified = Checkpoint::verify_with_fresh_witnesses(
             receipt.note(),
             &self.config.signing_key.verifying_key(),
-            &[witness.clone()],
+            std::slice::from_ref(witness),
             1,
             now_secs,
             policy.max_cosignature_age_secs(),

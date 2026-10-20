@@ -136,6 +136,10 @@ pub(crate) struct EventsQuery {
     /// exists because not every client can set headers on an EventSource.
     #[serde(default)]
     last_event_id: Option<String>,
+    /// `typed=1`: this client understands typed events (`"<mail>.<n>"` ids). New clients ask for
+    /// them explicitly so the flag only governs legacy clients that never ask (Phase 3a).
+    #[serde(default)]
+    typed: Option<String>,
 }
 
 /// `GET /v1/events` — one Server-Sent Events stream per **account**.
@@ -207,6 +211,7 @@ pub(crate) async fn events(
         },
     };
 
+    let asked_typed = matches!(q.typed.as_deref(), Some("1" | "true"));
     tracing::info!(%account, start = %start.typed_id(), "event stream opened");
     let stream = async_stream::stream! {
         let subscription = subscription;
@@ -233,7 +238,7 @@ pub(crate) async fn events(
                 .enabled_features(Some(account.clone()), vec![ACCOUNT_EVENTS])
                 .await
             {
-                Ok(on) => !on.is_empty(),
+                Ok(on) => !on.is_empty() || asked_typed,
                 Err(e) => {
                     tracing::error!(error = %e, "events flag read failed");
                     break;
@@ -277,10 +282,50 @@ pub(crate) async fn events(
                     Event::default().id(rowid.to_string()).event("mail").data(payload.to_string()),
                 ));
             }
-            for event in batch.typed {
+            // Group traffic is re-authorized at delivery (SDS §3.5): a mailbox removed after an
+            // event was queued must not receive it.
+            let parsed: Vec<serde_json::Value> = batch
+                .typed
+                .iter()
+                .map(|e| serde_json::from_str(&e.data).unwrap_or(serde_json::Value::Null))
+                .collect();
+            let pairs: Vec<(String, String)> = batch
+                .typed
+                .iter()
+                .zip(&parsed)
+                .filter_map(|(e, d)| {
+                    crate::groups::needs_membership(&e.kind, d)
+                        .zip(e.mailbox.clone())
+                })
+                .collect();
+            let allowed = if pairs.is_empty() {
+                std::collections::HashSet::new()
+            } else {
+                let lookup = pairs.clone();
+                match state
+                    .store
+                    .group_read(move |c| crate::groups::current_members(c, &lookup))
+                    .await
+                {
+                    Ok(set) => set,
+                    Err(crate::groups::GErr { code, .. }) => {
+                        tracing::error!(code, "events membership check failed");
+                        break;
+                    }
+                }
+            };
+            for (event, data) in batch.typed.into_iter().zip(parsed) {
                 let id = event.cursor.typed_id();
-                let data: serde_json::Value =
-                    serde_json::from_str(&event.data).unwrap_or(serde_json::Value::Null);
+                if let (Some(group), Some(mailbox)) = (
+                    crate::groups::needs_membership(&event.kind, &data),
+                    event.mailbox.clone(),
+                ) {
+                    if !allowed.contains(&(group, mailbox)) {
+                        // Skipped, but the cursor still moves past it.
+                        cursor = cursor.max(event.cursor);
+                        continue;
+                    }
+                }
                 let payload = json!({
                     "event_id": id,
                     "type": event.kind,

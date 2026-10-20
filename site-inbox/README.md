@@ -193,3 +193,34 @@ keyboard navigation and retry. `test/fixtures.mjs` contains only synthetic wire-
 also back a local browser acceptance server; neither file is deployed. Browser validation must
 check real scrolling, delayed layout, resizing and responsive/dark layouts because jsdom cannot
 measure their geometry.
+
+## Groups (Phase 3a)
+
+`groups-core.js` runs the group end-to-end encryption client (MLS through
+`vendor/groupcrypto`, see `docs/group-e2ee.md` and `docs/groups.md`); `groups.js` is the UI and
+`groups.css` its styles; `g/index.html` + `groups-join.js` handle `/g/<group-id>#<token>` invite
+links. Groups appear only when the postbox enables the `groups` flag **and** the WASM library loads
+and passes its integrity check. There is no unencrypted fallback.
+
+**Where the keys live, honestly.** Each browser is one device of the mailbox (`web-<random>`). Its
+MLS state is exported encrypted under a random 32-byte state key and stored in IndexedDB
+(`pigeonpost-groups`), together with this device's decrypted copy of group messages (a device can
+decrypt a message only once, so this is the only copy it has). The state key and the history are
+in turn encrypted with an AES-GCM key that WebCrypto generated as **non-extractable** and that
+IndexedDB keeps as an opaque `CryptoKey`. That stops a script from reading the key's bytes out and
+means the database files alone do not reveal anything. It does not stop code running on this
+origin from using the key, so a cross-site scripting bug would expose group content in this browser.
+Clearing site data, or a private window, deletes the device for good: the browser registers as a
+new device and is re-added to its groups **without history**. There is no history transfer in the
+web inbox yet.
+
+**Hosted mailboxes.** The postbox holds a hosted mailbox's identity key and signs the device
+attestation for it, so it could in principle add a device to that mailbox. Every device addition is
+shown in the conversation ("… added a new device" with the fingerprint) and in group info, with the
+group safety number for comparison.
+
+**Nginx.** `/g/<id>` must serve `g/index.html` (the token stays in the fragment):
+
+```nginx
+location ~ "^/g/grp_[A-Za-z0-9]{1,60}/?$" { try_files /g/index.html =404; }
+```

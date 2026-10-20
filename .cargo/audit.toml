@@ -1,0 +1,7 @@
+# cargo-audit configuration for the root workspace.
+[advisories]
+# RUSTSEC-2026-0330 / RUSTSEC-2026-0331 (libcrux-kem 0.0.9). Present in Cargo.lock since the
+# postbox and CLI link pigeonpost-groupcrypto (Phase 3a), only as an optional dependency of
+# hpke-rs-libcrux that no build enables: `cargo tree -i libcrux-kem` finds nothing. Same reasoning
+# and removal condition as crates/pigeonpost-groupcrypto/.cargo/audit.toml.
+ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331"]

@@ -110,6 +110,22 @@
     If you add a profile picture, the image you upload is processed on our server: metadata such as location and camera (EXIF) details is removed, and the picture is re-encoded into several sizes. The resulting images are stored with your mailbox and shown according to your visibility setting: Everyone, People I know, or Nobody. You can change the visibility or remove the picture at any time; we then stop serving it. Copies that people have already downloaded, or that were cached publicly while the picture was visible to Everyone, cannot be recalled. Pictures can be reported by other users, and we may remove a picture that breaks our terms. Profile pictures do not count against your storage quota.
   </p>
 
+  <h3>Groups</h3>
+  <p>
+    Group messages and the files sent in them are encrypted on the members' devices with the Messaging Layer Security protocol (RFC 9420) and can be decrypted only by the devices that were members of the group when they were sent. Our server stores and forwards the encrypted messages and never holds the keys to read them. To run groups it does keep: each group's name, description and settings; its members' mailbox addresses, roles and whether they are invited, active, left, removed or banned, and when; who sent each message, when, its encrypted size and which encrypted files it carries; the public keys and fingerprints of each member's devices and which devices are in which group; encrypted key-change messages and invitations to devices; read positions and notification settings; and invite links, stored only as a hash. Group notifications on your phone say only that a message arrived in a group, because we cannot read it. New members and new devices cannot read messages sent before they joined.
+  </p>
+  <p>
+    Because we sign in the devices of mailboxes hosted on our server, a compromised server could add a device to such a mailbox. Every member is shown when a device is added, together with its fingerprint, and each group has a safety number you can compare with the other members. Group roles and posting rules are enforced by our server.
+  </p>
+  <p>
+    When you leave or are removed, our server stops giving you the group's messages at once and the remaining members' devices change the group's keys. Deleted groups' stored messages are removed within 30 days. A member can keep copies of what they already received.
+  </p>
+
+  <h3>Disappearing messages</h3>
+  <p>
+    You can set a conversation or a group so that new messages disappear after a chosen time (5 minutes to 4 weeks), counted from when they are sent. When the time is up we delete the message and its attachments from our server, and the apps remove them from your devices. Disappearing messages limit how long messages are kept; they cannot stop someone from taking a screenshot, copying the text, or keeping a notification that was already shown, and they do not reach copies made outside Pigeonpost. Our database backups and write-ahead logs can hold a deleted message for a short time after it is deleted, until they are overwritten.
+  </p>
+
   <h2>3. Sender attribution</h2>
   <p>
     Envelope v3 supports an optional, encrypted <em>attribution block</em> that lets a sender's public key
@@ -223,6 +239,12 @@
       <td>To file unwanted calls and messages and limit abuse</td>
       <td>Legitimate interests in protecting users from spam and harassment (Art. 6(1)(f))</td>
       <td>Filtered messages like other messages; filtered calls like your call history</td>
+    </tr>
+    <tr>
+      <td>Group membership, settings, device public keys and encrypted group messages</td>
+      <td>To run the groups you create or join</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
+      <td>While you are a member and the group exists; encrypted messages until their disappearing timer ends or the group is deleted (removed within 30 days); key-change messages until every member device has processed them, at most 90 days</td>
     </tr>
     <tr>
       <td>Profile pictures</td>

@@ -40,6 +40,14 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         AVATARS,
         "Profile pictures: upload, visibility, lookup and profile.avatar events",
     ),
+    (
+        GROUPS,
+        "End-to-end-encrypted groups: /v1/groups, /v1/mls, group.* events (SDS §4)",
+    ),
+    (
+        DISAPPEARING,
+        "Disappearing-message timers for threads and groups, message.expired (SDS §17)",
+    ),
 ];
 
 /// Typed events on `/v1/events`.
@@ -52,6 +60,10 @@ pub(crate) const CALL_ADMISSION: &str = "call_admission";
 pub(crate) const CALL_HISTORY: &str = "call_history";
 /// Profile pictures (SDS §16).
 pub(crate) const AVATARS: &str = "avatars";
+/// Groups (SDS §4).
+pub(crate) const GROUPS: &str = "groups";
+/// Disappearing messages (SDS §17).
+pub(crate) const DISAPPEARING: &str = "disappearing";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[
@@ -59,6 +71,18 @@ pub(crate) const EVENT_TYPES: &[&str] = &[
     "resync_required",
     "call.log",
     "profile.avatar",
+    "group.message",
+    "group.handshake",
+    "group.member",
+    "group.settings",
+    "group.deleted",
+    "group.read",
+    "group.crypto_pending",
+    "group.device",
+    "mls.welcome",
+    "mls.key_packages_low",
+    "message.expired",
+    "thread.settings",
 ];
 
 pub(crate) fn known_names() -> Vec<&'static str> {

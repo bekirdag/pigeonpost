@@ -98,6 +98,61 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return value;
   }
 
+  // ---- Phase 3a: group call admission --------------------------------------------------------------
+  //
+  // `POST /internal/v1/group-call-admission {group_id, from:{mailbox}, kind, join}` →
+  // `{allowed, reason?, group_name, members:[{address, handle?, decision}]}` (members exclude the
+  // caller). Returns null when unconfigured or unavailable: group calls then fail closed.
+
+  function validGroupAdmission(v) {
+    if (!v || typeof v !== "object" || typeof v.allowed !== "boolean") return null;
+    const members = (Array.isArray(v.members) ? v.members : []).slice(0, 10_000).flatMap((m) => {
+      if (!m || typeof m !== "object" || typeof m.address !== "string" || !ADDRESS.test(m.address) || !DECISIONS.has(m.decision)) return [];
+      const handle = typeof m.handle === "string" && ADDRESS.test(m.handle) ? m.handle : null;
+      return [{ address: m.address, handle, decision: m.decision }];
+    });
+    return {
+      allowed: v.allowed,
+      reason: typeof v.reason === "string" ? v.reason.slice(0, 64) : "",
+      group_name: typeof v.group_name === "string" ? v.group_name.slice(0, 200) : "",
+      members,
+    };
+  }
+
+  async function groupAdmit({ group_id, from, kind, join }) {
+    if (!configured) return null;
+    const cacheable = Boolean(join);
+    const key = ["group", group_id, String(from && from.address || "").toLowerCase(), join ? "join" : "start"].join("\n");
+    if (cacheable) {
+      const hit = cache.get(key);
+      if (hit && hit.expires > clock()) {
+        counters.cache_hits++;
+        return hit.value;
+      }
+      if (hit) cache.delete(key);
+    }
+    let value = null;
+    try {
+      const res = await post("/internal/v1/group-call-admission", {
+        group_id, from: { mailbox: from.address }, kind: kind || "audio", join: Boolean(join),
+      }, L.admissionTimeoutMs);
+      if (res.ok) value = validGroupAdmission(await res.json());
+    } catch (_) {
+      value = null;
+    }
+    if (!value) {
+      counters.admission_failed++;
+      console.warn(`calls: group admission unavailable; failing closed (failures=${counters.admission_failed})`);
+      return null;
+    }
+    counters.admission_ok++;
+    if (cacheable) {
+      if (cache.size >= L.admissionCacheEntries) cache.delete(cache.keys().next().value);
+      cache.set(key, { value, expires: clock() + L.admissionCacheMs });
+    }
+    return value;
+  }
+
   // ---- lifecycle events ---------------------------------------------------------------------------
 
   function report(event) {
@@ -170,5 +225,5 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return { configured, queued: queue.length, ...counters };
   }
 
-  return { configured, admit, report, health, flush, _queue: queue, _cache: cache };
+  return { configured, admit, groupAdmit, report, health, flush, _queue: queue, _cache: cache };
 }

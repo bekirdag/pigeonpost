@@ -32,6 +32,8 @@ pigeonpost-mcp = { path = "../pigeonpost-mcp", version = "0.7.18" }
 pigeonpost-directory = { path = "../pigeonpost-directory", version = "0.7.18" }
 pigeonpost-compliance-format = { path = "../pigeonpost-compliance-format", version = "0.7.18" }
 pigeonpost-compliance-seal = { path = "../pigeonpost-compliance-seal", version = "0.7.18" }
+# Group end-to-end encryption (OpenMLS), linked directly: `pigeonpost group …`.
+pigeonpost-groupcrypto = { path = "../pigeonpost-groupcrypto" }
 axum = "0.8"
 ed25519-dalek.workspace = true
 fs2 = "0.4"

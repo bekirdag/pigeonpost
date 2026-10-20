@@ -18,10 +18,12 @@ mod avatars;
 mod calllog;
 mod deletion;
 mod entitlements;
+mod ephemeral;
 mod events;
 mod features;
 mod filtering;
 mod googleplay;
+mod groups;
 mod lifecycle;
 mod orgs;
 pub use audit::AuditRow;
@@ -35,6 +37,7 @@ pub use filtering::{
     CALL_HISTORY_CHOICES,
 };
 pub use googleplay::GoogleBinding;
+pub(crate) use groups::append_event;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
 pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
@@ -842,6 +845,7 @@ pub(crate) fn incoming_after_in(
            AND rowid > ?
            AND direction != 'out'
            AND filtered = 0
+           AND (expires_at IS NULL OR expires_at > CAST(strftime('%s','now') AS INTEGER))
          ORDER BY rowid ASC LIMIT ?"
     );
     let mut stmt = c.prepare(&sql)?;
@@ -923,10 +927,12 @@ impl Store {
         conn.execute_batch(orgs::SCHEMA)?;
         conn.execute_batch(calllog::SCHEMA)?;
         conn.execute_batch(avatars::SCHEMA)?;
+        conn.execute_batch(groups::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
             .chain(avatars::MIGRATIONS)
+            .chain(ephemeral::MIGRATIONS)
         {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
@@ -1470,7 +1476,11 @@ impl Store {
             let c = conn.lock().expect("store lock");
             c.query_row(
                 "SELECT id, sha256, bytes, media_type, filename, message_id FROM attachments
-                  WHERE id = ?1 AND owner = ?2",
+                  WHERE id = ?1 AND owner = ?2
+                    AND (message_id IS NULL OR NOT EXISTS (
+                         SELECT 1 FROM messages m WHERE m.id = attachments.message_id
+                            AND m.expires_at IS NOT NULL
+                            AND m.expires_at <= CAST(strftime('%s','now') AS INTEGER)))",
                 params![id, owner],
                 |r| {
                     Ok(Attachment {
@@ -3277,7 +3287,9 @@ impl Store {
             let mut stmt = c.prepare(
                 "SELECT id, recipient, sender, wrap_blob, created_at, read,
                         COALESCE(owner, recipient), direction, COALESCE(thread_id, ''), filtered
-                 FROM messages WHERE COALESCE(owner, recipient) = ?1 ORDER BY created_at ASC",
+                 FROM messages WHERE COALESCE(owner, recipient) = ?1
+                   AND (expires_at IS NULL OR expires_at > CAST(strftime('%s','now') AS INTEGER))
+                 ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map(params![owner], |row| {
                 Ok(Message {

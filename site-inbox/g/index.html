@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<title>Pigeonpost — Join group</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/app.css?v=20261020-p1b">
+</head>
+<body>
+<section class="signin">
+  <div class="signin-card">
+    <h1>Join group</h1>
+    <p id="join-group-note">Opening your inbox…</p>
+  </div>
+</section>
+<!-- The invite token is in the fragment, which browsers never send to a server. This page keeps
+     it on this device for the next half hour and hands over to the inbox, which asks the postbox
+     about the group with the token in a request body — never in a URL. -->
+<script src="/groups-join.js?v=20261020-p3a"></script>
+</body>
+</html>

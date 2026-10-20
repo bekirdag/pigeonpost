@@ -868,7 +868,7 @@ fn decode_hash(input: &str) -> Option<Hash> {
 
 fn decode_base64(input: &str) -> Option<Vec<u8>> {
     const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    if input.len() % 4 != 0 {
+    if !input.len().is_multiple_of(4) {
         return None;
     }
     let mut out = Vec::new();

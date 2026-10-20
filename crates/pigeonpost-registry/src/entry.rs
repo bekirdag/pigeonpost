@@ -565,7 +565,7 @@ impl LogEntry {
         let (handle, pubkey, subject) = self
             .handle_binding()
             .ok_or_else(|| EntryError("only handle entries have a legacy codec".into()))?;
-        if self.ts_ms() % 1_000 != 0 {
+        if !self.ts_ms().is_multiple_of(1_000) {
             return Err(EntryError(
                 "legacy timestamp is not an exact number of seconds".into(),
             ));
@@ -602,7 +602,7 @@ fn validate_handle(
             "unsupported log entry version {version}"
         )));
     }
-    if version == LEGACY_LOG_ENTRY_VERSION && ts_ms % 1_000 != 0 {
+    if version == LEGACY_LOG_ENTRY_VERSION && !ts_ms.is_multiple_of(1_000) {
         return Err(EntryError(
             "legacy timestamp is not an exact number of seconds".into(),
         ));
@@ -702,7 +702,7 @@ fn validate_directory_add(v: &Versioned<DirectoryAdd>) -> Result<(), EntryError>
     {
         return Err(EntryError("operator must be at most 256 safe bytes".into()));
     }
-    if v.payload.capacity_bytes % GIB != 0 {
+    if !v.payload.capacity_bytes.is_multiple_of(GIB) {
         return Err(EntryError(
             "authenticated capacity_bytes must be whole GiB".into(),
         ));

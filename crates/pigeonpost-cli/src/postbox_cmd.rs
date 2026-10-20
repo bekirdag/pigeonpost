@@ -210,7 +210,7 @@ pub async fn new_inbox(
 
 /// Pick which of this home's mailboxes to act as. Refuses to guess when several are on file — the
 /// wrong guess would apply a trust change to somebody else's inbox.
-fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Error> {
+pub(crate) fn credential_for(home: &Path, address: Option<&str>) -> Result<Credential, Error> {
     let creds = load(home)?;
     // Match the handle as readily as the /k/ address. Once a mailbox is named, its handle is what
     // everything else — the docs, its peers, the agent's own config — calls it, so `--as

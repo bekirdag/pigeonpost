@@ -590,7 +590,7 @@ fn witnessed_registry_fixture_with_later_generation(now_secs: u64) -> GrowingAtt
         not_after_ms: epoch_end_ms,
         status: ComplianceKeyStatus::Active,
     };
-    let log_entries = vec![
+    let log_entries = [
         LogEntry::compliance_key(0, old_active.clone(), now_ms),
         LogEntry::compliance_key(1, old_retired.clone(), now_ms.saturating_add(1)),
         LogEntry::compliance_key(2, new_active.clone(), now_ms.saturating_add(2)),

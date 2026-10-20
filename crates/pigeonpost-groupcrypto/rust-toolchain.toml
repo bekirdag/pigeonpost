@@ -1,5 +1,5 @@
 # OpenMLS 0.9.x (the only line with fixes for every published OpenMLS advisory) needs Rust 1.91.
-# This crate is its own workspace so the rest of the repository keeps its 1.88 pin.
+# This crate is its own workspace (own lockfile, wasm and FFI builds); the root workspace is on the same toolchain since Phase 3a.
 [toolchain]
 channel = "1.91.1"
 components = ["rustfmt", "clippy"]

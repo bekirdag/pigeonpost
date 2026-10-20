@@ -132,6 +132,7 @@
     $("threads").textContent = "";
     state = freshState();
     resetPhase1b();
+    window.PigeonpostGroups?.reset(); // Phase 3a
     const banner = $("offline-banner");
     if (banner) banner.hidden = true;
     render();
@@ -1064,6 +1065,7 @@
           status: "sent",
           thread_id: m.thread_id,
           attachments: m.attachments,
+          expires_at: m.expires_at || null, // Phase 3a: disappearing messages
         });
         continue;
       }
@@ -1084,6 +1086,7 @@
         matched: m.matched_contact,
         address: m.from,
         attachments: m.attachments,
+        expires_at: m.expires_at || null, // Phase 3a: disappearing messages
       });
       if (!m.read) t.unread += 1;
       if (m.autonomy === "review" && m.verb) t.held += 1;
@@ -1180,6 +1183,7 @@
     renderThreadList();
     renderSubs();
     renderThread();
+    window.PigeonpostGroups?.render(); // Phase 3a
   }
 
   function renderSubs() {
@@ -1475,7 +1479,7 @@
     // With several threads on a peer the phone stops at the list of them, so "a peer is selected"
     // is no longer the same question as "there are messages to show".
     const open = Boolean(state.openPeer);
-    $("pane-thread").dataset.open = String(open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length));
+    $("pane-thread").dataset.open = String((open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length)) || Boolean(window.PigeonpostGroups?.isOpen()));
     $("thread-head").hidden = !open;
     window.PigeonpostCalls?.renderHead();
     $("composer").hidden = !open;
@@ -1818,6 +1822,7 @@
     const li = document.createElement("li");
     li.dataset.messageId = m.id;
     if (m.kind === "out") li.className = "mine";
+    if (m.expires_at) { li.classList.add("ephemeral"); li.dataset.expires = String(m.expires_at); } // Phase 3a
 
     const bubble = document.createElement("div");
     bubble.className = "bubble";
@@ -2571,6 +2576,7 @@
   }
 
   async function openThread(peer) {
+    window.PigeonpostGroups?.close(); // Phase 3a
     stashDraft();
     const wasClosed = !state.openPeer;
     state.openPeer = peer;
@@ -2762,6 +2768,7 @@
     resetConversationView();
     renderIdentityMenu();
     render();
+    window.PigeonpostGroups?.onMailbox(); // Phase 3a
     // The stream regardless: an opening that did not arrive is exactly when the mailbox most needs
     // something retrying behind it.
     try { await loadAll(); }
@@ -3068,7 +3075,8 @@
       try {
         // The cursor goes in the query as well as the header. The server offers it precisely
         // because not every client can set headers, and sending both costs nothing.
-        const path = "/v1/events" + (liveCursor === null ? "" : "?last_event_id=" + encodeURIComponent(liveCursor));
+        // Phase 3a: `typed=1` asks for typed events (groups, expiry) whatever the account flag says.
+        const path = "/v1/events?typed=1" + (liveCursor === null ? "" : "&last_event_id=" + encodeURIComponent(liveCursor));
         const res = await fetch(cfg.postbox + path, {
           headers: Object.assign(
             { authorization: `Bearer ${getToken()}`, accept: "text/event-stream" },
@@ -3934,6 +3942,7 @@
     features = next;
     Avatars.enabled = has("avatars");
     syncSideNav();
+    window.PigeonpostGroups?.onMailbox(); // Phase 3a
   }
 
   function resetPhase1b() {
@@ -3965,7 +3974,15 @@
     } else if (event === "profile.avatar") {
       Avatars.forget([data.address, data.handle]);
       if (settingsPage === "profile" && !$("settings-sheet").hidden) loadOwnAvatar();
+    } else if (event === "message.expired" && data.thread_id) {
+      // Phase 3a: drop expired direct messages now rather than at the next listing.
+      const ids = new Set(data.ids || []);
+      state.inbound = state.inbound.filter((m) => !ids.has(m.message_id));
+      render();
+    } else if (event === "thread.settings") {
+      loadThreads().then(render).catch(() => {});
     }
+    if (/^(group\.|mls\.|message\.expired|thread\.settings)/.test(event)) window.PigeonpostGroups?.onEvent(event, frame); // Phase 3a
   }
 
   // ---- profile pictures ---------------------------------------------------------------------
@@ -5239,6 +5256,47 @@
     // Phase 1b: lets call tiles show a profile picture over their initials.
     decorateAvatar: (el, key) => Avatars.decorate(el, key),
     toast,
+  };
+
+  // Phase 3a: what groups.js may ask of the inbox. Group content never passes through here; it is
+  // decrypted in groups.js and rendered there.
+  function pruneExpiredDirect() {
+    const now = Date.now() / 1000;
+    const before = state.inbound.length;
+    state.inbound = state.inbound.filter((m) => !(m.expires_at && m.expires_at <= now));
+    if (state.inbound.length !== before) render();
+  }
+  setInterval(pruneExpiredDirect, 5000);
+  window.PigeonpostGroupsHost = {
+    api: (path, opts) => api(path, opts),
+    postbox: () => cfg.postbox,
+    token: () => getToken(),
+    renew: () => renewSession(),
+    mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    identities: () => state.identities.slice(),
+    contacts: () => state.contacts.slice(),
+    features: () => new Set(features),
+    leftView: () => (state.viewingArchive ? "archive" : state.leftView),
+    filter: () => state.filter || "",
+    onPhone: () => onPhone(),
+    displayName, paintAvatar, toast, listTime, clockTime,
+    closeConversation: () => {
+      if (!state.openPeer) return;
+      stashDraft();
+      state.openPeer = null;
+      state.openThread = null;
+      render();
+    },
+    openDirectThread: () => {
+      if (!state.openPeer) return null;
+      const subs = subthreadsFor(state.openPeer);
+      const id = state.openThread || (subs[0] && subs[0].id) || null;
+      const t = id && state.serverThreads.find((x) => (x.thread_id || x.id) === id);
+      return id ? { id, peer: state.openPeer, ephemeral_secs: t ? t.ephemeral_secs || null : null } : null;
+    },
+    reloadThreads: () => loadThreads().then(render),
+    pruneExpired: pruneExpiredDirect,
+    rerender: () => render(),
   };
 
   async function boot() {

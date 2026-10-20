@@ -65,6 +65,7 @@ mod blobs;
 mod calllog;
 mod capabilities;
 mod chatgpt;
+mod ephemeral;
 mod fcm;
 mod filtering;
 #[cfg(test)]
@@ -72,8 +73,12 @@ mod foundations_tests;
 mod github;
 mod googleplay;
 mod googleplay_routes;
+mod groups;
+#[cfg(test)]
+mod groups_tests;
 mod internal_api;
 mod mcp;
+mod mls;
 mod oidc;
 #[cfg(test)]
 mod p1b_tests;
@@ -368,6 +373,8 @@ async fn serve(cfg: Config) {
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
     start_internal_listener(&state).await;
+    // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
+    ephemeral::start_worker(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -681,6 +688,73 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/avatars/{address}", get(avatars::lookup_one))
         .route("/v1/avatar-blobs/{id}/{version}/{file}", get(avatars::blob))
         .route("/v1/report-avatar", post(avatars::report))
+        // Phase 3a: groups (SDS §4.5, docs/groups.md) and the MLS delivery service (P-2 §7).
+        .route("/v1/groups", get(groups::list).post(groups::create))
+        .route("/v1/groups/resolve", post(groups::resolve))
+        .route(
+            "/v1/groups/{id}",
+            get(groups::get_one)
+                .patch(groups::patch)
+                .delete(groups::delete),
+        )
+        .route(
+            "/v1/groups/{id}/members",
+            get(groups::members).post(groups::invite),
+        )
+        .route(
+            "/v1/groups/{id}/members/{address}",
+            axum::routing::patch(groups::patch_member),
+        )
+        .route("/v1/groups/{id}/bans/{address}", delete(groups::unban))
+        .route("/v1/groups/{id}/invitation", post(groups::respond))
+        .route("/v1/groups/{id}/join", post(groups::join))
+        .route("/v1/groups/{id}/leave", post(groups::leave))
+        .route("/v1/groups/{id}/transfer", post(groups::transfer))
+        .route("/v1/groups/{id}/link", post(groups::link))
+        .route(
+            "/v1/groups/{id}/messages",
+            get(groups::messages).post(groups::post),
+        )
+        .route(
+            "/v1/groups/{id}/messages/{seq}",
+            delete(groups::delete_message),
+        )
+        .route("/v1/groups/{id}/read", post(groups::read_cursor))
+        .route(
+            "/v1/groups/{id}/notifications",
+            axum::routing::put(groups::notifications),
+        )
+        .route(
+            "/v1/groups/{id}/attachments",
+            post(groups::upload_attachment)
+                .layer(axum::extract::DefaultBodyLimit::max(upload_limit)),
+        )
+        .route(
+            "/v1/groups/{id}/attachments/{att}",
+            get(groups::download_attachment),
+        )
+        .route("/v1/groups/{id}/key-packages/claim", post(mls::claim))
+        .route(
+            "/v1/groups/{id}/commits",
+            post(mls::commit).layer(axum::extract::DefaultBodyLimit::max(24 * 1024 * 1024)),
+        )
+        .route("/v1/groups/{id}/epoch-ack", post(mls::epoch_ack))
+        .route("/v1/groups/{id}/crypto", get(mls::crypto_state))
+        .route("/v1/groups/{id}/resync", post(mls::resync))
+        .route("/v1/rooms", get(groups::rooms))
+        .route(
+            "/v1/mls/devices",
+            post(mls::register_device).get(mls::list_devices),
+        )
+        .route("/v1/mls/devices/{device_id}", delete(mls::revoke_device))
+        .route(
+            "/v1/mls/key-packages",
+            post(mls::upload_key_packages)
+                .layer(axum::extract::DefaultBodyLimit::max(8 * 1024 * 1024)),
+        )
+        .route("/v1/mls/key-packages/count", get(mls::key_package_count))
+        .route("/v1/mls/welcomes", get(mls::welcomes))
+        .route("/v1/mls/welcomes/{welcome_id}/ack", post(mls::welcome_ack))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .layer(middleware::from_fn(cors))
@@ -1612,7 +1686,7 @@ const CORS_ORIGINS: [&str; 3] = [
 /// upload and download are made of, and their absence here is why the web inbox could not manage
 /// either — the CLI and the phone were unaffected, because neither asks permission first.
 const CORS_ALLOW_HEADERS: &str =
-    "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-filename, x-pigeonpost-media-type";
+    "authorization, content-type, x-pigeonpost-identity, x-pigeonpost-filename, x-pigeonpost-media-type, x-pigeonpost-device";
 
 /// Minimal CORS: echo an allowlisted `Origin`, answer preflight, allow the bearer header. Same-origin
 /// callers (the onboarding page, agents) are unaffected.
@@ -2909,6 +2983,8 @@ pub(crate) async fn do_send(
     // One id, stamped on both copies, so the two halves of the conversation line up. Resolved
     // before sealing because a failure here must not leave a delivered message in no thread.
     let thread_id = resolve_thread(state, sender, &recipient.address, thread, now).await?;
+    // Disappearing messages (SDS §17): the clock starts at send, from the thread's timer.
+    let expires_at = ephemeral::expiry_for(state, sender, &thread_id.sender_side, now).await;
 
     let wrap = envelope::wrap(&sender_identity, &recipient_vk, body, now).map_err(|e| {
         tracing::error!(error = %e, "seal failed");
@@ -2937,6 +3013,15 @@ pub(crate) async fn do_send(
             ApiError::server("store_error")
         })?;
     tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, filtered, "message sealed + enqueued");
+    if let Some(at) = expires_at {
+        if let Err(e) = state
+            .store
+            .set_message_expiry(vec![message_id.clone()], at)
+            .await
+        {
+            tracing::error!(error = %e, "could not stamp message expiry");
+        }
+    }
 
     // The sender's own copy, sealed to the sender's key. Without it a conversation is only ever
     // half visible: the delivered copy is sealed to the recipient, so nobody — including this
@@ -2970,7 +3055,15 @@ pub(crate) async fn do_send(
                         })
                         .await;
                     match stored {
-                        Ok(()) => Some(copy_id),
+                        Ok(()) => {
+                            if let Some(at) = expires_at {
+                                let _ = state
+                                    .store
+                                    .set_message_expiry(vec![copy_id.clone()], at)
+                                    .await;
+                            }
+                            Some(copy_id)
+                        }
                         Err(e) => {
                             tracing::warn!(error = %e, from = %sender.address, "sent copy not stored");
                             None
@@ -3013,7 +3106,12 @@ pub(crate) async fn do_send(
                 .handle
                 .clone()
                 .unwrap_or_else(|| recipient.address.clone()),
-            body: push::preview_of(body),
+            // A disappearing conversation never puts its words on a lock screen (SDS §17.2).
+            body: if expires_at.is_some() {
+                "New message".to_string()
+            } else {
+                push::preview_of(body)
+            },
             message_id: message_id.clone(),
             peer: who,
             unread: unread as i64,
@@ -3320,6 +3418,16 @@ pub(crate) async fn do_inbox_view(
         .iter()
         .filter_map(|m| m["message_id"].as_str().map(str::to_string))
         .collect();
+    // Disappearing messages (SDS §17): every listed copy says when it goes.
+    if let Ok(expiries) = state.store.message_expiries(ids.clone()).await {
+        if !expiries.is_empty() {
+            for m in out.iter_mut() {
+                if let Some(at) = m["message_id"].as_str().and_then(|id| expiries.get(id)) {
+                    m["expires_at"] = json!(at);
+                }
+            }
+        }
+    }
     if let Ok(files) = state.store.attachments_for(me.address.clone(), ids).await {
         if !files.is_empty() {
             let mut by_message: std::collections::HashMap<String, Vec<serde_json::Value>> =
@@ -3607,11 +3715,20 @@ pub(crate) async fn do_list_threads(
             tracing::error!(error = %e, "thread list failed");
             ApiError::server("store_error")
         })?;
+    let timers = state
+        .store
+        .thread_timers(me.address.clone())
+        .await
+        .unwrap_or_default();
     Ok(json!({
         "threads": threads
             .iter()
             .filter(|t| include_archived || t.archived_at.is_none())
-            .map(thread_json)
+            .map(|t| {
+                let mut v = thread_json(t);
+                v["ephemeral_secs"] = json!(timers.get(&t.id));
+                v
+            })
             .collect::<Vec<_>>()
     }))
 }
@@ -3759,6 +3876,9 @@ struct PatchThreadReq {
     /// Rename it here. Local: a title the peer could rewrite is a title that is not yours.
     #[serde(default)]
     title: Option<String>,
+    /// Disappearing-message timer for both sides (SDS §17); `null` turns it off.
+    #[serde(default, deserialize_with = "ephemeral::double_option")]
+    ephemeral_secs: Option<Option<u64>>,
     #[serde(default)]
     archived: Option<bool>,
     #[serde(default)]
@@ -3811,6 +3931,14 @@ async fn patch_thread(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
+    if let Some(secs) = req.ephemeral_secs {
+        if let Err(e) = ephemeral::set_thread_timer(&state, &me, &id, secs).await {
+            return e.into_response();
+        }
+        if req.title.is_none() && req.archived.is_none() {
+            return Json(json!({ "ok": true, "ephemeral_secs": secs })).into_response();
+        }
+    }
     if let Some(title) = &req.title {
         if title.trim().is_empty() || title.chars().count() > 200 {
             return ApiError::bad("bad_thread_title", "a thread title is 1 to 200 characters")
@@ -5543,6 +5671,15 @@ async fn reaper(cfg: Config) {
                 if let Some(blobs) = blobs.as_ref() {
                     sweep_blobs(&store, blobs).await;
                 }
+                // Backstop for the server's 30 s expiry worker (SDS §17.2); idempotent.
+                let group_blobs = blobs.as_ref().and_then(|b| {
+                    b.sub_store(
+                        "groups",
+                        b.max_bytes(),
+                        env_num::<u64>("PIGEONPOST_GROUP_BLOB_TOTAL_MB", 10_240) * 1024 * 1024,
+                    )
+                });
+                ephemeral::sweep_once(&store, blobs.as_ref(), group_blobs.as_ref()).await;
                 match store.reap_call_log(now_unix()).await {
                     Ok(0) => {}
                     Ok(n) => tracing::info!(purged = n, "call history past retention purged"),
@@ -5722,6 +5859,8 @@ mod tests {
             // What to call the file, and what it claims to be: the upload.
             "x-pigeonpost-filename",
             "x-pigeonpost-media-type",
+            // Which MLS device is acting: every device-scoped groups and /v1/mls route (Phase 3a).
+            "x-pigeonpost-device",
         ] {
             assert!(
                 CORS_ALLOW_HEADERS.split(", ").any(|h| h == name),

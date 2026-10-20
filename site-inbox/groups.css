@@ -1,0 +1,154 @@
+/* Pigeonpost inbox — groups and disappearing messages (Phase 3a). Built on app.css's tokens and
+   components; only what groups add lives here. */
+
+.new-group-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 32px;
+  padding: 0 10px;
+  border: 1px solid var(--card-edge);
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 550;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.new-group-btn:hover { background: var(--hover); border-color: var(--edge); }
+.new-group-btn:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 1px; }
+.new-group-btn svg { width: 18px; height: 18px; flex: none; }
+.new-group-btn[hidden] { display: none; }
+
+/* A narrow list column or a phone keeps the control but drops the label; the accessible name stays. */
+@media (max-width: 1100px) and (min-width: 781px), (max-width: 420px) {
+  .new-group-label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .new-group-btn { width: 32px; padding: 0; justify-content: center; }
+}
+
+.groups-section[hidden] { display: none; }
+.groups-list { margin: 0; }
+.groups-list:empty { display: none; }
+.group-avatar { font-weight: 600; letter-spacing: .02em; }
+.group-avatar svg { width: 18px; height: 18px; }
+.invitations-row .tr-name { font-weight: 650; }
+.invitation-card { cursor: default; }
+.invitation-card:hover { background: none; }
+.invitation-actions { display: flex; gap: 6px; flex: none; align-items: center; }
+.btn-small { min-height: 30px; height: 30px; padding: 0 12px; font-size: 13px; }
+.group-badge-icon { display: inline-grid; place-items: center; color: var(--faint); }
+.group-badge-icon svg { width: 15px; height: 15px; }
+
+/* The group view covers the direct-message pane while open. */
+.group-view {
+  position: absolute;
+  inset: 0;
+  z-index: 5;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--wash);
+}
+.group-view[hidden] { display: none; }
+.group-view .thread-scroll { flex: 1; min-height: 0; overflow-y: auto; }
+.group-head .back { display: none; }
+@media (max-width: 780px) { .group-head .back { display: grid; } }
+.call-join-btn { flex: none; min-height: 30px; font-size: 13px; color: var(--green); border-color: var(--green); }
+
+.group-e2ee-note {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  margin: 14px auto 6px;
+  max-width: 34rem;
+  padding: 0 16px;
+  font-size: 12.5px;
+  color: var(--muted);
+  text-align: center;
+}
+.group-e2ee-note[hidden] { display: none; }
+.group-e2ee-note svg { width: 14px; height: 14px; flex: none; }
+.group-empty { text-align: center; color: var(--muted); font-size: 14px; margin: 24px 16px; }
+.group-empty[hidden] { display: none; }
+
+.group-sender { font-size: 12.5px; font-weight: 650; color: var(--accent-row); margin-bottom: 2px; }
+.group-messages .text { white-space: pre-wrap; overflow-wrap: anywhere; }
+.muted-text { color: var(--muted); font-style: italic; }
+.group-notice span { color: var(--muted); }
+.group-notice.security span { color: var(--amber); }
+.group-warning span { color: var(--danger, #b42318); font-weight: 600; }
+.fingerprint { font-family: var(--mono); font-size: 12px; color: var(--muted); }
+.msg-delete { margin-left: 8px; font-size: 12px; }
+.timer-icon { display: inline-grid; place-items: center; margin-right: 4px; vertical-align: middle; }
+.timer-icon svg { width: 13px; height: 13px; }
+
+/* Direct messages with a timer get the same small mark, drawn by CSS so app.js stays untouched. */
+.messages > li.ephemeral .bubble .meta::before {
+  content: "⏱";
+  margin-right: 4px;
+  opacity: .75;
+}
+.group-messages > li.ephemeral .bubble .meta::before { content: none; }
+
+.group-bar {
+  margin: 0;
+  padding: 12px 16px calc(12px + env(safe-area-inset-bottom));
+  border-top: 1px solid var(--rule);
+  background: var(--inset);
+  color: var(--muted);
+  font-size: 13.5px;
+  text-align: center;
+}
+.group-bar[hidden] { display: none; }
+
+.dm-timer-badge { display: inline-flex; align-items: center; gap: 4px; color: var(--muted); font-size: 12px; flex: none; }
+.dm-timer-badge[hidden] { display: none; }
+.dm-timer-badge svg { width: 15px; height: 15px; }
+
+/* Sheets */
+.chip-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 8px; }
+.chip-row:empty { display: none; }
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 4px 3px 10px;
+  border-radius: 999px;
+  background: var(--mine-chip);
+  color: var(--mine-text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+.chip-x { border: 0; background: none; color: inherit; font-size: 16px; line-height: 1; cursor: pointer; padding: 0 6px; border-radius: 999px; }
+.chip-x:hover { background: var(--mine-edge); }
+.chip-input { display: flex; gap: 8px; align-items: center; margin-top: 8px; }
+.chip-input input, .chip-input select {
+  flex: 1;
+  min-width: 0;
+  height: 36px;
+  padding: 0 10px;
+  border: 1px solid var(--edge);
+  border-radius: 8px;
+  background: var(--field-deep);
+  color: var(--ink);
+  font: inherit;
+}
+.group-info .peer-section { margin-top: 18px; }
+.group-info h3 { font-size: 13px; margin: 0 0 8px; color: var(--label); }
+.gi-head { display: flex; gap: 12px; align-items: center; }
+.gi-name { font-size: 17px; font-weight: 650; color: var(--ink); }
+.gi-members { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.gi-member { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 6px 0; border-bottom: 1px solid var(--card-rule); }
+.gi-member-name { flex: 1; min-width: 8rem; color: var(--ink); overflow-wrap: anywhere; }
+.gi-member-actions { display: flex; gap: 10px; flex-wrap: wrap; font-size: 13px; }
+.gi-devices { width: 100%; font-size: 12.5px; color: var(--muted); }
+.gi-devices summary { cursor: pointer; }
+.gi-link { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.gi-link input { flex: 1; min-width: 12rem; height: 34px; padding: 0 8px; border: 1px solid var(--edge); border-radius: 8px; background: var(--field-deep); color: var(--ink); font-family: var(--mono); font-size: 12px; }
+.gi-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+.safety-number { font-family: var(--mono); font-size: 14px; letter-spacing: .04em; color: var(--ink); line-height: 1.7; }
+.pill.role-owner, .pill.role-admin { background: var(--mine-chip); color: var(--mine-text); }

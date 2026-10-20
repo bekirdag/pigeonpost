@@ -20,7 +20,7 @@
 # musl rather than glibc-static because glibc's static linking of NSS is a known trap; the release
 # pipeline already builds these exact musl targets for the published Linux binaries, so this uses
 # a toolchain that is proven rather than a new one.
-ARG BUILD_BASE=docker.io/library/rust:1.88.0-alpine3.22@sha256:9dfaae478ecd298b6b5a039e1f2cc4fc040fc818a2de9aa78fa714dea036574d
+ARG BUILD_BASE=docker.io/library/rust:1.91.1-alpine3.22@sha256:8efbfb788786eeb127adc581394349c5fb567712156e0f8c2e499acadbc23756
 ARG RUNTIME_BASE=gcr.io/distroless/static-debian13:nonroot@sha256:f7f8f729987ad0fdf6b05eeeae94b26e6a0f613bdf46feea7fc40f7bd72953e6
 ARG MUSL_VERSION=1.2.5-r12
 # tini is still load-bearing: the CLI's serve paths handle ctrl_c (SIGINT) but not SIGTERM, and a

@@ -410,7 +410,7 @@ fn b64(input: &[u8]) -> String {
 }
 
 fn unb64(input: &str) -> Option<Vec<u8>> {
-    if input.len() % 4 != 0
+    if !input.len().is_multiple_of(4)
         || input
             .bytes()
             .any(|byte| !byte.is_ascii_alphanumeric() && !matches!(byte, b'+' | b'/' | b'='))

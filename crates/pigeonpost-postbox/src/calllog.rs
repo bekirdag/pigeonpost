@@ -291,6 +291,9 @@ pub(crate) struct EventReq {
     #[serde(default)]
     participants: Vec<String>,
     at: u64,
+    /// Set for a group call (Phase 3a): start and end become notices in the group.
+    #[serde(default)]
+    group_id: Option<String>,
 }
 
 fn token_ok(s: &str, max: usize) -> bool {
@@ -377,6 +380,14 @@ pub(crate) async fn ingest(
         return ApiError::bad("bad_request", "malformed call event").into_response();
     };
     let now = now_unix();
+    let group_call = req.group_id.clone().map(|g| {
+        (
+            g,
+            req.event.clone(),
+            req.room_id.clone(),
+            req.from.address.clone(),
+        )
+    });
     let ev = match req.validate(now) {
         Ok(ev) => ev,
         Err(why) => return ApiError::bad("bad_request", why).into_response(),
@@ -387,6 +398,16 @@ pub(crate) async fn ingest(
         Ok(result) => {
             for (account, _) in &result.changed {
                 state.event_hub.wake(account);
+            }
+            if let Some((group, event, room, from)) = group_call {
+                let kind = match event.as_str() {
+                    "ring" => Some("call_started"),
+                    "end" => Some("call_ended"),
+                    _ => None,
+                };
+                if let Some(kind) = kind {
+                    crate::mls::call_notice(&state, &group, kind, &room, Some(&from)).await;
+                }
             }
             Json(json!({ "accepted": true, "duplicate": result.duplicate })).into_response()
         }
