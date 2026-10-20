@@ -5,10 +5,12 @@ namespace Pigeonpost.Core;
 
 public enum CallMode { Hidden, Mini, Full }
 
-public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null, bool Ringing = false);
+public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null, bool Ringing = false,
+    CallRing? Ring = null, string? Room = null, string? State = null);
 
 // The contract between the app and the web call client's native page (site-inbox/native-call.js).
-// The page posts {type: ready|mode|renew|toast}; the app answers through PigeonpostNative.*.
+// The page posts {type: ready|mode|renew|toast|ring|ring_ended|call}; the app answers through
+// PigeonpostNative.*. (ring_card comes from the app's own observer script below.)
 // Everything the app puts into a script is JSON-encoded, never concatenated as raw text.
 public static class CallBridge
 {
@@ -24,7 +26,14 @@ public static class CallBridge
             return type switch
             {
                 "ready" or "renew" => new CallPageMessage(type),
-                "ring" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),
+                "ring_card" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),
+                // Phase 1c: a ring arrived on the event stream (docs/call-alerting.md §5).
+                "ring" => CallRing.FromPage(message) is { } ring ? new CallPageMessage(type, Ring: ring, Room: ring.Room) : null,
+                "ring_ended" => CallRing.Text(message["room"]) is { } ended && CallRing.ValidRoom(ended) ? new CallPageMessage(type, Room: ended) : null,
+                "call" => CallRing.Text(message["state"]) is "connecting" or "active" or "ended"
+                    ? new CallPageMessage(type, State: CallRing.Text(message["state"]),
+                        Room: CallRing.Text(message["room"]) is { } callRoom && CallRing.ValidRoom(callRoom) ? callRoom : null)
+                    : null,
                 "mode" => new CallPageMessage(type, ParseMode(message["mode"] is JsonValue m && m.TryGetValue<string>(out var mode) ? mode : null)),
                 "toast" => message["text"] is JsonValue t && t.TryGetValue<string>(out var text) && !string.IsNullOrWhiteSpace(text)
                     ? new CallPageMessage(type, Text: text.Length > 300 ? text[..300] : text) : null,
@@ -44,7 +53,7 @@ public static class CallBridge
             const ringing = Boolean(ring && !ring.hidden && !(ui && !ui.hidden));
             if (ringing === last) return;
             last = ringing;
-            try { window.chrome.webview.postMessage({ type: "ring", ringing }); } catch (_) {}
+            try { window.chrome.webview.postMessage({ type: "ring_card", ringing }); } catch (_) {}
           };
           const start = () => {
             new MutationObserver(post).observe(document.body, { subtree: true, childList: true, attributes: true, attributeFilter: ["hidden"] });
@@ -56,7 +65,9 @@ public static class CallBridge
 
     public static CallMode ParseMode(string? mode) => mode switch { "full" => CallMode.Full, "mini" => CallMode.Mini, _ => CallMode.Hidden };
 
-    public static string ConfigureScript(string? token, Mailbox mailbox, IEnumerable<Conversation> conversations)
+    // nativeRing: the app shows incoming calls itself (a toast) and the page shows no ring screen and
+    // plays no ringtone. Pages from before Phase 1c ignore it and ring as they always did.
+    public static string ConfigureScript(string? token, Mailbox mailbox, IEnumerable<Conversation> conversations, bool nativeRing = false)
     {
         var known = new JsonObject();
         foreach (var conversation in conversations) known[conversation.Peer] = conversation.Name;
@@ -64,7 +75,8 @@ public static class CallBridge
         {
             ["token"] = token,
             ["mailbox"] = new JsonObject { ["address"] = mailbox.Address, ["handle"] = mailbox.Handle },
-            ["known"] = known
+            ["known"] = known,
+            ["nativeRing"] = nativeRing
         };
         return $"window.PigeonpostNative && PigeonpostNative.configure({options.ToJsonString()})";
     }
@@ -73,6 +85,14 @@ public static class CallBridge
 
     public static string CallScript(string peer, bool video) =>
         $"window.PigeonpostNative && PigeonpostNative.call({Json(peer)}, {Json(video ? "video" : "audio")})";
+
+    // Answer or decline a ring, with its ring token when a push supplied one. Guarded so a page from
+    // before Phase 1c, without these calls, is left alone.
+    public static string AnswerScript(string room, string? ringToken) =>
+        $"window.PigeonpostNative && PigeonpostNative.answer && PigeonpostNative.answer({Json(room)}, {Json(ringToken)})";
+
+    public static string DeclineScript(string room, string? ringToken) =>
+        $"window.PigeonpostNative && PigeonpostNative.decline && PigeonpostNative.decline({Json(room)}, {Json(ringToken)})";
 
     public const string SignOutScript = "window.PigeonpostNative && PigeonpostNative.signOut()";
 

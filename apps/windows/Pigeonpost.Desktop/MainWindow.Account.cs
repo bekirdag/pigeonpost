@@ -83,6 +83,7 @@ public sealed partial class MainWindow
         ExplainAlertSetting();
         StartAccountEvents();
         _ = StartCallsAsync();
+        _ = RegisterCallPushAsync();
     }
 
     private DispatcherTimer CreateRefreshTimer()
@@ -155,6 +156,7 @@ public sealed partial class MainWindow
             refreshTimer?.Stop();
             accountEvents?.Cancel();
             await StopCallsAsync();
+            await UnregisterCallPushAsync();
             await session.SignOutAsync(lifetime.Token);
             foreach (var cancellation in previewTasks.Values) { cancellation.Cancel(); cancellation.Dispose(); }
             previewTasks.Clear();
@@ -185,6 +187,7 @@ public sealed partial class MainWindow
             AccountStatus.Text = FriendlyAccountError(ex);
             refreshTimer?.Start();
             _ = StartCallsAsync();
+            _ = RegisterCallPushAsync();
         }
         finally { dialogOpen = false; }
     }

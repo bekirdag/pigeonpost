@@ -33,16 +33,44 @@ Native Windows notifications arrive through the account event stream, with perio
 The call buttons run the web inbox's own call client (`site-inbox/calls.js`) through
 `https://inbox.pigeonpost.dev/native-call.html` in a dedicated WebView2 (user data under
 `%LOCALAPPDATA%\Pigeonpost\CallsWebView2`). The page is loaded once after sign-in and stays loaded,
-invisible and click-through while idle, so incoming calls ring while the app runs (a ring brings a
-hidden or minimised window forward). A call covers the window; minimised, it becomes a 64px strip
+invisible and click-through while idle, so incoming calls ring while the app runs. A call covers the window; minimised, it becomes a 64px strip
 above the inbox. The display stays awake during a call. The bridge is `native-call.js`: the page
-posts `ready`/`mode`/`renew`/`toast`; the app calls `PigeonpostNative.configure/renewed/call/signOut`
-(`Pigeonpost.Core/CallBridge.cs`). Microphone, camera and autoplay are granted only to the call
+posts `ready`/`mode`/`renew`/`toast`/`ring`/`ring_ended`/`call`; the app calls
+`PigeonpostNative.configure/renewed/call/answer/decline/signOut` (`Pigeonpost.Core/CallBridge.cs`). Microphone, camera and autoplay are granted only to the call
 page's origin; navigation elsewhere is blocked and links open in the default browser. Screen
 sharing uses WebView2's `getDisplayMedia` and Windows' picker. The MSIX declares the `microphone`
 and `webcam` device capabilities, so Windows privacy settings govern access.
 
-Calls do not ring while the app is not running.
+### Incoming calls (Phase 1c, `docs/call-alerting.md`)
+
+- Window in front (visible, not minimised, active): the page rings in the window (ring card and
+  ringtone), as before; the page is configured with `nativeRing: false`.
+- Window in the notification area, minimised or behind other windows: the page is configured with
+  `nativeRing: true` and the app shows a Windows toast with `scenario="incomingCall"` (bottom right,
+  stays until acted on, looping `Notification.Looping.Call`, Answer and Decline), titled with the
+  caller's name from your conversations and their handle. Answer shows the window and calls
+  `PigeonpostNative.answer(room, null)`; Decline calls `PigeonpostNative.decline(room, null)`. A ring
+  already sounding in the window when it goes to the background gets a silent toast. The app
+  reconfigures the page whenever the window moves between the two states.
+- App not running: the postbox sends the same toast through WNS (launch arguments
+  `action=answer|decline&room=…&ring=…&kind=…`). Answer starts the app, restores the saved session,
+  opens the call page and answers with the ring token; Decline posts the ring token to
+  `/calls/v1/rings/{room}/decline` without the page and leaves the app in the notification area.
+  While the app runs, a WNS call toast is suppressed and re-shown by the app, so it never doubles.
+- Toasts are tagged with the room's first 16 characters (WNS's tag limit) in group `calls`, the same
+  tag and group the postbox uses, so the local and the WNS toast replace each other and the ring's
+  end removes either. A toast is also removed 60 seconds after its ring started.
+- After sign-in, on every start and daily, a packaged install creates its WNS channel
+  (`PushNotificationChannelManager.CreatePushNotificationChannelForApplicationAsync`) and registers
+  it with `POST /v1/devices {token: <channel URI>, platform: "wns", kind: "alert", os: "windows",
+  identity}`; a changed channel replaces the old registration and sign-out removes it
+  (`DELETE /v1/devices/{channel}`). Unpackaged and test builds skip this; every failure is logged
+  and calls still ring while the app runs. The postbox only pushes when it has the Store app's WNS
+  credentials (see STORE.md, "Incoming calls with the app closed").
+
+Code: `Pigeonpost.Core/CallRing.cs` (ring parsing, launch arguments, toast XML, ring state,
+ring-token decline; unit-tested in `Pigeonpost.Core.Tests/CallRingTests.cs`) and
+`Pigeonpost.Desktop/CallAlerts.cs`.
 
 No offline message database or rich Markdown rendering is included.
 Unsent drafts are discarded on sign-out or app exit. Store availability is tracked in STORE.md;
