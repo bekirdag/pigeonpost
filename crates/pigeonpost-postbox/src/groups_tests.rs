@@ -1450,3 +1450,44 @@ async fn hosted_mcp_tools_carry_metadata_and_ciphertext_only() {
     assert_eq!(sent["isError"], true, "{sent}");
     assert!(sent.to_string().contains("encryption_required"));
 }
+
+#[tokio::test]
+async fn pruning_only_desyncs_devices_that_missed_a_pruned_commit() {
+    let srv = serve().await;
+    let (mut alice, mut bob, _carol, gid) = three(&srv).await;
+    // Two more epochs, both devices acknowledge them, then prune.
+    for _ in 0..2 {
+        assert_eq!(alice.process_pending(&srv, &gid).await, 201);
+        bob.sync(&srv, &gid).await;
+    }
+    for m in [&alice, &bob] {
+        let epoch = m.group(&srv, &gid).await["epoch"].clone();
+        m.req(&srv, reqwest::Method::POST, &format!("/v1/groups/{gid}/epoch-ack"), Some(json!({ "epoch": epoch })))
+            .await;
+    }
+    let now = now_unix();
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> { mls::sweep_mls(tx, now) })
+        .await
+        .unwrap();
+    assert!(alice.group(&srv, &gid).await["last_seq"].as_i64().unwrap() > 0);
+    // Reading from the start is fine: nothing this device needs is gone.
+    let (s, _) = bob.req(&srv, reqwest::Method::GET, &format!("/v1/groups/{gid}/messages?after_seq=0"), None).await;
+    assert_eq!(s, 200);
+    // A device whose acknowledged epoch predates the oldest kept commit must resync.
+    let g2 = gid.clone();
+    let bob_addr = bob.address.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> {
+            tx.execute("UPDATE group_leaves SET acked_epoch = 0, added_epoch = 0 WHERE group_id = ?1 AND mailbox = ?2", rusqlite::params![g2, bob_addr])?;
+            tx.execute("UPDATE groups SET pruned_through_seq = MAX(pruned_through_seq, 1) WHERE id = ?1", [g2.clone()])?;
+            tx.execute("DELETE FROM group_handshakes WHERE group_id = ?1 AND epoch < 2", [g2])?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (s, v) = bob.req(&srv, reqwest::Method::GET, &format!("/v1/groups/{gid}/messages?after_seq=0"), None).await;
+    assert_eq!((s, v["error"].as_str()), (410, Some("resync_required")), "{v}");
+}

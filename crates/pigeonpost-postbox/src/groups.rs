@@ -2713,18 +2713,34 @@ pub(crate) fn page(
     c: &Connection,
     g: &GroupRow,
     me: &str,
+    device: Option<&str>,
     after: Option<i64>,
     before: Option<i64>,
     limit: usize,
     now: u64,
 ) -> GResult<Value> {
     let start = interval_start(c, &g.id, me)?;
-    if let Some(after) = after {
-        if after < g.pruned_through_seq && g.pruned_through_seq >= start {
+    // A device is desynced only when it still needs a commit that was pruned: normal pruning
+    // removes only commits every leaf acknowledged, so this is the 90-day backstop (P-2 §7.6).
+    if let (Some(device), true) = (device, g.pruned_through_seq > 0) {
+        let processed: Option<i64> = c
+            .query_row(
+                "SELECT MAX(acked_epoch, added_epoch) FROM group_leaves
+                  WHERE group_id = ?1 AND mailbox = ?2 AND device_id = ?3",
+                params![g.id, me, device],
+                |r| r.get(0),
+            )
+            .optional()?;
+        let oldest: i64 = c.query_row(
+            "SELECT COALESCE(MIN(epoch), ?2) FROM group_handshakes WHERE group_id = ?1",
+            params![g.id, g.epoch],
+            |r| r.get(0),
+        )?;
+        if processed.is_some_and(|p| p < oldest) {
             return Err(GErr::new(
                 StatusCode::GONE,
                 "resync_required",
-                "the commits after this point were pruned; reset this group on this device",
+                "commits this device still needs were pruned; reset this group on this device",
             )
             .with("pruned_through_seq", g.pruned_through_seq));
         }
@@ -2843,7 +2859,7 @@ pub(crate) async fn messages(
 ) -> Response {
     let result = async {
         let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
-        ctx.device()?;
+        let device = ctx.device()?;
         let me = ctx.address();
         let now = now_unix();
         state
@@ -2855,6 +2871,7 @@ pub(crate) async fn messages(
                     c,
                     &g,
                     &me,
+                    Some(&device),
                     q.after_seq,
                     q.before_seq,
                     q.limit.unwrap_or(50),
@@ -3676,7 +3693,7 @@ pub(crate) async fn mcp_tool(
                     .group_read(move |c: &Connection| -> GResult<Value> {
                         let g = live_group(c, &gid)?;
                         let m = active_member(c, &gid, &me)?;
-                        let mut page = page(c, &g, &me, after, None, 50, now)?;
+                        let mut page = page(c, &g, &me, None, after, None, 50, now)?;
                         page["group"] = group_view(c, &g, &m, now)?;
                         page["note"] = json!(MCP_E2EE_NOTE);
                         Ok(page)

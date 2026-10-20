@@ -408,6 +408,43 @@
     }
   }
 
+  // Phase 3a: group calls. The calls service rings every active member (each filtered by their own
+  // call settings) and lets any active member join a call in progress without knocking. Membership
+  // is checked by the postbox at create, ring and join.
+  async function placeGroup(kind, group, join) {
+    const h = host();
+    const me = h && h.mailbox();
+    if (!me || !group || !supported) return;
+    if (room || ring) { toast("Finish the current call first."); return; }
+    if (!session) { toast("Calling isn’t ready yet. Try again in a moment."); start(); return; }
+    openRoomUI({ title: group.name, sub: join ? "Joining group call" : "Group call", face: group.name, status: (join ? "Joining " : "Starting ") + kindWord(kind) + "…" });
+    room = newRoom({ kind, title: group.name, peerKey: group.id, groupId: group.id });
+    try {
+      await startLocalMedia(kind === "video");
+    } catch (err) {
+      endRoom(mediaMessage(err, kind), { notify: false });
+      return;
+    }
+    if (!room) return;
+    try {
+      if (join) {
+        const joined = await post(`/groups/${encodeURIComponent(group.id)}/join`, { session, from: me.address });
+        if (!room) { if (joined.room) post(`/rooms/${joined.room}/leave`, { session }).catch(() => {}); return; }
+        if (joined.participants) onJoined(joined);
+        else Object.assign(room, { id: joined.room, code: joined.code, you: joined.you, state: "active" });
+      } else {
+        const placed = await post("/calls", { session, from: me.address, group_id: group.id, kind });
+        if (!room) { post(`/rooms/${placed.room}/leave`, { session }).catch(() => {}); return; }
+        Object.assign(room, { id: placed.room, code: placed.code, you: placed.you, state: "ringing" });
+        setStatus("Ringing the group…");
+        startTone("ringback");
+      }
+      renderStage();
+    } catch (err) {
+      endRoom(err.code === "not_member" ? "You are not an active member of this group." : err.code === "room_full" ? "This call is full (six people)." : err.code === "no_call" ? "That call has ended." : placeError(err), { notify: false });
+    }
+  }
+
   function onIncoming(data) {
     if (room || ring) {
       post(`/rooms/${data.room}/decline`, { session, reason: "busy" }).catch(() => {});
@@ -2899,6 +2936,9 @@
     start, stop, renderHead,
     // For automated checks of large calls: receive statistics of the media server's tracks.
     sfuStats: () => Sfu.stats(),
+    // Phase 3a
+    placeGroup: (kind, group) => placeGroup(kind, group, false),
+    joinGroup: (kind, group) => placeGroup(kind, group, true),
     // For automated checks: who is connected, by which route, at what resolution and rate, and with
     // which security codes. Contains no media and no message text.
     inspect: () => ({
