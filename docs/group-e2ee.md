@@ -1,7 +1,8 @@
 # Group end-to-end encryption (P-2)
 
 Status: implemented and tested as a library, bindings and protocol contract (2026-10-20).
-The postbox endpoints in §7 are the contract Phase 3 implements; they do not exist yet.
+The postbox endpoints in §7 are implemented since Phase 3a (`crates/pigeonpost-postbox/src/{groups,mls}.rs`);
+the client contract is `docs/groups.md`, and §16 is the Phase 3a security self-review.
 
 This document is release prerequisite **P-2** of the big-features SDS (§3.6, §4.6): a reviewed,
 cross-client group encryption implementation for persistent groups and org rooms. Groups stay
@@ -561,3 +562,71 @@ pwsh scripts/build-windows.ps1
 * uniffi-bindgen-cs (versions and configuration) — https://github.com/NordSecurity/uniffi-bindgen-cs
 * wasm-bindgen changelog (deterministic output from 0.2.116) — https://github.com/wasm-bindgen/wasm-bindgen/blob/main/CHANGELOG.md
 * Pigeonpost big-features SDS §3.6, §4, §20, §26 (internal planning document)
+
+## 16. Phase 3a server and web: security self-review (2026-10-20)
+
+Reviewed by the implementer against §12 and SDS §4.6. Code: `crates/pigeonpost-postbox/src/{groups,mls,ephemeral}.rs`,
+`site-inbox/groups-core.js`, `crates/pigeonpost-cli/src/group_cmd.rs`.
+
+**What holds.**
+
+* *No custodial path.* The postbox stores ciphertext, commits, Welcomes and public device keys only; no route
+  decrypts group content and the hosted MCP tools return metadata and ciphertext (sending needs ciphertext from a
+  local device). Push bodies are generic ("New message"). Tests assert the stored bodies are not plaintext.
+* *Device authentication and binding.* Every application post and commit is checked against the registered,
+  unrevoked device key (`verify_envelope_signature`) and the cleartext header (`inspect_envelope`: kind, group,
+  sender mailbox, sender device, client id, epoch). A ciphertext made by another device cannot be posted under a
+  different mailbox (tested). The device must be a current leaf of the group to post.
+* *Commit serialization.* Commits run in one `BEGIN IMMEDIATE` transaction that checks epoch and revision; the
+  first valid commit wins and the loser gets `revision_conflict` (tested). Declared adds must be pending adds whose
+  key packages this device claimed in the last 10 minutes; the Welcome must be addressed to exactly those refs;
+  removes must be pending removals or the committer's own other devices.
+* *Removal.* Leaving, removal, bans, device revocation and failed Welcomes create pending removals. Server access
+  stops in the same transaction (interval closed), and application posts are refused with
+  `key_activation_pending` until a device commits the removal (tested); the removed device cannot decrypt later
+  epochs (tested with the real library).
+* *Authorization in the transaction.* Membership, role, posting policy, owner/admin rules (owner-only demotion,
+  nobody acts on the owner), invitation authority (rechecked at acceptance), bans, size and quotas are decided
+  inside the transaction that writes the change. Settings, roles, membership management, transfer, deletion,
+  links, accepting private invitations and second devices require a person's session (`human_required` for API
+  keys, mailbox tokens and connectors).
+* *Visibility of devices (P-2 open risk).* Registering a device emits `group.device` to the mailbox and every
+  co-member and appends a `device_added` notice to each of its groups; clients render "added a new device" with the
+  fingerprint and show per-member fingerprints and the safety number in group info. A second device for a hosted
+  mailbox needs a person's session, and step-up when the deployment configures an `acr` allowlist.
+* *Links and resolve.* Link tokens are 24 random bytes, stored as SHA-256, compared in constant time, shown once,
+  invalidated by reset and by switching to private, and only ever sent in request bodies. Resolve answers
+  `not_found` for private groups without an invitation, so a known id reveals nothing.
+* *Events.* Group events are written to the durable outbox in the change's transaction and re-authorized against
+  current membership at delivery: a removed mailbox does not receive queued `group.message`/`group.handshake`
+  events (tested). Payloads carry ids and sequence numbers, never ciphertext.
+* *Attachments.* Sealed blobs live in a separate `groups` blob store (no cross-feature reference counting), are
+  bound to the uploader and group quota, claimed by one message, and readable only through a live, unexpired,
+  in-interval message reference; knowing a blob id or hash grants nothing (tested).
+* *Disappearing messages.* `expires_at` is set at send; every read filters it; a 30 s worker deletes rows and
+  releases attachments, with a reaper backstop.
+* *Agents (D-10).* Group content never enters the verb/autonomy path; the CLI prints group text literally and
+  replaces control characters.
+
+**Residual risks and follow-ups.**
+
+1. *Hosted mailboxes remain an authentication-service risk.* Production has no step-up `acr` configured
+   (`POSTBOX_STEP_UP_ACR_VALUES` empty), so a second device needs a person's session but not a fresh strong
+   sign-in. Detection (notices, fingerprints, safety numbers) is the defence, as §12 states. Configure step-up when
+   the Keycloak flow is verified.
+2. *First device by automation.* Any credential for a mailbox may register its first device (agents need this).
+   A leaked API key can therefore enrol a device for a mailbox that has none yet; it is visible to co-members.
+3. *Server-enforced roles* (unchanged from §13.3): a compromised server could accept a member's unauthorized
+   commit. The web client renders membership changes from the verified commit and warns when they differ from the
+   server's notice.
+4. *Direct-message expiry is stamped right after the insert*, not in the same statement; a crash between the two
+   would leave that one message without a timer. Reads and the worker are otherwise exact.
+5. *Rate limits are per process and in memory*; a restart resets them. Group creation (20/day/account) and
+   invitations (1,000/day/group) are counted in the database.
+6. *Web key storage.* The state key is wrapped by a non-extractable WebCrypto key in IndexedDB: script cannot read
+   the raw key, but any script running in the inbox origin can use it. The inbox CSP (`script-src 'self'
+   'wasm-unsafe-eval'`, no inline script) is the barrier. Clearing site data loses the device (no history).
+7. *Metadata* listed in §6 is visible to the server, including sender, size (32-byte padded), timing and
+   optional mention lists used for push routing.
+8. *Not yet run*: groups larger than the six-device interop set and the 500-member fan-out target (SDS §4.11
+   item 9); native clients (Phase 3b).
