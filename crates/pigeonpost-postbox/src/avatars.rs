@@ -47,6 +47,7 @@ pub(crate) const SIZES: [u32; 4] = [512, 256, 128, 64];
 /// The JPEG fallback's size.
 const JPEG_SIZE: u32 = 256;
 /// Wall-clock budget for one worker.
+#[cfg_attr(not(unix), allow(dead_code))]
 const WORKER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 /// Reports one mailbox may file per day.
 const REPORTS_PER_DAY: usize = 20;
@@ -71,6 +72,7 @@ impl AvatarError {
             AvatarError::Internal => 4,
         }
     }
+    #[cfg_attr(not(unix), allow(dead_code))]
     fn from_code(code: u8) -> Self {
         match code {
             1 => AvatarError::TooLarge,
@@ -263,6 +265,7 @@ fn encode_output(result: &Result<Processed, AvatarError>) -> Vec<u8> {
     }
 }
 
+#[cfg_attr(not(unix), allow(dead_code))]
 fn decode_output(raw: &[u8]) -> Result<Processed, AvatarError> {
     match raw.first() {
         Some(1) => return Err(AvatarError::from_code(*raw.get(1).unwrap_or(&4))),
