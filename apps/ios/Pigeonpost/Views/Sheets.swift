@@ -48,7 +48,7 @@ struct IdentityPickerSheet: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Done") { dismiss() } }
             }
         }
-        .presentationDetents([.medium, .large])
+        .phoneDetents([.medium, .large])
     }
 }
 

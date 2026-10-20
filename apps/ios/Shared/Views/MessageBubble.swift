@@ -13,6 +13,11 @@ struct MessageBubble: View {
     var highlight: String = ""
     /// Whether this is the match the find bar is standing on.
     var isFound: Bool = false
+    /// The phone's history (ConversationHistoryView) presents the long-press menu itself, from the
+    /// table, and so turns this one off; see `HistoryController`.
+    var showsMenu: Bool = true
+    /// Where the card sits in the `history-row` coordinate space, for that menu's preview.
+    var onCardFrame: ((CGRect) -> Void)? = nil
 
     @Environment(Inbox.self) private var inbox
     @State private var confirmingReport = false
@@ -36,33 +41,22 @@ struct MessageBubble: View {
         HStack(spacing: 0) {
             if isMine { Spacer(minLength: 36) }
             card
+                .background {
+                    if let onCardFrame {
+                        GeometryReader { g in
+                            let frame = g.frame(in: .named("history-row"))
+                            Color.clear
+                                .onAppear { onCardFrame(frame) }
+                                .onChange(of: frame) { _, next in onCardFrame(next) }
+                        }
+                    }
+                }
+                // The menu belongs to the card, not the row: the row's spacers are not the message.
+                .contextMenu(showsMenu ? ContextMenu { menu } : nil)
                 .frame(maxWidth: 620, alignment: isMine ? .trailing : .leading)
             if !isMine { Spacer(minLength: 36) }
         }
         .padding(.vertical, 2)
-        .contextMenu {
-            Button {
-                Clipboard.copy(message.body)
-            } label: {
-                Label("Copy", systemImage: "doc.on.doc")
-            }
-            // Only inbound. Reporting your own message would report yourself, and the postbox would
-            // be right to wonder what it was being told.
-            if !isMine {
-                Button(role: .destructive) {
-                    confirmingReport = true
-                } label: {
-                    Label("Report spam", systemImage: "exclamationmark.bubble")
-                }
-            }
-            // Both directions: a sent copy takes up the same room in the mailbox as a received one,
-            // and this is the only way to get that room back.
-            Button(role: .destructive) {
-                confirmingDelete = true
-            } label: {
-                Label("Delete", systemImage: "trash")
-            }
-        }
         .confirmationDialog(
             "Report this message as spam?",
             isPresented: $confirmingReport,
@@ -86,6 +80,32 @@ struct MessageBubble: View {
             Button("Cancel", role: .cancel) {}
         } message: {
             Text("Deleted from this mailbox and gone for good — this is not archiving, and there is no undo. The other side keeps their copy and is not told. The room it took is freed.")
+        }
+    }
+
+    /// Copy, report and delete: the long-press menu.
+    @ViewBuilder
+    private var menu: some View {
+        Button {
+            Clipboard.copy(message.body)
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+        // Only inbound. Reporting your own message would report yourself, and the postbox would
+        // be right to wonder what it was being told.
+        if !isMine {
+            Button(role: .destructive) {
+                confirmingReport = true
+            } label: {
+                Label("Report spam", systemImage: "exclamationmark.bubble")
+            }
+        }
+        // Both directions: a sent copy takes up the same room in the mailbox as a received one,
+        // and this is the only way to get that room back.
+        Button(role: .destructive) {
+            confirmingDelete = true
+        } label: {
+            Label("Delete", systemImage: "trash")
         }
     }
 
