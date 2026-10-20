@@ -1,7 +1,7 @@
 //! Account-linked ChatGPT MCP surface. Generic clients continue to use `mcp`; this endpoint only
 //! accepts a resource-bound OAuth token and exports a small, credential-free set of mailbox tools.
 
-use crate::{bearer, mcp, now_unix, oidc, rand_hex, AppState, Principal};
+use crate::{bearer, mcp, now_unix, oidc, rand_hex, AccountCredential, AppState, Principal};
 use axum::{
     extract::State,
     http::{header, HeaderMap, HeaderValue, StatusCode},
@@ -309,7 +309,17 @@ async fn execute(
     limit: usize,
 ) -> Result<Value, Value> {
     let name = params["name"].as_str().unwrap_or("").to_string();
-    let result = mcp::call_tool_as(state, Principal::Account(account), params).await?;
+    let result = mcp::call_tool_as(
+        state,
+        Principal::Account(
+            account,
+            AccountCredential::Connector {
+                client: oidc::CHATGPT_CLIENT_ID.to_string(),
+            },
+        ),
+        params,
+    )
+    .await?;
     if result["isError"] == true {
         return Ok(result);
     }

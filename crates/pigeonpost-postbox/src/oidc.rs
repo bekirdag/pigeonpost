@@ -24,12 +24,32 @@ pub enum OidcError {
     Fetch,
 }
 
-/// The claims we consume — just the subject; issuer and expiry are validated by `jsonwebtoken`.
-#[derive(serde::Deserialize)]
+/// The claims we consume. Issuer and expiry are validated by `jsonwebtoken`; the provenance fields
+/// (`iss`, `aud`, `auth_time`, `acr`, `amr`, and the service-account markers) are retained so a
+/// validated interactive sign-in can be told apart from automation (SDS §3.2) and checked for
+/// step-up (§3.4). None of them is required: a token without them is still a member token, it just
+/// cannot satisfy a gate that needs them.
+#[derive(serde::Deserialize, Default)]
 pub struct Claims {
     pub sub: String,
     #[serde(default)]
     pub azp: Option<String>,
+    #[serde(default)]
+    pub iss: Option<String>,
+    #[serde(default, deserialize_with = "one_or_many")]
+    pub aud: Vec<String>,
+    #[serde(default)]
+    pub auth_time: Option<u64>,
+    #[serde(default)]
+    pub acr: Option<String>,
+    #[serde(default)]
+    pub amr: Vec<String>,
+    /// Keycloak names a client-credentials token's user `service-account-<client>`.
+    #[serde(default)]
+    pub preferred_username: Option<String>,
+    /// Present on Keycloak service-account tokens (the "Client ID" mapper); never on a person's.
+    #[serde(default)]
+    pub client_id: Option<String>,
     /// The address this account signs in with, when the realm sends one. Its key is the spec's
     /// spelling, which is why this file is excluded from the vocabulary guard in CI.
     #[serde(default)]
@@ -82,6 +102,22 @@ impl Claims {
     pub fn address_is_verified(&self) -> bool {
         self.email_verified == Some(true)
     }
+}
+
+/// `aud` is a string or an array of strings depending on how many audiences the token has.
+fn one_or_many<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Vec<String>, D::Error> {
+    use serde::Deserialize;
+    #[derive(serde::Deserialize)]
+    #[serde(untagged)]
+    enum OneOrMany {
+        One(String),
+        Many(Vec<String>),
+    }
+    Ok(match Option::<OneOrMany>::deserialize(d)? {
+        None => Vec::new(),
+        Some(OneOrMany::One(s)) => vec![s],
+        Some(OneOrMany::Many(v)) => v,
+    })
 }
 
 #[derive(serde::Deserialize)]
@@ -223,9 +259,9 @@ impl Claims {
     pub(crate) fn fixture(sub: &str, address: &str, verified: bool) -> Self {
         Self {
             sub: sub.into(),
-            azp: None,
             email: Some(address.into()),
             email_verified: Some(verified),
+            ..Self::default()
         }
     }
 }
