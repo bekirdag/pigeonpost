@@ -18,7 +18,9 @@ import Foundation
 
 /// One row in a conversation, whichever direction it went and whether or not the server has it yet.
 struct ThreadMessage: Identifiable, Equatable {
-    enum Kind: Equatable { case incoming, outgoing }
+    /// `system` is a line the app writes into a conversation itself — a missed call — and is never
+    /// a message anybody sent: no menu, no copy, no read state.
+    enum Kind: Equatable { case incoming, outgoing, system }
     enum Status: Equatable { case sent, sending, failed }
 
     let id: String

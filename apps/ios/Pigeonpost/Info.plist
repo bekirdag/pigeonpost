@@ -22,7 +22,7 @@
 	     reading the sign-in QR that `pigeonpost login` prints on another machine. Nothing is
 	     recorded or kept. -->
 	<key>NSCameraUsageDescription</key>
-	<string>For video calls, and to scan the sign-in code shown by the pigeonpost command line.</string>
+	<string>For video calls, taking a profile picture, and scanning the sign-in code shown by the pigeonpost command line.</string>
 	<!-- Calls only. Audio goes straight to the people in the call, encrypted end to end. -->
 	<key>NSMicrophoneUsageDescription</key>
 	<string>So the people you call can hear you.</string>

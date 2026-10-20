@@ -15,6 +15,9 @@ struct PigeonpostMacApp: App {
     @State private var inbox: Inbox
     @State private var calls = CallHost.shared
     @State private var groups: GroupStore
+    @State private var callLog: CallLog
+    @State private var filtered: FilteredMail
+    @State private var avatars: AvatarStore
 
     init() {
         let session = Session()
@@ -27,6 +30,11 @@ struct PigeonpostMacApp: App {
         groups.inbox = inbox
         account.groups = groups
         _groups = State(initialValue: groups)
+        let callLog = CallLog(account: account)
+        let filtered = FilteredMail(account: account)
+        _callLog = State(initialValue: callLog)
+        _filtered = State(initialValue: filtered)
+        _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
         // Keychain or the network: see `Session.init` and the `Fixtures.enabled` guards on every
@@ -34,6 +42,8 @@ struct PigeonpostMacApp: App {
         if Fixtures.enabled {
             Fixtures.apply(session: session, account: account, inbox: inbox)
             LongThread.install(into: inbox)
+            callLog.installFixture()
+            filtered.installFixture()
         }
         #endif
     }
@@ -47,6 +57,10 @@ struct PigeonpostMacApp: App {
                 .environment(MacPushDelegate.service)
                 .environment(calls)
                 .environment(groups)
+                .environment(callLog)
+                .environment(filtered)
+                .environment(avatars)
+                .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
                 .onOpenURL { url in
                     if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }

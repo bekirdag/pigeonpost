@@ -16,8 +16,19 @@ struct PeerInfoSheet: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(\.dismiss) private var dismiss
-    @State private var confirmingBlock = false
-    @State private var editingContact = false
+    /// One sheet at a time, for the reason `ConversationsView` gives.
+    @State private var sheet: InfoSheet?
+
+    private enum InfoSheet: Identifiable {
+        case edit
+        case block(BlockTarget)
+        var id: String {
+            switch self {
+            case .edit: return "edit"
+            case .block(let target): return target.id
+            }
+        }
+    }
 
     private var lastIncoming: ThreadMessage? {
         conversation.messages.last { $0.kind == .incoming }
@@ -85,7 +96,7 @@ struct PeerInfoSheet: View {
                         Toggle("Known sender", isOn: knownBinding)
                         Toggle("Full permissions", isOn: fullBinding)
                             .disabled(!inbox.isKnown(conversation.peer) || conversation.isBlocked)
-                        Button("Choose which requests run…") { editingContact = true }
+                        Button("Choose which requests run…") { sheet = .edit }
                             .disabled(inbox.exactContact(conversation.peer) == nil)
                     } header: {
                         Text("Trust")
@@ -104,7 +115,11 @@ struct PeerInfoSheet: View {
                                 Task { await inbox.markKnown(peer: conversation.peer) }
                             }
                         } else {
-                            Button("Block this sender", role: .destructive) { confirmingBlock = true }
+                            Button("Block this sender", role: .destructive) {
+                                sheet = .block(BlockTarget(peer: conversation.peer, name: conversation.name, origin: .info,
+                                                           messageId: lastIncoming?.id))
+                            }
+                            .accessibilityIdentifier("peerBlock")
                         }
                     } footer: {
                         Text(conversation.mine
@@ -141,23 +156,15 @@ struct PeerInfoSheet: View {
             .navigationTitle(conversation.name)
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
-            .sheet(isPresented: $editingContact) {
-                if let contact = inbox.exactContact(conversation.peer) {
-                    ContactSheet(existing: contact)
-                }
-            }
-            .confirmationDialog(
-                "Block \(conversation.name)?",
-                isPresented: $confirmingBlock,
-                titleVisibility: .visible
-            ) {
-                Button("Block", role: .destructive) {
-                    Task {
-                        await inbox.block(peer: conversation.peer)
-                        dismiss()
+            .sheet(item: $sheet) { which in
+                switch which {
+                case .edit:
+                    if let contact = inbox.exactContact(conversation.peer) {
+                        ContactSheet(existing: contact)
                     }
+                case .block(let target):
+                    BlockSheet(target: target) { dismiss() }
                 }
-                Button("Cancel", role: .cancel) {}
             }
         }
         .phoneDetents([.large, .medium])

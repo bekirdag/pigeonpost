@@ -30,10 +30,18 @@ struct DesktopInboxView: View {
     /// Groups (Phase 3): offered beside "New conversation" when the postbox has them on.
     var newGroup: (() -> Void)? = nil
     var joinLink: (() -> Void)? = nil
+    /// Open the Filtered senders. The caller owns the sheet, as it owns Settings.
+    var openFiltered: () -> Void = {}
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(GroupStore.self) private var groups
+    @Environment(CallHost.self) private var calls
+    // Phase 1b. Optional, so a host that does not provide them shows the inbox as it was.
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    /// The sidebar shows the call history instead of the conversations (the web's left view).
+    @State private var showingCalls = false
 
     @State private var openingThread: ThreadTarget?
     /// The subject a right-click asked to delete, held until the question is answered. Deleting mail
@@ -116,6 +124,7 @@ struct DesktopInboxView: View {
         .onChange(of: account.me?.address) { _, _ in
             openingThread = nil
             deletingThread = nil
+            showingCalls = false
         }
         .sheet(item: $openingThread) { target in
             NewThreadSheet(peer: target.id) { id in
@@ -152,6 +161,7 @@ struct DesktopInboxView: View {
         return VStack(spacing: 0) {
             mailboxBar
             if switchingMailbox { mailboxList }
+            if callLog != nil, account.features.callHistory { sideSwitch }
             if inbox.loading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -192,7 +202,16 @@ struct DesktopInboxView: View {
                     }
                     #endif
             }
-            conversationList
+            if showingCalls, let callLog, account.features.callHistory {
+                CallLogList(callLog: callLog, open: { key in
+                    peer = key
+                }, callBack: { key, video in
+                    peer = key
+                    calls.call(key, video: video)
+                })
+            } else {
+                conversationList
+            }
             // Which build this window is. Settings carries it too, but a released app is asked
             // "is the fix in this one?" far more often than Settings is opened, and the answer was
             // not visible anywhere in the window.
@@ -319,6 +338,12 @@ struct DesktopInboxView: View {
                     conversationRow(conversation)
                 }
             }
+            // Filtered mail at the foot of the list, as on the phone and the web.
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+               case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
+                FilteredEntryRow(count: senders.count)
+                    .selectable(false, radius: 10, choose: openFiltered)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -326,6 +351,8 @@ struct DesktopInboxView: View {
         .refreshable {
             await inbox.loadAll()
             await groups.refresh()
+            await callLog?.refresh()
+            await filtered?.refresh()
         }
         #else
         // The arrow keys still walk the list, as they did while the system owned the selection.
@@ -587,6 +614,43 @@ struct DesktopInboxView: View {
             .fill(Theme.rule)
             .frame(width: 1)
             .ignoresSafeArea()
+    }
+
+    /// Inbox or Calls: two chips under the mailbox, the Calls one carrying the missed badge. Tapped
+    /// shapes rather than `Button`s, for the reason the toolbar note gives.
+    private var sideSwitch: some View {
+        HStack(spacing: 6) {
+            sideChip("Inbox", symbol: "tray", on: !showingCalls, badge: 0, id: "sideInbox") { showingCalls = false }
+            sideChip("Calls", symbol: "phone", on: showingCalls, badge: callLog?.unseen ?? 0, id: "sideCalls") {
+                showingCalls = true
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
+    private func sideChip(_ title: String, symbol: String, on: Bool, badge: Int, id: String,
+                          action: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.geist(12, .semibold))
+            Text(title)
+                .font(.geist(13, on ? .semibold : .medium))
+            if badge > 0 { UnreadBadge(count: min(badge, 99)) }
+        }
+        .foregroundStyle(on ? Theme.ink : Theme.secondary)
+        .padding(.horizontal, 11)
+        .frame(height: 30)
+        .background(on ? Theme.selected : Color.clear, in: Capsule())
+        .overlay(Capsule().stroke(on ? Theme.strokeStrong : Theme.stroke, lineWidth: 1))
+        .fixedSize()
+        .contentShape(Capsule())
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(badge > 0 ? "\(title), \(badge) missed" : title)
+        .accessibilityIdentifier(id)
     }
 
     /// Which mailbox is being read, and the way to change it.

@@ -14,6 +14,10 @@ struct ConversationsView: View {
     @Environment(PushService.self) private var push
     @Environment(GroupStore.self) private var groups
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(CallHost.self) private var calls
+    // Phase 1b. Optional, so a host that does not provide them simply shows none of it.
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @Environment(FilteredMail.self) private var filtered: FilteredMail?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -34,14 +38,16 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner, newGroup, joinLink
+        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered
         case peer(Conversation)
         case join(GroupStore.JoinLink)
 
         init?(staged: String) {
             switch staged {
             case "identities": self = .identities
-            case "settings": self = .settings
+            case "settings", "privacy", "blocked", "profile": self = .settings
+            case "calls": self = .calls
+            case "filtered": self = .filtered
             case "new": self = .new
             case "scanner": self = .scanner
             case "new-group": self = .newGroup
@@ -58,6 +64,8 @@ struct ConversationsView: View {
             case .newGroup: return "new-group"
             case .joinLink: return "join-link"
             case .join(let link): return "join:" + link.id
+            case .calls: return "calls"
+            case .filtered: return "filtered"
             case .peer(let conversation): return "peer:" + conversation.peer
             }
         }
@@ -112,7 +120,13 @@ struct ConversationsView: View {
             await push.refreshRegistrationIfAuthorized()
             await push.register()
             await inbox.loadAll()
+            await refreshPhase1b()
             await inbox.live()
+        }
+        // A call that has just ended is a new row in the history, and maybe a missed one.
+        .onChange(of: calls.mode) { _, mode in
+            guard mode == .hidden, !Fixtures.enabled else { return }
+            Task { await callLog?.refresh() }
         }
         // A tapped notification names the conversation it was about. Opening anything else would be
         // answering a different question from the one that was asked.
@@ -127,6 +141,15 @@ struct ConversationsView: View {
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
             case .scanner: ScanView()
+            case .calls:
+                if let callLog {
+                    CallsSheet(callLog: callLog, open: { peer in
+                        selection = peer
+                        sheet = nil
+                    }, callBack: callBack)
+                }
+            case .filtered:
+                if let filtered { FilteredSheet(filtered: filtered) }
             case .new: NewConversationSheet { peer in selection = peer }
             case .newGroup: NewGroupSheet { id in selection = id }
             case .joinLink: JoinLinkSheet { link in sheet = .join(link) }
@@ -152,10 +175,28 @@ struct ConversationsView: View {
                 showPeer: { sheet = .peer($0) },
                 visit: visit,
                 newGroup: { sheet = .newGroup },
-                joinLink: { sheet = .joinLink }
+                joinLink: { sheet = .joinLink },
+                openFiltered: { sheet = .filtered }
             )
         } else {
             phone
+        }
+    }
+
+    /// The call history's badge and Filtered's senders, for the mailbox being read.
+    private func refreshPhase1b() async {
+        async let log: Void = callLog?.refresh() ?? ()
+        async let mail: Void = filtered?.refresh() ?? ()
+        _ = await (log, mail)
+    }
+
+    /// Ring somebody back from the call log: the sheet goes first, so the call is not under it.
+    private func callBack(_ peer: String, _ video: Bool) {
+        sheet = nil
+        selection = peer
+        Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            calls.call(peer, video: video)
         }
     }
 
@@ -231,6 +272,14 @@ struct ConversationsView: View {
                     conversationRow(conversation)
                 }
             }
+            // Filtered mail, at the foot of the list: looked at on purpose, never among the rest.
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+               case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
+                Button { sheet = .filtered } label: { FilteredEntryRow(count: senders.count) }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Theme.sidebar)
+                    .listRowSeparatorTint(Theme.rule)
+            }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
@@ -239,6 +288,7 @@ struct ConversationsView: View {
         .refreshable {
             await inbox.loadAll()
             await groups.refresh()
+            await refreshPhase1b()
         }
     }
 
@@ -301,6 +351,11 @@ struct ConversationsView: View {
                     Text(actingName)
                         .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        // Bounded, so a long handle cannot push the trailing buttons into an
+                        // overflow menu of the system's own making (see below).
+                        .frame(maxWidth: 132, alignment: .leading)
                     Image(systemName: "chevron.down")
                         .font(.geist(11, .semibold))
                         .foregroundStyle(Theme.secondary)
@@ -319,6 +374,15 @@ struct ConversationsView: View {
         // per machine and then forget exists, so it was never worth a permanent slot; and a plain
         // button that presents a sheet is one fewer presentation to go wrong than a menu that
         // presents a sheet.
+        // Calls, when the postbox keeps call history. A third trailing button, which is why the
+        // mailbox name beside it is bounded: three fit on the narrowest phone with that limit, and
+        // `PhoneTopBarTests` holds it to that.
+        if let callLog, account.features.callHistory {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { sheet = .calls } label: { CallsButtonLabel(unseen: callLog.unseen) }
+                    .accessibilityIdentifier("callsButton")
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
             if groups.enabled {
                 Menu {

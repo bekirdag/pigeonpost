@@ -804,7 +804,15 @@ final class Inbox {
 
     func saveContact(peer: String, alias: String?, admission: String, autonomy: String, allowedVerbs: [String]) async throws {
         guard let me else { throw AuthError.sessionExpired }
-        guard !Fixtures.enabled else { return }
+        guard !Fixtures.enabled else {
+            // The fixture mailbox keeps its decisions in memory, so a block or a trust change can
+            // still be seen to take effect.
+            contacts.removeAll { $0.peer == peer }
+            contacts.append(Contact(peer: peer, alias: alias, admission: admission, autonomy: autonomy,
+                                    allowedVerbs: allowedVerbs))
+            rebuild()
+            return
+        }
         try await client.putContact(
             identity: me.address,
             peer: peer,
@@ -814,6 +822,13 @@ final class Inbox {
             allowedVerbs: allowedVerbs
         )
         await loadContacts()
+        rebuild()
+    }
+
+    /// The fixture mailbox's way of forgetting a contact, which never reaches a server.
+    func forgetFixtureContact(_ peer: String) {
+        guard Fixtures.enabled else { return }
+        contacts.removeAll { $0.peer == peer }
         rebuild()
     }
 
