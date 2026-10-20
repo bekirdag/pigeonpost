@@ -17,17 +17,24 @@ MIT / Apache-2.0 / BSD / MPL-2.0 (see the doc, §1).
 CSP: works under the inbox policy `script-src 'self' 'wasm-unsafe-eval'` — same-origin modules,
 WebAssembly compilation only. Serve `.wasm` as `application/wasm`.
 
-wasm SHA-256: `23d910dd09aca1ffdc5cf62b8219a166a51d418d6aa433c0461b7044daf6aa53`
+wasm SHA-256: `82e8257bdb97079dec5d80f42312af02f5dd538280150575f0bf9d2a67628ccb`
 
 ## Reproduce
 
-The build is byte-reproducible (pinned Rust 1.91.1 via `rust-toolchain.toml`, `Cargo.lock`,
-`--locked`, host paths remapped). CI rebuilds it on Linux and compares every generated file.
+The build is byte-reproducible on the reference host, x86_64 Linux (pinned Rust 1.91.1 via
+`rust-toolchain.toml`, `Cargo.lock`, `--locked`, host paths remapped, so the checkout location does
+not matter). CI rebuilds it on ubuntu-24.04 and compares every generated file. A macOS build gives
+the same JS glue and functionally identical wasm with a different byte layout, because Cargo mixes
+the host triple into crate metadata hashes; use the container below to reproduce the committed
+bytes from a Mac.
 
 ```bash
 cargo install wasm-bindgen-cli --version 0.2.128 --locked
 crates/pigeonpost-groupcrypto/scripts/build-wasm.sh          # rewrite this directory
 crates/pigeonpost-groupcrypto/scripts/build-wasm.sh --check  # compare with a clean rebuild
+# from macOS or Windows, inside the reference image:
+docker run --rm -v "$PWD":/src -w /src/crates/pigeonpost-groupcrypto rust:1.91.1 \
+  sh -c 'cargo install wasm-bindgen-cli --version 0.2.128 --locked && scripts/build-wasm.sh --check'
 (cd site-inbox/vendor/groupcrypto && shasum -a 256 -c SHA256SUMS)
 ```
 

@@ -459,7 +459,7 @@ package that still verifies is still the same attested device.
 
 Local evidence (2026-10-20, macOS arm64): 10 Rust tests pass; the interop scenario passes with all
 six runtimes in both orders (epoch 10, 6 devices, 5 mailboxes); `swift test` passes against the
-XCFramework; the Android AAR builds with NDK 25.1; the WASM bundle rebuilds byte-identically.
+XCFramework; the Android AAR builds with NDK 25.1; the committed WASM bundle is the x86_64 Linux build, which CI reproduces byte for byte.
 
 ---
 
@@ -520,7 +520,8 @@ Reviewed by the implementer on 2026-10-20. Findings and residual risks:
    either crate ever becomes part of a build graph. `proc-macro-error2` (unmaintained, build-time
    macro dependency) is a warning only.
 9. **Supply chain of the web bundle.** Built reproducibly (byte-identical across rebuilds and
-   hosts, checked in CI), SHA-256 pinned in `integrity.js` and checked by the loader before
+   checkout paths on the x86_64 Linux reference host, checked in CI; a macOS build differs only in
+   layout because Cargo hashes the host triple into crate metadata), SHA-256 pinned in `integrity.js` and checked by the loader before
    instantiation; served same-origin under `script-src 'self' 'wasm-unsafe-eval'`. The glue uses
    no `eval`/`new Function` (wasm-bindgen 0.2.128).
 10. **Coverage gaps.** Not yet run: Android device/emulator, iOS simulator/device, Windows arm64
