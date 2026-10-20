@@ -48,6 +48,10 @@ services:
     env_file: [./postbox.env]              # copied from postbox.env.example; keep 600, never committed
     logging: *bounded-logging
     networks: [internal]
+    # The internal API (POSTBOX_INTERNAL_BIND=0.0.0.0:8991), published to loopback only. Never
+    # add it to the Caddyfile.
+    ports:
+      - "127.0.0.1:8991:8991"
     volumes:
       - data:/data
       - ./secrets/master.age:/kms/master.age:ro

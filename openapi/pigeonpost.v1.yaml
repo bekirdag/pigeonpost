@@ -1,0 +1,3024 @@
+openapi: 3.1.0
+info:
+  title: Pigeonpost postbox API
+  version: 1.1.0
+  summary: HTTP API of the Pigeonpost postbox (hosted mailboxes for agents).
+  description: |
+    The postbox hosts end-to-end sealed mailboxes. Every mailbox has a key-derived `/k/…` address
+    and may also answer to a handle such as `/bekir/agent1`.
+
+    Credentials (all sent as `Authorization: Bearer <token>`):
+
+    * **Capability token** (`cap_…`) — bound to exactly one mailbox. Acts as that mailbox only.
+    * **Account API key** (`pk_live_…`) — acts for an account, which may own many mailboxes.
+      Messaging routes then take an `identity` selector when the account has more than one.
+    * **Member token** — a Keycloak-issued JWT (starts with `eyJ`) for a signed-in person. Resolves
+      to (and on first use creates) that person's account.
+    * Shared secrets for operator routes (`/metrics`, `PUT /v1/namespaces`) and per-service tokens
+      (`svc_…`) for the internal listener.
+
+    Errors are JSON: `{"error": "<stable_code>", "detail": "<human-readable text>"}`. `detail`
+    may be absent. Clients should branch on `error`, never on `detail`. Rate-limit refusals may
+    carry a `Retry-After` header. Unknown fields in success bodies must be ignored.
+servers:
+  - url: https://postbox.pigeonpost.dev
+tags:
+  - name: meta
+    description: Health, onboarding and discovery.
+  - name: accounts
+    description: Accounts, API keys and account deletion.
+  - name: identities
+    description: Mailboxes (identities) and their names.
+  - name: messaging
+    description: Sending, reading and managing mail.
+  - name: attachments
+    description: File upload and download.
+  - name: threads
+    description: Conversations within a mailbox.
+  - name: trust
+    description: Contacts, inbox policy and spam reports.
+  - name: events
+    description: Server-Sent Events stream.
+  - name: handles
+    description: Handle availability, ownership and proofs.
+  - name: purchases
+    description: App Store, Google Play and tester handle entitlements.
+  - name: devices
+    description: Push notification registrations.
+  - name: mcp
+    description: Model Context Protocol endpoints (JSON-RPC 2.0 over HTTP).
+  - name: operator
+    description: Operator-only routes authenticated by shared secrets.
+  - name: internal
+    description: Served only on the separate internal listener, never on the public one.
+
+paths:
+  /:
+    get:
+      tags: [meta]
+      operationId: onboardingPage
+      summary: Self-serve onboarding page
+      description: Static HTML page that solves the proof-of-work in the browser, mints an inbox and shows an MCP connector config.
+      security: []
+      responses:
+        '200':
+          description: HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+  /health:
+    get:
+      tags: [meta]
+      operationId: health
+      summary: Liveness check
+      security: []
+      responses:
+        '200':
+          description: Service is up.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  service:
+                    type: string
+                    examples: [pigeonpost-postbox]
+                  version:
+                    type: string
+                  stage:
+                    type: string
+  /review-sign-in:
+    get:
+      tags: [meta]
+      operationId: reviewSignInPage
+      summary: App-review sign-in demonstration page
+      description: HTML page that lets an app reviewer generate a real device-authorization QR code. Never returns user tokens.
+      security: []
+      responses:
+        '200':
+          description: HTML page.
+          content:
+            text/html:
+              schema:
+                type: string
+    post:
+      tags: [meta]
+      operationId: reviewSignInGenerate
+      summary: Generate a fresh device-authorization QR code
+      description: Globally rate limited to one code per 15 seconds. Responses are HTML.
+      security: []
+      responses:
+        '200':
+          description: HTML page with a QR code and confirmation code.
+          content:
+            text/html:
+              schema:
+                type: string
+        '429':
+          description: Another code was generated less than 15 seconds ago (HTML).
+          content:
+            text/html:
+              schema:
+                type: string
+        '502':
+          description: The sign-in service is unavailable (HTML).
+          content:
+            text/html:
+              schema:
+                type: string
+  /metrics:
+    get:
+      tags: [operator]
+      operationId: metrics
+      summary: Prometheus metrics for attachment storage
+      description: Returns 404 `not_found` when no metrics secret is configured on this postbox.
+      security:
+        - metricsToken: []
+      responses:
+        '200':
+          description: Prometheus text exposition format.
+          content:
+            text/plain:
+              schema:
+                type: string
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /mcp:
+    post:
+      tags: [mcp]
+      operationId: mcp
+      summary: MCP over Streamable HTTP (JSON-RPC 2.0)
+      description: |
+        Methods: `initialize`, `tools/list`, `ping`, `tools/call`. The bearer token is optional for
+        `initialize`/`tools/list`; tool calls authenticate with a capability token, an account API
+        key or a member token. Tool failures (including authentication failures) are reported as
+        error tool-results inside a 200 JSON-RPC response, not as HTTP errors. A notification
+        (no `id`) gets an empty 202.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+      responses:
+        '200':
+          description: JSON-RPC response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: Notification accepted; no body.
+        '400':
+          description: Body was not JSON (`invalid_request`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /chatgpt:
+    post:
+      tags: [mcp]
+      operationId: chatgptMcp
+      summary: Account-linked MCP surface for ChatGPT
+      description: |
+        JSON-RPC 2.0 MCP endpoint exposing a restricted tool set. Tool calls require an OAuth access
+        token whose audience is this resource and that carries the `pigeonpost:read` or
+        `pigeonpost:write` scope. Requests from browser origins other than ChatGPT/OpenAI are refused
+        with 403. Unsupported `MCP-Protocol-Version` header values get 400. Missing or invalid
+        tokens get 401 (insufficient scope 403) with a JSON-RPC body carrying an
+        `mcp/www_authenticate` challenge. Body limit 128 KiB.
+      security:
+        - memberToken: []
+        - {}
+      parameters:
+        - name: MCP-Protocol-Version
+          in: header
+          required: false
+          schema:
+            type: string
+            enum: ['2025-03-26', '2025-06-18', '2025-11-25']
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonRpcRequest'
+      responses:
+        '200':
+          description: JSON-RPC response.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '202':
+          description: Notification accepted; no body.
+        '400':
+          description: Unsupported MCP protocol version.
+        '401':
+          description: Authorization required; JSON-RPC body with a `WWW-Authenticate`-style challenge in `_meta`.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JsonRpcResponse'
+        '403':
+          description: Origin not allowed, or token lacks the required scope.
+  /.well-known/oauth-protected-resource:
+    get:
+      tags: [mcp]
+      operationId: oauthProtectedResource
+      summary: OAuth protected-resource metadata (RFC 9728)
+      security: []
+      responses:
+        '200':
+          description: Metadata for the ChatGPT MCP resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectedResourceMetadata'
+  /.well-known/oauth-protected-resource/chatgpt:
+    get:
+      tags: [mcp]
+      operationId: oauthProtectedResourceChatgpt
+      summary: OAuth protected-resource metadata for /chatgpt
+      security: []
+      responses:
+        '200':
+          description: Metadata for the ChatGPT MCP resource.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ProtectedResourceMetadata'
+  /v1/capabilities:
+    get:
+      tags: [meta]
+      operationId: getCapabilities
+      summary: What this server and this credential can do
+      security:
+        - memberToken: []
+        - apiKey: []
+        - capToken: []
+      responses:
+        '200':
+          description: Capabilities for the caller.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [api_version, server_version, features, event_types, credential]
+                properties:
+                  api_version:
+                    type: string
+                    examples: ['1.1']
+                  server_version:
+                    type: string
+                  features:
+                    type: array
+                    description: Names of the feature flags enabled for this caller.
+                    items:
+                      type: string
+                  event_types:
+                    type: array
+                    description: Typed event names the event stream may emit for this caller.
+                    items:
+                      type: string
+                  credential:
+                    type: object
+                    additionalProperties: true
+                    required: [kind, human, step_up]
+                    properties:
+                      kind:
+                        type: string
+                        enum: [member, api_key, connector, mailbox]
+                      human:
+                        type: boolean
+                      step_up:
+                        type: object
+                        additionalProperties: true
+                        required: [configured, satisfied, acr_values, max_age]
+                        properties:
+                          configured:
+                            type: boolean
+                          satisfied:
+                            type: boolean
+                          acr_values:
+                            type: array
+                            items:
+                              type: string
+                          max_age:
+                            type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/pow/challenge:
+    get:
+      tags: [accounts]
+      operationId: powChallenge
+      summary: Issue a proof-of-work challenge
+      description: Required for anonymous `POST /v1/identities` and for `POST /v1/accounts`.
+      security: []
+      responses:
+        '200':
+          description: A challenge to solve.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  challenge:
+                    type: string
+                  bits:
+                    type: integer
+                  expires_at:
+                    type: integer
+                    description: Unix seconds.
+  /v1/accounts:
+    post:
+      tags: [accounts]
+      operationId: createAccount
+      summary: Create an account (proof-of-work gated)
+      description: Returns the account's first API key, shown once. Subject to the same per-IP mint budget as anonymous inboxes.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PowRequest'
+      responses:
+        '201':
+          description: Account created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  account_id:
+                    type: string
+                  api_key:
+                    type: string
+                    description: '`pk_live_…`, shown only once.'
+        '400':
+          description: '`pow_required` — missing, wrong or expired proof-of-work.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/MintRefused'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/account/deletion-request:
+    get:
+      tags: [accounts]
+      operationId: getAccountDeletionRequest
+      summary: Status of this account's deletion request
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Current request (null if none). `Cache-Control - no-store`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  request:
+                    oneOf:
+                      - $ref: '#/components/schemas/DeletionRequest'
+                      - type: 'null'
+                  account:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      label:
+                        type: string
+                        description: The sign-in contact address, or the account id.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [accounts]
+      operationId: requestAccountDeletion
+      summary: Request deletion of this account and its data
+      description: Idempotent; retries return the original receipt and cannot postpone its deadline.
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [confirm]
+              properties:
+                confirm:
+                  type: boolean
+                  description: Must be true.
+      responses:
+        '200':
+          description: Deletion request receipt.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  request:
+                    $ref: '#/components/schemas/DeletionRequest'
+        '400':
+          description: '`confirmation_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/api-keys:
+    post:
+      tags: [accounts]
+      operationId: createApiKey
+      summary: Issue a new account API key
+      security:
+        - memberToken: []
+        - apiKey: []
+      responses:
+        '201':
+          description: Key created; plaintext shown once.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  api_key:
+                    type: string
+        '400':
+          $ref: '#/components/responses/UseApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    get:
+      tags: [accounts]
+      operationId: listApiKeys
+      summary: List the account's API keys (never the secret)
+      security:
+        - memberToken: []
+        - apiKey: []
+      responses:
+        '200':
+          description: Keys.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  keys:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        id:
+                          type: string
+                        prefix:
+                          type: string
+                        created_at:
+                          type: integer
+        '400':
+          $ref: '#/components/responses/UseApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/api-keys/{id}:
+    delete:
+      tags: [accounts]
+      operationId: revokeApiKey
+      summary: Revoke one of the account's API keys
+      security:
+        - memberToken: []
+        - apiKey: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Revoked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  revoked:
+                    type: boolean
+                    const: true
+        '400':
+          $ref: '#/components/responses/UseApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/identities:
+    post:
+      tags: [identities]
+      operationId: createIdentity
+      summary: Create a mailbox
+      description: |
+        With an API key or member token: created under that account, no proof-of-work, optionally
+        under a `handle` the account is authorised for. Anonymous (no bearer): proof-of-work and the
+        per-IP mint budget apply, `handle` is ignored, and the mailbox is ephemeral. A capability
+        token cannot create mailboxes (400 `use_api_key`).
+      security:
+        - apiKey: []
+        - memberToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              allOf:
+                - $ref: '#/components/schemas/PowRequest'
+                - type: object
+                  properties:
+                    label:
+                      type: string
+                    handle:
+                      type: string
+                      description: e.g. `/bekir/agent1`. Account callers only.
+      responses:
+        '201':
+          description: Mailbox created.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  address:
+                    type: string
+                    description: The `/k/…` address.
+                  handle:
+                    type: [string, 'null']
+                  capability_token:
+                    type: string
+                    description: '`cap_…`, shown once.'
+        '400':
+          description: '`use_api_key`, `pow_required`, `invalid_handle`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`account_required`, `identity_quota`, `namespace_not_yours`, `namespace_quota`, `identity_not_proved`, `address_not_proved`, `name_reserved`, `parent_not_yours`, `already_named`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`handle_taken`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          $ref: '#/components/responses/MintRefused'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          description: '`open_namespace_closed` — open namespace has no reserved-name list configured.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    get:
+      tags: [identities]
+      operationId: listIdentities
+      summary: List the account's mailboxes
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: Mailboxes.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  identities:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        address:
+                          type: string
+                        label:
+                          type: [string, 'null']
+                        handle:
+                          type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/UseApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [identities]
+      operationId: deleteIdentity
+      summary: Delete a mailbox and its messages
+      description: An account credential may delete any mailbox it owns; a capability token may delete only its own mailbox.
+      security:
+        - apiKey: []
+        - memberToken: []
+        - capToken: []
+      parameters:
+        - name: identity
+          in: query
+          required: true
+          description: The `/k/…` address to delete.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+                    const: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`forbidden` — capability token naming another mailbox.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/identities/handle:
+    post:
+      tags: [identities]
+      operationId: bindIdentityHandle
+      summary: Give an existing mailbox a handle
+      security:
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address, handle]
+              properties:
+                address:
+                  type: string
+                  description: The `/k/…` mailbox to name.
+                handle:
+                  type: string
+                capability_token:
+                  type: string
+                  description: Required only when the mailbox belongs to no account yet, as proof of control.
+      responses:
+        '200':
+          description: Bound.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  address:
+                    type: string
+                  handle:
+                    type: string
+        '400':
+          description: '`invalid_handle`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`account_required`, `not_your_mailbox`, `proof_required`, `namespace_quota`, `namespace_not_yours`, `identity_not_proved`, `address_not_proved`, `name_reserved`, `parent_not_yours`, `already_named`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`unknown_mailbox`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`already_named`, `handle_taken`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          description: '`open_namespace_closed`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/send:
+    post:
+      tags: [messaging]
+      operationId: send
+      summary: Seal and deliver a message to a hosted recipient
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to, body]
+              properties:
+                to:
+                  type: string
+                  description: A `/k/…` address, a handle, or a bare namespace such as `/bekir`.
+                body:
+                  type: string
+                from:
+                  type: string
+                  description: Which of the account's mailboxes to send as.
+                thread_id:
+                  type: string
+                  description: Continue an existing thread.
+                thread:
+                  type: string
+                  description: Open a new thread with this title (1–200 chars). Ignored when `thread_id` is given.
+                attachments:
+                  type: array
+                  description: Attachment ids from `POST /v1/attachments`, uploaded by this mailbox and not yet sent.
+                  items:
+                    type: string
+      responses:
+        '201':
+          description: Delivered.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  message_id:
+                    type: string
+                  sent_copy_id:
+                    type: [string, 'null']
+                  recipient:
+                    type: string
+                    description: The resolved `/k/…` address.
+        '400':
+          description: '`invalid_recipient`, `unknown_thread`, `wrong_thread_peer`, `bad_thread_title`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`not_admitted`, `wrong_identity`, `not_in_account`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`recipient_unresolved`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`recipient_inbox_full`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: '`stranger_rate_limited` (with `Retry-After`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/inbox:
+    get:
+      tags: [messaging]
+      operationId: inbox
+      summary: Read the acting mailbox's messages (optionally long-polling)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - name: include_sent
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: include_read
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: wait
+          in: query
+          description: Seconds to hold the request open while the inbox is empty; clamped to 60.
+          schema:
+            type: integer
+            minimum: 0
+        - name: thread_id
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Opened messages plus the inbox policy.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  messages:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/InboxMessage'
+                  policy:
+                    $ref: '#/components/schemas/InboxPolicy'
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/ack:
+    post:
+      tags: [messaging]
+      operationId: ack
+      summary: Mark a message read
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRef'
+      responses:
+        '200':
+          description: Marked read.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/messages/delete:
+    post:
+      tags: [messaging]
+      operationId: deleteMessage
+      summary: Permanently delete one message (and its attachments) from the acting mailbox
+      description: Deleting something absent or not yours answers `deleted - false`, not an error.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRef'
+      responses:
+        '200':
+          description: Result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/attachments:
+    post:
+      tags: [attachments]
+      operationId: uploadAttachment
+      summary: Upload a file for a later send
+      description: |
+        The raw bytes are the request body; metadata travels in headers. The upload stays unclaimed
+        (and counts against the mailbox quota) until a send names it. 404 `not_found` when this
+        postbox has attachments disabled.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: x-pigeonpost-identity
+          in: header
+          description: Which of the account's mailboxes to act as.
+          schema:
+            type: string
+        - name: x-pigeonpost-filename
+          in: header
+          schema:
+            type: string
+        - name: x-pigeonpost-media-type
+          in: header
+          description: Narrowed server-side to a safe set.
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              contentMediaType: application/octet-stream
+      responses:
+        '201':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  id:
+                    type: string
+                    description: '`att_…`'
+                  bytes:
+                    type: integer
+                  media_type:
+                    type: string
+                  filename:
+                    type: string
+        '400':
+          description: '`empty_attachment`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`mailbox_full`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: '`attachment_too_large`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: '`store_error`, `storage_error`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '507':
+          description: '`storage_full`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/attachments/{id}:
+    get:
+      tags: [attachments]
+      operationId: downloadAttachment
+      summary: Download an attachment held by the acting mailbox
+      description: Always served with `Content-Disposition - attachment`. Not-yours and not-there both answer 404 `not_found`.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: x-pigeonpost-identity
+          in: header
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The bytes, with the stored media type.
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                contentMediaType: application/octet-stream
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/quota:
+    get:
+      tags: [messaging]
+      operationId: quota
+      summary: How full the acting mailbox is
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - name: x-pigeonpost-identity
+          in: header
+          description: Used when the `identity` query parameter is absent.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Usage.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  used_bytes:
+                    type: integer
+                  limit_bytes:
+                    type: integer
+                  tier:
+                    type: string
+                    enum: [anonymous, free, paid]
+                  warn_at_bytes:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/report-spam:
+    post:
+      tags: [trust]
+      operationId: reportSpam
+      summary: Report the sender of a received message as spam
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/MessageRef'
+      responses:
+        '200':
+          description: Report recorded (or already recorded).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  reported:
+                    type: boolean
+                    description: False when this message was already reported.
+                  sender:
+                    type: string
+                  reports_against_sender:
+                    type: integer
+                  detail:
+                    type: string
+        '400':
+          description: '`invalid_report`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`reporter_not_in_good_standing`, `wrong_identity`, `not_in_account`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/events:
+    get:
+      tags: [events]
+      operationId: events
+      summary: Server-Sent Events stream for an account
+      description: |
+        One stream per account covering all of its mailboxes. Only metadata crosses the stream,
+        never message bodies. Keep-alive comments are sent every 15 seconds. Without a resume
+        cursor the stream starts at "now".
+
+        **Event types**
+
+        * `mail` — legacy format, unchanged. The `id:` line is the message cursor (a decimal
+          integer). Data: `{event_id: integer, mailbox, message_id, sender, created_at}`.
+        * Typed events — sent only when the `account_events` feature flag is enabled for the
+          account. The `id:` line is `"<mail_cursor>.<event_seq>"`. Data:
+          `{event_id: string, type: string, mailbox: string|null, data: object}`. Initial type:
+          `features.changed` with data `{feature, enabled}`.
+        * `resync_required` — no `id:` line. Data
+          `{type: "resync_required", reason: "cursor_expired"}`. Sent when the resume cursor is older
+          than the retained window (7 days / 10,000 events per account). The client must reload
+          authoritative state (inbox, threads, capabilities) and then continue from the new ids.
+
+        Clients must ignore event types they do not recognise.
+      security:
+        - memberToken: []
+        - apiKey: []
+      parameters:
+        - name: last_event_id
+          in: query
+          description: Resume cursor, for clients that cannot set headers. Either a mail cursor (`"123"`) or a typed cursor (`"123.4"`).
+          schema:
+            type: string
+        - name: Last-Event-ID
+          in: header
+          description: Standard SSE resume cursor; same format as `last_event_id`.
+          schema:
+            type: string
+      responses:
+        '200':
+          description: An open `text/event-stream`.
+          content:
+            text/event-stream:
+              schema:
+                type: string
+                description: SSE frames whose `data:` is one of the event payload schemas.
+              examples:
+                mail:
+                  value: "id: 1042\nevent: mail\ndata: {\"event_id\":1042,\"mailbox\":\"/k/abc\",\"message_id\":\"m1\",\"sender\":\"/k/def\",\"created_at\":1760000000}\n\n"
+                typed:
+                  value: "id: 1042.7\nevent: features.changed\ndata: {\"event_id\":\"1042.7\",\"type\":\"features.changed\",\"mailbox\":null,\"data\":{\"feature\":\"account_events\",\"enabled\":true}}\n\n"
+                resync:
+                  value: "event: resync_required\ndata: {\"type\":\"resync_required\",\"reason\":\"cursor_expired\"}\n\n"
+        '400':
+          $ref: '#/components/responses/UseApiKey'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          description: '`too_many_streams` — the account already holds too many open streams.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/whoami:
+    get:
+      tags: [identities]
+      operationId: whoami
+      summary: The mailbox this credential acts as
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Acting mailbox.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  address:
+                    type: string
+                  handle:
+                    type: [string, 'null']
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/namespaces:
+    put:
+      tags: [operator]
+      operationId: grantNamespace
+      summary: Bind a purchased namespace to an account
+      description: |
+        Called by the billing/entitlement service only. Returns 404 `not_found` when no grant secret
+        is configured. Also ensures the namespace has a first mailbox (`/<namespace>/main`);
+        `mailbox` is null if that best-effort step failed.
+      security:
+        - namespaceGrant: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [namespace, account_id]
+              properties:
+                namespace:
+                  type: string
+                account_id:
+                  type: string
+                expires_at:
+                  type: [integer, 'null']
+                  description: Unix seconds; null means until revoked.
+      responses:
+        '200':
+          description: Granted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  namespace:
+                    type: string
+                  account_id:
+                    type: string
+                  mailbox:
+                    type: [string, 'null']
+        '400':
+          description: '`invalid_namespace`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`namespace_taken`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/github/device:
+    post:
+      tags: [handles]
+      operationId: startGithubClaim
+      summary: Start a GitHub device login to prove a GitHub username
+      security:
+        - apiKey: []
+        - memberToken: []
+      responses:
+        '200':
+          description: What the person enters at GitHub.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  device_code:
+                    type: string
+                  user_code:
+                    type: string
+                  verification_uri:
+                    type: string
+                  expires_in:
+                    type: integer
+                  interval:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/AccountRequired'
+        '404':
+          description: '`github_login_unavailable`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '502':
+          description: '`github_unreachable`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`github_device_flow_disabled`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/github/claim:
+    post:
+      tags: [handles]
+      operationId: claimGithub
+      summary: Finish a GitHub device login and record the username for this account
+      description: Polled; `pending` and `slow_down` are ordinary 200 answers.
+      security:
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [device_code]
+              properties:
+                device_code:
+                  type: string
+      responses:
+        '200':
+          description: Status.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  status:
+                    type: string
+                    enum: [pending, slow_down, verified]
+                  login:
+                    type: string
+                  handle:
+                    type: string
+                    examples: [/github/alex]
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/AccountRequired'
+        '404':
+          description: '`github_login_unavailable`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`login_changed_hands`, `login_already_claimed`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '502':
+          description: '`github_refused`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/workspace:
+    get:
+      tags: [identities]
+      operationId: getWorkspace
+      summary: Fetch the acting mailbox's encrypted workspace context
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Opaque ciphertext; the postbox holds no key for it.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  nonce:
+                    type: string
+                    contentEncoding: base64
+                  ciphertext:
+                    type: string
+                    contentEncoding: base64
+                  kdf_salt:
+                    type: string
+                    contentEncoding: base64
+                  updated_at:
+                    type: integer
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [identities]
+      operationId: putWorkspace
+      summary: Store the acting mailbox's encrypted workspace context
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [nonce, ciphertext, kdf_salt]
+              properties:
+                nonce:
+                  type: string
+                  description: Base64 of a 24-byte XChaCha20-Poly1305 nonce.
+                ciphertext:
+                  type: string
+                  description: Base64; at most 8 KiB decoded.
+                kdf_salt:
+                  type: string
+                  description: Base64; non-empty.
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: '`invalid_workspace`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/contacts:
+    get:
+      tags: [trust]
+      operationId: listContacts
+      summary: The acting mailbox's contacts, stranger policy and verb vocabulary
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Contacts.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  contacts:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Contact'
+                  policy:
+                    $ref: '#/components/schemas/InboxPolicy'
+                  vocabulary:
+                    type: object
+                    additionalProperties: true
+                    properties:
+                      grantable:
+                        type: array
+                        items:
+                          type: string
+                      never_auto:
+                        type: array
+                        items:
+                          type: string
+                      needs_machine_opt_in:
+                        type: array
+                        items:
+                          type: string
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [trust]
+      operationId: putContact
+      summary: Add or amend a contact (human path; may raise trust)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peer]
+              properties:
+                peer:
+                  type: string
+                  description: A `/k/…` address, a handle, or a namespace like `/bekir/*`.
+                alias:
+                  type: string
+                admission:
+                  type: string
+                  enum: [allow, block]
+                autonomy:
+                  type: string
+                  enum: [review, auto]
+                allowed_verbs:
+                  type: array
+                  description: Omitted leaves grants alone; `[]` revokes them all.
+                  items:
+                    type: string
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: The stored contact.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+        '400':
+          description: '`invalid_peer`, `invalid_verb`, an invalid enum value, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [trust]
+      operationId: deleteContact
+      summary: Forget a contact
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: peer
+          in: query
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: boolean
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/archive:
+    get:
+      tags: [threads]
+      operationId: listArchive
+      summary: Peers whose conversations this mailbox has archived
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Archived peers.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  archived:
+                    type: array
+                    items: {}
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    put:
+      tags: [threads]
+      operationId: putArchive
+      summary: Archive or restore a peer's conversation (local view only)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peer]
+              properties:
+                peer:
+                  type: string
+                  maxLength: 256
+                archived:
+                  type: boolean
+                  default: true
+                  description: false restores.
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Done.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: '`invalid_peer`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/threads:
+    get:
+      tags: [threads]
+      operationId: listThreads
+      summary: The acting mailbox's conversations, most recent first
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: peer
+          in: query
+          description: Address or handle; an unknown peer yields an empty list.
+          schema:
+            type: string
+        - name: include_archived
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Threads.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  threads:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Thread'
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [threads]
+      operationId: openThread
+      summary: Open a named thread with a peer (created on both sides)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peer, title]
+              properties:
+                peer:
+                  type: string
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                identity:
+                  type: string
+      responses:
+        '201':
+          description: Opened.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  thread_id:
+                    type: string
+        '400':
+          description: '`bad_thread_title`, `unknown_recipient`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/threads/{id}:
+    patch:
+      tags: [threads]
+      operationId: patchThread
+      summary: Rename or archive one thread in this mailbox only
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/ThreadId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                title:
+                  type: string
+                  minLength: 1
+                  maxLength: 200
+                archived:
+                  type: boolean
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: '`bad_thread_title`, `unknown_thread`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    delete:
+      tags: [threads]
+      operationId: deleteThread
+      summary: Delete one thread and its mail in this mailbox only (irreversible)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/ThreadId'
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: '`unknown_thread`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/handles/{name}/availability:
+    get:
+      tags: [handles]
+      operationId: handleAvailability
+      summary: Is this namespace free to buy?
+      description: |
+        Public. When called with the account credential of a lapsed namespace's owner, may answer
+        `available - true, reason - renewal` (then `Cache-Control - private, no-store`).
+      security:
+        - {}
+        - memberToken: []
+        - apiKey: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Availability.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  name:
+                    type: string
+                  available:
+                    type: boolean
+                  reason:
+                    type: string
+                    enum: [invalid, reserved, taken, renewal]
+        '500':
+          description: '`reserved_names_unavailable`, `store_error`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/me/handles:
+    get:
+      tags: [handles]
+      operationId: myHandles
+      summary: Every namespace the signed-in account holds
+      security:
+        - memberToken: []
+      parameters:
+        - name: include_inactive
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Holdings (`Cache-Control - private, no-store`).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  account:
+                    type: string
+                  handles:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/NamespaceHolding'
+        '400':
+          $ref: '#/components/responses/MemberTokenRequired'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/claims/test:
+    get:
+      tags: [purchases]
+      operationId: testerHandleState
+      summary: Complimentary tester handle offer and current holding
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Offer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TesterOffer'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [purchases]
+      operationId: testerHandleClaim
+      summary: Claim a complimentary namespace (approved testers only)
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [namespace]
+              properties:
+                namespace:
+                  type: string
+      responses:
+        '200':
+          description: Claimed (idempotent for the same name).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TesterOffer'
+        '400':
+          description: '`invalid_namespace`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`tester_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`name_reserved`, `tester_already_named`, `namespace_taken`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: '`reserved_names_unavailable`, `store_error`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/claims/address:
+    post:
+      tags: [handles]
+      operationId: claimAddress
+      summary: Prove the verified contact address this account signs in with, so it can be a handle
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Proved.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  handle:
+                    type: string
+                  proved_at:
+                    type: integer
+        '400':
+          description: '`member_token_required`, `no_address`, `invalid_address`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`address_not_verified`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`address_held`, `address_moved`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/claims/apple:
+    get:
+      tags: [purchases]
+      operationId: appleClaimState
+      summary: App Store catalog and what this account already holds
+      description: 404 `not_found` when App Store verification is not configured.
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: State.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  product_id:
+                    type: string
+                  product_ids:
+                    type: array
+                    items:
+                      type: string
+                  plan:
+                    description: The account's current plan, if any.
+                  max_handles:
+                    type: integer
+                  account:
+                    type: string
+                  app_account_token:
+                    type: string
+                    description: UUID to pass as the StoreKit appAccountToken.
+                  namespace:
+                    type: [string, 'null']
+                  expires_at:
+                    type: [integer, 'null']
+                  handles:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      properties:
+                        original_transaction_id:
+                          type: string
+                        namespace:
+                          type: string
+                        product_id:
+                          type: string
+                        environment:
+                          type: string
+                        expires_at:
+                          type: integer
+                        active:
+                          type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [purchases]
+      operationId: claimApple
+      summary: Turn a verified App Store purchase into a namespace or plan
+      description: 404 `not_found` when App Store verification is not configured. The transaction is verified with Apple; nothing in the body is trusted.
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [transaction_id]
+              properties:
+                transaction_id:
+                  type: string
+                namespace:
+                  type: string
+                  description: The name being bought; required unless the transaction already owns one.
+      responses:
+        '200':
+          description: |
+            Claimed. Single-handle products return `{namespace, mailbox, expires_at, environment}`;
+            plan products return `{plan, namespace, mailbox}`.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  namespace:
+                    type: [string, 'null']
+                  mailbox:
+                    type: [string, 'null']
+                  expires_at:
+                    type: integer
+                  environment:
+                    type: string
+                  plan: {}
+        '400':
+          description: '`member_token_required`, `purchase_unknown`, `purchase_not_ours`, `purchase_account_required`, `name_required`, `invalid_namespace`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: '`purchase_expired`, `purchase_refunded`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`purchase_already_used`, `purchase_already_named`, `namespace_taken`, `name_reserved`, `handle_limit_reached`, `handle_already_subscribed`, `plan_capacity_reached`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: '`appstore_unavailable`, `reserved_names_unavailable`, `store_error`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/claims/google:
+    get:
+      tags: [purchases]
+      operationId: googlePlayCatalog
+      summary: Google Play catalog and this account's subscriptions
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Catalog.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  available:
+                    type: boolean
+                  product_ids:
+                    type: array
+                    items:
+                      type: string
+                  base_plan_id:
+                    type: string
+                  max_handles:
+                    type: integer
+                  account_id:
+                    type: string
+                    description: Obfuscated account id to pass to Play Billing.
+                  handles:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [purchases]
+      operationId: googlePlayClaim
+      summary: Redeem a Google Play purchase token (optionally naming the handle)
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [purchase_token]
+              properties:
+                purchase_token:
+                  type: string
+                namespace:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/GooglePurchase'
+        '400':
+          $ref: '#/components/responses/GooglePurchaseBadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GooglePurchaseMismatch'
+        '409':
+          $ref: '#/components/responses/GooglePurchaseConflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/BillingUnavailable'
+  /v1/claims/google/assign:
+    post:
+      tags: [purchases]
+      operationId: googlePlayAssign
+      summary: Assign a name to an active, unnamed Google Play subscription
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [product_id, namespace]
+              properties:
+                product_id:
+                  type: string
+                namespace:
+                  type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/GooglePurchase'
+        '400':
+          description: '`no_unassigned_purchase`, `invalid_namespace`, `reserved`, `purchase_not_found`, `invalid_purchase`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GooglePurchaseMismatch'
+        '409':
+          $ref: '#/components/responses/GooglePurchaseConflict'
+        '500':
+          $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/BillingUnavailable'
+  /v1/devices:
+    post:
+      tags: [devices]
+      operationId: registerDevice
+      summary: Register a push token for the acting mailbox
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [token]
+              properties:
+                token:
+                  type: string
+                platform:
+                  type: string
+                  enum: [apns, fcm]
+                  default: apns
+                environment:
+                  type: string
+                  enum: [production, sandbox]
+                  default: production
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Registered.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Ok'
+        '400':
+          description: '`unknown_platform`, `invalid_device_token`, `no_identity`, `identity_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/devices/{token}:
+    delete:
+      tags: [devices]
+      operationId: unregisterDevice
+      summary: Stop pushing to a device (scoped to the caller's account or mailbox)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Done.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                    const: true
+                  removed:
+                    description: Whether (or how many) registrations were removed.
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/policy:
+    put:
+      tags: [trust]
+      operationId: putPolicy
+      summary: Set the acting mailbox's stranger defaults
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                accept_all:
+                  type: boolean
+                auto_accept_known:
+                  type: boolean
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: The resulting policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPolicy'
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /internal/v1/health:
+    get:
+      tags: [internal]
+      x-internal: true
+      operationId: internalHealth
+      summary: Internal listener health
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Up.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [status, service, server_version]
+                properties:
+                  status:
+                    type: string
+                    const: ok
+                  service:
+                    type: string
+                    description: The calling service the token belongs to.
+                  server_version:
+                    type: string
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/features:
+    get:
+      tags: [internal]
+      x-internal: true
+      operationId: internalListFeatures
+      summary: Known feature flags and every stored override
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Flags.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [known, flags]
+                properties:
+                  known:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      required: [name, description]
+                      properties:
+                        name:
+                          type: string
+                        description:
+                          type: string
+                  flags:
+                    type: array
+                    items:
+                      type: object
+                      additionalProperties: true
+                      required: [name, scope, scope_id, enabled, updated_at, updated_by]
+                      properties:
+                        name:
+                          type: string
+                        scope:
+                          type: string
+                          enum: [global, account]
+                        scope_id:
+                          type: string
+                        enabled:
+                          type: boolean
+                        updated_at:
+                          type: integer
+                        updated_by:
+                          type: [string, 'null']
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/features/{name}:
+    put:
+      tags: [internal]
+      x-internal: true
+      operationId: internalSetFeature
+      summary: Set or clear a feature flag override
+      security:
+        - serviceToken: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [scope, enabled]
+              properties:
+                scope:
+                  type: string
+                  enum: [global, account]
+                account_id:
+                  type: string
+                  description: Required when `scope` is `account`.
+                enabled:
+                  type: [boolean, 'null']
+                  description: null clears the override.
+      responses:
+        '200':
+          description: Resulting override.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                required: [name, scope, scope_id, enabled]
+                properties:
+                  name:
+                    type: string
+                  scope:
+                    type: string
+                    enum: [global, account]
+                  scope_id:
+                    type: string
+                  enabled:
+                    type: [boolean, 'null']
+        '400':
+          description: '`unknown_feature`, `scope_unsupported`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+
+components:
+  securitySchemes:
+    capToken:
+      type: http
+      scheme: bearer
+      bearerFormat: cap_<hex>
+      description: Capability token (`cap_…`) bound to exactly one mailbox. Returned once when the mailbox is created.
+    apiKey:
+      type: http
+      scheme: bearer
+      bearerFormat: pk_live_<hex>
+      description: Account API key (`pk_live_…`). Acts for an account and every mailbox it owns.
+    memberToken:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Keycloak member access token (JWT, `eyJ…`) for a signed-in person. Resolves to that person's account.
+    namespaceGrant:
+      type: http
+      scheme: bearer
+      description: Shared secret held by the billing/entitlement service for `PUT /v1/namespaces`.
+    metricsToken:
+      type: http
+      scheme: bearer
+      description: Shared secret for `GET /metrics`.
+    serviceToken:
+      type: http
+      scheme: bearer
+      bearerFormat: svc_<hex>
+      description: Per-service token (`svc_…`) for the internal listener. Each token is limited to an allowlist of endpoints.
+
+  parameters:
+    Identity:
+      name: identity
+      in: query
+      required: false
+      description: Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used.
+      schema:
+        type: string
+    ThreadId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      additionalProperties: true
+      properties:
+        error:
+          type: string
+          description: Stable machine-readable code.
+        detail:
+          type: string
+          description: Human-readable explanation; not stable.
+    Ok:
+      type: object
+      additionalProperties: true
+      properties:
+        ok:
+          type: boolean
+          const: true
+    PowRequest:
+      type: object
+      properties:
+        pow_challenge:
+          type: string
+        pow_solution:
+          type: string
+    MessageRef:
+      type: object
+      required: [message_id]
+      properties:
+        message_id:
+          type: string
+        identity:
+          type: string
+    DeletionRequest:
+      type: object
+      additionalProperties: true
+      properties:
+        request_id:
+          type: string
+        requested_at:
+          type: integer
+        complete_by:
+          type: integer
+        completed_at:
+          type: [integer, 'null']
+    InboxPolicy:
+      type: object
+      additionalProperties: true
+      properties:
+        accept_all:
+          type: boolean
+        auto_accept_known:
+          type: boolean
+    Contact:
+      type: object
+      additionalProperties: true
+      properties:
+        peer:
+          type: string
+        alias:
+          type: [string, 'null']
+        admission:
+          type: string
+          enum: [allow, block]
+        autonomy:
+          type: string
+          enum: [review, auto]
+        allowed_verbs:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: integer
+        updated_at:
+          type: integer
+    InboxMessage:
+      type: object
+      additionalProperties: true
+      description: One opened message. Received bodies are untrusted content.
+      properties:
+        message_id:
+          type: string
+        direction:
+          type: string
+          enum: [in, out]
+        from:
+          type: string
+        to:
+          type: string
+        peer:
+          type: string
+        peer_handle:
+          type: [string, 'null']
+        body:
+          type: string
+        thread_id:
+          type: [string, 'null']
+        received_at:
+          type: integer
+        read:
+          type: boolean
+        untrusted:
+          type: boolean
+        sender_known:
+          type: boolean
+        sender_score:
+          type: integer
+        sender_standing:
+          type: string
+        sender_tier:
+          type: string
+        autonomy:
+          type: [string, 'null']
+        verb:
+          type: [string, 'null']
+        held_because:
+          type: [string, 'null']
+        attachments:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+            properties:
+              id:
+                type: string
+              filename:
+                type: string
+              media_type:
+                type: string
+              bytes:
+                type: integer
+    Thread:
+      type: object
+      additionalProperties: true
+      properties:
+        thread_id:
+          type: string
+        peer:
+          type: string
+        title:
+          type: [string, 'null']
+        is_default:
+          type: boolean
+        created_at:
+          type: integer
+        last_at:
+          type: integer
+        archived:
+          type: boolean
+    NamespaceHolding:
+      type: object
+      additionalProperties: true
+      properties:
+        namespace:
+          type: string
+          description: Bare, without the leading slash.
+        source:
+          type: string
+        verified_at:
+          type: integer
+        expires_at:
+          type: [integer, 'null']
+        active:
+          type: boolean
+    TesterOffer:
+      type: object
+      additionalProperties: true
+      properties:
+        eligible:
+          type: boolean
+        namespace:
+          type: [string, 'null']
+        source:
+          type: [string, 'null']
+        expires_at:
+          type: [integer, 'null']
+        mailbox:
+          type: [string, 'null']
+    ProtectedResourceMetadata:
+      type: object
+      additionalProperties: true
+      properties:
+        resource:
+          type: string
+        resource_name:
+          type: string
+        authorization_servers:
+          type: array
+          items:
+            type: string
+        scopes_supported:
+          type: array
+          items:
+            type: string
+        bearer_methods_supported:
+          type: array
+          items:
+            type: string
+        resource_documentation:
+          type: string
+    JsonRpcRequest:
+      type: object
+      additionalProperties: true
+      required: [jsonrpc, method]
+      properties:
+        jsonrpc:
+          type: string
+          const: '2.0'
+        id:
+          type: [string, integer]
+        method:
+          type: string
+          examples: [initialize, tools/list, tools/call, ping]
+        params:
+          type: object
+          additionalProperties: true
+    JsonRpcResponse:
+      type: object
+      additionalProperties: true
+      properties:
+        jsonrpc:
+          type: string
+          const: '2.0'
+        id: {}
+        result: {}
+        error:
+          type: object
+          additionalProperties: true
+          properties:
+            code:
+              type: integer
+            message:
+              type: string
+    EventMailData:
+      type: object
+      description: Data of a legacy `mail` event.
+      properties:
+        event_id:
+          type: integer
+        mailbox:
+          type: string
+        message_id:
+          type: string
+        sender:
+          type: string
+        created_at:
+          type: integer
+    EventTypedData:
+      type: object
+      description: Data of a typed event (feature `account_events`).
+      required: [event_id, type, mailbox, data]
+      properties:
+        event_id:
+          type: string
+          description: '"<mail_cursor>.<event_seq>"'
+        type:
+          type: string
+          examples: [features.changed]
+        mailbox:
+          type: [string, 'null']
+        data:
+          type: object
+          additionalProperties: true
+    EventResyncRequired:
+      type: object
+      required: [type, reason]
+      properties:
+        type:
+          type: string
+          const: resync_required
+        reason:
+          type: string
+          enum: [cursor_expired]
+
+  responses:
+    Unauthorized:
+      description: '`unauthorized` — missing, unknown, revoked or invalid credential.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: '`not_found`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ServerError:
+      description: '`store_error` (or another server-side code such as `vault_error`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    UseApiKey:
+      description: '`use_api_key` — a capability token was presented where an account credential is required.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    AccountRequired:
+      description: '`account_required` — a capability token was presented where an account credential is required.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MemberTokenRequired:
+      description: '`member_token_required` — this route needs a member sign-in, not a key or capability token.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    IdentitySelection:
+      description: '`no_identity` (account has no mailboxes) or `identity_required` (account has several; pass `identity`).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    WrongIdentity:
+      description: '`wrong_identity` (capability token bound to another mailbox) or `not_in_account`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    MintRefused:
+      description: '`mint_rate_limited` (with `Retry-After`), `mint_lifetime_cap`, `mint_source_halted`.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    GooglePurchase:
+      description: Purchase recorded.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+            properties:
+              purchase:
+                type: object
+                additionalProperties: true
+              mailbox:
+                type: [string, 'null']
+    GooglePurchaseBadRequest:
+      description: '`invalid_namespace`, `reserved`, `purchase_not_found`, `invalid_purchase`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    GooglePurchaseMismatch:
+      description: '`purchase_account_mismatch`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    GooglePurchaseConflict:
+      description: '`duplicate_subscription`, `handle_limit`, `purchase_inactive`, `purchase_replaced`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    BillingUnavailable:
+      description: '`billing_unavailable`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    InvalidServiceToken:
+      description: '`invalid_service_token`'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    EndpointNotAllowed:
+      description: '`endpoint_not_allowed` — the service token is not allowed to call this endpoint.'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'

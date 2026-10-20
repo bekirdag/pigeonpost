@@ -251,7 +251,7 @@ pub(crate) async fn call_tool_as(
     // Account-management tools need an API-key account; messaging tools act as a resolved identity.
     let outcome: Result<Value, ApiError> = match name {
         "create_pigeonpost_identity" => match principal {
-            Principal::Account(a) => {
+            Principal::Account(a, _) => {
                 do_create_identity(state, Some(a), arg_str("label"), arg_str("handle")).await
             }
             Principal::Identity(_) => {
@@ -261,7 +261,7 @@ pub(crate) async fn call_tool_as(
             }
         },
         "name_pigeonpost_mailbox" => match principal {
-            Principal::Account(account) => match (arg_str("address"), arg_str("handle")) {
+            Principal::Account(account, _) => match (arg_str("address"), arg_str("handle")) {
                 (Some(address), Some(handle)) => {
                     do_bind_handle(
                         state,
@@ -285,7 +285,7 @@ pub(crate) async fn call_tool_as(
             }
         },
         "list_pigeonpost_identities" => match principal {
-            Principal::Account(a) => do_list_identities(state, a).await,
+            Principal::Account(a, _) => do_list_identities(state, a).await,
             Principal::Identity(_) => {
                 return Ok(tool_error(
                     "list_pigeonpost_identities needs an account API key",
