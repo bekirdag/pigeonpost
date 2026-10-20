@@ -57,13 +57,16 @@ mod account_events;
 mod appstore;
 mod appstore_routes;
 mod audit;
+mod avatars;
 mod billing_internal;
 #[cfg(test)]
 mod billing_tests;
 mod blobs;
+mod calllog;
 mod capabilities;
 mod chatgpt;
 mod fcm;
+mod filtering;
 #[cfg(test)]
 mod foundations_tests;
 mod github;
@@ -72,6 +75,8 @@ mod googleplay_routes;
 mod internal_api;
 mod mcp;
 mod oidc;
+#[cfg(test)]
+mod p1b_tests;
 mod policy;
 mod pow;
 mod principal;
@@ -150,6 +155,12 @@ struct AppState {
     service_tokens: Arc<internal_api::ServiceTokens>,
     /// Per-account wakeups for open `/v1/events` streams.
     event_hub: Arc<account_events::EventHub>,
+    /// Where profile pictures' bytes live: `<blob dir>/avatars`, outside the attachment quota.
+    avatar_blobs: Option<Arc<blobs::Blobs>>,
+    /// Decodes and re-encodes uploaded pictures, isolated and with bounded concurrency.
+    avatar_processor: Arc<avatars::Processor>,
+    /// Ring attempts per caller→callee pair, for call admission.
+    call_pairs: Arc<filtering::PairLimiter>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -293,6 +304,11 @@ async fn main() {
     if args.iter().any(|a| a == "--healthcheck") {
         std::process::exit(run_healthcheck());
     }
+    // One picture in, its variants out (see `avatars`). Runs under the parent's resource limits,
+    // touches no configuration, no database and no network.
+    if args.iter().any(|a| a == "--avatar-worker") {
+        std::process::exit(avatars::run_worker(&args));
+    }
 
     init_tracing();
     let cfg = Config::from_env();
@@ -426,6 +442,16 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         let key: [u8; 32] = h.finalize().into();
         key
     };
+    let blobs = blobs::Blobs::from_env();
+    // Pictures are tiny (each variant at most 60 KB) and rate-limited, so a modest ceiling of their
+    // own is plenty; it is not part of anybody's attachment quota.
+    let avatar_blobs = blobs.as_ref().and_then(|b| {
+        b.sub_store(
+            "avatars",
+            avatars::VARIANT_MAX,
+            env_num::<u64>("PIGEONPOST_AVATAR_TOTAL_MB", 2048) * 1024 * 1024,
+        )
+    });
     Ok(AppState {
         pow: Arc::new(pow::Pow::new(
             secret,
@@ -464,12 +490,15 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         appstore: appstore::AppStore::from_env(),
         googleplay: googleplay::GooglePlay::from_env(),
         test_handle_testers: tester_handles::configured_testers(),
-        blobs: blobs::Blobs::from_env().map(Arc::new),
+        blobs: blobs.map(Arc::new),
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
         auditor: Arc::new(audit::Auditor::new(audit_ip_key)),
         step_up: Arc::new(principal::StepUpPolicy::from_env()),
         service_tokens: Arc::new(internal_api::ServiceTokens::from_env()),
         event_hub: Arc::new(account_events::EventHub::from_env()),
+        avatar_blobs: avatar_blobs.map(Arc::new),
+        avatar_processor: Arc::new(avatars::Processor::from_env()),
+        call_pairs: Arc::new(filtering::PairLimiter::new()),
     })
 }
 
@@ -630,7 +659,28 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/claims/google/assign", post(googleplay_routes::assign))
         .route("/v1/devices", post(register_device))
         .route("/v1/devices/{token}", delete(unregister_device))
-        .route("/v1/policy", axum::routing::put(put_policy))
+        .route(
+            "/v1/policy",
+            axum::routing::put(put_policy).get(filtering::get_policy),
+        )
+        .route("/v1/filtered/accept", post(filtering::accept_filtered))
+        .route("/v1/calls/log", get(calllog::list).delete(calllog::clear))
+        .route("/v1/calls/log/seen", post(calllog::seen))
+        .route("/v1/calls/log/{id}", delete(calllog::delete_one))
+        .route(
+            "/v1/profile/avatar",
+            axum::routing::put(avatars::upload)
+                .layer(axum::extract::DefaultBodyLimit::max(
+                    avatars::MAX_UPLOAD + 1,
+                ))
+                .get(avatars::get_own)
+                .patch(avatars::set_visibility)
+                .delete(avatars::remove),
+        )
+        .route("/v1/avatars", get(avatars::lookup_many))
+        .route("/v1/avatars/{address}", get(avatars::lookup_one))
+        .route("/v1/avatar-blobs/{id}/{version}/{file}", get(avatars::blob))
+        .route("/v1/report-avatar", post(avatars::report))
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .layer(middleware::from_fn(cors))
@@ -1588,7 +1638,7 @@ async fn cors(req: Request, next: Next) -> Response {
         }
         h.insert(
             header::ACCESS_CONTROL_ALLOW_METHODS,
-            HeaderValue::from_static("GET, POST, PUT, DELETE, OPTIONS"),
+            HeaderValue::from_static("GET, POST, PUT, PATCH, DELETE, OPTIONS"),
         );
         h.insert(
             header::ACCESS_CONTROL_ALLOW_HEADERS,
@@ -2022,9 +2072,14 @@ pub(crate) async fn do_list_contacts(
         .inbox_policy(me.address.clone())
         .await
         .map_err(|_| ApiError::server("store_error"))?;
+    let filters = state
+        .store
+        .filters(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
     Ok(json!({
         "contacts": contacts.iter().map(contact_json).collect::<Vec<_>>(),
-        "policy": policy_json(policy),
+        "policy": filtering::full_policy_json(policy, &filters),
         // Published because a closed vocabulary nobody can enumerate is just an outage. A sender
         // needs to know which verbs exist to form a request; a human needs to know which are
         // grantable before deciding what to hand out, and which never will be.
@@ -2719,10 +2774,53 @@ pub(crate) async fn do_send(
         .inbox_policy(recipient.address.clone())
         .await
         .map_err(|_| ApiError::server("store_error"))?;
-    let admitted = match &contact {
-        Some(c) => c.admission != ADMISSION_BLOCK,
-        None => policy.accept_all,
-    };
+    // The same relationship facts call admission uses. A block on the sender's key address holds
+    // even when they write under their handle, so `contact` alone is not the whole answer.
+    let relationship = state
+        .store
+        .relationship(
+            recipient.address.clone(),
+            sender.address.clone(),
+            sender.handle.clone(),
+        )
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    let admitted = !relationship.blocked
+        && match &contact {
+            Some(c) => c.admission != ADMISSION_BLOCK,
+            None => policy.accept_all,
+        };
+    // Filtering (SDS §13.4), decided once here so every device agrees. `block` is refused exactly
+    // like a closed inbox; `filter` is delivered, and the sender cannot tell it from any other
+    // delivery.
+    let mut filtered = false;
+    if admitted
+        && filtering::feature_on(
+            state,
+            recipient.account_id.as_deref(),
+            capabilities::MESSAGE_FILTERING,
+        )
+        .await
+    {
+        let filters = state
+            .store
+            .filters(recipient.address.clone())
+            .await
+            .map_err(|_| ApiError::server("store_error"))?;
+        let score = sender_score(state, sender).await;
+        match filtering::message_rule(&filters, &relationship, sender.handle.is_none(), score) {
+            store::MessageRule::Show => {}
+            store::MessageRule::Filter => filtered = true,
+            store::MessageRule::Block => {
+                tracing::info!(from = %sender.address, to = %recipient.address, "send refused: not admitted");
+                return Err(ApiError::new(
+                    StatusCode::FORBIDDEN,
+                    "not_admitted",
+                    "the recipient is not accepting mail from you",
+                ));
+            }
+        }
+    }
     if !admitted {
         tracing::info!(from = %sender.address, to = %recipient.address, "send refused: not admitted");
         return Err(ApiError::new(
@@ -2831,13 +2929,14 @@ pub(crate) async fn do_send(
             owner: recipient.address.clone(),
             outgoing: false,
             thread_id: thread_id.recipient_side.clone(),
+            filtered,
         })
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "enqueue failed");
             ApiError::server("store_error")
         })?;
-    tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, "message sealed + enqueued");
+    tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, filtered, "message sealed + enqueued");
 
     // The sender's own copy, sealed to the sender's key. Without it a conversation is only ever
     // half visible: the delivered copy is sealed to the recipient, so nobody — including this
@@ -2867,6 +2966,7 @@ pub(crate) async fn do_send(
                             owner: sender.address.clone(),
                             outgoing: true,
                             thread_id: thread_id.sender_side.clone(),
+                            filtered: false,
                         })
                         .await;
                     match stored {
@@ -2895,8 +2995,9 @@ pub(crate) async fn do_send(
 
     // And wake the phones. Spawned, never awaited: a message is delivered once it is in the
     // recipient's inbox, and whether Apple was reachable afterwards must not decide whether this
-    // call succeeded.
-    if state.apns.is_some() || state.fcm.is_some() {
+    // call succeeded. Filtered mail wakes nobody: that is what filing it away means.
+    if filtered {
+    } else if state.apns.is_some() || state.fcm.is_some() {
         let unread = state
             .store
             .unread_count(recipient.address.clone())
@@ -3000,6 +3101,18 @@ pub(crate) async fn do_inbox(
     include_read: bool,
     thread_id: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
+    do_inbox_view(state, me, include_sent, include_read, thread_id, false).await
+}
+
+/// [`do_inbox`], or — with `filtered_only` — only the mail filed in Filtered (SDS §13.4).
+pub(crate) async fn do_inbox_view(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    include_sent: bool,
+    include_read: bool,
+    thread_id: Option<&str>,
+    filtered_only: bool,
+) -> Result<serde_json::Value, ApiError> {
     let messages = state
         .store
         .list_for(me.address.clone())
@@ -3051,7 +3164,11 @@ pub(crate) async fn do_inbox(
         // agent drains on wake — treats this list as "mail addressed to me", and quietly adding the
         // caller's own messages to it would have agents reading their own words as someone's
         // instruction. Only a client that asked for a conversation gets both halves.
-        if m.outgoing && !include_sent {
+        if m.outgoing && (!include_sent || filtered_only) {
+            continue;
+        }
+        // The inbox and the Filtered list are two disjoint views of received mail.
+        if !m.outgoing && m.filtered != filtered_only {
             continue;
         }
         // Narrowing to one thread is what makes reading history back affordable: an agent asking
@@ -3115,6 +3232,7 @@ pub(crate) async fn do_inbox(
                     "received_at": m.created_at,
                     "read": true,
                     "thread_id": m.thread_id,
+                    "filtered": false,
                 }));
                 continue;
             }
@@ -3191,6 +3309,7 @@ pub(crate) async fn do_inbox(
                 "held_because": held_because,
                 "received_at": m.created_at,
                 "read": m.read,
+                "filtered": m.filtered,
             }));
         }
     }
@@ -3226,7 +3345,12 @@ pub(crate) async fn do_inbox(
             }
         }
     }
-    Ok(json!({ "messages": out, "policy": policy_json(policy) }))
+    let filters = state
+        .store
+        .filters(me.address.clone())
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    Ok(json!({ "messages": out, "policy": filtering::full_policy_json(policy, &filters) }))
 }
 
 /// Mark one of `me`'s messages read (scoped to the recipient).
@@ -3357,6 +3481,12 @@ struct InboxQuery {
     /// Narrow the listing to one thread. Absent behaves exactly as it did before threads existed.
     #[serde(default)]
     thread_id: Option<String>,
+    /// `1` lists only the mail filed in Filtered; absent lists everything else.
+    #[serde(default)]
+    filtered: Option<String>,
+    /// `block` narrows `GET /v1/contacts` to blocks (the Blocked list).
+    #[serde(default)]
+    admission: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -3390,6 +3520,9 @@ struct PolicyReq {
     auto_accept_known: Option<bool>,
     #[serde(default)]
     identity: Option<String>,
+    /// The filtering settings (SDS §13.1), all optional.
+    #[serde(flatten)]
+    filters: filtering::FilterFields,
 }
 
 /// `GET /v1/contacts` — this inbox's contacts and its stranger-defaults.
@@ -3403,7 +3536,14 @@ async fn get_contacts(
         Err(e) => return e.into_response(),
     };
     match do_list_contacts(&state, &me).await {
-        Ok(v) => Json(v).into_response(),
+        Ok(mut v) => {
+            if let Some(want) = q.admission.as_deref() {
+                if let Some(list) = v["contacts"].as_array_mut() {
+                    list.retain(|c| c["admission"] == want);
+                }
+            }
+            Json(v).into_response()
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -3882,7 +4022,12 @@ async fn put_policy(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    match do_set_policy(
+    // Validate everything before writing anything, so a bad field cannot leave half a change.
+    let update = match req.filters.parse() {
+        Ok(u) => u,
+        Err(e) => return e.into_response(),
+    };
+    let policy = match do_set_policy(
         &state,
         &me,
         req.accept_all,
@@ -3891,7 +4036,14 @@ async fn put_policy(
     )
     .await
     {
-        Ok(v) => Json(v).into_response(),
+        Ok(_) => match state.store.inbox_policy(me.address.clone()).await {
+            Ok(p) => p,
+            Err(_) => return ApiError::server("store_error").into_response(),
+        },
+        Err(e) => return e.into_response(),
+    };
+    match filtering::do_set_filters(&state, &me, update, TrustActor::Human).await {
+        Ok(filters) => Json(filtering::full_policy_json(policy, &filters)).into_response(),
         Err(e) => e.into_response(),
     }
 }
@@ -3912,12 +4064,14 @@ async fn inbox(
     if let Some(wait) = q.wait.filter(|w| *w > 0) {
         await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
     }
-    match do_inbox(
+    let filtered_only = matches!(q.filtered.as_deref(), Some("1" | "true"));
+    match do_inbox_view(
         &state,
         &me,
         q.include_sent,
         q.include_read,
         q.thread_id.as_deref(),
+        filtered_only,
     )
     .await
     {
@@ -4901,17 +5055,52 @@ fn constant_time_eq(a: &[u8; 32], b: &[u8; 32]) -> bool {
     a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
-/// `POST /v1/report-spam` — report the sender of one of the acting identity's messages.
+#[derive(serde::Deserialize)]
+struct ReportReq {
+    #[serde(default)]
+    message_id: Option<String>,
+    /// A call-history entry id (`clg_…`), to report the caller of an incoming call.
+    #[serde(default)]
+    call_id: Option<String>,
+    #[serde(default)]
+    identity: Option<String>,
+}
+
+/// `POST /v1/report-spam` — report the sender of one of the acting identity's messages, or the
+/// caller of one of its incoming calls.
 async fn report_spam(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(req): Json<AckReq>,
+    Json(req): Json<ReportReq>,
 ) -> Response {
-    let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
-        Ok(m) => m,
-        Err(e) => return e.into_response(),
+    let result = match (req.message_id, req.call_id) {
+        (Some(message_id), None) => {
+            let me = match acting_identity(&state, &headers, req.identity.as_deref()).await {
+                Ok(m) => m,
+                Err(e) => return e.into_response(),
+            };
+            do_report_spam(&state, &me, message_id).await
+        }
+        (None, Some(call_id)) => {
+            let me = match filtering::mailbox_for(
+                &state,
+                &headers,
+                req.identity.as_deref(),
+                policy::Action::ReportAbuse,
+            )
+            .await
+            {
+                Ok((_, me)) => me,
+                Err(e) => return e.into_response(),
+            };
+            calllog::do_report_call(&state, &me, call_id).await
+        }
+        _ => Err(ApiError::bad(
+            "bad_request",
+            "send exactly one of message_id or call_id",
+        )),
     };
-    match do_report_spam(&state, &me, req.message_id).await {
+    match result {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -5354,6 +5543,11 @@ async fn reaper(cfg: Config) {
                 if let Some(blobs) = blobs.as_ref() {
                     sweep_blobs(&store, blobs).await;
                 }
+                match store.reap_call_log(now_unix()).await {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(purged = n, "call history past retention purged"),
+                    Err(e) => tracing::error!(error = %e, "call history retention failed"),
+                }
                 let event_cutoff = now_unix().saturating_sub(account_events::EVENT_RETENTION_SECS);
                 match store
                     .prune_account_events(event_cutoff, account_events::EVENT_RETENTION_COUNT)
@@ -5620,6 +5814,9 @@ mod tests {
             step_up: Arc::new(principal::StepUpPolicy::default()),
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
+            avatar_blobs: None,
+            avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
+            call_pairs: Arc::new(filtering::PairLimiter::new()),
         }
     }
 
@@ -8323,6 +8520,9 @@ mod tests {
             step_up: Arc::new(principal::StepUpPolicy::default()),
             service_tokens: Arc::new(internal_api::ServiceTokens::default()),
             event_hub: Arc::new(account_events::EventHub::default()),
+            avatar_blobs: None,
+            avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
+            call_pairs: Arc::new(filtering::PairLimiter::new()),
         };
         let _ = build_router(state);
     }

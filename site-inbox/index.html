@@ -21,7 +21,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261019-theme"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261019-callv4">
+<link rel="stylesheet" href="app.css?v=20261020-p1b">
 </head>
 <body>
 
@@ -61,6 +61,13 @@
         </button>
       </div>
       <ul class="identity-menu" id="identity-menu" aria-label="Your inboxes" hidden></ul>
+      <nav class="side-nav" id="side-nav" aria-label="Views" hidden>
+        <button id="calls-btn" class="side-nav-btn" type="button" aria-pressed="false">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>
+          <span>Calls</span>
+          <span class="dot calls-badge" id="calls-badge" hidden></span>
+        </button>
+      </nav>
       <div class="search">
         <input id="search" type="search" placeholder="Search" autocomplete="off" aria-label="Search conversations">
       </div>
@@ -79,6 +86,40 @@
 
     <ul class="threads" id="threads" role="list"></ul>
     <p class="empty" id="threads-empty" hidden>No mail yet. When an agent writes to this mailbox, it appears here.</p>
+    <button class="filtered-entry" id="filtered-entry" type="button" hidden>
+      <span class="filtered-entry-label">Filtered</span><span class="filtered-entry-count" id="filtered-count"></span>
+    </button>
+    <section class="side-view" id="filtered-view" aria-labelledby="filtered-view-title" hidden>
+      <div class="archive-banner side-view-head">
+        <span id="filtered-view-title">Filtered</span>
+        <button id="filtered-exit" class="linkish" type="button">Back to inbox</button>
+      </div>
+      <p class="field-note side-view-note">Messages your filtering settings moved out of the inbox. Senders are not told.</p>
+      <ul class="threads" id="filtered-list" role="list"></ul>
+      <p class="empty" id="filtered-empty" hidden>Nothing filtered.</p>
+    </section>
+    <section class="side-view calls-view" id="calls-view" aria-labelledby="calls-view-title" hidden>
+      <div class="archive-banner side-view-head">
+        <span id="calls-view-title">Calls</span>
+        <button id="calls-exit" class="linkish" type="button">Back to inbox</button>
+      </div>
+      <div class="calls-tools">
+        <div class="segmented calls-filter" id="calls-filter" role="radiogroup" aria-label="Show">
+          <label><input type="radio" name="calls-filter" value="all" checked><span>All</span></label>
+          <label><input type="radio" name="calls-filter" value="missed"><span>Missed</span></label>
+        </div>
+        <button id="calls-clear" class="linkish" type="button">Clear all</button>
+      </div>
+      <p class="inbox-status" id="calls-status" role="status" hidden></p>
+      <ul class="call-log" id="call-log" role="list"></ul>
+      <p class="empty" id="calls-empty" hidden>No calls yet.</p>
+      <button class="btn-ghost history-button" id="calls-more" type="button" hidden>Load earlier calls</button>
+      <details class="calls-filtered" id="calls-filtered-box">
+        <summary>Filtered calls <span id="calls-filtered-count"></span></summary>
+        <ul class="call-log" id="call-log-filtered" role="list"></ul>
+        <p class="field-note" id="calls-filtered-empty" hidden>No filtered calls.</p>
+      </details>
+    </section>
     <div id="list-resizer" class="column-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize conversations column" aria-controls="pane-list"></div>
   </aside>
 
@@ -142,6 +183,9 @@
     </div>
     <button id="jump-latest" class="jump-latest btn-ghost" type="button" hidden>↓ Latest messages</button>
 
+    <p class="blocked-banner" id="blocked-banner" role="status" hidden>
+      <span>You blocked this person</span> — <button class="linkish" id="blocked-unblock" type="button">Unblock</button>
+    </p>
     <form class="composer" id="composer" hidden>
       <!-- Chosen files, before they are sent. Listed rather than hidden behind a paperclip count,
            because what is about to leave a mailbox should be readable before it does. -->
@@ -236,7 +280,7 @@
       <button class="icon-btn" id="settings-close" type="button" aria-label="Close"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></svg></button>
     </header>
     <div class="sheet-body">
-      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Theme, text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
+      <nav data-settings-page="root" aria-label="Settings pages"><button class="settings-row" id="settings-nav-account" data-settings-open="account" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 10a4 4 0 1 0 0-8 4 4 0 0 0 0 8M3 19v-2a7 7 0 0 1 14 0v2"/></svg><span><strong>Account</strong><small>Your account and sign-in</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-handles" data-settings-open="handles" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M15 13c0 3 4 2 4-3a9 9 0 1 0-4 7M15 6v7M15 10a5 5 0 1 1-10 0 5 5 0 0 1 10 0"/></svg><span><strong>Handles</strong><small>Your names and subscriptions</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-inbox" data-settings-open="inbox" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M2 5h16v13H2ZM2 12h5l1 3h4l1-3h5"/></svg><span><strong>Inbox and appearance</strong><small>Theme, text size and archived conversations</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-contacts" data-settings-open="contacts" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7 10a3 3 0 1 0 0-6 3 3 0 0 0 0 6M1 18v-2a6 6 0 0 1 12 0v2M14 4a3 3 0 0 1 0 6M15 12a5 5 0 0 1 4 5"/></svg><span><strong>Contacts and permissions</strong><small>Senders you know and trust</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-profile" data-settings-open="profile" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M3 4h14v12H3ZM3 13l4-4 3 3 2-2 5 5M13 7.5v.1"/></svg><span><strong>Profile picture</strong><small>Your picture and who can see it</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-privacy" data-settings-open="privacy" type="button" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2l7 3v5c0 4-3 7-7 8-4-1-7-4-7-8V5ZM7 10l2 2 4-4"/></svg><span><strong>Privacy and filtering</strong><small>Unknown callers, unnamed senders, call history</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-blocked" data-settings-open="blocked" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16M4.4 4.4l11.2 11.2"/></svg><span><strong>Blocked</strong><small>People and addresses you blocked</small></span><span class="settings-chevron" aria-hidden="true">›</span></button><button class="settings-row" id="settings-nav-help" data-settings-open="help" type="button"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 19a9 9 0 1 0 0-18 9 9 0 0 0 0 18M7 7a3 3 0 1 1 5 2l-2 2v1M10 15v1"/></svg><span><strong>Help and about</strong><small>Support, privacy and app information</small></span><span class="settings-chevron" aria-hidden="true">›</span></button></nav>
       <div data-settings-page="account" hidden><section class="setting">
         <h3>Account</h3>
         <dl class="account-facts">
@@ -293,6 +337,45 @@
         <ul class="contact-list" id="contact-list"></ul>
         <button class="btn-ghost" id="contact-add" type="button">Add a sender</button>
       </section></div>
+      <div data-settings-page="profile" hidden><section class="setting">
+        <h3>Profile picture</h3>
+        <div class="profile-row">
+          <span class="avatar profile-avatar" id="profile-avatar" aria-hidden="true"></span>
+          <div class="profile-actions">
+            <button class="btn-ghost" id="profile-pick" type="button">Choose a photo…</button>
+            <button class="btn-ghost" id="profile-remove" type="button" hidden>Remove</button>
+          </div>
+        </div>
+        <input type="file" id="profile-file" accept="image/jpeg,image/png,image/webp,image/heic,image/heif" hidden aria-hidden="true" tabindex="-1">
+        <label class="peer-toggle" for="profile-all"><span>Use for all my mailboxes</span><input id="profile-all" type="checkbox"></label>
+        <p class="field-note" id="profile-note" role="status">This picture belongs to the mailbox you are using now.</p>
+      </section><section class="setting">
+        <h3 id="profile-visibility-title">Who can see it</h3>
+        <div class="segmented" id="profile-visibility" role="radiogroup" aria-labelledby="profile-visibility-title">
+          <label><input type="radio" name="profile-visibility" value="everyone"><span>Everyone</span></label>
+          <label><input type="radio" name="profile-visibility" value="known"><span>People I know</span></label>
+          <label><input type="radio" name="profile-visibility" value="nobody"><span>Nobody</span></label>
+        </div>
+        <p class="field-note">People I know means your contacts and people you have written to. Changing this stops new
+          downloads; copies someone already has cannot be recalled.</p>
+      </section></div>
+      <div data-settings-page="privacy" hidden><section class="setting">
+        <h3>Privacy and filtering</h3>
+        <p class="field-note">Decided on the server for this mailbox, so every device behaves the same. People are never told they were filtered or blocked.</p>
+        <div class="policy-list" id="policy-list"></div>
+        <p class="sheet-error" id="policy-error" role="alert" hidden></p>
+      </section></div>
+      <div data-settings-page="blocked" hidden><section class="setting">
+        <h3>Blocked</h3>
+        <p class="field-note">Blocked senders cannot message or call this mailbox, and are not told.</p>
+        <ul class="contact-list" id="blocked-list"></ul>
+        <label class="field">
+          <span>Block an address</span>
+          <input id="block-input" type="text" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="/k/…, /spamco/agent or /spamco/*">
+        </label>
+        <button class="btn-danger" id="block-add" type="button">Block</button>
+        <p class="sheet-error" id="blocked-error" role="alert" hidden></p>
+      </section></div>
       <div data-settings-page="help" hidden><section class="setting settings-links"><a href="https://pigeonpost.dev/app-support.html" target="_blank" rel="noopener noreferrer">Contact support</a><a href="https://pigeonpost.dev/app-privacy.html" target="_blank" rel="noopener noreferrer">Privacy policy</a><a href="https://pigeonpost.dev/app-terms.html" target="_blank" rel="noopener noreferrer">Terms of service</a></section><section class="setting"><h3>Pigeonpost</h3><p class="field-note">Wodo Teknoloji A.Ş.</p></section></div>
     </div>
     <footer class="sheet-foot"><button class="btn-primary" id="settings-done" type="button">Done</button></footer>
@@ -307,6 +390,7 @@
       <button class="icon-btn" id="peer-info-close" type="button" aria-label="Close sender options">×</button>
     </header>
     <div class="sheet-body peer-info" id="peer-info">
+      <span class="avatar peer-info-avatar" id="peer-info-avatar" aria-hidden="true"></span>
       <dl id="peer-addresses"></dl>
       <section class="peer-section" aria-labelledby="peer-trust-title">
         <h3 id="peer-trust-title">Trust</h3>
@@ -387,12 +471,50 @@
   <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="peer-block-title" aria-describedby="peer-block-detail">
     <header class="sheet-head"><h2 id="peer-block-title">Block this sender?</h2></header>
     <div class="sheet-body">
-      <p id="peer-block-detail">Their new messages will be refused. Existing messages stay. They will not be notified.</p>
+      <p id="peer-block-detail">They won't be able to message or call you, and won't be told. Existing messages stay.</p>
+      <label class="peer-toggle" for="peer-block-wide" id="peer-block-wide-row" hidden><span id="peer-block-wide-label">Block everyone at this namespace</span><input id="peer-block-wide" type="checkbox"></label>
+      <label class="peer-toggle" for="peer-block-report"><span>Also report as spam</span><input id="peer-block-report" type="checkbox"></label>
       <p class="sheet-error" id="peer-block-error" role="alert" hidden></p>
     </div>
     <footer class="sheet-foot">
       <button class="btn-ghost" id="peer-block-cancel" type="button">Cancel</button>
       <button class="btn-danger" id="peer-block-confirm" type="button">Block</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Filtered conversation (read-only) ------------------------------------------------------- -->
+<div class="sheet-wrap" id="filtered-sheet" hidden>
+  <div class="sheet sheet-wide" role="dialog" aria-modal="true" aria-labelledby="filtered-title">
+    <header class="sheet-head">
+      <h2 id="filtered-title">Filtered</h2>
+      <button class="icon-btn" id="filtered-close" type="button" aria-label="Close">×</button>
+    </header>
+    <div class="sheet-body">
+      <p class="field-note" id="filtered-sub"></p>
+      <ol class="filtered-messages" id="filtered-messages" role="list"></ol>
+      <p class="sheet-error" id="filtered-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-danger" id="filtered-block" type="button">Block</button>
+      <span class="foot-spacer"></span>
+      <button class="btn-primary" id="filtered-accept" type="button">Accept</button>
+    </footer>
+  </div>
+</div>
+
+<!-- Profile picture crop --------------------------------------------------------------------- -->
+<div class="sheet-wrap" id="crop-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="crop-title">
+    <header class="sheet-head"><h2 id="crop-title">Move and scale</h2></header>
+    <div class="sheet-body">
+      <canvas class="crop-canvas" id="crop-canvas" width="560" height="560" aria-label="Drag to position the picture" tabindex="0"></canvas>
+      <label class="field crop-zoom"><span>Zoom</span><input id="crop-zoom" type="range" min="1" max="4" step="0.01" value="1"></label>
+      <p class="sheet-error" id="crop-error" role="alert" hidden></p>
+    </div>
+    <footer class="sheet-foot">
+      <button class="btn-ghost" id="crop-cancel" type="button">Cancel</button>
+      <button class="btn-primary" id="crop-save" type="button">Save</button>
     </footer>
   </div>
 </div>
@@ -423,7 +545,8 @@
 
 <script src="config.js"></script>
 <script src="handle.js"></script>
-<script src="app.js?v=20261019-callv4"></script>
-<script src="calls.js?v=20261019-callv4"></script>
+<script src="crop.js?v=20261020-p1b"></script>
+<script src="app.js?v=20261020-p1b"></script>
+<script src="calls.js?v=20261020-p1b"></script>
 </body>
 </html>

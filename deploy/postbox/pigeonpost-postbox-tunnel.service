@@ -1,0 +1,40 @@
+# Private path from raijin to the postbox internal API (see internal-tunnel.md).
+# 127.0.0.1:18991 on raijin -> 127.0.0.1:8991 on the postbox host, over SSH with a key that may
+# open exactly that one forward and nothing else.
+[Unit]
+Description=Pigeonpost postbox internal API tunnel (raijin 127.0.0.1:18991 -> postbox 127.0.0.1:8991)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+User=pp-tunnel
+Group=pp-tunnel
+ExecStart=/usr/bin/ssh -N -T \
+  -i /var/lib/pp-tunnel/.ssh/id_ed25519 \
+  -o IdentitiesOnly=yes \
+  -o BatchMode=yes \
+  -o StrictHostKeyChecking=yes \
+  -o UserKnownHostsFile=/var/lib/pp-tunnel/.ssh/known_hosts \
+  -o ExitOnForwardFailure=yes \
+  -o ServerAliveInterval=15 \
+  -o ServerAliveCountMax=3 \
+  -o ConnectTimeout=10 \
+  -L 127.0.0.1:18991:127.0.0.1:8991 \
+  pp-tunnel@45.132.181.100
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+LockPersonality=true
+MemoryMax=64M
+
+[Install]
+WantedBy=multi-user.target

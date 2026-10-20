@@ -16,6 +16,7 @@
 
 import http from "node:http";
 import crypto from "node:crypto";
+import { createPostboxInternal } from "./postbox-internal.js"; // Phase 1b
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -34,6 +35,10 @@ export function configFromEnv(env = process.env) {
     // Behind nginx (and Cloudflare in front of that), the socket address is the proxy's. Only then
     // is a forwarded client address worth believing.
     trustProxy: (env.CALLS_TRUST_PROXY || "1") === "1",
+    // Phase 1b: the postbox's internal API (call admission, call history), over a private path.
+    // Unset = ring without asking and report nothing, as before.
+    postboxInternalUrl: env.POSTBOX_INTERNAL_URL || "",
+    postboxServiceToken: env.POSTBOX_SERVICE_TOKEN || "",
   };
 }
 
@@ -101,6 +106,24 @@ export function createCallsService(cfg, deps = {}) {
   const rooms = new Map(); // room id -> room
   const roomsByCode = new Map(); // code -> room
   const buckets = new Map(); // rate-limit key -> number[]
+
+  // ---- Phase 1b: postbox admission + call history reporting ---------------------------------------
+  const internal = deps.postboxInternal || createPostboxInternal({
+    url: cfg.postboxInternalUrl, token: cfg.postboxServiceToken, fetch: fetchImpl, now,
+  });
+  function participantName(p) {
+    return p.mailbox ? p.mailbox.address : "guest:" + p.name;
+  }
+  // One lifecycle event for the room, with a per-room increasing sequence number.
+  function reportCall(room, event, extra = {}) {
+    if (!room.caller) return;
+    room.seq = (room.seq || 0) + 1;
+    internal.report({
+      room_id: room.id, seq: room.seq, kind: room.kind, event,
+      from: room.caller, callee: (room.targets && room.targets[0]) || room.dialed || undefined,
+      to: room.targets || [], at: Math.floor(now() / 1000), ...extra,
+    });
+  }
 
   // ---- rate limits ------------------------------------------------------------------------------
 
@@ -329,7 +352,7 @@ export function createCallsService(cfg, deps = {}) {
 
   // A ring: a member calls one mailbox from one of theirs. The room exists from the first ring, so
   // its meeting link can be shared before anybody answers.
-  function startCall(auth, body) {
+  async function startCall(auth, body) {
     if (auth.guest) throw new HttpError(403, "members_only");
     const session = liveSession(auth, body.session);
     const kind = KINDS.has(body.kind) ? body.kind : null;
@@ -345,18 +368,32 @@ export function createCallsService(cfg, deps = {}) {
       throw new HttpError(429, "rate_limited");
     }
 
+    // Phase 1b: ask the postbox before anything rings. block and silence look to the caller exactly
+    // like nobody answering.
+    const admission = await internal.admit({ from, to, kind });
+    if (session.closed || sessionInRoom(session)) throw new HttpError(409, "already_in_call");
+
     const room = makeRoom(kind);
+    room.caller = { address: from.address, ...(from.handle ? { handle: from.handle } : {}) };
+    room.targets = admission.targets.length ? admission.targets : [to];
     const caller = addParticipant(room, session, { name: from.handle || from.address, mailbox: from });
-    ring(room, caller, to);
+    ring(room, caller, to, admission.decision);
     return roomView(room, caller);
   }
 
   // Busy and offline both look like an unanswered call from the outside: the caller learns nothing
   // about whether the other mailbox is online until somebody there picks up.
-  function ring(room, caller, to) {
+  function ring(room, caller, to, decision = "ring") {
     const toName = norm(to);
-    room.ring = { to, toName, from: caller.mailbox, ringing: new Set() };
-    if (!mailboxEngaged(toName)) {
+    room.ring = { to, toName, from: caller.mailbox, ringing: new Set(), decision: decision === "ring" ? "ring" : "quiet" };
+    // Phase 1b: `silence` files a filtered entry for the callee; `block` records nothing about them.
+    // Either way nothing rings and the timer below gives the caller the normal no-answer.
+    // The caller's own entry is written the same way in all three cases (ring, then missed), so
+    // their history cannot tell a block or a silence from nobody answering.
+    if (decision === "ring") reportCall(room, "ring");
+    else reportCall(room, "ring", { to: [] });
+    if (decision === "silence") reportCall(room, "filtered");
+    if (decision === "ring" && !mailboxEngaged(toName)) {
       for (const target of sessionsByName.get(toName) || []) {
         if (target.id === caller.sessionId || sessionInRoom(target)) continue;
         room.ring.ringing.add(target.id);
@@ -365,6 +402,7 @@ export function createCallsService(cfg, deps = {}) {
     }
     const t = setTimeout(() => {
       if (room.state !== "ringing") return;
+      if (room.ring) reportCall(room, "missed", room.ring.decision === "quiet" ? { to: [] } : {}); // Phase 1b
       stopRinging(room, "no_answer");
       if (room.participants.size < 2) endRoom(room, "no_answer");
     }, cfg.ringMs);
@@ -389,6 +427,7 @@ export function createCallsService(cfg, deps = {}) {
     stopRinging(room, "answered_elsewhere", session.id);
     const p = addParticipant(room, session, { name: callee.handle || callee.address, mailbox: callee });
     room.state = "active";
+    reportCall(room, "answer", { by: callee.address, participants: [...room.participants.values()].map(participantName) }); // Phase 1b
     admitted(room, p);
     return roomView(room, p);
   }
@@ -398,6 +437,8 @@ export function createCallsService(cfg, deps = {}) {
     if (!room.ring || !room.ring.ringing.has(session.id)) throw new HttpError(409, "not_ringing");
     const reason = body.reason === "busy" ? "busy" : "declined";
     room.ring.ringing.delete(session.id);
+    const decliner = mailboxFor(auth, room.ring.to);
+    reportCall(room, reason === "busy" ? "busy" : "decline", decliner ? { by: decliner.address } : {}); // Phase 1b
     // Another device of the same mailbox may still answer; the call only ends when nothing rings.
     if (!room.ring.ringing.size || reason === "declined") {
       stopRinging(room, reason, session.id);
@@ -428,6 +469,7 @@ export function createCallsService(cfg, deps = {}) {
     room.participants.delete(p.id);
     broadcast(room, "participant_left", { room: room.id, participant: p.id, reason });
     if (room.state === "ringing" && room.participants.size === 0) {
+      reportCall(room, "cancelled", room.ring && room.ring.decision === "quiet" ? { to: [] } : {}); // Phase 1b
       stopRinging(room, "cancelled");
       endRoom(room, "cancelled");
     } else if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) {
@@ -437,6 +479,8 @@ export function createCallsService(cfg, deps = {}) {
 
   function endRoom(room, reason, exceptSession) {
     if (room.state === "ended") return;
+    // Phase 1b: an answered call's end; unanswered outcomes were reported where they happened.
+    if (room.state === "active") reportCall(room, "end", { participants: [...room.participants.values()].map(participantName) });
     room.state = "ended";
     for (const t of room.timers) clearTimeout(t);
     stopRinging(room, reason);
@@ -523,6 +567,7 @@ export function createCallsService(cfg, deps = {}) {
     }
     const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest });
     if (room.state === "ringing" && room.participants.size >= 2) room.state = "active";
+    if (k.mailbox) reportCall(room, "join", { by: k.mailbox.address, participants: [...room.participants.values()].map(participantName) }); // Phase 1b
     send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: true });
     admitted(room, p);
   }
@@ -670,7 +715,7 @@ export function createCallsService(cfg, deps = {}) {
     const path = url.pathname.replace(/^\/calls(?=\/)/, "");
     try {
       if (req.method === "GET" && path === "/v1/health") {
-        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size });
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health() });
       }
       if (req.method === "POST") {
         const origin = req.headers.origin;
@@ -686,7 +731,7 @@ export function createCallsService(cfg, deps = {}) {
       const auth = await authenticate(req);
       if (req.method === "GET" && path === "/v1/events") return openStream(req, res, auth);
       if (req.method === "GET" && path === "/v1/turn") return json(res, 200, turnCredentials(auth, url.searchParams.get("session")));
-      if (req.method === "POST" && path === "/v1/calls") return json(res, 200, startCall(auth, await readJson(req)));
+      if (req.method === "POST" && path === "/v1/calls") return json(res, 200, await startCall(auth, await readJson(req)));
       if (req.method === "POST" && path === "/v1/knocks") return json(res, 200, knock(req, auth, await readJson(req)));
       if (req.method === "POST" && path === "/v1/knocks/withdraw") return json(res, 200, withdrawKnock(auth, await readJson(req)));
       const knockAnswer = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/knocks\/([A-Za-z0-9_-]{10,64})$/.exec(path);
@@ -712,7 +757,7 @@ export function createCallsService(cfg, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests } };
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal };
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {

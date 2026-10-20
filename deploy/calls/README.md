@@ -34,7 +34,8 @@ before RTP/UDP/IP (and TURN) overhead. Video adapts down on weaker links; 1080p 
 
 ## Service
 
-1. `useradd --system --no-create-home pigeonpost-calls`; copy `calls-service/src` to `/opt/pigeonpost-calls/src`.
+1. `useradd --system --no-create-home pigeonpost-calls`; copy `calls-service/src` (all files, including
+   `postbox-internal.js`) to `/opt/pigeonpost-calls/src`.
 2. `/etc/pigeonpost-calls/calls.env` from `calls.env.example` (0640 root:pigeonpost-calls), with the
    relay's secret copied host to host — never through the repository.
 3. Install `pigeonpost-calls.service`, `systemctl enable --now pigeonpost-calls`.
@@ -42,6 +43,40 @@ before RTP/UDP/IP (and TURN) overhead. Video adapts down on weaker links; 1080p 
 5. `curl https://inbox.pigeonpost.dev/calls/v1/health` → `{"ok":true,…}`.
 
 Deploy the service before the inbox files: without `/calls/` the inbox simply hides the call buttons.
+
+## Call admission and call history (Phase 1b)
+
+Before ringing, the service asks the postbox whether the callee's settings say ring, silence or
+block (`POST /internal/v1/call-admission`), and it reports each call's lifecycle (ring, answer, join,
+decline/busy, missed, cancelled, end, filtered) to `POST /internal/v1/call-events` so both sides get
+a call history. Both are on the postbox's **internal** listener (`127.0.0.1:8991` on the postbox host
+45.132.181.100), which is not public. raijin reaches it through the private tunnel described in
+`deploy/postbox/` (it listens on raijin at `127.0.0.1:18991`).
+
+| Variable | Value |
+| --- | --- |
+| `POSTBOX_INTERNAL_URL` | `http://127.0.0.1:18991` (the tunnel's local end) |
+| `POSTBOX_SERVICE_TOKEN` | the calls service token (`svc_…`), equal to `POSTBOX_SVC_TOKEN_CALLS` in the postbox's `postbox.env`; copy host to host |
+
+Behaviour:
+
+- Unset: rings without asking and reports nothing (the pre-1b behaviour).
+- Admission answers are cached for 30 s per caller, callee and kind. If the postbox is configured
+  but cannot answer within 3 s, admission **fails closed**: nothing rings and the caller sees the
+  ordinary no-answer.
+- `block` and `silence` are indistinguishable from a genuine no-answer for the caller: same response,
+  same events, same timing, and the caller's own history shows an unanswered call. `silence` files a
+  "filtered" entry in the callee's history; `block` records nothing for the callee.
+- Events go through a bounded in-memory retry queue (1,000 events, oldest dropped when full) with a
+  stable `event_id` per event, exponential backoff from 1 s to 60 s and up to 12 attempts (or 30
+  minutes). A 4xx other than 429 is dropped as rejected. The queue is not durable: a restart loses
+  whatever is queued.
+- `GET /calls/v1/health` includes `postbox: {configured, queued, sent, retried, dropped, rejected,
+  failed, admission_ok, admission_failed, cache_hits}` — counts only. A growing `dropped` or
+  `admission_failed` means the tunnel or the postbox is down.
+
+Check after deploying: `curl -s https://inbox.pigeonpost.dev/calls/v1/health` shows
+`"configured":true`, and `admission_failed` stays at 0 across a test call.
 
 ## Rollback
 
@@ -52,6 +87,8 @@ credential from the service.
 ## Testing
 
 `cd calls-service && npm test` covers authorization, ringing, busy/decline/cancel/timeout, signal
-validation, resume and TURN credentials. Two-browser checks should use synthetic media and force the
+validation, resume and TURN credentials, plus (`test/postbox-internal.test.mjs`) admission decisions,
+the no-answer equivalence for blocked and silenced calls, the 30 s cache, failing closed, event
+reporting order and the retry queue. Two-browser checks should use synthetic media and force the
 relay (`localStorage.ppi_calls_relay = "1"`) and read `PigeonpostCalls.inspect()` for the selected
 candidate pair, resolution, bitrate and security code on both ends.

@@ -57,6 +57,12 @@ private address, never over the public internet. Each service authenticates with
 service's env file. Wiring check from the host:
 `curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8991/internal/v1/health`.
 
+**Private tunnel from raijin.** The calls-service (and billing bridge) on raijin reach this port
+through `pigeonpost-postbox-tunnel.service`, an SSH local forward `raijin 127.0.0.1:18991 →
+postbox 127.0.0.1:8991` with a key restricted to that single `permitopen`. They set
+`POSTBOX_INTERNAL_URL=http://127.0.0.1:18991`. Setup, verification, key rotation and rollback:
+[`internal-tunnel.md`](internal-tunnel.md).
+
 Feature flags are toggled through it with the `ops` token, e.g.
 `PUT /internal/v1/features/account_events {"scope":"account","account_id":"acct_…","enabled":true}`.
 Every flag change is written to the append-only `audit_log` table.

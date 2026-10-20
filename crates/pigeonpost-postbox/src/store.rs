@@ -14,17 +14,26 @@ use std::sync::{Arc, Mutex};
 
 mod apple_plans;
 mod audit;
+mod avatars;
+mod calllog;
 mod deletion;
 mod entitlements;
 mod events;
 mod features;
+mod filtering;
 mod googleplay;
 mod lifecycle;
 mod orgs;
 pub use audit::AuditRow;
+pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
+pub use calllog::{CallEvent, CallEventKind, LogFilter};
 pub use entitlements::{Entitlement, EntitlementInput, UpsertOutcome, WebClaim};
 pub use events::StreamCursor;
 pub use features::{FeatureRow, FeatureScope};
+pub use filtering::{
+    CallRule, Filters, FiltersUpdate, MessageRule, Relationship, ReputationRule,
+    CALL_HISTORY_CHOICES,
+};
 pub use googleplay::GoogleBinding;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
@@ -500,6 +509,7 @@ pub enum TestHandleClaim {
 // x25519_pub, label, and created_at are persisted for future paths (device keys, display, metering)
 // but not yet read by logic; allow until then.
 #[allow(dead_code)]
+#[derive(Clone)]
 pub struct StoredIdentity {
     pub address: String,
     pub wrapped_seed: Wrapped,
@@ -571,6 +581,10 @@ pub struct Message {
     /// Which thread this copy belongs to, in the owner's mailbox. Both sides of a conversation
     /// carry the same id, because a thread is a property of the pair rather than of one inbox.
     pub thread_id: String,
+    /// Delivered, but filed in the recipient's Filtered list by their filtering settings (SDS
+    /// §13.4): no push, no `mail` event, not counted unread, and left out of `/v1/inbox` unless
+    /// asked for. Always `false` on a sender's own copy.
+    pub filtered: bool,
 }
 
 fn read_thread(row: &rusqlite::Row<'_>) -> Result<Thread, StoreError> {
@@ -827,6 +841,7 @@ pub(crate) fn incoming_after_in(
          WHERE COALESCE(owner, recipient) IN ({placeholders})
            AND rowid > ?
            AND direction != 'out'
+           AND filtered = 0
          ORDER BY rowid ASC LIMIT ?"
     );
     let mut stmt = c.prepare(&sql)?;
@@ -850,6 +865,7 @@ pub(crate) fn incoming_after_in(
                 owner: row.get(7)?,
                 outgoing: row.get::<_, String>(8)? == "out",
                 thread_id: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+                filtered: false,
             },
         ))
     })?;
@@ -905,7 +921,13 @@ impl Store {
         conn.execute_batch(features::SCHEMA)?;
         conn.execute_batch(entitlements::SCHEMA)?;
         conn.execute_batch(orgs::SCHEMA)?;
-        for stmt in MIGRATIONS {
+        conn.execute_batch(calllog::SCHEMA)?;
+        conn.execute_batch(avatars::SCHEMA)?;
+        for stmt in MIGRATIONS
+            .iter()
+            .chain(filtering::MIGRATIONS)
+            .chain(avatars::MIGRATIONS)
+        {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
                 if !e.to_string().contains("duplicate column name") {
@@ -1106,6 +1128,14 @@ impl Store {
                 "SELECT id, owner, peer, title, is_default, created_at, last_at, archived_at
                    FROM threads
                   WHERE owner = ?1 AND (?2 IS NULL OR peer = ?2)
+                    -- A thread holding only filtered mail belongs to the Filtered list, not here.
+                    AND NOT (
+                        EXISTS (SELECT 1 FROM messages m
+                                 WHERE m.owner = threads.owner AND m.thread_id = threads.id
+                                   AND m.filtered = 1)
+                        AND NOT EXISTS (SELECT 1 FROM messages m
+                                         WHERE m.owner = threads.owner
+                                           AND m.thread_id = threads.id AND m.filtered = 0))
                   ORDER BY last_at DESC",
             )?;
             let mut rows = q.query(params![owner, peer])?;
@@ -1654,7 +1684,8 @@ impl Store {
     pub async fn unread_count(&self, owner: String) -> Result<usize, StoreError> {
         self.count_where(
             "SELECT COUNT(*) FROM messages
-              WHERE COALESCE(owner, recipient) = ?1 AND read = 0 AND direction = 'in'",
+              WHERE COALESCE(owner, recipient) = ?1 AND read = 0 AND direction = 'in'
+                AND filtered = 0",
             owner,
         )
         .await
@@ -3161,8 +3192,9 @@ impl Store {
             let c = conn.lock().expect("store lock");
             c.execute(
                 "INSERT INTO messages
-                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction, thread_id)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction, thread_id,
+                      filtered)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
                 params![
                     m.id,
                     m.recipient,
@@ -3173,6 +3205,7 @@ impl Store {
                     m.owner,
                     if m.outgoing { "out" } else { "in" },
                     m.thread_id,
+                    (m.filtered && !m.outgoing) as i64,
                 ],
             )?;
             // A thread's ordering is by its own last activity, not by when it was opened, or a
@@ -3243,7 +3276,7 @@ impl Store {
             let c = conn.lock().expect("store lock");
             let mut stmt = c.prepare(
                 "SELECT id, recipient, sender, wrap_blob, created_at, read,
-                        COALESCE(owner, recipient), direction, COALESCE(thread_id, '')
+                        COALESCE(owner, recipient), direction, COALESCE(thread_id, ''), filtered
                  FROM messages WHERE COALESCE(owner, recipient) = ?1 ORDER BY created_at ASC",
             )?;
             let rows = stmt.query_map(params![owner], |row| {
@@ -3257,6 +3290,7 @@ impl Store {
                     owner: row.get(6)?,
                     outgoing: row.get::<_, String>(7)? == "out",
                     thread_id: row.get(8)?,
+                    filtered: row.get::<_, i64>(9)? != 0,
                 })
             })?;
             let mut out = Vec::new();
@@ -3665,6 +3699,7 @@ mod tests {
                 owner: owner.into(),
                 outgoing: false,
                 thread_id: thread.into(),
+                filtered: false,
             }
         }
 
@@ -5170,6 +5205,7 @@ mod tests {
                 owner: bob_addr.clone(),
                 outgoing: false,
                 thread_id: "t-test".into(),
+                filtered: false,
             })
             .await
             .unwrap();
@@ -5341,6 +5377,7 @@ mod tests {
             owner: recipient.into(),
             outgoing: false,
             thread_id: "t-test".into(),
+            filtered: false,
         }
     }
 
@@ -5856,6 +5893,7 @@ mod event_cursor_tests {
     fn msg(id: &str, owner: &str, sender: &str, outgoing: bool) -> Message {
         Message {
             thread_id: "t-test".into(),
+            filtered: false,
             id: id.into(),
             recipient: owner.into(),
             sender: sender.into(),

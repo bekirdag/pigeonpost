@@ -36,7 +36,11 @@ tags:
   - name: threads
     description: Conversations within a mailbox.
   - name: trust
-    description: Contacts, inbox policy and spam reports.
+    description: Contacts, inbox policy, filtering and spam reports.
+  - name: calls
+    description: Call history.
+  - name: profile
+    description: Profile pictures.
   - name: events
     description: Server-Sent Events stream.
   - name: handles
@@ -880,6 +884,12 @@ paths:
           in: query
           schema:
             type: string
+        - name: filtered
+          in: query
+          description: '`1` lists only messages filed in Filtered (feature `message_filtering`); absent lists the rest.'
+          schema:
+            type: string
+            enum: ['1', 'true']
       responses:
         '200':
           description: Opened messages plus the inbox policy.
@@ -1142,7 +1152,7 @@ paths:
     post:
       tags: [trust]
       operationId: reportSpam
-      summary: Report the sender of a received message as spam
+      summary: Report the sender of a received message, or the caller of an incoming call, as spam
       security:
         - capToken: []
         - apiKey: []
@@ -1152,7 +1162,15 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/MessageRef'
+              type: object
+              description: Exactly one of `message_id` or `call_id` (a call-history entry id).
+              properties:
+                message_id:
+                  type: string
+                call_id:
+                  type: string
+                identity:
+                  type: string
       responses:
         '200':
           description: Report recorded (or already recorded).
@@ -1552,6 +1570,12 @@ paths:
         - memberToken: []
       parameters:
         - $ref: '#/components/parameters/Identity'
+        - name: admission
+          in: query
+          description: '`block` lists only blocks (exact addresses, handles and `/ns/*` wildcards).'
+          schema:
+            type: string
+            enum: [allow, block]
       responses:
         '200':
           description: Contacts.
@@ -2417,10 +2441,36 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
   /v1/policy:
+    get:
+      tags: [trust]
+      operationId: getPolicy
+      summary: The acting mailbox's stranger defaults and filtering settings
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: The whole policy.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/InboxPolicy'
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
     put:
       tags: [trust]
       operationId: putPolicy
-      summary: Set the acting mailbox's stranger defaults
+      summary: Set the acting mailbox's stranger defaults and filtering settings
+      description: |
+        Any subset of fields. All values are validated before anything is written
+        (`invalid_policy`). Agents (MCP) may only make settings stricter. Returns the whole policy.
       security:
         - capToken: []
         - apiKey: []
@@ -2430,14 +2480,12 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                accept_all:
-                  type: boolean
-                auto_accept_known:
-                  type: boolean
-                identity:
-                  type: string
+              allOf:
+                - $ref: '#/components/schemas/InboxPolicy'
+                - type: object
+                  properties:
+                    identity:
+                      type: string
       responses:
         '200':
           description: The resulting policy.
@@ -2453,6 +2501,597 @@ paths:
           $ref: '#/components/responses/WrongIdentity'
         '500':
           $ref: '#/components/responses/ServerError'
+  /v1/filtered/accept:
+    post:
+      tags: [trust]
+      operationId: acceptFiltered
+      summary: Accept a sender out of Filtered (feature `message_filtering`)
+      description: |
+        Adds the sender as a contact with `admission=allow` (by handle when it has one) and moves
+        all of its filtered messages into the inbox. Not available through a connector.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [peer]
+              properties:
+                peer:
+                  type: string
+                  description: The sender's `/k/` address or handle.
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  accepted:
+                    type: boolean
+                  contact:
+                    $ref: '#/components/schemas/Contact'
+                  moved:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/calls/log:
+    get:
+      tags: [calls]
+      operationId: listCallLog
+      summary: Call history, newest first (feature `call_history`)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - name: filter
+          in: query
+          schema:
+            type: string
+            enum: [all, missed, filtered]
+            default: all
+          description: '`all` leaves out filtered calls, which have their own section.'
+        - name: before
+          in: query
+          schema:
+            type: integer
+          description: 'Page boundary: entries that started before this time.'
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+      responses:
+        '200':
+          description: One page.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  entries:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/CallLogEntry'
+                  unseen_missed:
+                    type: integer
+                  next_before:
+                    type: [integer, 'null']
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [calls]
+      operationId: clearCallLog
+      summary: Delete the whole call history
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Cleared.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/calls/log/seen:
+    post:
+      tags: [calls]
+      operationId: markCallsSeen
+      summary: Clear the missed-call badge up to a time
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [up_to]
+              properties:
+                up_to:
+                  type: integer
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Marked.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+                  unseen_missed:
+                    type: integer
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/calls/log/{id}:
+    delete:
+      tags: [calls]
+      operationId: deleteCallLogEntry
+      summary: Delete one call from the history
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Deleted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deleted:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/profile/avatar:
+    get:
+      tags: [profile]
+      operationId: getOwnAvatar
+      summary: The acting mailbox's own picture (feature `avatars`)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: The picture, or null.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  avatar:
+                    oneOf:
+                      - $ref: '#/components/schemas/OwnAvatar'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    put:
+      tags: [profile]
+      operationId: setAvatar
+      summary: Set the picture from a raw image
+      description: |
+        The body is the image itself (JPEG, PNG or WebP, at most 10 MB; convert HEIC on the
+        device). The server decodes it in an isolated worker, strips every piece of metadata,
+        crops a square and stores WebP at 64/128/256/512 px plus a 256 px JPEG. Five changes per
+        mailbox per day.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+        - name: crop
+          in: query
+          schema:
+            type: string
+          description: '`x,y,w,h` in source pixels after EXIF orientation; omitted = centre square.'
+        - name: visibility
+          in: query
+          schema:
+            type: string
+            enum: [everyone, known, nobody]
+            default: known
+        - name: all
+          in: query
+          schema:
+            type: string
+            enum: ['1', 'true']
+          description: Apply to every mailbox of the caller's account.
+      requestBody:
+        required: true
+        content:
+          image/*:
+            schema:
+              type: string
+              format: binary
+      responses:
+        '200':
+          description: Stored. With `all`, `avatars` lists each mailbox and `rate_limited` those over the limit.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  avatar:
+                    $ref: '#/components/schemas/OwnAvatar'
+                  avatars:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        address:
+                          type: string
+                        avatar:
+                          $ref: '#/components/schemas/OwnAvatar'
+                  rate_limited:
+                    type: array
+                    items:
+                      type: string
+        '400':
+          description: '`bad_request` (crop or visibility)'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '413':
+          description: '`too_large`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '415':
+          description: '`unsupported_image`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '422':
+          description: '`bad_image`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: '`avatar_rate_limited`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '503':
+          description: '`avatars_unavailable`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    patch:
+      tags: [profile]
+      operationId: setAvatarVisibility
+      summary: Change who may see the picture (bumps its version; old URLs stop working)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [visibility]
+              properties:
+                visibility:
+                  type: string
+                  enum: [everyone, known, nobody]
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  avatar:
+                    $ref: '#/components/schemas/OwnAvatar'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+    delete:
+      tags: [profile]
+      operationId: removeAvatar
+      summary: Remove the picture (back to initials)
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Removed (or there was none).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: boolean
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          description: '`feature_disabled` (flag off for this account), `not_found`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/avatars:
+    get:
+      tags: [profile]
+      operationId: lookupAvatars
+      summary: Pictures for up to 100 addresses
+      description: Each address is decided on its own; `null` means no picture or not visible to you.
+      security:
+        - {}
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: addresses
+          in: query
+          required: true
+          schema:
+            type: string
+          description: Comma-separated `/k/` addresses or handles.
+      responses:
+        '200':
+          description: Keyed by the requested string.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  avatars:
+                    type: object
+                    additionalProperties:
+                      oneOf:
+                        - $ref: '#/components/schemas/PublicAvatar'
+                        - type: 'null'
+        '400':
+          description: '`bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/avatars/{address}:
+    get:
+      tags: [profile]
+      operationId: lookupAvatar
+      summary: One mailbox's picture, if you may see it
+      security:
+        - {}
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+          description: URL-encoded `/k/` address or handle.
+      responses:
+        '200':
+          description: The picture or null (no picture and not visible look the same).
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  address:
+                    type: string
+                  avatar:
+                    oneOf:
+                      - $ref: '#/components/schemas/PublicAvatar'
+                      - type: 'null'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /v1/avatar-blobs/{id}/{version}/{file}:
+    get:
+      tags: [profile]
+      operationId: avatarBlob
+      summary: Picture bytes, authorized on every request
+      description: |
+        `everyone` pictures answer without credentials with `Cache-Control: public, max-age=31536000,
+        immutable`; others need the caller's credential and answer `private, max-age=300`.
+      security:
+        - {}
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: version
+          in: path
+          required: true
+          schema:
+            type: integer
+        - name: file
+          in: path
+          required: true
+          schema:
+            type: string
+            enum: [64.webp, 128.webp, 256.webp, 512.webp, 256.jpg]
+      responses:
+        '200':
+          description: The image.
+          content:
+            image/webp:
+              schema:
+                type: string
+                format: binary
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        '404':
+          $ref: '#/components/responses/NotFound'
+  /v1/report-avatar:
+    post:
+      tags: [profile]
+      operationId: reportAvatar
+      summary: Report a picture to the operator
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [address]
+              properties:
+                address:
+                  type: string
+                identity:
+                  type: string
+      responses:
+        '200':
+          description: Reported.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  reported:
+                    type: boolean
+        '400':
+          description: '`invalid_report`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          description: '`rate_limited`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /internal/v1/health:
     get:
       tags: [internal]
@@ -3010,6 +3649,192 @@ paths:
         '403':
           $ref: '#/components/responses/EndpointNotAllowed'
 
+  /internal/v1/call-admission:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCallAdmission
+      summary: Ring decision for one call (calls service)
+      description: |
+        Blocks, the callee's filtering settings, caller reputation and a per-pair attempt limit,
+        combined `block > silence > ring`. `reason` is for the calls service's logs only; the caller
+        always experiences an ordinary unanswered call.
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [from, to, kind]
+              properties:
+                from:
+                  type: object
+                  required: [mailbox]
+                  properties:
+                    mailbox:
+                      type: string
+                    handle:
+                      type: string
+                to:
+                  type: string
+                kind:
+                  type: string
+                  enum: [audio, video]
+                group_id:
+                  type: string
+      responses:
+        '200':
+          description: The decision.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [decision, targets, reason]
+                properties:
+                  decision:
+                    type: string
+                    enum: [ring, silence, block]
+                  targets:
+                    type: array
+                    items:
+                      type: string
+                  reason:
+                    type: string
+        '400':
+          description: '`bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/call-events:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCallEvents
+      summary: One call lifecycle event (calls service)
+      description: Deduplicated by `event_id`, folded monotonically into each participant's history.
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event_id, room_id, kind, event, from, at]
+              properties:
+                event_id:
+                  type: string
+                room_id:
+                  type: string
+                seq:
+                  type: integer
+                kind:
+                  type: string
+                  enum: [audio, video]
+                event:
+                  type: string
+                  enum: [ring, answer, join, decline, busy, missed, cancelled, filtered, end]
+                from:
+                  type: object
+                  required: [address]
+                  properties:
+                    address:
+                      type: string
+                    handle:
+                      type: string
+                callee:
+                  type: string
+                to:
+                  type: array
+                  items:
+                    type: string
+                by:
+                  type: string
+                participants:
+                  type: array
+                  items:
+                    type: string
+                at:
+                  type: integer
+      responses:
+        '200':
+          description: Accepted.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  accepted:
+                    type: boolean
+                  duplicate:
+                    type: boolean
+        '400':
+          description: '`bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/avatar-reports:
+    get:
+      tags: [internal]
+      x-internal: true
+      operationId: internalAvatarReports
+      summary: Reported pictures, most reported first (operator)
+      security:
+        - serviceToken: []
+      responses:
+        '200':
+          description: Reports.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/avatars/{id}/remove:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalRemoveAvatar
+      summary: Take a picture down after review (operator)
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Removed.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  removed:
+                    type: boolean
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
 components:
   securitySchemes:
     capToken:
@@ -3242,6 +4067,114 @@ components:
           type: boolean
         auto_accept_known:
           type: boolean
+        unknown_calls:
+          type: string
+          enum: [ring, silence, block]
+          description: Calls from people you don't know. Default ring.
+        unnamed_calls:
+          type: string
+          enum: [ring, silence, block]
+          description: Calls from addresses without a name. Default silence.
+        unnamed_messages:
+          type: string
+          enum: [show, filter, block]
+          description: Messages from addresses without a name. Default show.
+        unknown_messages:
+          type: string
+          enum: [show, filter, block]
+          description: Messages from people you don't know. Default show.
+        low_reputation:
+          type: string
+          enum: [filter, allow]
+          description: Senders and callers with a negative score. Default filter.
+        group_members_known:
+          type: boolean
+        call_history_days:
+          type: integer
+          enum: [0, 30, 180, 365]
+          description: Keep call history; 0 is off. Default 180.
+    CallLogEntry:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        owner:
+          type: string
+        room_id:
+          type: string
+        direction:
+          type: string
+          enum: [outgoing, incoming]
+        outcome:
+          type: [string, 'null']
+          enum: [answered, missed, declined, cancelled, busy, filtered, failed, null]
+          description: null while the call is in progress.
+        kind:
+          type: string
+          enum: [audio, video]
+        peer:
+          type: [string, 'null']
+        peer_handle:
+          type: [string, 'null']
+        participants:
+          type: array
+          items:
+            type: string
+        group_id:
+          type: [string, 'null']
+        started_at:
+          type: integer
+        answered_at:
+          type: [integer, 'null']
+        ended_at:
+          type: [integer, 'null']
+        duration:
+          type: [integer, 'null']
+        seen:
+          type: boolean
+    AvatarUrls:
+      type: object
+      properties:
+        '64':
+          type: string
+        '128':
+          type: string
+        '256':
+          type: string
+        '512':
+          type: string
+        jpeg:
+          type: string
+    PublicAvatar:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        hash:
+          type: string
+        urls:
+          $ref: '#/components/schemas/AvatarUrls'
+    OwnAvatar:
+      type: object
+      additionalProperties: true
+      properties:
+        id:
+          type: string
+        version:
+          type: integer
+        visibility:
+          type: string
+          enum: [everyone, known, nobody]
+        hash:
+          type: string
+        urls:
+          $ref: '#/components/schemas/AvatarUrls'
+        created_at:
+          type: integer
     Contact:
       type: object
       additionalProperties: true
@@ -3269,6 +4202,9 @@ components:
       additionalProperties: true
       description: One opened message. Received bodies are untrusted content.
       properties:
+        filtered:
+          type: boolean
+          description: Filed in Filtered by the recipient's settings.
         message_id:
           type: string
         direction:
@@ -3446,7 +4382,7 @@ components:
           description: '"<mail_cursor>.<event_seq>"'
         type:
           type: string
-          examples: [features.changed]
+          examples: [features.changed, call.log, profile.avatar]
         mailbox:
           type: [string, 'null']
         data:

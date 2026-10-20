@@ -17,7 +17,7 @@ publish = false
 [dependencies]
 axum = "0.8"
 async-stream = "0.3"
-tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync"] }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time", "signal", "sync", "process", "io-util"] }
 serde.workspace = true
 serde_json.workspace = true
 tracing = "0.1"
@@ -41,6 +41,8 @@ qrcodegen = "1.8"
 time = { version = "0.3", features = ["parsing"] }
 # `http2` because APNs speaks nothing else. The other features are the realm JWKS fetch.
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
+webp = { version = "0.3", default-features = false }
 
 # `statvfs`, for the free-space floor under the blob volume. Already in the tree through tokio and
 # rusqlite; this only makes the use direct.

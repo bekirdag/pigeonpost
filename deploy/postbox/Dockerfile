@@ -5,10 +5,14 @@
 # the repo root (see docker-compose.yml `build.context: ../..`); the root .dockerignore whitelists
 # only crates/ + the manifests, so the context stays small.
 #
-# Bullseye (glibc 2.31), not bookworm: the deploy box runs old Docker (18.09) whose seccomp profile
-# blocks clone3, which bookworm's newer glibc uses — bullseye avoids it, matching the loft image.
+# The runtime is bookworm. It used to be bullseye, because the old deploy box ran Docker 18.09,
+# whose seccomp profile blocks the clone3 call bookworm's glibc makes. The postbox moved to a host
+# with Docker 29, and bullseye's security apt pool now answers 404 (Debian 11 is past LTS), so the
+# stock bullseye runtime stopped building at all. The build stage stays on bullseye: a binary
+# linked against glibc 2.31 runs unchanged on bookworm's 2.36, never the other way round.
+# The runtime user keeps uid 65532, so the data volume's ownership is unchanged.
 ARG BUILD_BASE=docker.io/library/rust:1-bullseye
-ARG RUNTIME_BASE=docker.io/library/debian:bullseye-slim
+ARG RUNTIME_BASE=docker.io/library/debian:bookworm-slim
 
 FROM ${BUILD_BASE} AS build
 WORKDIR /src

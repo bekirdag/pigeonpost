@@ -90,6 +90,8 @@
   function paintAvatar(el, peer) {
     el.textContent = initials(peer);
     el.dataset.tone = String(tone(peer));
+    // A profile picture, when there is one this account may see; the initials stay underneath.
+    Avatars.decorate(el, peer);
   }
 
   // ---- session ------------------------------------------------------------------------------
@@ -129,6 +131,7 @@
     prunePreviews();
     $("threads").textContent = "";
     state = freshState();
+    resetPhase1b();
     const banner = $("offline-banner");
     if (banner) banner.hidden = true;
     render();
@@ -917,6 +920,9 @@
       inboxRequest: 0,
       acceptedInboxRequest: 0,
       sectionRequests: {},
+      leftView: "inbox", // inbox | calls | filtered
+      calls: { entries: [], unseen: 0, filter: "all", next: null, loaded: false, loading: false, filtered: null },
+      filtered: [],      // messages the server filed as filtered
     };
   }
 
@@ -1329,6 +1335,7 @@
   }
 
   function renderThreadList() {
+    if (renderSideViews()) return;
     const list = $("threads");
     // The archive is a different view of the same list, not a different list: filed conversations
     // are exactly the ones the inbox omits, so one predicate decides both and they can never
@@ -1485,6 +1492,7 @@
     archiveBtn.setAttribute("aria-label", archiveBtn.title);
 
     if (!open) {
+      $("blocked-banner").hidden = true;
       resetConversationView();
       $("messages").textContent = "";
       $("load-older").hidden = true;
@@ -1498,9 +1506,14 @@
     // Narrowed to the chosen thread, which is the whole point of having them: an answer about the
     // deploy should not be read next to last week's unrelated question.
     const showing = subsVisible() ? currentSubthread(state.openPeer) : null;
-    const thread = showing
+    const narrowed = showing
       ? { ...conversation, messages: conversation.messages.filter((m) => (m.thread_id || "") === showing.id) }
       : conversation;
+    // Missed calls read as small lines in the conversation they belong to, in the default thread.
+    const thread = !showing || showing.is_default
+      ? { ...narrowed, messages: withMissedCalls(narrowed.messages, conversation) }
+      : narrowed;
+    renderBlockedBanner(conversation);
 
     $("peer-name").textContent = threadName(thread);
     $("peer-name-btn").setAttribute("aria-label", "About " + threadName(thread));
@@ -1572,7 +1585,7 @@
 
   function highlightMessage(row, query, current) {
     row.classList.toggle("found-message", current);
-    if (!query) return;
+    if (!query || !row.querySelector(".bubble")) return;
     // Build marks from text nodes, never HTML from the query or message. Inline markup stays inert.
     const walker = document.createTreeWalker(row.querySelector(".bubble"), NodeFilter.SHOW_TEXT);
     const nodes = [];
@@ -1801,6 +1814,7 @@
   }
 
   function messageNode(m) {
+    if (m.kind === "system") return systemLine(m);
     const li = document.createElement("li");
     li.dataset.messageId = m.id;
     if (m.kind === "out") li.className = "mine";
@@ -1963,6 +1977,7 @@
       }
     });
     meta.append(copy);
+    if (m.kind === "in") meta.append(blockSenderButton(m));
 
     const time = document.createElement("span");
     time.textContent = clockTime(m.at);
@@ -2308,6 +2323,7 @@
       dl.append(dt, dd);
     };
     $("peer-info-title").textContent = threadName(thread);
+    paintAvatar($("peer-info-avatar"), thread.peer);
     add(addresses, "Address", thread.identity?.address || lastIn?.address || thread.peer, true);
     if (thread.peer.startsWith("/") && !thread.peer.startsWith("/k/")) add(addresses, "Handle", thread.peer, true);
     if (thread.mine) add(addresses, "Mailbox", "yours — on this account");
@@ -2375,7 +2391,8 @@
     state.senderAction = { peer, pending: true, error: null };
     renderThread();
     try {
-      await api("/v1/contacts", { method: action === "forget" ? "DELETE" : "PUT",
+      // DELETE reads `peer` from the query string on the server; the body copy is harmless.
+      await api(action === "forget" ? withIdentity("/v1/contacts?peer=" + encodeURIComponent(peer), context.address) : "/v1/contacts", { method: action === "forget" ? "DELETE" : "PUT",
         body: { ...(action === "forget" ? { peer } : row), identity: context.address }, signal: context.signal });
       if (!context.current()) return;
       state.sectionRequests.contacts = (state.sectionRequests.contacts || 0) + 1;
@@ -2818,7 +2835,7 @@
   // it had not managed to load.
   async function loadAll() {
     const context = mailboxContext();
-    const results = await Promise.allSettled([loadInbox(), loadContacts(), loadArchive(), loadThreads()]);
+    const results = await Promise.allSettled([loadInbox(), loadContacts(), loadArchive(), loadThreads(), loadCallLog(), loadFiltered()]);
     if (!context.current()) return;
     render();
     // The last word, so the answer no longer depends on which call finished first. The other three
@@ -3095,7 +3112,7 @@
           await readEventStream(res.body, rearm, (event, id, data) => {
             if (!liveWanted || gen !== liveGen) return;
             if (id !== null) liveCursor = id;
-            if (event !== "mail") return;
+            if (event !== "mail") { typedEvent(event, data); return; }
             // The stream is per account and the screen shows one mailbox. Refreshing for a sibling
             // mailbox's mail would be a fetch that changes nothing.
             let mailbox = null;
@@ -3158,6 +3175,8 @@
           if (field === "event") event = value2;
           else if (field === "data") data.push(value2);
           else if (field === "id" && /^\d+$/.test(value2)) id = Number(value2);
+          // Typed events carry `<mail>.<event>` ids; the cursor is opaque to this page.
+          else if (field === "id" && /^\d+\.\d+$/.test(value2)) id = value2;
         }
         if (data.length || id !== null) onEvent(event, id, data.join("\n"));
       }
@@ -3329,13 +3348,17 @@
 
   let settingsPage = "root";
   const settingsTitles = { root: "Settings", account: "Account", handles: "Handles",
-    inbox: "Inbox and appearance", contacts: "Contacts and permissions", help: "Help and about" };
+    inbox: "Inbox and appearance", contacts: "Contacts and permissions", help: "Help and about",
+    profile: "Profile picture", privacy: "Privacy and filtering", blocked: "Blocked" };
   function showSettingsPage(next, focus = true) {
     if (!Object.hasOwn(settingsTitles, next)) return;
     const previous = settingsPage;
     settingsPage = next;
     document.querySelectorAll("[data-settings-page]").forEach(el => { el.hidden = el.dataset.settingsPage !== next; });
     $("settings-title").textContent = settingsTitles[next];
+    if (next === "profile") openProfilePage();
+    if (next === "privacy") openPrivacyPage();
+    if (next === "blocked") openBlockedPage();
     $("settings-back").hidden = next === "root";
     $("settings-sheet").querySelector(".sheet-body").scrollTop = 0;
     if (focus) {
@@ -3391,6 +3414,7 @@
       });
     };
     loadAccountHandles();
+    syncSettingsRows();
     showSettingsPage("root", false);
     openSheet("settings-sheet");
     $("settings-nav-account").focus();
@@ -3787,14 +3811,11 @@
     $("peer-archive").onclick = () => setArchived(state.openPeer, !state.archived.has(state.openPeer));
     $("peer-block").onclick = () => {
       if (contactFor(state.openPeer)?.admission === "block") { updateSender(state.openPeer, "known"); return; }
-      blockingPeer = state.openPeer;
-      $("peer-block-title").textContent = "Block " + $("peer-info-title").textContent + "?";
-      $("peer-block-error").hidden = true;
-      openSheet("peer-block-sheet");
-      $("peer-block-cancel").focus();
+      askBlock({ peer: state.openPeer, name: $("peer-info-title").textContent, origin: "info" });
     };
     $("peer-block-cancel").onclick = () => closeSheet("peer-block-sheet");
-    $("peer-block-confirm").onclick = () => updateSender(blockingPeer, "block");
+    $("peer-block-confirm").onclick = () => confirmBlock();
+    wirePhase1b();
 
     $("search").oninput = (e) => {
       state.filter = e.target.value;
@@ -3893,6 +3914,1264 @@
     $("send-btn").disabled = true;
   }
 
+  // ---- Phase 1b: capabilities, profile pictures, calls, filtering and blocking -------------------
+  //
+  // Every feature below asks `GET /v1/capabilities` first and stays invisible when the postbox has
+  // not switched it on — a page released ahead of its server must look exactly like the old one.
+  // Blocking is the exception: it uses contact routes every postbox already has.
+
+  let features = new Set();
+  const has = (name) => features.has(name);
+
+  async function loadCapabilities() {
+    const version = sessionVersion;
+    let next = new Set();
+    try {
+      const body = await api("/v1/capabilities");
+      if (Array.isArray(body.features)) next = new Set(body.features.map(String));
+    } catch (_) { /* an older postbox: nothing new is on */ }
+    if (version !== sessionVersion) return;
+    features = next;
+    Avatars.enabled = has("avatars");
+    syncSideNav();
+  }
+
+  function resetPhase1b() {
+    features = new Set();
+    Avatars.reset();
+    blockTarget = null;
+    ownAvatar = null;
+    crop = null;
+    clearTimeout(callReloadTimer);
+    syncSideNav();
+  }
+
+  // Typed events on the account stream. Unknown types are ignored, as the stream's contract says.
+  let callReloadTimer = null;
+  function typedEvent(event, raw) {
+    let frame = null;
+    try { frame = JSON.parse(raw); } catch (_) { return; }
+    if (!frame || typeof frame !== "object") return;
+    const data = frame.data && typeof frame.data === "object" ? frame.data : frame;
+    if (event === "call.log") {
+      const mailbox = frame.mailbox || data.owner;
+      if (mailbox && state.me && mailbox !== state.me.address) return;
+      const context = mailboxContext();
+      clearTimeout(callReloadTimer);
+      callReloadTimer = setTimeout(() => {
+        if (!context.current()) return;
+        loadCallLog().then(() => { if (context.current()) render(); });
+      }, 250);
+    } else if (event === "profile.avatar") {
+      Avatars.forget([data.address, data.handle]);
+      if (settingsPage === "profile" && !$("settings-sheet").hidden) loadOwnAvatar();
+    }
+  }
+
+  // ---- profile pictures ---------------------------------------------------------------------
+
+  // Pictures are fetched with the bearer token (a "people I know" picture is not public), turned
+  // into object URLs and laid over the initials, which stay underneath as the fallback.
+  const Avatars = {
+    enabled: false,
+    meta: new Map(),     // key → { hash, url } or null (no picture, or not one this account may see)
+    urls: new Map(),     // hash → object URL
+    loading: new Map(),  // hash → promise
+    queue: new Set(),
+    timer: null,
+    generation: 0,
+    controller: new AbortController(),
+    reset() {
+      for (const url of this.urls.values()) { try { URL.revokeObjectURL(url); } catch (_) { /* jsdom */ } }
+      this.meta.clear(); this.urls.clear(); this.loading.clear(); this.queue.clear();
+      clearTimeout(this.timer); this.timer = null;
+      this.controller.abort(); this.controller = new AbortController();
+      this.generation += 1;
+      this.enabled = false;
+    },
+    clear(el) {
+      el.classList.remove("has-photo");
+      el.style.backgroundImage = "";
+    },
+    paint(el, url) {
+      el.classList.add("has-photo");
+      el.style.backgroundImage = 'url("' + url + '")';
+    },
+    decorate(el, key) {
+      if (!el) return;
+      this.clear(el);
+      if (!this.enabled || !key || key.endsWith("/*") || !key.startsWith("/")) { delete el.dataset.avatarKey; return; }
+      el.dataset.avatarKey = key;
+      const meta = this.meta.get(key);
+      if (meta === undefined) { this.want(key); return; }
+      if (meta && this.urls.has(meta.hash)) this.paint(el, this.urls.get(meta.hash));
+    },
+    want(key) {
+      if (this.queue.has(key)) return;
+      this.queue.add(key);
+      if (!this.timer) this.timer = setTimeout(() => this.flush(), 30);
+    },
+    async flush() {
+      this.timer = null;
+      const keys = [...this.queue].slice(0, 100);
+      keys.forEach((k) => { this.queue.delete(k); this.meta.set(k, null); });
+      if (this.queue.size) this.timer = setTimeout(() => this.flush(), 30);
+      if (!keys.length || !getToken()) return;
+      const generation = this.generation;
+      let body;
+      try {
+        body = await api("/v1/avatars?addresses=" + keys.map(encodeURIComponent).join(","), { signal: this.controller.signal });
+      } catch (_) { return; }
+      if (generation !== this.generation) return;
+      const found = body && typeof body.avatars === "object" && body.avatars ? body.avatars : {};
+      const replaced = [];
+      for (const key of keys) {
+        const a = found[key];
+        const url = a && a.urls && (a.urls["128"] || a.urls["256"] || a.urls.jpeg);
+        if (!url || typeof url !== "string" || !url.startsWith("/")) { this.meta.set(key, null); this.repaint(key); continue; }
+        const hash = String(a.hash || (a.id + ":" + a.version));
+        this.meta.set(key, { hash, url });
+        this.blob(hash, url).then((obj) => { if (obj && generation === this.generation) this.repaint(key); });
+      }
+      this.prune(replaced);
+    },
+    // The bytes for one picture, once per hash however many mailboxes share it.
+    blob(hash, url) {
+      if (this.urls.has(hash)) return Promise.resolve(this.urls.get(hash));
+      if (!this.loading.has(hash)) {
+        const generation = this.generation;
+        const job = (async () => {
+          const res = await fetch(cfg.postbox + url, {
+            headers: { authorization: `Bearer ${getToken()}` }, signal: this.controller.signal,
+          });
+          if (!res.ok || typeof res.blob !== "function") return null;
+          const data = await res.blob();
+          if (generation !== this.generation || typeof URL.createObjectURL !== "function") return null;
+          const obj = URL.createObjectURL(data);
+          this.urls.set(hash, obj);
+          return obj;
+        })().catch(() => null).finally(() => this.loading.delete(hash));
+        this.loading.set(hash, job);
+      }
+      return this.loading.get(hash);
+    },
+    repaint(key) {
+      const meta = this.meta.get(key);
+      for (const el of document.querySelectorAll("[data-avatar-key]")) {
+        if (el.dataset.avatarKey !== key) continue;
+        if (meta && this.urls.has(meta.hash)) this.paint(el, this.urls.get(meta.hash));
+        else this.clear(el);
+      }
+    },
+    // A picture changed: look again, and let go of bytes nothing shows any more.
+    forget(keys) {
+      const old = [];
+      for (const key of keys) {
+        if (!key) continue;
+        const meta = this.meta.get(key);
+        if (meta) old.push(meta.hash);
+        this.meta.delete(key);
+        if ([...document.querySelectorAll("[data-avatar-key]")].some((el) => el.dataset.avatarKey === key)) this.want(key);
+      }
+      this.prune(old);
+    },
+    prune(hashes) {
+      const live = new Set([...this.meta.values()].filter(Boolean).map((m) => m.hash));
+      for (const hash of hashes) {
+        if (live.has(hash) || !this.urls.has(hash)) continue;
+        try { URL.revokeObjectURL(this.urls.get(hash)); } catch (_) { /* jsdom */ }
+        this.urls.delete(hash);
+      }
+    },
+  };
+
+  let ownAvatar = null;
+  let pendingVisibility = "known";
+  const meKeys = () => (state.me ? [state.me.handle, state.me.address].filter(Boolean) : []);
+
+  function syncSettingsRows() {
+    $("settings-nav-profile").hidden = !has("avatars");
+    $("settings-nav-privacy").hidden = !(has("call_admission") || has("message_filtering") || has("call_history"));
+  }
+
+  function openProfilePage() {
+    renderProfile();
+    loadOwnAvatar();
+  }
+
+  async function loadOwnAvatar() {
+    const context = mailboxContext();
+    if (!context.address || !has("avatars")) return;
+    $("profile-note").textContent = "Loading…";
+    try {
+      const body = await api(withIdentity("/v1/profile/avatar", context.address), { signal: context.signal });
+      if (!context.current()) return;
+      ownAvatar = body.avatar || null;
+      if (ownAvatar?.visibility) pendingVisibility = ownAvatar.visibility;
+      $("profile-note").textContent = ownAvatar ? "This picture belongs to the mailbox you are using now."
+        : "No picture yet. People see your initials.";
+    } catch (_) {
+      if (context.current()) $("profile-note").textContent = "Could not load your picture. Try again later.";
+    }
+    if (context.current()) renderProfile();
+  }
+
+  function renderProfile() {
+    const el = $("profile-avatar");
+    const key = state.me ? state.me.handle || state.me.address : "";
+    el.textContent = initials(key || "··");
+    el.dataset.tone = String(tone(key || "-"));
+    Avatars.clear(el);
+    delete el.dataset.avatarKey;
+    const url = ownAvatar?.urls && (ownAvatar.urls["256"] || ownAvatar.urls["128"]);
+    if (url) {
+      const hash = String(ownAvatar.hash || ownAvatar.id + ":" + ownAvatar.version);
+      Avatars.blob(hash, url).then((obj) => { if (obj && ownAvatar && String(ownAvatar.hash || ownAvatar.id + ":" + ownAvatar.version) === hash) Avatars.paint(el, obj); });
+    }
+    $("profile-remove").hidden = !ownAvatar;
+    for (const input of document.querySelectorAll('#profile-visibility input')) input.checked = input.value === pendingVisibility;
+  }
+
+  async function setVisibility(value) {
+    const previous = pendingVisibility;
+    pendingVisibility = value;
+    if (!ownAvatar) return; // applied with the next upload
+    const context = mailboxContext();
+    try {
+      const body = await api("/v1/profile/avatar", { method: "PATCH", body: { identity: context.address, visibility: value }, signal: context.signal });
+      if (!context.current()) return;
+      ownAvatar = body.avatar || ownAvatar;
+      Avatars.forget(meKeys());
+      toast("Picture visibility saved.");
+    } catch (_) {
+      if (!context.current()) return;
+      pendingVisibility = previous;
+      toast("Could not change who can see your picture.");
+    }
+    renderProfile();
+  }
+
+  async function removeAvatar() {
+    const context = mailboxContext();
+    $("profile-remove").disabled = true;
+    try {
+      await api(withIdentity("/v1/profile/avatar", context.address), { method: "DELETE", signal: context.signal });
+      if (!context.current()) return;
+      ownAvatar = null;
+      Avatars.forget(meKeys());
+      $("profile-note").textContent = "Picture removed. People see your initials.";
+    } catch (_) {
+      if (context.current()) toast("Could not remove your picture.");
+    } finally {
+      if (context.current()) { $("profile-remove").disabled = false; renderProfile(); }
+    }
+  }
+
+  // ---- crop -----------------------------------------------------------------------------------
+
+  const AVATAR_MAX_BYTES = 10 * 1024 * 1024;
+  const AVATAR_MAX_SIDE = 4096;
+  let crop = null;
+
+  async function decodeImage(file) {
+    if (typeof createImageBitmap === "function") return createImageBitmap(file);
+    return new Promise((resolve, reject) => {
+      if (typeof URL.createObjectURL !== "function") { reject(new Error("no decoder")); return; }
+      const img = new Image(), url = URL.createObjectURL(file);
+      img.onload = () => { resolve(img); };
+      img.onerror = () => { URL.revokeObjectURL(url); reject(new Error("decode")); };
+      img.src = url;
+    });
+  }
+
+  async function startCrop(file) {
+    if (!file) return;
+    const heic = /hei[cf]/i.test(file.type) || /\.hei[cf]$/i.test(file.name || "");
+    if (!heic && !/^image\/(jpeg|png|webp)$/i.test(file.type)) { toast("Choose a JPEG, PNG or WebP picture."); return; }
+    let image;
+    try { image = await decodeImage(file); } catch (_) {
+      toast(heic ? "This browser cannot open HEIC photos. Save it as JPEG first, then choose it again."
+        : "That picture could not be opened.");
+      return;
+    }
+    const imgW = image.width || image.naturalWidth, imgH = image.height || image.naturalHeight;
+    if (!imgW || !imgH) { toast("That picture could not be opened."); return; }
+    const C = window.PigeonpostCrop;
+    const view = $("crop-canvas").width;
+    crop = { file, image, imgW, imgH, view, zoom: 1, heic, ...C.centred({ imgW, imgH, view, zoom: 1 }) };
+    $("crop-zoom").value = "1";
+    $("crop-error").hidden = true;
+    $("crop-save").disabled = false;
+    openSheet("crop-sheet");
+    drawCrop();
+    $("crop-canvas").focus();
+  }
+
+  function drawCrop() {
+    const canvas = $("crop-canvas");
+    const ctx = crop && canvas.getContext ? (() => { try { return canvas.getContext("2d"); } catch (_) { return null; } })() : null;
+    if (!ctx) return;
+    const s = window.PigeonpostCrop.baseScale(crop.imgW, crop.imgH, crop.view) * crop.zoom;
+    ctx.clearRect(0, 0, crop.view, crop.view);
+    ctx.drawImage(crop.image, crop.x, crop.y, crop.imgW * s, crop.imgH * s);
+    // The round mask people will actually see, drawn as a shade outside the circle.
+    ctx.save();
+    ctx.fillStyle = "rgba(0,0,0,.45)";
+    ctx.beginPath();
+    ctx.rect(0, 0, crop.view, crop.view);
+    ctx.arc(crop.view / 2, crop.view / 2, crop.view / 2, 0, Math.PI * 2, true);
+    ctx.fill("evenodd");
+    ctx.restore();
+  }
+
+  function moveCrop(dx, dy) {
+    if (!crop) return;
+    Object.assign(crop, window.PigeonpostCrop.clampOffset({ ...crop, x: crop.x + dx, y: crop.y + dy }));
+    drawCrop();
+  }
+
+  function zoomCrop(to) {
+    if (!crop) return;
+    const next = Math.min(4, Math.max(1, to));
+    Object.assign(crop, window.PigeonpostCrop.rezoom({ ...crop, from: crop.zoom, to: next }), { zoom: next });
+    $("crop-zoom").value = String(next);
+    drawCrop();
+  }
+
+  // What to upload: the original when the server can take it as is, otherwise a JPEG no larger
+  // than 4096 px (HEIC, very large files), with the crop moved onto the smaller picture.
+  async function uploadBody() {
+    const C = window.PigeonpostCrop;
+    let rect = C.cropRect(crop);
+    const fits = !crop.heic && crop.file.size <= AVATAR_MAX_BYTES && Math.max(crop.imgW, crop.imgH) <= AVATAR_MAX_SIDE;
+    if (fits) return { blob: crop.file, type: crop.file.type, rect };
+    const factor = Math.min(1, AVATAR_MAX_SIDE / Math.max(crop.imgW, crop.imgH));
+    const w = Math.max(1, Math.round(crop.imgW * factor)), h = Math.max(1, Math.round(crop.imgH * factor));
+    const canvas = document.createElement("canvas");
+    canvas.width = w; canvas.height = h;
+    let ctx = null;
+    try { ctx = canvas.getContext("2d"); } catch (_) { ctx = null; }
+    if (!ctx || typeof canvas.toBlob !== "function") throw new Error("This browser cannot prepare that picture.");
+    ctx.drawImage(crop.image, 0, 0, w, h);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.9));
+    if (!blob || blob.size > AVATAR_MAX_BYTES) throw new Error("That picture is too large.");
+    rect = C.scaleRect(rect, factor, w, h);
+    return { blob, type: "image/jpeg", rect };
+  }
+
+  function avatarError(status, code) {
+    if (status === 429 || code === "avatar_rate_limited") return "You can change your picture five times a day. Try again tomorrow.";
+    if (status === 413) return "That picture is too large. Choose one under 10 MB.";
+    if (status === 415 || status === 422) return "That picture could not be used. Try a JPEG or PNG.";
+    return "Could not save your picture. Please try again.";
+  }
+
+  async function saveCrop() {
+    if (!crop || $("crop-save").disabled) return;
+    const context = mailboxContext();
+    $("crop-save").disabled = true;
+    $("crop-error").hidden = true;
+    const fail = (message) => { $("crop-error").textContent = message; $("crop-error").hidden = false; $("crop-save").disabled = false; };
+    let upload;
+    try { upload = await uploadBody(); } catch (e) { fail(e.message); return; }
+    const { x, y, w, h } = upload.rect;
+    const all = $("profile-all").checked;
+    const path = withIdentity("/v1/profile/avatar", context.address)
+      + "&crop=" + [x, y, w, h].join(",") + "&visibility=" + encodeURIComponent(pendingVisibility) + (all ? "&all=1" : "");
+    const send = () => fetch(cfg.postbox + path, {
+      method: "PUT",
+      headers: { authorization: `Bearer ${getToken()}`, "content-type": upload.type || "application/octet-stream", accept: "application/json" },
+      body: upload.blob, signal: context.signal,
+    });
+    try {
+      let res = await send();
+      if (res.status === 401 && (await renewSession()) && context.current()) res = await send();
+      const body = await res.json().catch(() => ({}));
+      if (!context.current()) return;
+      if (!res.ok) { fail(avatarError(res.status, body.error)); return; }
+      ownAvatar = body.avatar || (Array.isArray(body.avatars) ? body.avatars.find((a) => !a.address || a.address === context.address) || body.avatars[0] : null) || ownAvatar;
+      const keys = all ? state.identities.flatMap((id) => [id.handle, id.address]) : meKeys();
+      Avatars.forget(keys);
+      crop = null;
+      closeSheet("crop-sheet");
+      $("profile-note").textContent = all ? "Saved for all your mailboxes." : "Saved.";
+      renderProfile();
+      renderIdentityMenu();
+      renderMe();
+    } catch (_) {
+      if (context.current()) fail("Could not reach your inbox. Please try again.");
+    }
+  }
+
+  // ---- privacy and filtering ------------------------------------------------------------------
+
+  const POLICY_ROWS = [
+    { field: "unknown_calls", flag: "call_admission", title: "Calls from people you don’t know",
+      note: "Silence keeps the call out of your way and lists it under Filtered calls.",
+      options: [["ring", "Ring"], ["silence", "Silence"], ["block", "Block"]] },
+    { field: "unnamed_messages", flag: "message_filtering", title: "Messages from addresses without a name",
+      note: "Addresses like /k/… that have no handle.",
+      options: [["show", "Show"], ["filter", "Move to Filtered"], ["block", "Block"]] },
+    { field: "unknown_messages", flag: "message_filtering", title: "Messages from people you don’t know",
+      note: "People you know are your contacts and anyone you have written to first.",
+      options: [["show", "Show"], ["filter", "Move to Filtered"], ["block", "Block"]] },
+    { field: "unnamed_calls", flag: "call_admission", title: "Calls from addresses without a name",
+      options: [["ring", "Ring"], ["silence", "Silence"], ["block", "Block"]] },
+    { field: "low_reputation", flag: "message_filtering", title: "Low-reputation senders",
+      note: "Senders others have reported as spam.",
+      options: [["filter", "Filter"], ["allow", "Allow"]] },
+    { field: "call_history_days", flag: "call_history", title: "Keep call history",
+      note: "Off stops keeping new calls. Entries older than this are deleted.",
+      options: [["0", "Off"], ["30", "30 days"], ["180", "180 days"], ["365", "1 year"]] },
+  ];
+  let policyFull = null;
+
+  function renderPolicy() {
+    const list = $("policy-list");
+    list.textContent = "";
+    for (const row of POLICY_ROWS) {
+      if (!has(row.flag)) continue;
+      const box = document.createElement("div");
+      box.className = "policy-row";
+      const title = document.createElement("h4");
+      title.id = "policy-title-" + row.field;
+      title.textContent = row.title;
+      const group = document.createElement("div");
+      group.className = "segmented";
+      group.setAttribute("role", "radiogroup");
+      group.setAttribute("aria-labelledby", title.id);
+      group.dataset.policy = row.field;
+      for (const [value, label] of row.options) {
+        const l = document.createElement("label"), input = document.createElement("input"), span = document.createElement("span");
+        input.type = "radio";
+        input.name = "policy-" + row.field;
+        input.value = value;
+        input.disabled = !policyFull;
+        input.checked = Boolean(policyFull) && String(policyFull[row.field]) === value;
+        input.addEventListener("change", () => { if (input.checked) savePolicy(row.field, value); });
+        span.textContent = label;
+        l.append(input, span);
+        group.append(l);
+      }
+      box.append(title, group);
+      if (row.note) {
+        const note = document.createElement("p");
+        note.className = "field-note";
+        note.textContent = row.note;
+        box.append(note);
+      }
+      list.append(box);
+    }
+  }
+
+  async function openPrivacyPage() {
+    const context = mailboxContext();
+    policyFull = null;
+    $("policy-error").hidden = true;
+    renderPolicy();
+    try {
+      const body = await api(withIdentity("/v1/policy", context.address), { signal: context.signal });
+      if (!context.current()) return;
+      policyFull = body;
+    } catch (_) {
+      if (!context.current()) return;
+      $("policy-error").textContent = "Could not load these settings. Close and try again.";
+      $("policy-error").hidden = false;
+    }
+    renderPolicy();
+  }
+
+  async function savePolicy(field, raw) {
+    if (!policyFull) return;
+    const context = mailboxContext();
+    const value = field === "call_history_days" ? Number(raw) : raw;
+    const previous = policyFull[field];
+    policyFull = { ...policyFull, [field]: value };
+    $("policy-error").hidden = true;
+    try {
+      const body = await api("/v1/policy", { method: "PUT", body: { [field]: value, identity: context.address }, signal: context.signal });
+      if (!context.current()) return;
+      if (body && typeof body === "object" && field in body) policyFull = { ...policyFull, ...body };
+      toast("Saved.");
+    } catch (_) {
+      if (!context.current()) return;
+      policyFull = { ...policyFull, [field]: previous };
+      $("policy-error").textContent = "Could not save that setting. Please try again.";
+      $("policy-error").hidden = false;
+    }
+    renderPolicy();
+  }
+
+  // ---- blocking ---------------------------------------------------------------------------------
+
+  let blockTarget = null;
+
+  // The rule covering a whole namespace, or null where nobody owns the namespace (a provider or an
+  // open one) and a wildcard would block strangers who merely share it.
+  function wildcardFor(peer) {
+    if (!peer || peer.startsWith("/k/") || peer.endsWith("/*")) return null;
+    const parts = peer.split("/").filter(Boolean);
+    if (!parts.length) return null;
+    const parent = parts.length === 1 ? parts[0] : parts.slice(0, -1).join("/");
+    if (["github", "pp", "k"].includes(parent)) return null;
+    return "/" + parent + "/*";
+  }
+
+  function askBlock(target) {
+    blockTarget = target;
+    blockingPeer = target.peer;
+    const name = target.name || displayName(target.peer);
+    $("peer-block-title").textContent = "Block " + name + "?";
+    $("peer-block-report").checked = Boolean(target.report);
+    const wide = wildcardFor(target.peer);
+    $("peer-block-wide-row").hidden = !wide;
+    $("peer-block-wide").checked = false;
+    if (wide) $("peer-block-wide-label").textContent = "Block everyone at " + wide.slice(0, -2);
+    $("peer-block-error").hidden = true;
+    $("peer-block-confirm").disabled = false;
+    $("peer-block-confirm").textContent = "Block";
+    openSheet("peer-block-sheet");
+    $("peer-block-cancel").focus();
+  }
+
+  async function confirmBlock() {
+    const target = blockTarget;
+    if (!target || $("peer-block-confirm").disabled) return;
+    const wide = !$("peer-block-wide-row").hidden && $("peer-block-wide").checked;
+    const report = $("peer-block-report").checked;
+    const peer = wide ? wildcardFor(target.peer) : target.peer;
+    if (target.origin === "info" && !wide) {
+      await updateSender(peer, "block");
+      if (state.senderAction?.error) return;
+    } else {
+      const error = await blockAddress(peer);
+      if (error) {
+        $("peer-block-error").textContent = error;
+        $("peer-block-error").hidden = false;
+        return;
+      }
+      if (!$("peer-block-sheet").hidden) closeSheet("peer-block-sheet");
+    }
+    if (report) await reportFor(target);
+  }
+
+  // Write a block row. Returns an error message, or null when it was saved.
+  async function blockAddress(peer) {
+    const context = mailboxContext();
+    const existing = state.contacts.find((c) => c.peer === peer);
+    const row = { peer, alias: existing?.alias || null, admission: "block", autonomy: "review", allowed_verbs: [] };
+    $("peer-block-confirm").disabled = true;
+    $("peer-block-confirm").textContent = "Blocking…";
+    try {
+      await api("/v1/contacts", { method: "PUT", body: { ...row, identity: context.address }, signal: context.signal });
+      if (!context.current()) return null;
+      state.sectionRequests.contacts = (state.sectionRequests.contacts || 0) + 1;
+      state.contacts = state.contacts.filter((c) => c.peer !== peer).concat(row);
+      toast("Blocked. They won’t be able to message or call you.");
+      render();
+      return null;
+    } catch (e) {
+      return "Could not block. " + (e?.message || "Please try again.");
+    } finally {
+      $("peer-block-confirm").disabled = false;
+      $("peer-block-confirm").textContent = "Block";
+    }
+  }
+
+  async function reportFor(target) {
+    const context = mailboxContext();
+    let body = null;
+    if (target.callId) body = { call_id: target.callId };
+    else {
+      const id = target.messageId || [...state.inbound, ...state.filtered].reverse()
+        .find((m) => m.direction !== "out" && peerKeyOf(m) === target.peer)?.message_id;
+      if (id) body = { message_id: id };
+    }
+    if (!body) return;
+    try {
+      await api("/v1/report-spam", { method: "POST", body: { ...body, identity: context.address }, signal: context.signal });
+      if (context.current()) toast("Blocked and reported as spam.");
+    } catch (_) {
+      if (context.current()) toast("Blocked, but the spam report could not be sent.");
+    }
+  }
+
+  function blockSenderButton(m) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "msg-block";
+    button.title = "Block sender";
+    button.setAttribute("aria-label", "Block sender");
+    button.textContent = "⊘";
+    button.addEventListener("click", () => {
+      if (!state.openPeer) return;
+      askBlock({ peer: state.openPeer, name: $("peer-name").textContent, origin: "message", messageId: m.id });
+    });
+    return button;
+  }
+
+  function renderBlockedBanner(conversation) {
+    const blocked = contactFor(conversation.peer)?.admission === "block";
+    $("blocked-banner").hidden = !blocked;
+    if (blocked) $("composer").hidden = true;
+  }
+
+  let blockedRows = null;
+  async function openBlockedPage() {
+    const context = mailboxContext();
+    blockedRows = null;
+    $("blocked-error").hidden = true;
+    renderBlockedList();
+    try {
+      const body = await api(withIdentity("/v1/contacts?admission=block", context.address), { signal: context.signal });
+      if (!context.current()) return;
+      blockedRows = (body.contacts || []).filter((c) => c.admission === "block");
+    } catch (_) {
+      if (!context.current()) return;
+      blockedRows = state.contacts.filter((c) => c.admission === "block");
+      $("blocked-error").textContent = "Could not refresh the list. Showing what was last loaded.";
+      $("blocked-error").hidden = false;
+    }
+    renderBlockedList();
+  }
+
+  function renderBlockedList() {
+    const list = $("blocked-list");
+    list.textContent = "";
+    if (!blockedRows) {
+      const li = document.createElement("li");
+      li.className = "cl-empty";
+      li.textContent = "Loading…";
+      list.append(li);
+      return;
+    }
+    if (!blockedRows.length) {
+      const li = document.createElement("li");
+      li.className = "cl-empty";
+      li.textContent = "Nobody is blocked.";
+      list.append(li);
+      return;
+    }
+    for (const c of blockedRows) {
+      const li = document.createElement("li");
+      const who = document.createElement("div");
+      who.className = "cl-who";
+      const peer = document.createElement("span");
+      peer.className = "cl-peer";
+      peer.textContent = c.peer;
+      const terms = document.createElement("span");
+      terms.className = "cl-terms";
+      terms.textContent = c.peer.endsWith("/*") ? "Everyone at " + c.peer.slice(0, -2) : (c.alias || "Blocked");
+      who.append(peer, terms);
+      const unblock = document.createElement("button");
+      unblock.type = "button";
+      unblock.className = "btn-ghost";
+      unblock.textContent = "Unblock";
+      unblock.setAttribute("aria-label", "Unblock " + c.peer);
+      unblock.onclick = () => unblockAddress(c.peer, unblock);
+      li.append(who, unblock);
+      list.append(li);
+    }
+  }
+
+  async function unblockAddress(peer, button) {
+    const context = mailboxContext();
+    if (button) button.disabled = true;
+    try {
+      await api(withIdentity("/v1/contacts?peer=" + encodeURIComponent(peer), context.address), {
+        method: "DELETE", body: { peer, identity: context.address }, signal: context.signal,
+      });
+      if (!context.current()) return;
+      state.sectionRequests.contacts = (state.sectionRequests.contacts || 0) + 1;
+      state.contacts = state.contacts.filter((c) => c.peer !== peer);
+      if (blockedRows) blockedRows = blockedRows.filter((c) => c.peer !== peer);
+      toast("Unblocked " + peer + ".");
+      renderBlockedList();
+      renderContactList();
+      render();
+    } catch (_) {
+      if (!context.current()) return;
+      if (button) button.disabled = false;
+      $("blocked-error").textContent = "Could not unblock " + peer + ". Please try again.";
+      $("blocked-error").hidden = false;
+    }
+  }
+
+  async function blockFromSettings() {
+    normaliseAddressInput($("block-input"));
+    const peer = $("block-input").value.trim();
+    $("blocked-error").hidden = true;
+    if (!/^\/(?:k\/[a-z0-9]+|[^\s/*]+(?:\/[^\s/*]+)*(?:\/\*)?)$/i.test(peer)) {
+      $("blocked-error").textContent = "Enter an address such as /k/…, /spamco/agent or /spamco/*.";
+      $("blocked-error").hidden = false;
+      return;
+    }
+    if (peer === state.me?.address || peer === state.me?.handle) {
+      $("blocked-error").textContent = "You cannot block this mailbox itself.";
+      $("blocked-error").hidden = false;
+      return;
+    }
+    $("block-add").disabled = true;
+    const error = await blockAddress(peer);
+    $("block-add").disabled = false;
+    if (error) {
+      $("blocked-error").textContent = error;
+      $("blocked-error").hidden = false;
+      return;
+    }
+    $("block-input").value = "";
+    if (blockedRows) blockedRows = blockedRows.filter((c) => c.peer !== peer).concat({ peer, admission: "block" });
+    renderBlockedList();
+  }
+
+  // ---- side views: calls and filtered ---------------------------------------------------------
+
+  function syncSideNav() {
+    const on = has("call_history") && Boolean(state.me);
+    $("side-nav").hidden = !on;
+    const unseen = on ? state.calls.unseen : 0;
+    $("calls-badge").hidden = !unseen;
+    $("calls-badge").textContent = unseen > 99 ? "99+" : String(unseen);
+    $("calls-btn").setAttribute("aria-pressed", String(state.leftView === "calls"));
+    $("calls-btn").setAttribute("aria-label", unseen ? `Calls, ${unseen} missed` : "Calls");
+  }
+
+  // Returns true when a side view, not the conversation list, owns the left pane.
+  function renderSideViews() {
+    if (state.leftView === "calls" && !has("call_history")) state.leftView = "inbox";
+    if (state.leftView === "filtered" && !has("message_filtering")) state.leftView = "inbox";
+    syncSideNav();
+    const view = state.leftView, inbox = view === "inbox";
+    $("threads").hidden = !inbox;
+    $("calls-view").hidden = view !== "calls";
+    $("filtered-view").hidden = view !== "filtered";
+    const search = $("search").closest(".search");
+    if (search) search.hidden = !inbox;
+    const groups = has("message_filtering") ? filteredGroups() : [];
+    $("filtered-entry").hidden = !(inbox && !state.viewingArchive && groups.length);
+    $("filtered-count").textContent = groups.length ? " (" + groups.length + ")" : "";
+    $("filtered-entry").setAttribute("aria-label", "Filtered, " + groups.length + (groups.length === 1 ? " conversation" : " conversations"));
+    if (inbox) return false;
+    $("threads-empty").hidden = true;
+    $("archive-banner").hidden = true;
+    if (view === "calls") renderCallLog();
+    if (view === "filtered") renderFilteredList(groups);
+    return true;
+  }
+
+  function setLeftView(view) {
+    state.leftView = view;
+    if (view !== "inbox" && state.viewingArchive) showArchive(false);
+    render();
+  }
+
+  // ---- call history -----------------------------------------------------------------------------
+
+  async function loadCallLog({ more = false } = {}) {
+    if (!has("call_history")) return;
+    const context = mailboxContext();
+    if (!context.address) return;
+    const calls = context.owner.calls, filter = calls.filter;
+    let path = withIdentity("/v1/calls/log?filter=" + filter + "&limit=50", context.address);
+    if (more && calls.next) path += "&before=" + encodeURIComponent(calls.next);
+    calls.loading = true;
+    try {
+      const body = await api(path, { signal: context.signal });
+      if (!context.current() || calls.filter !== filter) return;
+      const entries = Array.isArray(body.entries) ? body.entries.filter((e) => e && e.id) : [];
+      if (more) {
+        const seen = new Set(calls.entries.map((e) => e.id));
+        calls.entries = calls.entries.concat(entries.filter((e) => !seen.has(e.id)));
+      } else calls.entries = entries;
+      calls.next = body.next_before ?? null;
+      calls.unseen = Math.max(0, Number(body.unseen_missed) || 0);
+      calls.loaded = true;
+      calls.error = null;
+    } catch (_) {
+      if (context.current()) calls.error = "Could not load your calls.";
+    } finally {
+      if (context.current()) {
+        calls.loading = false;
+        syncSideNav();
+        if (state.leftView === "calls") renderCallLog();
+      }
+    }
+  }
+
+  async function loadFilteredCalls() {
+    const context = mailboxContext();
+    const calls = context.owner.calls;
+    try {
+      const body = await api(withIdentity("/v1/calls/log?filter=filtered&limit=50", context.address), { signal: context.signal });
+      if (!context.current()) return;
+      calls.filtered = Array.isArray(body.entries) ? body.entries : [];
+    } catch (_) {
+      if (context.current()) calls.filtered = [];
+    }
+    if (context.current() && state.leftView === "calls") renderCallLog();
+  }
+
+  async function showCalls() {
+    setLeftView("calls");
+    const calls = state.calls, context = mailboxContext();
+    if (!calls.loaded) await loadCallLog();
+    if (context.current() && state.leftView === "calls") markCallsSeen();
+  }
+
+  // Looking at the page is seeing the missed calls on it.
+  async function markCallsSeen() {
+    const calls = state.calls;
+    const newest = calls.entries.reduce((max, e) => Math.max(max, Number(e.started_at) || 0), 0);
+    if (!calls.unseen || !newest) return;
+    const context = mailboxContext();
+    calls.unseen = 0;
+    syncSideNav();
+    try {
+      const body = await api("/v1/calls/log/seen", { method: "POST", body: { up_to: newest, identity: context.address }, signal: context.signal });
+      if (!context.current()) return;
+      calls.unseen = Math.max(0, Number(body.unseen_missed) || 0);
+      for (const e of calls.entries) if (e.started_at <= newest) e.seen = true;
+      syncSideNav();
+    } catch (_) { /* the badge returns with the next load */ }
+  }
+
+  const callPeerKey = (e) => e.peer_handle || e.peer || null;
+  const kindWord = (kind) => (kind === "video" ? "video" : "voice");
+
+  function callOutcomeLabel(e) {
+    const incoming = e.direction === "incoming";
+    switch (e.outcome) {
+      case "answered": return incoming ? "Incoming" : "Outgoing";
+      case "missed": return incoming ? "Missed" : "No answer";
+      case "declined": return "Declined";
+      case "cancelled": return incoming ? "Missed" : "Cancelled";
+      case "busy": return "Busy";
+      case "filtered": return "Filtered";
+      case "failed": return "Failed";
+      default: return "In progress";
+    }
+  }
+
+  function formatDuration(seconds) {
+    const total = Math.max(0, Math.round(Number(seconds) || 0));
+    const h = Math.floor(total / 3600), m = Math.floor((total % 3600) / 60), s = total % 60;
+    const two = (n) => String(n).padStart(2, "0");
+    return h ? `${h}:${two(m)}:${two(s)}` : `${m}:${two(s)}`;
+  }
+
+  const CALL_ICON = {
+    audio: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M6.6 2.9 4.5 3.3c-.8.2-1.4.9-1.3 1.7.5 6.1 5.7 11.3 11.8 11.8.8.1 1.5-.5 1.7-1.3l.4-2.1c.1-.6-.2-1.2-.8-1.4l-2.4-1c-.5-.2-1.1-.1-1.5.3l-.9.9a9 9 0 0 1-4-4l.9-.9c.4-.4.5-1 .3-1.5l-1-2.4c-.2-.6-.8-.9-1.4-.8Z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+    video: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="2.5" y="5" width="11" height="10" rx="2" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="m13.5 9 4-2.3v6.6l-4-2.3" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/></svg>',
+  };
+  const ARROW = { incoming: "↙", outgoing: "↗" };
+
+  function callName(e) {
+    const key = callPeerKey(e);
+    if (key) return contactFor(key)?.alias || displayName(key);
+    const people = (e.participants || []).length;
+    return people ? people + " people" : "Call";
+  }
+
+  function callRow(e) {
+    const li = document.createElement("li");
+    li.className = "call-item";
+    li.dataset.callId = e.id;
+    const key = callPeerKey(e);
+    const missed = e.direction === "incoming" && (e.outcome === "missed" || e.outcome === "cancelled");
+    if (missed) li.classList.add("call-missed");
+
+    const main = document.createElement("button");
+    main.type = "button";
+    main.className = "call-main";
+    const av = document.createElement("span");
+    av.className = "avatar";
+    paintAvatar(av, key || "/guest");
+    const text = document.createElement("span");
+    text.className = "call-text";
+    const name = document.createElement("span");
+    name.className = "call-name";
+    name.textContent = callName(e);
+    const sub = document.createElement("span");
+    sub.className = "call-sub";
+    const label = callOutcomeLabel(e);
+    const bits = [label, e.kind === "video" ? "Video" : "Voice"];
+    const duration = e.duration ?? (e.answered_at && e.ended_at ? e.ended_at - e.answered_at : null);
+    if (e.outcome === "answered" && duration != null) bits.push(formatDuration(duration));
+    const people = (e.participants || []).length;
+    if (e.group_id || people > 2) bits.push(people + " people");
+    sub.textContent = (ARROW[e.direction] || "") + " " + bits.join(" · ");
+    text.append(name, sub);
+    const time = document.createElement("span");
+    time.className = "call-time";
+    time.textContent = e.started_at ? listTime(e.started_at) : "";
+    main.append(av, text, time);
+    main.setAttribute("aria-label", `${callName(e)}, ${label.toLowerCase()} ${kindWord(e.kind)} call` + (e.started_at ? ", " + listTime(e.started_at) : ""));
+    main.onclick = () => { if (key) openThread(key); };
+    main.disabled = !key;
+
+    const back = document.createElement("button");
+    back.type = "button";
+    back.className = "icon-btn call-back";
+    back.innerHTML = CALL_ICON[e.kind === "video" ? "video" : "audio"];
+    back.title = `Call back (${kindWord(e.kind)})`;
+    back.setAttribute("aria-label", `Call ${callName(e)} back, ${kindWord(e.kind)}`);
+    back.hidden = !key;
+    back.onclick = () => callBack(key, e.kind);
+
+    const more = document.createElement("button");
+    more.type = "button";
+    more.className = "icon-btn call-more";
+    more.textContent = "⋯";
+    more.setAttribute("aria-label", "More actions for this call");
+    more.setAttribute("aria-expanded", "false");
+    const menu = document.createElement("div");
+    menu.className = "call-menu";
+    menu.hidden = true;
+    const action = (label, handler, danger) => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = danger ? "btn-danger" : "btn-ghost";
+      b.textContent = label;
+      b.onclick = () => { menu.hidden = true; more.setAttribute("aria-expanded", "false"); handler(); };
+      menu.append(b);
+    };
+    action("Delete from history", () => deleteCall(e));
+    if (key) action("Block", () => askBlock({ peer: key, name: callName(e), origin: "call", callId: e.direction === "incoming" ? e.id : null }), true);
+    if (e.direction === "incoming" && key) action("Report spam", () => reportCall(e));
+    more.onclick = () => {
+      const open = menu.hidden;
+      for (const other of document.querySelectorAll(".call-menu")) other.hidden = true;
+      for (const other of document.querySelectorAll(".call-more")) other.setAttribute("aria-expanded", "false");
+      menu.hidden = !open;
+      more.setAttribute("aria-expanded", String(open));
+    };
+    li.append(main, back, more, menu);
+    return li;
+  }
+
+  function renderCallLog() {
+    const calls = state.calls, list = $("call-log");
+    for (const radio of document.querySelectorAll('#calls-filter input')) radio.checked = radio.value === calls.filter;
+    list.textContent = "";
+    const entries = calls.entries.filter((e) => e.outcome !== "filtered");
+    for (const e of entries) list.append(callRow(e));
+    const status = $("calls-status");
+    status.hidden = !(calls.error || (calls.loading && !calls.loaded));
+    status.textContent = calls.error || "Loading calls…";
+    $("calls-empty").hidden = entries.length > 0 || !calls.loaded || Boolean(calls.error);
+    $("calls-empty").textContent = calls.filter === "missed" ? "No missed calls." : "No calls yet.";
+    $("calls-more").hidden = !calls.next;
+    $("calls-clear").disabled = !calls.entries.length;
+    const filteredList = $("call-log-filtered");
+    filteredList.textContent = "";
+    for (const e of calls.filtered || []) filteredList.append(callRow(e));
+    $("calls-filtered-empty").hidden = !calls.filtered || calls.filtered.length > 0;
+    $("calls-filtered-count").textContent = calls.filtered && calls.filtered.length ? "(" + calls.filtered.length + ")" : "";
+  }
+
+  async function callBack(key, kind) {
+    if (!key) return;
+    await openThread(key);
+    const button = $(kind === "video" ? "call-video-btn" : "call-audio-btn");
+    if (button && !button.hidden && !button.disabled) button.click();
+    else toast("Calling isn’t available right now.");
+  }
+
+  async function deleteCall(e) {
+    const context = mailboxContext();
+    try {
+      await api(withIdentity("/v1/calls/log/" + encodeURIComponent(e.id), context.address), { method: "DELETE", signal: context.signal });
+      if (!context.current()) return;
+      const calls = state.calls;
+      calls.entries = calls.entries.filter((x) => x.id !== e.id);
+      if (calls.filtered) calls.filtered = calls.filtered.filter((x) => x.id !== e.id);
+      toast("Removed from call history.");
+      render();
+    } catch (_) {
+      if (context.current()) toast("Could not remove that call.");
+    }
+  }
+
+  async function reportCall(e) {
+    const context = mailboxContext();
+    try {
+      await api("/v1/report-spam", { method: "POST", body: { call_id: e.id, identity: context.address }, signal: context.signal });
+      if (context.current()) toast("Reported as spam.");
+    } catch (_) {
+      if (context.current()) toast("Could not send the report.");
+    }
+  }
+
+  let clearArmed = null;
+  async function clearCalls() {
+    const button = $("calls-clear");
+    if (!clearArmed) {
+      button.textContent = "Clear all calls?";
+      clearArmed = setTimeout(() => { clearArmed = null; button.textContent = "Clear all"; }, 4000);
+      return;
+    }
+    clearTimeout(clearArmed);
+    clearArmed = null;
+    button.textContent = "Clear all";
+    const context = mailboxContext();
+    try {
+      await api(withIdentity("/v1/calls/log", context.address), { method: "DELETE", signal: context.signal });
+      if (!context.current()) return;
+      Object.assign(state.calls, { entries: [], filtered: state.calls.filtered ? [] : null, next: null, unseen: 0 });
+      toast("Call history cleared.");
+      render();
+    } catch (_) {
+      if (context.current()) toast("Could not clear your call history.");
+    }
+  }
+
+  // A missed call reads as a small line in the conversation it belongs to.
+  function withMissedCalls(messages, conversation) {
+    if (!has("call_history") || !state.calls.entries.length) return messages;
+    const keys = new Set([conversation.peer]);
+    for (const m of conversation.messages) if (m.kind === "in" && m.address) keys.add(m.address);
+    const lines = state.calls.entries
+      .filter((e) => e.direction === "incoming" && e.outcome === "missed" && !e.group_id
+        && (keys.has(e.peer_handle) || keys.has(e.peer)))
+      .map((e) => ({ kind: "system", id: "call:" + e.id, at: e.started_at,
+        body: `Missed ${kindWord(e.kind)} call · ${clockTime(e.started_at)}` }));
+    if (!lines.length) return messages;
+    return [...messages, ...lines].sort((a, b) => a.at - b.at);
+  }
+
+  function systemLine(m) {
+    const li = document.createElement("li");
+    li.className = "system-line";
+    li.dataset.messageId = m.id;
+    const span = document.createElement("span");
+    span.textContent = m.body;
+    li.append(span);
+    return li;
+  }
+
+  // ---- filtered messages ------------------------------------------------------------------------
+
+  async function loadFiltered() {
+    if (!has("message_filtering")) return;
+    const context = mailboxContext();
+    if (!context.address) return;
+    try {
+      const body = await api(withIdentity("/v1/inbox", context.address) + "&filtered=1&include_read=true", { signal: context.signal });
+      if (!context.current()) return;
+      state.filtered = (body.messages || []).filter((m) => m.direction !== "out");
+    } catch (e) {
+      if (context.current() && answered(e) && [400, 404, 501].includes(e.status)) state.filtered = [];
+    }
+  }
+
+  function filteredGroups() {
+    const groups = new Map();
+    for (const m of state.filtered) {
+      const key = peerKeyOf(m);
+      if (!key || contactFor(key)?.admission === "block") continue;
+      if (!groups.has(key)) groups.set(key, { peer: key, messages: [], last: 0 });
+      const group = groups.get(key);
+      group.messages.push(m);
+      group.last = Math.max(group.last, Number(m.received_at) || 0);
+    }
+    for (const group of groups.values()) group.messages.sort((a, b) => a.received_at - b.received_at);
+    return [...groups.values()].sort((a, b) => b.last - a.last);
+  }
+
+  function renderFilteredList(groups) {
+    const list = $("filtered-list");
+    list.textContent = "";
+    $("filtered-empty").hidden = groups.length > 0;
+    for (const group of groups) {
+      const li = document.createElement("li");
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "thread-row";
+      const av = document.createElement("span");
+      av.className = "avatar";
+      paintAvatar(av, group.peer);
+      const text = document.createElement("div");
+      text.className = "tr-text";
+      const top = document.createElement("div");
+      top.className = "tr-top";
+      const name = document.createElement("span");
+      name.className = "tr-name";
+      name.textContent = displayName(group.peer);
+      const time = document.createElement("span");
+      time.className = "tr-time";
+      time.textContent = group.last ? listTime(group.last) : "";
+      top.append(name, time);
+      const bottom = document.createElement("div");
+      bottom.className = "tr-bottom";
+      const preview = document.createElement("span");
+      preview.className = "tr-preview";
+      preview.textContent = previewOf(group.messages[group.messages.length - 1]);
+      const badges = document.createElement("span");
+      badges.className = "tr-badges";
+      badges.append(pill(String(group.messages.length), "pill-held"));
+      bottom.append(preview, badges);
+      text.append(top, bottom);
+      row.append(av, text);
+      row.onclick = () => openFiltered(group.peer);
+      li.append(row);
+      list.append(li);
+    }
+  }
+
+  let filteredOpen = null;
+  function openFiltered(peer) {
+    const group = filteredGroups().find((g) => g.peer === peer);
+    if (!group) return;
+    filteredOpen = peer;
+    const last = group.messages[group.messages.length - 1];
+    $("filtered-title").textContent = displayName(peer);
+    $("filtered-sub").textContent = "From " + (last.from || peer)
+      + (last.sender_standing ? " · " + last.sender_standing : "")
+      + ". Accepting adds them as a contact and moves these messages to your inbox.";
+    $("filtered-error").hidden = true;
+    $("filtered-accept").disabled = false;
+    const list = $("filtered-messages");
+    list.textContent = "";
+    for (const m of group.messages) {
+      const li = document.createElement("li");
+      li.className = "filtered-message";
+      const meta = document.createElement("div");
+      meta.className = "filtered-meta";
+      const time = document.createElement("span");
+      time.textContent = dayLabel(m.received_at) + " · " + clockTime(m.received_at);
+      const report = document.createElement("button");
+      report.type = "button";
+      report.className = "linkish";
+      report.textContent = "Report spam";
+      report.setAttribute("aria-label", "Report this message as spam");
+      report.onclick = () => reportFilteredMessage(m, report);
+      meta.append(time, report);
+      const body = document.createElement("p");
+      body.className = "filtered-body";
+      body.textContent = plainText(copyTextOf(m));
+      li.append(meta, body);
+      list.append(li);
+    }
+    openSheet("filtered-sheet");
+    $("filtered-close").focus();
+  }
+
+  async function reportFilteredMessage(m, button) {
+    const context = mailboxContext();
+    button.disabled = true;
+    try {
+      await api("/v1/report-spam", { method: "POST", body: { message_id: m.message_id, identity: context.address }, signal: context.signal });
+      if (!context.current()) return;
+      button.textContent = "Reported";
+    } catch (_) {
+      if (!context.current()) return;
+      button.disabled = false;
+      toast("Could not send the report.");
+    }
+  }
+
+  async function acceptFiltered() {
+    const peer = filteredOpen;
+    const group = filteredGroups().find((g) => g.peer === peer);
+    if (!group || $("filtered-accept").disabled) return;
+    const context = mailboxContext();
+    const from = group.messages[group.messages.length - 1].from || peer;
+    $("filtered-accept").disabled = true;
+    try {
+      await api("/v1/filtered/accept", { method: "POST", body: { peer: from, identity: context.address }, signal: context.signal });
+      if (!context.current()) return;
+      state.filtered = state.filtered.filter((m) => peerKeyOf(m) !== peer);
+      closeSheet("filtered-sheet");
+      await Promise.allSettled([loadInbox(), loadContacts(), loadFiltered()]);
+      if (!context.current()) return;
+      state.leftView = "inbox";
+      render();
+      toast("Accepted. Their messages are in your inbox.");
+      const opened = buildThreads().find((t) => t.peer === peer);
+      if (opened) openThread(opened.peer);
+    } catch (e) {
+      if (!context.current()) return;
+      $("filtered-accept").disabled = false;
+      $("filtered-error").textContent = "Could not accept. " + (e?.message || "Please try again.");
+      $("filtered-error").hidden = false;
+    }
+  }
+
+  function blockFiltered() {
+    const group = filteredGroups().find((g) => g.peer === filteredOpen);
+    if (!group) return;
+    closeSheet("filtered-sheet");
+    const last = group.messages[group.messages.length - 1];
+    askBlock({ peer: group.peer, name: displayName(group.peer), origin: "filtered", messageId: last.message_id, report: true });
+  }
+
+  function wirePhase1b() {
+    $("calls-btn").onclick = () => (state.leftView === "calls" ? setLeftView("inbox") : showCalls());
+    $("calls-exit").onclick = () => setLeftView("inbox");
+    $("filtered-exit").onclick = () => setLeftView("inbox");
+    $("filtered-entry").onclick = () => setLeftView("filtered");
+    for (const input of document.querySelectorAll('#calls-filter input')) {
+      input.addEventListener("change", () => {
+        if (!input.checked) return;
+        Object.assign(state.calls, { filter: input.value, entries: [], next: null, loaded: false });
+        renderCallLog();
+        loadCallLog();
+      });
+    }
+    $("calls-more").onclick = () => loadCallLog({ more: true });
+    $("calls-clear").onclick = () => clearCalls();
+    $("calls-filtered-box").addEventListener("toggle", () => {
+      if ($("calls-filtered-box").open && state.calls.filtered === null) loadFilteredCalls();
+    });
+    document.addEventListener("click", (e) => {
+      if (e.target.closest(".call-more") || e.target.closest(".call-menu")) return;
+      for (const menu of document.querySelectorAll(".call-menu")) menu.hidden = true;
+    });
+
+    $("filtered-close").onclick = () => closeSheet("filtered-sheet");
+    $("filtered-accept").onclick = () => acceptFiltered();
+    $("filtered-block").onclick = () => blockFiltered();
+    wireSheet("filtered-sheet");
+
+    $("blocked-unblock").onclick = () => { if (state.openPeer) updateSender(state.openPeer, "known"); };
+    $("block-add").onclick = () => blockFromSettings();
+    $("block-input").addEventListener("input", (e) => { if (!e.isComposing) normaliseAddressInput(e.target); });
+    $("block-input").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); blockFromSettings(); } });
+
+    $("profile-pick").onclick = () => $("profile-file").click();
+    $("profile-file").addEventListener("change", () => {
+      const file = $("profile-file").files && $("profile-file").files[0];
+      $("profile-file").value = "";
+      startCrop(file);
+    });
+    $("profile-remove").onclick = () => removeAvatar();
+    for (const input of document.querySelectorAll('#profile-visibility input')) {
+      input.addEventListener("change", () => { if (input.checked) setVisibility(input.value); });
+    }
+    $("crop-cancel").onclick = () => { crop = null; closeSheet("crop-sheet"); };
+    $("crop-save").onclick = () => saveCrop();
+    $("crop-zoom").addEventListener("input", () => zoomCrop(Number($("crop-zoom").value)));
+    wireSheet("crop-sheet", () => {});
+    const canvas = $("crop-canvas");
+    let drag = null;
+    const ratio = () => (canvas.clientWidth ? canvas.width / canvas.clientWidth : 1);
+    canvas.addEventListener("pointerdown", (e) => { drag = { x: e.clientX, y: e.clientY }; canvas.setPointerCapture?.(e.pointerId); });
+    canvas.addEventListener("pointermove", (e) => {
+      if (!drag) return;
+      const r = ratio();
+      moveCrop((e.clientX - drag.x) * r, (e.clientY - drag.y) * r);
+      drag = { x: e.clientX, y: e.clientY };
+    });
+    for (const type of ["pointerup", "pointercancel"]) canvas.addEventListener(type, () => { drag = null; });
+    canvas.addEventListener("wheel", (e) => { if (!crop) return; e.preventDefault(); zoomCrop(crop.zoom * (e.deltaY < 0 ? 1.08 : 1 / 1.08)); }, { passive: false });
+    canvas.addEventListener("keydown", (e) => {
+      const step = { ArrowLeft: [10, 0], ArrowRight: [-10, 0], ArrowUp: [0, 10], ArrowDown: [0, -10] }[e.key];
+      if (step) { e.preventDefault(); moveCrop(step[0], step[1]); }
+      if (e.key === "+" || e.key === "=") { e.preventDefault(); zoomCrop((crop?.zoom || 1) + 0.1); }
+      if (e.key === "-") { e.preventDefault(); zoomCrop((crop?.zoom || 1) - 0.1); }
+    });
+  }
+
   // ---- boot ---------------------------------------------------------------------------------
 
   async function openInbox(createIfMissing = false) {
@@ -3923,6 +5202,7 @@
       }
       note.textContent = "";
       create.hidden = true;
+      await loadCapabilities();
       render();
       // Resume setup without wiring the page twice. Mail loading has its own recovery loop.
       try { await loadAll(); } finally { startLive(); }
@@ -3956,6 +5236,8 @@
     knownPeer: (peer) => Boolean(peer && (contactFor(peer) || state.inbound.some((m) => peerKeyOf(m) === peer))),
     displayName,
     paintAvatar,
+    // Phase 1b: lets call tiles show a profile picture over their initials.
+    decorateAvatar: (el, key) => Avatars.decorate(el, key),
     toast,
   };
 

@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 19 October 2026</p>
+  <p class="updated">Last updated 20 October 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -88,6 +88,26 @@
   <h3>Voice and video calls</h3>
   <p>
     When you start or answer a voice or video call, the app uses your microphone and, for video calls or screen sharing, your camera or the screen or window you choose. Audio, video, shared screens and in-call chat travel directly between the people in the call, encrypted end to end (DTLS-SRTP). When a direct connection is not possible they pass through our relay server, which forwards encrypted data it cannot read. We do not record or store call audio, video, shared screens or in-call chat. To set up calls and keep them reliable, our call service processes who is in a call (mailbox addresses, or the name a guest enters when asking to join through a meeting link), when the call starts and ends, and connection diagnostics (how many connection candidates of each type were tried and whether the relay was used; never network addresses or call content). Microphone, camera and screen access are optional and controlled by your device or operating system.
+  </p>
+
+  <h3>Call history</h3>
+  <p>
+    We keep a list of your calls so you can see your call history: who took part, when the call started and ended, how long it lasted, whether it was voice or video, and whether it was answered, missed, declined or filtered. Each participant's mailbox has its own copy, so you can delete your entries without affecting anyone else's. You can delete single entries, clear your history, or turn it off under <em>Keep call history</em> (Off, 30 days, 180 days or 1 year; the default is 180 days). Older entries are deleted automatically, and deleted entries are removed in a way that late or retried call reports cannot recreate. Guests who join through a meeting link are recorded by the display name they entered, only in the host's entry. The short-lived state our call service holds while a call is being set up and is in progress is separate from this history.
+  </p>
+
+  <h3>Call and message filtering</h3>
+  <p>
+    Settings → Privacy &amp; filtering lets you decide what happens to calls and messages from people you don't know, from addresses without a name (a bare key address with no handle) and from senders with a poor spam-report standing. These decisions are made on our server, using metadata only: whether you know the sender (for example, they are a contact or you have written to them), whether their address has a handle, their spam-report standing, and how often they have called you recently. Filtered messages are still delivered, to your Filtered list rather than your inbox, without a notification. Filtered calls do not ring and appear as Filtered in your call history. Callers and senders are never told that they were filtered or blocked: they see an ordinary unanswered call, or a refusal that cannot be told apart from an inbox that is closed to them. When you report a call as spam, the report feeds the same reputation system as message spam reports.
+  </p>
+
+  <h3>Blocking</h3>
+  <p>
+    When you block a person, an address or a whole namespace, their new messages are refused and their calls are not put through. They are not told. You can see and undo your blocks in Settings → Privacy → Blocked.
+  </p>
+
+  <h3>Profile pictures</h3>
+  <p>
+    If you add a profile picture, the image you upload is processed on our server: metadata such as location and camera (EXIF) details is removed, and the picture is re-encoded into several sizes. The resulting images are stored with your mailbox and shown according to your visibility setting: Everyone, People I know, or Nobody. You can change the visibility or remove the picture at any time; we then stop serving it. Copies that people have already downloaded, or that were cached publicly while the picture was visible to Everyone, cannot be recalled. Pictures can be reported by other users, and we may remove a picture that breaks our terms. Profile pictures do not count against your storage quota.
   </p>
 
   <h2>3. Sender attribution</h2>
@@ -191,6 +211,24 @@
       <td>To deliver Pigeonpost messages you asked us to carry</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
       <td><strong>30 days</strong>, then deleted automatically</td>
+    </tr>
+    <tr>
+      <td>Call history (who, when, how long, outcome, voice or video)</td>
+      <td>To show you your own call history</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
+      <td>Your <em>Keep call history</em> setting: <strong>180 days</strong> by default, or 30 days, 1 year, or not kept at all; deleted entries are removed</td>
+    </tr>
+    <tr>
+      <td>Filtering metadata and spam reports</td>
+      <td>To file unwanted calls and messages and limit abuse</td>
+      <td>Legitimate interests in protecting users from spam and harassment (Art. 6(1)(f))</td>
+      <td>Filtered messages like other messages; filtered calls like your call history</td>
+    </tr>
+    <tr>
+      <td>Profile pictures</td>
+      <td>To show your picture to the people your visibility setting allows</td>
+      <td>Performance of the service you requested (Art. 6(1)(b)); you choose to upload one</td>
+      <td>Until you remove or replace it, or it is removed after a report</td>
     </tr>
     <tr>
       <td>Name registry entries</td>

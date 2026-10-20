@@ -44,13 +44,27 @@ pub(crate) enum Endpoint {
     Entitlements,
     /// Org drafts, activation and org entitlements (SDS §8.5, §21.2).
     Orgs,
+    /// `POST /internal/v1/call-admission`.
+    CallAdmission,
+    /// `POST /internal/v1/call-events`.
+    CallEvents,
+    /// Avatar reports and takedowns.
+    ModerateAvatars,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
 /// call. Later phases add endpoints (call events, admission, entitlements) to the right service
 /// here, and nowhere else.
 const SERVICES: &[(&str, &str, &[Endpoint])] = &[
-    ("calls", "POSTBOX_SVC_TOKEN_CALLS", &[Endpoint::Health]),
+    (
+        "calls",
+        "POSTBOX_SVC_TOKEN_CALLS",
+        &[
+            Endpoint::Health,
+            Endpoint::CallAdmission,
+            Endpoint::CallEvents,
+        ],
+    ),
     (
         "billing",
         "POSTBOX_SVC_TOKEN_BILLING",
@@ -68,6 +82,7 @@ const SERVICES: &[(&str, &str, &[Endpoint])] = &[
             Endpoint::Health,
             Endpoint::FeaturesRead,
             Endpoint::FeaturesWrite,
+            Endpoint::ModerateAvatars,
         ],
     ),
 ];
@@ -225,6 +240,16 @@ pub(crate) fn router(state: AppState) -> Router {
         .route(
             "/internal/v1/orgs/{id}/entitlement",
             put(billing_internal::put_org_entitlement),
+        )
+        .route(
+            "/internal/v1/call-admission",
+            post(crate::filtering::call_admission),
+        )
+        .route("/internal/v1/call-events", post(crate::calllog::ingest))
+        .route("/internal/v1/avatar-reports", get(crate::avatars::reports))
+        .route(
+            "/internal/v1/avatars/{id}/remove",
+            post(crate::avatars::moderate_remove),
         )
         .fallback(|| async { err_response(StatusCode::NOT_FOUND, "not_found", None) })
         .with_state(state)
