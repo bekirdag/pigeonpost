@@ -157,6 +157,15 @@
   let streamWanted = false, streamGen = 0, streamAbort = null;
   let session = null, myMailboxes = [], iceServers = null;
   let ring = null; // an incoming ring not yet answered
+  // Phase 1c (docs/call-alerting.md): a ring to answer as soon as it is seen — from a device that was
+  // woken by a push (`PigeonpostNative.answer`) or a link (`?answer=<room>`).
+  let pendingAnswer = null; // { room, ringToken, at }
+  const ROOM_ID = /^[A-Za-z0-9_-]{10,64}$/, RING_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+  // Tell the app hosting this page (if any) about the ring and the call. A browser has no host.
+  function tellHost(name, ...args) {
+    const h = host();
+    try { return h && typeof h[name] === "function" ? h[name](...args) : undefined; } catch (_) { return undefined; }
+  }
   let room = null; // the call on screen
   let knockState = null; // join page: { code, knock, state }
   const peers = new Map(); // participant id -> peer
@@ -299,6 +308,7 @@
       case "ring_ended":
         if (ring && ring.room === data.room) {
           const missed = ring;
+          tellHost("ringEnded", { room: data.room, reason: data.reason });
           dismissRing();
           if (data.reason !== "answered_elsewhere") toast("Missed " + kindWord(missed.kind) + " call from " + displayName(missed.from.handle || missed.from.address) + ".");
         } else if (room && room.id === data.room && peers.size === 0) {
@@ -309,6 +319,7 @@
       case "participant_joined":
         if (room && room.id === data.room) {
           room.state = "active";
+          tellHost("callState", { state: "active", room: room.id, kind: room.kind });
           stopTone();
           noteMember(data);
           // The newcomer offers; this end prepares to answer. On the media server nobody offers.
@@ -388,6 +399,7 @@
     if (!session) { toast("Calling isn’t ready yet. Try again in a moment."); start(); return; }
     openRoomUI({ title: callName(peer), sub: peer, face: peer, status: "Starting " + kindWord(kind) + "…" });
     room = newRoom({ kind, title: displayName(peer), peerKey: peer });
+    tellHost("callState", { state: "connecting", room: null, kind, outgoing: true, peer });
     try {
       await startLocalMedia(kind === "video");
     } catch (err) {
@@ -453,6 +465,15 @@
     ring = data;
     const from = data.from || {};
     const key = from.handle || from.address;
+    // Phase 1c: answered already (from a lock screen, a notification, a link)?
+    if (pendingAnswer && pendingAnswer.room === data.room) {
+      const token = pendingAnswer.ringToken;
+      pendingAnswer = null;
+      acceptRing(token);
+      return;
+    }
+    // An app that rings natively (CallKit, a system notification) shows it itself.
+    if (tellHost("ring", { room: data.room, code: data.code, kind: data.kind, from: { address: from.address || null, handle: from.handle || null }, to: data.to || null }) === true) return;
     const h = host();
     const known = h && (h.knownPeer(from.handle) || h.knownPeer(from.address));
     $("call-ring-title").textContent = "Incoming " + kindWord(data.kind) + " call";
@@ -464,7 +485,7 @@
     startTone("ring");
     if (document.hidden && "Notification" in window && Notification.permission === "granted") {
       try {
-        const n = new Notification("Incoming " + kindWord(data.kind) + " call", { body: key, tag: "pp-call-" + data.room });
+        const n = new Notification("Incoming " + kindWord(data.kind) + " call", { body: key, tag: "pp-call-" + data.room, requireInteraction: true });
         n.onclick = () => { window.focus(); n.close(); };
         ring.notification = n;
       } catch (_) { /* a courtesy */ }
@@ -479,11 +500,12 @@
     stopTone();
   }
 
-  async function acceptRing() {
+  async function acceptRing(ringToken) {
     const r = ring;
     if (!r) return;
     dismissRing();
-    const peerKey = r.from.handle || r.from.address;
+    const peerKey = (r.from && (r.from.handle || r.from.address)) || "Call";
+    tellHost("callState", { state: "connecting", room: r.room, kind: r.kind });
     openRoomUI({ title: callName(peerKey), sub: peerKey, face: peerKey, status: "Connecting…" });
     room = newRoom({ kind: r.kind, title: displayName(peerKey), peerKey, id: r.room, code: r.code });
     try {
@@ -495,7 +517,7 @@
     }
     if (!room) return;
     try {
-      await post(`/rooms/${r.room}/accept`, { session, e2ee: canEncryptFrames });
+      await post(`/rooms/${r.room}/accept`, Object.assign({ session, e2ee: canEncryptFrames }, typeof ringToken === "string" && RING_TOKEN_RE.test(ringToken) ? { ring_token: ringToken } : {}));
     } catch (err) {
       endRoom(err.code === "not_ringing" ? "That call has already ended." : err.code === "needs_e2ee" ? NEEDS_NEWER : err.code === "call_busy" ? admissionWords.call_busy : "The call could not be answered.", { notify: false });
     }
@@ -560,6 +582,7 @@
     }
     Object.assign(room, { id: data.room, code: data.code, you: data.you, kind: data.kind || room.kind, state: "active", topology: data.topology || "mesh" });
     setMembers(data.participants);
+    tellHost("callState", { state: "active", room: data.room, kind: room.kind });
     stopTone();
     if (PAGE === "join") Join.enter();
     for (const p of data.participants || []) {
@@ -746,6 +769,7 @@
     if (!local.mic) return;
     local.muted = !local.muted;
     local.mic.enabled = !local.muted;
+    tellHost("muted", local.muted);
     broadcastState();
     showSelf();
     renderControls();
@@ -1876,6 +1900,7 @@
     const ending = room;
     if (!ending) return;
     room = null;
+    tellHost("callState", { state: "ended", room: ending.id, kind: ending.kind });
     stopTone();
     clearInterval(ending.timer);
     clearInterval(ending.statsTimer);
@@ -2923,8 +2948,55 @@
 
   // ---- wiring ----------------------------------------------------------------------------------
 
+  // ---- answering from outside the page (Phase 1c) -------------------------------------------------
+
+  // Answer a ring this page may not have seen yet. The session opened by a woken app is added to the
+  // ring by the service and told `incoming`; if that does not come, the ring token answers directly.
+  async function answerFromOutside(roomId, ringToken) {
+    if (!ROOM_ID.test(String(roomId || ""))) return;
+    const token = RING_TOKEN_RE.test(String(ringToken || "")) ? ringToken : null;
+    if (ring && ring.room === roomId) { acceptRing(token); return; }
+    if (room) return;
+    pendingAnswer = { room: roomId, ringToken: token, at: Date.now() };
+    start();
+    await whenReady();
+    await new Promise((r) => setTimeout(r, 2500));
+    if (!pendingAnswer || pendingAnswer.room !== roomId || ring || room) return;
+    pendingAnswer = null;
+    if (!token) { tellHost("callState", { state: "ended", room: roomId }); return; }
+    try {
+      const res = await fetch(BASE + `/rings/${roomId}`, { headers: { "x-ring-token": token } });
+      const state = await res.json().catch(() => ({}));
+      if (!res.ok || state.state !== "ringing") {
+        tellHost("callState", { state: "ended", room: roomId });
+        toast("That call has already ended.");
+        return;
+      }
+      ring = { room: roomId, kind: state.kind === "video" ? "video" : "audio", from: {}, code: null };
+      acceptRing(token);
+    } catch (_) {
+      tellHost("callState", { state: "ended", room: roomId });
+    }
+  }
+
+  function declineFromOutside(roomId, ringToken) {
+    if (!ROOM_ID.test(String(roomId || ""))) return;
+    if (pendingAnswer && pendingAnswer.room === roomId) pendingAnswer = null;
+    if (ring && ring.room === roomId) { declineRing(); return; }
+    if (RING_TOKEN_RE.test(String(ringToken || ""))) {
+      fetch(BASE + `/rings/${roomId}/decline`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ring_token: ringToken }) }).catch(() => {});
+    }
+  }
+
   function wire() {
     if (PAGE === "join") { Join.init(); return; }
+    // `?answer=<room>`: opened by an app that cannot hold a call itself (Linux) to answer one ring.
+    try {
+      const url = new URL(location.href);
+      const wanted = url.searchParams.get("answer");
+      if (wanted && ROOM_ID.test(wanted)) pendingAnswer = { room: wanted, ringToken: null, at: Date.now() };
+      if (url.searchParams.has("answer")) { url.searchParams.delete("answer"); history.replaceState(history.state, "", url.pathname + url.search + url.hash); }
+    } catch (_) { /* fine */ }
     buildUI();
     $("call-audio-btn")?.addEventListener("click", () => place("audio"));
     $("call-video-btn")?.addEventListener("click", () => place("video"));
@@ -2939,6 +3011,11 @@
     // Phase 3a
     placeGroup: (kind, group) => placeGroup(kind, group, false),
     joinGroup: (kind, group) => placeGroup(kind, group, true),
+    // Phase 1c: the native apps' call screens act through these.
+    answer: answerFromOutside,
+    decline: declineFromOutside,
+    setMuted: (muted) => { if (local.mic && Boolean(muted) !== local.muted) toggleMute(); },
+    hangUp: () => { if (ring) declineRing(); else leave(); },
     // For automated checks: who is connected, by which route, at what resolution and rate, and with
     // which security codes. Contains no media and no message text.
     inspect: () => ({

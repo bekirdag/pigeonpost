@@ -48,7 +48,14 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         DISAPPEARING,
         "Disappearing-message timers for threads and groups, message.expired (SDS §17)",
     ),
+    (
+        CALL_PUSH,
+        "Incoming calls pushed to the callee's devices (VoIP, FCM, Mac alert, WNS)",
+    ),
 ];
+
+/// Incoming-call pushes (Phase 1c, docs/call-alerting.md).
+pub(crate) const CALL_PUSH: &str = "call_push";
 
 /// Typed events on `/v1/events`.
 pub(crate) const ACCOUNT_EVENTS: &str = "account_events";

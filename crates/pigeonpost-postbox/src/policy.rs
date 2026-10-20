@@ -42,6 +42,8 @@ pub(crate) enum Action {
     WriteFeatureFlags,
     /// The billing bridge's entitlement and org endpoints (`/internal/v1/entitlements`, `/orgs`).
     ManageBilling,
+    /// `POST /internal/v1/call-ring` and `/call-ring-cancel` (Phase 1c).
+    PushCallRing,
     /// A sensitive member action (§3.4 list). Nothing in Phase 0 is gated on it yet; it exists so
     /// the requirement is expressed once, here, when the first such endpoint lands.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -122,7 +124,8 @@ impl Action {
             Action::ServiceHealth
             | Action::ReadFeatureFlags
             | Action::WriteFeatureFlags
-            | Action::ManageBilling => Requirement::Service,
+            | Action::ManageBilling
+            | Action::PushCallRing => Requirement::Service,
             Action::SensitiveAccountChange => Requirement::HumanStepUp,
             Action::ManageOwnMailbox | Action::ReportAbuse => Requirement::AnyPrincipal,
             Action::RaiseTrust => Requirement::NotConnector,

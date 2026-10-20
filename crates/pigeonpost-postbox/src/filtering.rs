@@ -475,6 +475,20 @@ pub(crate) async fn decide_call(
     callee: &store::StoredIdentity,
     now: u64,
 ) -> Result<(CallRule, &'static str), ApiError> {
+    let pair_limited = state
+        .call_pairs
+        .attempt(&caller.address, &callee.address, now);
+    decide_call_with(state, caller, callee, pair_limited).await
+}
+
+/// [`decide_call`] without counting an attempt: the push fan-out (Phase 1c, `call_alerts`) asks
+/// again after admission already counted this ring.
+pub(crate) async fn decide_call_with(
+    state: &AppState,
+    caller: &store::StoredIdentity,
+    callee: &store::StoredIdentity,
+    pair_limited: bool,
+) -> Result<(CallRule, &'static str), ApiError> {
     let se = |_| ApiError::server("store_error");
     let rel = state
         .store
@@ -491,9 +505,6 @@ pub(crate) async fn decide_call(
         capabilities::CALL_ADMISSION,
     )
     .await;
-    let pair_limited = state
-        .call_pairs
-        .attempt(&caller.address, &callee.address, now);
     if !enabled {
         // Before the flag, calls rang as they always have — except that a block was already a
         // block for messages, and a person who blocked someone expects it to hold for calls too.
