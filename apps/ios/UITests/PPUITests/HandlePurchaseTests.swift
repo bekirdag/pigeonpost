@@ -90,7 +90,7 @@ final class HandlePurchaseTests: XCTestCase {
         app.launchArguments = ["-fixtures", "-handle=owned"]
         app.launch()
         XCTAssertFalse(app.buttons["copy-address:/bekir/main"].exists)
-        app.buttons["Acting as /bekir. Change mailbox"].tap()
+        app.buttons["Acting as Bekir. Change mailbox"].tap()
         let copy = app.buttons["copy-address:/bekir/main"]
         XCTAssertTrue(copy.waitForExistence(timeout: 8))
         copy.tap()
@@ -117,7 +117,7 @@ final class HandlePurchaseTests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Mailboxes"].exists)
         app.buttons["Done"].tap()
         expectPastedAddress("/bekir/docdex")
-        app.buttons["Acting as /bekir. Change mailbox"].tap()
+        app.buttons["Acting as Bekir. Change mailbox"].tap()
         let address = "/k/qq2222v2h90vnwefj7g7ezvbh7"
         app.buttons["copy-address:\(address)"].tap()
         screenshot("mailbox-copy-address")
