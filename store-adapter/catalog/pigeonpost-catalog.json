@@ -1,0 +1,879 @@
+{
+ "tenant": "pigeonpost",
+ "catalog_version": "2026-10-20",
+ "trial_period_days": 0,
+ "pricing": {
+  "cloud": "USD 8 per name per year, 1-10 names (D-18, matches the App Store)",
+  "ent": "USD 6 per seat per month; -10% from 50 seats, -20% from 100, -25% from 200; yearly = 10 x monthly; 500+ seats: contact sales (D-16)",
+  "try": "Calendar-year fixed TRY editions: saas_be USD_ANNUAL_EQUIVALENT formula, opening USD/TRY 42.9229 (TCMB 2025-12-31 ForexSelling), inflation assumption 48.078% (mean December CPI 2021-2025)",
+  "storage": "Enterprise: 5 GB per seat, pooled; agent addresses: 10 x seats"
+ },
+ "products": {
+  "cloud": {
+   "name": "PP_CLOUD",
+   "provider_product_reference": null
+  },
+  "ent": {
+   "name": "PP_ENT",
+   "provider_product_reference": null
+  }
+ },
+ "plans": {
+  "cloud-1names-yearly-usd": {
+   "family": "cloud",
+   "names": 1,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-1names",
+   "editions": {
+    "2026": {
+     "amount": "8.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-1names-yearly-try": {
+   "family": "cloud",
+   "names": 1,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-1names",
+   "editions": {
+    "2026": {
+     "amount": "409.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-2names-yearly-usd": {
+   "family": "cloud",
+   "names": 2,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-2names",
+   "editions": {
+    "2026": {
+     "amount": "16.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-2names-yearly-try": {
+   "family": "cloud",
+   "names": 2,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-2names",
+   "editions": {
+    "2026": {
+     "amount": "817.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-3names-yearly-usd": {
+   "family": "cloud",
+   "names": 3,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-3names",
+   "editions": {
+    "2026": {
+     "amount": "24.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-3names-yearly-try": {
+   "family": "cloud",
+   "names": 3,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-3names",
+   "editions": {
+    "2026": {
+     "amount": "1226.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-4names-yearly-usd": {
+   "family": "cloud",
+   "names": 4,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-4names",
+   "editions": {
+    "2026": {
+     "amount": "32.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-4names-yearly-try": {
+   "family": "cloud",
+   "names": 4,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-4names",
+   "editions": {
+    "2026": {
+     "amount": "1634.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-5names-yearly-usd": {
+   "family": "cloud",
+   "names": 5,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-5names",
+   "editions": {
+    "2026": {
+     "amount": "40.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-5names-yearly-try": {
+   "family": "cloud",
+   "names": 5,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-5names",
+   "editions": {
+    "2026": {
+     "amount": "2043.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-6names-yearly-usd": {
+   "family": "cloud",
+   "names": 6,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-6names",
+   "editions": {
+    "2026": {
+     "amount": "48.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-6names-yearly-try": {
+   "family": "cloud",
+   "names": 6,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-6names",
+   "editions": {
+    "2026": {
+     "amount": "2451.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-7names-yearly-usd": {
+   "family": "cloud",
+   "names": 7,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-7names",
+   "editions": {
+    "2026": {
+     "amount": "56.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-7names-yearly-try": {
+   "family": "cloud",
+   "names": 7,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-7names",
+   "editions": {
+    "2026": {
+     "amount": "2860.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-8names-yearly-usd": {
+   "family": "cloud",
+   "names": 8,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-8names",
+   "editions": {
+    "2026": {
+     "amount": "64.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-8names-yearly-try": {
+   "family": "cloud",
+   "names": 8,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-8names",
+   "editions": {
+    "2026": {
+     "amount": "3268.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-9names-yearly-usd": {
+   "family": "cloud",
+   "names": 9,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-9names",
+   "editions": {
+    "2026": {
+     "amount": "72.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-9names-yearly-try": {
+   "family": "cloud",
+   "names": 9,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-9names",
+   "editions": {
+    "2026": {
+     "amount": "3677.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-10names-yearly-usd": {
+   "family": "cloud",
+   "names": 10,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-cloud-10names",
+   "editions": {
+    "2026": {
+     "amount": "80.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "cloud-10names-yearly-try": {
+   "family": "cloud",
+   "names": 10,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-cloud-10names",
+   "editions": {
+    "2026": {
+     "amount": "4085.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-5-monthly-usd": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-5-monthly",
+   "editions": {
+    "2026": {
+     "amount": "30.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-5-monthly-try": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-5-monthly",
+   "editions": {
+    "2026": {
+     "amount": "1532.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-5-yearly-usd": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-5-yearly",
+   "editions": {
+    "2026": {
+     "amount": "300.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-5-yearly-try": {
+   "family": "ent",
+   "seats": 5,
+   "agent_limit": 50,
+   "storage_gb": 25,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-5-yearly",
+   "editions": {
+    "2026": {
+     "amount": "15318.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-10-monthly-usd": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-10-monthly",
+   "editions": {
+    "2026": {
+     "amount": "60.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-10-monthly-try": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-10-monthly",
+   "editions": {
+    "2026": {
+     "amount": "3064.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-10-yearly-usd": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-10-yearly",
+   "editions": {
+    "2026": {
+     "amount": "600.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-10-yearly-try": {
+   "family": "ent",
+   "seats": 10,
+   "agent_limit": 100,
+   "storage_gb": 50,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-10-yearly",
+   "editions": {
+    "2026": {
+     "amount": "30635.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-15-monthly-usd": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-15-monthly",
+   "editions": {
+    "2026": {
+     "amount": "90.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-15-monthly-try": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-15-monthly",
+   "editions": {
+    "2026": {
+     "amount": "4596.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-15-yearly-usd": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-15-yearly",
+   "editions": {
+    "2026": {
+     "amount": "900.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-15-yearly-try": {
+   "family": "ent",
+   "seats": 15,
+   "agent_limit": 150,
+   "storage_gb": 75,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-15-yearly",
+   "editions": {
+    "2026": {
+     "amount": "45953.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-20-monthly-usd": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-20-monthly",
+   "editions": {
+    "2026": {
+     "amount": "120.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-20-monthly-try": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-20-monthly",
+   "editions": {
+    "2026": {
+     "amount": "6127.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-20-yearly-usd": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-20-yearly",
+   "editions": {
+    "2026": {
+     "amount": "1200.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-20-yearly-try": {
+   "family": "ent",
+   "seats": 20,
+   "agent_limit": 200,
+   "storage_gb": 100,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-20-yearly",
+   "editions": {
+    "2026": {
+     "amount": "61270.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-30-monthly-usd": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-30-monthly",
+   "editions": {
+    "2026": {
+     "amount": "180.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-30-monthly-try": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-30-monthly",
+   "editions": {
+    "2026": {
+     "amount": "9191.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-30-yearly-usd": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-30-yearly",
+   "editions": {
+    "2026": {
+     "amount": "1800.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-30-yearly-try": {
+   "family": "ent",
+   "seats": 30,
+   "agent_limit": 300,
+   "storage_gb": 150,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-30-yearly",
+   "editions": {
+    "2026": {
+     "amount": "91905.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-50-monthly-usd": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-50-monthly",
+   "editions": {
+    "2026": {
+     "amount": "270.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-50-monthly-try": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-50-monthly",
+   "editions": {
+    "2026": {
+     "amount": "13786.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-50-yearly-usd": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-50-yearly",
+   "editions": {
+    "2026": {
+     "amount": "2700.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-50-yearly-try": {
+   "family": "ent",
+   "seats": 50,
+   "agent_limit": 500,
+   "storage_gb": 250,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-50-yearly",
+   "editions": {
+    "2026": {
+     "amount": "137857.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-100-monthly-usd": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-100-monthly",
+   "editions": {
+    "2026": {
+     "amount": "480.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-100-monthly-try": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-100-monthly",
+   "editions": {
+    "2026": {
+     "amount": "24508.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-100-yearly-usd": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-100-yearly",
+   "editions": {
+    "2026": {
+     "amount": "4800.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-100-yearly-try": {
+   "family": "ent",
+   "seats": 100,
+   "agent_limit": 1000,
+   "storage_gb": 500,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-100-yearly",
+   "editions": {
+    "2026": {
+     "amount": "245079.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-200-monthly-usd": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-200-monthly",
+   "editions": {
+    "2026": {
+     "amount": "900.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-200-monthly-try": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-200-monthly",
+   "editions": {
+    "2026": {
+     "amount": "45953.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-200-yearly-usd": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-200-yearly",
+   "editions": {
+    "2026": {
+     "amount": "9000.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-200-yearly-try": {
+   "family": "ent",
+   "seats": 200,
+   "agent_limit": 2000,
+   "storage_gb": 1000,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-200-yearly",
+   "editions": {
+    "2026": {
+     "amount": "459524.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-500-monthly-usd": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "month",
+   "currency": "USD",
+   "package_slug": "pp-ent-500-monthly",
+   "editions": {
+    "2026": {
+     "amount": "2250.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-500-monthly-try": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "month",
+   "currency": "TRY",
+   "package_slug": "pp-ent-500-monthly",
+   "editions": {
+    "2026": {
+     "amount": "114881.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-500-yearly-usd": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "year",
+   "currency": "USD",
+   "package_slug": "pp-ent-500-yearly",
+   "editions": {
+    "2026": {
+     "amount": "22500.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  },
+  "ent-500-yearly-try": {
+   "family": "ent",
+   "seats": 500,
+   "agent_limit": 5000,
+   "storage_gb": 2500,
+   "interval": "year",
+   "currency": "TRY",
+   "package_slug": "pp-ent-500-yearly",
+   "editions": {
+    "2026": {
+     "amount": "1148808.00",
+     "plan_id": null,
+     "provider_plan_reference": null
+    }
+   }
+  }
+ }
+}

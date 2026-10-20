@@ -1,133 +1,21 @@
-// MASAAS client — the proxy pattern taken from the theneuralledger adapter.
+// Sign-in and postbox reads for the account page.
 //
-// Two authorities, exactly as in TNL:
-//   - the runtime token authenticates catalog/entitlement reads (server-held);
-//   - the customer's own token authenticates member billing operations, forwarded with the
-//     `x-product-slug` header. The adapter never holds a payment-gateway key — MASAAS does, and it
-//     hosts the card capture.
+// The OIDC code exchange and refresh run here so a confidential client's secret (if any) never
+// reaches the browser. Billing calls live in saas.js; plan activation in postbox.js.
 
-import { randomUUID } from "node:crypto";
 import { config } from "./config.js";
 
-function idempotencyKey(prefix) {
-  return `${prefix}_${randomUUID()}`;
-}
-
 async function doFetch(url, init) {
-  const controller = AbortSignal.timeout(config.requestTimeoutMs);
-  const res = await fetch(url, { ...init, signal: controller });
+  const res = await fetch(url, { ...init, signal: AbortSignal.timeout(config.requestTimeoutMs) });
   const text = await res.text().catch(() => "");
   let payload = null;
-  try { payload = text ? JSON.parse(text) : null; } catch { payload = { raw: text }; }
+  try { payload = text ? JSON.parse(text) : null; } catch { payload = null; }
   if (!res.ok) {
-    const message =
-      (payload && (payload.message || payload.error || payload.detail)) ||
-      `MASAAS returned ${res.status}`;
-    throw Object.assign(new Error(message), { status: res.status, payload });
+    const message = (payload && (payload.error_description || payload.message || payload.error)) || `Sign-in returned ${res.status}`;
+    throw Object.assign(new Error(String(message).slice(0, 200)), { status: res.status });
   }
   return payload;
 }
-
-// ---- runtime-token reads (public-ish catalog, entitlement snapshot) ---------------------------
-
-export async function publicPackages() {
-  const url = new URL(`${config.masaasApiBaseUrl}/catalog/public/packages`);
-  url.searchParams.set("product_slug", config.masaasProductSlug);
-  return doFetch(url, { headers: { accept: "application/json" } });
-}
-
-export async function entitlementSnapshot(tenantId) {
-  const url = new URL(`${config.masaasApiBaseUrl}/catalog/runtime/snapshot`);
-  url.searchParams.set("product_slug", config.masaasProductSlug);
-  url.searchParams.set("tenant_id", tenantId);
-  return doFetch(url, {
-    headers: {
-      accept: "application/json",
-      authorization: `Bearer ${config.masaasRuntimeToken}`,
-    },
-  });
-}
-
-// ---- member-token proxy (subscriptions, billing profile, hosted payment) ----------------------
-
-export async function memberBackend(memberToken, method, path, body, requestKey) {
-  const headers = {
-    accept: "application/json",
-    authorization: `Bearer ${memberToken}`,
-    "user-agent": "pigeonpost store adapter",
-    "x-product-slug": config.masaasProductSlug,
-  };
-  const hasBody = body !== undefined && method !== "GET";
-  if (hasBody) {
-    headers["content-type"] = "application/json";
-    headers["idempotency-key"] = requestKey || idempotencyKey(`pp_${method.toLowerCase()}`);
-  }
-  const target = /^https?:\/\//i.test(path) ? path : `${config.masaasSaasApiBase}${path.startsWith("/") ? path : `/${path}`}`;
-  return doFetch(target, { method, headers, body: hasBody ? JSON.stringify(body) : undefined });
-}
-
-// Read every page before deciding whether a purchase already exists.
-async function memberList(token, path) {
-  const rows = [];
-  const seen = new Set();
-  let cursor;
-  do {
-    const page = await memberBackend(token, "GET", `${path}?limit=100${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`);
-    if (Array.isArray(page)) return rows.concat(page);
-    if (!Array.isArray(page?.data)) throw new Error("Invalid billing list response");
-    rows.push(...page.data);
-    cursor = page.next_cursor;
-    if (cursor && seen.has(cursor)) throw new Error("Billing pagination did not advance");
-    if (cursor) seen.add(cursor);
-  } while (cursor);
-  return rows;
-}
-
-export const listSubscriptions = (t) => memberList(t, "/v1/subscriptions");
-export async function getSubscription(token, id) {
-  const subscription = (await listSubscriptions(token)).find((s) => s.id === id);
-  if (!subscription) throw Object.assign(new Error("Subscription not found"), { status: 404 });
-  return subscription;
-}
-export const listPayments = (t) => memberList(t, "/v1/billing/payments");
-export const getPayment = (t, id) => memberBackend(t, "GET", `/v1/billing/payments/${encodeURIComponent(id)}`);
-export const cancelSubscription = (t, id) =>
-  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {});
-
-// Creating the subscription starts its payment. Card setup is a separate, earlier operation.
-export const subscribeToPlan = (t, planSlug, externalReference, callbackUrl, key) =>
-  memberBackend(t, "POST", "/v1/subscriptions", {
-    plan_slug: planSlug, external_reference: externalReference, payment_callback_url: callbackUrl,
-  }, key);
-export const retrySubscriptionPayment = (t, id, callbackUrl, key) =>
-  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/retry-payment`, {
-    payment_callback_url: callbackUrl,
-  }, key);
-export const completeSubscriptionPayment = (t, id, paymentId, sessionId, key) =>
-  memberBackend(t, "POST", `/v1/subscriptions/${encodeURIComponent(id)}/payment-checkout/complete`, {
-    payment_id: paymentId, session_id: sessionId,
-  }, key);
-
-// Billing profile (individual or entity + tax fields)
-export const listBillingProfiles = (t) => memberBackend(t, "GET", "/v1/billing/profiles?limit=20");
-export const createBillingProfile = (t, profile) => memberBackend(t, "POST", "/v1/billing/profiles", profile);
-export const updateBillingProfile = (t, id, profile) =>
-  memberBackend(t, "PATCH", `/v1/billing/profiles/${encodeURIComponent(id)}`, profile);
-
-// Payment methods — MASAAS hosts the card capture; setup-session returns the hosted URL.
-export const listPaymentMethods = (t) => memberBackend(t, "GET", "/v1/billing/payment-methods?limit=20");
-export const paymentGateways = (t) => memberBackend(t, "GET", "/v1/billing/payment-methods/gateways");
-export const paymentSetupSession = (t, returnUrl, cancelUrl, billingProfileId) =>
-  memberBackend(t, "POST", "/v1/billing/payment-methods/setup-session", {
-    return_url: returnUrl,
-    cancel_url: cancelUrl,
-    ...(billingProfileId ? { billing_profile_id: billingProfileId } : {}),
-  });
-export const completePaymentSession = (t, body) =>
-  memberBackend(t, "POST", "/v1/billing/payment-methods/complete-session", body);
-
-// Invoices
-export const listInvoices = (t) => memberBackend(t, "GET", "/v1/billing/invoices?limit=20");
 
 // ---- OIDC code exchange (adapter-side; browser never sees a client secret) ---------------------
 
@@ -148,8 +36,7 @@ export async function exchangeOidcCode(code, redirectUri, codeVerifier) {
   });
 }
 
-// Silently renew the access token from a stored refresh token ("remember me"). The refresh token
-// itself never reaches the browser as a bearer credential — it round-trips only to Keycloak here.
+// Silently renew the access token from a stored refresh token ("remember me").
 export async function refreshOidcToken(refreshToken) {
   const url = `${config.oidc.issuer}/protocol/openid-connect/token`;
   const form = new URLSearchParams({
@@ -167,13 +54,8 @@ export async function refreshOidcToken(refreshToken) {
 
 // ---- postbox reads (handle availability, and what an account owns) ----------------------------
 
-/// Whether a handle can still be bought, according to the server that hands them out.
-///
-/// Returns `true`, `false`, or `null` for "could not tell" — and a caller that gets `null` must not
-/// sell the name. This used to ask the registry over `/v1/resolve/handle/<name>`, a route the
-/// registry does not serve: it answered 400 to everything, the 400 was read as "not taken", and the
-/// site cheerfully offered handles the postbox had already given to somebody. The registry holds no
-/// namespaces at all — nothing has ever published one to it.
+/// Whether a handle can still be registered, according to the server that hands them out.
+/// Returns `true`, `false`, or `null` for "could not tell" — and `null` must never read as free.
 export async function handleAvailable(name, memberToken) {
   const url = `${config.postboxUrl}/v1/handles/${encodeURIComponent(name)}/availability`;
   try {
@@ -189,11 +71,7 @@ export async function handleAvailable(name, memberToken) {
   }
 }
 
-/// The handles an account holds, whatever paid for them.
-///
-/// Travels on the customer's own token: the postbox does not require an audience, so the website's
-/// token is accepted for the same account the phone signs in as — which is the point, since one of
-/// those handles was bought in the App Store and the billing system has never heard of it.
+/// The handles an account holds, whatever paid for them (App Store, Google Play, web plan).
 export async function accountHandles(token) {
   const url = `${config.postboxUrl}/v1/me/handles?include_inactive=true`;
   const res = await fetch(url, {
@@ -207,54 +85,4 @@ export async function accountHandles(token) {
   const body = await res.json();
   if (!Array.isArray(body?.handles)) throw Object.assign(new Error("Could not load your handles. Please try again."), { status: 502 });
   return body.handles;
-}
-
-/// Bind a handle to an account in the postbox, using this service's own credential.
-///
-/// The last piece of "one handle record, whatever paid for it". The App Store path binds itself:
-/// the app claims the purchase against the postbox and the postbox verifies it with Apple. A card
-/// purchase had no equivalent step at all — the billing system took the money and nothing told the
-/// postbox, so the name resolved for nobody.
-///
-/// Idempotent by construction: the postbox upserts the binding, and it refuses a namespace another
-/// account already holds.
-export async function grantNamespace({ namespace, accountId, expiresAt }) {
-  if (!config.namespaceGrantToken) return { ok: false, reason: "not_configured" };
-  const url = `${config.postboxUrl}/v1/namespaces`;
-  try {
-    const res = await fetch(url, {
-      method: "PUT",
-      headers: {
-        authorization: `Bearer ${config.namespaceGrantToken}`,
-        "content-type": "application/json",
-        accept: "application/json",
-      },
-      body: JSON.stringify({
-        namespace,
-        account_id: accountId,
-        ...(expiresAt ? { expires_at: expiresAt } : {}),
-      }),
-      signal: AbortSignal.timeout(8000),
-    });
-    if (res.ok) return { ok: true };
-    return { ok: false, reason: `postbox_${res.status}` };
-  } catch {
-    return { ok: false, reason: "postbox_unreachable" };
-  }
-}
-
-/// The postbox's own id for the signed-in account, which the grant above is addressed by.
-export async function accountIdFor(token) {
-  const url = `${config.postboxUrl}/v1/me/handles`;
-  try {
-    const res = await fetch(url, {
-      headers: { authorization: `Bearer ${token}`, accept: "application/json" },
-      signal: AbortSignal.timeout(6000),
-    });
-    if (!res.ok) return null;
-    const body = await res.json();
-    return body?.account || null;
-  } catch {
-    return null;
-  }
 }

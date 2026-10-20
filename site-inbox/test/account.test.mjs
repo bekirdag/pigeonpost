@@ -129,27 +129,31 @@ test("a deletion response cannot overwrite a subsequent sign-out", async t => {
   assert.equal($("#ac-deletion-receipt"), null);
 });
 
-async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "https://pigeonpost.dev/account", completeStatus = 200, recovery = false } = {}) {
+async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = { capacity: 0, used: 0, names: [] }, profiles = [{ id: "11111111-1111-4111-8111-111111111111" }],
+  subscriptions = [], recovery = false, statuses = ["pending", "active"] } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
   window.eval(config);
   window.sessionStorage.setItem("pp_session", "member-token");
   const originalTimeout = window.setTimeout.bind(window);
-  window.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay === 350 ? 0 : delay, ...args);
+  window.setTimeout = (fn, delay, ...args) => originalTimeout(fn, delay >= 350 ? 0 : delay, ...args);
   const calls = [];
   window.fetch = async (url, init = {}) => {
     const path = new URL(url, window.location.origin).pathname;
-    calls.push({ path, body: init.body && JSON.parse(init.body) });
+    calls.push({ path, method: init.method || "GET", body: init.body && JSON.parse(init.body) });
     const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
-    if (path === "/api/v1/me/overview") return response({ subscriptions: [], handles: [], invoices: [], billingProfiles: [{ id: "profile-1" }], paymentMethods: [{ id: "card-1" }] });
+    if (path === "/api/v1/me/overview") return response({ handles: [], invoices: [], billingProfiles: profiles,
+      cloud: { subscriptions, plan: { web_plan: plan } } });
     if (path.endsWith("/availability")) return response({ available: !recovery || init.headers?.authorization === "Bearer member-token", known: true });
-    if (path === "/api/v1/checkout") return response(checkoutBody || { status: "payment_action_required", subscriptionId: "subscription-1", paymentId: "payment-1", checkoutUrl: "https://bank.example.test/checkout" }, checkoutStatus);
-    if (path === "/api/v1/checkout/complete") return response(completeStatus === 200 ? { status: "active", handle: "example", bound: true } : { error: "Payment is still under review" }, completeStatus);
-    return response({ identities: [], keys: [], namespaces: [], packages: [] });
+    if (path === "/api/v1/names") return response({ namespace: "/example", capacity: plan.capacity, used: plan.used + 1 });
+    if (path.startsWith("/api/v1/cloud/checkout/")) return response({ status: statuses.length > 1 ? statuses.shift() : statuses[0] });
+    return response({ identities: [], keys: [] });
   };
   window.eval(source);
+  window.document.dispatchEvent(new window.Event("DOMContentLoaded"));
   for (let i = 0; i < 30 && !window.document.querySelector("#ac-buy"); i++) await tick();
+  for (let i = 0; i < 10; i++) await tick();
   return {
     window, calls,
     async buy() {
@@ -158,68 +162,110 @@ async function checkoutPage(t, { checkoutStatus = 200, checkoutBody, url = "http
       const button = window.document.querySelector("#ac-buy");
       for (let i = 0; i < 30 && button.disabled; i++) await new Promise((resolve) => setTimeout(resolve, 1));
       assert.equal(button.disabled, false);
-      button.click(); button.click();
+      button.click();
       for (let i = 0; i < 20; i++) await tick();
     },
   };
 }
 
-test("Get it keeps the payment reference before redirect and ignores a double click", async (t) => {
-  const page = await checkoutPage(t);
+test("a plan with room registers the name directly, with no payment step", async (t) => {
+  const page = await checkoutPage(t, { plan: { capacity: 3, used: 1, names: [] } });
+  assert.equal(page.window.document.querySelector("#ac-buy").textContent, "Register it");
   await page.buy();
-  const calls = page.calls.filter((c) => c.path === "/api/v1/checkout");
-  assert.equal(calls.length, 1);
-  assert.match(calls[0].body.operationId, /^[a-f0-9]{32}$/);
-  const pending = JSON.parse(page.window.sessionStorage.getItem("pp_checkout"));
-  assert.equal(pending.subscriptionId, "subscription-1");
-  assert.equal(pending.paymentId, "payment-1");
-  assert.equal(page.window.localStorage.getItem("pp_bought_handle"), null, "starting payment does not claim that the handle is paid for");
-  assert.equal(page.calls.some((c) => c.path === "/api/v1/handles/claim"), false);
-});
-
-test("the signed-in owner can select an expired handle during recovery", async (t) => {
-  const page = await checkoutPage(t, { recovery: true });
-  await page.buy();
-  assert.equal(page.calls.filter((c) => c.path === "/api/v1/checkout").length, 1);
-});
-
-test("an ambiguous checkout failure keeps a stable attempt and never claims payment success", async (t) => {
-  const page = await checkoutPage(t, { checkoutStatus: 502, checkoutBody: { error: "Example checkout rejection" } });
-  await page.buy();
-  const first = page.calls.find((c) => c.path === "/api/v1/checkout");
-  await page.buy();
-  const attempts = page.calls.filter((c) => c.path === "/api/v1/checkout");
-  assert.equal(attempts[1].body.operationId, first.body.operationId);
-  assert.equal(page.window.localStorage.getItem("pp_bought_handle"), null);
-  assert.equal(page.window.document.querySelector("#ac-toast").textContent, "Checkout couldn't start: Example checkout rejection");
-});
-
-test("a definite payment rejection allows a fresh attempt after correction", async (t) => {
-  const page = await checkoutPage(t, { checkoutStatus: 400, checkoutBody: { error: "Payment declined" } });
-  await page.buy();
-  const first = page.calls.find((c) => c.path === "/api/v1/checkout");
-  await page.buy();
-  assert.notEqual(page.calls.filter((c) => c.path === "/api/v1/checkout")[1].body.operationId, first.body.operationId);
-});
-
-test("a completed checkout shows the delivered handle without another hosted step", async (t) => {
-  const page = await checkoutPage(t, { checkoutBody: { status: "active", handle: "example", bound: true } });
-  await page.buy();
-  assert.equal(page.window.sessionStorage.getItem("pp_checkout"), null);
+  const register = page.calls.filter((c) => c.path === "/api/v1/names");
+  assert.equal(register.length, 1);
+  assert.deepEqual(register[0].body, { namespace: "example" });
+  assert.equal(page.calls.some((c) => c.path.startsWith("/api/v1/cloud/checkout")), false);
   assert.equal(page.window.document.querySelector("#ac-toast").textContent, "/example is yours.");
 });
 
-for (const completeStatus of [200, 400]) {
-  test(`bank return checks payment and ${completeStatus === 200 ? "shows ownership" : "preserves pending state"}`, async (t) => {
-    const page = await checkoutPage(t, { url: "https://pigeonpost.dev/account?checkout_return=1&subscription_id=subscription-1&payment_id=payment-1", completeStatus });
-    for (let i = 0; i < 10; i++) await tick();
-    const completion = page.calls.find((c) => c.path === "/api/v1/checkout/complete");
-    assert.deepEqual(completion.body, { subscriptionId: "subscription-1", paymentId: "payment-1" });
-    assert.equal(page.calls.some((c) => c.path === "/api/v1/checkout"), false);
-    assert.equal(page.window.location.search, "");
-    assert.equal(Boolean(page.window.sessionStorage.getItem("pp_checkout")), completeStatus !== 200);
-  });
-}
+test("the signed-in owner can select an expired handle during recovery", async (t) => {
+  const page = await checkoutPage(t, { recovery: true, plan: { capacity: 1, used: 0, names: [] } });
+  await page.buy();
+  assert.equal(page.calls.filter((c) => c.path === "/api/v1/names").length, 1);
+});
+
+test("without a plan the member chooses one; the hosted form gets a stable intent and no price from the page", async (t) => {
+  const page = await checkoutPage(t);
+  await page.buy();
+  const doc = page.window.document;
+  const names = doc.querySelector("#ac-plan-names");
+  assert.ok(names, "plan picker shown");
+  assert.equal(names.options[0].value, "1");
+  assert.equal(names.options.length, 10);
+  const currency = doc.querySelector("#ac-plan-currency");
+  currency.value = "TRY"; currency.dispatchEvent(new page.window.Event("change"));
+  assert.match(doc.querySelector("#ac-plan-names").options[2].textContent, /3 names/);
+  assert.match(doc.querySelector("#ac-plan-names").options[2].textContent, /1[.,]?226/);
+  doc.querySelector("#ac-plan-names").value = "3";
+  try { doc.querySelector("#ac-plan-go").click(); } catch { /* jsdom does not navigate */ }
+  const pending = JSON.parse(page.window.sessionStorage.getItem("pp_cloud_checkout"));
+  assert.match(pending.intent_id, /^[a-f0-9]{32}$/);
+  assert.equal(pending.plan_code, "cloud-3names-yearly-try");
+  assert.equal(pending.billing_profile_id, "11111111-1111-4111-8111-111111111111");
+  assert.equal(Object.keys(pending).some((k) => /price|amount/.test(k)), false);
+  assert.equal(page.calls.some((c) => c.method === "POST"), false, "nothing is charged from the account page");
+});
+
+test("billing details come before a plan", async (t) => {
+  const page = await checkoutPage(t, { profiles: [] });
+  await page.buy();
+  assert.equal(page.window.document.querySelector("#ac-plan-names"), null);
+  assert.match(page.window.document.querySelector("#ac-toast").textContent, /billing details/);
+});
+
+test("a full plan points to a plan change instead of a second subscription", async (t) => {
+  const page = await checkoutPage(t, { plan: { capacity: 1, used: 1, names: [] },
+    subscriptions: [{ id: "22222222-2222-4222-8222-222222222222", names: 1, currency: "USD", provider_status: "ACTIVE" }] });
+  await page.buy();
+  assert.equal(page.window.document.querySelector("#ac-plan-names"), null);
+  assert.match(page.window.document.querySelector("#ac-toast").textContent, /larger plan/);
+  assert.ok(page.window.document.querySelector("[data-change-plan]"));
+});
+
+test("the return from iyzico polls the bridge and never trusts the redirect", async (t) => {
+  const intent = "0123456789abcdef0123456789abcdef";
+  const page = await checkoutPage(t, { url: `https://pigeonpost.dev/account?checkout=${intent}`, statuses: ["pending", "active"] });
+  for (let i = 0; i < 40 && !page.calls.filter((c) => c.path === `/api/v1/cloud/checkout/${intent}`).length >= 2; i++) await tick();
+  for (let i = 0; i < 40; i++) await tick();
+  const polls = page.calls.filter((c) => c.path === `/api/v1/cloud/checkout/${intent}`);
+  assert.equal(polls.length, 2);
+  assert.equal(page.window.location.search, "");
+  assert.equal(page.window.document.querySelector("#ac-toast").textContent, "Your Pigeonpost Cloud plan is active.");
+  assert.equal(page.calls.some((c) => c.method === "POST"), false);
+});
+
+test("the hosted form page replays the intent and runs only nonce-tagged iyzico scripts", async (t) => {
+  const html = readFileSync(new URL("../../site/billing/checkout.html", import.meta.url), "utf8");
+  const script = readFileSync(new URL("../../site/billing/checkout.js", import.meta.url), "utf8");
+  assert.match(html, /<meta name="csp-nonce" content="__CSP_NONCE__">/);
+  const dom = new JSDOM(html.replace("__CSP_NONCE__", "nonce123"), { url: "https://pigeonpost.dev/billing/checkout", runScripts: "outside-only", virtualConsole: new VirtualConsole() });
+  t.after(() => dom.window.close());
+  const { window } = dom;
+  window.eval(config);
+  window.sessionStorage.setItem("pp_session", "member-token");
+  const pending = { kind: "cloud", intent_id: "a".repeat(32), plan_code: "cloud-2names-yearly-usd", billing_profile_id: "p", locale: "en" };
+  window.sessionStorage.setItem("pp_cloud_checkout", JSON.stringify(pending));
+  const calls = [];
+  window.fetch = async (url, init) => {
+    calls.push({ url, body: JSON.parse(init.body), auth: init.headers.authorization });
+    return { ok: true, status: 200, json: async () => ({ plan_code: "cloud-2names-yearly-usd", amount: "16.00", currency: "USD",
+      checkout_form_content: '<script>window.__iyzi = 1;</script><script src="https://evil.example/x.js"></script><script src="https://static.iyzipay.com/checkoutform/v2/bundle.js"></script><div id="iyzipay-checkout-form" class="responsive"></div><img src=x onerror="window.__xss=1">' }) };
+  };
+  window.eval(script);
+  for (let i = 0; i < 20; i++) await tick();
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].url, "/api/v1/cloud/checkout");
+  assert.deepEqual(calls[0].body, { intent_id: pending.intent_id, plan_code: pending.plan_code, billing_profile_id: "p", locale: "en" });
+  const scripts = [...window.document.querySelectorAll("#pp-pay-form script")];
+  assert.equal(scripts.length, 2, "foreign script hosts are dropped");
+  assert.ok(scripts.every((s) => s.nonce === "nonce123" || s.getAttribute("nonce") === "nonce123"));
+  assert.equal(scripts[1].src, "https://static.iyzipay.com/checkoutform/v2/bundle.js");
+  assert.ok(window.document.querySelector("#iyzipay-checkout-form"));
+  assert.match(window.document.querySelector("#pp-pay-summary").textContent, /2 names: \$16\.00 per year/);
+  assert.equal(window.sessionStorage.getItem("pp_cloud_checkout") !== null, true, "a reload replays the same intent");
+});
+
 
 async function account(t, { remember, rejectFresh = false, existingProfile = null }) {
   const dom = new JSDOM('<main id="account-root"></main>', {

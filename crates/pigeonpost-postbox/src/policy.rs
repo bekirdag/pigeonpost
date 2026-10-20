@@ -38,6 +38,8 @@ pub(crate) enum Action {
     ReadFeatureFlags,
     /// `PUT /internal/v1/features/{name}`.
     WriteFeatureFlags,
+    /// The billing bridge's entitlement and org endpoints (`/internal/v1/entitlements`, `/orgs`).
+    ManageBilling,
     /// A sensitive member action (§3.4 list). Nothing in Phase 0 is gated on it yet; it exists so
     /// the requirement is expressed once, here, when the first such endpoint lands.
     #[cfg_attr(not(test), allow(dead_code))]
@@ -72,9 +74,10 @@ impl Action {
         match self {
             Action::ReadCapabilities => Requirement::AnyPrincipal,
             Action::StreamAccountEvents => Requirement::AccountHolder,
-            Action::ServiceHealth | Action::ReadFeatureFlags | Action::WriteFeatureFlags => {
-                Requirement::Service
-            }
+            Action::ServiceHealth
+            | Action::ReadFeatureFlags
+            | Action::WriteFeatureFlags
+            | Action::ManageBilling => Requirement::Service,
             Action::SensitiveAccountChange => Requirement::HumanStepUp,
         }
     }

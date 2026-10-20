@@ -2597,6 +2597,419 @@ paths:
         '403':
           $ref: '#/components/responses/EndpointNotAllowed'
 
+  /v1/me/entitlements:
+    get:
+      tags: [handles]
+      operationId: myEntitlements
+      summary: The signed-in account's entitlements and web plan capacity
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Entitlements (`Cache-Control - private, no-store`).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  account:
+                    type: string
+                  entitlements:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/Entitlement'
+                  web_plan:
+                    type: object
+                    additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: '`human_required` — an interactive sign-in is required.'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /v1/claims/plan:
+    post:
+      tags: [handles]
+      operationId: claimPlanName
+      summary: Register a name within the account's Pigeonpost Cloud web plan
+      security:
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [namespace]
+              properties:
+                namespace:
+                  type: string
+      responses:
+        '200':
+          description: The name is registered (idempotent).
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+                properties:
+                  namespace:
+                    type: string
+                  mailbox:
+                    type: [string, 'null']
+                  capacity:
+                    type: integer
+                  used:
+                    type: integer
+        '400':
+          description: '`invalid_namespace`, `member_token_required`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '402':
+          description: '`no_plan`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '403':
+          description: '`human_required`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`plan_capacity_reached`, `name_reserved`, `namespace_taken`, `handle_already_subscribed`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+  /internal/v1/entitlements/{provider}/{environment}/{reference}:
+    put:
+      tags: [internal]
+      x-internal: true
+      operationId: internalPutEntitlement
+      summary: Upsert one provider-bound account or org entitlement (billing bridge)
+      security:
+        - serviceToken: []
+      parameters:
+        - name: provider
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: environment
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: reference
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/EntitlementWrite'
+      responses:
+        '200':
+          description: Applied, or not applied with `reason` stale/duplicate.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementResult'
+        '400':
+          description: '`invalid_provider`, `invalid_environment`, `invalid_reference`, `invalid_plan_code`, `invalid_status`, `invalid_names`, `invalid_seats`, `paid_through_required`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`subject_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`subject_mismatch`, `version_conflict`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/accounts/{id}/cloud-plan:
+    put:
+      tags: [internal]
+      x-internal: true
+      operationId: internalPutCloudPlan
+      summary: Set a complimentary web plan of 0-10 names for an account
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CloudPlanWrite'
+      responses:
+        '200':
+          description: As for the entitlement upsert.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntitlementResult'
+        '400':
+          description: '`invalid_names`, `invalid_note`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`subject_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`version_conflict`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/accounts/{id}/entitlements:
+    get:
+      tags: [internal]
+      x-internal: true
+      operationId: internalAccountEntitlements
+      summary: An account's entitlements and web plan
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Entitlements, name capacity and web plan.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: '`subject_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/org-drafts:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCreateOrgDraft
+      summary: Create (or replay) an org draft before enterprise checkout
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgDraftWrite'
+      responses:
+        '201':
+          description: Draft created (200 when the same operation is replayed).
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [org]
+                properties:
+                  org:
+                    $ref: '#/components/schemas/Org'
+        '400':
+          description: '`invalid_operation_id`, `invalid_plan_code`, `invalid_namespace`, `invalid_name`, `bad_request`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`subject_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`operation_conflict`, `namespace_unavailable`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/orgs/{id}:
+    get:
+      tags: [internal]
+      x-internal: true
+      operationId: internalGetOrg
+      summary: An org and its entitlements
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: The org.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '404':
+          description: '`org_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/orgs/{id}/activate:
+    put:
+      tags: [internal]
+      x-internal: true
+      operationId: internalActivateOrg
+      summary: Activate a paid org draft; never takes a namespace claimed meanwhile (status paid_unprovisioned)
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgActivateWrite'
+      responses:
+        '200':
+          description: The org and its entitlement.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: 'validation errors'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`org_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`entitlement_inactive`, `subject_mismatch`, `version_conflict`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+  /internal/v1/orgs/{id}/entitlement:
+    put:
+      tags: [internal]
+      x-internal: true
+      operationId: internalPutOrgEntitlement
+      summary: Upsert an org entitlement; org status follows it
+      security:
+        - serviceToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OrgEntitlementWrite'
+      responses:
+        '200':
+          description: The org and entitlement.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          description: 'validation errors'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: '`subject_unknown`, `org_unknown`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '409':
+          description: '`subject_mismatch`, `version_conflict`'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/InvalidServiceToken'
+        '403':
+          $ref: '#/components/responses/EndpointNotAllowed'
+
 components:
   securitySchemes:
     capToken:
@@ -2644,6 +3057,138 @@ components:
         type: string
 
   schemas:
+    Entitlement:
+      type: object
+      description: One provider-bound entitlement (SDS §8.8). `active` means a live status and an unexpired `paid_through` (null only for perpetual grants).
+      properties:
+        id: {type: string}
+        subject_kind: {type: string, enum: [account, org]}
+        subject_id: {type: string}
+        source: {type: string, enum: [apple, google, iyzico, grant, test]}
+        plan_code: {type: string}
+        plan_version: {type: string}
+        names: {type: [integer, 'null']}
+        seats: {type: [integer, 'null']}
+        agent_limit: {type: [integer, 'null']}
+        storage_bytes: {type: [integer, 'null']}
+        status: {type: string, enum: [active, past_due, grace, expired, canceled]}
+        period_end: {type: [integer, 'null']}
+        paid_through: {type: [integer, 'null']}
+        provider_ref: {type: string}
+        provider_environment: {type: string}
+        cancel_requested_at: {type: [integer, 'null']}
+        pending_plan_code: {type: [string, 'null']}
+        pending_effective_at: {type: [integer, 'null']}
+        updated_at: {type: integer}
+        reconciliation_version: {type: integer}
+        active: {type: boolean}
+    EntitlementResult:
+      type: object
+      required: [applied, entitlement]
+      properties:
+        applied: {type: boolean}
+        reason: {type: string, enum: [stale, duplicate]}
+        entitlement:
+          $ref: '#/components/schemas/Entitlement'
+        capacity:
+          type: [object, 'null']
+          properties:
+            names: {type: integer}
+            used: {type: integer}
+    EntitlementWrite:
+      type: object
+      additionalProperties: false
+      required: [subject, plan_code, plan_version, status, reconciliation_version]
+      properties:
+        subject:
+          type: object
+          additionalProperties: false
+          required: [kind, id]
+          properties:
+            kind: {type: string, enum: [account, org]}
+            id: {type: string}
+        subject_check:
+          type: object
+          additionalProperties: false
+          properties:
+            oidc_sub: {type: string}
+        plan_code: {type: string, pattern: '^[a-z0-9][a-z0-9.-]{0,63}$'}
+        plan_version: {type: string, pattern: '^[A-Za-z0-9._-]{1,32}$'}
+        names: {type: [integer, 'null'], minimum: 1, maximum: 10}
+        seats: {type: [integer, 'null'], minimum: 1}
+        agent_limit: {type: [integer, 'null']}
+        storage_bytes: {type: [integer, 'null'], minimum: 0}
+        status: {type: string, enum: [active, past_due, grace, expired, canceled]}
+        period_end: {type: [integer, 'null']}
+        paid_through: {type: [integer, 'null']}
+        cancel_requested_at: {type: [integer, 'null']}
+        pending_plan_code: {type: [string, 'null']}
+        pending_effective_at: {type: [integer, 'null']}
+        reconciliation_version: {type: integer, minimum: 1}
+        operation_id: {type: string}
+    CloudPlanWrite:
+      type: object
+      additionalProperties: false
+      required: [names, reconciliation_version]
+      properties:
+        names: {type: integer, minimum: 0, maximum: 10}
+        paid_through: {type: [integer, 'null'], description: null = no expiry}
+        reconciliation_version: {type: integer, minimum: 1}
+        note: {type: string, maxLength: 200}
+    OrgEntitlementWrite:
+      type: object
+      additionalProperties: false
+      required: [provider, environment, reference, plan_code, plan_version, seats, status, reconciliation_version]
+      properties:
+        provider: {type: string, enum: [iyzico, grant, test]}
+        environment: {type: string, enum: [live, test, sandbox]}
+        reference: {type: string}
+        plan_code: {type: string}
+        plan_version: {type: string}
+        seats: {type: integer, minimum: 1}
+        agent_limit: {type: [integer, 'null']}
+        storage_bytes: {type: [integer, 'null']}
+        status: {type: string, enum: [active, past_due, grace, expired, canceled]}
+        period_end: {type: [integer, 'null']}
+        paid_through: {type: [integer, 'null']}
+        cancel_requested_at: {type: [integer, 'null']}
+        pending_plan_code: {type: [string, 'null']}
+        pending_effective_at: {type: [integer, 'null']}
+        reconciliation_version: {type: integer, minimum: 1}
+    OrgActivateWrite:
+      type: object
+      additionalProperties: false
+      required: [operation_id, entitlement]
+      properties:
+        operation_id: {type: string, pattern: '^[A-Za-z0-9_-]{16,128}$'}
+        entitlement:
+          $ref: '#/components/schemas/OrgEntitlementWrite'
+    OrgDraftWrite:
+      type: object
+      additionalProperties: false
+      required: [operation_id, owner_account, name, namespace, plan_code, seats]
+      properties:
+        operation_id: {type: string, pattern: '^[A-Za-z0-9_-]{16,128}$'}
+        owner_account: {type: string}
+        name: {type: string, maxLength: 120}
+        namespace: {type: string}
+        plan_code: {type: string, pattern: '^ent-[1-9][0-9]*-(monthly|yearly)-(usd|try|eur)$'}
+        seats: {type: integer, minimum: 1}
+    Org:
+      type: object
+      properties:
+        id: {type: string}
+        namespace: {type: string}
+        name: {type: string}
+        owner_account: {type: string}
+        status: {type: string, enum: [pending, active, past_due, read_only, suspended, deleted, paid_unprovisioned]}
+        seats: {type: integer}
+        agent_limit: {type: integer}
+        storage_bytes: {type: integer}
+        plan_code: {type: [string, 'null']}
+        billing_ref: {type: [string, 'null']}
+        period_end: {type: [integer, 'null']}
+        created_at: {type: integer}
     Error:
       type: object
       required: [error]

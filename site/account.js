@@ -1,8 +1,8 @@
 // Pigeonpost account — the in-page member area.
 //
 // Auth is Authorization Code + PKCE against the pigeonpost-prod realm; the adapter at /api exchanges
-// the code and proxies member operations to MASAAS with the customer's token. MASAAS hosts the card
-// capture, so no payment script or key runs here.
+// the code and proxies member operations to saas_be with the customer's token. iyzico hosts the card
+// form on the separate /billing/checkout page, so no payment script or key runs here.
 
 (function () {
   "use strict";
@@ -15,7 +15,6 @@
   // What loadOverview last learned about the signed-in member. Null until the first load, so the
   // purchase gate knows to fetch it before deciding whether billing/card are missing.
   let overview = null;
-  let purchasing = false;
 
   // localStorage, not sessionStorage: the PKCE verifier must survive the full-page
   // redirect out to Keycloak and back. sessionStorage is meant to persist across that, but in
@@ -43,7 +42,7 @@
   function signOut() {
     clearSession();
     SS.removeItem("pp_remember");
-    TS.removeItem("pp_checkout");
+    TS.removeItem("pp_cloud_checkout");
   }
 
   // ---- PKCE ---------------------------------------------------------------------------------
@@ -295,7 +294,7 @@
         <div id="ac-pb-keys"><p class="muted">Loading…</p></div>
       </div>
       <div class="ac-card"><h3>Billing details</h3><div id="ac-billing"><p class="muted">Loading…</p></div></div>
-      <div class="ac-card"><h3>Payment method</h3><div id="ac-pay"><p class="muted">Loading…</p></div></div>
+      <div class="ac-card" id="ac-cloud"><h3>Pigeonpost Cloud plan</h3><div id="ac-cloud-body"><p class="muted">Loading…</p></div></div>
       <div class="ac-card">
         <h3>Security</h3>
         <p class="muted">Add two-factor authentication with an app like Google Authenticator, Authy, or 1Password.</p>
@@ -606,39 +605,55 @@
     try { return new Date(secs * 1000).toLocaleDateString(); } catch (_) { return ""; }
   }
 
+
+  // ---- names and the Pigeonpost Cloud plan ---------------------------------------------------
+  //
+  // A name on the web comes from a Pigeonpost Cloud plan: 1–10 names, paid yearly through iyzico.
+  // Buying the plan and registering names are two steps, as in the apps: a plan gives capacity,
+  // and each name is registered into it here. The postbox is authoritative about capacity.
+
+  const cloudCfg = () => cfg.cloud || { plans: {}, currencies: ["USD", "TRY"] };
+  const PLAN_CODE = (names, currency) => `cloud-${names}names-yearly-${currency.toLowerCase()}`;
+  const webPlan = () => (overview && overview.plan) || { capacity: 0, used: 0, names: [] };
+  const hasRoom = () => webPlan().active !== false && webPlan().capacity > webPlan().used;
+
+  function defaultCurrency() {
+    const saved = SS.getItem("pp_currency");
+    if (saved === "USD" || saved === "TRY") return saved;
+    return /^tr\b/i.test(navigator.language || "") ? "TRY" : "USD";
+  }
+
+  function priceLabel(names, currency) {
+    const plan = cloudCfg().plans[names];
+    return plan ? `${money(Number(plan[currency]), currency)}/year` : "";
+  }
+
   function searchBlock() {
-    const price = cfg.price ? `${money(cfg.price.amount, cfg.price.currency)}/${cfg.price.interval}` : "$6.80/year";
     return `
       <div class="ac-card ac-search-card">
         <h3>Get a handle</h3>
+        <p class="muted">Names come with a Pigeonpost Cloud plan: ${money(Number(cloudCfg().perNameUSD || 8), "USD")} per name per year, up to 10 names.</p>
         <div class="ac-search">
           <div class="ac-field"><span class="slash">/</span>
             <input id="ac-handle" type="text" placeholder="yourname" autocomplete="off"
               autocapitalize="none" spellcheck="false" maxlength="32" aria-label="handle"></div>
-          <button class="btn btn-primary" id="ac-buy" disabled>Get it — ${price}</button>
+          <button class="btn btn-primary" id="ac-buy" disabled>Get it</button>
         </div>
         <p class="hs" id="ac-handle-status" aria-live="polite"></p>
       </div>`;
   }
 
   // The format check is local and instant; whether the name is *free* is a question only the
-  // postbox can answer, so it is asked, debounced, before the button is enabled.
-  //
-  // It used to say "availability confirmed at checkout" and enable the button on a well-formed name
-  // — but nothing downstream confirmed anything: checkout goes to the billing system, which does
-  // not know what a handle is, and the only availability check in the stack asked the registry over
-  // a route it does not serve. So the page offered names that were already sold, including one this
-  // very account had bought on its phone.
-  //
-  // Unknown is not free. If the check cannot be made, the button stays disabled and says so; the
-  // cost of that is somebody waiting, and the cost of the opposite is charging for a name they
-  // cannot have.
+  // postbox can answer, so it is asked, debounced, before the button is enabled. Unknown is not
+  // free: if the check cannot be made, the button stays disabled and says so.
   function wireSearch(signedIn) {
     const input = $("#ac-handle"); if (!input) return;
     const status = $("#ac-handle-status");
     const buy = $("#ac-buy");
     let current = { ok: false };
     let checking = 0;
+    const label = () => { buy.textContent = signedIn && hasRoom() ? "Register it" : "Get it"; };
+    label();
 
     async function check(v) {
       const mine = ++checking;
@@ -655,23 +670,20 @@
           answer = res.ok ? await res.json() : null;
         }
       } catch { answer = null; }
-      // A newer keystroke has overtaken this one; its answer is about a name nobody is asking for.
       if (mine !== checking) return;
-
       if (!answer || answer.known === false) {
         status.classList.add("bad");
         status.textContent = "✗ could not check that name just now — try again in a moment";
-        buy.disabled = true;
         return;
       }
       if (!answer.available) {
         status.classList.add("bad");
         status.textContent = `✗ /${v.name} is already taken`;
-        buy.disabled = true;
         return;
       }
       status.classList.add("ok");
       status.textContent = `✓ /${v.name} is available`;
+      label();
       buy.disabled = false;
     }
 
@@ -680,7 +692,7 @@
       const v = validate(input.value); current = v;
       status.className = "hs";
       clearTimeout(debounce);
-      checking++; // whatever is in flight is now about a stale name
+      checking++;
       buy.disabled = true;
       if (v.silent) { status.textContent = ""; return; }
       if (!v.ok) { status.classList.add("bad"); status.textContent = "✗ " + v.reason; return; }
@@ -694,60 +706,49 @@
     };
   }
 
-  // Make sure we know the member's billing/card state before gating a purchase. loadOverview sets
-  // `overview`; if the buy button is pressed before that first load lands, fetch it now.
   async function ensureOverview() {
     if (!overview) await loadOverview();
-    return overview || { hasBilling: false, hasCard: false };
+    return overview || { hasBilling: false, plan: null };
   }
 
-  // A purchase needs billing details, then a card, then checkout. Rather than let the backend reject
-  // an incomplete purchase with a raw error, walk the member to whichever step is missing — billing
-  // first, card second — and remember the handle so the flow resumes once each step is done.
+  // A name needs a plan with room, and a plan needs billing details. Walk the member to whichever
+  // step is missing and remember the name, so the flow resumes once each step is done.
   async function startPurchase(name) {
     const ov = await ensureOverview();
+    if (hasRoom()) { SS.removeItem("pp_pending_handle"); await registerName(name); return; }
+    SS.setItem("pp_pending_handle", name);
+    if (ov.subscription) {
+      toast(`Your plan's names are all registered. Choose a larger plan to add /${name}.`);
+      focusStep("#ac-cloud", "[data-change-plan]");
+      return;
+    }
     if (!ov.hasBilling) {
-      SS.setItem("pp_pending_handle", name);
-      toast(`Almost there — add your billing details to claim /${name}.`);
+      toast(`Almost there — add your billing details, then choose a plan for /${name}.`);
       focusStep("#ac-billing", 'input[name="legal_name"]');
       return;
     }
-    if (!ov.hasCard) {
-      SS.setItem("pp_pending_handle", name);
-      toast(`One more step — add a payment card to claim /${name}.`);
-      focusStep("#ac-pay", "#ac-addcard");
-      return;
-    }
-    SS.removeItem("pp_pending_handle");
-    await buyHandle(name);
+    showPlanPicker(Math.max(1, webPlan().used + 1));
   }
 
-  // Coming back from checkout. The charge and the handle are two different systems, and this is the
-  // step that joins them: the billing system took the money, and the postbox is what has to be told
-  // that this account may now mint under the name.
-  //
-  // Safe to run twice — the adapter re-proves the subscription before binding anything, and the
-  // binding is an upsert. It runs on every load while a bought handle is still unbound, which also
-  // repairs a purchase whose return never made it back to this page.
-  async function claimBoughtHandle() {
-    const name = SS.getItem("pp_bought_handle");
-    if (!name || !getToken()) return;
+  async function registerName(name) {
+    const button = $("#ac-buy");
+    if (button) button.disabled = true;
     try {
-      await apiAction("/v1/handles/claim", { handle: name });
-      SS.removeItem("pp_bought_handle");
+      await apiAction("/v1/names", { namespace: name });
       toast(`/${name} is yours.`);
-      loadOverview();
+      const input = $("#ac-handle"); if (input) { input.value = ""; input.dispatchEvent(new Event("input")); }
+      await loadOverview();
+      loadPostbox();
     } catch (e) {
-      // Left in place deliberately: an unbound purchase should keep trying rather than quietly
-      // become money taken for nothing.
-      toast(`Could not finish /${name}: ${e.message}`);
+      toast(`Could not register /${name}: ${e.message}`);
+      if (button) button.disabled = false;
     }
   }
 
   // Scroll a card into view and put the cursor on the field/button that needs attention.
   function focusStep(cardSelector, targetSelector) {
     const card = $(cardSelector);
-    if (card) card.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (card && card.scrollIntoView) card.scrollIntoView({ behavior: "smooth", block: "center" });
     const target = card && $(targetSelector, card);
     if (target) {
       card.classList.add("ac-attn");
@@ -756,71 +757,181 @@
     }
   }
 
-  function checkoutState() {
-    try { return JSON.parse(TS.getItem("pp_checkout") || "null"); } catch { return null; }
+  // ---- plan picker and hosted checkout --------------------------------------------------------
+
+  function showPlanPicker(minNames) {
+    const box = $("#ac-cloud-picker"); if (!box) return;
+    let currency = defaultCurrency();
+    const draw = () => {
+      const options = Object.keys(cloudCfg().plans).map(Number).filter((n) => n >= minNames)
+        .map((n) => `<option value="${n}">${n} name${n === 1 ? "" : "s"} — ${esc(priceLabel(n, currency))}</option>`).join("");
+      box.innerHTML = `
+        <div class="ac-form">
+          <label>Plan <select id="ac-plan-names">${options}</select></label>
+          <label>Currency <select id="ac-plan-currency">
+            ${cloudCfg().currencies.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${c === "TRY" ? "Turkish lira (TRY)" : "US dollars (USD)"}</option>`).join("")}
+          </select></label>
+          <p class="ac-note">Billed yearly by iyzico on behalf of Piyote Bilişim. Cards issued in Türkiye pay in TRY.
+            TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>
+          <div class="ac-actions ac-left">
+            <button class="btn btn-primary" id="ac-plan-go">Continue to secure payment</button>
+            <button class="btn btn-secondary" id="ac-plan-x">Cancel</button>
+          </div>
+        </div>`;
+      $("#ac-plan-currency").onchange = (e) => { currency = e.target.value; SS.setItem("pp_currency", currency); draw(); };
+      $("#ac-plan-x").onclick = () => { box.innerHTML = ""; };
+      $("#ac-plan-go").onclick = () => beginCheckout(PLAN_CODE(Number($("#ac-plan-names").value), currency));
+    };
+    draw();
+    focusStep("#ac-cloud", "#ac-plan-names");
   }
 
-  async function buyHandle(name) {
-    if (purchasing) return;
-    purchasing = true;
-    const button = $("#ac-buy");
-    if (button) button.disabled = true;
-    try {
-      let pending = checkoutState();
-      if (!pending || pending.handle !== name) pending = { handle: name, operationId: randomString(16) };
-      TS.setItem("pp_checkout", JSON.stringify(pending));
-      const body = await apiAction("/v1/checkout", { handle: name, operationId: pending.operationId });
-      if (body.status === "active" && body.bound) {
-        TS.removeItem("pp_checkout"); SS.removeItem("pp_bought_handle");
-        toast(`/${name} is yours.`);
-        await loadOverview();
-        return;
-      }
-      if (body.status === "payment_action_required" && body.checkoutUrl) {
-        TS.setItem("pp_checkout", JSON.stringify({ ...pending, returning: false, subscriptionId: body.subscriptionId, paymentId: body.paymentId }));
-        window.location.href = body.checkoutUrl;
-        return;
-      }
-      toast(body.error || "Could not start checkout.");
-    } catch (e) {
-      // A definite rejection can be followed by a new attempt after correcting the problem.
-      // Keep the key for ambiguous transport failures so a lost response cannot duplicate it.
-      if (e.status === 400 || e.status === 422) {
-        const pending = checkoutState();
-        if (pending) TS.setItem("pp_checkout", JSON.stringify({ ...pending, operationId: randomString(16) }));
-      }
-      if (e.status === 401) toast("Your session has expired — sign out and sign back in, then try again.");
-      else toast("Checkout couldn't start: " + e.message);
-    } finally {
-      purchasing = false;
-      if (button && $("#ac-handle")?.value.trim().toLowerCase() === name) button.disabled = false;
-    }
+  // The hosted iyzico form runs on its own page, whose content-security policy admits iyzico and
+  // nothing else; this page never loads third-party script. The intent id is the idempotency key
+  // for the whole purchase: a reload or a lost response replays it rather than charging twice.
+  function beginCheckout(planCode) {
+    if (!overview || !overview.profileId) { focusStep("#ac-billing", 'input[name="legal_name"]'); return; }
+    const pending = { kind: "cloud", intent_id: randomString(16), plan_code: planCode,
+      billing_profile_id: overview.profileId, locale: /^tr\b/i.test(navigator.language || "") ? "tr" : "en" };
+    TS.setItem("pp_cloud_checkout", JSON.stringify(pending));
+    window.location.href = cloudCfg().checkoutPath || "/billing/checkout";
   }
 
-  async function completeCheckoutIfReturning() {
+  // Back from iyzico (via saas_be's callback). The redirect proves nothing: ask the bridge, which
+  // reads saas_be's authoritative state and activates the plan only for a confirmed payment.
+  async function confirmCheckoutIfReturning() {
     const params = new URLSearchParams(window.location.search);
-    let pending = checkoutState();
-    if (params.get("checkout_return") === "1") {
-      pending = { ...pending, returning: true,
-        subscriptionId: params.get("subscription_id") || pending?.subscriptionId,
-        paymentId: params.get("payment_id") || pending?.paymentId };
-      TS.setItem("pp_checkout", JSON.stringify(pending));
-      ["checkout_return", "subscription_id", "payment_id"].forEach((key) => params.delete(key));
-      history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : ""));
+    const intent = params.get("checkout");
+    const card = params.get("card");
+    const notice = sessionStorage.getItem("pp_checkout_notice");
+    if (notice) { sessionStorage.removeItem("pp_checkout_notice"); toast(notice); }
+    if (!intent && !card) return;
+    params.delete("checkout"); params.delete("card");
+    history.replaceState({}, "", window.location.pathname + (params.size ? "?" + params : ""));
+    if (card) { toast("Card update submitted. It may take a minute to show."); return; }
+    if (!/^[a-f0-9]{32}$/.test(intent) || !getToken()) return;
+    TS.removeItem("pp_cloud_checkout");
+    toast("Confirming your payment…");
+    for (let attempt = 0; attempt < 20; attempt++) {
+      try {
+        const result = await apiGet(`/v1/cloud/checkout/${intent}`);
+        if (["active", "canceled"].includes(result.status)) { toast("Your Pigeonpost Cloud plan is active."); return true; }
+        if (result.status === "failed") { toast("The payment did not go through. No plan was started."); return true; }
+      } catch (e) {
+        if (e.status === 401) return;
+      }
+      await new Promise((r) => setTimeout(r, 3000));
     }
-    if (!pending?.returning || !getToken()) return;
-    try {
-      const result = await apiAction("/v1/checkout/complete", {
-        subscriptionId: pending.subscriptionId, paymentId: pending.paymentId,
-      });
-      if (result.status !== "active" || !result.bound) throw new Error("Payment has not been confirmed yet");
-      TS.removeItem("pp_checkout"); SS.removeItem("pp_bought_handle");
-      toast(`/${result.handle} is yours.`);
-    } catch (e) {
-      // Keep the return for another status check. A failed check must never create a new charge.
-      toast("Could not finish checkout: " + e.message);
-    }
+    toast("Your payment is still being confirmed. This page will show the plan as soon as it is.");
+    return true;
   }
+
+  // ---- the plan card ----------------------------------------------------------------------------
+
+  function renderCloud(cloud) {
+    const el = $("#ac-cloud-body"); if (!el) return;
+    if (!cloud) { el.innerHTML = `<p class="muted" role="status">Could not load your plan. Try Refresh handles.</p>`; return; }
+    const plan = cloud.plan?.web_plan || { capacity: 0, used: 0, names: [] };
+    const sub = cloud.subscriptions?.[0] || null;
+    const lines = [];
+    if (plan.capacity > 0) {
+      lines.push(`<p><strong>${plan.capacity} name${plan.capacity === 1 ? "" : "s"}</strong> · ${plan.used} registered
+        ${plan.paid_through ? ` · paid through ${esc(fmtDate(plan.paid_through))}` : ""}</p>`);
+    } else {
+      lines.push(`<p class="muted">No Pigeonpost Cloud plan yet. Names bought in the App Store or Google Play are managed there.</p>`);
+    }
+    if (sub) {
+      lines.push(`<div class="ac-row"><span class="muted">${esc(sub.names)} names · ${esc(sub.currency)}
+        ${sub.recurring_price ? " · " + esc(money(Number(sub.recurring_price.amount), sub.recurring_price.currency)) + "/year" : ""}
+        · ${esc(statusText(sub.provider_status))}</span>
+        <span class="ac-row-actions">
+          <button class="btn btn-small" data-change-plan="${esc(sub.id)}">Change plan</button>
+          <button class="btn btn-small" data-card="${esc(sub.id)}">Update card</button>
+          <button class="btn btn-small" data-manage="${esc(sub.id)}">Details</button>
+          ${sub.provider_status === "CANCELED" ? "" : `<button class="btn btn-small" data-cancel="${esc(sub.id)}">Cancel</button>`}
+        </span></div><div id="ac-cloud-detail"></div>`);
+    } else {
+      lines.push(`<button class="btn btn-secondary" id="ac-cloud-start">Choose a plan</button>`);
+    }
+    lines.push(`<div id="ac-cloud-picker"></div>`);
+    el.innerHTML = lines.join("");
+    const start = $("#ac-cloud-start");
+    if (start) start.onclick = () => (overview?.hasBilling ? showPlanPicker(Math.max(1, plan.used)) : focusStep("#ac-billing", 'input[name="legal_name"]'));
+    el.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = () => cancelCloud(b.getAttribute("data-cancel")));
+    el.querySelectorAll("[data-card]").forEach((b) => b.onclick = () => updateCard(b.getAttribute("data-card")));
+    el.querySelectorAll("[data-manage]").forEach((b) => b.onclick = () => showSubscription(b.getAttribute("data-manage")));
+    el.querySelectorAll("[data-change-plan]").forEach((b) => b.onclick = () => changePlan(sub, plan));
+  }
+
+  function statusText(provider) {
+    return { ACTIVE: "Active", CANCELED: "Canceled — no renewal", UNPAID: "Payment failed", PENDING: "Payment pending",
+      CHECKOUT_PENDING: "Checkout not finished", UPGRADED: "Changed", EXPIRED: "Expired" }[provider] || "Processing";
+  }
+
+  async function showSubscription(id) {
+    const out = $("#ac-cloud-detail"); if (!out) return;
+    out.innerHTML = `<p class="muted">Loading…</p>`;
+    try {
+      const s = await apiGet(`/v1/cloud/subscriptions/${encodeURIComponent(id)}`);
+      out.innerHTML = `<p class="muted">${esc(statusText(s.provider_status))}${s.paid_through ? ` · paid through ${esc(fmtDate(s.paid_through))}` : ""}
+          ${s.next_payment_at ? ` · next payment ${esc(new Date(s.next_payment_at).toLocaleDateString())}` : ""}
+          ${s.pending_change ? " · a plan change is scheduled" : ""}</p>`
+        + (s.failed_orders || []).map((o) => `<div class="ac-row"><span class="muted">Payment of ${esc(money(Number(o.amount), o.currency))} failed</span>
+          <button class="btn btn-small" data-retry="${esc(o.order_reference_code)}">Retry payment</button></div>`).join("");
+      out.querySelectorAll("[data-retry]").forEach((b) => b.onclick = () => retryPayment(id, b.getAttribute("data-retry")));
+    } catch (e) { out.innerHTML = `<p class="muted">Could not load the subscription: ${esc(e.message)}</p>`; }
+  }
+
+  async function cancelCloud(id) {
+    if (!confirm("Cancel your Pigeonpost Cloud plan? It will not renew; your names keep working until the end of the paid year.")) return;
+    try {
+      const r = await apiAction(`/v1/cloud/subscriptions/${encodeURIComponent(id)}/cancel`, { intent_id: randomString(16) });
+      toast(r.paid_through ? `Canceled. Your names keep working until ${fmtDate(r.paid_through)}.` : "Canceled.");
+      loadOverview();
+    } catch (e) { toast("Could not cancel: " + e.message); }
+  }
+
+  async function retryPayment(id, order) {
+    try {
+      await apiAction(`/v1/cloud/subscriptions/${encodeURIComponent(id)}/retry`, { intent_id: randomString(16), order_reference_code: order });
+      toast("Payment retried.");
+      loadOverview();
+    } catch (e) { toast("Could not retry the payment: " + e.message); }
+  }
+
+  function updateCard(id) {
+    TS.setItem("pp_cloud_checkout", JSON.stringify({ kind: "card", intent_id: randomString(16), subscription_id: id,
+      locale: /^tr\b/i.test(navigator.language || "") ? "tr" : "en" }));
+    window.location.href = cloudCfg().checkoutPath || "/billing/checkout";
+  }
+
+  function changePlan(sub, plan) {
+    const box = $("#ac-cloud-picker"); if (!box || !sub) return;
+    const options = Object.keys(cloudCfg().plans).map(Number).filter((n) => n !== sub.names)
+      .map((n) => `<option value="${n}"${n < plan.used ? " disabled" : ""}>${n} name${n === 1 ? "" : "s"} — ${esc(priceLabel(n, sub.currency))}</option>`).join("");
+    box.innerHTML = `
+      <div class="ac-form">
+        <label>New plan <select id="ac-change-names">${options}</select></label>
+        <label>When <select id="ac-change-when">
+          <option value="NOW">Now</option><option value="NEXT_PERIOD">At the next renewal</option></select></label>
+        <p class="ac-note">The price and currency stay in ${esc(sub.currency)}. iyzico confirms any charge for a change made now. A smaller plan needs names released first.</p>
+        <div class="ac-actions ac-left"><button class="btn btn-primary" id="ac-change-go">Change plan</button>
+          <button class="btn btn-secondary" id="ac-change-x">Cancel</button></div>
+      </div>`;
+    $("#ac-change-x").onclick = () => { box.innerHTML = ""; };
+    $("#ac-change-go").onclick = async () => {
+      const names = Number($("#ac-change-names").value);
+      try {
+        await apiAction(`/v1/cloud/subscriptions/${encodeURIComponent(sub.id)}/upgrade`, {
+          intent_id: randomString(16), plan_code: PLAN_CODE(names, sub.currency), upgrade_period: $("#ac-change-when").value });
+        toast("Plan change submitted.");
+        box.innerHTML = "";
+        loadOverview();
+      } catch (e) { toast("Could not change the plan: " + e.message); }
+    };
+  }
+
+  // ---- overview -----------------------------------------------------------------------------
 
   let overviewRequest = 0;
   let lastOverviewAt = 0;
@@ -846,85 +957,55 @@
     } finally { if ($("#ac-handles-refresh") === refresh && refresh && request === overviewRequest) refresh.disabled = false; }
     if ($("#ac-subs") !== box || request !== overviewRequest) return;
     const profiles = data.billingProfiles || [];
-    const methods = data.paymentMethods || [];
-    overview = { hasBilling: profiles.length > 0, hasCard: methods.length > 0 };
-    renderSubs(data.subscriptions || [], data.handles || []);
+    overview = { hasBilling: profiles.length > 0, profileId: profiles[0]?.id || null,
+      plan: data.cloud?.plan?.web_plan || null, subscription: data.cloud?.subscriptions?.[0] || null };
+    renderSubs(data.handles || []);
+    renderCloud(data.cloud);
     renderBilling(profiles);
-    renderPay(methods);
     renderInvoices(data.invoices || []);
+    const buy = $("#ac-buy"); if (buy) buy.textContent = hasRoom() ? "Register it" : "Get it";
     resumePending();
-    // After the render, so a handle that binds successfully refreshes into the list above.
-    if (SS.getItem("pp_bought_handle") &&
-        !(data.handles || []).some((h) => String(h.namespace || "").replace(/^\/+/, "") === SS.getItem("pp_bought_handle"))) {
-      claimBoughtHandle();
-    } else if (SS.getItem("pp_bought_handle")) {
-      SS.removeItem("pp_bought_handle");
-    }
   }
 
-  // A purchase the member started before completing billing/card (or before signing in) is parked in
-  // pp_pending_handle. After each overview refresh, pick it back up: advance to the next missing step,
-  // or — when everything's in place — pre-fill the handle and put the cursor on the buy button so the
-  // claim is one deliberate click, not a surprise redirect.
+  // A name the member picked before signing in, adding billing details or buying a plan is parked
+  // in pp_pending_handle. After each overview refresh, pick it back up at the next missing step.
   function resumePending() {
     const pending = SS.getItem("pp_pending_handle");
     if (!pending || !overview) return;
-    if (!overview.hasBilling || !overview.hasCard) { startPurchase(pending); return; }
     const input = $("#ac-handle");
-    if (input) { input.value = pending; input.dispatchEvent(new Event("input")); }
-    toast(`You're all set — press “Get it” to claim /${pending}.`);
-    focusStep(".ac-search-card", "#ac-buy");
+    if (input && input.value !== pending) { input.value = pending; input.dispatchEvent(new Event("input")); }
+    if (hasRoom()) {
+      toast(`You're all set — press “Register it” to add /${pending}.`);
+      focusStep(".ac-search-card", "#ac-buy");
+      SS.removeItem("pp_pending_handle");
+    } else if (overview.hasBilling && !overview.subscription) {
+      showPlanPicker(Math.max(1, webPlan().used + 1));
+    }
   }
 
-  // The postbox owns names; billing supplies management details only. An old web subscription must
-  // not override a name's current Apple/Google ownership or make an expired name look active.
-  function renderSubs(subs, handles) {
+  // The postbox owns names, whatever paid for them; each row says where it is managed.
+  function renderSubs(handles) {
     const el = $("#ac-subs"); if (!el) return;
-
-    const rows = new Map();
+    const rows = [];
     for (const h of handles) {
       const name = String(h.namespace || "").replace(/^\/+/, "");
       if (!name) continue;
       const active = h.active ?? (!h.expires_at || h.expires_at * 1000 > Date.now());
       const source = h.source === "apple" ? "App Store" : h.source === "google" ? "Google Play" : "Pigeonpost";
-      const subscription = ["apple", "google"].includes(h.source) ? null
-        : subs.find((s) => String(s.handle || "").replace(/^\/+/, "") === name);
-      rows.set(name, {
-        name,
-        detail: `${active ? "Active" : "Expired"} · ${source}`,
+      rows.push({ name, detail: `${active ? "Active" : "Expired"} · ${source}`,
         date: h.expires_at ? `${active ? "Paid through" : "Expired on"} ${fmtDate(h.expires_at)}` : "",
-        cancelId: subscription?.id || "",
         manageUrl: h.source === "apple" ? "https://apps.apple.com/account/subscriptions"
           : h.source === "google" ? "https://play.google.com/store/account/subscriptions?package=dev.pigeonpost.inbox" : "",
-        source,
-      });
+        source });
     }
-    for (const s of subs) {
-      const name = String(s.handle || "").replace(/^\/+/, "");
-      if (!name || rows.has(name)) continue;
-      rows.set(name, { name, detail: s.status === "past_due" ? "Payment pending" : "No active handle · " + (s.status || "unknown"),
-        date: "", cancelId: s.id || "", pending: s.status === "past_due", source: "Pigeonpost" });
-    }
-
-    const list = [...rows.values()];
-    if (!list.length) { el.innerHTML = `<p class="muted">No handles yet. Search above to claim one.</p>`; return; }
-    el.innerHTML = list.map((r) => `
+    if (!rows.length) { el.innerHTML = `<p class="muted">No handles yet. Search above to claim one.</p>`; return; }
+    el.innerHTML = rows.map((r) => `
       <div class="ac-row">
         <div><span class="k">/${esc(r.name)}</span>
           <span class="muted">${esc(r.detail)}${r.date ? " · " + esc(r.date) : ""}</span></div>
-        ${r.pending ? `<button class="btn btn-small" data-continue="${esc(r.name)}">Continue payment</button>` : ""}
-        ${r.cancelId
-          ? `<button class="btn btn-small" data-cancel="${esc(r.cancelId)}">Cancel</button>`
-          : r.manageUrl ? `<a class="btn btn-small" href="${esc(r.manageUrl)}" target="_blank" rel="noopener noreferrer">Manage in ${esc(r.source)}</a>`
+        ${r.manageUrl ? `<a class="btn btn-small" href="${esc(r.manageUrl)}" target="_blank" rel="noopener noreferrer">Manage in ${esc(r.source)}</a>`
           : `<span class="muted">Managed by Pigeonpost</span>`}
       </div>`).join("");
-    el.querySelectorAll("[data-continue]").forEach((b) => b.onclick = () => startPurchase(b.getAttribute("data-continue")));
-    el.querySelectorAll("[data-cancel]").forEach((b) => b.onclick = () => cancelSub(b.getAttribute("data-cancel")));
-  }
-  async function cancelSub(id) {
-    if (!confirm("Cancel this handle? It stops resolving at the end of the paid term; the key address keeps working.")) return;
-    try { await apiAction(`/v1/subscriptions/${encodeURIComponent(id)}/cancel`, {}); loadOverview(); }
-    catch (e) { toast("Could not cancel: " + e.message); }
   }
 
   function renderBilling(profiles) {
@@ -1033,34 +1114,19 @@
     return wrap;
   }
 
-  function renderPay(methods) {
-    const el = $("#ac-pay"); if (!el) return;
-    const rows = methods.map((m) => `<div class="ac-row"><span class="muted">${esc(m.brand || m.type || "card")} ···· ${esc(m.last4 || m.last_four || "")}</span></div>`).join("");
-    el.innerHTML = `${rows || `<p class="muted">No card on file.</p>`}
-      <button class="btn btn-small" id="ac-addcard">Add a card</button>`;
-    $("#ac-addcard").onclick = addCard;
-  }
-  async function addCard() {
-    try {
-      const body = await apiAction("/v1/billing/payment-methods/setup", {});
-      if (body.setupUrl) {
-        // Stash the session so we can finalise the card on return even if MASAAS sends the browser
-        // back to a bare /account with no completion params (which is what it does today).
-        if (body.sessionId) SS.setItem("pp_card_session", body.sessionId);
-        if (body.provider) SS.setItem("pp_card_provider", body.provider);
-        window.location.href = body.setupUrl;
-        return;
-      }
-      toast(body.error || "Could not start card setup.");
-    } catch (e) { toast("Could not add a card: " + e.message); }
-  }
-
   function renderInvoices(invoices) {
     const el = $("#ac-invoices"); if (!el) return;
     if (!invoices.length) { el.innerHTML = `<p class="muted">No invoices yet.</p>`; return; }
     el.innerHTML = invoices.map((i) => `
-      <div class="ac-row"><span class="muted">${esc(String(i.created_at || i.issued_at || "").slice(0, 10))} · ${esc(i.status || "")}</span>
-      <span>${i.amount != null ? money(i.amount, i.currency || "USD") : ""}</span></div>`).join("");
+      <div class="ac-row"><span class="muted">${esc(String(i.issued_at || i.created_at || "").slice(0, 10))} · ${esc(i.number || "")} · ${esc(i.status || "")}</span>
+      <span>${i.total != null ? money(i.total, i.currency || "USD") : i.amount != null ? money(i.amount, i.currency || "USD") : ""}</span>
+      ${i.id ? `<button class="btn btn-small" data-invoice="${esc(i.id)}">PDF</button>` : ""}</div>`).join("");
+    el.querySelectorAll("[data-invoice]").forEach((b) => b.onclick = async () => {
+      try {
+        const { url } = await apiGet(`/v1/billing/invoices/${encodeURIComponent(b.getAttribute("data-invoice"))}/download`);
+        if (/^https:\/\//.test(url)) window.open(url, "_blank", "noopener");
+      } catch (e) { toast("Could not open the invoice: " + e.message); }
+    });
   }
 
   // ---- helpers ------------------------------------------------------------------------------
@@ -1074,39 +1140,10 @@
     clearTimeout(t._timer); t._timer = setTimeout(() => t.classList.remove("on"), 4000);
   }
 
-  // Coming back from the hosted card page, finalise the payment method before the account renders, so
-  // the card shows immediately instead of "No card on file". The session id comes from whatever MASAAS
-  // appended (matching the shared backend's params) or, failing that, the token we stashed on the way
-  // out. Runs only when there's something to complete.
-  async function completeCardSetupIfReturning() {
-    if (!getToken()) return;
-    const params = new URLSearchParams(window.location.search);
-    const stashed = SS.getItem("pp_card_session");
-    const returned = params.get("payment_setup") === "success" || params.get("added") === "card";
-    if (!stashed && !returned) return;
-    const sessionId = params.get("payment_setup_session") || params.get("token") || params.get("session_id") || stashed;
-    const provider = params.get("provider") || SS.getItem("pp_card_provider") || undefined;
-    SS.removeItem("pp_card_session"); SS.removeItem("pp_card_provider");
-    // Strip the card-setup params so a reload doesn't retry a spent session.
-    ["payment_setup", "payment_setup_session", "token", "session_id", "provider", "added"].forEach((k) => params.delete(k));
-    const q = params.toString();
-    history.replaceState({}, "", (cfg.oidc.redirectPath || "/account") + (q ? "?" + q : ""));
-    if (!sessionId) return; // nothing to finalise; the overview will reflect whatever MASAAS has
-    try {
-      await apiAction("/v1/billing/payment-methods/complete", { sessionId, provider });
-      toast("Card saved.");
-    } catch (e) {
-      toast("Could not finish saving the card: " + e.message);
-    }
-  }
-
   document.addEventListener("DOMContentLoaded", async () => {
     await completeLoginIfReturning();
-    if (window.location.hash !== "#delete-account") {
-      await completeCheckoutIfReturning();
-      await completeCardSetupIfReturning();
-    }
     render();
+    if (window.location.hash !== "#delete-account" && await confirmCheckoutIfReturning() && getToken()) loadOverview();
   });
   window.addEventListener("hashchange", render);
 })();
