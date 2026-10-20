@@ -70,7 +70,7 @@ class PolicyUiTest {
     @Test fun reportConfirmationPreservesMessageAndSenderCanBeBlocked() {
         launch("inbox").use {
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
             ui.onNode(hasContentDescription("Message actions") and hasAnyAncestor(hasTestTag("message:m_1"))).performClick()
             ui.onNodeWithText("Report message").performClick()

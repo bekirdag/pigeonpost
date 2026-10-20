@@ -58,8 +58,8 @@ class PushNotificationTest {
         preferences.edit().putString("identity", payload.getValue("identity")).commit()
         displayPush(context, payload + ("body" to "Private text must never be displayed"))
         val notification = awaitNotification("push-test")
-        assertEquals("/bekir", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertEquals("New message in /alp", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals("Bekir", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("New message in Alp", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
         assertEquals(Notification.VISIBILITY_PRIVATE, notification.visibility)
         assertEquals("Pigeonpost", notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
         assertEquals("You have a new message.", notification.publicVersion.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
@@ -98,7 +98,7 @@ class PushNotificationTest {
         preferences.edit().putString("identity", payload.getValue("identity")).commit()
         File(context.cacheDir, "fcm-test-token").writeText(token)
         val notification = awaitNotification("live-push-test", 90)
-        assertEquals("/bekir", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
-        assertEquals("New message in /alp", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
+        assertEquals("Bekir", notification.extras.getCharSequence(Notification.EXTRA_TITLE).toString())
+        assertEquals("New message in Alp", notification.extras.getCharSequence(Notification.EXTRA_TEXT).toString())
     }
 }

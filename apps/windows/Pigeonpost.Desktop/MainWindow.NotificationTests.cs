@@ -58,21 +58,15 @@ public sealed partial class MainWindow
                 // The toast Windows holds: sender's name (the contact alias), the message, an inline
                 // reply box, Mark as read, the sender's face, filed under the conversation.
                 Check(alert.Group == designGroup, "Toast is grouped under its conversation");
-                Check(alert.Payload.Contains(">Design<", StringComparison.Ordinal), "Toast names the sender: " + alert.Payload);
+                Check(alert.Payload.Contains(">Design<", StringComparison.Ordinal), "Toast names the sender");
                 Check(alert.Payload.Contains("New message during background refresh", StringComparison.Ordinal), "Toast previews the message");
-                Check(alert.Payload.Contains("<input ", StringComparison.Ordinal) && alert.Payload.Contains("id=\"reply\"", StringComparison.Ordinal), "Toast has an inline Reply box: " + alert.Payload);
-                Check(alert.Payload.Contains("content=\"Reply\"", StringComparison.Ordinal) && alert.Payload.Contains("hint-inputId=\"reply\"", StringComparison.Ordinal), "Toast has a Reply button bound to the box: " + alert.Payload);
-                Check(alert.Payload.Contains("content=\"Mark as read\"", StringComparison.Ordinal), "Toast has Mark as read: " + alert.Payload);
-                Check(alert.Payload.Contains("appLogoOverride", StringComparison.Ordinal) && alert.Payload.Contains("hint-crop=\"circle\"", StringComparison.Ordinal), "Toast shows the sender's face: " + alert.Payload);
+                Check(alert.Payload.Contains("<input ", StringComparison.Ordinal) && alert.Payload.Contains("id=\"reply\"", StringComparison.Ordinal), "Toast has an inline Reply box");
+                Check(alert.Payload.Contains("content=\"Reply\"", StringComparison.Ordinal) && alert.Payload.Contains("hint-inputId=\"reply\"", StringComparison.Ordinal), "Toast has a Reply button bound to the box");
+                Check(alert.Payload.Contains("content=\"Mark as read\"", StringComparison.Ordinal), "Toast has Mark as read");
+                Check(alert.Payload.Contains("appLogoOverride", StringComparison.Ordinal) && alert.Payload.Contains("hint-crop=\"circle\"", StringComparison.Ordinal), "Toast shows the sender's face");
             }
             toastPayload = alerts[0].Payload;
             checks.Add($"Toast ids {string.Join(", ", alerts.Select(a => a.Id))} raised through AppNotificationManager while the window was hidden");
-            if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_SCREENSHOT") is { Length: > 0 } screenshot)
-            {
-                await Task.Delay(1500); // The banner slides in at the bottom right.
-                CaptureScreen(screenshot);
-                checks.Add("Screen captured while the toast was showing: " + Path.GetFileName(screenshot));
-            }
 
             await ViewModel.RefreshAsync();
             Check((await AppNotificationManager.Default.GetAllAsync()).Count == 2, "Repeated refresh does not duplicate native alerts");
@@ -126,21 +120,6 @@ public sealed partial class MainWindow
         }
         finally { Quit(); }
     }
-
-    private static void CaptureScreen(string path)
-    {
-        try
-        {
-            var width = GetSystemMetrics(0); var height = GetSystemMetrics(1);
-            using var bitmap = new System.Drawing.Bitmap(width, height);
-            using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen(0, 0, 0, 0, bitmap.Size);
-            bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
-        }
-        catch (Exception ex) { DesktopLog.Error("Capturing the screen failed", ex); }
-    }
-
-    [System.Runtime.InteropServices.DllImport("user32.dll")]
-    private static extern int GetSystemMetrics(int index);
 }
 
 #endif
