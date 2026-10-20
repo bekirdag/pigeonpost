@@ -5,6 +5,29 @@ struct APIError: LocalizedError, Equatable {
     /// The postbox's own machine-readable code — `not_admitted`, `recipient_unresolved`, and so on.
     let code: String?
     let detail: String?
+    /// Fields some refusals carry beside the code: `current_epoch` and `current_revision` on a group
+    /// conflict, `Retry-After` on a rate limit.
+    var currentEpoch: Int? = nil
+    var currentRevision: Int? = nil
+    var retryAfter: Int? = nil
+
+    init(status: Int, code: String?, detail: String?) {
+        self.status = status
+        self.code = code
+        self.detail = detail
+    }
+
+    /// From a refusal's body. The postbox says `detail` on older routes and `message` on newer ones.
+    init(status: Int, body: Data, retryAfter: Int? = nil) {
+        let object = (try? JSONSerialization.jsonObject(with: body)) as? [String: Any]
+        self.status = status
+        code = object?["error"] as? String
+        detail = (object?["detail"] as? String) ?? (object?["message"] as? String)
+        currentEpoch = (object?["current_epoch"] as? NSNumber)?.intValue
+        currentRevision = (object?["current_revision"] as? NSNumber)?.intValue
+            ?? (object?["revision"] as? NSNumber)?.intValue
+        self.retryAfter = retryAfter
+    }
 
     var errorDescription: String? { detail ?? code ?? "The postbox answered \(status)." }
 

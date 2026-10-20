@@ -17,6 +17,8 @@
 /* Begin PBXBuildFile section */
 		PP000000000000000000B1 = {isa = PBXBuildFile; fileRef = PP000000000000000000B2; };
 		PP000000000000000000B3 = {isa = PBXBuildFile; fileRef = PP000000000000000000B4; };
+		PP000000000000000000C2 /* PigeonpostGroupCrypto.swift in Sources (iOS) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
+		PP000000000000000000C3 /* PigeonpostGroupCrypto.swift in Sources (Mac) */ = {isa = PBXBuildFile; fileRef = PP000000000000000000C1; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileSystemSynchronizedBuildFileExceptionSet section */
@@ -66,6 +68,8 @@
 		PP000000000000000000B2 = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = UITests/PPUITests/NativeHandleStoreKitTests.swift; sourceTree = SOURCE_ROOT; };
 		PP000000000000000000B4 = {isa = PBXFileReference; lastKnownFileType = text.json; path = UITests/PPUITests/HandleSubscriptions.storekit; sourceTree = SOURCE_ROOT; };
 		PP000000000000000000B5 = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = HandleStoreKitTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		PP000000000000000000C1 /* PigeonpostGroupCrypto.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; name = PigeonpostGroupCrypto.swift; path = ../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCrypto.swift; sourceTree = SOURCE_ROOT; };
+		PP000000000000000000C6 /* build-groupcrypto.sh */ = {isa = PBXFileReference; lastKnownFileType = text.script.sh; path = scripts/build-groupcrypto.sh; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -95,6 +99,7 @@
 				PP0000000000000000006A /* PigeonpostMac */,
 				PP000000000000000000B2 /* NativeHandleStoreKitTests.swift */,
 				PP000000000000000000B4 /* HandleSubscriptions.storekit */,
+				PP000000000000000000C7 /* GroupCrypto */,
 				PP0000000000000000000E /* Products */,
 			);
 			sourceTree = "<group>";
@@ -109,6 +114,15 @@
 			name = Products;
 			sourceTree = "<group>";
 		};
+		PP000000000000000000C7 /* GroupCrypto */ = {
+			isa = PBXGroup;
+			children = (
+				PP000000000000000000C1 /* PigeonpostGroupCrypto.swift */,
+				PP000000000000000000C6 /* build-groupcrypto.sh */,
+			);
+			name = GroupCrypto;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -116,6 +130,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = PP00000000000000000010 /* Build configuration list for PBXNativeTarget "Pigeonpost" */;
 			buildPhases = (
+				PP000000000000000000C4 /* Group crypto (Rust) */,
 				PP00000000000000000011 /* Sources */,
 				PP0000000000000000000C /* Frameworks */,
 				PP00000000000000000012 /* Resources */,
@@ -137,6 +152,7 @@
 			isa = PBXNativeTarget;
 			buildConfigurationList = PP00000000000000000070 /* Build configuration list for PBXNativeTarget "PigeonpostMac" */;
 			buildPhases = (
+				PP000000000000000000C5 /* Group crypto (Rust) */,
 				PP0000000000000000006D /* Sources */,
 				PP0000000000000000006C /* Frameworks */,
 				PP0000000000000000006E /* Resources */,
@@ -222,11 +238,57 @@
 		PP000000000000000000B9 = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (PP000000000000000000B3); runOnlyForDeploymentPostprocessing = 0; };
 /* End PBXResourcesBuildPhase section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		PP000000000000000000C4 /* Group crypto (Rust) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Group crypto (Rust)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_TEMP_DIR)/groupcrypto/libpigeonpost_groupcrypto_ffi.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/build-groupcrypto.sh\" \"$TARGET_TEMP_DIR/groupcrypto\"\n";
+			showEnvVarsInLog = 0;
+		};
+		PP000000000000000000C5 /* Group crypto (Rust) */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Group crypto (Rust)";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(TARGET_TEMP_DIR)/groupcrypto/libpigeonpost_groupcrypto_ffi.a",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "exec \"$SRCROOT/scripts/build-groupcrypto.sh\" \"$TARGET_TEMP_DIR/groupcrypto\"\n";
+			showEnvVarsInLog = 0;
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		PP00000000000000000011 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				PP000000000000000000C2 /* PigeonpostGroupCrypto.swift in Sources (iOS) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -234,6 +296,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				PP000000000000000000C3 /* PigeonpostGroupCrypto.swift in Sources (Mac) */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -318,6 +381,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(TARGET_TEMP_DIR)/groupcrypto",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpigeonpost_groupcrypto_ffi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCryptoFFI.modulemap";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) GROUPCRYPTO";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -348,6 +422,17 @@
 					"@executable_path/Frameworks",
 				);
 				MARKETING_VERSION = 1.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(TARGET_TEMP_DIR)/groupcrypto",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpigeonpost_groupcrypto_ffi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCryptoFFI.modulemap";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) GROUPCRYPTO";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -377,6 +462,17 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(TARGET_TEMP_DIR)/groupcrypto",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpigeonpost_groupcrypto_ffi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCryptoFFI.modulemap";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) GROUPCRYPTO";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "Pigeonpost Desktop";
 				SDKROOT = macosx;
@@ -407,6 +503,17 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 1.0;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
+				LIBRARY_SEARCH_PATHS = (
+					"$(inherited)",
+					"$(TARGET_TEMP_DIR)/groupcrypto",
+				);
+				OTHER_LDFLAGS = (
+					"$(inherited)",
+					"-lpigeonpost_groupcrypto_ffi",
+				);
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCryptoFFI.modulemap";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "$(inherited) GROUPCRYPTO";
 				PRODUCT_BUNDLE_IDENTIFIER = dev.pigeonpost.inbox;
 				PRODUCT_NAME = "Pigeonpost Desktop";
 				SDKROOT = macosx;
