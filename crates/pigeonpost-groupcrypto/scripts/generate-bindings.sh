@@ -6,11 +6,13 @@
 set -euo pipefail
 here="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$here"
-cargo build --locked --release -p pigeonpost-groupcrypto-ffi
+# UniFFI library mode reads metadata symbols; the release profile strips them on Linux, so
+# generate from the (unstripped) debug build. The interface metadata is identical.
+cargo build --locked -p pigeonpost-groupcrypto-ffi
 case "$(uname -s)" in
-  Darwin) lib="target/release/libpigeonpost_groupcrypto_ffi.dylib" ;;
-  MINGW*|MSYS*|CYGWIN*) lib="target/release/pigeonpost_groupcrypto_ffi.dll" ;;
-  *) lib="target/release/libpigeonpost_groupcrypto_ffi.so" ;;
+  Darwin) lib="target/debug/libpigeonpost_groupcrypto_ffi.dylib" ;;
+  MINGW*|MSYS*|CYGWIN*) lib="target/debug/pigeonpost_groupcrypto_ffi.dll" ;;
+  *) lib="target/debug/libpigeonpost_groupcrypto_ffi.so" ;;
 esac
 out="bindings"
 if [ "${1:-}" = "--check" ]; then out="$(mktemp -d)"; fi
@@ -20,5 +22,8 @@ for language in swift kotlin python; do
 done
 uniffi-bindgen-cs --library --no-format --config ffi/uniffi.toml --out-dir "$out/csharp" "$lib"
 if [ "${1:-}" = "--check" ]; then
+  for language in swift kotlin python csharp; do
+    [ -n "$(ls -A "$out/$language" 2>/dev/null)" ] || { echo "::error::no $language bindings were generated" >&2; exit 1; }
+  done
   diff -r "$out" bindings && echo "committed bindings match the library"
 fi
