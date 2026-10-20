@@ -129,13 +129,10 @@
     // Phase 1b: the inbox may lay a profile picture over the initials (falls back to them).
     host()?.decorateAvatar?.(node, name);
   }
-  // The name a call shows for someone. The shared naming rule ("Bob", not "/bob") is coming as a
-  // helper (Phase 1d); until it lands this is the inbox's own display name, and it is the one
-  // place the call screen asks — swap the helper in here.
+  // The name a call shows for someone: the shared naming rule (names.js, "Bob" not "/bob"),
+  // applied through displayName so a contact alias still wins.
   function callName(m) {
-    const helper = window.PigeonpostNames && window.PigeonpostNames.display;
-    const name = displayName(m);
-    return helper ? helper(name) : name;
+    return displayName(m);
   }
   function displayName(m) {
     if (!m) return "Guest";
