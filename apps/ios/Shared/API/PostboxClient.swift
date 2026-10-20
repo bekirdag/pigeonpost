@@ -350,7 +350,16 @@ struct PostboxClient {
     ) async throws -> Data {
         guard let tokens else { throw AuthError.sessionExpired }
 
-        var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        var components: URLComponents
+        if path.contains("%") {
+            // Already percent-encoded by the caller — an address as one path segment (`/k/…` with its
+            // slashes as %2F). `appendingPathComponent` would encode the `%` a second time.
+            components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+            components.percentEncodedPath = (components.percentEncodedPath.hasSuffix("/")
+                ? String(components.percentEncodedPath.dropLast()) : components.percentEncodedPath) + path
+        } else {
+            components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        }
         if !query.isEmpty { components.queryItems = query }
         let url = components.url!
 
