@@ -1539,6 +1539,9 @@ class Window(Adw.ApplicationWindow):
         window.present()
 
     def clear_account(self):
+        # The calls stream goes first: nothing below may keep it open for a signed-out account.
+        if self.calls:
+            self.calls.stop()
         for dialog in list(self.dialogs):
             dialog.close()
         self.identity = self.peer = self.subject = None
@@ -1548,9 +1551,9 @@ class Window(Adw.ApplicationWindow):
         self.previews.clear()
         self.known_ids = None
         self.notification_target = None
-        self.get_application().withdraw_notification("new-mail")
-        if self.calls:
-            self.calls.stop()
+        application = self.get_application()
+        if application:
+            application.withdraw_notification("new-mail")
         self.polling = self.sending = self.acking = False
         self.restore_draft()
         self.render_all()
