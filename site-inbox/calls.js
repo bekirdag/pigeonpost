@@ -1870,6 +1870,29 @@
 
   // ---- the call screen -------------------------------------------------------------------------
 
+  // How far down the header's own content reaches (its buttons, the name and status), published as
+  // --call-top-h so the stage and the tiles' pin and mute buttons keep clear of it. Measured rather
+  // than assumed: it changes with the width (a phone stacks the header), the font, zoom and the
+  // phone's safe area above it.
+  function watchHeader(ui) {
+    const top = ui.querySelector(".call-top");
+    if (!top) return;
+    const measure = () => {
+      let bottom = 0;
+      for (const child of top.children) {
+        if (child.offsetHeight) bottom = Math.max(bottom, child.offsetTop + child.offsetHeight);
+      }
+      if (bottom) ui.style.setProperty("--call-top-h", Math.ceil(bottom) + "px");
+    };
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(measure);
+      observer.observe(top);
+      for (const child of top.children) observer.observe(child);
+    }
+    window.addEventListener("resize", measure);
+    measure();
+  }
+
   function buildUI() {
     if ($("call-ui")) return;
     const btn = (id, label, icon, extraClass = "") => el("button", { id, class: "call-btn " + extraClass, type: "button", "aria-label": label, title: label }, svg(icon));
@@ -1971,6 +1994,7 @@
     );
     document.body.append(ui, ringCard, miniBar());
     if (!host()) document.body.append(el("div", { class: "toast", id: "call-toast", role: "status", "aria-live": "polite", hidden: true }));
+    watchHeader(ui);
 
     $("call-mute").addEventListener("click", toggleMute);
     $("call-camera").addEventListener("click", toggleCamera);
