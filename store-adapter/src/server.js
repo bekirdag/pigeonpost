@@ -1,18 +1,28 @@
-// Pigeonpost store adapter — the member backend the pigeonpost.dev account page calls.
+// Pigeonpost billing bridge — the member backend the pigeonpost.dev account page (and, later, the
+// enterprise portal) calls. Reverse-proxied under https://pigeonpost.dev/api.
 //
-// Modeled on theneuralledger's adapter: the browser holds the customer's own OIDC token; this
-// service forwards member operations to the MASAAS SaaS backend with that token plus x-product-slug.
-// MASAAS holds the payment-gateway keys and hosts the card capture. Reverse-proxied under
-// https://pigeonpost.dev/api so everything stays on one origin.
+// The browser holds the customer's own OIDC token; this service forwards member billing calls to
+// saas_be with it, starts iyzico abonelik hosted checkouts, and activates paid plans in the postbox
+// through the postbox's internal entitlement API. No card data reaches this service: iyzico hosts
+// the card form, and saas_be holds the merchant keys.
 
 import http from "node:http";
+import { createHash, randomUUID } from "node:crypto";
 import { config, configured } from "./config.js";
-import * as masaas from "./masaas.js";
-import { startCheckout, completeCheckout, claimHandle, subscriptionHandle } from "./checkout.js";
+import * as account from "./masaas.js";
+import * as saas from "./saas.js";
+import * as postbox from "./postbox.js";
+import { publicCatalog, isUuid } from "./catalog.js";
+import { State } from "./state.js";
+import { createBilling } from "./billing.js";
+
+const state = new State(config.stateDir);
+const billing = createBilling(state);
+const MAX_BODY = 64 * 1024;
 
 function send(res, status, body, origin) {
-  const headers = { "content-type": "application/json", "cache-control": "no-store" };
-  if (origin && config.allowedOrigins.includes(origin)) {
+  const headers = { "content-type": "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff" };
+  if (origin && [...config.allowedOrigins, config.enterpriseOrigin].includes(origin)) {
     headers["access-control-allow-origin"] = origin;
     headers["access-control-allow-headers"] = "authorization, content-type";
     headers["access-control-allow-methods"] = "GET, POST, PATCH, OPTIONS";
@@ -23,92 +33,66 @@ function send(res, status, body, origin) {
 }
 
 const bearer = (req) => {
-  const m = /^Bearer\s+(.+)$/i.exec(req.headers["authorization"] || "");
+  const m = /^Bearer\s+(\S+)$/i.exec(req.headers["authorization"] || "");
   return m ? m[1] : null;
 };
 
 async function readJson(req) {
   const chunks = [];
-  for await (const c of req) chunks.push(c);
+  let size = 0;
+  for await (const c of req) {
+    size += c.length;
+    if (size > MAX_BODY) throw Object.assign(new Error("Request body is too large."), { status: 413 });
+    chunks.push(c);
+  }
   if (!chunks.length) return {};
-  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); } catch { return {}; }
+  try { return JSON.parse(Buffer.concat(chunks).toString("utf8")); }
+  catch { throw Object.assign(new Error("Request body must be JSON."), { status: 400 }); }
 }
 
-const statusFrom = (e) => (Number.isInteger(e?.status) ? e.status : 502);
-const back = (p) => `${config.allowedOrigins[0]}${p}`;
+const statusFrom = (e) => (Number.isInteger(e?.status) && e.status >= 400 && e.status <= 599 ? e.status : 502);
+const list = (payload) => (Array.isArray(payload) ? payload : Array.isArray(payload?.data) ? payload.data : []);
+const profileKey = (token, body) => `pp-profile-${createHash("sha256").update(token).update(JSON.stringify(body)).digest("hex").slice(0, 40)}`;
 
 const server = http.createServer(async (req, res) => {
   const origin = req.headers.origin;
   if (req.method === "OPTIONS") return send(res, 204, {}, origin);
-  const path = new URL(req.url, "http://localhost").pathname.replace(/^\/api/, "") || "/";
+  const url = new URL(req.url, "http://localhost");
+  const path = url.pathname.replace(/^\/api/, "") || "/";
   const method = req.method;
+  let match;
 
   try {
     if (method === "GET" && path === "/healthz") {
       return send(res, 200, { ok: true, configured: configured(), product: config.masaasProductSlug }, origin);
     }
 
-    // Public — no auth. What a handle costs, from MASAAS.
-    if (method === "GET" && path === "/v1/packages") {
-      const packages = await masaas.publicPackages().catch(() => ({ packages: [] }));
-      return send(res, 200, packages, origin);
-    }
+    // Public: the approved price list.
+    if (method === "GET" && path === "/v1/catalog") return send(res, 200, publicCatalog(), origin);
 
     // OIDC login return: code -> member session. Any client secret stays server-side.
     if (method === "POST" && path === "/v1/auth/exchange") {
       const { code, redirectUri, codeVerifier } = await readJson(req);
       if (!code || !redirectUri) return send(res, 400, { error: "code and redirectUri required" }, origin);
-      const tokens = await masaas.exchangeOidcCode(code, redirectUri, codeVerifier);
-      return send(res, 200, {
-        session: tokens.access_token,
-        refresh: tokens.refresh_token || null,
-        expiresIn: tokens.expires_in || null,
-      }, origin);
+      const tokens = await account.exchangeOidcCode(code, redirectUri, codeVerifier);
+      return send(res, 200, { session: tokens.access_token, refresh: tokens.refresh_token || null, expiresIn: tokens.expires_in || null }, origin);
     }
 
-    // "Remember me" renewal: refresh token -> fresh member session. Kept public (the refresh token
-    // is the credential); a bad/expired token surfaces as 401 so the browser drops it and re-prompts.
+    // "Remember me" renewal: refresh token -> fresh member session.
     if (method === "POST" && path === "/v1/auth/refresh") {
       const { refresh } = await readJson(req);
       if (!refresh) return send(res, 400, { error: "refresh required" }, origin);
       let tokens;
-      try {
-        tokens = await masaas.refreshOidcToken(refresh);
-      } catch (_) {
-        return send(res, 401, { error: "session expired" }, origin);
-      }
-      return send(res, 200, {
-        session: tokens.access_token,
-        refresh: tokens.refresh_token || refresh,
-        expiresIn: tokens.expires_in || null,
-      }, origin);
+      try { tokens = await account.refreshOidcToken(refresh); }
+      catch { return send(res, 401, { error: "session expired" }, origin); }
+      return send(res, 200, { session: tokens.access_token, refresh: tokens.refresh_token || refresh, expiresIn: tokens.expires_in || null }, origin);
     }
 
-    // Handle availability, from the postbox — the server that actually hands handles out.
-    //
-    // `null` means the postbox could not be reached, and the answer to "may I sell this" when you
-    // do not know is no. It used to be the opposite: an unreachable or erroring check read as
-    // "free", which is how the site came to offer a name it had already sold.
-    const avail = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path);
-    if (method === "GET" && avail) {
-      const name = decodeURIComponent(avail[1]).toLowerCase();
-      const available = await masaas.handleAvailable(name, bearer(req));
+    // Handle availability, from the postbox. `known: false` means "could not tell", never "free".
+    if (method === "GET" && (match = /^\/v1\/handles\/([^/]+)\/availability$/.exec(path))) {
+      const name = decodeURIComponent(match[1]).toLowerCase();
+      const available = await account.handleAvailable(name, bearer(req));
       return send(res, 200, { name, available: available === true, known: available !== null }, origin);
-    }
-
-    // Banks can POST their return. Static /account cannot accept that POST; bridge it to a GET.
-    // These identifiers only select a purchase. The authenticated completion still verifies it.
-    if (["GET", "POST"].includes(method) && path === "/v1/checkout/callback") {
-      req.resume();
-      const incoming = new URL(req.url, "http://localhost").searchParams;
-      const target = new URL(back("/account"));
-      target.searchParams.set("checkout_return", "1");
-      for (const key of ["subscription_id", "payment_id"]) {
-        const value = incoming.get(key);
-        if (value && /^[a-f0-9-]{36}$/i.test(value)) target.searchParams.set(key, value);
-      }
-      res.writeHead(303, { location: target.href, "cache-control": "no-store", "referrer-policy": "no-referrer" });
-      return res.end();
     }
 
     // ---- everything below needs the customer's token ---------------------------------------
@@ -116,130 +100,98 @@ const server = http.createServer(async (req, res) => {
     if (!token) return send(res, 401, { error: "sign in required" }, origin);
 
     if (method === "GET" && path === "/v1/me/overview") {
-      // One round-trip for the account page: subscriptions + billing + invoices + payment methods.
-      const [subs, profiles, invoices, methods, handles] = await Promise.all([
-        masaas.listSubscriptions(token).catch(() => null),
-        masaas.listBillingProfiles(token).catch(() => null),
-        masaas.listInvoices(token).catch(() => null),
-        masaas.listPaymentMethods(token).catch(() => null),
-        // What the account actually owns, which the billing system is not the record of. A handle
-        // bought in the App Store has no subscription here, and listing only subscriptions is what
-        // made the account page say "No handles yet" to somebody holding two.
-        masaas.accountHandles(token),
+      // What the account owns comes from the postbox, which every store reports to; a failure
+      // there is an error, never an empty account. Billing parts degrade to null individually.
+      const [handles, profiles, invoices, cloud] = await Promise.all([
+        account.accountHandles(token),
+        saas.listBillingProfiles(token).catch(() => null),
+        saas.listInvoices(token).catch(() => null),
+        billing.cloudOverview(token).catch(() => null),
       ]);
-      return send(res, 200, {
-        subscriptions: normalizeSubs(subs),
-        handles,
-        billingProfiles: list(profiles),
-        invoices: list(invoices),
-        paymentMethods: list(methods),
-      }, origin);
-    }
-
-    if (method === "GET" && path === "/v1/subscriptions") {
-      return send(res, 200, { subscriptions: normalizeSubs(await masaas.listSubscriptions(token)) }, origin);
-    }
-
-    const cancel = /^\/v1\/subscriptions\/([^/]+)\/cancel$/.exec(path);
-    if (method === "POST" && cancel) {
-      await masaas.cancelSubscription(token, decodeURIComponent(cancel[1]));
-      return send(res, 200, { ok: true }, origin);
+      return send(res, 200, { handles, billingProfiles: list(profiles), invoices: list(invoices), cloud,
+        openCurrencies: config.openCurrencies }, origin);
     }
 
     if (method === "GET" && path === "/v1/billing/profiles") {
-      return send(res, 200, { profiles: list(await masaas.listBillingProfiles(token)) }, origin);
+      return send(res, 200, { profiles: list(await saas.listBillingProfiles(token)) }, origin);
     }
     if (method === "POST" && path === "/v1/billing/profiles") {
       const profile = await readJson(req);
-      return send(res, 201, await masaas.createBillingProfile(token, profile), origin);
+      return send(res, 201, await saas.createBillingProfile(token, profile, profileKey(token, profile)), origin);
     }
-    const billingProfile = /^\/v1\/billing\/profiles\/([^/]+)$/.exec(path);
-    if (method === "PATCH" && billingProfile) {
+    if (method === "PATCH" && (match = /^\/v1\/billing\/profiles\/([^/]+)$/.exec(path))) {
+      const id = decodeURIComponent(match[1]);
+      if (!isUuid(id) && !/^[A-Za-z0-9_-]{1,64}$/.test(id)) return send(res, 404, { error: "not found" }, origin);
       const profile = await readJson(req);
-      return send(res, 200, await masaas.updateBillingProfile(token, decodeURIComponent(billingProfile[1]), profile), origin);
+      return send(res, 200, await saas.updateBillingProfile(token, id, profile, `pp-profile-edit-${randomUUID()}`), origin);
     }
 
     if (method === "GET" && path === "/v1/billing/invoices") {
-      return send(res, 200, { invoices: list(await masaas.listInvoices(token)) }, origin);
+      return send(res, 200, { invoices: list(await saas.listInvoices(token)) }, origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/billing\/invoices\/([^/]+)\/download$/.exec(path))) {
+      if (!isUuid(match[1])) return send(res, 404, { error: "not found" }, origin);
+      return send(res, 200, await saas.invoiceDownload(token, match[1]), origin);
     }
 
-    if (method === "GET" && path === "/v1/billing/payment-methods") {
-      return send(res, 200, { paymentMethods: list(await masaas.listPaymentMethods(token)) }, origin);
+    // ---- individual Cloud plans -------------------------------------------------------------
+    if (method === "GET" && path === "/v1/cloud") return send(res, 200, await billing.cloudOverview(token), origin);
+    if (method === "POST" && path === "/v1/cloud/checkout") {
+      return send(res, 200, await billing.cloudCheckout(token, await readJson(req)), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/cloud\/checkout\/([a-f0-9]{32})$/.exec(path))) {
+      return send(res, 200, await billing.cloudStatus(token, match[1]), origin);
+    }
+    if (method === "GET" && (match = /^\/v1\/cloud\/subscriptions\/([^/]+)$/.exec(path))) {
+      return send(res, 200, await billing.cloudSubscription(token, match[1]), origin);
+    }
+    if (method === "POST" && (match = /^\/v1\/cloud\/subscriptions\/([^/]+)\/(cancel|retry|card-update|upgrade)$/.exec(path))) {
+      return send(res, 200, await billing.cloudOperation(token, match[1], match[2], await readJson(req)), origin);
+    }
+    // Register a name inside the account's web plan.
+    if (method === "POST" && path === "/v1/names") {
+      const { namespace } = await readJson(req);
+      if (typeof namespace !== "string" || !namespace.trim() || namespace.length > 64) return send(res, 400, { error: "namespace required" }, origin);
+      return send(res, 200, await postbox.claimName(token, namespace.trim()), origin);
     }
 
-    // Add a card: MASAAS returns a hosted setup URL; the browser redirects to it. The return URL is
-    // kept query-free so MASAAS can append its own completion params cleanly; we also hand back the
-    // session id so the browser can complete even when MASAAS returns the URL verbatim.
-    if (method === "POST" && path === "/v1/billing/payment-methods/setup") {
-      const { billingProfileId } = await readJson(req);
-      const session = await masaas.paymentSetupSession(token, back("/account"), back("/account"), billingProfileId);
-      const url = pickHostedUrl(session);
-      if (!url) return send(res, 502, { error: "no hosted setup url returned", session }, origin);
-      return send(res, 200, { setupUrl: url, sessionId: pickSessionId(session), provider: pickProvider(session) }, origin);
+    // ---- enterprise (the Phase 4 portal calls these) ---------------------------------------
+    if (method === "POST" && path === "/ent/billing-profile") {
+      return send(res, 201, await billing.enterpriseBillingProfile(token, await readJson(req)), origin);
     }
-
-    // Finish adding a card: the hosted page captured it at the gateway, but MASAAS only persists the
-    // payment method once we complete the session with the token it handed back on the return URL.
-    if (method === "POST" && path === "/v1/billing/payment-methods/complete") {
-      const { sessionId, provider, billingProfileId } = await readJson(req);
-      if (!sessionId) return send(res, 400, { error: "sessionId required" }, origin);
-      const paymentMethod = await masaas.completePaymentSession(token, {
-        session_id: sessionId,
-        ...(provider ? { provider } : {}),
-        ...(billingProfileId ? { billing_profile_id: billingProfileId } : {}),
-      });
-      return send(res, 200, { paymentMethod }, origin);
+    if (method === "POST" && path === "/ent/checkout") {
+      return send(res, 200, await billing.enterpriseCheckout(token, await readJson(req)), origin);
     }
-
-    if (method === "POST" && path === "/v1/checkout") {
-      return send(res, 200, await startCheckout(token, await readJson(req)), origin);
-    }
-    if (method === "POST" && path === "/v1/checkout/complete") {
-      return send(res, 200, await completeCheckout(token, await readJson(req)), origin);
-    }
-    if (method === "POST" && path === "/v1/handles/claim") {
-      const { handle } = await readJson(req);
-      return send(res, 200, await claimHandle(token, handle), origin);
+    if (method === "GET" && (match = /^\/ent\/checkout\/(org_[a-z0-9]{6,64})$/.exec(path))) {
+      return send(res, 200, await billing.enterpriseStatus(token, match[1]), origin);
     }
 
     return send(res, 404, { error: "not found" }, origin);
   } catch (err) {
-    return send(res, statusFrom(err), { error: err.message || "adapter error" }, origin);
+    const status = statusFrom(err);
+    if (status >= 500) console.error(`${method} ${path}: ${status} ${err.code || ""}`.trim());
+    return send(res, status, { error: err.message || "bridge error", ...(err.code ? { code: err.code } : {}) }, origin);
   }
 });
 
-function pickHostedUrl(session) {
-  const s = session && (session.session || session.setup || session);
-  return s?.hosted_url || s?.hostedUrl || s?.checkout_url || s?.checkoutUrl ||
-    s?.redirect_url || s?.redirectUrl || s?.url || null;
+// Missed-return reconciliation: closed tabs, lost callbacks and renewals reach the postbox here.
+let reconciling = false;
+async function reconcileOnce() {
+  if (reconciling || !configured()) return;
+  reconciling = true;
+  try {
+    const report = await billing.reconcile();
+    if (report.activated || report.renewed || report.expired || report.errors) console.log(`reconcile ${JSON.stringify(report)}`);
+  } catch (error) {
+    console.error(`reconcile failed: ${error.code || error.status || "error"}`);
+  } finally {
+    reconciling = false;
+  }
 }
-// The token that MASAAS wants back at complete-session time. MASAAS does not append it to the return
-// URL when the URL already carries a query, so the browser stashes this before redirecting.
-function pickSessionId(session) {
-  const s = session && (session.session || session.setup || session);
-  return s?.session_id || s?.sessionId || s?.payment_setup_session || s?.paymentSetupSession ||
-    s?.id || s?.token || null;
-}
-function pickProvider(session) {
-  const s = session && (session.session || session.setup || session);
-  return s?.provider || s?.gateway || null;
-}
-function list(payload) {
-  if (Array.isArray(payload)) return payload;
-  return payload?.data || payload?.[Object.keys(payload || {})[0]] || [];
-}
-function normalizeSubs(payload) {
-  const arr = list(payload);
-  return arr.map((s) => ({
-    id: s.id || s.subscription_id,
-    handle: subscriptionHandle(s),
-    status: s.status || "unknown",
-    renewsAt: s.current_period_end || s.renews_at || s.renewsAt || "",
-    planSlug: s.plan_slug || s.planSlug || "",
-  }));
-}
+if (config.reconcileIntervalMs > 0) setInterval(reconcileOnce, config.reconcileIntervalMs).unref();
 
 server.listen(config.port, () => {
   // eslint-disable-next-line no-console
   console.log(`pigeonpost store adapter on :${server.address().port} configured=${configured()} product=${config.masaasProductSlug}`);
+  if (config.reconcileIntervalMs > 0) setTimeout(reconcileOnce, 2000).unref();
 });

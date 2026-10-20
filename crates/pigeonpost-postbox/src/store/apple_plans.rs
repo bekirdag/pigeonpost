@@ -92,6 +92,7 @@ fn install(
         VALUES (?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(account_id) DO UPDATE SET
         original_transaction_id=?2,product_id=?3,environment=?4,expires_at=?5,active=?6,updated_at=?7",
         params![account, e.original_transaction_id, e.product_id, e.environment, e.expires_at, status.active, now as i64])?;
+    super::entitlements::sync_apple_plan(c, account, now)?;
     let provider = format!("plan:{account}");
     // A downgrade keeps the first N slots. Other names stop working and enter the existing
     // recovery period; their mailbox contents and ownership are never transferred by this update.

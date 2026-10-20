@@ -40,7 +40,6 @@ use axum::{
     extract::{Extension, Path, Query, Request, State},
     http::{header, HeaderMap, HeaderValue, Method, StatusCode},
     middleware::{self, Next},
-    response::sse::{Event, KeepAlive, Sse},
     response::{Html, IntoResponse, Response},
     routing::{any, delete, get, post},
     Json, Router,
@@ -51,18 +50,31 @@ use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
+pub(crate) use principal::{AccountCredential, Principal};
+
 mod account_deletion;
+mod account_events;
 mod appstore;
 mod appstore_routes;
+mod audit;
+mod billing_internal;
+#[cfg(test)]
+mod billing_tests;
 mod blobs;
+mod capabilities;
 mod chatgpt;
 mod fcm;
+#[cfg(test)]
+mod foundations_tests;
 mod github;
 mod googleplay;
 mod googleplay_routes;
+mod internal_api;
 mod mcp;
 mod oidc;
+mod policy;
 mod pow;
+mod principal;
 mod push;
 mod reputation;
 mod review_access;
@@ -70,6 +82,7 @@ mod store;
 mod tester_handles;
 mod vault;
 mod verbs;
+mod web_plan;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
 const POW_TTL_SECS: u64 = 120;
@@ -129,6 +142,14 @@ struct AppState {
     /// GitHub device login, when this postbox is configured for it. `None` closes the endpoints
     /// rather than failing per request, so an unconfigured deployment says so once and plainly.
     github: Option<Arc<github::Github>>,
+    /// Builds audit records; holds the keyed IP-hash secret.
+    auditor: Arc<audit::Auditor>,
+    /// Which `acr` values count as a strong sign-in, and for how long (SDS §3.4).
+    step_up: Arc<principal::StepUpPolicy>,
+    /// Per-service bearer tokens for the internal API.
+    service_tokens: Arc<internal_api::ServiceTokens>,
+    /// Per-account wakeups for open `/v1/events` streams.
+    event_hub: Arc<account_events::EventHub>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -330,6 +351,7 @@ async fn serve(cfg: Config) {
 
     googleplay_routes::start_reconciliation(state.clone());
     appstore_routes::start_reconciliation(state.clone());
+    start_internal_listener(&state).await;
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -342,6 +364,41 @@ async fn serve(cfg: Config) {
         tracing::error!(error = %e, "server error");
         std::process::exit(1);
     }
+}
+
+/// Serve the internal API (`/internal/v1/*`) on `POSTBOX_INTERNAL_BIND`, if set.
+///
+/// A separate listener rather than a path prefix on the public one, so that exposure is decided by
+/// where the socket is bound (loopback, a private interface, or a port published only to
+/// `127.0.0.1`) instead of by every proxy in front remembering to block a prefix. Unset means no
+/// internal API at all. A bind failure is logged and the public server keeps running: the member
+/// API must not go down because an internal port is taken.
+async fn start_internal_listener(state: &AppState) {
+    let Some(bind) = std::env::var("POSTBOX_INTERNAL_BIND")
+        .ok()
+        .map(|b| b.trim().to_string())
+        .filter(|b| !b.is_empty())
+    else {
+        return;
+    };
+    let listener = match tokio::net::TcpListener::bind(&bind).await {
+        Ok(l) => l,
+        Err(e) => {
+            tracing::error!(error = %e, %bind, "internal API listener failed to bind; internal API disabled");
+            return;
+        }
+    };
+    tracing::info!(%bind, "internal API listening (/internal/v1, service tokens only)");
+    let app = internal_api::router(state.clone())
+        .into_make_service_with_connect_info::<std::net::SocketAddr>();
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app)
+            .with_graceful_shutdown(shutdown_signal())
+            .await
+        {
+            tracing::error!(error = %e, "internal API server error");
+        }
+    });
 }
 
 /// Assemble shared state. The PoW HMAC secret comes from `POW_HMAC_SECRET`; if it's unset (or the
@@ -359,6 +416,16 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             b.to_vec()
         }
     };
+    let master_key = load_master_key();
+    // Derived, not the master key itself: the audit log's IP hashes must be stable across restarts
+    // (so one address correlates) without the log being able to say anything about the vault key.
+    let audit_ip_key = {
+        let mut h = Sha256::new();
+        h.update(b"pigeonpost audit ip-hash key v1\0");
+        h.update(master_key);
+        let key: [u8; 32] = h.finalize().into();
+        key
+    };
     Ok(AppState {
         pow: Arc::new(pow::Pow::new(
             secret,
@@ -366,7 +433,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             cfg.pow_max_bits,
             POW_TTL_SECS,
         )),
-        vault: Arc::new(vault::Vault::new(load_master_key())),
+        vault: Arc::new(vault::Vault::new(master_key)),
         store: Arc::new(store::Store::open(&cfg.db_path)?),
         oidc: Arc::new(oidc::Oidc::new(env_or(
             "OIDC_ISSUER",
@@ -399,6 +466,10 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         test_handle_testers: tester_handles::configured_testers(),
         blobs: blobs::Blobs::from_env().map(Arc::new),
         public_url: cfg.public_url.trim_end_matches('/').to_string(),
+        auditor: Arc::new(audit::Auditor::new(audit_ip_key)),
+        step_up: Arc::new(principal::StepUpPolicy::from_env()),
+        service_tokens: Arc::new(internal_api::ServiceTokens::from_env()),
+        event_hub: Arc::new(account_events::EventHub::from_env()),
     })
 }
 
@@ -524,7 +595,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/attachments/{id}", get(download_attachment))
         .route("/v1/quota", get(quota))
         .route("/v1/report-spam", post(report_spam))
-        .route("/v1/events", get(events))
+        .route("/v1/events", get(account_events::events))
+        .route("/v1/capabilities", get(capabilities::capabilities))
         .route("/v1/whoami", get(whoami))
         .route("/v1/identities/handle", post(bind_identity_handle))
         .route("/v1/namespaces", axum::routing::put(grant_namespace))
@@ -543,6 +615,8 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/handles/{name}/availability", get(handle_availability))
         .route("/v1/me/handles", get(my_handles))
+        .route("/v1/me/entitlements", get(web_plan::my_entitlements))
+        .route("/v1/claims/plan", post(web_plan::claim_plan))
         .route(
             "/v1/claims/test",
             get(tester_handles::state).post(tester_handles::claim),
@@ -1107,7 +1181,7 @@ async fn bind_identity_handle(
     Json(req): Json<BindHandleReq>,
 ) -> Response {
     let account = match principal_for_token(&state, bearer(&headers)).await {
-        Ok(Principal::Account(account)) => account,
+        Ok(Principal::Account(account, _)) => account,
         Ok(Principal::Identity(_)) => {
             // A capability token is the mailbox's own credential, not the account's. Naming a
             // mailbox spends a slot in a namespace the *account* paid for, so it is the account
@@ -1221,7 +1295,7 @@ async fn create_identity(
     match bearer(&headers) {
         // Authenticated (API key or member JWT) → create under that account, no PoW.
         Some(tok) => match principal_for_token(&state, Some(tok)).await {
-            Ok(Principal::Account(account_id)) => {
+            Ok(Principal::Account(account_id, _)) => {
                 created(do_create_identity(&state, Some(account_id), req.label, req.handle).await)
             }
             Ok(Principal::Identity(_)) => err_response(
@@ -1337,8 +1411,12 @@ pub(crate) async fn do_list_identities(
 /// `POST /v1/api-keys` — issue a durable API key for the authenticated account (member JWT or an
 /// existing key). Lets a signed-in web user hand their agent a connector credential that outlives
 /// the short-lived member token.
-async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Response {
-    let account = match account_for_headers(&state, &headers).await {
+async fn create_api_key(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    client_ip: Option<Extension<ClientIp>>,
+) -> Response {
+    let (account, actor) = match account_and_actor_for_headers(&state, &headers).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
     };
@@ -1350,6 +1428,17 @@ async fn create_api_key(State(state): State<AppState>, headers: HeaderMap) -> Re
     {
         Ok(()) => {
             tracing::info!(account = %account, "issued API key");
+            record_audit(
+                &state,
+                actor,
+                Some(account.clone()),
+                "api_key.create",
+                None,
+                json!({}),
+                client_ip.as_ref().map(|Extension(ip)| ip),
+                &headers,
+            )
+            .await;
             (StatusCode::CREATED, Json(json!({ "api_key": api_key }))).into_response()
         }
         Err(e) => {
@@ -1381,14 +1470,28 @@ async fn list_api_keys(State(state): State<AppState>, headers: HeaderMap) -> Res
 async fn revoke_api_key(
     State(state): State<AppState>,
     headers: HeaderMap,
+    client_ip: Option<Extension<ClientIp>>,
     axum::extract::Path(id): axum::extract::Path<String>,
 ) -> Response {
-    let account = match account_for_headers(&state, &headers).await {
+    let (account, actor) = match account_and_actor_for_headers(&state, &headers).await {
         Ok(a) => a,
         Err(e) => return e.into_response(),
     };
-    match state.store.revoke_key(account, id).await {
-        Ok(true) => (StatusCode::OK, Json(json!({ "revoked": true }))).into_response(),
+    match state.store.revoke_key(account.clone(), id.clone()).await {
+        Ok(true) => {
+            record_audit(
+                &state,
+                actor,
+                Some(account),
+                "api_key.revoke",
+                Some(format!("api_key:{id}")),
+                json!({}),
+                client_ip.as_ref().map(|Extension(ip)| ip),
+                &headers,
+            )
+            .await;
+            (StatusCode::OK, Json(json!({ "revoked": true }))).into_response()
+        }
         Ok(false) => err_response(
             StatusCode::NOT_FOUND,
             "not_found",
@@ -1416,7 +1519,7 @@ async fn delete_identity(
     // token may delete exactly one inbox — its own — which is what makes a self-served `/k/`
     // address destroyable at all: it has no account, so before this it could only be waited out.
     let scope = match principal_for_token(&state, bearer(&headers)).await {
-        Ok(Principal::Account(a)) => Some(a),
+        Ok(Principal::Account(a, _)) => Some(a),
         Ok(Principal::Identity(me)) => {
             if me.address != q.identity {
                 return err_response(
@@ -2085,18 +2188,6 @@ pub(crate) async fn identity_for_token(
     }
 }
 
-/// Who a bearer token authenticates: a single identity (capability token) or a whole account
-/// (API key), which may own many identities.
-// One variant carries a whole StoredIdentity and the other an account id, so the enum is as big
-// as the identity. That is fine here: a Principal is resolved once per request, moved, and
-// dropped — it is never held in bulk, so boxing would trade a real allocation for a notional
-// saving.
-#[allow(clippy::large_enum_variant)]
-pub(crate) enum Principal {
-    Identity(store::StoredIdentity),
-    Account(String),
-}
-
 /// Resolve a bearer token to a principal. `pk_…` = API key → account; otherwise a capability token.
 pub(crate) async fn principal_for_token(
     state: &AppState,
@@ -2105,7 +2196,7 @@ pub(crate) async fn principal_for_token(
     let token = token.ok_or_else(|| ApiError::unauthorized("missing bearer token"))?;
     if is_api_key(token) {
         match state.store.account_for_key(sha256(token.as_bytes())).await {
-            Ok(Some(a)) => Ok(Principal::Account(a)),
+            Ok(Some(a)) => Ok(Principal::Account(a, AccountCredential::ApiKey)),
             Ok(None) => Err(ApiError::unauthorized("unknown API key")),
             Err(e) => {
                 tracing::error!(error = %e, "api-key lookup failed");
@@ -2118,12 +2209,16 @@ pub(crate) async fn principal_for_token(
             tracing::debug!(error = %e, "member-token validation failed");
             ApiError::unauthorized("invalid member token")
         })?;
+        let session = principal::MemberSession::from_claims(&claims, state.oidc.issuer());
         let account = state
             .store
             .account_for_sub(claims.sub, format!("acct_{}", rand_hex(12)), now_unix())
             .await
             .map_err(|_| ApiError::server("store_error"))?;
-        Ok(Principal::Account(account))
+        Ok(Principal::Account(
+            account,
+            AccountCredential::Member(Box::new(session)),
+        ))
     } else {
         identity_for_token(state, Some(token))
             .await
@@ -2244,12 +2339,61 @@ async fn claim_address(State(state): State<AppState>, headers: HeaderMap) -> Res
 
 /// Require an API-key account (for account-management endpoints).
 async fn account_for_headers(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
+    account_and_actor_for_headers(state, headers)
+        .await
+        .map(|(account, _)| account)
+}
+
+/// [`account_for_headers`], plus how the caller is classified in the audit log.
+async fn account_and_actor_for_headers(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> Result<(String, audit::ActorKind), ApiError> {
     match principal_for_token(state, bearer(headers)).await? {
-        Principal::Account(a) => Ok(a),
+        principal @ Principal::Account(..) => {
+            let actor = audit::ActorKind::of(&principal);
+            let Principal::Account(account, _) = principal else {
+                unreachable!("matched above")
+            };
+            Ok((account, actor))
+        }
         Principal::Identity(_) => Err(ApiError::bad(
             "use_api_key",
             "this endpoint needs an account API key, not a capability token",
         )),
+    }
+}
+
+/// Append an audit record after a change that has already committed. Best-effort by design: the
+/// change happened, and refusing to report it because the log was briefly unwritable would tell
+/// the caller something untrue. A failure is logged loudly instead.
+#[allow(clippy::too_many_arguments)]
+async fn record_audit(
+    state: &AppState,
+    actor: audit::ActorKind,
+    actor_account: Option<String>,
+    action: &str,
+    target: Option<String>,
+    details: serde_json::Value,
+    client_ip: Option<&ClientIp>,
+    headers: &HeaderMap,
+) {
+    let ip = client_ip.and_then(|ip| ip.as_str().parse::<std::net::IpAddr>().ok());
+    let user_agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok());
+    let row = state.auditor.row(
+        actor,
+        actor_account,
+        action,
+        target,
+        details,
+        ip,
+        user_agent,
+        now_unix(),
+    );
+    if let Err(e) = state.store.append_audit(row).await {
+        tracing::error!(error = %e, action, "audit append failed");
     }
 }
 
@@ -2271,7 +2415,7 @@ async fn resolve_acting_identity(
             }
             Ok(id)
         }
-        Principal::Account(account) => {
+        Principal::Account(account, _) => {
             if let Some(addr) = explicit {
                 return state
                     .store
@@ -2745,6 +2889,9 @@ pub(crate) async fn do_send(
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.
     state.inbox_signal.notify_waiters();
+    if let Some(account) = recipient.account_id.as_deref() {
+        state.event_hub.wake(account);
+    }
 
     // And wake the phones. Spawned, never awaited: a message is delivered once it is in the
     // recipient's inbox, and whether Apple was reachable afterwards must not decide whether this
@@ -3634,7 +3781,7 @@ async fn unregister_device(
     Path(token): Path<String>,
 ) -> Response {
     let (account, mailbox) = match principal_for_token(&state, bearer(&headers)).await {
-        Ok(Principal::Account(account)) => (Some(account), None),
+        Ok(Principal::Account(account, _)) => (Some(account), None),
         Ok(Principal::Identity(identity)) => (None, Some(identity.address)),
         Err(error) => return error.into_response(),
     };
@@ -3882,113 +4029,6 @@ pub(crate) async fn do_get_workspace(
 }
 
 /// `GET /v1/workspace` — fetch this mailbox's encrypted workspace context.
-/// How many events one poll of the store will emit before yielding. A daemon reconnecting after a
-/// long sleep should catch up in bounded chunks rather than building one enormous response.
-const EVENT_BATCH: usize = 256;
-
-/// `GET /v1/events` — one Server-Sent Events stream per **account**.
-///
-/// Per account rather than per mailbox on purpose: a twenty-agent fleet holding a long poll each is
-/// twenty sockets and twenty wakeups, while the thing that actually wants to know is the one daemon
-/// on that machine. It learns *that* mail arrived and for which mailbox, then fetches the message
-/// through the ordinary authenticated path.
-///
-/// Only metadata crosses this stream — no bodies. That keeps it cheap enough to hold open, and
-/// means a stream leaking would disclose who wrote to whom rather than what they said.
-///
-/// `Last-Event-ID` is honoured, so a daemon that was asleep resumes exactly where it stopped:
-/// SQLite's rowid is monotonic and never reused for appended rows, which is precisely the property
-/// a resumption cursor needs. Without an id the stream starts at *now*, because a daemon starting
-/// for the first time wants what happens next, not a replay of everything the account ever received.
-async fn events(
-    State(state): State<AppState>,
-    headers: HeaderMap,
-    Query(q): Query<EventsQuery>,
-) -> Response {
-    let account = match account_for_headers(&state, &headers).await {
-        Ok(account) => account,
-        Err(e) => return e.into_response(),
-    };
-
-    let resume = q.last_event_id.or_else(|| {
-        headers
-            .get("last-event-id")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.parse::<i64>().ok())
-    });
-    let start = match resume {
-        Some(cursor) => cursor,
-        None => match state.store.latest_message_cursor().await {
-            Ok(cursor) => cursor,
-            Err(e) => {
-                tracing::error!(error = %e, "events cursor read failed");
-                return ApiError::server("store_error").into_response();
-            }
-        },
-    };
-
-    tracing::info!(%account, start, "event stream opened");
-    let stream = async_stream::stream! {
-        let mut cursor = start;
-        loop {
-            // Register interest before reading, for the same lost-wakeup reason `await_mail`
-            // documents: mail landing between the read and the wait would notify nobody.
-            let notified = state.inbox_signal.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-
-            // Re-read the account's mailboxes each pass, so a mailbox minted while the stream is
-            // open starts producing events without the daemon reconnecting.
-            let owners: Vec<String> = match state.store.list_by_account(account.clone()).await {
-                Ok(rows) => rows.into_iter().map(|i| i.address).collect(),
-                Err(e) => {
-                    tracing::error!(error = %e, "events identity read failed");
-                    break;
-                }
-            };
-
-            match state.store.incoming_after(owners, cursor, EVENT_BATCH).await {
-                Ok(rows) => {
-                    for (rowid, message) in rows {
-                        cursor = rowid;
-                        let payload = json!({
-                            "event_id": rowid,
-                            "mailbox": message.owner,
-                            "message_id": message.id,
-                            "sender": message.sender,
-                            "created_at": message.created_at,
-                        });
-                        yield Ok::<Event, std::convert::Infallible>(
-                            Event::default().id(rowid.to_string()).event("mail").data(payload.to_string()),
-                        );
-                    }
-                }
-                Err(e) => {
-                    tracing::error!(error = %e, "events read failed");
-                    break;
-                }
-            }
-
-            notified.await;
-        }
-    };
-
-    // The keep-alive is what makes this survive the middleboxes between a laptop and here: an idle
-    // stream that sends nothing for minutes gets closed by something in between, and the daemon
-    // would rediscover that only when mail failed to arrive.
-    Sse::new(stream)
-        .keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
-        .into_response()
-}
-
-#[derive(serde::Deserialize)]
-struct EventsQuery {
-    /// Resume point. The `Last-Event-ID` header is the standard channel and is honoured too; this
-    /// exists because not every client can set headers on an EventSource.
-    #[serde(default)]
-    last_event_id: Option<i64>,
-}
-
 /// `GET /v1/whoami` — the address this capability token acts as, and its handle if it has one.
 ///
 /// Exists because "am I named?" is not answerable from the client's own records: a token can be
@@ -4253,7 +4293,7 @@ async fn claim_github(
 /// The account behind this request, refusing a mailbox-scoped capability token.
 async fn require_account(state: &AppState, headers: &HeaderMap) -> Result<String, ApiError> {
     match principal_for_token(state, bearer(headers)).await? {
-        Principal::Account(account) => Ok(account),
+        Principal::Account(account, _) => Ok(account),
         Principal::Identity(_) => Err(ApiError::new(
             StatusCode::FORBIDDEN,
             "account_required",
@@ -4267,6 +4307,7 @@ async fn require_account(state: &AppState, headers: &HeaderMap) -> Result<String
 async fn grant_namespace(
     State(state): State<AppState>,
     headers: HeaderMap,
+    client_ip: Option<Extension<ClientIp>>,
     Json(req): Json<GrantNamespaceReq>,
 ) -> Response {
     let Some(expected) = state.namespace_grant_hash else {
@@ -4304,6 +4345,21 @@ async fn grant_namespace(
     {
         Ok(true) => {
             tracing::info!(%namespace, account = %req.account_id, expires_at = ?req.expires_at, "namespace granted");
+            record_audit(
+                &state,
+                audit::ActorKind::System,
+                None,
+                "namespace.grant",
+                Some(format!("namespace:{namespace}")),
+                json!({
+                    "via": "namespace_grant_token",
+                    "account_id": req.account_id,
+                    "expires_at": req.expires_at,
+                }),
+                client_ip.as_ref().map(|Extension(ip)| ip),
+                &headers,
+            )
+            .await;
             let mailbox = ensure_namespace_mailbox(&state, &req.account_id, &namespace).await;
             Json(json!({
                 "namespace": namespace,
@@ -5298,6 +5354,15 @@ async fn reaper(cfg: Config) {
                 if let Some(blobs) = blobs.as_ref() {
                     sweep_blobs(&store, blobs).await;
                 }
+                let event_cutoff = now_unix().saturating_sub(account_events::EVENT_RETENTION_SECS);
+                match store
+                    .prune_account_events(event_cutoff, account_events::EVENT_RETENTION_COUNT)
+                    .await
+                {
+                    Ok(0) => {}
+                    Ok(n) => tracing::info!(pruned = n, "pruned account events past the retained window"),
+                    Err(e) => tracing::error!(error = %e, "account event prune failed"),
+                }
             }
             _ = shutdown_signal() => {
                 tracing::info!("reaper stopping");
@@ -5422,7 +5487,7 @@ mod tests {
         );
         assert!(matches!(
             principal_for_token(&state, Some(&token)).await.unwrap(),
-            Principal::Account(_)
+            Principal::Account(_, AccountCredential::ApiKey)
         ));
         for headers in [HeaderMap::new(), headers] {
             let consent = serde_json::from_value(json!({"confirm": true})).unwrap();
@@ -5551,6 +5616,10 @@ mod tests {
             blobs: None,
             public_url: "https://postbox.example".into(),
             github: None,
+            auditor: Arc::new(audit::Auditor::new([0u8; 32])),
+            step_up: Arc::new(principal::StepUpPolicy::default()),
+            service_tokens: Arc::new(internal_api::ServiceTokens::default()),
+            event_hub: Arc::new(account_events::EventHub::default()),
         }
     }
 
@@ -8250,6 +8319,10 @@ mod tests {
             blobs: None,
             public_url: "https://postbox.example".into(),
             github: None,
+            auditor: Arc::new(audit::Auditor::new([0u8; 32])),
+            step_up: Arc::new(principal::StepUpPolicy::default()),
+            service_tokens: Arc::new(internal_api::ServiceTokens::default()),
+            event_hub: Arc::new(account_events::EventHub::default()),
         };
         let _ = build_router(state);
     }

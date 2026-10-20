@@ -45,6 +45,22 @@ Live setup (SSH `-p 34251 root@159.69.201.24`):
   then recreate both containers with the log limits below. Data, credentials, and TLS stay in the
   separate runtime directory. Verify the source checkout's `HEAD` and clean status after deployment.
 
+### Internal API (`/internal/v1`) exposure
+
+The internal API is a **second listener**, not a path on the public port: it exists only when
+`POSTBOX_INTERNAL_BIND` is set (e.g. `0.0.0.0:8991` inside the container), and the container port is
+published to **loopback only** (`-p 127.0.0.1:8991:8991`). Do not add a `ProxyPass` for it to any
+Apache vhost; a request for `/internal/…` on the public port is an ordinary 404. Services on other
+hosts (calls-service and billing-bridge on raijin) reach it later over a private tunnel bound to a
+private address, never over the public internet. Each service authenticates with its own
+`POSTBOX_SVC_TOKEN_<NAME>` (see `postbox.env.example`); the matching value lives only in that
+service's env file. Wiring check from the host:
+`curl -s -H "Authorization: Bearer $TOKEN" http://127.0.0.1:8991/internal/v1/health`.
+
+Feature flags are toggled through it with the `ops` token, e.g.
+`PUT /internal/v1/features/account_events {"scope":"account","account_id":"acct_…","enabled":true}`.
+Every flag change is written to the append-only `audit_log` table.
+
 ### Bound container logs on every deployment
 
 Both manual `docker run` commands must include

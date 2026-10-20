@@ -13,12 +13,22 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
 mod apple_plans;
+mod audit;
 mod deletion;
+mod entitlements;
+mod events;
+mod features;
 mod googleplay;
 mod lifecycle;
+mod orgs;
+pub use audit::AuditRow;
+pub use entitlements::{Entitlement, EntitlementInput, UpsertOutcome, WebClaim};
+pub use events::StreamCursor;
+pub use features::{FeatureRow, FeatureScope};
 pub use googleplay::GoogleBinding;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
+pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
@@ -505,6 +515,27 @@ pub struct StoredIdentity {
     pub handle: Option<String>,
 }
 
+#[cfg(test)]
+impl StoredIdentity {
+    /// A minimal identity for tests that only need an address and an owner.
+    pub(crate) fn test_fixture(address: &str) -> Self {
+        StoredIdentity {
+            address: address.into(),
+            wrapped_seed: Wrapped {
+                nonce: [0; 24],
+                ct: Vec::new(),
+            },
+            ed25519_pub: [0; 32],
+            x25519_pub: [0; 32],
+            cap_hash: [0; 32],
+            label: None,
+            created_at: 0,
+            account_id: None,
+            handle: None,
+        }
+    }
+}
+
 /// What a retention sweep removed.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct ReapStats {
@@ -778,6 +809,57 @@ fn map_contact_row(row: &rusqlite::Row) -> rusqlite::Result<Contact> {
     })
 }
 
+/// The query behind [`Store::incoming_after`], for callers already holding the lock.
+pub(crate) fn incoming_after_in(
+    c: &Connection,
+    owners: &[String],
+    after: i64,
+    limit: usize,
+) -> Result<Vec<(i64, Message)>, StoreError> {
+    if owners.is_empty() {
+        return Ok(Vec::new());
+    }
+    let placeholders = owners.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT rowid, id, recipient, sender, wrap_blob, created_at, read,
+                COALESCE(owner, recipient), direction, thread_id
+         FROM messages
+         WHERE COALESCE(owner, recipient) IN ({placeholders})
+           AND rowid > ?
+           AND direction != 'out'
+         ORDER BY rowid ASC LIMIT ?"
+    );
+    let mut stmt = c.prepare(&sql)?;
+    let mut params: Vec<Box<dyn rusqlite::ToSql>> = owners
+        .iter()
+        .map(|o| Box::new(o.clone()) as Box<dyn rusqlite::ToSql>)
+        .collect();
+    params.push(Box::new(after));
+    params.push(Box::new(limit as i64));
+    let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+    let rows = stmt.query_map(refs.as_slice(), |row| {
+        Ok((
+            row.get::<_, i64>(0)?,
+            Message {
+                id: row.get(1)?,
+                recipient: row.get(2)?,
+                sender: row.get(3)?,
+                wrap_blob: row.get(4)?,
+                created_at: row.get::<_, i64>(5)? as u64,
+                read: row.get::<_, i64>(6)? != 0,
+                owner: row.get(7)?,
+                outgoing: row.get::<_, String>(8)? == "out",
+                thread_id: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
+            },
+        ))
+    })?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r?);
+    }
+    Ok(out)
+}
+
 const ID_COLS: &str = "address, ed25519_pub, x25519_pub, wrapped_nonce, wrapped_ct, cap_hash, label, created_at, account_id, handle";
 
 fn map_id_row(row: &rusqlite::Row) -> rusqlite::Result<IdRow> {
@@ -818,6 +900,11 @@ impl Store {
         conn.execute_batch(deletion::SCHEMA)?;
         conn.execute_batch(googleplay::SCHEMA)?;
         conn.execute_batch(apple_plans::SCHEMA)?;
+        conn.execute_batch(audit::SCHEMA)?;
+        conn.execute_batch(events::SCHEMA)?;
+        conn.execute_batch(features::SCHEMA)?;
+        conn.execute_batch(entitlements::SCHEMA)?;
+        conn.execute_batch(orgs::SCHEMA)?;
         for stmt in MIGRATIONS {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
@@ -826,9 +913,35 @@ impl Store {
                 }
             }
         }
+        // Mirror provider state into the unified entitlements table. Idempotent; it never changes
+        // namespaces or the provider tables, so an older binary that ignores the table is unaffected.
+        {
+            let tx = conn.unchecked_transaction()?;
+            entitlements::backfill(&tx, crate::now_unix())?;
+            tx.commit()?;
+        }
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
         })
+    }
+
+    /// One pragma's current value, as text.
+    #[cfg(test)]
+    pub async fn pragma(&self, name: &'static str) -> Result<String, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<String, StoreError> {
+            let c = conn.lock().expect("store lock");
+            Ok(c.query_row(&format!("PRAGMA {name}"), [], |r| {
+                r.get::<_, rusqlite::types::Value>(0)
+            })
+            .map(|v| match v {
+                rusqlite::types::Value::Integer(i) => i.to_string(),
+                rusqlite::types::Value::Text(t) => t,
+                other => format!("{other:?}"),
+            })?)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
     }
 
     pub async fn insert(&self, id: StoredIdentity) -> Result<(), StoreError> {
@@ -1177,14 +1290,8 @@ impl Store {
             };
             // A verified plan provides hosted storage immediately, including before the owner
             // chooses a name. Legacy subscriptions and explicit namespace grants remain valid.
-            let paid: bool = c.query_row(
-                "SELECT EXISTS(SELECT 1 FROM namespaces
-                    WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2))
-                 OR EXISTS(SELECT 1 FROM apple_handle_plans
-                    WHERE account_id = ?1 AND active = 1 AND expires_at > ?2)",
-                params![account, now as i64],
-                |r| r.get(0),
-            )?;
+            // The unified entitlements table carries every provider's plan (SDS §8.8).
+            let paid = entitlements::paid(&c, &account, now)?;
             Ok(if paid { Tier::Paid } else { Tier::Free })
         })
         .await
@@ -1696,6 +1803,7 @@ impl Store {
                 VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(namespace) DO UPDATE SET
                 account_id=?2,source=?3,verified_at=?4,expires_at=?5,release_at=?6,provider_ref=NULL",
                 params![namespace, account_id, source, now as i64, expires_at.map(|v| v as i64), release])?;
+            entitlements::sync_grant(&tx, &namespace, now)?;
             tx.commit()?;
             Ok(true)
         }).await.map_err(|_| StoreError::Join)?
@@ -1793,6 +1901,8 @@ impl Store {
                      expires_at = (SELECT expires_at FROM apple_subscriptions WHERE original_transaction_id = ?5)",
                 params![namespace, account_id, now as i64, expires_at, original_transaction_id],
             )?;
+            entitlements::sync_apple_legacy(&tx, &original_transaction_id, now)?;
+            entitlements::sync_grant(&tx, &namespace, now)?;
             tx.commit()?;
             Ok(if held.is_some() {
                 AppleClaim::Renewed
@@ -3091,6 +3201,7 @@ impl Store {
     ///
     /// Sent copies are excluded: a stream exists to say "someone wrote to you", and echoing a
     /// mailbox's own outgoing mail back at it would wake an agent to read its own words.
+    #[cfg(test)]
     pub async fn incoming_after(
         &self,
         owners: Vec<String>,
@@ -3103,45 +3214,7 @@ impl Store {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<Vec<(i64, Message)>, StoreError> {
             let c = conn.lock().expect("store lock");
-            let placeholders = owners.iter().map(|_| "?").collect::<Vec<_>>().join(",");
-            let sql = format!(
-                "SELECT rowid, id, recipient, sender, wrap_blob, created_at, read,
-                        COALESCE(owner, recipient), direction, thread_id
-                 FROM messages
-                 WHERE COALESCE(owner, recipient) IN ({placeholders})
-                   AND rowid > ?
-                   AND direction != 'out'
-                 ORDER BY rowid ASC LIMIT ?"
-            );
-            let mut stmt = c.prepare(&sql)?;
-            let mut params: Vec<Box<dyn rusqlite::ToSql>> = owners
-                .iter()
-                .map(|o| Box::new(o.clone()) as Box<dyn rusqlite::ToSql>)
-                .collect();
-            params.push(Box::new(after));
-            params.push(Box::new(limit as i64));
-            let refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
-            let rows = stmt.query_map(refs.as_slice(), |row| {
-                Ok((
-                    row.get::<_, i64>(0)?,
-                    Message {
-                        id: row.get(1)?,
-                        recipient: row.get(2)?,
-                        sender: row.get(3)?,
-                        wrap_blob: row.get(4)?,
-                        created_at: row.get::<_, i64>(5)? as u64,
-                        read: row.get::<_, i64>(6)? != 0,
-                        owner: row.get(7)?,
-                        outgoing: row.get::<_, String>(8)? == "out",
-                        thread_id: row.get::<_, Option<String>>(9)?.unwrap_or_default(),
-                    },
-                ))
-            })?;
-            let mut out = Vec::new();
-            for r in rows {
-                out.push(r?);
-            }
-            Ok(out)
+            incoming_after_in(&c, &owners, after, limit)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -3149,6 +3222,7 @@ impl Store {
 
     /// The highest message rowid, so a stream can start from "only what happens next" rather than
     /// replaying a mailbox's whole history to a daemon that just connected.
+    #[cfg(test)]
     pub async fn latest_message_cursor(&self) -> Result<i64, StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<i64, StoreError> {

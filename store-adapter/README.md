@@ -1,76 +1,99 @@
-# Pigeonpost store adapter
+# Pigeonpost billing bridge (store adapter)
 
-The small service that sits between the account page (`site/account.js`) and MASAAS. It follows the
-same pattern as the `theneuralledger` adapter: the browser holds the customer's own OIDC token, and
-this service **forwards member billing operations to MASAAS with that token** plus an
-`x-product-slug` header. The catalog is public. An optional **runtime token** supports entitlement
-reads; it is not required by the current account and checkout routes.
+The service behind `https://pigeonpost.dev/api`. The account page (`site/account.js`), and later
+the enterprise portal, call it. It:
 
-**No payment-gateway keys live here.** MASAAS holds the Stripe (or iyzico) keys and hosts the card
-capture. The buy flow creates a subscription in MASAAS and redirects the browser to the hosted
-payment URL MASAAS returns.
+- forwards member billing calls to saas_be (MASAAS) with the **customer's own OIDC token**, plus
+  `x-product-slug: pigeonpost`;
+- starts **iyzico abonelik hosted checkouts** through saas_be. iyzico hosts the card form and
+  saas_be holds the merchant keys, so **no card data and no gateway key reach this service**;
+- activates paid plans in the postbox through the postbox's **internal entitlement API**.
 
-## Run
+Dependency-free: Node's built-in `http` and `fetch`, Node ≥ 18. `npm test` runs every test
+against local fixtures for saas_be and the postbox; nothing calls a real provider.
 
-```bash
-node src/server.js
-```
+## Catalog
 
-Dependency-free — Node's built-in `http` and `fetch`, Node ≥ 18.
+`catalog/pigeonpost-catalog.json` is the approved price list. It holds:
+
+- 56 plan codes: `cloud-<n>names-yearly-<usd|try>` (n = 1–10) and
+  `ent-<seats>-<monthly|yearly>-<usd|try>` (5, 10, 15, 20, 30, 50, 100, 200, 500 seats);
+- for each code, the editions provisioned in saas_be: pricing year, amount, local plan id and iyzico
+  pricing-plan reference.
+
+saas_be's `scripts/pigeonpost-regional-catalog.cjs` provisions the editions, and its output fills
+the ids. Every offer, subscription and access-list row is checked against this file. An edition not
+listed here (a new year, a changed price) **fails closed** until someone reviews it and adds it.
+
+## Flows
+
+**Individual (Pigeonpost Cloud)**
+
+1. `POST /v1/cloud/checkout {intent_id, plan_code, billing_profile_id, locale}`. The page generates
+   `intent_id` (32 hex characters) once per purchase and reuses it for retries.
+2. The bridge resolves the edition through saas_be's regional offer and checks it against the
+   catalog.
+3. It starts `POST /v1/integrations/iyzico/subscriptions` with:
+   - `Idempotency-Key: pp-cloud-<intent>`;
+   - `client_reference_id: pp-cloud:<account>:<intent>`;
+   - `return_url: https://pigeonpost.dev/account?checkout=<intent>`;
+   - `method: hosted`, trial 0.
+
+   It returns `checkout_form_content`, which `/billing/checkout` renders. The `:<intent>` suffix is
+   needed because saas_be keeps an abandoned hosted form reserved under its client reference, so a
+   bare `pp-cloud:<account>` would block a retry.
+4. After the return, `GET /v1/cloud/checkout/<intent>` reads saas_be's authoritative state with
+   `?refresh=true`. A provider-confirmed paid period is pushed to the postbox:
+   `PUT /internal/v1/entitlements/iyzico/live/<saas subscription id>`, with `names`, `paid_through`
+   and a version that only increases.
+5. Management, all keyed by a fresh `intent_id` per operation, under `/v1/cloud/subscriptions/<id>/…`:
+   - `cancel` — access is kept through the paid period;
+   - `retry` — only a failed order of that subscription;
+   - `card-update` — hosted form;
+   - `upgrade` — same product, currency and interval. A plan below the names already registered is
+     refused.
+
+**Enterprise** (the Phase 4 portal calls these; exercised by tests now)
+
+- `POST /ent/billing-profile` creates the profile.
+- `POST /ent/checkout {intent_id, plan_code, billing_profile_id, org:{name, namespace}}`:
+  1. creates the postbox org draft;
+  2. starts the hosted checkout with `client_reference_id: pp-org:<draft>`;
+  3. returns to `https://enterprise.pigeonpost.dev/checkout/return?d=<draft>`.
+- `GET /ent/checkout/<draft>` activates the org on a verified payment.
+
+**Missed returns.** Every 60 s the reconciler reads saas_be's internal access list:
+`GET /v1/internal/tenants/pigeonpost/subscription-packages`, using `SAAS_INTERNAL_TOKEN`. It
+activates and renews `pp-cloud:` and `pp-org:` subscriptions from that list, and passes the Keycloak
+id as `subject_check`. A subscription that leaves the list keeps its verified `paid_through` and is
+marked expired once that passes. Nothing here ever extends a paid period.
+
+## Security
+
+- No card data, checkout token or form content is stored. `STORE_STATE_DIR/billing-state.json`
+  (mode 600) holds only intents and the last pushed entitlement.
+- Every saas_be response is validated: ids, statuses, mode, amounts, dates and plausible periods.
+  Every mutation sends an idempotency key.
+- Limit: 5 new checkouts per account per hour. Replays of an intent do not count.
+- Return URLs are built here, on the exact configured origins. The browser sends only a plan code
+  and an intent id.
+- Request bodies over 64 KiB are refused. Upstream messages are bounded and stripped of tokens.
 
 ## Configuration (environment)
 
-Mirrors the theneuralledger adapter so an operator wires it the same way.
-
 | Var | Meaning |
 | --- | --- |
-| `MASAAS_API_URL` | Control-plane API, default `https://api.masaas.org/v1` |
-| `MASAAS_PRODUCT_APP_URL` | Member app base, default `https://app-pigeonpost.masaas.org` |
-| `MASAAS_SAAS_API_URL` | Member SaaS backend; defaults to `<app url>/saas-api` |
-| `MASAAS_PRODUCT_SLUG` | `pigeonpost` |
-| `MASAAS_RUNTIME_TOKEN` | Runtime/service token for entitlement reads; member billing uses the customer's token |
-| `MASAAS_PLAN_SLUG` | Handle price plan, default `handle-yearly-annual-usd` |
-| `OIDC_ISSUER` | `https://sso.sealunit.com/realms/pigeonpost` |
-| `OIDC_CLIENT_ID` | The store's OIDC client |
-| `OIDC_CLIENT_SECRET` | Empty for a public (PKCE) client |
-| `PIGEONPOST_POSTBOX_URL` | Handle availability and ownership, default `https://postbox.pigeonpost.dev` |
-| `PIGEONPOST_NAMESPACE_GRANT` | Service credential matching the postbox's `NAMESPACE_GRANT_TOKEN`; required before checkout |
-| `STORE_ALLOWED_ORIGINS` | CORS allowlist; first origin is the payment return origin, default `https://pigeonpost.dev` |
+| `MASAAS_PRODUCT_APP_URL` / `MASAAS_SAAS_API_URL` | saas_be base, default `https://app-pigeonpost.masaas.org/saas-api` |
+| `MASAAS_PRODUCT_SLUG`, `MASAAS_TENANT_ID` | `pigeonpost` |
+| `SAAS_INTERNAL_TOKEN` | saas_be's internal adapter token (`API_KEY_INTROSPECTION_TOKEN`), used read-only for the access list |
+| `IYZICO_MODE` | `live` (or `test`). Every binding must report this mode. |
+| `OIDC_ISSUER`, `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Member sign-in (PKCE public client by default) |
+| `PIGEONPOST_POSTBOX_URL` | Public postbox, default `https://postbox.pigeonpost.dev` |
+| `POSTBOX_INTERNAL_URL`, `POSTBOX_SERVICE_TOKEN` | Postbox internal API (private link) and this service's `svc_` token |
+| `STORE_ALLOWED_ORIGINS` | Exact https origins. The first is the individual-checkout return origin. |
+| `ENTERPRISE_ORIGIN` | Enterprise return origin, default `https://enterprise.pigeonpost.dev` |
+| `STORE_STATE_DIR` | Durable state, default `/var/lib/pigeonpost-store-adapter` (systemd `StateDirectory=`) |
+| `CHECKOUTS_PER_HOUR`, `RECONCILE_INTERVAL_MS` | 5 and 60000 |
 
-`/healthz` reports `configured:true` when the API, postbox, OIDC and browser-origin URLs are valid,
-the product/plan/client identifiers are present, and `PIGEONPOST_NAMESPACE_GRANT` is set so paid
-handles can be delivered. The optional runtime token does not affect this flag. This checks local
-configuration completeness; it does not verify upstream availability, credentials or payments.
-
-## Routes the store calls
-
-| Method | Path | Does |
-| --- | --- | --- |
-| GET | `/healthz` | Liveness + whether live wiring is present |
-| GET | `/v1/packages` | Public catalog from MASAAS |
-| GET | `/v1/handles/:name/availability` | Authoritative postbox availability read |
-| POST | `/v1/auth/exchange` | OIDC code → member session (client secret, if any, stays here) |
-| GET | `/v1/subscriptions` | The signed-in customer's handles |
-| POST | `/v1/checkout` | Start or resume payment for `{handle, operationId}`; operationId is 32 random hex characters retained for retries |
-| GET/POST | `/v1/checkout/callback` | Bridge the bank's return to the account page; this does not authorize delivery |
-| POST | `/v1/checkout/complete` | Verify `{subscriptionId, paymentId}` with the member's token, complete payment and deliver the handle |
-| POST | `/v1/handles/claim` | Reconcile an already paid handle with postbox ownership |
-| POST | `/v1/subscriptions/:id/cancel` | Cancel |
-
-## Checkout contract and deployment
-
-Deploy the backend's `20260910120000_subscription_external_reference` migration and API support
-before this adapter. Subscriptions store `external_reference: pigeonpost:handle:<name>` at creation.
-The backend rejects arbitrary `metadata`; card setup is separate from subscription payment.
-
-The create response either supplies `payment_action_required` with a hosted bank URL or a paid
-subscription. Existing pending payments are resumed from their member-scoped payment records;
-they are never passed to `retry-payment`, which would start a second charge. Bank completion
-re-reads the subscription and its payment, resolving the session from the stored payment record.
-
-Delivery requires the exact reference and configured plan, `active` status, and a future paid
-period. `past_due`, `trialing`, missing status, and expired terms cannot grant a handle. The
-postbox grant uses that paid term as the namespace expiry and can be retried without a payment.
-
-Run `node --test test/*.test.mjs` from this directory. The tests use local HTTP fixtures
-and exercise the actual adapter routes without contacting a payment gateway.
+`/healthz` reports `configured:true` when these are present and well formed. It checks local
+configuration only, not whether the upstreams are reachable.
