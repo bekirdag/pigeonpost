@@ -60,6 +60,10 @@ export const config = {
   // Durable bridge state: checkout intents, rate-limit history, last pushed entitlements.
   stateDir: process.env.STORE_STATE_DIR || process.env.STATE_DIRECTORY || "/var/lib/pigeonpost-store-adapter",
 
+  // Currencies new checkouts may use. iyzico refuses a plan currency the merchant has no active
+  // POS for ("Active pos is not found for currency"), so a currency opens only once it does.
+  openCurrencies: (process.env.OPEN_CURRENCIES || "USD,TRY").split(",").map((s) => s.trim().toUpperCase()).filter(Boolean),
+
   // At most this many new checkouts per account per hour (replays of one intent do not count).
   checkoutsPerHour: Number(process.env.CHECKOUTS_PER_HOUR || 5),
 

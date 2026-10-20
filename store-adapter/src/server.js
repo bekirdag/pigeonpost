@@ -108,7 +108,8 @@ const server = http.createServer(async (req, res) => {
         saas.listInvoices(token).catch(() => null),
         billing.cloudOverview(token).catch(() => null),
       ]);
-      return send(res, 200, { handles, billingProfiles: list(profiles), invoices: list(invoices), cloud }, origin);
+      return send(res, 200, { handles, billingProfiles: list(profiles), invoices: list(invoices), cloud,
+        openCurrencies: config.openCurrencies }, origin);
     }
 
     if (method === "GET" && path === "/v1/billing/profiles") {

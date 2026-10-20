@@ -5,6 +5,7 @@
 // listed here (a new pricing year, a changed price) fails closed until it is reviewed and added.
 
 import { readFileSync } from "node:fs";
+import { config } from "./config.js";
 
 const source = process.env.PIGEONPOST_CATALOG_FILE
   || new URL("../catalog/pigeonpost-catalog.json", import.meta.url);
@@ -75,5 +76,5 @@ export function publicCatalog() {
     };
   });
   return { catalog_version: catalog.catalog_version, trial_period_days: catalog.trial_period_days,
-    contact_sales_above_seats: 500, plans };
+    contact_sales_above_seats: 500, open_currencies: config.openCurrencies, plans };
 }

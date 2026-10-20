@@ -188,6 +188,15 @@ test("checkout refuses unknown plans, foreign fields, unapproved offers and a se
   assert.equal(dup.body.code, "already_subscribed");
 });
 
+test("a currency without an active merchant POS is closed before any provider call", async (t) => {
+  const { s, call } = await setup(t, { OPEN_CURRENCIES: "TRY" });
+  const r = await checkout(call, "7".repeat(32), "cloud-1names-yearly-usd");
+  assert.equal(r.status, 503);
+  assert.equal(r.body.code, "currency_unavailable");
+  assert.equal(s.calls.some((c) => c.path.startsWith("/v1/integrations")), false);
+  assert.equal((await checkout(call, "8".repeat(32), "cloud-1names-yearly-try")).status, 200);
+});
+
 test("five new checkouts per account per hour; replays are free", async (t) => {
   const { call } = await setup(t);
   const ids = [1, 2, 3, 4, 5].map((n) => `${n}`.repeat(32));

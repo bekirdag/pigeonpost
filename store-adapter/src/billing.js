@@ -205,6 +205,7 @@ export function createBilling(state) {
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
     if (!entry || entry.family !== "cloud") fail(400, "Choose a Pigeonpost Cloud plan.", "invalid_plan");
+    if (!config.openCurrencies.includes(entry.currency)) fail(503, `Payments in ${entry.currency} are not open yet.`, "currency_unavailable");
     if (!isUuid(body.billing_profile_id)) fail(400, "Save your billing details first.", "billing_profile_required");
     const request = { kind: "cloud", plan_code: entry.code, billing_profile_id: body.billing_profile_id, locale: locale(body.locale) };
     const account = await postbox.accountFor(token);
@@ -342,6 +343,7 @@ export function createBilling(state) {
     const id = intentId(body.intent_id);
     const entry = plan(body.plan_code);
     if (!entry || entry.family !== "ent") fail(400, "Choose an enterprise plan. Above 500 seats, contact sales.", "invalid_plan");
+    if (!config.openCurrencies.includes(entry.currency)) fail(503, `Payments in ${entry.currency} are not open yet.`, "currency_unavailable");
     if (!isUuid(body.billing_profile_id)) fail(400, "Save the billing details first.", "billing_profile_required");
     strict(body.org, ["name", "namespace"]);
     const name = String(body.org.name || "").trim();

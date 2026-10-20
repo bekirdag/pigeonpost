@@ -761,7 +761,8 @@
 
   function showPlanPicker(minNames) {
     const box = $("#ac-cloud-picker"); if (!box) return;
-    let currency = defaultCurrency();
+    const open = cloudCfg().currencies.filter((c) => !overview?.openCurrencies || overview.openCurrencies.includes(c));
+    let currency = open.includes(defaultCurrency()) ? defaultCurrency() : open[0];
     const draw = () => {
       const options = Object.keys(cloudCfg().plans).map(Number).filter((n) => n >= minNames)
         .map((n) => `<option value="${n}">${n} name${n === 1 ? "" : "s"} — ${esc(priceLabel(n, currency))}</option>`).join("");
@@ -769,7 +770,7 @@
         <div class="ac-form">
           <label>Plan <select id="ac-plan-names">${options}</select></label>
           <label>Currency <select id="ac-plan-currency">
-            ${cloudCfg().currencies.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${c === "TRY" ? "Turkish lira (TRY)" : "US dollars (USD)"}</option>`).join("")}
+            ${open.map((c) => `<option value="${c}"${c === currency ? " selected" : ""}>${c === "TRY" ? "Turkish lira (TRY)" : "US dollars (USD)"}</option>`).join("")}
           </select></label>
           <p class="ac-note">Billed yearly by iyzico on behalf of Piyote Bilişim. Cards issued in Türkiye pay in TRY.
             TRY prices are fixed for ${esc(cloudCfg().pricingYear || "")}. Cancel any time; your names keep working until the end of the paid year.</p>
@@ -957,7 +958,7 @@
     } finally { if ($("#ac-handles-refresh") === refresh && refresh && request === overviewRequest) refresh.disabled = false; }
     if ($("#ac-subs") !== box || request !== overviewRequest) return;
     const profiles = data.billingProfiles || [];
-    overview = { hasBilling: profiles.length > 0, profileId: profiles[0]?.id || null,
+    overview = { hasBilling: profiles.length > 0, profileId: profiles[0]?.id || null, openCurrencies: data.openCurrencies || null,
       plan: data.cloud?.plan?.web_plan || null, subscription: data.cloud?.subscriptions?.[0] || null };
     renderSubs(data.handles || []);
     renderCloud(data.cloud);

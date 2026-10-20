@@ -130,7 +130,7 @@ test("a deletion response cannot overwrite a subsequent sign-out", async t => {
 });
 
 async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = { capacity: 0, used: 0, names: [] }, profiles = [{ id: "11111111-1111-4111-8111-111111111111" }],
-  subscriptions = [], recovery = false, statuses = ["pending", "active"] } = {}) {
+  subscriptions = [], recovery = false, statuses = ["pending", "active"], openCurrencies } = {}) {
   const dom = new JSDOM('<main id="account-root"></main>', { url, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
@@ -144,7 +144,7 @@ async function checkoutPage(t, { url = "https://pigeonpost.dev/account", plan = 
     calls.push({ path, method: init.method || "GET", body: init.body && JSON.parse(init.body) });
     const response = (body, status = 200) => ({ ok: status < 400, status, json: async () => body });
     if (path === "/api/v1/me/overview") return response({ handles: [], invoices: [], billingProfiles: profiles,
-      cloud: { subscriptions, plan: { web_plan: plan } } });
+      cloud: { subscriptions, plan: { web_plan: plan } }, openCurrencies });
     if (path.endsWith("/availability")) return response({ available: !recovery || init.headers?.authorization === "Bearer member-token", known: true });
     if (path === "/api/v1/names") return response({ namespace: "/example", capacity: plan.capacity, used: plan.used + 1 });
     if (path.startsWith("/api/v1/cloud/checkout/")) return response({ status: statuses.length > 1 ? statuses.shift() : statuses[0] });
@@ -205,6 +205,14 @@ test("without a plan the member chooses one; the hosted form gets a stable inten
   assert.equal(pending.billing_profile_id, "11111111-1111-4111-8111-111111111111");
   assert.equal(Object.keys(pending).some((k) => /price|amount/.test(k)), false);
   assert.equal(page.calls.some((c) => c.method === "POST"), false, "nothing is charged from the account page");
+});
+
+test("the picker offers only currencies the merchant can take", async (t) => {
+  const page = await checkoutPage(t, { openCurrencies: ["TRY"] });
+  await page.buy();
+  const options = [...page.window.document.querySelector("#ac-plan-currency").options].map((o) => o.value);
+  assert.deepEqual(options, ["TRY"]);
+  assert.match(page.window.document.querySelector("#ac-plan-names").options[0].textContent, /409/);
 });
 
 test("billing details come before a plan", async (t) => {
