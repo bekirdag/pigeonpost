@@ -183,6 +183,18 @@ const MEASURE = `(() => {
     if (!a.strip && (a.b.x < 0 || a.b.y < 0 || a.b.r > innerWidth || a.b.b > innerHeight)) problems.push(label(a.e) + " outside the window");
   }
   for (const p of presenting) for (const h of header) if (hit(p.b, h.b)) problems.push("the sharing banner overlaps " + label(h.e));
+  // The header's buttons are drawn in the call's own tokens (dark in either theme), not the inbox's:
+  // the Calls list once had .call-back and .call-main rules that reached in here and turned them blue.
+  const probe = document.createElement("span");
+  probe.style.color = "var(--call-ink)"; probe.style.background = "var(--call-chip)";
+  ui.append(probe);
+  const want = getComputedStyle(probe);
+  for (const b of ui.querySelectorAll(".call-top .call-back, .call-top .call-who-pill, .call-top .call-top-btn")) {
+    if (!b.offsetWidth) continue;
+    const cs = getComputedStyle(b);
+    if (cs.color !== want.color || cs.backgroundColor !== want.backgroundColor) problems.push(label(b) + " is not in the call's colours (" + cs.color + " on " + cs.backgroundColor + ", want " + want.color + " on " + want.backgroundColor + ")");
+  }
+  probe.remove();
   const grid = document.getElementById("call-grid");
   // No tile under the controls dock. The solo view fills the stage on purpose.
   const dock = box(ui.querySelector(".call-controls"));
@@ -193,7 +205,7 @@ const MEASURE = `(() => {
     }
   }
   return { layout: grid.dataset.layout, count: grid.dataset.count, acts: acts.length, guarded: guarded.length,
-    dock: dock && [Math.round(dock.y), Math.round(dock.b)], pill: (() => { const e = ui.querySelector(".call-pill"); const b = e && box(e); return b && [Math.round(b.x), Math.round(b.y), Math.round(b.r), Math.round(b.b)]; })(),
+    dock: dock && [Math.round(dock.y), Math.round(dock.b)], pill: (() => { const e = ui.querySelector(".call-who-pill"); const b = e && box(e); return b && [Math.round(b.x), Math.round(b.y), Math.round(b.r), Math.round(b.b)]; })(),
     act: acts[0] && [Math.round(acts[0].b.y), Math.round(acts[0].b.b)], problems };
 })()`;
 
@@ -231,7 +243,7 @@ const DETAILS = `(async () => {
   const problems = [];
   if (pill.getAttribute("aria-expanded") !== "false" || !details.hidden) problems.push("details open by default");
   const p = rect(pill);
-  for (const other of ui.querySelectorAll(".call-top button:not(.call-pill)")) if (other.offsetWidth && hit(p, rect(other))) problems.push("the pill overlaps " + (other.getAttribute("aria-label") || other.id));
+  for (const other of ui.querySelectorAll(".call-top button:not(.call-who-pill)")) if (other.offsetWidth && hit(p, rect(other))) problems.push("the pill overlaps " + (other.getAttribute("aria-label") || other.id));
   pill.click();
   await new Promise((r) => setTimeout(r, 200));
   if (pill.getAttribute("aria-expanded") !== "true" || details.hidden) problems.push("the pill did not open its details");

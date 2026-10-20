@@ -1999,10 +1999,10 @@
             // Who the call is with, as one compact pill: the name, the time, and a chevron. The rest —
             // handle, quality and route, and the security code — opens under it on a tap.
             el("div", { class: "call-who" },
-              el("button", { class: "call-pill", id: "call-pill", type: "button", "aria-expanded": "false", "aria-controls": "call-details",
+              el("button", { class: "call-who-pill", id: "call-pill", type: "button", "aria-expanded": "false", "aria-controls": "call-details",
                 title: "Call details and security code", onclick: () => toggleDetails() },
-                el("h2", { class: "call-pill-name", id: "call-name" }),
-                el("span", { class: "call-pill-time", id: "call-status", "aria-live": "polite" }),
+                el("h2", { class: "call-who-name", id: "call-name" }),
+                el("span", { class: "call-who-time", id: "call-status", "aria-live": "polite" }),
                 svg(ICON.chevron)),
               el("div", { class: "call-details", id: "call-details", role: "region", "aria-label": "Call details", hidden: true },
                 el("p", { class: "call-handle", id: "call-handle" }),
