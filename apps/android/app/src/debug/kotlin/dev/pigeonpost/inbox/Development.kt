@@ -5,6 +5,7 @@ import android.content.Intent
 import dev.pigeonpost.core.*
 import dev.pigeonpost.inbox.auth.SessionState
 import dev.pigeonpost.inbox.auth.UserSession
+import dev.pigeonpost.inbox.calls.CallsOverride
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
@@ -17,9 +18,27 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store")) return null
         return AppGraph(FixtureSession(mode != "signin", mode != "policy" && mode != "signin"), FixturePostbox(mode), fixtures = true)
     }
+
+    /**
+     * Local call tests only, like the iOS app's `-calls-page/-calls-token/-calls-mailbox/-calls-handle/-call`:
+     * `--es pigeonpost.calls.page http://127.0.0.1:8460/native-call.html --es pigeonpost.calls.token tok-alice
+     *  --es pigeonpost.calls.mailbox /k/alice… [--es pigeonpost.calls.handle /alice] [--es pigeonpost.call /bob:video]`.
+     * Only the debug source set has this; release builds cannot be pointed anywhere but production.
+     */
+    fun calls(intent: Intent): CallsOverride? {
+        val page = intent.getStringExtra("pigeonpost.calls.page") ?: return null
+        return CallsOverride(page, intent.getStringExtra("pigeonpost.calls.token"), intent.getStringExtra("pigeonpost.calls.mailbox"),
+            intent.getStringExtra("pigeonpost.calls.handle"), intent.getStringExtra("pigeonpost.call"))
+    }
+
+    /** A screenshot run may pin light or dark without touching the saved setting. */
+    fun appearance(intent: Intent): String? = intent.getStringExtra("pigeonpost.appearance")
+
+    /** Lets the call page be inspected from the computer (chrome://inspect) in debug builds. */
+    fun started() { android.webkit.WebView.setWebContentsDebuggingEnabled(true) }
 }
 private class FixtureSession(signedIn: Boolean, accepted: Boolean) : UserSession {
     override val state = MutableStateFlow(SessionState(loading = false, signedIn = signedIn, username = "demo", termsAccepted = signedIn && accepted))
@@ -51,8 +70,35 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
     private val attachments = mutableMapOf("a_notes" to "Pigeonpost Android development build".toByteArray())
     init {
         if (mode == "long" || mode == "long-tall") repeat(1000) { index -> messages += Message("history_$index", "History message $index\n\nA repeatable scrolling check.", from = "/k/demo-agent", peerHandle = "/demo/builder", threadId = "t_build", receivedAt = now - 10000 + index, read = true) }
+        if (mode == "store") storeFixture()
         if (mode == "long-tall") messages[0] = messages[0].copy(body =
             "# A long build report\n\n" + (1..60).joinToString("\n\n") { "Section $it: verifying native message layout and scrolling." } + "\n\nNewest report footer")
+    }
+    /** Store screenshots: the same fleet the iOS App Store shots show. Invented addresses, no real data. */
+    private fun storeFixture() {
+        boxes.clear(); boxes += listOf(IdentityRow("/k/cz6900v2h90vnwefj7g7ezvbh4", "main"), IdentityRow("/k/zz1111v2h90vnwefj7g7ezvbh9", "docdex box"), IdentityRow("/k/qq2222v2h90vnwefj7g7ezvbh7", "scratch"))
+        val agent = "/bekir/agent1"
+        messages.clear(); messages += listOf(
+            Message("m1", "the build is green — 0.5.21 tagged and the npm job went through unattended", from = "/k/aaaa1111bbbb2222cccc3333dd", peer = agent, peerHandle = agent, senderHandle = agent,
+                threadId = "t-agent1", direction = "in", autonomy = "review", heldBecause = "not_a_request", receivedAt = now - 7200, read = true),
+            Message("m_out1", "good. run the unit suite once more before the release gate", direction = "out", to = agent, peer = agent, peerHandle = agent, threadId = "t-agent1", sentAt = now - 3600, read = true),
+            Message("m2", "{\"v\":1,\"verb\":\"run_tests\",\"args\":{\"suite\":\"unit\",\"target\":\"crates/pigeonpost-postbox\"},\"note\":\"before the tag\"}",
+                from = "/k/aaaa1111bbbb2222cccc3333dd", peer = agent, peerHandle = agent, senderHandle = agent, threadId = "t-agent1", direction = "in", autonomy = "review", verb = "run_tests",
+                heldBecause = "verb_denied", receivedAt = now - 900, read = false),
+            Message("m_out2", "pin the flaky macOS test and push a fix", direction = "out", to = agent, peer = agent, peerHandle = agent, threadId = "t-agent1", sentAt = now - 600, read = true),
+            Message("m_reply", "pigeonpost-auto-reply v1 in_reply_to=m_out2 answered=full_access\nGenerated unattended by this mailbox's agent. Nobody read it before it was sent.\n\n## Pinned it\n\n" +
+                "The fixture listener was **non-blocking**, which macOS inherits onto the accepted socket and Linux does not.\n\n- `set_nonblocking(false)` in `serve_http_request`\n- one test added for the accepted socket\n\n" +
+                "```rust\nstream.set_nonblocking(false)?;\n```\n\nPushed as `4f21c0e` and CI is green: fmt, clippy, and the Linux and macOS test jobs all pass.",
+                from = "/k/aaaa1111bbbb2222cccc3333dd", peer = agent, peerHandle = agent, senderHandle = agent, threadId = "t-agent1", direction = "in", autonomy = "auto", verb = "full_access", receivedAt = now - 420, read = true),
+            Message("m_docdex", "index rebuilt — 41k symbols, 1.2s", from = "/k/zz1111v2h90vnwefj7g7ezvbh9", peer = "/bekir/docdex", peerHandle = "/bekir/docdex", senderHandle = "/bekir/docdex",
+                direction = "in", autonomy = "auto", receivedAt = now - 108000, read = true),
+            Message("m3", "hello — are you the maintainer of pigeonpost?", from = "/k/eeee5555ffff6666gggg7777hh", peer = "/k/eeee5555ffff6666gggg7777hh", threadId = "t-stranger",
+                direction = "in", autonomy = "review", heldBecause = "sender_not_auto", receivedAt = now - 240, read = false),
+        )
+        subjects.clear(); subjects += listOf(ServerThread("t-agent1", agent, null, isDefault = true, lastAt = now - 900), ServerThread("t-agent1-deploy", agent, "the deploy", lastAt = now - 8000),
+            ServerThread("t-stranger", "/k/eeee5555ffff6666gggg7777hh", null, isDefault = true, lastAt = now - 240))
+        people.clear(); people += Contact("/bekir/*", "my fleet", "allow", "review", emptyList())
+        archived.clear()
     }
     override suspend fun identities() = if (created) boxes else emptyList()
     override suspend fun accountHandles() = listOf(
@@ -60,7 +106,12 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
         AccountHandle("studio", "google", now + 86400, true),
         AccountHandle("previous", "google", now - 86400, false),
     )
-    override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == "/k/preview") preview.mailbox else if (identity == boxes.first().address) "/demo/main" else "/demo/builder")
+    override suspend fun whoami(identity: String) = WhoAmI(identity, when {
+        mode == "store" -> mapOf("/k/cz6900v2h90vnwefj7g7ezvbh4" to "/bekir/main", "/k/zz1111v2h90vnwefj7g7ezvbh9" to "/bekir/docdex")[identity]
+        identity == "/k/preview" -> preview.mailbox
+        identity == boxes.first().address -> "/demo/main"
+        else -> "/demo/builder"
+    })
     override suspend fun createIdentity(handle: String?): String { created = true; return boxes.first().address }
     override suspend fun inbox(identity: String, wait: Int?): InboxResponse {
         if (mode == "offline") throw IOException("You’re offline. Check your connection and try again.")

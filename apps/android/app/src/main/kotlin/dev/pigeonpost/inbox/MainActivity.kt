@@ -21,6 +21,9 @@ import androidx.lifecycle.lifecycleScope
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import dev.pigeonpost.core.Attachment
+import dev.pigeonpost.core.AttachmentKinds
+import dev.pigeonpost.inbox.calls.CallFrame
+import dev.pigeonpost.inbox.calls.CallWindow
 import dev.pigeonpost.core.verifiedSignInUrl
 import dev.pigeonpost.inbox.ui.PigeonpostApp
 import kotlinx.coroutines.CancellationException
@@ -34,7 +37,8 @@ class MainActivity : ComponentActivity() {
         ViewModelProvider(this, object : ViewModelProvider.Factory {
             @Suppress("UNCHECKED_CAST")
             override fun <T : ViewModel> create(modelClass: Class<T>): T = InboxViewModel(application,
-                Development.graph(application, intent) ?: (application as PigeonpostApplication).graph) as T
+                Development.graph(application, intent) ?: (application as PigeonpostApplication).graph,
+                Development.calls(intent), Development.appearance(intent)) as T
         })[InboxViewModel::class.java]
     }
     private val authorization = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.completeSignIn(it.data) }
@@ -45,6 +49,11 @@ class MainActivity : ComponentActivity() {
         val file = model.pendingSave; model.pendingSave = null
         if (uri != null && file != null) lifecycleScope.launch { try { model.files.save(file, uri) } catch (failure: Exception) { report(failure) } }
     }
+    private var permissionsAnswer: ((Map<String, Boolean>) -> Unit)? = null
+    private val callPermissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+        val answer = permissionsAnswer; permissionsAnswer = null; answer?.invoke(result)
+    }
+    private var callFrame: CallFrame? = null
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { text ->
             val safe = verifiedSignInUrl(text)
@@ -65,6 +74,21 @@ class MainActivity : ComponentActivity() {
             attachment = ::attachment,
             openLink = ::openLink, notificationSettings = ::notificationSettings) }
         model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        Development.started()
+        model.calls?.let { host ->
+            host.window = object : CallWindow {
+                override fun requestPermissions(permissions: Array<String>, done: (Map<String, Boolean>) -> Unit) {
+                    // One question at a time; a second request while the first is open is answered by the first.
+                    val previous = permissionsAnswer
+                    permissionsAnswer = { result -> previous?.invoke(result); done(result) }
+                    if (previous == null) callPermissions.launch(permissions)
+                }
+                override fun openExternal(uri: Uri) = openLink(uri.toString())
+                override fun toast(text: String) = model.inbox.showError(text)
+            }
+            callFrame = CallFrame(this, host)
+            onBackPressedDispatcher.addCallback(this, callFrame!!.back)
+        }
         lifecycleScope.launch {
             combine(model.session.state, model.inbox.state) { session, state -> session.signedIn && session.termsAccepted && state.acting != null }
                 .distinctUntilChanged().collect { ready ->
@@ -77,6 +101,11 @@ class MainActivity : ComponentActivity() {
                     }
                 }
         }
+    }
+    override fun onDestroy() {
+        callFrame?.detach(); callFrame = null
+        model.calls?.window = null
+        super.onDestroy()
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
@@ -94,7 +123,13 @@ class MainActivity : ComponentActivity() {
             try {
                 val file = model.files.download(identity, value)
                 if (identity != model.inbox.state.value.acting?.address || !model.session.state.value.signedIn) return@launch
-                if (action == "save") { model.pendingSave = file; save.launch(file.name); return@launch }
+                if (action == "download" && AttachmentKinds.savesToGallery(value.filename, value.mediaType) && Build.VERSION.SDK_INT >= 29) {
+                    // Photos and videos go to the gallery; nothing else is written there.
+                    try { model.files.saveToGallery(file, value.filename, AttachmentKinds.type(value.filename, value.mediaType)); model.inbox.showError("Saved to your photos.") }
+                    finally { file.parentFile?.deleteRecursively() }
+                    return@launch
+                }
+                if (action == "save" || action == "download") { model.pendingSave = file; save.launch(file.name); return@launch }
                 val uri = FileProvider.getUriForFile(this@MainActivity, "$packageName.files", file)
                 val intent = if (action == "share") Intent(Intent.ACTION_SEND).setType(value.mediaType).putExtra(Intent.EXTRA_STREAM, uri)
                     else Intent(Intent.ACTION_VIEW).setDataAndType(uri, value.mediaType)

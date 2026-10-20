@@ -26,8 +26,8 @@ android {
         applicationId = "dev.pigeonpost.inbox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 10
-        versionName = "0.2.7"
+        versionCode = 11
+        versionName = "0.3.0"
         // Firebase project identifiers are public. Inject the restricted API key at build time.
         // Forked PRs without secrets can still run fixtures and produce development artifacts.
         resValue("string", "google_api_key", firebaseApiKey ?: "not-configured")

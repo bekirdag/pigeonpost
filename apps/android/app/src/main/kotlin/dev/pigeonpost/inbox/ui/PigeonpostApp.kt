@@ -1,23 +1,20 @@
 @file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 package dev.pigeonpost.inbox.ui
 
+import android.app.Activity
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,63 +22,30 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.pigeonpost.core.*
-import dev.pigeonpost.inbox.InboxViewModel
 import dev.pigeonpost.inbox.AppPolicy
+import dev.pigeonpost.inbox.InboxViewModel
 import dev.pigeonpost.inbox.R
 import dev.pigeonpost.inbox.auth.SessionState
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import java.text.DateFormat
-import java.util.Date
+import dev.pigeonpost.inbox.calls.CallHost
 
-@Composable
-fun CopyAddressButton(address: String, modifier: Modifier = Modifier) {
-    val clipboard = LocalClipboardManager.current
-    val context = LocalContext.current
-    var copied by remember(address) { mutableStateOf(false) }
-    var revision by remember(address) { mutableIntStateOf(0) }
-    LaunchedEffect(address, revision) {
-        if (copied) { delay(2000); copied = false }
-    }
-    IconButton(onClick = {
-        try {
-            clipboard.setText(AnnotatedString(address))
-            copied = true
-            revision++
-        } catch (_: SecurityException) {
-            android.widget.Toast.makeText(context, "Couldn’t copy the address. Select it and copy manually.", android.widget.Toast.LENGTH_LONG).show()
-        }
-    }, enabled = address.isNotEmpty(), modifier = modifier.size(48.dp).semantics { stateDescription = if (copied) "Copied" else "" }) {
-        Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy address $address")
-    }
-}
-
-@Composable
-fun PostAddressRow(address: String, modifier: Modifier = Modifier) {
-    Row(modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-        SelectionContainer(Modifier.weight(1f)) {
-            Text(address, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 2, overflow = TextOverflow.Ellipsis)
-        }
-        CopyAddressButton(address)
-    }
-}
+/** Windows at least this wide get the iPad/desktop three-column layout. */
+val WideLayoutWidth = 700.dp
 
 @Composable
 fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, chooseFile: () -> Unit,
@@ -90,9 +54,12 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val session by model.session.state.collectAsStateWithLifecycle()
     val state by model.inbox.state.collectAsStateWithLifecycle()
     val handleState by model.handles.state.collectAsStateWithLifecycle()
+    val appearance by model.appearance.collectAsStateWithLifecycle()
+    val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
     val store = model.inbox
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
+    var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); store.clearError() } }
     // Preserve a Settings subpage through rotation, but never carry it to another account/inbox.
@@ -101,7 +68,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
         val owner = if (session.signedIn && state.acting != null) "${session.username}\n${state.acting?.address}" else null
         val signedOut = !session.loading && !session.signedIn
         if (signedOut || (owner != null && sheetOwner != null && owner != sheetOwner)) {
-            sheet = null; editContact = null
+            sheet = null; editContact = null; viewing = null
         }
         if (owner != null || signedOut) sheetOwner = owner
     }
@@ -111,31 +78,53 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     LaunchedEffect(session.termsAccepted, state.acting?.address, state.selectedPeer, state.subject?.id, visibleIds, lifecycle) {
         if (session.termsAccepted && state.selectedPeer != null && lifecycle.isAtLeast(Lifecycle.State.RESUMED)) store.acknowledgeVisible()
     }
-    BackHandler(enabled = state.selectedPeer != null && sheet == null) { store.selectPeer(null) }
-    BackHandler(enabled = state.viewingArchive && state.selectedPeer == null && sheet == null) { store.showArchive(false) }
-    PigeonpostTheme {
-        Scaffold(snackbarHost = { SnackbarHost(snackbar) }, contentWindowInsets = WindowInsets.safeDrawing) { padding ->
-            Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).imePadding()) {
-                when {
-                    session.loading -> Loading("Opening Pigeonpost…")
-                    !session.signedIn -> SignIn(session, signIn, openLink)
-                    !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
-                    state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
-                    state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
-                    else -> BoxWithConstraints(Modifier.fillMaxSize()) {
-                        val wide = maxWidth >= 840.dp
-                        Row(Modifier.fillMaxSize()) {
-                            if (wide || state.selectedPeer == null) {
-                                InboxList(state, store, Modifier.then(if (wide) Modifier.width(340.dp) else Modifier.fillMaxWidth()).fillMaxHeight(),
-                                    mailbox = { sheet = "mailbox" }, new = { sheet = "new" }, settings = { sheet = "settings" })
-                            }
-                            if (wide) VerticalDivider()
-                            if (state.selectedPeer != null) {
-                                ConversationPane(state, store, model, Modifier.weight(1f), wide,
-                                    info = { sheet = "peer" }, newSubject = { sheet = "subject" },
-                                    chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = attachment, openLink = openLink)
-                            } else if (wide) EmptyPane("A place for your agents", "Choose a conversation or start a new one.", Modifier.weight(1f))
+    // The in-app viewer for files Android can show safely; anything else keeps the existing open/share/save.
+    val open: (Attachment, String) -> Unit = { file, action ->
+        if (action == "view" || (action == "open" && AttachmentKinds.viewer(file.filename, file.mediaType) != null)) viewing = file
+        else attachment(file, action)
+    }
+    val dark = appearance.isDark()
+    val view = LocalView.current
+    if (!view.isInEditMode) SideEffect {
+        (view.context as? Activity)?.window?.let { window ->
+            // A full-screen call is drawn dark whatever the app's appearance, so its bars carry light icons.
+            val light = !dark && callMode != CallHost.Mode.FULL
+            WindowCompat.getInsetsController(window, view).apply { isAppearanceLightStatusBars = light; isAppearanceLightNavigationBars = light }
+        }
+    }
+    PigeonpostTheme(dark) {
+        val p = Pp.colors
+        BoxWithConstraints(Modifier.fillMaxSize()) {
+            val wide = maxWidth >= WideLayoutWidth
+            BackHandler(enabled = !wide && state.selectedPeer != null && sheet == null) { store.selectPeer(null) }
+            BackHandler(enabled = state.viewingArchive && (wide || state.selectedPeer == null) && sheet == null) { store.showArchive(false) }
+            val ground = when {
+                !session.signedIn || !session.termsAccepted || state.acting == null -> p.app
+                wide -> p.sidebar
+                state.selectedPeer != null -> p.wash
+                else -> p.sidebar
+            }
+            Scaffold(snackbarHost = { SnackbarHost(snackbar) { Snackbar(it, containerColor = p.toastFill, contentColor = androidx.compose.ui.graphics.Color.White) } },
+                contentWindowInsets = WindowInsets.safeDrawing, containerColor = ground) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)
+                    .padding(top = if (callMode == CallHost.Mode.MINI) 64.dp else 0.dp).imePadding()) {
+                    when {
+                        session.loading -> Loading("Opening Pigeonpost…")
+                        !session.signedIn -> SignIn(session, signIn, openLink)
+                        !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
+                        state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
+                        state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
+                        wide -> TabletInbox(state, store, model, session.username, callMode,
+                            newConversation = { sheet = "new" }, settings = { sheet = "settings" },
+                            info = { sheet = "peer" }, newSubject = { sheet = "subject" },
+                            chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = open, openLink = openLink)
+                        state.selectedPeer != null -> Box(Modifier.fillMaxSize().background(p.wash)) {
+                            ConversationPane(state, store, model, Modifier.fillMaxSize(), wide = false, callMode = callMode,
+                                info = { sheet = "peer" }, newSubject = { sheet = "subject" },
+                                chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = open, openLink = openLink)
                         }
+                        else -> InboxList(state, store, Modifier.fillMaxSize().background(p.sidebar),
+                            mailbox = { sheet = "mailbox" }, new = { sheet = "new" }, settings = { sheet = "settings" })
                     }
                 }
             }
@@ -149,7 +138,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 accountHandles = model.accountHandles, refreshMailboxes = { store.loadAccount() },
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
-                signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings)
+                signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings,
+                appearance = appearance, chooseAppearance = model::chooseAppearance)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
@@ -157,261 +147,145 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
         }
+        viewing?.let { file ->
+            val identity = state.acting?.address
+            if (identity == null) viewing = null
+            else AttachmentViewer(identity, file, model.files, download = { attachment(file, "download") }, dismiss = { viewing = null })
+        }
     }
 }
 
 @Composable
 private fun SignIn(state: SessionState, signIn: (String?, Boolean) -> Unit, openLink: (String) -> Unit) {
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Image(painterResource(R.drawable.ic_pigeonpost), "Pigeonpost", Modifier.size(104.dp).clip(RoundedCornerShape(24.dp)))
-            Text("Pigeonpost", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
-            Text("A direct line to your agents.", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Spacer(Modifier.height(20.dp))
-            Button({ signIn(null, false) }, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Sign in") }
-            OutlinedButton({ signIn("google", false) }, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Continue with Google") }
-            OutlinedButton({ signIn("github", false) }, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Continue with GitHub") }
-            OutlinedButton({ signIn("apple", false) }, Modifier.fillMaxWidth(), enabled = !state.busy) { Text("Continue with Apple") }
+    val p = Pp.colors
+    Box(Modifier.fillMaxSize().background(p.app), contentAlignment = Alignment.Center) {
+        Column(Modifier.widthIn(max = 420.dp).verticalScroll(rememberScrollState()).padding(28.dp), horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Image(painterResource(R.drawable.ic_pigeonpost), "Pigeonpost", Modifier.size(96.dp).clip(RoundedCornerShape(22.dp)))
+            Text("Pigeonpost", style = geist(30.sp, FontWeight.Bold), color = p.ink)
+            Text("A direct line to your agents.", style = geist(16.sp), color = p.secondary)
+            Spacer(Modifier.height(18.dp))
+            Button({ signIn(null, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(12.dp)) { Text("Sign in", style = geist(15.sp, FontWeight.SemiBold)) }
+            listOf("google" to "Continue with Google", "github" to "Continue with GitHub", "apple" to "Continue with Apple").forEach { (provider, label) ->
+                OutlinedButton({ signIn(provider, false) }, Modifier.fillMaxWidth().height(48.dp), enabled = !state.busy, shape = RoundedCornerShape(12.dp),
+                    border = androidx.compose.foundation.BorderStroke(1.dp, p.strokeStrong),
+                    colors = ButtonDefaults.outlinedButtonColors(containerColor = p.ground, contentColor = p.ink)) { Text(label, style = geist(15.sp, FontWeight.Medium)) }
+            }
             TextButton({ signIn(null, true) }, enabled = !state.busy) { Text("Use a different account") }
-            if (state.busy) CircularProgressIndicator(Modifier.size(24.dp))
+            if (state.busy) CircularProgressIndicator(Modifier.size(24.dp), color = p.accent)
             state.error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-            Text("Your conversations, subjects, and contacts stay with your account.", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton({ openLink(AppPolicy.TERMS_URL) }) { Text("Terms of service") }
-            TextButton({ openLink(AppPolicy.PRIVACY_URL) }) { Text("Privacy policy") }
-            TextButton({ openLink(AppPolicy.SUPPORT_URL) }) { Text("Support") }
+            Text("Your conversations, subjects, and contacts stay with your account.", style = geist(13.5.sp), color = p.muted, textAlign = TextAlign.Center)
+            Row(horizontalArrangement = Arrangement.Center) {
+                TextButton({ openLink(AppPolicy.TERMS_URL) }) { Text("Terms of service", color = p.secondary) }
+                TextButton({ openLink(AppPolicy.PRIVACY_URL) }) { Text("Privacy policy", color = p.secondary) }
+                TextButton({ openLink(AppPolicy.SUPPORT_URL) }) { Text("Support", color = p.secondary) }
+            }
         }
     }
 }
 
 @Composable
 private fun FirstInbox(state: InboxState, store: InboxStore, signOut: () -> Unit, openLink: (String) -> Unit) {
-    Column(Modifier.fillMaxSize().padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-        Image(painterResource(R.drawable.ic_pigeonpost), null, Modifier.size(96.dp))
-        Text(if (state.accountLoaded) "Your first inbox" else "Couldn’t open your inboxes", style = MaterialTheme.typography.headlineSmall)
-        Text(if (state.accountLoaded) "Create an inbox to start a conversation with your agents." else "Check your connection and try again.", Modifier.padding(vertical = 16.dp))
-        Button({ if (state.accountLoaded) store.createFirstInbox() else store.loadAccount() }, enabled = !state.creating && !state.accountLoading) {
+    val p = Pp.colors
+    Column(Modifier.fillMaxSize().background(p.app).padding(28.dp), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+        Image(painterResource(R.drawable.ic_pigeonpost), null, Modifier.size(88.dp).clip(RoundedCornerShape(20.dp)))
+        Spacer(Modifier.height(16.dp))
+        Text(if (state.accountLoaded) "Your first inbox" else "Couldn’t open your inboxes", style = geist(22.sp, FontWeight.SemiBold), color = p.ink)
+        Text(if (state.accountLoaded) "Create an inbox to start a conversation with your agents." else "Check your connection and try again.",
+            Modifier.padding(vertical = 16.dp), color = p.secondary, style = geist(15.sp), textAlign = TextAlign.Center)
+        Button({ if (state.accountLoaded) store.createFirstInbox() else store.loadAccount() }, enabled = !state.creating && !state.accountLoading, shape = RoundedCornerShape(12.dp)) {
             Text(if (state.creating) "Creating…" else if (state.accountLoaded) "Create inbox" else "Try again")
         }
-        TextButton(signOut) { Text("Sign out") }
-        TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account") }
+        TextButton(signOut) { Text("Sign out", color = p.secondary) }
+        TextButton({ openLink("https://pigeonpost.dev/delete-account.html") }) { Text("Delete account", color = p.blockedText) }
     }
+}
+
+/** A search field in the design's own shape: a filled, borderless, rounded row. */
+@Composable
+fun SearchField(value: String, change: (String) -> Unit, placeholder: String, modifier: Modifier = Modifier) {
+    val p = Pp.colors
+    BasicTextField(value, change, modifier.semantics { contentDescription = placeholder }, singleLine = true,
+        textStyle = geist(14.5.sp, color = p.ink), cursorBrush = SolidColor(p.accent),
+        decorationBox = { inner ->
+            Row(Modifier.fillMaxWidth().height(40.dp).background(p.field, RoundedCornerShape(10.dp)).padding(horizontal = 12.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Icon(Icons.Outlined.Search, null, Modifier.size(18.dp), tint = p.muted)
+                Box(Modifier.weight(1f)) {
+                    if (value.isEmpty()) Text(placeholder, style = geist(14.5.sp), color = p.muted, maxLines = 1)
+                    inner()
+                }
+            }
+        })
 }
 
 @Composable
 private fun InboxList(state: InboxState, store: InboxStore, modifier: Modifier, mailbox: () -> Unit, new: () -> Unit, settings: () -> Unit) {
+    val p = Pp.colors
     Column(modifier) {
-        Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack) { store.showArchive(false) }
-            Column(Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).clickable(onClick = mailbox).padding(vertical = 8.dp)) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(if (state.viewingArchive) "Archive" else "Inbox", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
-                    Icon(Icons.Outlined.ExpandMore, null, Modifier.size(20.dp))
+        Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.showArchive(false) }
+            Row(Modifier.weight(1f).clip(RoundedCornerShape(10.dp)).clickable(onClick = mailbox).padding(horizontal = 8.dp, vertical = 6.dp),
+                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                state.acting?.let { Avatar(it.key, it.name, 30.dp) }
+                Column(Modifier.weight(1f, fill = false)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(if (state.viewingArchive) "Archive" else "Inbox", style = geist(22.sp, FontWeight.Bold), color = p.ink)
+                        Icon(Icons.Outlined.ExpandMore, null, Modifier.padding(start = 2.dp).size(20.dp), tint = p.secondary)
+                    }
+                    state.acting?.let { Text(it.name, style = geistMono(12.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.MiddleEllipsis) }
                 }
             }
-            ActionIcon("New conversation", Icons.Outlined.Edit, new)
-            ActionIcon("Settings", Icons.Outlined.Settings, settings)
+            ActionIcon("New conversation", Icons.Outlined.Edit, action = new)
+            ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
         }
-        OutlinedTextField(state.filter, store::filter, Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 10.dp),
-            placeholder = { Text("Search conversations") }, leadingIcon = { Icon(Icons.Outlined.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp))
-        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth())
-        if (state.offline) Text("Offline · showing the last loaded conversations", Modifier.padding(16.dp), color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.labelMedium)
+        SearchField(state.filter, store::filter, "Search conversations", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
+        if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = p.accent, trackColor = p.rule)
+        else Seam(Modifier.fillMaxWidth().height(1.dp))
+        if (state.offline) Text("Offline · showing the last loaded conversations", Modifier.padding(16.dp), color = p.heldText, style = geist(12.5.sp, FontWeight.Medium))
         if (state.visible.isEmpty()) {
             EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
                 if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
         } else LazyColumn(Modifier.weight(1f)) {
             items(state.visible, key = { it.peer }) { conversation ->
-                ConversationRow(conversation, conversation.peer == state.selectedPeer, { store.selectPeer(conversation.peer) })
+                ConversationRow(conversation, false, phone = true) { store.selectPeer(conversation.peer) }
             }
         }
+        Seam(Modifier.fillMaxWidth().height(1.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
-            Text("${state.visible.size} conversations", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            TextButton({ store.refresh() }, enabled = !state.loading) { Icon(Icons.Outlined.Refresh, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("Refresh") }
+            Text("${state.visible.size} conversations", style = geist(12.sp), color = p.muted)
+            TextButton({ store.refresh() }, enabled = !state.loading) {
+                Icon(Icons.Outlined.Refresh, null, Modifier.size(16.dp), tint = p.secondary); Spacer(Modifier.width(6.dp)); Text("Refresh", color = p.secondary, style = geist(13.sp, FontWeight.Medium))
+            }
         }
     }
 }
 
+/** One conversation: the face, the name in mono, the time, a one-line preview and the server's chips. */
 @Composable
-private fun ConversationRow(row: Conversation, selected: Boolean, select: () -> Unit) {
-    Column(Modifier.fillMaxWidth().background(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = .08f) else Color.Transparent).clickable(onClick = select)) {
-        Row(Modifier.padding(horizontal = 16.dp, vertical = 16.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            Avatar(row.name)
-            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+fun ConversationRow(row: Conversation, selected: Boolean, phone: Boolean, select: () -> Unit) {
+    val p = Pp.colors
+    val preview = row.messages.lastOrNull()?.display?.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trimStart('#', ' ', '>')?.take(140)?.ifBlank { "Attachment" }
+        ?: if (row.messages.lastOrNull()?.attachments?.isNotEmpty() == true) "Attachment" else "Start a conversation"
+    val shape = RoundedCornerShape(10.dp)
+    Column(Modifier.fillMaxWidth().then(if (phone) Modifier else Modifier.padding(horizontal = 8.dp, vertical = 1.dp))
+        .clip(if (phone) RoundedCornerShape(0.dp) else shape).background(if (selected) p.selected else androidx.compose.ui.graphics.Color.Transparent)
+        .clickable(onClick = select).testTag("conversation:" + row.peer)) {
+        Row(Modifier.padding(horizontal = if (phone) 16.dp else 10.dp, vertical = if (phone) 13.dp else 10.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(11.dp)) {
+            Avatar(row.peer, row.name, if (phone) 44.dp else 38.dp)
+            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(row.name, Modifier.weight(1f), fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(shortTime(row.last), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(row.name, Modifier.weight(1f), style = geistMono(if (phone) 14.5.sp else 13.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(shortTime(row.last), style = geist(11.5.sp), color = p.muted)
                 }
                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    Text(row.messages.lastOrNull()?.display?.text?.lineSequence()?.firstOrNull { it.isNotBlank() }?.trimStart('#', ' ', '>')?.take(140)?.ifBlank { "Attachment" }
-                        ?: if (row.messages.lastOrNull()?.attachments?.isNotEmpty() == true) "Attachment" else "Start a conversation",
-                        Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium, maxLines = 2, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (row.blocked) BadgeText("Blocked", MaterialTheme.colorScheme.error)
-                    else if (row.held > 0) BadgeText("Held", MaterialTheme.colorScheme.tertiary)
-                    if (row.unread > 0) Badge(containerColor = MaterialTheme.colorScheme.primary) { Text(row.unread.toString()) }
+                    Text(preview, Modifier.weight(1f), style = geist(if (phone) 14.sp else 13.sp), maxLines = 1, overflow = TextOverflow.Ellipsis, color = p.secondary)
+                    if (row.blocked) Pill("BLOCKED", PillKind.BLOCKED)
+                    else if (row.held > 0) Pill("HELD", PillKind.HELD)
+                    if (row.unread > 0) UnreadBadge(row.unread, inverted = false)
                 }
             }
         }
-        HorizontalDivider(Modifier.padding(start = 72.dp), color = MaterialTheme.colorScheme.outline)
+        if (phone) Seam(Modifier.padding(start = 71.dp).fillMaxWidth().height(1.dp))
     }
 }
-
-@Composable
-private fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel, modifier: Modifier, wide: Boolean, info: () -> Unit,
-    newSubject: () -> Unit, chooseFile: () -> Unit, choosePhoto: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
-    val staging by model.stagingAttachments.collectAsStateWithLifecycle()
-    val loadingFiles = staging[state.draftKey]?.let { it > 0 } == true
-    val peer = state.selectedPeer.orEmpty()
-    val subjects = state.subjects
-    val subject = state.subject
-    val messages = subject?.messages.orEmpty()
-    var searching by rememberSaveable(peer) { mutableStateOf(false) }
-    var query by rememberSaveable(peer) { mutableStateOf("") }
-    var match by rememberSaveable(peer) { mutableIntStateOf(0) }
-    var deleteSubject by remember { mutableStateOf(false) }
-    var addMenu by remember { mutableStateOf(false) }
-    val hits = remember(messages, query) { if (query.isBlank()) emptyList() else messages.filter { it.display.text.contains(query, true) }.map { it.id } }
-    var latestRequest by remember(state.acting?.address, peer, subject?.id) { mutableIntStateOf(0) }
-    Column(modifier.fillMaxHeight()) {
-        Row(Modifier.fillMaxWidth().padding(end = 4.dp, start = if (wide) 12.dp else 0.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (!wide) ActionIcon("Back to conversations", Icons.AutoMirrored.Outlined.ArrowBack) { store.selectPeer(null) }
-            Column(Modifier.weight(1f).clickable(onClick = info).padding(vertical = 14.dp)) {
-                Text(state.conversation?.name ?: displayName(peer), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(peer, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
-            ActionIcon("Find in conversation", Icons.Outlined.Search) { searching = !searching; if (!searching) query = "" }
-            ActionIcon("Conversation info", Icons.Outlined.Info, info)
-        }
-        Row(Modifier.fillMaxWidth().padding(end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            Row(Modifier.weight(1f).horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 8.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                subjects.forEach { item -> FilterChip(item.id == subject?.id, { store.selectSubject(item.id) }, label = { Text(item.name + if (item.unread > 0) " (${item.unread})" else "") }) }
-            }
-            ActionIcon("New subject", Icons.Outlined.Add, newSubject)
-            if (subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
-        }
-        if (searching) Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            OutlinedTextField(query, { query = it; match = 0 }, Modifier.weight(1f), label = { Text("Find in this subject") }, singleLine = true)
-            Text(if (hits.isEmpty()) "0" else "${match.mod(hits.size) + 1}/${hits.size}", Modifier.padding(8.dp), style = MaterialTheme.typography.labelSmall)
-            ActionIcon("Next match", Icons.Outlined.ArrowDownward) { if (hits.isNotEmpty()) match++ }
-        }
-        HorizontalDivider(color = MaterialTheme.colorScheme.outline)
-        if (messages.isEmpty()) EmptyPane("Start a conversation", "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
-        else key(state.acting?.address, peer, subject?.id) {
-            ConversationHistory(messages, Modifier.weight(1f),
-                searchTarget = if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
-                MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true), store, attachment, openLink, model, state.acting?.address.orEmpty())
-            }
-        }
-        if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
-                label = { Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    AttachmentPreview("draft:${file.id}", file.name, file.mediaType, compact = true) { model.files.preview(file) }
-                    Text(file.name, maxLines = 1)
-                } }, trailingIcon = { Icon(Icons.Outlined.Close, "Remove ${file.name}", Modifier.size(16.dp)) }) }
-        }
-        if (loadingFiles) Row(Modifier.padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-            Text("Preparing attachments…", Modifier.padding(start = 8.dp), style = MaterialTheme.typography.labelSmall)
-        }
-        if (state.quota?.full == true) Text("Storage is full. Delete messages or attachments to make space.", Modifier.padding(12.dp), color = MaterialTheme.colorScheme.error)
-        Row(Modifier.fillMaxWidth().padding(start = 4.dp, end = 8.dp, top = 8.dp, bottom = 8.dp), verticalAlignment = Alignment.Bottom) {
-            Box {
-                ActionIcon("Add attachment", Icons.Outlined.AttachFile) { addMenu = true }
-                DropdownMenu(addMenu, { addMenu = false }) {
-                    DropdownMenuItem({ Text("Choose document") }, { addMenu = false; chooseFile() })
-                    DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; choosePhoto() })
-                }
-            }
-            key(state.draftKey) {
-                MessageEditor(state.draft, store::draft, !state.isSending,
-                    Modifier.weight(1f).onFocusChanged { if (it.isFocused) latestRequest++ }, model::pasteAttachments)
-            }
-            IconButton({ latestRequest++; store.send() }, enabled = !state.isSending && !loadingFiles && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())) {
-                if (state.isSending) CircularProgressIndicator(Modifier.size(22.dp), strokeWidth = 2.dp)
-                else Icon(Icons.AutoMirrored.Outlined.Send, "Send message", tint = MaterialTheme.colorScheme.primary)
-            }
-        }
-    }
-    if (deleteSubject) Confirm("Delete subject?", "This removes the subject and its messages from this inbox. Other inboxes keep their copies.", "Delete",
-        { subject?.id?.let { store.deleteThread(it) { deleteSubject = false } } }, { deleteSubject = false }, enabled = !state.actionBusy)
-}
-
-@Suppress("DEPRECATION")
-@Composable
-private fun MessageBubble(message: ThreadMessage, highlighted: Boolean, store: InboxStore, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
-    model: InboxViewModel, identity: String) {
-    var menu by remember { mutableStateOf(false) }
-    var original by remember { mutableStateOf(false) }
-    var confirm by remember { mutableStateOf<String?>(null) }
-    val clipboard = LocalClipboardManager.current
-    Column(Modifier.fillMaxWidth(), horizontalAlignment = if (message.outgoing) Alignment.End else Alignment.Start) {
-        Surface(shape = RoundedCornerShape(18.dp), color = when {
-            highlighted -> MaterialTheme.colorScheme.tertiaryContainer
-            message.outgoing -> MaterialTheme.colorScheme.primary.copy(alpha = .08f)
-            else -> MaterialTheme.colorScheme.surfaceVariant
-        }, modifier = Modifier.widthIn(max = 680.dp).combinedClickable(onClick = {}, onLongClick = { menu = true })) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                if (!message.outgoing && message.verb != null) BadgeText(if (message.autonomy == "auto") "Auto · ${message.verb}" else "Held for review · ${message.verb}",
-                    if (message.autonomy == "auto") MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.tertiary)
-                message.heldBecause?.takeIf { message.autonomy == "review" }?.let { Text(it.replace('_', ' '), style = MaterialTheme.typography.labelSmall) }
-                if (message.display.unattended) BadgeText(if (message.display.failed) "Unattended · failed" else "Unattended reply", MaterialTheme.colorScheme.onSurfaceVariant)
-                if (message.body.isNotEmpty()) Markdown(message.display.text, openLink)
-                message.attachments.forEach { file ->
-                    var fileMenu by remember { mutableStateOf(false) }
-                    Box {
-                        Column(Modifier.clickable { fileMenu = true }) {
-                            AttachmentPreview("$identity:${file.id}", file.filename, file.mediaType) { model.files.preview(identity, file) }
-                            OutlinedButton({ fileMenu = true }) { Icon(Icons.Outlined.Description, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text(file.filename + " · " + bytes(file.bytes), maxLines = 2) }
-                        }
-                        DropdownMenu(fileMenu, { fileMenu = false }) {
-                            listOf("Open" to "open", "Share" to "share", "Save a copy" to "save").forEach { (label, action) ->
-                                DropdownMenuItem({ Text(label) }, { fileMenu = false; attachment(file, action) })
-                            }
-                        }
-                    }
-                }
-                Row(Modifier.align(Alignment.End), verticalAlignment = Alignment.CenterVertically) {
-                    Text(when (message.status) { Delivery.SENDING -> "Sending…"; Delivery.FAILED -> "Delivery unconfirmed"; Delivery.SENT -> shortTime(message.at) }, style = MaterialTheme.typography.labelSmall,
-                        color = if (message.status == Delivery.FAILED) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
-                    IconButton({ clipboard.setText(AnnotatedString(message.display.text)) }, Modifier.size(40.dp)) {
-                        Icon(Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp))
-                    }
-                    IconButton({ menu = true }, Modifier.size(32.dp)) { Icon(Icons.Outlined.MoreHoriz, "Message actions", Modifier.size(18.dp)) }
-                }
-                DropdownMenu(menu, { menu = false }) {
-                    DropdownMenuItem({ Text("Copy text") }, { menu = false; clipboard.setText(AnnotatedString(message.display.text)) })
-                    DropdownMenuItem({ Text("Original message") }, { menu = false; original = true })
-                    if (message.status != Delivery.SENDING) DropdownMenuItem({ Text(if (message.status == Delivery.FAILED) "Dismiss failed message" else "Delete message") }, { menu = false; confirm = "delete" })
-                    if (!message.outgoing) DropdownMenuItem({ Text("Report message") }, { menu = false; confirm = "spam" })
-                }
-            }
-        }
-    }
-    if (original) PageDialog("Original message", { original = false }) { SelectionContainer { Text(message.body, style = MaterialTheme.typography.bodyMedium) } }
-    if (confirm != null) Confirm(if (confirm == "spam") "Report this message?" else "Delete message?",
-        if (confirm == "spam") "Report this message and its sender for spam, abuse, or other prohibited content. This does not delete your copy." else "This removes your copy only.",
-        if (confirm == "spam") "Report" else "Delete", { if (confirm == "spam") store.reportSpam(message.id) else store.deleteMessage(message.id); confirm = null }, { confirm = null })
-}
-
-@Composable fun ActionIcon(label: String, icon: ImageVector, action: () -> Unit) { IconButton(action) { Icon(icon, label, tint = MaterialTheme.colorScheme.primary) } }
-@Composable fun Avatar(name: String) {
-    val palette = listOf(0xFF16326B, 0xFF2563EB, 0xFF0F766E, 0xFF7C3AED, 0xFFB45309, 0xFFBE123C)
-    Box(Modifier.size(44.dp).background(Color(palette[name.hashCode().mod(palette.size)]), CircleShape), contentAlignment = Alignment.Center) {
-        Text(name.filter { it.isLetterOrDigit() }.take(2).uppercase(), color = Color.White, style = MaterialTheme.typography.labelLarge)
-    }
-}
-@Composable fun BadgeText(text: String, color: Color) { Surface(color = color.copy(alpha = .08f), shape = RoundedCornerShape(5.dp)) { Text(text, Modifier.padding(horizontal = 6.dp, vertical = 3.dp), color = color, style = MaterialTheme.typography.labelSmall) } }
-@Composable fun EmptyPane(title: String, detail: String, modifier: Modifier = Modifier) {
-    Box(modifier.fillMaxSize().padding(28.dp), contentAlignment = Alignment.Center) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Icon(Icons.Outlined.Forum, null, Modifier.size(40.dp), tint = MaterialTheme.colorScheme.primary)
-            Text(title, style = MaterialTheme.typography.titleMedium)
-            Text(detail, color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.bodyMedium)
-        }
-    }
-}
-@Composable fun Loading(label: String) { Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) { CircularProgressIndicator(); Text(label, Modifier.padding(20.dp)) } }
-fun shortTime(epoch: Long): String = if (epoch <= 0) "" else {
-    val today = java.time.Instant.now().atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-    val date = java.time.Instant.ofEpochSecond(epoch).atZone(java.time.ZoneId.systemDefault()).toLocalDate()
-    (if (today == date) DateFormat.getTimeInstance(DateFormat.SHORT) else DateFormat.getDateInstance(DateFormat.SHORT)).format(Date(epoch * 1000))
-}
-fun bytes(value: Long): String = when { value >= 1024 * 1024 -> "%.1f MB".format(value / (1024.0 * 1024)); value >= 1024 -> "%.0f KB".format(value / 1024.0); else -> "$value B" }
