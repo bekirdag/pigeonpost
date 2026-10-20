@@ -6,6 +6,9 @@
 	     with Apple, which Apple grants to Mac App Store profiles only — a Developer ID profile for
 	     this App ID comes back without it, and a signed app claiming an entitlement its profile
 	     lacks is killed at launch. The Apple button there falls back to the realm's web flow.
+	     The same goes for `com.apple.developer.aps-environment` (remote push): no Developer ID
+	     profile with push is embedded in the website build, so it must not claim it; that build
+	     rings for calls only while it is running (a local notification, MacCallAlerts).
 	     Keep the two files otherwise identical. -->
 	<!-- Sandboxed from the first build rather than retrofitted: what the app may reach is easier to
 	     keep narrow than to make narrow later, and the App Store requires it. -->

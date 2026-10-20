@@ -10,9 +10,14 @@
 //  the call needs: all of it, a strip while the person reads mail during a call, or none — while
 //  idle it stays loaded and invisible, so an incoming call can ring while the app is open.
 //
-//  Not covered: ringing while the app is closed (on a phone that needs CallKit and VoIP push), and
-//  sharing this device's screen — WebKit offers it to Safari but not to an app's web view, so the
-//  page finds no `getDisplayMedia` and hides its share button. Others' shared screens are shown.
+//  Ringing while the app is closed is not this file's job: on a phone it is CallKit and VoIP push
+//  (`Pigeonpost/Calls/CallAlerts.swift`), on a Mac a `CALL_RING` notification (`MacCallAlerts`).
+//  Both act on the page through `answer`, `decline`, `setMuted` and `hangUp` here, and hear about
+//  rings and the call's progress through `events`. See docs/call-alerting.md.
+//
+//  Not covered: sharing this device's screen — WebKit offers it to Safari but not to an app's web
+//  view, so the page finds no `getDisplayMedia` and hides its share button. Others' shared screens
+//  are shown.
 //
 //  On the Mac the window stays one window: the call covers it, or shrinks to a strip along its top
 //  edge while mail is read underneath, exactly as on the iPad.
@@ -31,6 +36,11 @@ import AppKit
 final class CallHost: NSObject {
     enum Mode: String { case hidden, mini, full }
 
+    /// The one call page. One, because a ring answered from a lock screen or a notification has to
+    /// reach the same page the window shows once it opens — the app may have been launched in the
+    /// background with no window at all, and the page is loaded and signed in without one.
+    static let shared = CallHost()
+
     private(set) var mode: Mode = .hidden
 
     @ObservationIgnored private weak var session: Session?
@@ -38,12 +48,27 @@ final class CallHost: NSObject {
     @ObservationIgnored private weak var inbox: Inbox?
     @ObservationIgnored private var ready = false
     @ObservationIgnored private var pending: (peer: String, kind: String)?
+    /// Signed in on the page, so it has (or is opening) a session that can accept a ring.
+    @ObservationIgnored private var configured = false
+    /// Bridge calls made before the page was ready and signed in, run in order once it is.
+    @ObservationIgnored private var queued: [String] = []
+
+    /// True on iPhone and iPad: incoming calls are shown by the system (CallKit), so the page keeps
+    /// the ring state but shows no ring screen and plays no ringtone of its own. Set before `attach`.
+    @ObservationIgnored var nativeRing = false
+    /// Who hears about rings and the call's progress (CallKit on a phone, notifications on a Mac).
+    @ObservationIgnored weak var events: CallPageEvents?
+
+    /// Whether the app has handed the page a session yet (the window did, or a ring did).
+    var isAttached: Bool { session != nil }
     #if os(macOS)
     /// Held while a call is on screen, so the display does not sleep in the middle of one.
     @ObservationIgnored private var awake: NSObjectProtocol?
     #endif
 
-    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261019-native")!
+    // The version names the bridge this build expects (Phase 1c: answer, decline, setMuted, hangUp,
+    // nativeRing); a new value keeps a cached older page from being used.
+    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261020-ring")!
 
     #if DEBUG
     /// Local call tests only: `-calls-page URL -calls-token T -calls-mailbox ADDRESS [-calls-handle H]
@@ -97,7 +122,41 @@ final class CallHost: NSObject {
 
     func detach() {
         evaluate("window.PigeonpostNative && PigeonpostNative.signOut()")
+        configured = false
+        queued = []
         mode = .hidden
+    }
+
+    /// Accept this ring as soon as the page has a session. With a ring token it works even if the
+    /// page never saw the ring itself (the app was woken by a push); without one (the ring came over
+    /// the page's own event stream) the page accepts through its session.
+    func answer(room: String, ringToken: String?) {
+        run("PigeonpostNative.answer(\(Self.json(room)), \(ringToken.map(Self.json) ?? "null"))")
+    }
+
+    /// Decline from the page's own session — for a ring with no token. A ring that came with a token
+    /// is declined over HTTP instead (`RingEndpoint.decline`), which needs no session.
+    func decline(room: String, ringToken: String?) {
+        run("PigeonpostNative.decline(\(Self.json(room)), \(ringToken.map(Self.json) ?? "null"))")
+    }
+
+    func setMuted(_ muted: Bool) {
+        run("PigeonpostNative.setMuted(\(muted ? "true" : "false"))")
+    }
+
+    func hangUp() {
+        run("PigeonpostNative.hangUp()")
+    }
+
+    /// The call page's origin: where the ring-token endpoints live.
+    var pageURL: URL { Self.page }
+
+    /// Now if the page is signed in, otherwise once it is. Guarded on the function existing so an
+    /// older page (served live, so possibly behind the app) fails quietly rather than throwing.
+    private func run(_ script: String) {
+        let name = script.prefix { $0 != "(" }
+        let guarded = "window.PigeonpostNative && typeof \(name) === 'function' && \(script)"
+        if ready && configured { evaluate(guarded) } else { queued.append(guarded) }
     }
 
     /// Call whoever `peer` is, by voice or with video.
@@ -126,10 +185,19 @@ final class CallHost: NSObject {
             "token": token ?? NSNull(),
             "mailbox": ["address": me.address, "handle": me.handle as Any? ?? NSNull()] as [String: Any],
             "known": known,
+            "nativeRing": nativeRing,
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: options),
               let json = String(data: data, encoding: .utf8) else { return }
+        // The page may have reloaded while a token was being fetched.
+        guard ready else { return }
         evaluate("PigeonpostNative.configure(\(json))")
+        configured = token != nil
+        if configured, !queued.isEmpty {
+            let waiting = queued
+            queued = []
+            waiting.forEach(evaluate)
+        }
     }
 
     private func renew() async {
@@ -188,6 +256,8 @@ final class CallHost: NSObject {
             Task { await renew() }
         case "toast":
             if let text = message["text"] as? String, !text.isEmpty { inbox?.toast = text }
+        case "ring", "ring_ended", "call", "muted":
+            events?.callPage(type, message)
         default:
             break
         }
@@ -208,6 +278,11 @@ final class CallHost: NSObject {
             }
         }
     }
+    #endif
+
+    #if DEBUG
+    /// Local tests only: run a line on the call page (a tap on its own controls).
+    func debugRun(_ script: String) { evaluate(script) }
     #endif
 
     private func evaluate(_ script: String) {
@@ -241,10 +316,12 @@ extension CallHost: WKNavigationDelegate, WKUIDelegate {
     /// A reload (the web view's process was reclaimed) starts again from a page that knows nothing.
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         ready = false
+        configured = false
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         ready = false
+        configured = false
         mode = .hidden
         webView.load(URLRequest(url: Self.page))
     }
@@ -263,6 +340,15 @@ extension CallHost: WKNavigationDelegate, WKUIDelegate {
         let originPort = origin.port == 0 ? (origin.protocol == "https" ? 443 : 80) : origin.port
         return origin.protocol == Self.page.scheme && origin.host == Self.page.host && originPort == port
     }
+}
+
+/// What the page says about rings and calls, for whoever shows them outside the page.
+///
+/// `ring` and `ring_ended` (a ring arrived on the event stream, or stopped), `call` (`state`:
+/// connecting, active, ended) and `muted`. The message is passed as the page sent it.
+@MainActor
+protocol CallPageEvents: AnyObject {
+    func callPage(_ type: String, _ message: [String: Any])
 }
 
 /// The content controller holds its handlers strongly; this keeps that from holding the host.

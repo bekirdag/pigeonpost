@@ -38,6 +38,15 @@
 		<string>GeistMono-Medium.ttf</string>
 		<string>GeistMono-SemiBold.ttf</string>
 	</array>
+	<!-- Incoming calls with the app closed (see Pigeonpost/Calls/CallAlerts.swift).
+	     `voip`: PushKit wakes the app for a ring, which goes straight to the system call screen.
+	     `audio`: a call's sound keeps running with the screen locked or another app in front, as a
+	     phone call's does. Neither is used for anything but a call. -->
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>voip</string>
+		<string>audio</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>

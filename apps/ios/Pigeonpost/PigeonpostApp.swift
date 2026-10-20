@@ -7,7 +7,7 @@ struct PigeonpostApp: App {
     @State private var account: Account
     @State private var inbox: Inbox
     @State private var push = PushDelegate.service
-    @State private var calls = CallHost()
+    @State private var calls = CallHost.shared
 
     init() {
         let session = Session()
@@ -20,6 +20,9 @@ struct PigeonpostApp: App {
         let bar = UINavigationBar.appearance()
         bar.titleTextAttributes = [.font: Typeface.platform(16, .semibold)]
         bar.largeTitleTextAttributes = [.font: Typeface.platform(30, .semibold)]
+        // Before any window: a call answered from the lock screen of a phone woken by a VoIP push
+        // has to sign the call page in with these, and there may never be a window for it.
+        CallAlerts.shared.adopt(session: session, account: account, inbox: inbox)
         #if DEBUG
         if Fixtures.enabled {
             Fixtures.apply(session: session, account: account, inbox: inbox)

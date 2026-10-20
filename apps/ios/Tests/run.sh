@@ -29,3 +29,5 @@ swiftc -O -parse-as-library -o "$out/inbox-loading" \
 swiftc -O -o "$out/ios-navigation" Tests/IOSNavigationTests.swift Shared/API/Models.swift \
   Pigeonpost/Views/MailboxOrder.swift Pigeonpost/Views/HistoryWindow.swift
 "$out/ios-navigation"
+swiftc -O -parse-as-library -o "$out/call-rings" Tests/CallRingTests.swift Shared/Calls/CallRing.swift
+"$out/call-rings"

@@ -13,7 +13,7 @@ struct PigeonpostMacApp: App {
     @State private var session = Session()
     @State private var account: Account
     @State private var inbox: Inbox
-    @State private var calls = CallHost()
+    @State private var calls = CallHost.shared
 
     init() {
         let session = Session()
