@@ -54,7 +54,7 @@ class ParityUiTest {
     @Test fun composerKeepsFocusAfterSend() {
         launch().use {
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
             ui.onNodeWithText("Message").performClick().performTextInput("First of two")
             ui.onNode(hasSetTextAction()).assertIsFocused()
@@ -70,7 +70,7 @@ class ParityUiTest {
     @Test fun longPressOnTextSelectsAndTheMenuStaysOnItsButton() {
         launch().use {
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
             ui.onNodeWithText("The Android build is ready for review.").performTouchInput { longClick(centerLeft + androidx.compose.ui.geometry.Offset(40f, 0f)) }
             ui.waitForIdle()
@@ -117,11 +117,11 @@ class TabletLayoutTest {
                 PigeonpostApp(model, { _, _ -> }, {}, {}, {}, { _, _ -> }, {})
             }
         }
-        ui.waitUntil(10_000) { ui.onAllNodesWithText("demo/builder").fetchSemanticsNodes().isNotEmpty() }
+        ui.waitUntil(10_000) { ui.onAllNodesWithText("Demo Builder").fetchSemanticsNodes().isNotEmpty() }
         // Nothing open yet: the conversations column, the mailbox switcher and an empty thread pane.
         ui.onNodeWithTag("mailboxSwitcher").assertExists()
         ui.onNodeWithText("Choose a conversation or start a new one.").assertExists()
-        ui.onNodeWithText("demo/builder").performClick()
+        ui.onNodeWithText("Demo Builder").performClick()
         ui.waitUntil(10_000) { ui.onAllNodesWithText("THREADS").fetchSemanticsNodes().isNotEmpty() }
         ui.onNodeWithTag("subject:Android build").assertExists()
         ui.onNodeWithContentDescription("Voice call").assertExists()
