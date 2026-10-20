@@ -36,6 +36,8 @@ final class CallHost: NSObject {
     @ObservationIgnored private weak var session: Session?
     @ObservationIgnored private weak var account: Account?
     @ObservationIgnored private weak var inbox: Inbox?
+    /// Faces for the call tiles (Phase 1b), when the app has them. Set by the root view.
+    @ObservationIgnored weak var avatars: AvatarStore?
     @ObservationIgnored private var ready = false
     @ObservationIgnored private var pending: (peer: String, kind: String)?
     #if os(macOS)
@@ -43,7 +45,7 @@ final class CallHost: NSObject {
     @ObservationIgnored private var awake: NSObjectProtocol?
     #endif
 
-    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261019-native")!
+    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261021-p1b-faces")!
 
     #if DEBUG
     /// Local call tests only: `-calls-page URL -calls-token T -calls-mailbox ADDRESS [-calls-handle H]
@@ -126,6 +128,9 @@ final class CallHost: NSObject {
             "token": token ?? NSNull(),
             "mailbox": ["address": me.address, "handle": me.handle as Any? ?? NSNull()] as [String: Any],
             "known": known,
+            // `data:` URLs of the faces already fetched, painted over the tiles' initials by a page
+            // that knows how (native-call.js `decorateAvatar`); an older page ignores the field.
+            "avatars": avatars?.dataURLs(for: Array(known.keys) + [me.handle ?? me.address]) ?? [:],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: options),
               let json = String(data: data, encoding: .utf8) else { return }

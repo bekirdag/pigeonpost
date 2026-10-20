@@ -74,9 +74,28 @@ enum PeerFace {
     }
 }
 
+/// Where `Avatar` finds a profile picture: the app's `AvatarStore`, put in the environment at the
+/// root. Absent — a test, a preview, a postbox without pictures — the face is the initials, which is
+/// also what shows underneath while a picture loads and whenever there is none.
+struct AvatarLookup {
+    let image: @MainActor (String) -> Image?
+}
+
+private struct AvatarLookupKey: EnvironmentKey {
+    static let defaultValue: AvatarLookup? = nil
+}
+
+extension EnvironmentValues {
+    var avatarLookup: AvatarLookup? {
+        get { self[AvatarLookupKey.self] }
+        set { self[AvatarLookupKey.self] = newValue }
+    }
+}
+
 struct Avatar: View {
     let peer: String?
     var size: CGFloat = 38
+    @Environment(\.avatarLookup) private var lookup
 
     var body: some View {
         Circle()
@@ -88,6 +107,15 @@ struct Avatar: View {
                     .kerning(size * 0.32 * 0.02)
                     .foregroundStyle(PeerFace.toneInk(peer))
             )
+            .overlay {
+                if let peer, let picture = lookup?.image(peer) {
+                    picture
+                        .resizable()
+                        .scaledToFill()
+                        .frame(width: size, height: size)
+                        .clipShape(Circle())
+                }
+            }
             .accessibilityHidden(true)
     }
 }

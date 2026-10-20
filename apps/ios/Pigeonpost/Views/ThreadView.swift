@@ -27,6 +27,7 @@ struct ThreadView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
+    @Environment(CallLog.self) private var callLog: CallLog?
 
     private struct ComposerDraft {
         var text = ""
@@ -62,9 +63,16 @@ struct ThreadView: View {
     /// What the photo picker last handed back. Emptied by `stage(_:)` as soon as the bytes are in
     /// `staged`, so this never holds a selection between one attachment and the next.
     @State private var photos: [PhotosPickerItem] = []
-    private enum Sheet: String, Identifiable {
+    private enum Sheet: Identifiable {
         case info, newThread
-        var id: String { rawValue }
+        case block(BlockTarget)
+        var id: String {
+            switch self {
+            case .info: return "info"
+            case .newThread: return "newThread"
+            case .block(let target): return "block:" + target.id
+            }
+        }
     }
     @State private var composing = false
 
@@ -75,8 +83,10 @@ struct ThreadView: View {
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
-        guard let subthread else { return conversation.messages }
-        return conversation.messages.filter { ($0.threadId ?? "") == subthread }
+        // Missed calls are lines in the conversation, whichever subject is on screen.
+        let lines = callLog?.lines(for: conversation) ?? []
+        guard let subthread else { return CallLog.merge(conversation.messages, lines) }
+        return CallLog.merge(conversation.messages.filter { ($0.threadId ?? "") == subthread }, lines)
     }
 
     var body: some View {
@@ -99,7 +109,12 @@ struct ThreadView: View {
         // and the layout no longer changes shape underneath somebody the moment they do.
         .safeAreaInset(edge: .top, spacing: 0) { if !embedded { subjects } }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            composer.modifier(ReportsItsPlace(measure: \.minY, report: LandingReport.composer))
+            // A blocked conversation says so where the composer would be, with the way back.
+            if let conversation, conversation.isBlocked {
+                BlockedBanner(conversation: conversation)
+            } else {
+                composer.modifier(ReportsItsPlace(measure: \.minY, report: LandingReport.composer))
+            }
         }
         .navigationTitle(embedded ? "" : conversation?.name ?? PeerFace.displayName(peer))
         .navigationBarTitleDisplayMode(.inline)
@@ -118,11 +133,26 @@ struct ThreadView: View {
             // beside the other decisions about it — known, trusted, blocked — rather than sitting
             // in the bar as a thing to hit by accident on the way to reading.
             // Embedded, the sender's name in the bar is already the way to this panel.
-            if !embedded {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { sheet = .info } label: { Image(systemName: "info.circle") }
-                        .accessibilityLabel("About this sender")
+            // The sender panel, and blocking, behind one button: a third bar item is what iOS folds
+            // into an overflow of its own (see `ConversationsView`). Embedded, the sender's name in
+            // the bar is already the way to the panel, so only Block is here.
+            ToolbarItem(placement: .topBarTrailing) {
+                Menu {
+                    if !embedded {
+                        Button { sheet = .info } label: { Label("About this sender", systemImage: "info.circle") }
+                    }
+                    if let conversation, !conversation.isBlocked {
+                        Button(role: .destructive) {
+                            sheet = .block(BlockTarget(peer: peer, name: conversation.name, origin: .thread))
+                        } label: {
+                            Label("Block \(conversation.name)…", systemImage: "hand.raised")
+                        }
+                    }
+                } label: {
+                    Image(systemName: embedded ? "ellipsis.circle" : "info.circle")
                 }
+                .accessibilityLabel(embedded ? "More" : "About this sender")
+                .accessibilityIdentifier("threadMenu")
             }
         }
         .sheet(item: $sheet) { which in
@@ -136,6 +166,8 @@ struct ThreadView: View {
                 }
             case .newThread:
                 NewThreadSheet(peer: peer) { id in subthread = id }
+            case .block(let target):
+                BlockSheet(target: target)
             }
         }
         .task(id: taskKey) {
@@ -150,6 +182,9 @@ struct ThreadView: View {
             // Embedded, nothing chosen means the whole conversation, as it does on the Mac.
             if !embedded, subthread == nil { subthread = subthreads.first?.id }
             if Fixtures.sheet == "peer" { sheet = .info }
+            if Fixtures.sheet == "block", let conversation {
+                sheet = .block(BlockTarget(peer: peer, name: conversation.name, origin: .thread))
+            }
             if Fixtures.sheet == "thread", !embedded { sheet = .newThread }
         }
     }

@@ -23,6 +23,7 @@ struct MessageBubble: View {
     @State private var confirmingReport = false
     @State private var confirmingDelete = false
     @State private var copied = false
+    @State private var blocking: BlockTarget?
 
     private var isMine: Bool { message.kind == .outgoing }
 
@@ -38,6 +39,15 @@ struct MessageBubble: View {
     private var metaColor: Color { isMine ? Theme.Mine.meta : (isHeldRequest ? Theme.Held.text : Theme.muted) }
 
     var body: some View {
+        if message.kind == .system {
+            SystemLine(text: message.body)
+                .accessibilityIdentifier("systemLine:" + message.id)
+        } else {
+            bubble
+        }
+    }
+
+    private var bubble: some View {
         HStack(spacing: 0) {
             if isMine { Spacer(minLength: 36) }
             card
@@ -81,6 +91,7 @@ struct MessageBubble: View {
         } message: {
             Text("Deleted from this mailbox and gone for good — this is not archiving, and there is no undo. The other side keeps their copy and is not told. The room it took is freed.")
         }
+        .sheet(item: $blocking) { target in BlockSheet(target: target) }
     }
 
     /// Copy, report and delete: the long-press menu.
@@ -98,6 +109,15 @@ struct MessageBubble: View {
                 confirmingReport = true
             } label: {
                 Label("Report spam", systemImage: "exclamationmark.bubble")
+            }
+        }
+        // Blocking the sender, from the message that prompted it (SDS §15.2).
+        if !isMine, let peer = inbox.reading, !(inbox.conversation(with: peer)?.isBlocked ?? false) {
+            Button(role: .destructive) {
+                blocking = BlockTarget(peer: peer, name: inbox.conversation(with: peer)?.name ?? PeerFace.displayName(peer),
+                                       origin: .message, messageId: message.id)
+            } label: {
+                Label("Block sender", systemImage: "hand.raised")
             }
         }
         // Both directions: a sent copy takes up the same room in the mailbox as a received one,
@@ -209,6 +229,28 @@ struct MessageBubble: View {
                 .font(.geist(12))
                 .foregroundStyle(metaColor)
         }
+    }
+}
+
+/// A line in a conversation that nobody sent: "Missed video call · 14:05".
+struct SystemLine: View {
+    let text: String
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "phone.arrow.down.left")
+                .font(.geist(11.5, .semibold))
+            Text(text)
+                .font(.geist(12.5, .medium))
+        }
+        .foregroundStyle(Theme.Pill.blockedText)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Theme.ground, in: Capsule())
+        .overlay(Capsule().stroke(Theme.stroke, lineWidth: 1))
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, 4)
+        .accessibilityElement(children: .combine)
     }
 }
 

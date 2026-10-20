@@ -19,7 +19,7 @@
     } catch (_) { /* app gone */ }
   }
 
-  let token = null, me = null, peer = null, names = {};
+  let token = null, me = null, peer = null, names = {}, faces = {};
   let renewing = null, settle = null;
 
   window.PigeonpostCallsHost = {
@@ -36,6 +36,19 @@
     peer: () => peer,
     knownPeer: (key) => Boolean(key && Object.prototype.hasOwnProperty.call(names, key)),
     displayName: (key) => (key && names[key]) || key,
+    // Phase 1b: a profile picture the app already holds, laid over the initials (which stay
+    // underneath as the fallback), as the inbox's own Avatars.paint does.
+    decorateAvatar: (node, key) => {
+      if (!node) return;
+      const url = key && Object.prototype.hasOwnProperty.call(faces, key) ? faces[key] : null;
+      if (typeof url === "string" && url.startsWith("data:image/")) {
+        node.classList.add("has-photo");
+        node.style.backgroundImage = 'url("' + url + '")';
+      } else {
+        node.classList.remove("has-photo");
+        node.style.backgroundImage = "";
+      }
+    },
     toast: (text) => tell({ type: "toast", text: String(text || "") }),
   };
 
@@ -46,6 +59,7 @@
     configure(options) {
       token = options.token || null;
       names = options.known || {};
+      faces = options.avatars && typeof options.avatars === "object" ? options.avatars : {};
       const next = options.mailbox || null;
       const changed = !me || !next || me.address !== next.address;
       me = next;

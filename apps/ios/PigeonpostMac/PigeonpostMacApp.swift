@@ -14,6 +14,9 @@ struct PigeonpostMacApp: App {
     @State private var account: Account
     @State private var inbox: Inbox
     @State private var calls = CallHost()
+    @State private var callLog: CallLog
+    @State private var filtered: FilteredMail
+    @State private var avatars: AvatarStore
 
     init() {
         let session = Session()
@@ -22,6 +25,11 @@ struct PigeonpostMacApp: App {
         _account = State(initialValue: account)
         let inbox = Inbox(account: account)
         _inbox = State(initialValue: inbox)
+        let callLog = CallLog(account: account)
+        let filtered = FilteredMail(account: account)
+        _callLog = State(initialValue: callLog)
+        _filtered = State(initialValue: filtered)
+        _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
         // Keychain or the network: see `Session.init` and the `Fixtures.enabled` guards on every
@@ -29,6 +37,8 @@ struct PigeonpostMacApp: App {
         if Fixtures.enabled {
             Fixtures.apply(session: session, account: account, inbox: inbox)
             LongThread.install(into: inbox)
+            callLog.installFixture()
+            filtered.installFixture()
         }
         #endif
     }
@@ -41,6 +51,10 @@ struct PigeonpostMacApp: App {
                 .environment(inbox)
                 .environment(MacPushDelegate.service)
                 .environment(calls)
+                .environment(callLog)
+                .environment(filtered)
+                .environment(avatars)
+                .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.

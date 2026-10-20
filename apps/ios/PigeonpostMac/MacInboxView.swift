@@ -10,6 +10,9 @@ struct MacInboxView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    @Environment(CallHost.self) private var calls
 
     /// The conversation being read. The sidebar's selection.
     @State private var peer: String?
@@ -21,11 +24,13 @@ struct MacInboxView: View {
 
     private enum Sheet: Identifiable {
         case settings
+        case filtered
         case peer(Conversation)
 
         var id: String {
             switch self {
             case .settings: return "settings"
+            case .filtered: return "filtered"
             case .peer(let conversation): return "peer:\(conversation.peer)"
             }
         }
@@ -40,7 +45,8 @@ struct MacInboxView: View {
             newConversation: { showingNew = true },
             openSettings: { sheet = .settings },
             showPeer: { sheet = .peer($0) },
-            visit: visit
+            visit: visit,
+            openFiltered: { sheet = .filtered }
         )
         // Mail for another conversation, said inside the window rather than by Notification Centre.
         // A desktop notification is right when the app is behind something and wrong when it is in
@@ -52,7 +58,8 @@ struct MacInboxView: View {
         .task {
             if let staged = Fixtures.openPeer, peer == nil { peer = staged }
             switch Fixtures.sheet {
-            case "settings": sheet = .settings
+            case "settings", "privacy", "blocked", "profile": sheet = .settings
+            case "filtered": sheet = .filtered
             case "new": showingNew = true
             default: break
             }
@@ -92,6 +99,8 @@ struct MacInboxView: View {
             subthread = nil
             await inbox.loadAll()
             guard !Task.isCancelled, account.me?.address == identity else { return }
+            await callLog?.refresh()
+            await filtered?.refresh()
             await inbox.live()
         }
         // `initial: true` because the count is already right when this appears — the first listing
@@ -111,7 +120,16 @@ struct MacInboxView: View {
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
         .onReceive(NotificationCenter.default.publisher(for: .refreshInbox)) { _ in
-            Task { await inbox.loadAll() }
+            Task {
+                await inbox.loadAll()
+                await callLog?.refresh()
+                await filtered?.refresh()
+            }
+        }
+        // A call that has just ended is a new row in the history.
+        .onChange(of: calls.mode) { _, mode in
+            guard mode == .hidden, !Fixtures.enabled else { return }
+            Task { await callLog?.refresh() }
         }
         .onReceive(NotificationCenter.default.publisher(for: .newConversation)) { _ in
             showingNew = true
@@ -131,6 +149,11 @@ struct MacInboxView: View {
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
+            case .filtered:
+                if let filtered {
+                    FilteredSheet(filtered: filtered)
+                        .frame(width: 520, height: 620)
+                }
             case .peer(let conversation):
                 // Keep the presented content alive independently of inbox selection. Removing
                 // its conversation while the sheet is open must not leave an empty modal panel.

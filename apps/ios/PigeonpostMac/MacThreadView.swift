@@ -16,6 +16,8 @@ struct MacThreadView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @State private var blocking: BlockTarget?
     private struct ComposerDraft { var text = ""; var files: [StagedFile] = [] }
     @State private var drafts: [ScrollContext: ComposerDraft] = [:]
     @State private var sending: Set<ScrollContext> = []
@@ -41,9 +43,11 @@ struct MacThreadView: View {
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
-        return subthread.map { id in
+        let messages = subthread.map { id in
             conversation.messages.filter { ($0.threadId ?? "") == id }
         } ?? conversation.messages
+        // Missed calls are lines in the conversation, whichever subject is chosen.
+        return CallLog.merge(messages, callLog?.lines(for: conversation) ?? [])
     }
 
     /// The messages the find bar has matched, in the order they appear.
@@ -143,7 +147,11 @@ struct MacThreadView: View {
             // A different subject needs fresh lazy layout measurements. The composer and its
             // draft stay outside this identity boundary.
             .id(scrollContext)
-            composer
+            if let conversation, conversation.isBlocked {
+                BlockedBanner(conversation: conversation)
+            } else {
+                composer
+            }
         }
         .background(Theme.wash)
         // A file dropped onto the conversation is the natural desktop gesture for sending one, and
@@ -177,6 +185,26 @@ struct MacThreadView: View {
             ToolbarItem(placement: .primaryAction) { findBar }
             // Voice and video, beside the find bar: what you do *with* this conversation.
             ToolbarItem(placement: .primaryAction) { CallButtons(peer: peer) }
+            // Block, beside the call buttons and drawn the same way: a tapped image, not a Button.
+            ToolbarItem(placement: .primaryAction) {
+                if let conversation, !conversation.isBlocked {
+                    Image(systemName: "hand.raised")
+                        .font(.geist(14, .medium))
+                        .foregroundStyle(Theme.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            blocking = BlockTarget(peer: peer, name: conversation.name, origin: .thread)
+                        }
+                        .help("Block \(conversation.name)")
+                        .accessibilityLabel("Block \(conversation.name)")
+                        .accessibilityIdentifier("blockThread")
+                        .accessibilityAddTraits(.isButton)
+                }
+            }
+        }
+        .sheet(item: $blocking) { target in
+            BlockSheet(target: target).frame(width: 460, height: 300)
         }
         .task(id: taskKey) {
             guard scenePhase == .active else { return }
