@@ -87,6 +87,44 @@ impl Blobs {
         self.max_bytes
     }
 
+    /// A store in a fresh directory of its own, for tests elsewhere in the crate.
+    #[cfg(test)]
+    pub fn for_test(tag: &str) -> Blobs {
+        static NEXT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let n = NEXT.fetch_add(1, Ordering::Relaxed);
+        let root = std::env::temp_dir().join(format!("pp-{tag}-{}-{n}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        std::fs::create_dir_all(&root).unwrap();
+        Blobs {
+            root,
+            max_bytes: 64 * 1024,
+            total_bytes: 64 * 1024 * 1024,
+            min_free_bytes: 0,
+            uploads_failed: AtomicU64::new(0),
+        }
+    }
+
+    /// A separate store under `<root>/<name>`, for bytes that are not attachments (profile
+    /// pictures). Its own directory keeps it out of the attachment sweep's reach and its own
+    /// ceiling out of the attachments' quota; the volume floor is shared, because the disk is.
+    pub fn sub_store(&self, name: &str, max_bytes: usize, total_bytes: u64) -> Option<Blobs> {
+        if name.is_empty() || !name.bytes().all(|b| b.is_ascii_lowercase()) {
+            return None;
+        }
+        let root = self.root.join(name);
+        if let Err(e) = std::fs::create_dir_all(&root) {
+            tracing::error!(error = %e, path = %root.display(), "blob sub-store unusable");
+            return None;
+        }
+        Some(Blobs {
+            root,
+            max_bytes,
+            total_bytes,
+            min_free_bytes: self.min_free_bytes,
+            uploads_failed: AtomicU64::new(0),
+        })
+    }
+
     pub fn total_bytes(&self) -> u64 {
         self.total_bytes
     }

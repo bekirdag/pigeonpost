@@ -45,6 +45,27 @@ pub struct FeatureRow {
     pub updated_by: Option<String>,
 }
 
+/// Whether one flag is on for `account` (or globally), for callers holding the lock.
+pub(super) fn enabled_in(
+    c: &rusqlite::Connection,
+    name: &str,
+    account: Option<&str>,
+) -> Result<bool, StoreError> {
+    use rusqlite::OptionalExtension;
+    let enabled: Option<i64> = c
+        .query_row(
+            "SELECT enabled FROM features
+             WHERE name = ?1 AND (
+                 (scope = 'account' AND scope_id = ?2) OR (scope = 'global' AND scope_id = '')
+             )
+             ORDER BY CASE scope WHEN 'account' THEN 0 ELSE 1 END LIMIT 1",
+            params![name, account.unwrap_or("")],
+            |r| r.get(0),
+        )
+        .optional()?;
+    Ok(enabled == Some(1))
+}
+
 impl Store {
     /// The flags enabled for `account` (or globally, for a caller with no account), among `known`.
     pub async fn enabled_features(

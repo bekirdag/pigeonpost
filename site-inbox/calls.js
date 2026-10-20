@@ -98,6 +98,8 @@
   function paintFace(node, name) {
     node.textContent = initials(name);
     node.dataset.tone = faceTone(name);
+    // Phase 1b: the inbox may lay a profile picture over the initials (falls back to them).
+    host()?.decorateAvatar?.(node, name);
   }
   function displayName(m) {
     if (!m) return "Guest";

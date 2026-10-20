@@ -133,6 +133,27 @@ pub struct StreamBatch {
 }
 
 impl Store {
+    /// Record a typed event on its own, for a change already committed (or living elsewhere).
+    pub async fn record_account_event(
+        &self,
+        account: String,
+        kind: String,
+        mailbox: Option<String>,
+        data: serde_json::Value,
+        now: u64,
+    ) -> Result<StreamCursor, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || -> Result<StreamCursor, StoreError> {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction()?;
+            let at = append_in(&tx, &account, &kind, mailbox.as_deref(), &data, now)?;
+            tx.commit()?;
+            Ok(at)
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
     /// Record a typed event on its own (for changes whose state lives outside this database).
     #[cfg(test)]
     pub async fn append_account_event(
@@ -341,6 +362,7 @@ mod tests {
     fn msg(id: &str, owner: &str) -> Message {
         Message {
             thread_id: "t".into(),
+            filtered: false,
             id: id.into(),
             recipient: owner.into(),
             sender: "/k/alice".into(),

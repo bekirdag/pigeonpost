@@ -23,6 +23,8 @@ use axum::response::{IntoResponse, Response};
 pub(crate) enum Actor<'a> {
     Principal(&'a Principal),
     Service(&'a str),
+    /// No credential at all: only actions open to anyone (public profile pictures) accept it.
+    Anonymous,
 }
 
 /// What they want to do.
@@ -44,6 +46,22 @@ pub(crate) enum Action {
     /// the requirement is expressed once, here, when the first such endpoint lands.
     #[cfg_attr(not(test), allow(dead_code))]
     SensitiveAccountChange,
+    /// Read or change a mailbox's own call history, filtering settings or picture
+    /// (`/v1/calls/log*`, `/v1/policy`, `/v1/profile/avatar`). Agents may act on their own mailbox.
+    ManageOwnMailbox,
+    /// Move a sender out of Filtered (`POST /v1/filtered/accept`): a trust raise, so not through a
+    /// connector acting on the member's behalf. (MCP agents never reach the route at all.)
+    RaiseTrust,
+    /// Report a call or a picture as abuse. Lowering trust in someone else; anyone signed in.
+    ReportAbuse,
+    /// See a mailbox's picture.
+    ViewAvatar,
+    /// `POST /internal/v1/call-admission`.
+    CallAdmission,
+    /// `POST /internal/v1/call-events`.
+    CallEvents,
+    /// `/internal/v1/avatar-reports`, `/internal/v1/avatars/{id}/remove`.
+    ModerateAvatars,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -53,6 +71,19 @@ pub(crate) enum Resource<'a> {
     Account(&'a str),
     /// The platform itself (flags, health): only services act on it.
     Platform,
+    /// One mailbox, with its account binding as stored (never as requested).
+    Mailbox {
+        address: &'a str,
+        account: Option<&'a str>,
+    },
+    /// A mailbox's picture, with the facts its visibility is decided on.
+    Avatar {
+        visibility: crate::store::Visibility,
+        owner_account: Option<&'a str>,
+        owner_address: &'a str,
+        /// The owner counts at least one of the viewer's mailboxes as known (SDS §13.1).
+        viewer_known: bool,
+    },
 }
 
 /// The kind of credential an action accepts.
@@ -67,6 +98,10 @@ enum Requirement {
     HumanStepUp,
     /// An internal service.
     Service,
+    /// Any principal except a connector acting for the member.
+    NotConnector,
+    /// Anyone, with or without a credential.
+    Anyone,
 }
 
 impl Action {
@@ -79,6 +114,12 @@ impl Action {
             | Action::WriteFeatureFlags
             | Action::ManageBilling => Requirement::Service,
             Action::SensitiveAccountChange => Requirement::HumanStepUp,
+            Action::ManageOwnMailbox | Action::ReportAbuse => Requirement::AnyPrincipal,
+            Action::RaiseTrust => Requirement::NotConnector,
+            Action::ViewAvatar => Requirement::Anyone,
+            Action::CallAdmission | Action::CallEvents | Action::ModerateAvatars => {
+                Requirement::Service
+            }
         }
     }
 }
@@ -174,10 +215,19 @@ pub(crate) fn authorize_with(
     // 1. Credential kind.
     match (action.requirement(), actor) {
         (Requirement::Service, Actor::Service(_)) => {}
-        (Requirement::Service, Actor::Principal(_)) | (_, Actor::Service(_)) => {
-            return Err(DenyReason::CredentialNotAccepted)
-        }
+        (Requirement::Anyone, Actor::Principal(_) | Actor::Anonymous) => {}
+        (Requirement::Service, Actor::Principal(_) | Actor::Anonymous)
+        | (_, Actor::Service(_))
+        | (_, Actor::Anonymous) => return Err(DenyReason::CredentialNotAccepted),
         (Requirement::AnyPrincipal, Actor::Principal(_)) => {}
+        (Requirement::NotConnector, Actor::Principal(p)) => {
+            if matches!(
+                p,
+                Principal::Account(_, AccountCredential::Connector { .. })
+            ) {
+                return Err(DenyReason::CredentialNotAccepted);
+            }
+        }
         (Requirement::AccountHolder, Actor::Principal(p)) => match p {
             Principal::Account(_, AccountCredential::ApiKey | AccountCredential::Member(_)) => {}
             _ => return Err(DenyReason::CredentialNotAccepted),
@@ -208,6 +258,29 @@ pub(crate) fn authorize_with(
             Principal::Account(account, _) => account == id,
             Principal::Identity(identity) => identity.account_id.as_deref() == Some(*id),
         },
+        (Actor::Principal(p), Resource::Mailbox { address, account }) => owns(p, address, *account),
+        (
+            actor,
+            Resource::Avatar {
+                visibility,
+                owner_account,
+                owner_address,
+                viewer_known,
+            },
+        ) => {
+            let own = match actor {
+                Actor::Principal(p) => owns(p, owner_address, *owner_account),
+                _ => false,
+            };
+            match visibility {
+                crate::store::Visibility::Everyone => true,
+                // Being known needs someone to know: never the anonymous.
+                crate::store::Visibility::Known => {
+                    own || (*viewer_known && matches!(actor, Actor::Principal(_)))
+                }
+                crate::store::Visibility::Nobody => own,
+            }
+        }
         _ => false,
     };
     if granted {
@@ -221,6 +294,14 @@ pub(crate) fn authorize_with(
             );
         }
         Err(DenyReason::NotPermitted)
+    }
+}
+
+/// Whether a principal holds a mailbox: its own capability token, or the account it is bound to.
+fn owns(p: &Principal, address: &str, account: Option<&str>) -> bool {
+    match p {
+        Principal::Identity(identity) => identity.address == address,
+        Principal::Account(id, _) => account == Some(id.as_str()),
     }
 }
 
@@ -406,6 +487,139 @@ mod tests {
             authorize_with(&[always], &actor, Action::ReadCapabilities, &own, &facts()),
             Err(DenyReason::Mandatory("test_hook"))
         );
+    }
+
+    #[test]
+    fn mailbox_actions_need_the_mailbox() {
+        let key = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let connector = Principal::Account(
+            "a1".into(),
+            AccountCredential::Connector { client: "c".into() },
+        );
+        let mut own_mb = crate::store::StoredIdentity::test_fixture("/k/mine");
+        own_mb.account_id = Some("a1".into());
+        let mb = Principal::Identity(own_mb);
+        let mine = Resource::Mailbox {
+            address: "/k/mine",
+            account: Some("a1"),
+        };
+        let theirs = Resource::Mailbox {
+            address: "/k/theirs",
+            account: Some("a2"),
+        };
+        for p in [&key, &mb, &connector] {
+            assert!(authorize(
+                &Actor::Principal(p),
+                Action::ManageOwnMailbox,
+                &mine,
+                &facts()
+            )
+            .is_ok());
+            assert_eq!(
+                authorize(
+                    &Actor::Principal(p),
+                    Action::ManageOwnMailbox,
+                    &theirs,
+                    &facts()
+                ),
+                Err(DenyReason::NotPermitted)
+            );
+        }
+        // A mailbox token holds only its own mailbox, even inside its account.
+        let sibling = Resource::Mailbox {
+            address: "/k/sibling",
+            account: Some("a1"),
+        };
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&mb),
+                Action::ManageOwnMailbox,
+                &sibling,
+                &facts()
+            ),
+            Err(DenyReason::NotPermitted)
+        );
+        // Raising trust is not for a connector.
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&connector),
+                Action::RaiseTrust,
+                &mine,
+                &facts()
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert!(authorize(&Actor::Principal(&key), Action::RaiseTrust, &mine, &facts()).is_ok());
+        // Services and the anonymous never reach member actions.
+        assert_eq!(
+            authorize(&Actor::Anonymous, Action::ManageOwnMailbox, &mine, &facts()),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert_eq!(
+            authorize(
+                &Actor::Service("calls"),
+                Action::ManageOwnMailbox,
+                &mine,
+                &facts()
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+        assert!(authorize(
+            &Actor::Service("calls"),
+            Action::CallAdmission,
+            &Resource::Platform,
+            &facts()
+        )
+        .is_ok());
+        assert_eq!(
+            authorize(
+                &Actor::Principal(&key),
+                Action::CallEvents,
+                &Resource::Platform,
+                &facts()
+            ),
+            Err(DenyReason::CredentialNotAccepted)
+        );
+    }
+
+    #[test]
+    fn avatar_visibility() {
+        use crate::store::Visibility;
+        let owner = Principal::Account("a1".into(), AccountCredential::ApiKey);
+        let other = Principal::Account("a2".into(), AccountCredential::ApiKey);
+        let avatar = |visibility, viewer_known| Resource::Avatar {
+            visibility,
+            owner_account: Some("a1"),
+            owner_address: "/k/o",
+            viewer_known,
+        };
+        let can =
+            |actor: &Actor, r: &Resource| authorize(actor, Action::ViewAvatar, r, &facts()).is_ok();
+        // Everyone: even without a credential.
+        assert!(can(&Actor::Anonymous, &avatar(Visibility::Everyone, false)));
+        // Known: the owner, or a viewer the owner knows; never the anonymous.
+        assert!(can(
+            &Actor::Principal(&owner),
+            &avatar(Visibility::Known, false)
+        ));
+        assert!(can(
+            &Actor::Principal(&other),
+            &avatar(Visibility::Known, true)
+        ));
+        assert!(!can(
+            &Actor::Principal(&other),
+            &avatar(Visibility::Known, false)
+        ));
+        assert!(!can(&Actor::Anonymous, &avatar(Visibility::Known, true)));
+        // Nobody: only the owner.
+        assert!(can(
+            &Actor::Principal(&owner),
+            &avatar(Visibility::Nobody, false)
+        ));
+        assert!(!can(
+            &Actor::Principal(&other),
+            &avatar(Visibility::Nobody, true)
+        ));
     }
 
     #[test]

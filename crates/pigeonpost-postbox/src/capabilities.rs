@@ -19,16 +19,47 @@ pub(crate) const API_VERSION: &str = "1.1";
 
 /// Flags this server understands, with what each switches on. A flag not listed here cannot be
 /// set, so a typo is an error rather than a silently inert row.
-pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[(
-    ACCOUNT_EVENTS,
-    "Typed events, durable resume and resync_required on /v1/events",
-)];
+pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
+    (
+        ACCOUNT_EVENTS,
+        "Typed events, durable resume and resync_required on /v1/events",
+    ),
+    (
+        MESSAGE_FILTERING,
+        "Filtering settings applied at delivery, the Filtered list and accept-from-Filtered",
+    ),
+    (
+        CALL_ADMISSION,
+        "The calls service asks the postbox before ringing (blocks, filters, rate limits)",
+    ),
+    (
+        CALL_HISTORY,
+        "Call history: recorded calls, /v1/calls/log and call.log events",
+    ),
+    (
+        AVATARS,
+        "Profile pictures: upload, visibility, lookup and profile.avatar events",
+    ),
+];
 
 /// Typed events on `/v1/events`.
 pub(crate) const ACCOUNT_EVENTS: &str = "account_events";
+/// Message filtering at delivery (SDS §13.4).
+pub(crate) const MESSAGE_FILTERING: &str = "message_filtering";
+/// Call admission (SDS §13.3).
+pub(crate) const CALL_ADMISSION: &str = "call_admission";
+/// Call history (SDS §12). Kept equal to `store::calllog::CALL_HISTORY_FLAG`.
+pub(crate) const CALL_HISTORY: &str = "call_history";
+/// Profile pictures (SDS §16).
+pub(crate) const AVATARS: &str = "avatars";
 
 /// Typed event names the account stream may emit when `account_events` is on.
-pub(crate) const EVENT_TYPES: &[&str] = &["features.changed", "resync_required"];
+pub(crate) const EVENT_TYPES: &[&str] = &[
+    "features.changed",
+    "resync_required",
+    "call.log",
+    "profile.avatar",
+];
 
 pub(crate) fn known_names() -> Vec<&'static str> {
     KNOWN_FEATURES.iter().map(|(name, _)| *name).collect()
