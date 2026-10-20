@@ -491,7 +491,10 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(window.caller_name("/k/stranger", None), "/k/stranger")
         window.answer_call("AbCdEfGhIjKlMnOpQrStUv")
         window.decline_call("AbCdEfGhIjKlMnOpQrStUv")
-        window.close()
+        # What closing the window runs; called directly because a window that was never presented
+        # does not emit close-request on every GTK build.
+        window.on_close()
+        window.destroy()
         pump(timeout=0.05)
         self.assertEqual(calls.events, ["start", ("answer", "AbCdEfGhIjKlMnOpQrStUv"),
                                         ("decline", "AbCdEfGhIjKlMnOpQrStUv"), "stop"])
