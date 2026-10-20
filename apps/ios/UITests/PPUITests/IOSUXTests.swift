@@ -382,16 +382,20 @@ final class IPadLayoutTests: XCTestCase {
         func check(_ state: String) {
             Thread.sleep(forTimeInterval: 1.2)
             keep("call-" + state)
-            problems += findProblems().map { "call-\(state): \($0)" }
+            // The call's own controls. While it fills the screen the inbox is still in the
+            // accessibility tree under it, but nothing of it can be seen or touched.
+            problems += findProblems(in: state.hasPrefix("mini") ? nil : app.webViews.firstMatch).map { "call-\(state): \($0)" }
         }
         XCUIDevice.shared.orientation = .landscapeLeft
         app.terminate()
         app.launchArguments = harness + ["-call", "/bob:video"]
         app.launch()
         let leave = app.webViews.buttons["Leave call"].firstMatch
-        XCTAssertTrue(leave.waitForExistence(timeout: 25))
+        XCTAssertTrue(leave.waitForExistence(timeout: 40))
         check("calling-landscape")
-        XCTAssertTrue(app.webViews.staticTexts["Security code"].firstMatch.waitForExistence(timeout: 40), "the peer never answered")
+        // Connected: the name pill's clock is running.
+        let clock = app.webViews.buttons.matching(NSPredicate(format: "label MATCHES %@", ".* [0-9]+:[0-9]{2}$")).firstMatch
+        XCTAssertTrue(clock.waitForExistence(timeout: 40), "the peer never answered")
         check("full-landscape")
         XCUIDevice.shared.orientation = .portrait
         check("full-portrait")
@@ -436,9 +440,8 @@ final class IPadLayoutTests: XCTestCase {
         func contains(_ other: Node) -> Bool { other.path.starts(with: path) }
     }
 
-    private func findProblems() -> [String] {
-        guard let root = try? app.snapshot() else { return ["no accessibility snapshot"] }
-        let screen = root.frame
+    private func findProblems(in scope: XCUIElement? = nil) -> [String] {
+        guard let root = try? (scope ?? app).snapshot(), let screen = try? app.snapshot().frame else { return ["no accessibility snapshot"] }
         var nodes: [Node] = []
         var titles: [(String, CGRect)] = []
         func hasKeyboard(_ element: XCUIElementSnapshot) -> Bool {

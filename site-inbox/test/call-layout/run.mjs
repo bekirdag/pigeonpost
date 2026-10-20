@@ -193,7 +193,7 @@ const MEASURE = `(() => {
     }
   }
   return { layout: grid.dataset.layout, count: grid.dataset.count, acts: acts.length, guarded: guarded.length,
-    dock: dock && [Math.round(dock.y), Math.round(dock.b)], sas: (() => { const e = ui.querySelector(".call-sas"); const b = e && box(e); return b && [Math.round(b.y), Math.round(b.b)]; })(),
+    dock: dock && [Math.round(dock.y), Math.round(dock.b)], pill: (() => { const e = ui.querySelector(".call-pill"); const b = e && box(e); return b && [Math.round(b.x), Math.round(b.y), Math.round(b.r), Math.round(b.b)]; })(),
     act: acts[0] && [Math.round(acts[0].b.y), Math.round(acts[0].b.b)], problems };
 })()`;
 
@@ -218,6 +218,36 @@ const SELF_CORNERS = `(async () => {
     for (const h of header) if (hit(r, rect(h))) problems.push("your view covers " + (h.getAttribute("aria-label") || h.id) + " in " + corner);
   }
   return { problems, stored: localStorage.getItem("ppi_call_self_corner") };
+})()`;
+
+// The call details under the name pill: opened by the pill, inside the window, clear of the header's
+// other controls, showing the security code once there is one; Escape closes it and gives the pill
+// its focus back.
+const DETAILS = `(async () => {
+  const ui = document.getElementById("call-ui"), pill = document.getElementById("call-pill"), details = document.getElementById("call-details");
+  if (!pill || !details) return { problems: ["no call details pill"] };
+  const rect = (e) => e.getBoundingClientRect();
+  const hit = (a, b) => a.left < b.right - 0.5 && b.left < a.right - 0.5 && a.top < b.bottom - 0.5 && b.top < a.bottom - 0.5;
+  const problems = [];
+  if (pill.getAttribute("aria-expanded") !== "false" || !details.hidden) problems.push("details open by default");
+  const p = rect(pill);
+  for (const other of ui.querySelectorAll(".call-top button:not(.call-pill)")) if (other.offsetWidth && hit(p, rect(other))) problems.push("the pill overlaps " + (other.getAttribute("aria-label") || other.id));
+  pill.click();
+  await new Promise((r) => setTimeout(r, 200));
+  if (pill.getAttribute("aria-expanded") !== "true" || details.hidden) problems.push("the pill did not open its details");
+  const d = rect(details);
+  if (d.left < -0.5 || d.top < -0.5 || d.right > innerWidth + 0.5 || d.bottom > innerHeight + 0.5) problems.push("details cut off by the window");
+  for (const other of ui.querySelectorAll(".call-top-right button, .call-back")) if (other.offsetWidth && hit(d, rect(other))) problems.push("details cover " + (other.getAttribute("aria-label") || other.id));
+  const code = document.getElementById("call-sas");
+  const shown = { code: Boolean(code && !code.hidden && code.offsetHeight), handle: document.getElementById("call-handle").textContent, quality: document.getElementById("call-quality").textContent };
+  return { problems, shown };
+})()`;
+const CLOSE_DETAILS = `(async () => {
+  const pill = document.getElementById("call-pill"), details = document.getElementById("call-details");
+  pill.focus();
+  document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await new Promise((r) => setTimeout(r, 100));
+  return pill.getAttribute("aria-expanded") === "false" && details.hidden && document.activeElement === pill ? [] : ["Escape did not close the details"];
 })()`;
 
 const failures = [];
@@ -257,6 +287,12 @@ try {
         for (const problem of corners.problems || []) failures.push(`${name}: ${problem}`);
         if (corners.problems && !corners.problems.length && corners.stored !== "br") failures.push(`${name}: the corner was not remembered`);
         m.problems.push(...(corners.problems || []));
+        const details = await p.evaluate(DETAILS);
+        await sleep(150);
+        await p.shot(path.join(OUT, name + "-details.png"));
+        const closed = await p.evaluate(CLOSE_DETAILS);
+        if (!details.shown?.code) details.problems.push("no security code in the details");
+        for (const problem of [...details.problems, ...closed]) { failures.push(`${name}: ${problem}`); m.problems.push(problem); }
       }
     }
     for (const p of Object.values(people)) await p.viewport(VIEWPORTS[0]);
@@ -312,7 +348,7 @@ try {
   server.close();
 }
 
-for (const r of report) console.log(`${r.problems && r.problems.length ? "FAIL" : "ok  "} ${r.name.padEnd(28)} ${r.layout}/${r.count} tile buttons ${r.acts} dock ${JSON.stringify(r.dock)} security code ${JSON.stringify(r.sas)} first tile button ${JSON.stringify(r.act)}`);
+for (const r of report) console.log(`${r.problems && r.problems.length ? "FAIL" : "ok  "} ${r.name.padEnd(28)} ${r.layout}/${r.count} tile buttons ${r.acts} pill ${JSON.stringify(r.pill)} dock ${JSON.stringify(r.dock)} first tile button ${JSON.stringify(r.act)}`);
 console.log(`screenshots: ${OUT}`);
 if (failures.length) {
   console.error(`\n${failures.length} problem(s):\n  ` + failures.join("\n  "));
