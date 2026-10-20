@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- C# interop agent: the generated uniffi-bindgen-cs binding (bindings/csharp), P/Invoking the
+       Rust library as the Windows app will. Protocol: interop/run_interop.py. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <NoWarn>CS1591;CS8618;CS8625;CS0168</NoWarn>
+    <InvariantGlobalization>true</InvariantGlobalization>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../bindings/csharp/pigeonpost_groupcrypto.cs" />
+  </ItemGroup>
+</Project>

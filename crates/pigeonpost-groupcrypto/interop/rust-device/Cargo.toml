@@ -1,0 +1,17 @@
+[package]
+name = "pigeonpost-groupcrypto-interop-device"
+description = "Interop test agent: drives pigeonpost-groupcrypto natively over a JSON-lines protocol."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+publish = false
+
+[[bin]]
+name = "rust-device"
+path = "src/main.rs"
+
+[dependencies]
+pigeonpost-groupcrypto = { path = "../.." }
+serde_json = "1"
+base64 = "0.22"

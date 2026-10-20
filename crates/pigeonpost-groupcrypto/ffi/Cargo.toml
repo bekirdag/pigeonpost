@@ -1,0 +1,28 @@
+[package]
+name = "pigeonpost-groupcrypto-ffi"
+description = "UniFFI bindings (Swift, Kotlin, Python, C#) for pigeonpost-groupcrypto."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+authors.workspace = true
+rust-version.workspace = true
+publish = false
+
+[lib]
+name = "pigeonpost_groupcrypto_ffi"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[[bin]]
+name = "uniffi-bindgen"
+path = "src/bin/uniffi-bindgen.rs"
+required-features = ["bindgen"]
+
+[features]
+bindgen = ["uniffi/cli"]
+
+[dependencies]
+pigeonpost-groupcrypto = { path = ".." }
+# Pinned to the exact UniFFI release uniffi-bindgen-cs v0.11.x targets, so every generator
+# (Swift, Kotlin, Python from UniFFI itself; C# from NordSecurity) speaks one contract.
+uniffi = "=0.31.0"

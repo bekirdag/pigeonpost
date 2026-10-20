@@ -1,0 +1,18 @@
+[bindings.kotlin]
+package_name = "dev.pigeonpost.groupcrypto"
+cdylib_name = "pigeonpost_groupcrypto_ffi"
+
+[bindings.swift]
+module_name = "PigeonpostGroupCrypto"
+ffi_module_name = "PigeonpostGroupCryptoFFI"
+ffi_module_filename = "PigeonpostGroupCryptoFFI"
+generate_module_map = true
+
+[bindings.python]
+cdylib_name = "pigeonpost_groupcrypto_ffi"
+
+[bindings.csharp]
+namespace = "Pigeonpost.GroupCrypto"
+cdylib_name = "pigeonpost_groupcrypto_ffi"
+access_modifier = "public"
+global_methods_class_name = "GroupCrypto"

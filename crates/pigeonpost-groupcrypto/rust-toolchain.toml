@@ -1,0 +1,7 @@
+# OpenMLS 0.9.x (the only line with fixes for every published OpenMLS advisory) needs Rust 1.91.
+# This crate is its own workspace so the rest of the repository keeps its 1.88 pin.
+[toolchain]
+channel = "1.91.1"
+components = ["rustfmt", "clippy"]
+targets = ["wasm32-unknown-unknown"]
+profile = "minimal"
