@@ -2328,7 +2328,7 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
   .call-top-right .call-back span { display: none; }
 }
 
-/* ==== Phase 1b: calls page, filtered list, privacy, blocking, profile pictures ==================
+/* ==== Phase 1b: calls page, filtered list, privacy, blocking, profile pictures ===========
    Kept in one block at the end so it never collides with the call screen's own rules above. */
 
 /* A profile picture lies over the initials, which stay as the fallback underneath. */
@@ -2423,3 +2423,21 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
 .crop-canvas { display: block; width: 100%; max-width: 280px; aspect-ratio: 1; margin: 0 auto 14px; border-radius: 12px; background: var(--inset); touch-action: none; cursor: grab; }
 .crop-canvas:focus-visible { outline: 2px solid var(--edge-focus); outline-offset: 2px; }
 .crop-zoom input { width: 100%; accent-color: var(--accent-fill); }
+=======
+/* ---- large calls (7–30 people): up to sixteen views per page, and a pager ---------------------- */
+.call-grid[data-count="7"], .call-grid[data-count="8"], .call-grid[data-count="9"] { grid-template-columns: repeat(3, 1fr); }
+.call-grid[data-count="10"], .call-grid[data-count="11"], .call-grid[data-count="12"],
+.call-grid[data-count="13"], .call-grid[data-count="14"], .call-grid[data-count="15"], .call-grid[data-count="16"] { grid-template-columns: repeat(4, 1fr); gap: 8px; }
+.call-grid[data-count="10"] .call-tile-face.avatar, .call-grid[data-count="11"] .call-tile-face.avatar, .call-grid[data-count="12"] .call-tile-face.avatar,
+.call-grid[data-count="13"] .call-tile-face.avatar, .call-grid[data-count="14"] .call-tile-face.avatar, .call-grid[data-count="15"] .call-tile-face.avatar,
+.call-grid[data-count="16"] .call-tile-face.avatar { width: 48px; height: 48px; font-size: 17px; }
+.call-pager { display: inline-flex; align-items: center; gap: 6px; }
+.call-pager[hidden] { display: none; }
+.call-page-label { min-width: 3.4em; text-align: center; font-size: 12.5px; font-variant-numeric: tabular-nums; color: var(--call-body); }
+.call-page-next svg { transform: scaleX(-1); }
+.call-top-btn:disabled { opacity: .45; cursor: default; }
+@media (max-width: 760px) {
+  .call-grid[data-count="7"], .call-grid[data-count="8"], .call-grid[data-count="9"],
+  .call-grid[data-count="10"], .call-grid[data-count="11"], .call-grid[data-count="12"] { grid-template-columns: repeat(3, 1fr); gap: 6px; }
+  .call-grid[data-count="13"], .call-grid[data-count="14"], .call-grid[data-count="15"], .call-grid[data-count="16"] { grid-template-columns: repeat(4, 1fr); gap: 4px; }
+}

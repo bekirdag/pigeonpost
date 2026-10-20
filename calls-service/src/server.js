@@ -2,10 +2,17 @@
 //
 // What this service is: a rendezvous. It rings a mailbox, admits people who knock on a meeting link,
 // carries WebRTC setup messages between browsers and mints short-lived TURN credentials. What it is
-// not: a media path. Every pair of browsers in a call holds its own DTLS-SRTP keys; audio, video,
-// screens and in-call chat travel between them directly or through the TURN relay, which forwards
-// ciphertext. Each screen shows, per person, a security code derived from both browsers' DTLS
-// fingerprints, so people can confirm that this service did not put itself in the middle.
+// not: a media path. In a call of up to six (a mesh), every pair of browsers holds its own DTLS-SRTP
+// keys; audio, video, screens and in-call chat travel between them directly or through the TURN
+// relay, which forwards ciphertext. Each screen shows, per person, a security code derived from both
+// browsers' DTLS fingerprints, so people can confirm that this service did not put itself in the middle.
+//
+// Larger calls (up to 30) go through a media server (a LiveKit SFU). Every browser then encrypts each
+// audio and video frame itself before it leaves the device, with a room key that the browsers hand to
+// each other wrapped to each one's own key pair. This service and the media server carry those
+// wrapped keys and encrypted frames but never hold a key that opens them. All it does for a large
+// call is check who may join, mint a short media-server ticket for that participant, keep the call
+// within the media server's measured bandwidth, and remove people from the media server when they leave.
 //
 // Members are authorised by the postbox, not here: every member request carries the member's own
 // token, and this service asks the postbox which mailboxes that token's account owns. Guests — people
@@ -15,8 +22,10 @@
 // Everything is in memory for the life of a call. Dependency-free on purpose.
 
 import http from "node:http";
+import https from "node:https";
 import crypto from "node:crypto";
 import { createPostboxInternal } from "./postbox-internal.js"; // Phase 1b
+import { readFileSync } from "node:fs";
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -39,7 +48,51 @@ export function configFromEnv(env = process.env) {
     // Unset = ring without asking and report nothing, as before.
     postboxInternalUrl: env.POSTBOX_INTERNAL_URL || "",
     postboxServiceToken: env.POSTBOX_SERVICE_TOKEN || "",
+    // Calls stay a mesh up to this many people; beyond it they move to the media server.
+    meshMax: Number(env.CALLS_MESH_MAX || 6),
+    sfu: sfuConfigFromEnv(env),
   };
+}
+
+// The media server (SFU). Unset, calls stay a mesh of at most `meshMax`.
+export function sfuConfigFromEnv(env = process.env) {
+  let apiCa = null;
+  if (env.CALLS_SFU_API_CA_FILE) apiCa = readFileSync(env.CALLS_SFU_API_CA_FILE, "utf8");
+  return {
+    // What browsers connect to (the media server's signaling WebSocket).
+    url: env.CALLS_SFU_URL || "",
+    // Where this service reaches the media server's admin API, and the one certificate it trusts there.
+    apiUrl: (env.CALLS_SFU_API_URL || "").replace(/\/+$/, ""),
+    apiCa,
+    apiServerName: env.CALLS_SFU_API_SERVERNAME || "",
+    key: env.CALLS_SFU_KEY || "",
+    secret: env.CALLS_SFU_SECRET || "",
+    // A ticket only has to last until the browser has connected; the media server renews it after that.
+    tokenTtlSeconds: Number(env.CALLS_SFU_TOKEN_TTL_SECONDS || 120),
+    // How much of the media host's measured upload the media server may plan to use (Mbit/s), and what
+    // one participant is expected to cost (see sfuRoomMbps).
+    budgetMbps: Number(env.CALLS_SFU_BUDGET_MBPS || 0),
+    model: {
+      mainMbps: Number(env.CALLS_SFU_MAIN_MBPS || 1.7),
+      // Measured on the production media server with 30 participants (2026-10-20): about 220 Mbit/s
+      // forwarded, i.e. ~7.3 Mbit/s per receiver including RTCP, retransmission and probing.
+      thumbMbps: Number(env.CALLS_SFU_THUMB_MBPS || 0.25),
+      audioMbps: Number(env.CALLS_SFU_AUDIO_MBPS || 0.06),
+      publishMbps: Number(env.CALLS_SFU_PUBLISH_MBPS || 2.4),
+      thumbs: Number(env.CALLS_SFU_THUMBS || 15),
+    },
+  };
+}
+
+// What one room on the media server is expected to cost, in Mbit/s, in the busier direction.
+// Every participant receives one large view (the speaker, a pinned person or a shared screen), up to
+// `thumbs` small views at the lowest simulcast layer, and everyone else's voice; every participant
+// sends three simulcast layers and a voice. Upload from the host (what it forwards) dominates.
+export function sfuRoomMbps(n, model) {
+  if (n <= 0) return 0;
+  const others = Math.max(0, n - 1);
+  const perReceiver = others ? model.mainMbps + Math.min(Math.max(0, others - 1), model.thumbs) * model.thumbMbps + others * model.audioMbps : 0;
+  return Math.max(n * perReceiver, n * model.publishMbps);
 }
 
 export const LIMITS = {
@@ -48,17 +101,21 @@ export const LIMITS = {
   candidateChars: 1_000,
   tokenChars: 8_192,
   nameChars: 60,
-  participants: 6,
+  // The most people in any call. A call of more than `meshMax` (6) runs on the media server.
+  participants: 30,
   sessionsPerAccount: 12,
   sessionsTotal: 5_000,
   roomsTotal: 2_000,
   callsPerMinute: 6,
   callsPerHour: 60,
-  guestsPerIpHour: 30,
-  knocksPerIpHour: 40,
+  // A 30-person meeting can be people behind one office address, each opening the link.
+  guestsPerIpHour: 60,
+  knocksPerIpHour: 60,
   missedCodesPerIp10Min: 10,
-  pendingKnocksPerRoom: 10,
+  pendingKnocksPerRoom: 20,
   signalsPerMinute: 600,
+  sfuTicketsPerMinute: 20,
+  e2eeUpdatesPerMinute: 120,
   authCacheEntries: 10_000,
   authCacheMs: 60_000,
   heartbeatMs: 20_000,
@@ -72,7 +129,12 @@ const ADDRESS = /^\/[A-Za-z0-9._~\-/]{1,200}$/;
 const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
 const CODE = /^[A-Za-z0-9]{6}$/;
 const KINDS = new Set(["audio", "video"]);
-const SIGNALS = new Set(["offer", "answer", "ice", "mute"]);
+const SIGNALS = new Set(["offer", "answer", "ice", "mute", "key"]);
+// A P-256 public key, uncompressed (65 bytes, first byte 4), base64url without padding.
+const PUBLIC_KEY = /^B[A-Za-z0-9_-]{86}$/;
+const B64U = (n) => new RegExp(`^[A-Za-z0-9_-]{${n}}$`);
+const WRAP_IV = B64U(16); // 12 bytes
+const WRAP_KEY = B64U(64); // a 32-byte room key plus its 16-byte AES-GCM tag
 
 class HttpError extends Error {
   constructor(status, code) {
@@ -83,6 +145,15 @@ class HttpError extends Error {
 }
 
 const sha256 = (s) => crypto.createHash("sha256").update(s).digest("hex");
+const b64url = (v) => Buffer.from(v).toString("base64url");
+
+// LiveKit access tokens and admin calls are HS256 JWTs signed with the media server's API secret.
+export function signSfuToken(sfu, claims) {
+  const head = b64url(JSON.stringify({ alg: "HS256", typ: "JWT" }));
+  const body = b64url(JSON.stringify({ iss: sfu.key, ...claims }));
+  const sig = crypto.createHmac("sha256", sfu.secret).update(head + "." + body).digest("base64url");
+  return head + "." + body + "." + sig;
+}
 const newId = () => crypto.randomBytes(16).toString("base64url");
 const norm = (address) => String(address).toLowerCase();
 
@@ -91,7 +162,8 @@ function cleanName(value) {
   return name.slice(0, LIMITS.nameChars);
 }
 
-export function createCallsService(cfg, deps = {}) {
+export function createCallsService(cfgIn, deps = {}) {
+  const cfg = { meshMax: 6, sfu: null, ...cfgIn };
   const fetchImpl = deps.fetch || globalThis.fetch;
   const now = deps.now || (() => Date.now());
   const randomCode = deps.randomCode || (() => {
@@ -106,6 +178,7 @@ export function createCallsService(cfg, deps = {}) {
   const rooms = new Map(); // room id -> room
   const roomsByCode = new Map(); // code -> room
   const buckets = new Map(); // rate-limit key -> number[]
+  const sfuApi = deps.sfuApi || defaultSfuApi;
 
   // ---- Phase 1b: postbox admission + call history reporting ---------------------------------------
   const internal = deps.postboxInternal || createPostboxInternal({
@@ -273,13 +346,18 @@ export function createCallsService(cfg, deps = {}) {
 
   // ---- rooms ------------------------------------------------------------------------------------
 
+  // `key` and `epoch` exist only in a call on the media server: the participant's public key, and the
+  // newest room-key generation they say they hold. Both are what the browsers announced; the browsers
+  // check them against each other through the room's security code.
   function participantView(p) {
-    return { participant: p.id, name: p.name, mailbox: p.mailbox, guest: p.guest };
+    const view = { participant: p.id, name: p.name, mailbox: p.mailbox, guest: p.guest };
+    if (p.key) Object.assign(view, { key: p.key, epoch: p.epoch });
+    return view;
   }
 
   function roomView(room, you) {
     return {
-      room: room.id, code: room.code, kind: room.kind, state: room.state,
+      room: room.id, code: room.code, kind: room.kind, state: room.state, topology: room.topology,
       you: you ? you.id : undefined,
       participants: [...room.participants.values()].map(participantView),
     };
@@ -299,10 +377,10 @@ export function createCallsService(cfg, deps = {}) {
     throw new HttpError(503, "busy");
   }
 
-  function makeRoom(kind) {
+  function makeRoom(kind, topology = "mesh") {
     if (rooms.size >= LIMITS.roomsTotal) throw new HttpError(503, "busy");
     const room = {
-      id: newId(), code: newCode(), kind, state: "ringing", createdAt: now(),
+      id: newId(), code: newCode(), kind, topology, state: "ringing", createdAt: now(),
       participants: new Map(), knocks: new Map(), ring: null, timers: [],
     };
     rooms.set(room.id, room);
@@ -313,11 +391,108 @@ export function createCallsService(cfg, deps = {}) {
     return room;
   }
 
-  function addParticipant(room, session, { name, mailbox, guest }) {
-    if (room.participants.size >= LIMITS.participants) throw new HttpError(409, "room_full");
-    const p = { id: newId(), sessionId: session.id, account: session.account, name, mailbox: mailbox || null, guest: Boolean(guest), joinedAt: now(), grace: null };
+  function addParticipant(room, session, { name, mailbox, guest, e2ee }) {
+    const problem = admissionProblem(room, e2ee);
+    if (problem) throw admissionError(problem);
+    if (room.topology === "mesh" && room.participants.size >= cfg.meshMax) moveToSfu(room);
+    const p = { id: newId(), sessionId: session.id, account: session.account, name, mailbox: mailbox || null, guest: Boolean(guest), e2ee: e2ee === true, key: null, epoch: 0, joinedAt: now(), grace: null };
     room.participants.set(p.id, p);
     return p;
+  }
+
+  // ---- the media server (large calls) -------------------------------------------------------------
+
+  const sfuEnabled = () => Boolean(cfg.sfu && cfg.sfu.url && cfg.sfu.key && cfg.sfu.secret && cfg.sfu.budgetMbps > 0);
+
+  function sfuLoadMbps(except) {
+    let total = 0;
+    for (const r of rooms.values()) {
+      if (r !== except && r.state !== "ended" && r.topology === "sfu") total += sfuRoomMbps(r.participants.size, cfg.sfu.model);
+    }
+    return total;
+  }
+
+  // Whether one more person can come in, and if not, why. A call grows past `meshMax` only onto the
+  // media server, only if everyone in it (newcomer included) can encrypt their own media — there is
+  // no unencrypted fallback — and only while the media server stays within its bandwidth budget.
+  function admissionProblem(room, e2ee) {
+    const n = room.participants.size;
+    if (n >= LIMITS.participants) return "room_full";
+    if (room.topology === "mesh" && n < cfg.meshMax) return null;
+    if (!sfuEnabled()) return "room_full";
+    if (e2ee !== true) return "needs_e2ee";
+    if (room.topology === "mesh" && [...room.participants.values()].some((p) => !p.e2ee)) return "needs_e2ee";
+    if (sfuLoadMbps(room) + sfuRoomMbps(n + 1, cfg.sfu.model) > cfg.sfu.budgetMbps) return "call_busy";
+    return null;
+  }
+
+  function admissionError(problem) {
+    return new HttpError(problem === "call_busy" ? 503 : 409, problem);
+  }
+
+  // The seventh person is coming in: everyone already here connects to the media server too, and
+  // keeps their direct connections until the media server carries the others' encrypted media.
+  function moveToSfu(room) {
+    room.topology = "sfu";
+    console.log(`calls: room=${room.id.slice(0, 6)} moved to the media server at ${room.participants.size + 1} people`);
+    broadcast(room, "topology", { room: room.id, topology: "sfu" });
+  }
+
+  // A ticket for the media server: this participant, this room, nothing else, for two minutes.
+  function sfuTicket(auth, room, body) {
+    const p = participantFor(room, auth, body.session);
+    if (room.topology !== "sfu" || !sfuEnabled()) throw new HttpError(409, "not_large");
+    if (limited("sfu:" + p.id, LIMITS.sfuTicketsPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
+    const t = Math.floor(now() / 1000);
+    const token = signSfuToken(cfg.sfu, {
+      sub: p.id, nbf: t - 5, exp: t + cfg.sfu.tokenTtlSeconds,
+      video: {
+        room: room.id, roomJoin: true, canPublish: true, canSubscribe: true, canPublishData: true,
+        canPublishSources: ["microphone", "camera", "screen_share"], canUpdateOwnMetadata: false,
+      },
+    });
+    return { url: cfg.sfu.url, token, ttl: cfg.sfu.tokenTtlSeconds };
+  }
+
+  // A participant announces the public half of the key pair their browser made for this call, and
+  // later which room-key generation they hold. Everyone else hears about it; the browsers do the rest.
+  function announceKey(auth, room, body) {
+    const p = participantFor(room, auth, body.session);
+    if (room.topology !== "sfu") throw new HttpError(409, "not_large");
+    if (limited("e2ee:" + p.id, LIMITS.e2eeUpdatesPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
+    let changed = false;
+    if (body.public_key !== undefined) {
+      if (typeof body.public_key !== "string" || !PUBLIC_KEY.test(body.public_key)) throw new HttpError(400, "bad_key");
+      if (p.key !== body.public_key) { p.key = body.public_key; p.epoch = 0; changed = true; }
+    }
+    if (body.epoch !== undefined) {
+      if (!Number.isInteger(body.epoch) || body.epoch < 0 || body.epoch > 1e9) throw new HttpError(400, "bad_key");
+      if (!p.key) throw new HttpError(409, "no_key");
+      if (p.epoch !== body.epoch) { p.epoch = body.epoch; changed = true; }
+    }
+    if (changed) broadcast(room, "participant_key", { room: room.id, participant: p.id, key: p.key, epoch: p.epoch }, p.id);
+    return { ok: true };
+  }
+
+  // Removing someone from a media-server room is what actually stops their media: the room key
+  // rotates when they leave, and this makes sure they no longer receive even the encrypted frames.
+  function sfuRemove(room, p) {
+    if (room.topology !== "sfu" || !sfuEnabled() || !cfg.sfu.apiUrl) return;
+    sfuAdmin("RemoveParticipant", { room: room.id, identity: p.id }, { roomAdmin: true, room: room.id });
+  }
+
+  function sfuClose(room) {
+    if (room.topology !== "sfu" || !sfuEnabled() || !cfg.sfu.apiUrl) return;
+    sfuAdmin("DeleteRoom", { room: room.id }, { roomCreate: true });
+  }
+
+  function sfuAdmin(method, body, grant) {
+    const t = Math.floor(now() / 1000);
+    const token = signSfuToken(cfg.sfu, { nbf: t - 5, exp: t + 60, video: grant });
+    Promise.resolve()
+      .then(() => sfuApi(cfg.sfu, method, body, token))
+      .then((status) => { if (status !== 200 && status !== 404) console.warn(`calls: media server ${method} answered ${status}`); })
+      .catch((err) => console.warn(`calls: media server ${method} failed`, err && (err.code || err.name)));
   }
 
   function participantFor(room, auth, sessionId) {
@@ -368,15 +543,22 @@ export function createCallsService(cfg, deps = {}) {
       throw new HttpError(429, "rate_limited");
     }
 
+    // A call can start on the media server straight away (meant for calls that will be large); it
+    // then needs an encrypting browser and room in the media server's budget from the first ring.
+    const large = body.large === true;
+    if (large && !sfuEnabled()) throw new HttpError(409, "room_full");
+    if (large && body.e2ee !== true) throw new HttpError(409, "needs_e2ee");
+    if (large && sfuLoadMbps() + sfuRoomMbps(2, cfg.sfu.model) > cfg.sfu.budgetMbps) throw new HttpError(503, "call_busy");
+
     // Phase 1b: ask the postbox before anything rings. block and silence look to the caller exactly
     // like nobody answering.
     const admission = await internal.admit({ from, to, kind });
     if (session.closed || sessionInRoom(session)) throw new HttpError(409, "already_in_call");
 
-    const room = makeRoom(kind);
+    const room = makeRoom(kind, large ? "sfu" : "mesh");
     room.caller = { address: from.address, ...(from.handle ? { handle: from.handle } : {}) };
     room.targets = admission.targets.length ? admission.targets : [to];
-    const caller = addParticipant(room, session, { name: from.handle || from.address, mailbox: from });
+    const caller = addParticipant(room, session, { name: from.handle || from.address, mailbox: from, e2ee: body.e2ee });
     ring(room, caller, to, admission.decision);
     return roomView(room, caller);
   }
@@ -424,8 +606,10 @@ export function createCallsService(cfg, deps = {}) {
     const callee = mailboxFor(auth, room.ring.to);
     if (!callee) throw new HttpError(403, "not_your_call");
     if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
+    const problem = admissionProblem(room, body.e2ee);
+    if (problem) throw admissionError(problem);
     stopRinging(room, "answered_elsewhere", session.id);
-    const p = addParticipant(room, session, { name: callee.handle || callee.address, mailbox: callee });
+    const p = addParticipant(room, session, { name: callee.handle || callee.address, mailbox: callee, e2ee: body.e2ee });
     room.state = "active";
     reportCall(room, "answer", { by: callee.address, participants: [...room.participants.values()].map(participantName) }); // Phase 1b
     admitted(room, p);
@@ -467,6 +651,7 @@ export function createCallsService(cfg, deps = {}) {
   function removeParticipant(room, p, reason) {
     clearTimeout(p.grace);
     room.participants.delete(p.id);
+    sfuRemove(room, p);
     broadcast(room, "participant_left", { room: room.id, participant: p.id, reason });
     if (room.state === "ringing" && room.participants.size === 0) {
       reportCall(room, "cancelled", room.ring && room.ring.decision === "quiet" ? { to: [] } : {}); // Phase 1b
@@ -494,6 +679,7 @@ export function createCallsService(cfg, deps = {}) {
     }
     room.knocks.clear();
     roomsByCode.delete(room.code);
+    sfuClose(room);
     const cleanup = setTimeout(() => rooms.delete(room.id), LIMITS.endedRetentionMs);
     cleanup.unref?.();
   }
@@ -512,7 +698,15 @@ export function createCallsService(cfg, deps = {}) {
 
   function meetingInfo(req, code) {
     const room = lookup(req, code);
-    return { code: room.code, kind: room.kind, participants: room.participants.size, full: room.participants.size >= LIMITS.participants };
+    const n = room.participants.size;
+    // `e2ee_required`: the next person in would be on the media server, so their browser has to be
+    // able to encrypt its own media. The page can say so before anyone asks to join.
+    return {
+      code: room.code, kind: room.kind, participants: n,
+      full: n >= LIMITS.participants || (room.topology === "mesh" && n >= cfg.meshMax && !sfuEnabled()),
+      large: room.topology === "sfu",
+      e2ee_required: room.topology === "sfu" || n >= cfg.meshMax,
+    };
   }
 
   function knock(req, auth, body) {
@@ -520,7 +714,8 @@ export function createCallsService(cfg, deps = {}) {
     const room = lookup(req, body.code);
     if (limited("knock:" + clientIp(req), LIMITS.knocksPerIpHour, 3600_000)) throw new HttpError(429, "rate_limited");
     if (sessionInRoom(session)) throw new HttpError(409, "already_in_call");
-    if (room.participants.size >= LIMITS.participants) throw new HttpError(409, "room_full");
+    const problem = admissionProblem(room, body.e2ee);
+    if (problem) throw admissionError(problem);
     if (room.knocks.size >= LIMITS.pendingKnocksPerRoom) throw new HttpError(429, "too_many_requests");
     for (const k of room.knocks.values()) if (k.sessionId === session.id) throw new HttpError(409, "already_waiting");
     // A signed-in member knocks as one of their own mailboxes, which everyone inside sees as
@@ -534,7 +729,7 @@ export function createCallsService(cfg, deps = {}) {
       name = cleanName(body.name);
       if (!name) throw new HttpError(400, "name_required");
     }
-    const k = { id: newId(), sessionId: session.id, account: auth.account, name, mailbox, guest: auth.guest, at: now(), timer: null };
+    const k = { id: newId(), sessionId: session.id, account: auth.account, name, mailbox, guest: auth.guest, e2ee: body.e2ee === true, at: now(), timer: null };
     room.knocks.set(k.id, k);
     k.timer = setTimeout(() => resolveKnock(room, k, false, "timeout"), cfg.knockMs);
     k.timer.unref?.();
@@ -554,18 +749,20 @@ export function createCallsService(cfg, deps = {}) {
     if (!room.knocks.has(k.id)) return;
     room.knocks.delete(k.id);
     clearTimeout(k.timer);
-    broadcast(room, "knock_resolved", { room: room.id, knock: k.id, admitted: admit, by: decider ? decider.id : null, reason });
     const knocker = sessions.get(k.sessionId);
+    // Being let in can still fail: the call filled up, or would have to grow onto the media server
+    // and cannot (someone's browser cannot encrypt its own media, or the media server is at capacity).
+    if (admit && knocker && room.state !== "ended") {
+      const problem = admissionProblem(room, k.e2ee);
+      if (problem) { admit = false; reason = problem; }
+    }
+    broadcast(room, "knock_resolved", { room: room.id, knock: k.id, admitted: admit, by: decider ? decider.id : null, reason });
     if (!admit || !knocker || room.state === "ended") {
       send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: false, reason });
       if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) endRoom(room, "ended");
       return;
     }
-    if (room.participants.size >= LIMITS.participants) {
-      send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: false, reason: "room_full" });
-      return;
-    }
-    const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest });
+    const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest, e2ee: k.e2ee });
     if (room.state === "ringing" && room.participants.size >= 2) room.state = "active";
     if (k.mailbox) reportCall(room, "join", { by: k.mailbox.address, participants: [...room.participants.values()].map(participantName) }); // Phase 1b
     send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: true });
@@ -592,7 +789,7 @@ export function createCallsService(cfg, deps = {}) {
     const to = room.participants.get(String(body.to || ""));
     if (!to || to.id === from.id) throw new HttpError(404, "no_participant");
     if (!SIGNALS.has(body.type)) throw new HttpError(400, "bad_signal");
-    const data = validSignal(body.type, body.data);
+    const data = validSignal(body.type, body.data, room);
     if (limited("sig:" + from.id, LIMITS.signalsPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
     if (!send(sessions.get(to.sessionId), "signal", { room: room.id, from: from.id, type: body.type, data })) {
       throw new HttpError(409, "peer_unreachable");
@@ -600,9 +797,17 @@ export function createCallsService(cfg, deps = {}) {
     return { ok: true };
   }
 
-  function validSignal(type, data) {
+  function validSignal(type, data, room) {
     // Anyone in a call may mute anyone else, as in every meeting app. Only the person can unmute.
     if (type === "mute") return null;
+    // A room key wrapped to one participant's public key. This service cannot open it.
+    if (type === "key") {
+      if (room.topology !== "sfu" || !data || !Number.isInteger(data.epoch) || data.epoch < 1 || data.epoch > 1e9
+        || typeof data.iv !== "string" || !WRAP_IV.test(data.iv) || typeof data.key !== "string" || !WRAP_KEY.test(data.key)) {
+        throw new HttpError(400, "bad_signal");
+      }
+      return { epoch: data.epoch, iv: data.iv, key: data.key };
+    }
     if (type === "offer" || type === "answer") {
       if (!data || data.type !== type || typeof data.sdp !== "string" || data.sdp.length > LIMITS.sdpChars) {
         throw new HttpError(400, "bad_signal");
@@ -715,7 +920,9 @@ export function createCallsService(cfg, deps = {}) {
     const path = url.pathname.replace(/^\/calls(?=\/)/, "");
     try {
       if (req.method === "GET" && path === "/v1/health") {
-        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health() });
+        let large = 0;
+        for (const r of rooms.values()) if (r.state !== "ended" && r.topology === "sfu") large++;
+        return json(res, 200, { ok: true, sessions: sessions.size, rooms: rooms.size, postbox: internal.health(), large_rooms: large, large_calls: sfuEnabled() });
       }
       if (req.method === "POST") {
         const origin = req.headers.origin;
@@ -739,11 +946,11 @@ export function createCallsService(cfg, deps = {}) {
         const body = await readJson(req);
         return json(res, 200, answerKnock(auth, roomFor(knockAnswer[1]), knockAnswer[2], body));
       }
-      const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume|report)$/.exec(path);
+      const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume|report|sfu|e2ee)$/.exec(path);
       if (req.method === "POST" && m) {
         const body = await readJson(req);
         const room = roomFor(m[1]);
-        const action = { accept, decline, leave, signal, resume, report }[m[2]];
+        const action = { accept, decline, leave, signal, resume, report, sfu: sfuTicket, e2ee: announceKey }[m[2]];
         return json(res, 200, action(auth, room, body));
       }
       throw new HttpError(404, "not_found");
@@ -757,12 +964,36 @@ export function createCallsService(cfg, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal };
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps };
+}
+
+// The media server's admin API (LiveKit's Twirp RoomService), reached over TLS that trusts exactly
+// one certificate: the media host's own. Resolves with the HTTP status.
+function defaultSfuApi(sfu, method, body, token) {
+  const url = new URL(sfu.apiUrl + "/twirp/livekit.RoomService/" + method);
+  const payload = JSON.stringify(body);
+  const secure = url.protocol === "https:";
+  const options = {
+    method: "POST", host: url.hostname, port: url.port || (secure ? 443 : 80), path: url.pathname,
+    headers: { authorization: "Bearer " + token, "content-type": "application/json", "content-length": Buffer.byteLength(payload) },
+    timeout: 5_000,
+  };
+  if (secure && sfu.apiCa) Object.assign(options, { ca: sfu.apiCa, servername: sfu.apiServerName || undefined });
+  return new Promise((resolve, reject) => {
+    const req = (secure ? https : http).request(options, (res) => { res.resume(); resolve(res.statusCode); });
+    req.on("timeout", () => req.destroy(Object.assign(new Error("timeout"), { code: "ETIMEDOUT" })));
+    req.on("error", reject);
+    req.end(payload);
+  });
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const cfg = configFromEnv();
   if (!cfg.turnSecret || !cfg.turnUrls.length) console.warn("calls: TURN is not configured; calls will be direct only");
+  if (cfg.sfu.secret && cfg.sfu.secret.length < 32) throw new Error("CALLS_SFU_SECRET must be at least 32 characters");
+  console.log(cfg.sfu.url && cfg.sfu.key && cfg.sfu.secret && cfg.sfu.budgetMbps > 0
+    ? `calls: large calls on the media server, budget ${cfg.sfu.budgetMbps} Mbit/s`
+    : `calls: no media server configured; calls stay at ${cfg.meshMax} people`);
   const service = createCallsService(cfg);
   const server = http.createServer((req, res) => service.handle(req, res));
   server.headersTimeout = 15_000;
