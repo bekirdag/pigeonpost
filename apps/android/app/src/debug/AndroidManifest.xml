@@ -1,4 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-    <application android:networkSecurityConfig="@xml/network_security_config" />
+    <application android:networkSecurityConfig="@xml/network_security_config">
+        <!-- Debug only: FCM-shaped test pushes over adb (DebugPushReceiver); DUMP = the adb shell, nothing else. -->
+        <receiver android:name=".DebugPushReceiver" android:exported="true" android:permission="android.permission.DUMP">
+            <intent-filter><action android:name="dev.pigeonpost.inbox.debug.PUSH" /></intent-filter>
+        </receiver>
+    </application>
 </manifest>

@@ -80,6 +80,13 @@ private val DarkTokens = palette(true)
 
 val LocalPp = staticCompositionLocalOf { DarkTokens }
 
+/** An avatar's disc and initials colours outside Compose (the call notification's caller picture). */
+fun avatarTone(peer: String?, dark: Boolean): Pair<Color, Color> {
+    val tokens = if (dark) DarkTokens else LightTokens
+    val index = dev.pigeonpost.core.PeerFace.toneIndex(peer) - 1
+    return tokens.tones[index] to tokens.toneInk[index]
+}
+
 /** The design tokens of the theme being drawn. */
 object Pp {
     val colors: PpColors @Composable @ReadOnlyComposable get() = LocalPp.current

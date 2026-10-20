@@ -9,6 +9,7 @@ import com.google.firebase.messaging.FirebaseMessaging
 import dev.pigeonpost.core.DevicePushApi
 import dev.pigeonpost.core.SessionExpired
 import dev.pigeonpost.inbox.PigeonpostApplication
+import dev.pigeonpost.inbox.calls.IncomingCalls
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.tasks.await
@@ -31,6 +32,7 @@ class PushNotifications(private val context: Context) {
         preferences.edit().remove("identity").remove("token").apply()
         WorkManager.getInstance(context).cancelUniqueWork(WORK)
         NotificationManagerCompat.from(context).cancelAll()
+        IncomingCalls.clear(context)
         return token
     }
 

@@ -31,6 +31,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import dev.pigeonpost.inbox.push.PushNotifications
+import dev.pigeonpost.inbox.calls.IncomingCalls
 
 class MainActivity : ComponentActivity() {
     private val model: InboxViewModel by lazy {
@@ -42,7 +43,7 @@ class MainActivity : ComponentActivity() {
         })[InboxViewModel::class.java]
     }
     private val authorization = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.completeSignIn(it.data) }
-    private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration() }
+    private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration(); offerFullScreenCalls() }
     private val documents = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { model.attach(it) }
     private val photos = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { model.attach(it) }
     private val save = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
@@ -63,6 +64,7 @@ class MainActivity : ComponentActivity() {
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
+        Development.rememberHarness(this, intent)
         setContent { PigeonpostApp(model,
             signIn = { provider, other -> lifecycleScope.launch { model.session.begin(provider, other)?.let { intent ->
                 try { authorization.launch(intent) }
@@ -72,7 +74,8 @@ class MainActivity : ComponentActivity() {
             choosePhoto = { model.chooseAttachments(); photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
             scan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan a Pigeonpost sign-in code").setBeepEnabled(false).setOrientationLocked(false)) },
             attachment = ::attachment,
-            openLink = ::openLink, notificationSettings = ::notificationSettings) }
+            openLink = ::openLink, notificationSettings = ::notificationSettings,
+            fullScreenCalls = { if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this)) null else ::fullScreenCallSettings }) }
         model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
         Development.started()
         model.calls?.let { host ->
@@ -89,6 +92,7 @@ class MainActivity : ComponentActivity() {
             callFrame = CallFrame(this, host)
             onBackPressedDispatcher.addCallback(this, callFrame!!.back)
         }
+        if (savedInstanceState == null) answerCall(intent)
         lifecycleScope.launch {
             combine(model.session.state, model.inbox.state) { session, state -> session.signedIn && session.termsAccepted && state.acting != null }
                 .distinctUntilChanged().collect { ready ->
@@ -97,7 +101,7 @@ class MainActivity : ComponentActivity() {
                         if (!preferences.getBoolean("asked_permission", false) && !PushNotifications.allowed(this@MainActivity)) {
                             preferences.edit().putBoolean("asked_permission", true).apply()
                             notifications.launch(Manifest.permission.POST_NOTIFICATIONS)
-                        }
+                        } else offerFullScreenCalls()
                     }
                 }
         }
@@ -110,10 +114,42 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        answerCall(intent)
     }
-    override fun onStart() { super.onStart(); PushNotifications.foreground = true; model.inbox.setActive(true); model.billing?.attach(this) }
+    override fun onStart() {
+        super.onStart(); PushNotifications.foreground = true; model.inbox.setActive(true); model.billing?.attach(this)
+        model.calls?.setVisible(true); IncomingCalls.foreground(this)
+    }
     override fun onResume() { super.onResume(); model.refreshPushRegistration(); if (model.session.state.value.signedIn) model.paidHandles?.restore() }
-    override fun onStop() { PushNotifications.foreground = false; model.billing?.detach(this); model.inbox.setActive(false); super.onStop() }
+    override fun onStop() {
+        PushNotifications.foreground = false; model.billing?.detach(this); model.inbox.setActive(false)
+        model.calls?.setVisible(false); IncomingCalls.background(this)
+        super.onStop()
+    }
+    /** Answer from the call notification or the incoming-call screen: the call page accepts with the ring token. */
+    private fun answerCall(intent: Intent?) {
+        if (intent?.action != IncomingCalls.ACTION_ANSWER || intent.flags and Intent.FLAG_ACTIVITY_LAUNCHED_FROM_HISTORY != 0) return
+        val ring = IncomingCalls.fromIntent(intent)
+        setIntent(Intent(intent).setAction(null))
+        if (ring == null || ring.expiresAt * 1000 < System.currentTimeMillis() - 5000 || ring.identity != IncomingCalls.identity(this)) return
+        IncomingCalls.answered(this, ring)
+        model.calls?.answer(ring.room, ring.ringToken, ring.kind)
+    }
+    /** Android 14+: full-screen call screens can be switched off; ask once, then Settings keeps the way back. */
+    private fun offerFullScreenCalls() {
+        if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this) || !IncomingCalls.allowed(this)) return
+        val preferences = getSharedPreferences("push", MODE_PRIVATE)
+        if (preferences.getBoolean("asked_full_screen", false)) return
+        preferences.edit().putBoolean("asked_full_screen", true).apply()
+        android.app.AlertDialog.Builder(this).setTitle("Show calls on the lock screen")
+            .setMessage("Allow Pigeonpost to show incoming calls full screen, like a phone call. Without it, calls ring as a notification.")
+            .setPositiveButton("Allow") { _, _ -> fullScreenCallSettings() }.setNegativeButton("Not now", null).show()
+    }
+    private fun fullScreenCallSettings() {
+        val intent = if (Build.VERSION.SDK_INT >= 34) Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT, Uri.parse("package:$packageName"))
+            else Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+        try { startActivity(intent) } catch (_: ActivityNotFoundException) { notificationSettings() }
+    }
     private fun notificationSettings() {
         startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName))
     }

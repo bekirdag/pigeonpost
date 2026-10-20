@@ -120,7 +120,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     accountHandles: AccountHandleStore? = null, refreshMailboxes: () -> Unit = {},
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit,
-    notificationSettings: () -> Unit = {}, appearance: AppearanceChoice = AppearanceChoice.SYSTEM,
+    notificationSettings: () -> Unit = {}, fullScreenCalls: (() -> Unit)? = null, appearance: AppearanceChoice = AppearanceChoice.SYSTEM,
     chooseAppearance: (AppearanceChoice) -> Unit = {}) {
     var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
     val page = SettingsPage.valueOf(pageName)
@@ -190,6 +190,11 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 Text("Notifications", style = MaterialTheme.typography.titleMedium)
                 Text("Get notified about new messages in your selected inbox, even when Pigeonpost is closed. Allow notifications in Android settings.", style = MaterialTheme.typography.bodyMedium)
                 OutlinedButton(notificationSettings, Modifier.fillMaxWidth()) { Text("Notification settings") }
+                fullScreenCalls?.let { allow ->
+                    Text("Calls", style = MaterialTheme.typography.titleMedium)
+                    Text("Incoming calls ring as a notification. Allow full-screen notifications to see them over the lock screen, like a phone call.", style = MaterialTheme.typography.bodyMedium)
+                    OutlinedButton(allow, Modifier.fillMaxWidth()) { Text("Allow full-screen calls") }
+                }
             }
             SettingsPage.HELP -> {
                 TextButton({ openLink("https://pigeonpost.dev/app-support.html") }) { Text("Contact support") }

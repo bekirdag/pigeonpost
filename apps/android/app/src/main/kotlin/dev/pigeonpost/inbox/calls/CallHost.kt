@@ -10,8 +10,12 @@
 //  the call needs: all of it, a strip while the person reads mail during a call, or none. While idle
 //  it stays loaded and invisible, so an incoming call rings while the app is open.
 //
-//  Not covered: ringing while the app is closed (that needs a push-driven call service), and sending
-//  this device's screen (Android WebView has no getDisplayMedia). Others' shared screens are shown.
+//  With the app off screen or closed, rings come as notifications (IncomingCalls, Phase 1c): the page
+//  is configured with `nativeRing` then, keeps the ring state, and reports `ring`/`ring_ended` here.
+//  Answering a notification hands the page `PigeonpostNative.answer(room, ringToken)`.
+//
+//  Not covered: sending this device's screen (Android WebView has no getDisplayMedia). Others' shared
+//  screens are shown.
 package dev.pigeonpost.inbox.calls
 
 import android.Manifest
@@ -70,7 +74,16 @@ class CallHost(private val app: Application, private val session: UserSession, p
     private var mailbox: Mailbox? = null
     private var known: Map<String, String> = emptyMap()
     private var autoCalled = false
+    /** Answer this ring once the page is signed in: room, ring token (null: the page's own ring), kind. */
+    private var pendingAnswer: Triple<String, String?, String>? = null
+    private var configured = false
+    /** The app is on screen: the page's own ring screen and ringtone answer calls. */
+    private var visible = false
     var window: CallWindow? = null
+
+    init {
+        IncomingCalls.host = java.lang.ref.WeakReference(this)
+    }
 
     val webView: WebView get() = view ?: build().also { view = it }
 
@@ -83,7 +96,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
     }
 
     fun signOut() {
-        mailbox = null; known = emptyMap(); pending = null
+        mailbox = null; known = emptyMap(); pending = null; pendingAnswer = null; configured = false
         if (ready) evaluate("window.PigeonpostNative && PigeonpostNative.signOut()")
         mutableMode.value = Mode.HIDDEN
     }
@@ -100,6 +113,37 @@ class CallHost(private val app: Application, private val session: UserSession, p
         }
     }
 
+    /** On screen or not; off screen the app rings with a notification instead of the page. */
+    fun setVisible(value: Boolean) {
+        if (visible == value) return
+        visible = value
+        configure()
+    }
+
+    /**
+     * Answer an incoming call from the notification or the incoming-call screen. The page may not be
+     * loaded yet (the app was started by the push); it answers as soon as it has a session.
+     */
+    fun answer(room: String, ringToken: String?, kind: String) {
+        val needed = buildList { add(Manifest.permission.RECORD_AUDIO); if (kind == "video") add(Manifest.permission.CAMERA) }.filterNot(::held)
+        val go = {
+            if (ready && configured) evaluate("PigeonpostNative.answer(${quote(room)}, ${ringToken?.let(::quote) ?: "null"})")
+            else pendingAnswer = Triple(room, ringToken, kind)
+        }
+        val window = window
+        if (needed.isEmpty() || window == null) go()
+        else window.requestPermissions(needed.toTypedArray()) { result ->
+            if (result[Manifest.permission.RECORD_AUDIO] == true) go()
+            else { decline(room, ringToken); window.toast("Allow the microphone in Android settings to answer calls.") }
+        }
+    }
+
+    /** Decline through the page: a ring it rang itself, or when the ring-token decline did not get through. */
+    fun decline(room: String, ringToken: String?) {
+        if (pendingAnswer?.first == room) pendingAnswer = null
+        if (ready) evaluate("window.PigeonpostNative && PigeonpostNative.decline && PigeonpostNative.decline(${quote(room)}, ${ringToken?.let(::quote) ?: "null"})")
+    }
+
     private fun held(permission: String) = ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun configure() {
@@ -113,7 +157,14 @@ class CallHost(private val app: Application, private val session: UserSession, p
                 .put("token", token ?: JSONObject.NULL)
                 .put("mailbox", JSONObject().put("address", address).put("handle", handle ?: JSONObject.NULL))
                 .put("known", JSONObject(known))
+                // Off screen (or answering from a notification) the app shows the ring, not the page.
+                .put("nativeRing", !visible || pendingAnswer != null)
             evaluate("PigeonpostNative.configure($options)")
+            configured = token != null
+            pendingAnswer?.let { (room, ringToken, _) ->
+                pendingAnswer = null
+                evaluate("PigeonpostNative.answer(${quote(room)}, ${ringToken?.let(::quote) ?: "null"})")
+            }
             val auto = override?.autoCall
             if (auto != null && !autoCalled && auto.contains(':')) {
                 autoCalled = true
@@ -144,6 +195,15 @@ class CallHost(private val app: Application, private val session: UserSession, p
             "mode" -> mutableMode.value = when (message.optString("mode")) { "full" -> Mode.FULL; "mini" -> Mode.MINI; else -> Mode.HIDDEN }
             "renew" -> renew()
             "toast" -> message.optString("text").takeIf { it.isNotBlank() }?.let { window?.toast(it) }
+            "ring" -> {
+                val me = mailbox ?: return
+                val from = message.optJSONObject("from") ?: return
+                IncomingCalls.fromPage(app, message.optString("room"), message.optString("kind"), from.optString("address"),
+                    from.optString("handle").takeIf { it.isNotEmpty() && it != "null" }, override?.mailbox ?: me.address)
+            }
+            "ring_ended" -> message.optString("room").takeIf { it.isNotEmpty() }?.let { room ->
+                if (IncomingCalls.rings.value.containsKey(room)) IncomingCalls.end(app, room, message.optString("reason").ifEmpty { "ended" })
+            }
         }
     }
 
@@ -178,7 +238,7 @@ class CallHost(private val app: Application, private val session: UserSession, p
                 if (request.hasGesture() && request.url.scheme in setOf("https", "http")) window?.openExternal(request.url)
                 return true
             }
-            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { ready = false }
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) { ready = false; configured = false }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 // Start again from a page that knows nothing; the activity re-adds the new view.
                 ready = false; mutableMode.value = Mode.HIDDEN
@@ -229,7 +289,9 @@ class CallHost(private val app: Application, private val session: UserSession, p
     }
 
     companion object {
-        const val PRODUCTION = "https://inbox.pigeonpost.dev/native-call.html?v=20261019-android"
+        const val PRODUCTION = "https://inbox.pigeonpost.dev/native-call.html?v=20261020-android"
+        /** The calls service is `/calls/v1` on the page's own origin. */
+        const val PRODUCTION_ORIGIN = "https://inbox.pigeonpost.dev"
         private fun quote(value: String) = JSONObject.quote(value)
     }
 }
