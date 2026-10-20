@@ -16,6 +16,11 @@
 // removes Carol, who stops receiving anything; Alice's second browser joins as a new device and sees
 // no earlier messages; a 5-minute disappearing timer runs out and the message vanishes everywhere.
 // No Chrome dependency beyond the browser itself: the DevTools protocol is spoken directly.
+//
+// Live mode (verifying a deployment, cross-origin): E2E_LIVE=1 E2E_ORIGIN=https://inbox… \
+//   E2E_POSTBOX=https://postbox… E2E_TOKENS='{"alice":"<jwt>","bob":"<jwt>","carol":"<jwt>"}'
+// uses real member tokens for throwaway accounts that already have the flags, starts nothing
+// locally, and talks to the deployed inbox and postbox exactly as a browser on the inbox does.
 import { spawn, execFileSync } from "node:child_process";
 import http from "node:http";
 import { mkdtempSync, readFileSync, existsSync, rmSync, writeFileSync } from "node:fs";
@@ -30,6 +35,7 @@ const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/M
 const OPS = "svc_ops_" + crypto.randomBytes(20).toString("hex");
 const TIMER_WAIT = Number(process.env.E2E_TIMER_WAIT_S || 400);
 const SKIP_TIMER = process.env.E2E_SKIP_TIMER === "1";
+const LIVE = process.env.E2E_LIVE === "1";
 const work = mkdtempSync(path.join(tmpdir(), "pp-e2e-groups-"));
 const log = (...a) => console.log(new Date().toISOString().slice(11, 19), ...a);
 const children = [];
@@ -55,6 +61,14 @@ async function until(fn, what, ms = 60000) {
   throw new Error("timed out: " + what + (last instanceof Error ? " (" + last.message + ")" : ""));
 }
 
+let PB, ORIGIN, jwt;
+if (LIVE) {
+  PB = process.env.E2E_POSTBOX.replace(/\/+$/, "");
+  ORIGIN = process.env.E2E_ORIGIN.replace(/\/+$/, "");
+  const tokens = JSON.parse(process.env.E2E_TOKENS);
+  jwt = (sub) => tokens[sub.replace(/^e2e-/, "")];
+  log("live mode:", ORIGIN, "→", PB);
+} else {
 // ---- OIDC issuer ------------------------------------------------------------------------------
 
 const { publicKey, privateKey } = crypto.generateKeyPairSync("rsa", { modulusLength: 2048 });
@@ -69,7 +83,7 @@ const oidc = http.createServer((req, res) => {
 const oidcPort = await listen(oidc);
 const ISSUER = `http://127.0.0.1:${oidcPort}/realms/e2e`;
 const b64u = (buf) => Buffer.from(buf).toString("base64url");
-function jwt(sub, name) {
+jwt = function (sub, name) {
   const now = Math.floor(Date.now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT", kid: KID }));
   const body = b64u(JSON.stringify({ iss: ISSUER, sub, exp: now + 6 * 3600, iat: now, auth_time: now, azp: "pigeonpost-web", typ: "Bearer", preferred_username: name, aud: ["account"] }));
@@ -100,7 +114,7 @@ const postbox = spawn(bin, [], {
   stdio: ["ignore", "inherit", "inherit"],
 });
 children.push(postbox);
-const PB = `http://127.0.0.1:${pbPort}`, INT = `http://127.0.0.1:${intPort}`;
+PB = `http://127.0.0.1:${pbPort}`; const INT = `http://127.0.0.1:${intPort}`;
 await until(() => fetch(PB + "/health").then((r) => r.ok), "postbox health", 30000);
 for (const name of ["groups", "disappearing", "account_events"]) {
   const r = await fetch(`${INT}/internal/v1/features/${name}`, { method: "PUT", headers: { authorization: "Bearer " + OPS, "content-type": "application/json" }, body: JSON.stringify({ scope: "global", enabled: true }) });
@@ -108,6 +122,7 @@ for (const name of ["groups", "disappearing", "account_events"]) {
 }
 log("postbox up on", PB);
 
+}
 async function pb(token, method, p, body, identity, device) {
   const r = await fetch(PB + p, { method, headers: { authorization: "Bearer " + token, "content-type": "application/json", ...(identity ? { "x-pigeonpost-identity": identity } : {}), ...(device ? { "x-pigeonpost-device": device } : {}) }, body: body ? JSON.stringify(body) : undefined });
   const text = await r.text();
@@ -125,13 +140,14 @@ for (const [key, name] of [["alice", "Alice"], ["bob", "Bob"], ["carol", "Carol"
 }
 log("mailboxes", Object.fromEntries(Object.entries(people).map(([k, v]) => [k, v.address])));
 
+if (!LIVE) {
 // ---- static inbox + same-origin proxy ---------------------------------------------------------
 
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".mjs": "text/javascript", ".css": "text/css", ".wasm": "application/wasm", ".png": "image/png", ".ico": "image/x-icon", ".woff2": "font/woff2", ".json": "application/json", ".svg": "image/svg+xml" };
 const site = http.createServer((req, res) => {
   const url = new URL(req.url, "http://x");
   if (url.pathname.startsWith("/v1/")) {
-    const up = http.request(PB + req.url, { method: req.method, headers: { ...req.headers, host: `127.0.0.1:${pbPort}` } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
+    const up = http.request(PB + req.url, { method: req.method, headers: { ...req.headers, host: new URL(PB).host } }, (r) => { res.writeHead(r.statusCode, r.headers); r.pipe(res); });
     up.on("error", () => { res.writeHead(502); res.end(); });
     req.pipe(up);
     return;
@@ -148,8 +164,10 @@ const site = http.createServer((req, res) => {
   res.end(data);
 });
 const sitePort = await listen(site);
-const ORIGIN = `http://127.0.0.1:${sitePort}`;
+ORIGIN = `http://127.0.0.1:${sitePort}`;
 log("inbox on", ORIGIN, "(served under the production CSP)");
+
+}
 
 // ---- Chrome over the DevTools protocol ----------------------------------------------------------
 
