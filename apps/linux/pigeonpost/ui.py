@@ -14,6 +14,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, Gtk, Pango
 from . import APP_ID, VERSION
 from .api import APIError, MAX_FILE, Postbox
 from .auth import Session
+from .calls import CallAlerts, valid_room
 from .model import (contact_for, conversation_address_input, conversations, display_name, message_text, normalize, safe_filename,
                     size_text, subjects, target_thread, timestamp, valid_peer, unread_count)
 from .vault import Vault
@@ -22,6 +23,35 @@ from .theme import CHOICES, Design, Preferences, apply_appearance
 from .viewer import AttachmentViewer
 
 WEB_INBOX = "https://inbox.pigeonpost.dev/"
+
+
+class CallNotifier:
+    """Incoming calls as urgent desktop notifications with Answer and Decline buttons."""
+
+    def __init__(self, app):
+        self.app = app
+
+    def show(self, room, title, body):
+        notification = Gio.Notification.new(title)
+        notification.set_body(body)  # plain text, already stripped of markup characters
+        notification.set_priority(Gio.NotificationPriority.URGENT)
+        if hasattr(notification, "set_category"):
+            notification.set_category("call.incoming")
+        target = GLib.Variant("s", room)
+        notification.add_button_with_target("Answer", "app.call-answer", target)
+        notification.add_button_with_target("Decline", "app.call-decline", target)
+        self.app.send_notification("call-" + room, notification)
+
+    def withdraw(self, room):
+        self.app.withdraw_notification("call-" + room)
+
+
+def on_main(fn, *args):
+    GLib.idle_add(lambda: (fn(*args), False)[1])
+
+
+def main_later(seconds, fn):
+    GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
 def box(spacing=8, horizontal=False, margin=0):
@@ -175,7 +205,7 @@ class SettingsNavigation:
 
 
 class Window(Adw.ApplicationWindow):
-    def __init__(self, app, session=None, api=None, restore=True, preferences=None):
+    def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
         self.preferences = preferences or getattr(app, "preferences", None) or Preferences()
@@ -184,6 +214,9 @@ class Window(Adw.ApplicationWindow):
             app.design = Design(self.get_display())
         self.session = session or Session(Vault())
         self.api = api or Postbox(self.session)
+        # Injected APIs (tests) get no live calls stream unless one is passed explicitly.
+        self.calls = calls if calls is not None or api is not None else CallAlerts(
+            self.session, CallNotifier(app), self.open_url, dispatch=on_main, later=main_later, name_for=self.caller_name)
         self.generation, self.revision, self.closed = 0, 0, False
         self.cancel = threading.Event()
         self.mailboxes, self.messages, self.threads, self.contacts, self.archived = [], [], [], [], []
@@ -348,6 +381,8 @@ class Window(Adw.ApplicationWindow):
                                  [display_name(r["handle"]) if r.get("handle") else r.get("label") or display_name(r["address"]) for r in rows])
         self.rendering = False
         self.create_button.set_visible(not rows)
+        if self.calls and rows:
+            self.calls.start()
         self.mailbox_picker.set_visible(bool(rows))
         self.post_address.set_visible(bool(rows))
         if rows:
@@ -968,6 +1003,20 @@ class Window(Adw.ApplicationWindow):
         kind = "video" if video else "voice"
         self.toast(f"Calls open in the web inbox. Choose {display_name(peer)} there and start a {kind} call — the address is copied.")
 
+    def caller_name(self, address, handle):
+        """A ringing caller as this mailbox's contacts name them, else their handle or address."""
+        shown = display_name(handle or address)
+        alias = next((c.get("alias") for c in self.contacts if c.get("peer") in (handle, address) and c.get("alias")), None)
+        return f"{alias} ({shown})" if isinstance(alias, str) and alias.strip() else shown
+
+    def answer_call(self, room):
+        if self.calls and self.calls.answer(room):
+            self.toast("The call opens in your browser.")
+
+    def decline_call(self, room):
+        if self.calls:
+            self.calls.decline(room)
+
     def sent_snapshot(self, messages):
         self.messages = messages
         self.render_all()
@@ -1500,6 +1549,8 @@ class Window(Adw.ApplicationWindow):
         self.known_ids = None
         self.notification_target = None
         self.get_application().withdraw_notification("new-mail")
+        if self.calls:
+            self.calls.stop()
         self.polling = self.sending = self.acking = False
         self.restore_draft()
         self.render_all()
@@ -1532,6 +1583,19 @@ class Application(Adw.Application):
         action = Gio.SimpleAction.new("open-message", GLib.VariantType.new("(ss)"))
         action.connect("activate", self.open_message)
         self.add_action(action)
+        for name, handler in (("call-answer", "answer_call"), ("call-decline", "decline_call")):
+            action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
+            action.connect("activate", self.call_action, handler)
+            self.add_action(action)
+
+    def call_action(self, action, parameter, handler):
+        room = parameter.get_string()
+        if not valid_room(room):
+            return
+        if self.window and not self.window.closed:
+            getattr(self.window, handler)(room)
+        else:
+            self.withdraw_notification("call-" + room)
 
     def open_message(self, action, parameter):
         self.activate()

@@ -36,3 +36,8 @@
 - Linux dependencies and UI were tested on Ubuntu 24.04 under X11/Xvfb on both processor architectures. Wayland support uses GTK/Flatpak's standard Wayland interface; physical Wayland, KDE and other distribution sessions were not exercised. Debian 12 meets the declared dependency floors; it was not separately installed for this release.
 - Direct Flatpak bundles require installing a newer release to update. They are not yet listed on Flathub. The GNOME runtime is downloaded on first install.
 - Handle checkout and account deletion use the existing website. No offline message database or system tray is included. Notifications arrive while the app runs.
+
+## 2026-10-20 — incoming-call alerting (Phase 1c)
+
+- `pigeonpost/calls.py`: calls event-stream client (bounded SSE parser, backoff, one token renewal on 401, stops on sign-out/quit), urgent `Gio.Notification` with Answer/Decline (`app.call-answer`/`app.call-decline`, room id target), optional `canberra-gtk-play` ringtone, Answer → `https://inbox.pigeonpost.dev/?answer=<room>`, Decline → `POST /calls/v1/rooms/{room}/decline` with the app's own session. Hooks in `ui.py` start it after the mailboxes load and stop it in `clear_account`.
+- 46 core tests pass on macOS (20 new call tests). A new GTK lifecycle test needs Linux CI. End-to-end against a local calls service with a mock postbox: stream after 401 renewal, ring, decline seen by the caller, caller cancel / answered elsewhere / no answer withdraw the alert, Answer URL, prompt stop.
