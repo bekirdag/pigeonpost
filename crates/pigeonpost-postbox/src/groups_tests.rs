@@ -1462,8 +1462,13 @@ async fn pruning_only_desyncs_devices_that_missed_a_pruned_commit() {
     }
     for m in [&alice, &bob] {
         let epoch = m.group(&srv, &gid).await["epoch"].clone();
-        m.req(&srv, reqwest::Method::POST, &format!("/v1/groups/{gid}/epoch-ack"), Some(json!({ "epoch": epoch })))
-            .await;
+        m.req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/epoch-ack"),
+            Some(json!({ "epoch": epoch })),
+        )
+        .await;
     }
     let now = now_unix();
     srv.state
@@ -1473,7 +1478,14 @@ async fn pruning_only_desyncs_devices_that_missed_a_pruned_commit() {
         .unwrap();
     assert!(alice.group(&srv, &gid).await["last_seq"].as_i64().unwrap() > 0);
     // Reading from the start is fine: nothing this device needs is gone.
-    let (s, _) = bob.req(&srv, reqwest::Method::GET, &format!("/v1/groups/{gid}/messages?after_seq=0"), None).await;
+    let (s, _) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?after_seq=0"),
+            None,
+        )
+        .await;
     assert_eq!(s, 200);
     // A device whose acknowledged epoch predates the oldest kept commit must resync.
     let g2 = gid.clone();
@@ -1488,6 +1500,17 @@ async fn pruning_only_desyncs_devices_that_missed_a_pruned_commit() {
         })
         .await
         .unwrap();
-    let (s, v) = bob.req(&srv, reqwest::Method::GET, &format!("/v1/groups/{gid}/messages?after_seq=0"), None).await;
-    assert_eq!((s, v["error"].as_str()), (410, Some("resync_required")), "{v}");
+    let (s, v) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?after_seq=0"),
+            None,
+        )
+        .await;
+    assert_eq!(
+        (s, v["error"].as_str()),
+        (410, Some("resync_required")),
+        "{v}"
+    );
 }

@@ -2709,6 +2709,7 @@ pub(crate) struct PageQuery {
 }
 
 /// The items one member may see, in sequence order (inside a read).
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn page(
     c: &Connection,
     g: &GroupRow,
