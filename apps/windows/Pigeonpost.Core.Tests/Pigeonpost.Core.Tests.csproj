@@ -9,6 +9,18 @@
   <ItemGroup>
     <ProjectReference Include="../Pigeonpost.Core/Pigeonpost.Core.csproj" />
     <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />
+    <Compile Include="../Pigeonpost.Core/Preview/**/*.cs" LinkBase="Preview" />
     <None Update="Fixtures/*.json" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <!-- The group crypto library for the machine running the tests: build it first with
+       cargo build (release, package pigeonpost-groupcrypto-ffi) in crates/pigeonpost-groupcrypto.
+       The MLS tests fail, rather than skip, when it is missing. -->
+  <PropertyGroup>
+    <GroupCryptoRelease>$(MSBuildThisFileDirectory)../../../crates/pigeonpost-groupcrypto/target/release/</GroupCryptoRelease>
+  </PropertyGroup>
+  <ItemGroup>
+    <None Include="$(GroupCryptoRelease)libpigeonpost_groupcrypto_ffi.so" Link="libpigeonpost_groupcrypto_ffi.so" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(GroupCryptoRelease)libpigeonpost_groupcrypto_ffi.so')" />
+    <None Include="$(GroupCryptoRelease)libpigeonpost_groupcrypto_ffi.dylib" Link="libpigeonpost_groupcrypto_ffi.dylib" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(GroupCryptoRelease)libpigeonpost_groupcrypto_ffi.dylib')" />
+    <None Include="$(GroupCryptoRelease)pigeonpost_groupcrypto_ffi.dll" Link="pigeonpost_groupcrypto_ffi.dll" CopyToOutputDirectory="PreserveNewest" Condition="Exists('$(GroupCryptoRelease)pigeonpost_groupcrypto_ffi.dll')" />
   </ItemGroup>
 </Project>

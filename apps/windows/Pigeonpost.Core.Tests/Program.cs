@@ -1031,6 +1031,8 @@ Test("Call page messages parse strictly and scripts carry JSON-encoded values on
 });
 tests.AddRange(AccountTests.All());
 tests.AddRange(CallRingTests.All());
+tests.AddRange(PrivacyTests.All());
+tests.AddRange(GroupTests.All());
 var failed = 0;
 foreach (var test in tests)
 {

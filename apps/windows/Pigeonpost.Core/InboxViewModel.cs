@@ -3,7 +3,7 @@ using System.Collections.ObjectModel;
 namespace Pigeonpost.Core;
 
 // Construct on the UI context. Awaited service calls return to it; stale mailbox loads are discarded.
-public sealed class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null) : ObservableObject, IDisposable
+public sealed partial class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null) : ObservableObject, IDisposable
 {
     private InboxSnapshot snapshot = InboxSnapshot.Empty;
     private readonly List<PendingMessage> pending = [];
@@ -73,7 +73,7 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
     public event EventHandler? MessagesUpdated;
     public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
-    public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending;
+    public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending && !IsSelectedBlocked;
     public bool HasConversation => SelectedConversation is not null;
     public bool HasError => !string.IsNullOrEmpty(Error);
     public string? Error { get => error; private set { if (Set(ref error, value)) Changed(nameof(HasError)); } }
@@ -406,9 +406,16 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
     private void Rebuild()
     {
         if (SelectedMailbox is null) return;
-        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address));
+        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address), callEntries);
         FilterConversations();
         Changed(nameof(InboxSummary));
+        // A block or a timer can change without the selected row changing.
+        Changed(nameof(IsSelectedBlocked));
+        Changed(nameof(BlockedBanner));
+        Changed(nameof(CanCompose));
+        Changed(nameof(CanSetTimer));
+        Changed(nameof(TimerBanner));
+        Changed(nameof(HasTimer));
     }
 
     private void FilterConversations()
@@ -447,6 +454,8 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
             if (!ReferenceEquals(previousConversation, conversation))
             {
                 Changed(nameof(SelectedConversation));
+                Changed(nameof(IsSelectedBlocked));
+                Changed(nameof(BlockedBanner));
                 Changed(nameof(ConversationTitle));
                 Changed(nameof(ConversationAddress));
                 Changed(nameof(HasConversation));
@@ -472,6 +481,8 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
         Changed(nameof(SelectedSubject));
         Changed(nameof(SubjectTitle));
         Changed(nameof(CanDeleteSubject));
+        Changed(nameof(TimerBanner));
+        Changed(nameof(HasTimer));
         if (contextChanged || !StableList.SameMessages(Messages, next))
         {
             MessagesUpdating?.Invoke(this, EventArgs.Empty);

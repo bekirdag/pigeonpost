@@ -1,7 +1,7 @@
 namespace Pigeonpost.Core;
 
 // Local, disposable sample data. This service has no HttpClient, credential store or network path.
-public sealed class PreviewInboxService : IInboxService
+public sealed class PreviewInboxService : IInboxService, IConversationSettings
 {
     private readonly Dictionary<string, InboxSnapshot> snapshots;
     private int sequence;
@@ -184,6 +184,24 @@ public sealed class PreviewInboxService : IInboxService
             Threads = snapshot.Threads.Where(t => t.ThreadId != threadId).ToArray(),
             Messages = snapshot.Messages.Where(m => m.ThreadId != threadId).ToArray()
         };
+        return Task.CompletedTask;
+    }
+
+    public List<string> Reported { get; } = [];
+
+    public Task SetThreadTimerAsync(string identity, string threadId, int? seconds, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        var snapshot = snapshots[identity];
+        if (snapshot.Threads.All(t => t.ThreadId != threadId)) throw new PostboxException(404, "not_found");
+        snapshots[identity] = snapshot with { Threads = snapshot.Threads.Select(t => t.ThreadId == threadId ? t with { EphemeralSecs = seconds } : t).ToArray() };
+        return Task.CompletedTask;
+    }
+
+    public Task ReportMessageAsync(string identity, string messageId, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        Reported.Add(messageId);
         return Task.CompletedTask;
     }
 
