@@ -163,6 +163,51 @@ Test("Large histories preserve all messages and correct counts", () =>
     Equal(row.Messages.Count, 10000); Equal(row.Unread, 5000); Equal(row.Last, 9999L);
 });
 
+Test("Message toasts name the sender, preview the text and obey the preview setting", () =>
+{
+    Mailbox me = new("/k/me", "/bekir/main");
+    var snapshot = new InboxSnapshot([
+        new InboxMessage { MessageId = "m1", Body = RequestEnvelope.Work("Can you check the release notes?\nThanks"), Peer = "/wodo/hr", ReceivedAt = 10 },
+        new InboxMessage { MessageId = "m2", Body = "hello", Peer = "/acme/john-doe", ReceivedAt = 11 },
+        new InboxMessage { MessageId = "m3", Body = "", Peer = "/wodo/hr", ReceivedAt = 12, Attachments = [new MessageAttachment("a", "plan.pdf", "application/pdf", 10)] },
+        new InboxMessage { MessageId = "m4", Body = new string('x', 500), Peer = "/wodo/hr", ReceivedAt = 13 }],
+        [], [new Contact("/acme/john-doe", "John", "allow", "review")], new HashSet<string>());
+    var full = MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m1"), snapshot, [me], NotificationPreview.NameAndMessage);
+    Equal(full.Title, "Wodo HR"); Equal(full.Text, "Can you check the release notes? Thanks"); Equal(full.Initials, "WH");
+    Equal(MessageAlerts.Compose(new(me.Address, "/acme/john-doe", null, "m2"), snapshot, [me], NotificationPreview.NameAndMessage).Title, "John");
+    Equal(MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m3"), snapshot, [me], NotificationPreview.NameAndMessage).Text, "Sent a file: plan.pdf");
+    Equal(MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m4"), snapshot, [me], NotificationPreview.NameAndMessage).Text.Length, MessageAlerts.MaxPreviewLength);
+    var named = MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m1"), snapshot, [me], NotificationPreview.NameOnly);
+    Equal(named.Title, "Wodo HR"); Equal(named.Text, "New message");
+    var hidden = MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m1"), snapshot, [me], NotificationPreview.Hidden);
+    Equal(hidden.Title, MessageAlerts.GenericTitle); Equal(hidden.Text, MessageAlerts.GenericText);
+    Check(!hidden.Text.Contains("release"), "A hidden preview must not leak the message.");
+    Equal(full.Group, MessageAlerts.Compose(new(me.Address, "/wodo/hr", null, "m3"), snapshot, [me], NotificationPreview.NameAndMessage).Group);
+    Check(full.Group != MessageAlerts.Compose(new(me.Address, "/acme/john-doe", null, "m2"), snapshot, [me], NotificationPreview.NameAndMessage).Group, "Each conversation has its own toast group.");
+    Check(full.Tag != hidden.Group, "Tags and groups are distinct keys.");
+    Equal(AppPreferences.ParseNotificationPreview(null), NotificationPreview.NameAndMessage);
+    Equal(AppPreferences.ParseNotificationPreview("name"), NotificationPreview.NameOnly);
+    Equal(AppPreferences.ParseNotificationPreview("garbled"), NotificationPreview.Hidden);
+});
+AsyncTest("Toast reply sends into the subject and Mark as read clears the conversation without moving the selection", async () =>
+{
+    var service = new PreviewInboxService();
+    using var vm = new InboxViewModel(service);
+    await vm.InitializeAsync();
+    var mailbox = vm.SelectedMailbox!.Address;
+    var selected = vm.SelectedConversation!.Peer;
+    service.ReceiveForUiTest("design-release");
+    Check(await vm.ReplyFromAlertAsync(mailbox, "/preview/design", "design-release", "On it"), "Reply was refused.");
+    var after = await service.LoadAsync(mailbox, CancellationToken.None);
+    var reply = after.Messages.Last(m => m.IsOutgoing);
+    Equal(RequestEnvelope.DisplayText(reply.Body), "On it"); Equal(reply.ThreadId, "design-release");
+    Check(after.Messages.Where(m => !m.IsOutgoing && m.PeerKey == "/preview/design").All(m => m.Read == true), "Replying marks the conversation read.");
+    Equal(vm.SelectedConversation!.Peer, selected);
+    service.ReceiveForUiTest();
+    Equal(await vm.MarkConversationReadAsync(mailbox, "/preview/design"), 1);
+    Check(!await vm.ReplyFromAlertAsync("/k/not-mine", "/preview/design", null, "x"), "Activation arguments for another account are ignored.");
+    Check(!await vm.ReplyFromAlertAsync(mailbox, "/preview/design", null, "  "), "An empty reply is not sent.");
+});
 AsyncTest("Preview switches mailboxes without mixing histories or drafts", async () =>
 {
     using var vm = new InboxViewModel(new PreviewInboxService());

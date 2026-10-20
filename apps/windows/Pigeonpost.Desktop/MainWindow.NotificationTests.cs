@@ -11,6 +11,7 @@ public sealed partial class MainWindow
     private async Task RunNotificationTestsAsync(string resultPath)
     {
         var checks = new List<string>();
+        string? toastPayload = null;
         void Check(bool condition, string message)
         {
             if (!condition) throw new InvalidOperationException(message);
@@ -47,6 +48,28 @@ public sealed partial class MainWindow
             Check(ViewModel.Subjects.Single(s => s.Id == "design-release").Unread == 1, "Hidden subject retains its unread marker");
             var alerts = await AppNotificationManager.Default.GetAllAsync();
             Check(alerts.Count == 2, "Windows notification center contains both native alerts");
+            var mailboxAddress = ViewModel.SelectedMailbox!.Address;
+            var designGroup = MessageAlerts.GroupKey(mailboxAddress, "/preview/design");
+            foreach (var alert in alerts)
+            {
+                // The toast Windows holds: sender's name (the contact alias), the message, an inline
+                // reply box, Mark as read, the sender's face, filed under the conversation.
+                Check(alert.Group == designGroup, "Toast is grouped under its conversation");
+                Check(alert.Payload.Contains(">Design<", StringComparison.Ordinal), "Toast names the sender: " + alert.Payload);
+                Check(alert.Payload.Contains("New message during background refresh", StringComparison.Ordinal), "Toast previews the message");
+                Check(alert.Payload.Contains("<input ", StringComparison.Ordinal) && alert.Payload.Contains("id=\"reply\"", StringComparison.Ordinal), "Toast has an inline Reply box");
+                Check(alert.Payload.Contains("content=\"Reply\"", StringComparison.Ordinal) && alert.Payload.Contains("hint-inputId=\"reply\"", StringComparison.Ordinal), "Toast has a Reply button bound to the box");
+                Check(alert.Payload.Contains("content=\"Mark as read\"", StringComparison.Ordinal), "Toast has Mark as read");
+                Check(alert.Payload.Contains("appLogoOverride", StringComparison.Ordinal) && alert.Payload.Contains("hint-crop=\"circle\"", StringComparison.Ordinal), "Toast shows the sender's face");
+            }
+            toastPayload = alerts[0].Payload;
+            checks.Add($"Toast ids {string.Join(", ", alerts.Select(a => a.Id))} raised through AppNotificationManager while the window was hidden");
+            if (Environment.GetEnvironmentVariable("PIGEONPOST_NOTIFICATION_TEST_SCREENSHOT") is { Length: > 0 } screenshot)
+            {
+                await Task.Delay(1500); // The banner slides in at the bottom right.
+                CaptureScreen(screenshot);
+                checks.Add("Screen captured while the toast was showing: " + Path.GetFileName(screenshot));
+            }
 
             await ViewModel.RefreshAsync();
             Check((await AppNotificationManager.Default.GetAllAsync()).Count == 2, "Repeated refresh does not duplicate native alerts");
@@ -59,10 +82,39 @@ public sealed partial class MainWindow
             await ViewModel.AcknowledgeSelectedAsync(() => true);
             Check(ViewModel.SelectedSubject!.Unread == 0 && ViewModel.Subjects.Single(s => s.Id == "design-general").Unread > 0,
                 "Reading notification target preserves unread mail in the other subject");
+            // Toast actions run with the window hidden: the preview setting, Mark as read and Reply.
+            AppWindow.Hide(); await Task.Delay(200);
+            var previous = preferences.LoadNotificationPreview();
+            preferences.SaveNotificationPreview(NotificationPreview.Hidden);
+            try
+            {
+                preview.ReceiveForUiTest();
+                await ViewModel.RefreshAsync();
+                var privateAlert = (await AppNotificationManager.Default.GetAllAsync()).OrderBy(a => a.Id).Last();
+                Check(privateAlert.Payload.Contains(MessageAlerts.GenericText, StringComparison.Ordinal)
+                    && !privateAlert.Payload.Contains("background refresh", StringComparison.Ordinal) && !privateAlert.Payload.Contains(">Design<", StringComparison.Ordinal),
+                    "With previews off the toast names neither the sender nor the message");
+            }
+            finally { preferences.SaveNotificationPreview(previous); }
+            var latest = (await preview.LoadAsync(mailboxAddress, lifetime.Token)).Messages.Last(m => !m.IsOutgoing);
+            await HandleNotificationActionAsync("read", new(mailboxAddress, latest.PeerKey, latest.ThreadId, latest.MessageId), null);
+            var afterRead = await preview.LoadAsync(mailboxAddress, lifetime.Token);
+            Check(afterRead.Messages.Where(m => !m.IsOutgoing && m.PeerKey == "/preview/design").All(m => m.Read == true), "Mark as read acknowledges the whole conversation");
+            Check((await AppNotificationManager.Default.GetAllAsync()).All(a => a.Group != designGroup), "Mark as read removes that conversation's toasts");
+            Check(!AppWindow.IsVisible, "Mark as read leaves the app in the tray");
+            preview.ReceiveForUiTest("design-release");
+            await ViewModel.RefreshAsync();
+            latest = (await preview.LoadAsync(mailboxAddress, lifetime.Token)).Messages.Last(m => !m.IsOutgoing);
+            await HandleNotificationActionAsync("reply", new(mailboxAddress, latest.PeerKey, latest.ThreadId, latest.MessageId), "Replying from the toast");
+            var afterReply = await preview.LoadAsync(mailboxAddress, lifetime.Token);
+            var sent = afterReply.Messages.Last(m => m.IsOutgoing);
+            Check(RequestEnvelope.DisplayText(sent.Body) == "Replying from the toast" && sent.ThreadId == "design-release", "Inline reply is sent into the toast's subject");
+            Check(!AppWindow.IsVisible, "Replying leaves the app in the tray");
+
             unreadState.Clear(); notifications!.Update(0);
             await DesktopNotifications.ClearAlertsAsync();
             Check(unreadState.Count == 0 && (await AppNotificationManager.Default.GetAllAsync()).Count == 0, "Sign-out cleanup clears the badge and native alerts");
-            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, identity, shell = $"0x{shell:X8}", setting = setting.ToString(), taskbarWarning = notifications.TaskbarWarning }));
+            File.WriteAllText(resultPath, System.Text.Json.JsonSerializer.Serialize(new { passed = true, checks, toast = toastPayload, identity, shell = $"0x{shell:X8}", setting = setting.ToString(), taskbarWarning = notifications.TaskbarWarning }));
         }
         catch (Exception ex)
         {
@@ -71,6 +123,21 @@ public sealed partial class MainWindow
         }
         finally { Quit(); }
     }
+
+    private static void CaptureScreen(string path)
+    {
+        try
+        {
+            var width = GetSystemMetrics(0); var height = GetSystemMetrics(1);
+            using var bitmap = new System.Drawing.Bitmap(width, height);
+            using (var graphics = System.Drawing.Graphics.FromImage(bitmap)) graphics.CopyFromScreen(0, 0, 0, 0, bitmap.Size);
+            bitmap.Save(path, System.Drawing.Imaging.ImageFormat.Png);
+        }
+        catch (Exception ex) { DesktopLog.Error("Capturing the screen failed", ex); }
+    }
+
+    [System.Runtime.InteropServices.DllImport("user32.dll")]
+    private static extern int GetSystemMetrics(int index);
 }
 
 #endif

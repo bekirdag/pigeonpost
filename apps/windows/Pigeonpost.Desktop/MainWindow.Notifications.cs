@@ -115,7 +115,7 @@ public sealed partial class MainWindow
             var visible = ReadingVisibleSubject() && ViewModel.SelectedMailbox?.Address == arrival.Mailbox
                 && ViewModel.SelectedConversation?.Peer == peer
                 && (ViewModel.SelectedSubject?.Id == arrival.ThreadId || string.IsNullOrEmpty(arrival.ThreadId) && ViewModel.SelectedSubject?.IsDefault == true);
-            if (!visible && !DesktopNotifications.Announce(arrival))
+            if (!visible && !Announce(arrival, update.Snapshot))
                 AccountStatus.Text = "New messages arrived. Check Windows notification settings if alerts are disabled.";
         }
         notifications?.Update(unreadState.Count);
@@ -141,12 +141,68 @@ public sealed partial class MainWindow
                 if (lifetime.IsCancellationRequested || !ReferenceEquals(model, ViewModel)) return;
                 var arrivals = unreadState.Observe(mailbox.Address, messages);
                 if (arrivals.Count > 0) DesktopLog.Write($"{arrivals.Count} new message(s) in another mailbox");
-                foreach (var arrival in arrivals) DesktopNotifications.Announce(arrival);
+#if UI_TESTS
+                var known = await preview.LoadAsync(mailbox.Address, lifetime.Token);
+#else
+                var known = InboxSnapshot.Empty with { Messages = messages };
+#endif
+                foreach (var arrival in arrivals) Announce(arrival, known);
                 notifications?.Update(unreadState.Count);
             }
         }
         catch (Exception ex) { DesktopLog.Error("Checking other mailboxes failed", ex); /* Retain the last count; retry next refresh. */ }
         finally { refreshingNotifications = false; }
+    }
+
+    private bool Announce(MessageArrival arrival, InboxSnapshot snapshot)
+    {
+        var alert = MessageAlerts.Compose(arrival, snapshot, ViewModel.Mailboxes, preferences.LoadNotificationPreview());
+        var mailbox = ViewModel.Mailboxes.FirstOrDefault(m => m.Address == arrival.Mailbox);
+        // Name the receiving mailbox only when there is more than one to tell apart.
+        return DesktopNotifications.Announce(arrival, alert, ViewModel.Mailboxes.Count > 1 ? mailbox?.DisplayName : null);
+    }
+
+    // Reply and Mark as read run from the toast while the window stays hidden or minimised. If the
+    // account is not loaded yet (a toast that launched the app), the conversation opens instead.
+    public async Task HandleNotificationActionAsync(string action, MessageArrival target, string? reply)
+    {
+        if (ViewModel.Mailboxes.All(m => m.Address != target.Mailbox)) { await OpenNotificationAsync(target); return; }
+        try
+        {
+            if (action == "reply" && !string.IsNullOrWhiteSpace(reply))
+            {
+                await ViewModel.ReplyFromAlertAsync(target.Mailbox, target.Peer, target.ThreadId, reply, lifetime.Token);
+                DesktopLog.Write("Replied from a Windows notification");
+            }
+            else if (action == "read")
+            {
+                var count = await ViewModel.MarkConversationReadAsync(target.Mailbox, target.Peer, lifetime.Token);
+                DesktopLog.Write($"Marked {count} message(s) read from a Windows notification");
+            }
+            else { await OpenNotificationAsync(target); return; }
+            await DesktopNotifications.RemoveConversationAsync(target.Mailbox, target.Peer);
+            await RefreshUnreadAfterActionAsync(target.Mailbox);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            DesktopLog.Error("A notification action failed", ex);
+            // Do not lose a typed reply: open the conversation with it in the composer.
+            await OpenNotificationAsync(target);
+            if (action == "reply" && !string.IsNullOrWhiteSpace(reply) && string.IsNullOrEmpty(ViewModel.Draft)) ViewModel.Draft = reply;
+            AccountStatus.Text = "Pigeonpost could not finish that from the notification. Please check this conversation.";
+        }
+    }
+
+    private async Task RefreshUnreadAfterActionAsync(string mailbox)
+    {
+        if (ViewModel.SelectedMailbox?.Address == mailbox) return; // RefreshAsync already updated the count.
+#if UI_TESTS
+        var messages = (await preview.LoadAsync(mailbox, lifetime.Token)).Messages;
+#else
+        var messages = (await postbox.GetInboxAsync(mailbox, cancellationToken: lifetime.Token)).Messages ?? [];
+#endif
+        unreadState.Observe(mailbox, messages);
+        notifications?.Update(unreadState.Count);
     }
 
     public async Task OpenNotificationAsync(MessageArrival target)
@@ -174,6 +230,7 @@ public sealed partial class MainWindow
         ViewModel.SelectConversation(conversation);
         ViewModel.SelectSubject(ViewModel.Subjects.FirstOrDefault(s => s.Messages.Any(m => m.Id == target.MessageId)));
         ShowConversation();
+        _ = DesktopNotifications.RemoveConversationAsync(target.Mailbox, conversation.Peer);
         }
         finally { openingNotification = false; pendingNotification = null; }
         await AcknowledgeVisibleAsync();

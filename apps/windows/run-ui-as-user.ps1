@@ -67,12 +67,13 @@ try {
     if (`$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'UI process is elevated.' }
     Write-Host 'Native UI checks are running as a standard Windows user.'
     `$env:PIGEONPOST_NOTIFICATION_TEST_RESULT = $(Literal (Join-Path $directory 'notifications.json'))
+    `$env:PIGEONPOST_NOTIFICATION_TEST_SCREENSHOT = $(Literal (Join-Path $directory 'toast-raised.png'))
     `$notificationProcess = Start-Process -FilePath $(Literal (Resolve-Path $Executable).Path) -PassThru
     if (-not `$notificationProcess.WaitForExit(60000)) { `$notificationProcess.Kill(); throw 'Notification integration timed out.' }
     `$notificationResult = Get-Content `$env:PIGEONPOST_NOTIFICATION_TEST_RESULT -Raw | ConvertFrom-Json
     Write-Host (`$notificationResult | ConvertTo-Json -Depth 4)
     if (-not `$notificationResult.passed) { throw 'Native notification integration failed.' }
-    Remove-Item Env:PIGEONPOST_NOTIFICATION_TEST_RESULT
+    Remove-Item Env:PIGEONPOST_NOTIFICATION_TEST_RESULT, Env:PIGEONPOST_NOTIFICATION_TEST_SCREENSHOT
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }

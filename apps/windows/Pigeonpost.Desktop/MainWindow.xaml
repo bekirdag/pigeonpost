@@ -459,6 +459,11 @@
                             <RadioMenuFlyoutItem x:Name="ThemeLightItem" Text="Light" Tag="light" GroupName="Theme" Click="Theme_Click" />
                             <RadioMenuFlyoutItem x:Name="ThemeDarkItem" Text="Dark" Tag="dark" GroupName="Theme" Click="Theme_Click" />
                         </MenuFlyoutSubItem>
+                        <MenuFlyoutSubItem Text="Notification previews">
+                            <RadioMenuFlyoutItem x:Name="PreviewMessageItem" Text="Sender and message" Tag="message" GroupName="NotificationPreview" Click="NotificationPreview_Click" />
+                            <RadioMenuFlyoutItem x:Name="PreviewNameItem" Text="Sender only" Tag="name" GroupName="NotificationPreview" Click="NotificationPreview_Click" />
+                            <RadioMenuFlyoutItem x:Name="PreviewHiddenItem" Text="No preview" Tag="hidden" GroupName="NotificationPreview" Click="NotificationPreview_Click" />
+                        </MenuFlyoutSubItem>
                         <ToggleMenuFlyoutItem x:Name="StartupItem" Text="Start Pigeonpost when you sign in" Click="Startup_Click" />
                         <MenuFlyoutSeparator />
                         <MenuFlyoutItem Text="{x:Bind BuildLabel}" IsEnabled="False" />

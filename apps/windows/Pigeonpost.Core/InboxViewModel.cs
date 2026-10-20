@@ -359,6 +359,30 @@ public sealed class InboxViewModel(IInboxService service, IAttachmentService? at
         catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
     }
 
+    // A toast's "Mark as read": every unread message from that peer in that mailbox, without
+    // opening the window or changing the selection. Only the account's own mailboxes are accepted.
+    public async Task<int> MarkConversationReadAsync(string mailboxAddress, string peer, CancellationToken cancellationToken = default)
+    {
+        if (Mailboxes.All(m => m.Address != mailboxAddress)) return 0;
+        var loaded = await service.LoadAsync(mailboxAddress, cancellationToken);
+        var target = ConversationBuilder.ResolvePeer(peer, loaded, Mailboxes);
+        var unread = loaded.Messages.Where(m => !m.IsOutgoing && m.Read != true
+            && ConversationBuilder.ResolvePeer(m.PeerKey, loaded, Mailboxes) == target).ToArray();
+        foreach (var message in unread) await service.AcknowledgeAsync(mailboxAddress, message.MessageId, cancellationToken);
+        if (!disposed && SelectedMailbox?.Address == mailboxAddress) await RefreshAsync(background: true);
+        return unread.Length;
+    }
+
+    // A toast's inline reply: sent as the composer would send it, into the same subject, and the
+    // conversation counts as read once answered.
+    public async Task<bool> ReplyFromAlertAsync(string mailboxAddress, string peer, string? threadId, string text, CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(text) || Mailboxes.All(m => m.Address != mailboxAddress)) return false;
+        await service.SendAsync(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId, cancellationToken);
+        await MarkConversationReadAsync(mailboxAddress, peer, cancellationToken);
+        return true;
+    }
+
     public async Task AcknowledgeSelectedAsync(Func<bool>? isVisible = null)
     {
         if (SelectedMailbox is not { } mailbox || SelectedSubject is not { } subject || isVisible?.Invoke() == false) return;
