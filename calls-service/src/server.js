@@ -658,6 +658,9 @@ export function createCallsService(cfgIn, deps = {}) {
     const { room, live } = ringFor(req, roomId, body.ring_token);
     if (!live) return { ok: true, state: "ended" };
     const reason = body.reason === "busy" ? "busy" : "declined";
+    // Phase 1b history: the same event a session's decline reports.
+    const by = (room.targets && room.targets[0]) || null;
+    reportCall(room, reason === "busy" ? "busy" : "decline", by ? { by } : {});
     stopRinging(room, reason);
     if (room.participants.size < 2) endRoom(room, reason, null);
     else broadcast(room, "ring_ended", { room: room.id, reason });

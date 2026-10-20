@@ -14,7 +14,7 @@ public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidde
 // Everything the app puts into a script is JSON-encoded, never concatenated as raw text.
 public static class CallBridge
 {
-    public static readonly Uri ProductionPage = new("https://inbox.pigeonpost.dev/native-call.html?v=20261019-native");
+    public static readonly Uri ProductionPage = new("https://inbox.pigeonpost.dev/native-call.html?v=20261020-ring");
 
     public static CallPageMessage? Parse(string? json)
     {
