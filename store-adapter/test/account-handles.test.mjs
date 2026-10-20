@@ -3,6 +3,9 @@ import { spawn } from "node:child_process";
 import { once } from "node:events";
 import http from "node:http";
 import test from "node:test";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 test("account overview preserves cross-store ownership, expiry and failures", async t => {
   let status = 200, payload = { handles: [
@@ -20,7 +23,8 @@ test("account overview preserves cross-store ownership, expiry and failures", as
   t.after(() => { upstream.closeAllConnections(); upstream.close(); });
   const base = `http://127.0.0.1:${upstream.address().port}`;
   const child = spawn(process.execPath, [new URL("../src/server.js", import.meta.url).pathname], {
-    env: { PATH: process.env.PATH, PORT: "0", PIGEONPOST_POSTBOX_URL: base, MASAAS_SAAS_API_URL: base },
+    env: { PATH: process.env.PATH, PORT: "0", PIGEONPOST_POSTBOX_URL: base, MASAAS_SAAS_API_URL: base,
+      RECONCILE_INTERVAL_MS: "0", STORE_STATE_DIR: mkdtempSync(join(tmpdir(), "pp-overview-")) },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(async () => { if (child.exitCode === null && child.signalCode === null) { const exit = once(child, "exit"); child.kill(); await exit; } });

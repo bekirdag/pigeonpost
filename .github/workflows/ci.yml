@@ -33,8 +33,9 @@ jobs:
           cache-dependency-path: site-inbox/package-lock.json
       - run: npm ci --ignore-scripts
       - run: npm test
-      - name: Exercise handle checkout against the billing contract
-        run: node --test ../store-adapter/test/checkout.test.mjs
+      - name: Exercise the iyzico billing bridge against saas_be and postbox fixtures
+        working-directory: store-adapter
+        run: npm test
       - name: Call signaling (authorization, ringing, signals, TURN credentials)
         working-directory: calls-service
         run: npm test

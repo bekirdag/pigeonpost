@@ -201,6 +201,7 @@ impl Store {
                     row.original
                 ],
             )?;
+            super::entitlements::sync_apple_legacy(&tx, &row.original, now)?;
             tx.commit()?;
             Ok(())
         })

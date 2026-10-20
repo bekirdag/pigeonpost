@@ -57,6 +57,9 @@ mod account_events;
 mod appstore;
 mod appstore_routes;
 mod audit;
+mod billing_internal;
+#[cfg(test)]
+mod billing_tests;
 mod blobs;
 mod capabilities;
 mod chatgpt;
@@ -79,6 +82,7 @@ mod store;
 mod tester_handles;
 mod vault;
 mod verbs;
+mod web_plan;
 
 /// How long a proof-of-work challenge stays valid (also bounds the spent-challenge set).
 const POW_TTL_SECS: u64 = 120;
@@ -611,6 +615,8 @@ fn build_router(state: AppState) -> Router {
         )
         .route("/v1/handles/{name}/availability", get(handle_availability))
         .route("/v1/me/handles", get(my_handles))
+        .route("/v1/me/entitlements", get(web_plan::my_entitlements))
+        .route("/v1/claims/plan", post(web_plan::claim_plan))
         .route(
             "/v1/claims/test",
             get(tester_handles::state).post(tester_handles::claim),

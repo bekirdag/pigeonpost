@@ -24,12 +24,13 @@ use crate::audit::ActorKind;
 use crate::policy::{authorize, Action, Actor, Facts, Resource};
 use crate::store::{FeatureRow, FeatureScope};
 use crate::{
-    bearer, capabilities, constant_time_eq, err_response, now_unix, sha256, ApiError, AppState,
+    bearer, billing_internal, capabilities, constant_time_eq, err_response, now_unix, sha256,
+    ApiError, AppState,
 };
 use axum::extract::{ConnectInfo, Path, State};
 use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, put};
+use axum::routing::{get, post, put};
 use axum::{Extension, Json, Router};
 use serde_json::json;
 
@@ -39,6 +40,10 @@ pub(crate) enum Endpoint {
     Health,
     FeaturesRead,
     FeaturesWrite,
+    /// Entitlement upserts and reads (SDS §8.8, §21.2).
+    Entitlements,
+    /// Org drafts, activation and org entitlements (SDS §8.5, §21.2).
+    Orgs,
 }
 
 /// The services this postbox knows, the variable each one's token lives in, and what each may
@@ -46,7 +51,11 @@ pub(crate) enum Endpoint {
 /// here, and nowhere else.
 const SERVICES: &[(&str, &str, &[Endpoint])] = &[
     ("calls", "POSTBOX_SVC_TOKEN_CALLS", &[Endpoint::Health]),
-    ("billing", "POSTBOX_SVC_TOKEN_BILLING", &[Endpoint::Health]),
+    (
+        "billing",
+        "POSTBOX_SVC_TOKEN_BILLING",
+        &[Endpoint::Health, Endpoint::Entitlements, Endpoint::Orgs],
+    ),
     (
         "meeting_intel",
         "POSTBOX_SVC_TOKEN_MEETING_INTEL",
@@ -165,7 +174,7 @@ fn service_for(
 }
 
 /// Authenticate, check the endpoint grant, then ask the policy.
-fn authorize_service(
+pub(crate) fn authorize_service(
     state: &AppState,
     headers: &HeaderMap,
     endpoint: Endpoint,
@@ -192,6 +201,31 @@ pub(crate) fn router(state: AppState) -> Router {
         .route("/internal/v1/health", get(health))
         .route("/internal/v1/features", get(list_features))
         .route("/internal/v1/features/{name}", put(set_feature))
+        .route(
+            "/internal/v1/entitlements/{provider}/{environment}/{reference}",
+            put(billing_internal::put_entitlement),
+        )
+        .route(
+            "/internal/v1/accounts/{id}/cloud-plan",
+            put(billing_internal::put_cloud_plan),
+        )
+        .route(
+            "/internal/v1/accounts/{id}/entitlements",
+            get(billing_internal::account_entitlements),
+        )
+        .route(
+            "/internal/v1/org-drafts",
+            post(billing_internal::create_org_draft),
+        )
+        .route("/internal/v1/orgs/{id}", get(billing_internal::get_org))
+        .route(
+            "/internal/v1/orgs/{id}/activate",
+            put(billing_internal::activate_org),
+        )
+        .route(
+            "/internal/v1/orgs/{id}/entitlement",
+            put(billing_internal::put_org_entitlement),
+        )
         .fallback(|| async { err_response(StatusCode::NOT_FOUND, "not_found", None) })
         .with_state(state)
 }

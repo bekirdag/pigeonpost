@@ -175,6 +175,10 @@ impl Store {
                         params![expiry as i64, now as i64, terminal, super::lifecycle::RECOVERY_SECONDS, name, account, token])?;
                 }
             }
+            super::entitlements::sync_google(&tx, &token, now)?;
+            if let Some(linked) = purchase.linked_token.as_deref().filter(|t| *t != token) {
+                super::entitlements::sync_google(&tx, linked, now)?;
+            }
             let saved = lookup(&tx, &token, now)?.ok_or(StoreError::Corrupt("Google purchase disappeared"))?;
             tx.commit()?;
             Ok(GoogleBinding::Saved(saved))

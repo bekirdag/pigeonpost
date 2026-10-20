@@ -15,16 +15,20 @@ use std::sync::{Arc, Mutex};
 mod apple_plans;
 mod audit;
 mod deletion;
+mod entitlements;
 mod events;
 mod features;
 mod googleplay;
 mod lifecycle;
+mod orgs;
 pub use audit::AuditRow;
+pub use entitlements::{Entitlement, EntitlementInput, UpsertOutcome, WebClaim};
 pub use events::StreamCursor;
 pub use features::{FeatureRow, FeatureScope};
 pub use googleplay::GoogleBinding;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
+pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS identities (
@@ -899,6 +903,8 @@ impl Store {
         conn.execute_batch(audit::SCHEMA)?;
         conn.execute_batch(events::SCHEMA)?;
         conn.execute_batch(features::SCHEMA)?;
+        conn.execute_batch(entitlements::SCHEMA)?;
+        conn.execute_batch(orgs::SCHEMA)?;
         for stmt in MIGRATIONS {
             if let Err(e) = conn.execute(stmt, []) {
                 // "duplicate column name" means the migration already applied (fresh DB) — benign.
@@ -906,6 +912,13 @@ impl Store {
                     return Err(e.into());
                 }
             }
+        }
+        // Mirror provider state into the unified entitlements table. Idempotent; it never changes
+        // namespaces or the provider tables, so an older binary that ignores the table is unaffected.
+        {
+            let tx = conn.unchecked_transaction()?;
+            entitlements::backfill(&tx, crate::now_unix())?;
+            tx.commit()?;
         }
         Ok(Store {
             conn: Arc::new(Mutex::new(conn)),
@@ -1277,14 +1290,8 @@ impl Store {
             };
             // A verified plan provides hosted storage immediately, including before the owner
             // chooses a name. Legacy subscriptions and explicit namespace grants remain valid.
-            let paid: bool = c.query_row(
-                "SELECT EXISTS(SELECT 1 FROM namespaces
-                    WHERE account_id = ?1 AND (expires_at IS NULL OR expires_at > ?2))
-                 OR EXISTS(SELECT 1 FROM apple_handle_plans
-                    WHERE account_id = ?1 AND active = 1 AND expires_at > ?2)",
-                params![account, now as i64],
-                |r| r.get(0),
-            )?;
+            // The unified entitlements table carries every provider's plan (SDS §8.8).
+            let paid = entitlements::paid(&c, &account, now)?;
             Ok(if paid { Tier::Paid } else { Tier::Free })
         })
         .await
@@ -1796,6 +1803,7 @@ impl Store {
                 VALUES (?1,?2,?3,?4,?5,?6) ON CONFLICT(namespace) DO UPDATE SET
                 account_id=?2,source=?3,verified_at=?4,expires_at=?5,release_at=?6,provider_ref=NULL",
                 params![namespace, account_id, source, now as i64, expires_at.map(|v| v as i64), release])?;
+            entitlements::sync_grant(&tx, &namespace, now)?;
             tx.commit()?;
             Ok(true)
         }).await.map_err(|_| StoreError::Join)?
@@ -1893,6 +1901,8 @@ impl Store {
                      expires_at = (SELECT expires_at FROM apple_subscriptions WHERE original_transaction_id = ?5)",
                 params![namespace, account_id, now as i64, expires_at, original_transaction_id],
             )?;
+            entitlements::sync_apple_legacy(&tx, &original_transaction_id, now)?;
+            entitlements::sync_grant(&tx, &namespace, now)?;
             tx.commit()?;
             Ok(if held.is_some() {
                 AppleClaim::Renewed

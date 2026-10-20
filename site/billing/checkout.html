@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Secure payment — Pigeonpost</title>
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="light dark">
+<!-- The web server replaces this placeholder with the per-request CSP nonce. -->
+<meta name="csp-nonce" content="__CSP_NONCE__">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="stylesheet" href="/style.css">
+<link rel="stylesheet" href="/brand.css">
+<link rel="stylesheet" href="/account.css">
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <a href="/account"><picture class="brand-logo">
+      <source srcset="/logo_white.png" media="(prefers-color-scheme: dark)">
+      <img src="/logo.png" alt="Pigeonpost" width="640" height="213">
+    </picture></a>
+  </header>
+  <main class="account">
+    <div class="ac-card">
+      <h2 id="pp-pay-title">Secure payment</h2>
+      <p class="muted" id="pp-pay-summary">Preparing the iyzico payment form…</p>
+      <p class="ac-note">Your card details go directly to iyzico. Pigeonpost never sees or stores them.</p>
+      <div id="pp-pay-form"></div>
+      <p><a href="/account">Back to your account</a></p>
+    </div>
+  </main>
+</div>
+<script src="/account-config.js"></script>
+<script src="/billing/checkout.js"></script>
+</body>
+</html>
