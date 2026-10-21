@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - 'apps/windows/**'
+      - 'crates/pigeonpost-groupcrypto/**'
       - '.github/workflows/windows-desktop.yml'
       # The call test runs the web call client and the call service from this repository.
       - 'site-inbox/native-call.*'
@@ -19,19 +20,32 @@ concurrency:
   group: windows-desktop-${{ github.ref }}
   cancel-in-progress: true
 
+# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
+# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
+# never select the self-hosted pool, whatever the variable says.
 jobs:
   core:
     name: Core behavior
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
+        env:
+          # The self-hosted runner's user cannot write /usr/share/dotnet.
+          DOTNET_INSTALL_DIR: ${{ runner.temp }}/dotnet
         with:
           dotnet-version: '10.0.x'
-      - name: Run domain, API and state tests
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+      - name: Build the group crypto library (MLS round trips in the core tests)
+        working-directory: crates/pigeonpost-groupcrypto
+        run: cargo build --locked --release -p pigeonpost-groupcrypto-ffi
+      - name: Run domain, API, state and group encryption tests
         working-directory: apps/windows
         run: dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c Release
 
@@ -39,7 +53,7 @@ jobs:
     name: Windows ${{ matrix.architecture }}
     needs: core
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +65,10 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+          key: ${{ matrix.architecture }}
       - name: Compile native app and validate unsigned MSIX
         shell: pwsh
         run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package

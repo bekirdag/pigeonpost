@@ -6,7 +6,7 @@
     <SupportedOSPlatformVersion>10.0.22000.0</SupportedOSPlatformVersion>
     <RootNamespace>Pigeonpost.Desktop</RootNamespace>
     <AssemblyName>Pigeonpost</AssemblyName>
-    <Version>1.0.9</Version>
+    <Version>1.0.10</Version>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\Pigeonpost.ico</ApplicationIcon>
     <Platforms>x64;ARM64</Platforms>
@@ -36,7 +36,22 @@
     <Content Include="Assets\Fonts\GeistMono-Variable.ttf" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="Assets\Fonts\OFL.txt" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
+  <!-- Group end-to-end encryption: the Rust library for this architecture ships beside
+       Pigeonpost.exe (and so inside the MSIX). build.ps1 builds it; a Release build without it
+       fails rather than ship an app that would have to hide groups. -->
+  <PropertyGroup>
+    <GroupCryptoTriple Condition="'$(Platform)' == 'ARM64' or '$(RuntimeIdentifier)' == 'win-arm64'">aarch64-pc-windows-msvc</GroupCryptoTriple>
+    <GroupCryptoTriple Condition="'$(GroupCryptoTriple)' == ''">x86_64-pc-windows-msvc</GroupCryptoTriple>
+    <GroupCryptoNative>$(MSBuildThisFileDirectory)..\..\..\crates\pigeonpost-groupcrypto\target\$(GroupCryptoTriple)\release\pigeonpost_groupcrypto_ffi.dll</GroupCryptoNative>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Include="$(GroupCryptoNative)" Link="pigeonpost_groupcrypto_ffi.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" Condition="Exists('$(GroupCryptoNative)')" />
+  </ItemGroup>
+  <Target Name="RequireGroupCrypto" BeforeTargets="Build" Condition="'$(Configuration)' == 'Release' and !Exists('$(GroupCryptoNative)')">
+    <Error Text="pigeonpost_groupcrypto_ffi.dll for $(GroupCryptoTriple) is missing ($(GroupCryptoNative)). Run build.ps1, which builds it." />
+  </Target>
   <ItemGroup Condition="'$(DefineConstants)' == 'UI_TESTS'">
+    <Compile Include="../Pigeonpost.Core/Preview/**/*.cs" LinkBase="Preview" />
     <Compile Include="../Pigeonpost.Core/PreviewInboxService.cs" Link="PreviewInboxService.cs" />
     <Content Include="../../../tests/fixtures/attachments/*" Link="PreviewFixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../ui-fixtures/*" Link="PreviewFixtures/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

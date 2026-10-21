@@ -8,15 +8,18 @@ data class Conversation(
 ) {
     val mine get() = identity != null
     val name get() = identity?.name ?: contact?.alias?.takeIf { it.isNotBlank() } ?: displayName(peer)
-    val unread get() = messages.count { !it.outgoing && !it.read }
+    val unread get() = messages.count { !it.outgoing && !it.read && !it.system }
     val held get() = messages.count { !it.outgoing && it.autonomy == "review" && it.verb != null }
     val last get() = messages.lastOrNull()?.at ?: 0
     val blocked get() = contact?.admission == "block"
+    /** Every address this conversation has been reached at: the key, and each sender's own address. */
+    val addresses get() = (listOf(peer) + messages.mapNotNull { it.address }).toSet()
 }
-data class Subject(val id: String, val title: String? = null, val isDefault: Boolean = false, val messages: List<ThreadMessage> = emptyList(), val lastAt: Long = 0) {
+data class Subject(val id: String, val title: String? = null, val isDefault: Boolean = false, val messages: List<ThreadMessage> = emptyList(), val lastAt: Long = 0,
+    val ephemeralSecs: Long? = null) {
     val name get() = title?.takeIf { it.isNotBlank() } ?: if (isDefault || id.isEmpty()) "General" else "Untitled"
-    val unread get() = messages.count { !it.outgoing && !it.read }
-    val last get() = maxOf(lastAt, messages.maxOfOrNull { it.at } ?: 0)
+    val unread get() = messages.count { !it.outgoing && !it.read && !it.system }
+    val last get() = maxOf(lastAt, messages.filterNot { it.system }.maxOfOrNull { it.at } ?: 0)
 }
 
 object Conversations {
@@ -45,6 +48,7 @@ object Conversations {
                 autonomy = message.autonomy.takeUnless { message.outgoing }, verb = message.verb.takeUnless { message.outgoing },
                 heldBecause = message.heldBecause.takeUnless { message.outgoing }, address = message.from,
                 standing = message.standing, tier = message.tier, attachments = message.attachments.orEmpty(),
+                expiresAt = message.expiresAt,
             ))
         }
         pending.filter { it.mailbox == acting && it.id !in seen && it.sentCopyId !in seen }.forEach { row ->
@@ -57,12 +61,24 @@ object Conversations {
         }.sortedWith(compareByDescending<Conversation> { it.last }.thenBy(String.CASE_INSENSITIVE_ORDER) { it.name }.thenBy { it.peer })
     }
 
-    fun subjects(conversation: Conversation?, threads: List<ServerThread>, peer: String, messages: List<Message>): List<Subject> {
+    /**
+     * Incoming missed one-to-one calls as system lines for this conversation (SDS §12.1), matched by
+     * the peer key or any address its messages came from.
+     */
+    fun missedCallLines(conversation: Conversation?, calls: List<CallLogEntry>, time: (Long) -> String): List<ThreadMessage> {
+        if (conversation == null) return emptyList()
+        val keys = conversation.addresses
+        return calls.filter { it.incoming && it.outcome == "missed" && it.groupId == null && (it.peerHandle in keys || it.peer in keys) }
+            .map { ThreadMessage("call:" + it.id, "Missed ${if (it.video) "video" else "voice"} call · ${time(it.startedAt)}", outgoing = false, at = it.startedAt, system = true) }
+    }
+
+    fun subjects(conversation: Conversation?, threads: List<ServerThread>, peer: String, messages: List<Message>, extra: List<ThreadMessage> = emptyList()): List<Subject> {
         val aliases = aliases(messages)
         val groups = linkedMapOf<String, Subject>()
         conversation?.messages.orEmpty().groupBy { it.threadId ?: "" }.forEach { (id, rows) -> groups[id] = Subject(id, isDefault = id.isEmpty(), messages = rows) }
         threads.filter { (aliases[it.peer] ?: it.peer) == peer }.forEach { thread ->
-            groups[thread.id] = (groups[thread.id] ?: Subject(thread.id)).copy(title = thread.title, isDefault = thread.isDefault == true, lastAt = thread.lastAt ?: 0)
+            groups[thread.id] = (groups[thread.id] ?: Subject(thread.id)).copy(title = thread.title, isDefault = thread.isDefault == true, lastAt = thread.lastAt ?: 0,
+                ephemeralSecs = thread.ephemeralSecs)
         }
         val default = groups.values.firstOrNull { it.id.isNotEmpty() && it.isDefault }
         if (default != null) groups.remove("")?.let { legacy ->
@@ -70,6 +86,10 @@ object Conversations {
         }
         // A new named subject must not strand a draft in the general conversation.
         if (groups.values.none { it.isDefault }) groups[""] = Subject("", isDefault = true)
+        // A missed call belongs to the whole conversation, so its line shows in whichever subject is open.
+        if (extra.isNotEmpty()) groups.keys.toList().forEach { id -> val subject = groups.getValue(id)
+            groups[id] = subject.copy(messages = (subject.messages + extra).sortedWith(compareBy<ThreadMessage> { it.at }.thenBy { it.id }))
+        }
         return groups.values.sortedWith(compareByDescending<Subject> { it.last }.thenBy { it.id }).ifEmpty { listOf(Subject("", isDefault = true)) }
     }
 

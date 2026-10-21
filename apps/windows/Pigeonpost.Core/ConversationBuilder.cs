@@ -3,8 +3,10 @@ namespace Pigeonpost.Core;
 public static class ConversationBuilder
 {
     public static IReadOnlyList<Conversation> Build(InboxSnapshot snapshot, IReadOnlyList<PendingMessage> pending,
-        IReadOnlyList<Mailbox> mailboxes, Mailbox acting, IEnumerable<string>? opened = null)
+        IReadOnlyList<Mailbox> mailboxes, Mailbox acting, IEnumerable<string>? opened = null,
+        IReadOnlyList<CallLogEntry>? calls = null, long? now = null)
     {
+        var clock = now ?? DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var aliases = Aliases(snapshot.Messages);
         foreach (var mailbox in mailboxes) aliases[mailbox.Address] = mailbox.Key;
         string Key(string peer) => PostAddress.Canonical(aliases.GetValueOrDefault(peer, peer));
@@ -20,9 +22,12 @@ public static class ConversationBuilder
         foreach (var m in snapshot.Messages)
         {
             if (string.IsNullOrEmpty(m.MessageId) || !ids.Add(m.MessageId)) continue;
+            // Disappearing messages leave by this device's clock even when the expiry event was missed;
+            // filtered mail lives in Filtered, never in the conversation list.
+            if (Timers.Expired(m.ExpiresAt, clock) || m.Filtered == true) continue;
             Group(m.PeerKey).Add(new ThreadMessage(m.MessageId, m.Body, m.At, m.ThreadId, m.IsOutgoing,
                 m.IsOutgoing || m.Read == true, m.IsOutgoing ? null : m.Autonomy, m.IsOutgoing ? null : m.Verb,
-                m.IsOutgoing ? null : m.HeldBecause, Attachments: m.Attachments));
+                m.IsOutgoing ? null : m.HeldBecause, Attachments: m.Attachments, ExpiresAt: m.ExpiresAt));
         }
         foreach (var p in pending.Where(p => p.Mailbox == acting.Address))
         {
@@ -30,9 +35,20 @@ public static class ConversationBuilder
             if (!ids.Add(p.Id)) continue;
             Group(p.To).Add(new ThreadMessage(p.Id, p.Body, p.At, p.ThreadId, true, Status: p.Status, Attachments: p.Attachments));
         }
-        foreach (var contact in snapshot.Contacts.Where(c => !c.IsWildcard)) Group(contact.Peer);
+        foreach (var contact in snapshot.Contacts.Where(c => !c.IsWildcard && c.Admission != "block")) Group(contact.Peer);
         foreach (var thread in snapshot.Threads) Group(thread.Peer);
         foreach (var peer in opened ?? []) Group(peer);
+        // A missed 1:1 call reads as a small line in the conversation it belongs to (SDS §12.1).
+        if (calls is { Count: > 0 })
+            foreach (var (key, list) in groups)
+            {
+                var keys = new HashSet<string>(StringComparer.Ordinal) { key };
+                foreach (var m in snapshot.Messages)
+                    if (!m.IsOutgoing && m.From is { } from && Key(m.PeerKey) == key) keys.Add(from);
+                foreach (var alias in aliases.Where(a => PostAddress.Canonical(a.Value) == key)) keys.Add(alias.Key);
+                var thread = snapshot.Threads.FirstOrDefault(t => t.IsDefault == true && Key(t.Peer) == key)?.ThreadId;
+                list.AddRange(CallPresentation.MissedCallLines(calls, keys, thread).Where(line => ids.Add(line.Id)));
+            }
 
         return groups.Select(pair =>
         {
@@ -57,7 +73,7 @@ public static class ConversationBuilder
         {
             groups.TryGetValue(t.ThreadId, out var current);
             groups[t.ThreadId] = new Subject(t.ThreadId, t.Title, t.IsDefault == true, current?.Messages ?? [],
-                Math.Max(current?.Last ?? 0, t.LastAt ?? t.CreatedAt ?? 0));
+                Math.Max(current?.Last ?? 0, t.LastAt ?? t.CreatedAt ?? 0), t.EphemeralSecs);
         }
         var defaultSubject = groups.Values.FirstOrDefault(s => s.IsDefault && s.Id.Length > 0);
         if (defaultSubject is not null && groups.Remove("", out var legacy))

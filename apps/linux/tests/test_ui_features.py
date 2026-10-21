@@ -223,7 +223,7 @@ class Phase1bTests(WindowCase):
         w.show_page("calls")
         pump(lambda: any(c[1] == "/v1/calls/log/seen" for c in self.api.calls), timeout=5)
         rows = [r for r in walk(w.calls_list) if isinstance(r, Adw.ActionRow)]
-        self.assertEqual([r.get_title() for r in rows], ["Alex", "/studio/reviewer"])
+        self.assertEqual([r.get_title() for r in rows], ["Alex", "Studio Reviewer"])
         self.assertTrue(rows[0].has_css_class("pp-call-missed"))
         self.assertIn("Missed", rows[0].get_subtitle())
         self.assertIn("3:10", rows[1].get_subtitle())

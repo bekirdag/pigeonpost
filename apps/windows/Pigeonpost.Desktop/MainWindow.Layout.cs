@@ -39,6 +39,7 @@ public sealed partial class MainWindow
         SubjectColumn.Width = new GridLength(subjects ? Math.Min(subjectWidth, Root.ActualWidth * .24) : 0);
         SubjectDividerColumn.Width = new GridLength(subjects ? 5 : 0);
         MessageColumn.Width = conversation ? new GridLength(1, GridUnitType.Star) : new GridLength(0);
+        ApplySideLayout(compact);
     }
 
     private void ShowConversation()
@@ -59,6 +60,7 @@ public sealed partial class MainWindow
     private void ArchiveFilter_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (sender is ComboBox box) ViewModel.ShowArchived = box.SelectedIndex == 1;
+        if (FilteredEntry is not null) UpdateFilteredEntry();
     }
 
     private void ShowFind()

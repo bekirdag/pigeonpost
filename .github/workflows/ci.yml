@@ -17,10 +17,13 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
   RUSTFLAGS: -D warnings
 
+# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
+# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
+# never select the self-hosted pool, whatever the variable says.
 jobs:
   inbox:
     name: inbox web
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     defaults:
       run:
         working-directory: site-inbox
@@ -61,7 +64,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -105,7 +108,7 @@ jobs:
 
   lint:
     name: fmt + clippy
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the fail-closed Cubemeld App Store broker
@@ -894,7 +897,7 @@ jobs:
 
   audit:
     name: cargo audit
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -907,7 +910,7 @@ jobs:
     # a clean-room implementation (docs/sds.md §8). A change here is a protocol break, and it
     # should be obvious in the checks list which job failed.
     name: conformance vectors
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -915,12 +918,29 @@ jobs:
       - run: cargo test --locked -p pigeonpost-core --test conformance
       - run: cargo test --locked -p pigeonpost-compliance --test conformance
 
+  openapi:
+    # The postbox route-drift test reads the spec as text, so it cannot notice a merge that
+    # leaves the file unparseable. This parses it strictly (duplicate keys fail) and validates it
+    # as OpenAPI 3.1 with the hash-locked validator in .github/scripts/openapi/requirements.txt.
+    # No secrets and no persistent state, so it always uses a GitHub-hosted runner.
+    name: OpenAPI spec (YAML + OpenAPI 3.1)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Install the pinned validator
+        run: |
+          python3 -m venv "$RUNNER_TEMP/openapi-venv"
+          "$RUNNER_TEMP/openapi-venv/bin/pip" install --quiet --require-hashes --no-deps \
+            --only-binary :all: -r .github/scripts/openapi/requirements.txt
+      - name: Parse and validate openapi/pigeonpost.v1.yaml
+        run: '"$RUNNER_TEMP/openapi-venv/bin/python" .github/scripts/openapi/check_openapi.py'
+
   acceptance:
     # Exercise the built product as two isolated agents, including an offline loft/outbox retry,
     # and capture the exact generated reverse proxy under real Caddy. These are SDS §8 release
     # gates that crate-level tests alone cannot prove.
     name: black-box delivery + proxy privacy
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -976,7 +996,7 @@ jobs:
     # The online binary may seal records but must never acquire the offline unseal/custody crate.
     # This is a build invariant from docs/sds.md §4, not a deployment convention.
     name: online/offline custody boundary
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -1230,7 +1250,7 @@ jobs:
 
   launcher:
     name: npm launcher (Node ${{ matrix.node }})
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:

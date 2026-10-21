@@ -83,6 +83,7 @@ public sealed partial class MainWindow
         ExplainAlertSetting();
         StartAccountEvents();
         _ = StartCallsAsync();
+        _ = StartSideViewsAsync();
         _ = RegisterCallPushAsync();
     }
 
@@ -104,6 +105,7 @@ public sealed partial class MainWindow
 #endif
             await ViewModel.RefreshAsync(background: true);
             await RefreshOtherNotificationsAsync();
+            await RefreshSideViewsAsync();
         };
         return timer;
     }
@@ -173,6 +175,8 @@ public sealed partial class MainWindow
             ViewModel.MessagesUpdated += Messages_Updated;
             ViewModel.InboxUpdated += Inbox_Updated;
             unreadState.Clear();
+            ResetSideViews();
+            AvatarFiles.Clear();
             pendingNotification = null;
             notifications?.Update(0);
             await DesktopNotifications.ClearAlertsAsync();

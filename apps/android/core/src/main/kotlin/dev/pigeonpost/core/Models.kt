@@ -38,6 +38,8 @@ data class Message(
     @SerialName("sender_standing") val standing: String? = null,
     @SerialName("sender_tier") val tier: String? = null,
     val attachments: List<Attachment>? = null,
+    val filtered: Boolean? = null,
+    @SerialName("expires_at") val expiresAt: Long? = null,
 ) {
     val outgoing get() = direction == "out"
     val at get() = if (outgoing) sentAt ?: receivedAt ?: 0 else receivedAt ?: sentAt ?: 0
@@ -69,6 +71,7 @@ data class ServerThread(
     @SerialName("created_at") val createdAt: Long? = null,
     @SerialName("last_at") val lastAt: Long? = null,
     val archived: Boolean? = null,
+    @SerialName("ephemeral_secs") val ephemeralSecs: Long? = null,
 )
 @Serializable
 data class ThreadsResponse(val threads: List<ServerThread>? = null)
@@ -139,6 +142,9 @@ data class ThreadMessage(
     val tier: String? = null,
     val status: Delivery = Delivery.SENT,
     val attachments: List<Attachment> = emptyList(),
+    val expiresAt: Long? = null,
+    /** A line drawn by the app, not a message: "Missed video call · 14:32". */
+    val system: Boolean = false,
 ) {
     val display get() = displayBody(body, outgoing)
 }

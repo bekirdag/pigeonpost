@@ -83,6 +83,11 @@ public static class CallBridge
 
     public static string RenewedScript(string? token) => $"window.PigeonpostNative && PigeonpostNative.renewed({Json(token)})";
 
+    // Phase 3b: start or join a group's call through the page's own group calls (calls.js
+    // placeGroup/joinGroup). The calls service rechecks membership with the postbox.
+    public static string GroupCallScript(string groupId, string name, bool video, bool join) =>
+        $"window.PigeonpostCalls && PigeonpostCalls.{(join ? "joinGroup" : "placeGroup")}({Json(video ? "video" : "audio")}, {{ id: {Json(groupId)}, name: {Json(name)} }})";
+
     public static string CallScript(string peer, bool video) =>
         $"window.PigeonpostNative && PigeonpostNative.call({Json(peer)}, {Json(video ? "video" : "audio")})";
 

@@ -1,0 +1,18 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- The generated uniffi-bindgen-cs binding of crates/pigeonpost-groupcrypto (committed and
+       drift-checked there), compiled as its own assembly so the app's warnings-as-errors rules
+       do not apply to generated code. It P/Invokes pigeonpost_groupcrypto_ffi, which the app ships
+       beside Pigeonpost.exe for its own architecture (build.ps1) and the tests load from their
+       output folder (Pigeonpost.Core.Tests.csproj). -->
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <TreatWarningsAsErrors>false</TreatWarningsAsErrors>
+    <NoWarn>$(NoWarn);CS1591;CS8618;CS8625;CS0168;CS8600;CS8601;CS8602;CS8603;CS8604;CS0108;CS0114</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../../crates/pigeonpost-groupcrypto/bindings/csharp/pigeonpost_groupcrypto.cs" Link="pigeonpost_groupcrypto.cs" />
+  </ItemGroup>
+</Project>

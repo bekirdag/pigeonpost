@@ -26,8 +26,8 @@ android {
         applicationId = "dev.pigeonpost.inbox"
         minSdk = 26
         targetSdk = 36
-        versionCode = 11
-        versionName = "0.3.0"
+        versionCode = 12
+        versionName = "0.4.0"
         // Firebase project identifiers are public. Inject the restricted API key at build time.
         // Forked PRs without secrets can still run fixtures and produce development artifacts.
         resValue("string", "google_api_key", firebaseApiKey ?: "not-configured")
@@ -52,10 +52,26 @@ android {
         buildConfig = true
         resValues = true
     }
-    packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
+    packaging {
+        resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1")
+        // JNA's AAR also carries ABIs this app never shipped and the group library is not built for.
+        jniLibs.excludes += setOf("lib/armeabi/**", "lib/mips/**", "lib/mips64/**")
+    }
     testOptions { unitTests.isReturnDefaultValues = true }
     sourceSets.getByName("androidTest").assets.srcDir("../../../tests/fixtures/attachments")
+    // The UniFFI adapter for group encryption, shared with core's JVM tests.
+    sourceSets.getByName("main").kotlin.srcDir("../core/src/groupcrypto/kotlin")
+    // Debug fixtures run real group encryption against the same in-memory postbox as core's tests.
+    sourceSets.getByName("debug").kotlin.srcDir("../core/src/groupcrypto-fake/kotlin")
 }
+
+// Group end-to-end encryption: the AAR built from crates/pigeonpost-groupcrypto
+// (scripts/build-android.sh; arm64-v8a, armeabi-v7a, x86_64, 16 KB aligned). Never committed:
+// every build makes it from the crate's locked sources.
+val groupCryptoAar = rootDir.resolve("../../crates/pigeonpost-groupcrypto/target/android/pigeonpost-groupcrypto.aar")
+if (!groupCryptoAar.isFile) throw GradleException(
+    "Build the group-crypto AAR first: ANDROID_NDK_HOME=… KOTLINC_HOME=… JNA_JAR=… crates/pigeonpost-groupcrypto/scripts/build-android.sh " +
+        "(see apps/android/README.md, \"Group encryption library\").")
 kotlin { jvmToolchain(17) }
 
 dependencies {
@@ -85,6 +101,10 @@ dependencies {
     implementation("androidx.browser:browser:1.9.0")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     implementation("org.commonmark:commonmark:0.24.0")
+    implementation(files(groupCryptoAar))
+    // UniFFI's Kotlin binding calls the library through JNA; the AAR carries libjnidispatch for each ABI.
+    implementation("net.java.dev.jna:jna:5.17.0@aar")
+    implementation("androidx.exifinterface:exifinterface:1.4.1")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")
     testImplementation("junit:junit:4.13.2")

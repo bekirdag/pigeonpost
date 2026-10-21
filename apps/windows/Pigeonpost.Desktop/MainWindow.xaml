@@ -4,6 +4,7 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     xmlns:local="using:Pigeonpost.Desktop"
     xmlns:core="using:Pigeonpost.Core"
+    xmlns:groups="using:Pigeonpost.Core.Groups"
     Title="Pigeonpost Desktop">
     <Grid x:Name="Root" Background="{ThemeResource AppBackgroundBrush}" Loaded="Root_Loaded" SizeChanged="Root_SizeChanged" KeyboardAcceleratorPlacementMode="Hidden">
         <Grid.Resources>
@@ -104,7 +105,7 @@
                         </Border>
                     </StackPanel>
                     <Border.ContextFlyout>
-                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /></MenuFlyout>
+                        <MenuFlyout><MenuFlyoutItem Text="Copy original message" Tag="{x:Bind Body}" Click="CopyOriginal_Click" /><MenuFlyoutItem Text="Save attachments…" Tag="{x:Bind}" Click="SaveFiles_Click" /><MenuFlyoutItem Text="Block sender…" Tag="{x:Bind Id}" Click="BlockSender_Click" /></MenuFlyout>
                     </Border.ContextFlyout>
                 </Border>
             </DataTemplate>
@@ -156,8 +157,144 @@
                     </Border.ContextFlyout>
                 </Border>
             </DataTemplate>
+            <!-- Phase 1b and 3b rows, used by the pages built in MainWindow.SideViews.cs and MainWindow.Groups.cs. -->
+            <DataTemplate x:Key="CallRowTemplate" x:DataType="core:CallRow">
+                <Grid ColumnSpacing="10" Padding="4,6" AutomationProperties.Name="{x:Bind AccessibleName}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Border Width="36" Height="36" CornerRadius="18" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind Key}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
+                        <TextBlock Text="{x:Bind Initials}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Border>
+                    <Button Grid.Column="1" Tag="{x:Bind}" Click="CallRow_Click" Background="Transparent" BorderThickness="0" Padding="0" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            IsEnabled="{x:Bind CanCallBack}" AutomationProperties.Name="{x:Bind AccessibleName}">
+                        <StackPanel Spacing="2">
+                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="13.5" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="{x:Bind Detail}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" />
+                        </StackPanel>
+                    </Button>
+                    <Border Grid.Column="2" Visibility="{x:Bind IsMissed}" Padding="6,1" CornerRadius="6" VerticalAlignment="Center" Background="#22C42435">
+                        <TextBlock Text="Missed" FontSize="11" FontWeight="SemiBold" Foreground="#C42435" />
+                    </Border>
+                    <TextBlock Grid.Column="3" Text="{x:Bind TimeLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
+                    <StackPanel Grid.Column="4" Orientation="Horizontal" Spacing="4">
+                        <Button Tag="{x:Bind}" Click="CallBack_Click" Visibility="{x:Bind CanCallBack}" Style="{StaticResource QuietIconButton}" AutomationProperties.Name="{x:Bind CallBackLabel}" ToolTipService.ToolTip="Call back"><FontIcon Glyph="&#xE717;" FontSize="14" /></Button>
+                        <Button Style="{StaticResource QuietIconButton}" AutomationProperties.Name="More actions for this call" ToolTipService.ToolTip="More">
+                            <FontIcon Glyph="&#xE712;" FontSize="14" />
+                            <Button.Flyout><MenuFlyout>
+                                <MenuFlyoutItem Text="Delete from history" Tag="{x:Bind}" Click="DeleteCall_Click" />
+                                <MenuFlyoutItem Text="Block…" Tag="{x:Bind}" Click="BlockCall_Click" IsEnabled="{x:Bind CanCallBack}" />
+                                <MenuFlyoutItem Text="Report spam" Tag="{x:Bind}" Click="ReportCall_Click" IsEnabled="{x:Bind CanReport}" />
+                            </MenuFlyout></Button.Flyout>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+            <DataTemplate x:Key="FilteredRowTemplate" x:DataType="core:FilteredSender">
+                <Border Margin="0,6" Padding="14,12" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource DividerBrush}" Background="{ThemeResource IncomingMessageBrush}">
+                    <Grid RowSpacing="8" ColumnSpacing="10" AutomationProperties.Name="{x:Bind AccessibleName}">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+                        <Border Width="36" Height="36" CornerRadius="18" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind Peer}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
+                            <TextBlock Text="{x:Bind Initials}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                        </Border>
+                        <StackPanel Grid.Column="1" Spacing="2">
+                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontFamily="{StaticResource MonoFont}" FontSize="13.5" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Text="{x:Bind Peer}" FontSize="12" IsTextSelectionEnabled="True" Foreground="{ThemeResource TextTertiaryBrush}" />
+                        </StackPanel>
+                        <TextBlock Grid.Row="1" Grid.ColumnSpan="2" Text="{x:Bind Preview}" TextWrapping="Wrap" MaxLines="4" FontSize="13.5" Foreground="{ThemeResource IncomingTextBrush}" />
+                        <StackPanel Grid.Row="2" Grid.ColumnSpan="2" Orientation="Horizontal" Spacing="8">
+                            <TextBlock Text="{x:Bind CountLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextSecondaryBrush}" Margin="0,0,8,0" />
+                            <Button Content="Accept" Tag="{x:Bind}" Click="AcceptFiltered_Click" Style="{StaticResource PrimaryActionButton}" AutomationProperties.Name="Accept" />
+                            <Button Content="Block…" Tag="{x:Bind}" Click="BlockFiltered_Click" Style="{StaticResource SecondaryActionButton}" AutomationProperties.Name="Block" />
+                            <Button Content="Report spam" Tag="{x:Bind}" Click="ReportFiltered_Click" Style="{StaticResource SecondaryActionButton}" AutomationProperties.Name="Report spam" />
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </DataTemplate>
+            <DataTemplate x:Key="GroupRowTemplate" x:DataType="groups:GroupRow">
+                <Grid ColumnSpacing="11" AutomationProperties.Name="{x:Bind AccessibleSummary}">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Width="38" Height="38" CornerRadius="11" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}">
+                        <TextBlock Text="{x:Bind Initials}" FontSize="12" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Border>
+                    <StackPanel Grid.Column="1" Spacing="3">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Name}" FontWeight="SemiBold" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextPrimaryBrush}" />
+                            <TextBlock Grid.Column="1" Text="{x:Bind ActivityLabel}" FontSize="11.5" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
+                        </Grid>
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                            <TextBlock Text="{x:Bind Detail}" FontSize="13" TextTrimming="CharacterEllipsis" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <Border Grid.Column="1" MinWidth="18" Height="18" Padding="5,0" CornerRadius="9" VerticalAlignment="Center" Background="{ThemeResource AccentBrush}" Visibility="{x:Bind HasUnread}">
+                                <TextBlock Text="{x:Bind UnreadLabel}" FontSize="11" FontWeight="SemiBold" TextAlignment="Center" VerticalAlignment="Center" Foreground="{ThemeResource OnAccentBrush}" />
+                            </Border>
+                        </Grid>
+                    </StackPanel>
+                </Grid>
+            </DataTemplate>
+            <DataTemplate x:Key="GroupSystemLine" x:DataType="groups:GroupLineRow">
+                <Border HorizontalAlignment="Center" Margin="24,5" Padding="12,5" MaxWidth="560" CornerRadius="10" Background="{ThemeResource ChipSurfaceBrush}">
+                    <TextBlock Text="{x:Bind Text}" FontSize="12" TextWrapping="Wrap" TextAlignment="Center" IsTextSelectionEnabled="True" Foreground="{ThemeResource TextSecondaryBrush}" />
+                </Border>
+            </DataTemplate>
+            <DataTemplate x:Key="GroupIncomingLine" x:DataType="groups:GroupLineRow">
+                <Grid HorizontalAlignment="Left" Margin="24,5,64,5" ColumnSpacing="8" MaxWidth="660">
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+                    <Border Width="30" Height="30" CornerRadius="15" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind SenderKey}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
+                        <TextBlock Text="{x:Bind Initials}" FontSize="11" FontWeight="Bold" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
+                    </Border>
+                    <Border Grid.Column="1" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind Sender}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource AccentBrush}" />
+                            <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
+                            <ItemsControl ItemsSource="{x:Bind Files}">
+                                <ItemsControl.ItemTemplate>
+                                    <DataTemplate x:DataType="groups:LocalFile">
+                                        <Button Tag="{x:Bind}" Click="GroupFile_Click" Style="{StaticResource AttachmentButton}" Margin="0,6,0,0" Padding="12,8" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                                AutomationProperties.Name="{x:Bind Name}" ToolTipService.ToolTip="Open or save (decrypted on this device)">
+                                            <TextBlock Text="{x:Bind Name}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" TextWrapping="Wrap" />
+                                        </Button>
+                                    </DataTemplate>
+                                </ItemsControl.ItemTemplate>
+                            </ItemsControl>
+                            <StackPanel Orientation="Horizontal" Spacing="6">
+                                <TextBlock Text="{x:Bind TimeLabel}" FontSize="11.5" Foreground="{ThemeResource IncomingFooterTextBrush}" />
+                                <FontIcon Glyph="&#xE916;" FontSize="11" Visibility="{x:Bind Disappears}" Foreground="{ThemeResource IncomingFooterTextBrush}" AutomationProperties.Name="Disappearing message" />
+                            </StackPanel>
+                        </StackPanel>
+                    </Border>
+                </Grid>
+            </DataTemplate>
+            <DataTemplate x:Key="GroupOutgoingLine" x:DataType="groups:GroupLineRow">
+                <Border HorizontalAlignment="Right" Margin="64,5,24,5" MaxWidth="620" CornerRadius="14" Padding="14,9,14,10" Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
+                    <StackPanel Spacing="4">
+                        <TextBlock Text="{x:Bind Text}" TextWrapping="Wrap" IsTextSelectionEnabled="True" FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
+                        <ItemsControl ItemsSource="{x:Bind Files}">
+                            <ItemsControl.ItemTemplate>
+                                <DataTemplate x:DataType="groups:LocalFile">
+                                    <Button Tag="{x:Bind}" Click="GroupFile_Click" Style="{StaticResource AttachmentButton}" Margin="0,6,0,0" Padding="12,8" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                                            AutomationProperties.Name="{x:Bind Name}">
+                                        <TextBlock Text="{x:Bind Name}" FontFamily="{StaticResource MonoFont}" FontSize="12.5" TextWrapping="Wrap" />
+                                    </Button>
+                                </DataTemplate>
+                            </ItemsControl.ItemTemplate>
+                        </ItemsControl>
+                        <StackPanel Orientation="Horizontal" Spacing="6">
+                            <TextBlock Text="{x:Bind TimeLabel}" FontSize="11.5" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                            <FontIcon Glyph="&#xE916;" FontSize="11" Visibility="{x:Bind Disappears}" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.Name="Disappearing message" />
+                        </StackPanel>
+                    </StackPanel>
+                </Border>
+            </DataTemplate>
+            <local:GroupLineSelector x:Key="GroupLineSelector" Incoming="{StaticResource GroupIncomingLine}" Outgoing="{StaticResource GroupOutgoingLine}" Notice="{StaticResource GroupSystemLine}" />
+            <!-- A missed call in a 1:1 conversation: a small centred line, not a message. -->
+            <DataTemplate x:Key="SystemLine" x:DataType="core:ThreadMessage">
+                <Border HorizontalAlignment="Center" Margin="24,6" Padding="12,4" CornerRadius="10" Background="{ThemeResource ChipSurfaceBrush}">
+                    <TextBlock Text="{x:Bind Body}" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}" TextWrapping="Wrap" TextAlignment="Center" />
+                </Border>
+            </DataTemplate>
             <local:MessageTemplateSelector x:Key="MessageTemplateSelector"
-                Incoming="{StaticResource IncomingMessage}" Outgoing="{StaticResource OutgoingMessage}" />
+                Incoming="{StaticResource IncomingMessage}" Outgoing="{StaticResource OutgoingMessage}" Notice="{StaticResource SystemLine}" />
             </ResourceDictionary>
         </Grid.Resources>
         <Grid.KeyboardAccelerators>
@@ -187,11 +324,13 @@
             <Grid x:Name="SenderPane" Padding="12,16,12,8" RowSpacing="12" Background="{ThemeResource NavigationSurfaceBrush}">
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" />
-                    <RowDefinition Height="Auto" /><RowDefinition Height="*" />
+                    <RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" />
                 </Grid.RowDefinitions>
                 <Grid ColumnSpacing="10" Padding="6,0,0,4">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                     <Image Source="ms-appx:///Assets/Logo.png" Width="26" Height="26" AutomationProperties.Name="Pigeonpost" />
+                    <Button x:Name="NewGroupButton" Grid.Column="3" Content="New group" Click="NewGroup_Click" Visibility="Collapsed" Style="{StaticResource SecondaryActionButton}"
+                            MinHeight="30" Padding="10,0" FontSize="12.5" AutomationProperties.Name="New group" ToolTipService.ToolTip="Start an end-to-end encrypted group" />
                     <TextBlock Grid.Column="1" Text="Pigeonpost" FontSize="15" FontWeight="SemiBold" CharacterSpacing="-10" VerticalAlignment="Center" Foreground="{ThemeResource TextPrimaryBrush}" />
                     <Button Grid.Column="2" Click="NewConversation_Click" Style="{StaticResource QuietIconButton}" Width="34" Height="34" Padding="0" AutomationProperties.Name="New conversation" ToolTipService.ToolTip="New conversation (Ctrl+N)">
                         <FontIcon Glyph="&#xE8F2;" FontSize="16" />
@@ -210,7 +349,11 @@
                     </ComboBox>
                     <TextBlock Grid.Column="1" Text="{x:Bind ViewModel.InboxSummary, Mode=OneWay}" FontSize="12" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" HorizontalAlignment="Right" Foreground="{ThemeResource TextTertiaryBrush}" />
                 </Grid>
-                <Grid Grid.Row="4" Margin="-4,0,-4,0">
+                <!-- Chats, Calls and Groups (MainWindow.SideViews.cs); each appears when the server enables it. -->
+                <StackPanel x:Name="SideNav" Grid.Row="4" Orientation="Horizontal" Spacing="6" Visibility="Collapsed" />
+                <Grid x:Name="SideListHost" Grid.Row="5" Margin="-4,0,-4,0" Visibility="Collapsed" />
+                <Grid x:Name="ConversationListHost" Grid.Row="5" Margin="-4,0,-4,0">
+                    <Grid.RowDefinitions><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                     <ListView x:Name="ConversationList" ItemsSource="{x:Bind ViewModel.Conversations, Mode=OneWay}" SelectedItem="{x:Bind ViewModel.SelectedConversation, Mode=OneWay}"
                               SelectionChanged="Conversation_SelectionChanged" IsItemClickEnabled="True" ItemClick="Conversation_ItemClick"
                               SelectionMode="Single" AutomationProperties.Name="Conversations" ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -222,7 +365,7 @@
                                 <Grid ColumnSpacing="11" AutomationProperties.Name="{x:Bind AccessibleSummary}">
                                     <Grid.ColumnDefinitions><ColumnDefinition Width="38" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
                                     <Grid.ContextFlyout><MenuFlyout><MenuFlyoutItem Text="Copy address" Tag="{x:Bind Peer}" Click="CopyPeer_Click" /></MenuFlyout></Grid.ContextFlyout>
-                                    <Border Width="38" Height="38" CornerRadius="19" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}">
+                                    <Border Width="38" Height="38" CornerRadius="19" VerticalAlignment="Top" Background="{ThemeResource AvatarSurfaceBrush}" Tag="{x:Bind Peer}" Loaded="Avatar_Loaded" Unloaded="Avatar_Unloaded">
                                         <TextBlock Text="{x:Bind Initials}" FontSize="12" FontWeight="Bold" CharacterSpacing="20" Foreground="{ThemeResource AvatarTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False" />
                                     </Border>
                                     <StackPanel Grid.Column="1" Spacing="3">
@@ -249,6 +392,8 @@
                     <TextBlock Text="{x:Bind ViewModel.EmptyListMessage, Mode=OneWay}" TextWrapping="Wrap" Margin="16,24" FontSize="13"
                                Foreground="{ThemeResource TextSecondaryBrush}" IsHitTestVisible="False"
                                Visibility="{x:Bind ToVisibility(ViewModel.IsListEmpty), Mode=OneWay}" />
+                    <Button x:Name="FilteredEntry" Grid.Row="1" Click="FilteredEntry_Click" Visibility="Collapsed" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"
+                            Margin="4,6,4,0" Padding="12,8" CornerRadius="9" Background="Transparent" BorderThickness="0" Foreground="{ThemeResource TextSecondaryBrush}" Content="Filtered" />
                 </Grid>
             </Grid>
             <Thumb x:Name="SenderDivider" Grid.Column="1" DragDelta="SenderColumn_DragDelta" Style="{StaticResource PaneDivider}" AutomationProperties.Name="Resize conversations column" />
@@ -278,6 +423,7 @@
                 <Button Grid.Row="2" Content="New subject" Click="NewSubject_Click" Style="{StaticResource SecondaryActionButton}" HorizontalAlignment="Stretch" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
             </Grid>
             <Thumb x:Name="SubjectDivider" Grid.Column="3" DragDelta="SubjectColumn_DragDelta" Style="{StaticResource PaneDivider}" Visibility="Collapsed" AutomationProperties.Name="Resize subjects column" />
+            <Grid x:Name="SidePage" Grid.Column="2" Grid.ColumnSpan="3" Visibility="Collapsed" Background="{ThemeResource ConversationSurfaceBrush}" />
             <Grid x:Name="MessagingArea" Grid.Column="4" Background="{ThemeResource ConversationSurfaceBrush}">
                 <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                 <Border BorderBrush="{ThemeResource DividerBrush}" BorderThickness="0,0,0,1" Padding="24,12,20,12">
@@ -310,6 +456,8 @@
                                         <MenuFlyoutItem Text="{x:Bind ViewModel.ArchiveAction, Mode=OneWay}" Click="Archive_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
                                         <MenuFlyoutItem Text="Refresh" Click="Refresh_Click" />
                                         <MenuFlyoutItem Text="Sender details" Click="Contact_Click" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                                        <MenuFlyoutItem x:Name="TimerMenuItem" Text="Disappearing messages…" Click="Timer_Click" Visibility="Collapsed" IsEnabled="{x:Bind ViewModel.CanSetTimer, Mode=OneWay}" />
+                                        <MenuFlyoutItem x:Name="BlockMenuItem" Text="Block…" Click="BlockConversation_Click" IsEnabled="{x:Bind ViewModel.HasConversation, Mode=OneWay}" />
                                     </MenuFlyout></Button.Flyout>
                                 </Button>
                             </StackPanel>
@@ -372,7 +520,14 @@
                     </ListView>
                     <ProgressRing IsActive="{x:Bind ViewModel.IsBusy, Mode=OneWay}" Width="32" Height="32" IsHitTestVisible="False" />
                 </Grid>
-                <Border Grid.Row="3" Padding="24,12,24,18" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerBrush}" Background="{ThemeResource ComposerAreaBrush}">
+                <StackPanel Grid.Row="3">
+                <InfoBar x:Name="TimerBanner" IsOpen="{x:Bind ViewModel.HasTimer, Mode=OneWay}" IsClosable="False" Severity="Informational" Margin="24,0,24,6"
+                         Message="{x:Bind ViewModel.TimerBanner, Mode=OneWay}" AutomationProperties.Name="Disappearing messages" />
+                <InfoBar x:Name="BlockedBanner" IsOpen="{x:Bind ViewModel.IsSelectedBlocked, Mode=OneWay}" IsClosable="False" Severity="Warning" Margin="24,0,24,6"
+                         Message="{x:Bind ViewModel.BlockedBanner, Mode=OneWay}" AutomationProperties.Name="Blocked">
+                    <InfoBar.ActionButton><Button Content="Unblock" Click="Unblock_Click" AutomationProperties.Name="Unblock" /></InfoBar.ActionButton>
+                </InfoBar>
+                <Border Padding="24,12,24,18" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerBrush}" Background="{ThemeResource ComposerAreaBrush}">
                 <Border Padding="10,8,12,12" CornerRadius="14" BorderThickness="1" BorderBrush="{ThemeResource ComposerBorderBrush}" Background="{ThemeResource ComposerSurfaceBrush}">
                     <Grid RowSpacing="6">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
@@ -418,6 +573,7 @@
                     </Grid>
                 </Border>
                 </Border>
+                </StackPanel>
             </Grid>
         </Grid>
         <StackPanel x:Name="Welcome" Grid.Row="1" Grid.RowSpan="3" MaxWidth="460" HorizontalAlignment="Center" VerticalAlignment="Center" Spacing="20" Margin="32">
@@ -452,6 +608,9 @@
                     <FontIcon Glyph="&#xE77B;" FontSize="16" />
                     <Button.Flyout><MenuFlyout Placement="TopEdgeAlignedLeft" Opening="AccountMenu_Opening">
                         <MenuFlyoutItem Text="Copy my address" Click="CopyAddress_Click" />
+                        <MenuFlyoutItem x:Name="ProfileMenuItem" Text="Profile picture…" Click="ProfilePicture_Click" Visibility="Collapsed" />
+                        <MenuFlyoutItem x:Name="PrivacyMenuItem" Text="Privacy and filtering…" Click="Privacy_Settings_Click" Visibility="Collapsed" />
+                        <MenuFlyoutItem x:Name="BlockedMenuItem" Text="Blocked…" Click="Blocked_Click" />
                         <MenuFlyoutItem Text="Manage account" Click="ManageAccount_Click" />
                         <MenuFlyoutItem Text="Privacy policy" Click="Privacy_Click" />
                         <MenuFlyoutSubItem Text="Theme">
