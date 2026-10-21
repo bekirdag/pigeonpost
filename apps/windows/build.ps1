@@ -17,7 +17,7 @@ try {
     $buildRoot = Join-Path $PSScriptRoot "artifacts/$Architecture/$buildId"
     $publish = Join-Path $buildRoot 'publish'
     $runtime = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
-    $version = ([xml](Get-Content Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    $version = [regex]::Match((Get-Content Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
     if (-not $version) { throw 'Desktop version must be set before packaging.' }
     New-Item -ItemType Directory -Path $publish -Force | Out-Null
 
