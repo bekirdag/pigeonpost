@@ -229,8 +229,8 @@ public sealed partial class MainWindow
     private void RebuildCallRows()
     {
         var contacts = ViewModel.Contacts;
-        StableList.Reconcile(callRows, callHistory.Entries.Select(e => CallRow.For(e, contacts)).ToArray(), r => r.Entry.Id, (a, b) => a == b);
-        StableList.Reconcile(filteredCallRows, callHistory.FilteredEntries.Select(e => CallRow.For(e, contacts)).ToArray(), r => r.Entry.Id, (a, b) => a == b);
+        StableList.Reconcile(callRows, callHistory.Entries.Select(e => Pigeonpost.Core.CallRow.For(e, contacts)).ToArray(), r => r.Entry.Id, (a, b) => a == b);
+        StableList.Reconcile(filteredCallRows, callHistory.FilteredEntries.Select(e => Pigeonpost.Core.CallRow.For(e, contacts)).ToArray(), r => r.Entry.Id, (a, b) => a == b);
         if (callsEmpty is not null) { callsEmpty.Text = callHistory.Error ?? callHistory.EmptyText; callsEmpty.Visibility = ToVisibility(callsEmpty.Text.Length > 0); }
         if (callsMore is not null) callsMore.Visibility = ToVisibility(callHistory.CanLoadMore);
         if (filteredCallsExpander is not null) filteredCallsExpander.Header = callHistory.FilteredTitle;
