@@ -1110,7 +1110,9 @@ class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
         """A ringing caller as this mailbox's contacts name them, else their handle or address."""
         shown = display_name(handle or address)
         alias = next((c.get("alias") for c in self.contacts if c.get("peer") in (handle, address) and c.get("alias")), None)
-        return f"{alias} ({shown})" if isinstance(alias, str) and alias.strip() else shown
+        # Beside an alias, the address itself says who is really calling.
+        where = handle[:-5] if handle and handle.endswith("/main") and handle.count("/") > 1 else handle or address
+        return f"{alias} ({where})" if isinstance(alias, str) and alias.strip() else shown
 
     def answer_call(self, room):
         if self.calls and self.calls.answer(room):

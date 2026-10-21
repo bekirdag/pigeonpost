@@ -16,26 +16,34 @@ public static class PostboxJson
 public sealed record Mailbox(string Address, string? Handle = null, string? Label = null)
 {
     public string Key => Handle ?? Address;
-    public string DisplayName => Handle is { } handle && handle.EndsWith("/main", StringComparison.Ordinal)
-        ? PostAddress.DisplayName(handle) : Label ?? Handle ?? Address;
+    public string DisplayName => Handle is { } handle ? PostAddress.DisplayName(handle) : Label ?? Address;
 }
 
 public static class PostAddress
 {
-    // The whole handle, with a trailing "/main" dropped.
-    //
-    // Showing the last segment alone made every namespace's default inbox read as the same word,
-    // "main", so the one name on screen identified nobody. The rest of a handle is not decoration
-    // either: /wodo/home and /bekir/home are different mailboxes, and a row saying only "home" does
-    // not say whose. The namespace always survives; only the "main" that a bare /<namespace>
-    // already resolves to is worth dropping. Matches PeerFace.displayName in the Apple client.
+    // Short segments that read as acronyms. The same list as ACRONYMS in site-inbox/names.js.
+    public static readonly string[] Acronyms = ["hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev"];
+
+    // A handle as a person's name: /bekir/main and /bekir are "Bekir", /wodo/hr is "Wodo HR",
+    // /acme/john-doe is "Acme John Doe". Every segment survives (/wodo/home and /bekir/home are
+    // different mailboxes); only the "main" a bare /<namespace> resolves to is dropped. Key
+    // addresses, address-style handles and GitHub logins keep their old display, and anything that is
+    // not a handle is returned unchanged. A contact alias wins over this. Matches PeerFace.displayName.
     public static string DisplayName(string peer)
     {
-        if (peer.StartsWith("/k/", StringComparison.Ordinal)) return peer;
-        var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 0) return peer;
-        if (parts.Length > 1 && parts[^1] == "main") return "/" + string.Join('/', parts[..^1]);
-        return "/" + string.Join('/', parts);
+        if (peer.StartsWith("/k/", StringComparison.Ordinal) || !peer.StartsWith('/')) return peer;
+        var parts = peer.Split('/', StringSplitOptions.RemoveEmptyEntries).ToList();
+        if (parts.Count == 0) return peer;
+        if (parts.Count > 1 && parts[^1] == "main") parts.RemoveAt(parts.Count - 1);
+        if (peer.Contains('@') || parts[0] == "github") return "/" + string.Join('/', parts);
+        var words = parts.SelectMany(part => part.Split(['-', '_'], StringSplitOptions.RemoveEmptyEntries))
+            .Select(word =>
+            {
+                var lower = word.ToLowerInvariant();
+                return Acronyms.Contains(lower) ? lower.ToUpperInvariant() : char.ToUpperInvariant(lower[0]) + lower[1..];
+            });
+        var name = string.Join(' ', words);
+        return name.Length == 0 ? peer : name;
     }
 
     public static string Input(string value)

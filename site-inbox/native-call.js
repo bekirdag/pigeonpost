@@ -35,7 +35,8 @@
     mailbox: () => me,
     peer: () => peer,
     knownPeer: (key) => Boolean(key && Object.prototype.hasOwnProperty.call(names, key)),
-    displayName: (key) => (key && names[key]) || key,
+    // The app's name for a peer (a contact alias or its own derived name), else the shared rule.
+    displayName: (key) => (key && names[key]) || (window.PigeonpostNames ? window.PigeonpostNames.displayName(key) : key),
     toast: (text) => tell({ type: "toast", text: String(text || "") }),
     // Phase 1c (docs/call-alerting.md). With `nativeRing`, the app shows incoming calls itself
     // (CallKit, a system notification) and the page shows no ring screen of its own.

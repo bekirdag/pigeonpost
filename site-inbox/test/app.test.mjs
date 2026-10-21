@@ -204,6 +204,7 @@ window.localStorage.setItem("ppi_token", "eyJfake.token.here");
 // back to the long poll get a run of their own at the bottom of this file.
 EVENTS.mode = "live";
 
+window.eval(readFileSync(`${APP}/names.js`, "utf8"));
 window.eval(readFileSync(`${APP}/config.js`, "utf8"));
 window.eval(readFileSync(`${APP}/app.js`, "utf8"));
 
@@ -258,7 +259,7 @@ check("a keep-alive is not mail", calls.filter((c) => c.path.startsWith("/v1/inb
 console.log("\n— signed in —");
 check("signin hidden", $("signin").hidden, true);
 check("app shown", $("app").hidden, false);
-check("mailbox name", text($("me-name")), "su_iam");
+check("mailbox name", text($("me-name")), "Bekir Su Iam");
 check("mailbox handle", $("identity-btn").dataset.address, "/bekir/su_iam");
 check("identity switcher enabled (2 mailboxes)", $("identity-btn").disabled, false);
 
@@ -278,7 +279,7 @@ const allNames = [...agentRows, ...otherRows].map((r) => text(r.querySelector(".
 // `docdex` and `scratch` are on the account and have never exchanged a message. A fleet of a dozen
 // such agents would bury the conversations that are real, so they belong in the identity picker
 // rather than in this list.
-check("an own agent you have corresponded with is listed", allNames.includes("docdex"), true);
+check("an own agent you have corresponded with is listed", allNames.includes("Bekir Docdex"), true);
 check("a silent own agent is not", allNames.includes("scratch"), false);
 check("every mailbox is still reachable from the picker", $("identity-btn").disabled, false);
 
@@ -482,10 +483,10 @@ check("sent to the handle, no new thread", [...$("threads").querySelectorAll(".t
 
 console.log("\n— chatting with your own agent —");
 const docdexRow = [...$("threads").querySelectorAll(".thread-row")]
-  .find((r) => text(r.querySelector(".tr-name")) === "docdex");
+  .find((r) => text(r.querySelector(".tr-name")) === "Bekir Docdex");
 docdexRow.click();
 await settle(60);
-check("thread opens on the agent", text($("peer-name")), "docdex");
+check("thread opens on the agent", text($("peer-name")), "Bekir Docdex");
 check("header says it is yours", text($("peer-sub")), "/bekir/docdex · your mailbox");
 $("peer-info-btn").click();
 await settle(30);
@@ -551,7 +552,7 @@ console.log("\n— switching to that mailbox —");
 $("peer-info").querySelector(".open-mailbox").click();
 await settle(150);
 check("now acting as the agent", $("identity-btn").dataset.address, "/bekir/docdex");
-check("its own row is gone from the agent list", [...$("threads").querySelectorAll(".tr-name")].every((n) => text(n) !== "docdex"), true);
+check("its own row is gone from the agent list", [...$("threads").querySelectorAll(".tr-name")].every((n) => text(n) !== "Bekir Docdex"), true);
 // It is not promoted into the list just for being an own mailbox — the list stays correspondence.
 // Switching back to it is the picker's job, and the picker still offers it.
 check("the previous mailbox is reachable from the picker", $("identity-btn").disabled, false);
@@ -994,7 +995,8 @@ console.log("\n— a postbox without the stream, and a network that comes and go
   };
   w2.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w2.localStorage.setItem("ppi_token", "eyJfake.token.here");
-  w2.eval(readFileSync(`${APP}/config.js`, "utf8"));
+  w2.eval(readFileSync(`${APP}/names.js`, "utf8"));
+w2.eval(readFileSync(`${APP}/config.js`, "utf8"));
   w2.eval(readFileSync(`${APP}/app.js`, "utf8"));
   await settle(220);
 
@@ -1078,7 +1080,8 @@ console.log("\n— the postbox is unreachable for the second the page loads —"
   };
   w3.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {} });
   w3.localStorage.setItem("ppi_token", "eyJfake.token.here");
-  w3.eval(readFileSync(`${APP}/config.js`, "utf8"));
+  w3.eval(readFileSync(`${APP}/names.js`, "utf8"));
+w3.eval(readFileSync(`${APP}/config.js`, "utf8"));
   w3.eval(readFileSync(`${APP}/app.js`, "utf8"));
   await settle(250);
 

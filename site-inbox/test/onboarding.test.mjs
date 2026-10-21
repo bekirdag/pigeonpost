@@ -56,6 +56,7 @@ function app(t, { signedIn = true, existing = false, intercept } = {}) {
     throw new Error(`Unexpected request: ${call.method} ${call.path}`);
   };
   if (signedIn) w.localStorage.setItem("ppi_token", "pk_test_account");
+  w.eval(read("names.js"));
   w.eval(read("config.js"));
   w.eval(read("app.js"));
   const $ = (id) => w.document.getElementById(id);

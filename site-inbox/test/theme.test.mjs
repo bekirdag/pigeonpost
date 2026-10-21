@@ -40,6 +40,7 @@ async function boot(p) {
   p.w.matchMedia = query => ({ matches: query.includes("min-width"), addEventListener() {} });
   p.w.fetch = server.fetch;
   try { p.w.localStorage.setItem("ppi_token", "fixture_account"); } catch (_) { /* blocked storage */ }
+  p.w.eval(read("names.js"));
   p.w.eval(read("config.js"));
   p.w.eval(read("app.js"));
   await tick(60);

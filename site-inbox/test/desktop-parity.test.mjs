@@ -24,6 +24,7 @@ async function app(t, configure = () => {}) {
   w.matchMedia = query => ({ matches: query.includes("min-width"), addEventListener() {} });
   w.fetch = server.fetch;
   w.localStorage.setItem("ppi_token", "fixture_account");
+  w.eval(read("names.js"));
   w.eval(read("config.js"));
   w.eval(read("app.js"));
   t.after(() => { w.close(); assert.deepEqual(errors, [], "No uncaught script errors"); });
@@ -43,14 +44,14 @@ test("default inbox labels distinguish owners and picker groups roots before chi
   const a = await app(t, server => server.identities.push(
     { address: "/k/z", handle: "/garden/worker" }, { address: "/k/anonymous", label: "Unnamed" },
     { address: "/k/a", handle: "/apple/main" }, { address: "/k/b", handle: "/apple/bot" }));
-  assert.equal(a.$("me-name").textContent, "/bekir");
+  assert.equal(a.$("me-name").textContent, "Bekir");
   assert.equal(a.$("me-sub"), null);
   assert.equal(a.$("copy-my-address"), null);
   a.$("identity-btn").click();
   assert.deepEqual([...a.$("identity-menu").querySelectorAll(".copy-address")].map(x => x.dataset.address),
     ["/bekir/main", "/apple/main", "/apple/bot", "/garden/main", "/garden/worker", "/k/anonymous"]);
   await a.clickPeer();
-  assert.equal(a.$("peer-name").textContent, "/alp");
+  assert.equal(a.$("peer-name").textContent, "Alp");
 });
 
 test("rapid A→B→A switching rejects delayed inbox, contact, archive and subject responses", async t => {
@@ -70,7 +71,7 @@ test("rapid A→B→A switching rejects delayed inbox, contact, archive and subj
   await a.switchTo("/bekir/main");
   pending.forEach(resolve => resolve());
   await a.clickPeer();
-  assert.equal(a.$("me-name").textContent, "/bekir");
+  assert.equal(a.$("me-name").textContent, "Bekir");
   assert.doesNotMatch(a.$("app").textContent, /Wrong account|Wrong thread|\/wrong/);
   assert.equal(a.$("inbox-status").hidden, true);
   assert.ok(a.$("messages").textContent.includes(OWNER));
@@ -207,7 +208,7 @@ test("starting with a namespace opens the canonical peer returned in the sent co
   a.$("new-btn").click(); a.input("new-peer", "alp"); a.input("new-body", "Hello at your main address");
   a.$("new-send").click();
   await until(() => !a.$("thread-head").hidden);
-  assert.equal(a.$("peer-name").textContent, "/alp");
+  assert.equal(a.$("peer-name").textContent, "Alp");
   assert.match(a.$("messages").textContent, /Hello at your main address/);
 });
 
@@ -313,7 +314,7 @@ test("sender name and information button open desktop options with nested-dialog
   a.$("peer-name-btn").click();
   assert.equal(a.$("peer-info-sheet").hidden, false);
   assert.equal(a.$("peer-name-btn").getAttribute("aria-expanded"), "true");
-  assert.equal(a.$("peer-info-title").textContent, "/alp");
+  assert.equal(a.$("peer-info-title").textContent, "Alp");
   assert.equal(a.$("peer-known").checked, true);
   assert.equal(a.$("peer-full").checked, false);
   assert.equal(a.$("peer-requests").disabled, false);
