@@ -17,9 +17,23 @@ try {
     $buildRoot = Join-Path $PSScriptRoot "artifacts/$Architecture/$buildId"
     $publish = Join-Path $buildRoot 'publish'
     $runtime = if ($Architecture -eq 'ARM64') { 'win-arm64' } else { 'win-x64' }
-    $version = ([xml](Get-Content Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -Raw)).Project.PropertyGroup.Version | Where-Object { $_ } | Select-Object -First 1
+    $version = [regex]::Match((Get-Content Pigeonpost.Desktop/Pigeonpost.Desktop.csproj -Raw), '<Version>([^<]+)</Version>').Groups[1].Value
     if (-not $version) { throw 'Desktop version must be set before packaging.' }
     New-Item -ItemType Directory -Path $publish -Force | Out-Null
+
+    # Group end-to-end encryption: the Rust library (crates/pigeonpost-groupcrypto, Rust 1.91.1 from
+    # its rust-toolchain.toml) for this machine, which the core tests load, and for the package's
+    # architecture, which ships beside Pigeonpost.exe.
+    $crate = Join-Path $PSScriptRoot '../../crates/pigeonpost-groupcrypto'
+    $triple = if ($Architecture -eq 'ARM64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+    Push-Location $crate
+    try {
+        & cargo build --locked --release -p pigeonpost-groupcrypto-ffi
+        if ($LASTEXITCODE -ne 0) { throw 'Group crypto library build failed for this machine.' }
+        & rustup target add $triple | Out-Null
+        & cargo build --locked --release -p pigeonpost-groupcrypto-ffi --target $triple
+        if ($LASTEXITCODE -ne 0) { throw "Group crypto library build failed for $triple." }
+    } finally { Pop-Location }
 
     & dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c $Configuration
     if ($LASTEXITCODE -ne 0) { throw 'Core tests failed.' }
@@ -28,6 +42,11 @@ try {
         "-p:Platform=$Architecture" --self-contained true -o $publish --nologo
     if ($LASTEXITCODE -ne 0) { throw "WinUI publish failed for $Architecture." }
     if (-not (Test-Path -LiteralPath (Join-Path $publish 'Pigeonpost.exe'))) { throw 'Publish did not produce Pigeonpost.exe.' }
+    $library = Join-Path $publish 'pigeonpost_groupcrypto_ffi.dll'
+    if (-not (Test-Path -LiteralPath $library)) { throw 'Publish did not include the group crypto library.' }
+    $machine = [BitConverter]::ToUInt16([IO.File]::ReadAllBytes($library), [BitConverter]::ToInt32([IO.File]::ReadAllBytes($library), 0x3C) + 4)
+    $expected = if ($Architecture -eq 'ARM64') { 0xAA64 } else { 0x8664 }
+    if ($machine -ne $expected) { throw ('The group crypto library is built for machine 0x{0:X4}, not {1}.' -f $machine, $Architecture) }
 
     if ($Package) {
         # Derive package sizes from the existing Pigeonpost artwork as part of the Windows build.

@@ -119,6 +119,7 @@ public sealed partial class MainWindow
                 AccountStatus.Text = "New messages arrived. Check Windows notification settings if alerts are disabled.";
         }
         notifications?.Update(unreadState.Count);
+        SideViewsInboxUpdated();
         _ = AcknowledgeVisibleAsync();
     }
 

@@ -6,6 +6,9 @@
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
+    <!-- Sample data and the stand-in postbox are compiled only into the tests and the UI-test app. -->
     <Compile Remove="PreviewInboxService.cs" />
+    <Compile Remove="Preview/**" />
+    <ProjectReference Include="../Pigeonpost.GroupCrypto/Pigeonpost.GroupCrypto.csproj" />
   </ItemGroup>
 </Project>

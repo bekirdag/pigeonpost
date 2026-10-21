@@ -5,7 +5,7 @@ using System.Text.Json;
 
 namespace Pigeonpost.Core;
 
-public sealed class PostboxException(int statusCode, string? code) : Exception(code switch
+public sealed class PostboxException(int statusCode, string? code, JsonElement? detail = null) : Exception(code switch
 {
     "not_admitted" => "They are not accepting mail from this mailbox.",
     "recipient_unresolved" => "No mailbox at that address.",
@@ -16,15 +16,38 @@ public sealed class PostboxException(int statusCode, string? code) : Exception(c
     "mailbox_full" => "Your mailbox has no room for this file.",
     "storage_full" => "The postbox has no room for more files. Please try again later.",
     "bad_response" => "The postbox returned an unreadable response.",
+    "feature_disabled" => "This isn't available for your account yet.",
+    "human_required" => "Only you can do this, signed in on this device.",
+    "not_member" => "You are not an active member of this group.",
+    "not_admin" => "Only the group's admins can do that.",
+    "owner_only" => "Only the group's owner can do that.",
+    "posting_restricted" => "Only admins can send messages in this group.",
+    "banned" => "You can't join this group.",
+    "group_full" => "This group is full.",
+    "invalid_link" => "This invitation link is no longer valid.",
+    "invite_required" => "This group is invite only.",
+    "group_deleted" => "This group was deleted.",
+    "rate_limited" => "Too many requests. Please wait a moment and try again.",
+    "quota_exceeded" => "This group has no room for more files.",
+    "avatar_rate_limited" => "You can change your picture five times a day. Please try again tomorrow.",
+    "too_large" => "This picture is too large. Choose one under 10 MB.",
+    "unsupported_image" => "Choose a JPEG, PNG or WebP picture.",
+    "bad_image" => "This picture could not be read. Please choose another.",
+    "avatars_unavailable" => "Pictures can't be changed right now. Please try again later.",
+    "invalid_policy" => "That setting could not be saved.",
     _ => $"The postbox could not complete this request ({statusCode})."
 })
 {
     public int StatusCode { get; } = statusCode;
     public string? Code { get; } = code;
+    // The whole error body, for codes that carry fields (current_epoch, current_revision, …).
+    public JsonElement? Detail { get; } = detail;
+    public long? DetailNumber(string name) => Detail is { ValueKind: JsonValueKind.Object } body
+        && body.TryGetProperty(name, out var value) && value.TryGetInt64(out var number) ? number : null;
 }
 
 // HttpClient and token-provider lifetimes belong to the caller. Never log tokens or raw responses.
-public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IAttachmentService, IDisposable
+public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider tokens, Uri? endpoint = null, HttpClient? transfers = null) : IInboxService, IAttachmentService, IConversationSettings, IDisposable
 {
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);
@@ -195,7 +218,7 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     }
 
     private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken,
-        byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false)
+        byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false, string? mediaType = null, string? device = null)
     {
         var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
         for (var attempt = 0; ; attempt++)
@@ -204,12 +227,16 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (identity is not null) request.Headers.Add("x-pigeonpost-identity", identity);
+            if (device is not null) request.Headers.Add("x-pigeonpost-device", device);
             if (binary is not null)
             {
                 request.Content = new ByteArrayContent(binary);
-                request.Content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-                request.Headers.Add("x-pigeonpost-filename", filename);
-                request.Headers.Add("x-pigeonpost-media-type", "application/octet-stream");
+                request.Content.Headers.ContentType = new MediaTypeHeaderValue(mediaType ?? "application/octet-stream");
+                if (filename is not null)
+                {
+                    request.Headers.Add("x-pigeonpost-filename", filename);
+                    request.Headers.Add("x-pigeonpost-media-type", "application/octet-stream");
+                }
             }
             if (json is not null) request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
             var response = await (transfer ? transfers ?? http : http).SendAsync(request,
@@ -230,13 +257,18 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
             using (response)
             {
                 string? code = response.StatusCode == HttpStatusCode.Unauthorized ? "unauthorized" : null;
+                JsonElement? detail = null;
                 try
                 {
-                    var error = await response.Content.ReadFromJsonAsync<ErrorResponse>(PostboxJson.Options, cancellationToken).ConfigureAwait(false);
-                    code ??= error?.Error;
+                    var error = await response.Content.ReadFromJsonAsync<JsonElement>(PostboxJson.Options, cancellationToken).ConfigureAwait(false);
+                    if (error.ValueKind == JsonValueKind.Object)
+                    {
+                        detail = error;
+                        if (error.TryGetProperty("error", out var name) && name.ValueKind == JsonValueKind.String) code ??= name.GetString();
+                    }
                 }
-                catch (JsonException) { }
-                throw new PostboxException((int)response.StatusCode, code);
+                catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException) { }
+                throw new PostboxException((int)response.StatusCode, code, detail);
             }
         }
     }
@@ -265,5 +297,4 @@ public sealed class PostboxClient(HttpClient http, IAccessTokenProvider tokens, 
     private sealed record ContactsResponse(IReadOnlyList<Contact>? Contacts, Vocabulary? Vocabulary);
     private sealed record ArchiveResponse(IReadOnlyList<string>? Archived);
     private sealed record OpenedThread(string ThreadId);
-    private sealed record ErrorResponse(string? Error);
 }

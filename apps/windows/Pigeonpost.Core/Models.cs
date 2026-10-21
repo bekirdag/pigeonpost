@@ -85,6 +85,9 @@ public sealed record InboxMessage
     public string? Verb { get; init; }
     public string? HeldBecause { get; init; }
     public IReadOnlyList<MessageAttachment>? Attachments { get; init; }
+    // Phase 1b/3a: held out of the inbox by the recipient's filtering; deleted by the server at this time.
+    public bool? Filtered { get; init; }
+    public long? ExpiresAt { get; init; }
 
     [JsonIgnore] public bool IsOutgoing => Direction == "out";
     [JsonIgnore] public long At => IsOutgoing ? SentAt ?? ReceivedAt ?? 0 : ReceivedAt ?? SentAt ?? 0;
@@ -111,7 +114,7 @@ public sealed record Contact(string Peer, string? Alias, string Admission, strin
     [JsonIgnore] public bool IsWildcard => Peer.EndsWith("/*", StringComparison.Ordinal);
 }
 public sealed record ServerThread(string ThreadId, string Peer, string? Title = null, bool? IsDefault = null,
-    long? CreatedAt = null, long? LastAt = null, bool? Archived = null);
+    long? CreatedAt = null, long? LastAt = null, bool? Archived = null, int? EphemeralSecs = null);
 public sealed record SendReceipt(string? MessageId, string? SentCopyId);
 public sealed record Vocabulary(IReadOnlyList<string>? Grantable = null, IReadOnlyList<string>? NeverAuto = null)
 {
@@ -131,8 +134,12 @@ public sealed record PendingMessage(string Id, string Mailbox, string To, string
 
 public sealed record ThreadMessage(string Id, string Body, long At, string? ThreadId, bool IsOutgoing,
     bool Read = true, string? Autonomy = null, string? Verb = null, string? HeldBecause = null,
-    DeliveryStatus Status = DeliveryStatus.Sent, IReadOnlyList<MessageAttachment>? Attachments = null)
+    DeliveryStatus Status = DeliveryStatus.Sent, IReadOnlyList<MessageAttachment>? Attachments = null,
+    bool System = false, long? ExpiresAt = null)
 {
+    // A small centred line in the conversation (a missed call), not a message anyone wrote.
+    public bool IsSystem => System;
+    public bool Disappears => ExpiresAt is not null;
     public bool CanDownloadAttachments => Status == DeliveryStatus.Sent;
     public bool IsHeld => !IsOutgoing && Autonomy == "review" && !string.IsNullOrEmpty(Verb);
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
@@ -155,7 +162,7 @@ public sealed record Conversation(string Peer, string Name, IReadOnlyList<Thread
 {
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
     public int Held => Messages.Count(m => m.IsHeld);
-    public long Last => Messages.LastOrDefault()?.At ?? 0;
+    public long Last => Messages.LastOrDefault(m => !m.IsSystem)?.At ?? Messages.LastOrDefault()?.At ?? 0;
     public string Initials => ConversationPresentation.Initials(Name);
     public string ActivityLabel => ConversationPresentation.ActivityLabel(Last, DateTimeOffset.Now);
     public string UnreadLabel => Unread > 99 ? "99+" : Unread.ToString();
@@ -163,12 +170,13 @@ public sealed record Conversation(string Peer, string Name, IReadOnlyList<Thread
     public bool HasUnread => Unread > 0;
     public bool HasHeld => Held > 0;
     public string AccessibleSummary => $"{Name}, {Peer}. {Preview}. {Badge}";
-    public string Preview => Messages.LastOrDefault() is { } m ? (string.IsNullOrWhiteSpace(m.DisplayBody) && m.Attachments?.Count > 0 ? m.AttachmentSummary : m.DisplayBody.ReplaceLineEndings(" ")) : "Start a conversation";
+    public string Preview => Messages.LastOrDefault(m => !m.IsSystem) is { } m ? (string.IsNullOrWhiteSpace(m.DisplayBody) && m.Attachments?.Count > 0 ? m.AttachmentSummary : m.DisplayBody.ReplaceLineEndings(" ")) : "Start a conversation";
     public string Badge => string.Join(" · ", new[] { Unread > 0 ? $"{Unread} unread" : "", Held > 0 ? $"{Held} held" : "" }.Where(s => s.Length > 0));
 }
 
-public sealed record Subject(string Id, string? Title, bool IsDefault, IReadOnlyList<ThreadMessage> Messages, long Last)
+public sealed record Subject(string Id, string? Title, bool IsDefault, IReadOnlyList<ThreadMessage> Messages, long Last, int? EphemeralSecs = null)
 {
+    public string TimerLabel => Timers.Label(EphemeralSecs);
     public string Name => !string.IsNullOrWhiteSpace(Title) ? Title : IsDefault ? "General" : "Untitled";
     public int Unread => Messages.Count(m => !m.IsOutgoing && !m.Read);
     public bool HasUnread => Unread > 0;

@@ -76,6 +76,53 @@ No offline message database or rich Markdown rendering is included.
 Unsent drafts are discarded on sign-out or app exit. Store availability is tracked in STORE.md;
 unsigned build artifacts are for validation and are not public installers.
 
+## Privacy, call history and pictures (Phase 1b)
+
+Each feature appears only when `GET /v1/capabilities` lists it for the account:
+
+- **Calls** (`call_history`): a sidebar entry beside Chats with the unseen-missed badge, cleared when
+  the page is viewed. All · Missed, a collapsed Filtered calls section, call back, Delete from
+  history, Block… and Report spam on each row, Clear all. Missed 1:1 calls also appear as a small
+  line in that conversation ("Missed video call · 14:32").
+- **Filtered** (`message_filtering`): a "Filtered (n)" row under the conversation list; each sender
+  offers Accept, Block… (Also report as spam on by default) and Report spam.
+- **Account menu → Privacy and filtering…** (the six controls of the web, saved on change) and
+  **Blocked…** (exact and namespace blocks, Unblock, block an address).
+- **Block** from the conversation menu, a message's menu ("Block sender…"), a call row, a group
+  member and Filtered, with the confirmation "They won't be able to message or call you, and won't
+  be told." A blocked conversation keeps its history with an Unblock banner and no composer.
+- **Profile picture…** (`avatars`): choose a file (Windows decodes JPEG, PNG, WebP and HEIC; the app
+  uploads a fresh JPEG without metadata), square crop with zoom, who can see it, all mailboxes,
+  remove. Pictures replace initials in conversation rows, call rows, group messages and group info,
+  and appear on new-message toasts once the app has shown them.
+- **Disappearing messages…** (`disappearing`) in the conversation menu sets the subject's timer for
+  both sides; expired messages leave by this device's clock even if the server's event was missed.
+
+## Groups (Phase 3b)
+
+End-to-end encrypted groups follow `docs/groups.md` exactly; the client loop is
+`Pigeonpost.Core/Groups/GroupClient.cs`, a port of the web inbox's `groups-core.js`, over the Rust
+library `crates/pigeonpost-groupcrypto` through its generated C# binding
+(`Pigeonpost.GroupCrypto`). `build.ps1` builds `pigeonpost_groupcrypto_ffi.dll` for the package's
+architecture (x64 or ARM64) and the MSIX carries it beside `Pigeonpost.exe`; a Release build fails
+without it, and an app that cannot load it hides groups.
+
+- Device ids are `win-<12 base32>`; the postbox attests the device for hosted mailboxes. The app keeps
+  20 key packages plus a last-resort one uploaded, processes welcomes, reads each group strictly in
+  `seq` order, acknowledges epochs, commits pending adds and removals (with jitter, discarding and
+  retrying on `revision_conflict`) and re-encrypts on `epoch_conflict`.
+- State at rest: the MLS state (already encrypted under its own state key) and the decrypted
+  history are sealed together with DPAPI for the signed-in Windows user in
+  `%LOCALAPPDATA%\Pigeonpost\groups`, written atomically after every mutation. A file this user
+  cannot open counts as no state, and the device enrols again as a new device.
+- Screens: Groups in the sidebar (invitations first), New group (who, name, description, who can
+  join, who can post), the group view (announcement bar instead of the composer for non-admins,
+  timer banner, encrypted files opened in the viewer), Group info (members with roles and every
+  device's fingerprint, the group safety number, this device's fingerprint, admin settings, add
+  people, leave, delete), device-change lines ("Jane added a new device · …") and a warning when
+  the safety number changes, and group voice/video calls with "Call in progress — Join" through the
+  WebView2 call host.
+
 ## Build and test
 
 Install .NET 10, PowerShell 7, Visual Studio Windows app development prerequisites and Windows SDK
@@ -90,11 +137,20 @@ Each build runs the core tests, publishes a self-contained WinUI executable and 
 validate an unsigned Store-upload MSIX. Packages contain the .NET and Windows App SDK runtimes.
 Artifacts are isolated under `apps/windows/artifacts/<architecture>/<build-id>`.
 
-Core tests also run on macOS/Linux:
+Core tests also run on macOS/Linux, after building the group crypto library for that machine:
 
 ```sh
+(cd crates/pigeonpost-groupcrypto && cargo build --locked --release -p pigeonpost-groupcrypto-ffi)
 dotnet run --project apps/windows/Pigeonpost.Core.Tests -c Release
 ```
+
+The group tests run the real MLS library against a stand-in postbox
+(`Pigeonpost.Core/Preview/PreviewPostbox.cs`, test and UI-test builds only): create, invite,
+accept, key, chat and encrypted files between devices; state encrypted at rest across a restart;
+a second device joining without history with a visible device change and a racing commit;
+removal with pending-removal commits, announcement mode and revision conflicts; disappearing
+messages; revoked devices and the feature flag. The UI-test build uses the same stand-in for the
+Calls, Filtered, privacy, blocking, picture and Groups screens.
 
 Docdex run-tests currently assumes Cargo for this workspace; use the native .NET runner for these
 tests. The dependency-free runner covers account custody, token rotation, cancellation, sign-out

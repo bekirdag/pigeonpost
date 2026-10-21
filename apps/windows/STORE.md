@@ -68,6 +68,17 @@ disabling the tray or native alerts. Overlay display in a normal same-user Explo
 visually tested. Evidence and package hashes are recorded in
 `docs/planning/2026-10-16-desktop-notifications-progress.md`.
 
+### Version 1.0.10 release notes
+
+End-to-end encrypted groups: start a group, invite people, chat and share files that only members'
+devices can read, check device fingerprints and the group safety number, set disappearing messages
+and call the whole group. New Calls page with missed calls, a Filtered list for mail from strangers,
+Privacy and filtering settings, blocking from any conversation, call or message, and profile
+pictures.
+
+1.0.10 ships `pigeonpost_groupcrypto_ffi.dll` (the group encryption library, built from
+`crates/pigeonpost-groupcrypto`) inside each architecture's MSIX. No new package capabilities.
+
 ### Version 1.0.9 release notes
 
 Voice and video calls: call anyone from the conversation header, answer incoming calls while the app
