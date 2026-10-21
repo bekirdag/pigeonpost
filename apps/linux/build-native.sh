@@ -2,8 +2,8 @@
 # Build the group end-to-end encryption library (crates/pigeonpost-groupcrypto, UniFFI) for this
 # machine and place it, with its generated Python binding, where the app loads it:
 #   pigeonpost/native/<x86_64|aarch64>/{pigeonpost_groupcrypto.py, libpigeonpost_groupcrypto_ffi.so}
-# Needs Rust (rustup picks 1.91.1 from the crate's rust-toolchain.toml). Release CI builds both
-# processors on Ubuntu 22.04 so the library runs on Debian 12 and Ubuntu 22.04 or newer.
+# Needs Rust (rustup picks 1.91.1 from the crate's rust-toolchain.toml). Release CI verifies both
+# processors' glibc symbol floor so the library runs on Debian 12 and Ubuntu 22.04 or newer.
 set -euo pipefail
 here="$(cd "$(dirname "$0")" && pwd)"
 crate="$here/../../crates/pigeonpost-groupcrypto"
