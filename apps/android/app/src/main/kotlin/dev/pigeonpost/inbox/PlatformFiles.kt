@@ -93,6 +93,11 @@ class PlatformFiles(private val context: Context, private val api: PostboxApi) {
         try { file.outputStream().use { api.download(identity, attachment.id, it) }; file }
         catch (failure: Exception) { directory.deleteRecursively(); throw failure }
     }
+    /** Bytes this device decrypted (a group file), in the same private, cleared-on-sign-out place as downloads. */
+    suspend fun received(name: String, bytes: ByteArray): File = withContext(Dispatchers.IO) {
+        val directory = File(received, UUID.randomUUID().toString()).apply { mkdirs() }
+        File(directory, safeFilename(name)).apply { writeBytes(bytes) }
+    }
     suspend fun save(file: File, uri: Uri) = withContext(Dispatchers.IO) {
         require(uri.scheme == "content")
         val output = context.contentResolver.openOutputStream(uri, "wt") ?: error("Could not save the file.")

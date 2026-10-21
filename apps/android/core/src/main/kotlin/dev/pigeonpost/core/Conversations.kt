@@ -19,7 +19,7 @@ data class Subject(val id: String, val title: String? = null, val isDefault: Boo
     val ephemeralSecs: Long? = null) {
     val name get() = title?.takeIf { it.isNotBlank() } ?: if (isDefault || id.isEmpty()) "General" else "Untitled"
     val unread get() = messages.count { !it.outgoing && !it.read && !it.system }
-    val last get() = maxOf(lastAt, messages.maxOfOrNull { it.at } ?: 0)
+    val last get() = maxOf(lastAt, messages.filterNot { it.system }.maxOfOrNull { it.at } ?: 0)
 }
 
 object Conversations {
@@ -86,8 +86,9 @@ object Conversations {
         }
         // A new named subject must not strand a draft in the general conversation.
         if (groups.values.none { it.isDefault }) groups[""] = Subject("", isDefault = true)
-        if (extra.isNotEmpty()) groups.values.first { it.isDefault }.let { general ->
-            groups[general.id] = general.copy(messages = (general.messages + extra).sortedWith(compareBy<ThreadMessage> { it.at }.thenBy { it.id }))
+        // A missed call belongs to the whole conversation, so its line shows in whichever subject is open.
+        if (extra.isNotEmpty()) groups.keys.toList().forEach { id -> val subject = groups.getValue(id)
+            groups[id] = subject.copy(messages = (subject.messages + extra).sortedWith(compareBy<ThreadMessage> { it.at }.thenBy { it.id }))
         }
         return groups.values.sortedWith(compareByDescending<Subject> { it.last }.thenBy { it.id }).ifEmpty { listOf(Subject("", isDefault = true)) }
     }

@@ -144,6 +144,23 @@ class CallHost(private val app: Application, private val session: UserSession, p
         if (ready) evaluate("window.PigeonpostNative && PigeonpostNative.decline && PigeonpostNative.decline(${quote(room)}, ${ringToken?.let(::quote) ?: "null"})")
     }
 
+    /**
+     * A group call (Phase 3a, docs/groups.md §6): the page's own `placeGroup`/`joinGroup` ring every
+     * active member or join the running call; the postbox rechecks membership each time.
+     */
+    fun callGroup(groupId: String, name: String, video: Boolean, join: Boolean) {
+        val kind = if (video) "video" else "audio"
+        val group = JSONObject().put("id", groupId).put("name", name)
+        val script = "window.PigeonpostCalls && PigeonpostCalls.${if (join) "joinGroup" else "placeGroup"} ? PigeonpostCalls.${if (join) "joinGroup" else "placeGroup"}(${quote(kind)}, $group) : (window.PigeonpostCallsHost && PigeonpostCallsHost.toast('Group calls are not available here yet.'))"
+        val needed = buildList { add(Manifest.permission.RECORD_AUDIO); if (video) add(Manifest.permission.CAMERA) }.filterNot(::held)
+        val go = { if (ready && configured) evaluate(script) else window?.toast("Calling isn’t ready yet. Try again in a moment.") }
+        val window = window
+        if (needed.isEmpty() || window == null) go()
+        else window.requestPermissions(needed.toTypedArray()) { result ->
+            if (result[Manifest.permission.RECORD_AUDIO] == true) go() else window.toast("Allow the microphone in Android settings to make calls.")
+        }
+    }
+
     private fun held(permission: String) = ContextCompat.checkSelfPermission(app, permission) == PackageManager.PERMISSION_GRANTED
 
     private fun configure() {

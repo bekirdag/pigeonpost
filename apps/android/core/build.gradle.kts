@@ -10,6 +10,7 @@ kotlin { jvmToolchain(17) }
 val groupCrypto = rootDir.resolve("../../crates/pigeonpost-groupcrypto")
 sourceSets.named("test") {
     kotlin.srcDir("src/groupcrypto/kotlin")
+    kotlin.srcDir("src/groupcrypto-fake/kotlin")
     kotlin.srcDir(groupCrypto.resolve("bindings/kotlin"))
 }
 tasks.withType<Test>().configureEach {

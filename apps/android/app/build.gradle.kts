@@ -57,6 +57,8 @@ android {
     sourceSets.getByName("androidTest").assets.srcDir("../../../tests/fixtures/attachments")
     // The UniFFI adapter for group encryption, shared with core's JVM tests.
     sourceSets.getByName("main").kotlin.srcDir("../core/src/groupcrypto/kotlin")
+    // Debug fixtures run real group encryption against the same in-memory postbox as core's tests.
+    sourceSets.getByName("debug").kotlin.srcDir("../core/src/groupcrypto-fake/kotlin")
 }
 
 // Group end-to-end encryption: the AAR built from crates/pigeonpost-groupcrypto

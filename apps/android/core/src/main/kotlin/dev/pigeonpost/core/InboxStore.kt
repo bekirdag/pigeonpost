@@ -460,9 +460,17 @@ class InboxStore(
         api.acceptFiltered(identity, group.from)
         if (epoch != sessionVersion || state.value.acting?.address != identity) return@command
         content { old -> old.copy(filtered = old.filtered.filterNot { (Conversations.aliases(old.filtered)[it.peerKey] ?: it.peerKey) == group.peer }, leftView = LeftView.INBOX,
-            selectedPeer = group.peer, selectedSubject = null, error = "Accepted. Their messages are in your inbox.") }
+            selectedPeer = group.peer, selectedSubject = null) }
         done()
-        refresh()
+        refresh()?.join()
+        mutable.update { it.copy(error = "Accepted. Their messages are in your inbox.") }
+    }
+
+    fun reportAvatar(address: String): Job = action {
+        val identity = state.value.acting?.address ?: return@action
+        try { api.reportAvatar(identity, address); showError("Picture reported.") }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { showError("Could not send the report.") }
     }
 
     fun reportMessage(id: String, done: () -> Unit = {}): Job = action {

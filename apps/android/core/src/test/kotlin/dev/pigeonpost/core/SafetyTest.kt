@@ -233,6 +233,7 @@ class GroupLinksTest {
         assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://evil.example/g/$id#t"))
         assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/grp_short#t"))
         assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://user@inbox.pigeonpost.dev/g/$id#t"))
-        assertEquals(id to null, dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id#bad<token>"))
+        assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id#bad<token>"))
+        assertEquals(id to null, dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id#bad.token"))
     }
 }

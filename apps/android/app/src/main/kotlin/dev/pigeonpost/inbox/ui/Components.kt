@@ -99,7 +99,9 @@ fun Avatar(peer: String?, name: String, size: Dp = 38.dp) {
 fun GroupAvatar(id: String, name: String, size: Dp = 38.dp) {
     val index = PeerFace.toneIndex(id) - 1
     Box(Modifier.size(size).background(Pp.colors.tones[index], RoundedCornerShape(size * 0.3f)), contentAlignment = Alignment.Center) {
-        Text(PeerFace.initials(name.replace(' ', '/')), color = Pp.colors.toneInk[index], style = geist((size.value * 0.32f).sp, FontWeight.Bold), maxLines = 1)
+        val words = name.split(' ').filter { w -> w.any(Char::isLetterOrDigit) }
+        val letters = if (words.size >= 2) "${words[0].first(Char::isLetterOrDigit)}${words[1].first(Char::isLetterOrDigit)}".uppercase() else PeerFace.initials(name)
+        Text(letters, color = Pp.colors.toneInk[index], style = geist((size.value * 0.32f).sp, FontWeight.Bold), maxLines = 1)
     }
 }
 

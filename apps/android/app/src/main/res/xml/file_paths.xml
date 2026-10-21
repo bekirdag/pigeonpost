@@ -1,4 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <paths xmlns:android="http://schemas.android.com/apk/res/android">
     <cache-path name="attachments" path="received/" />
+    <!-- A photo the camera takes for a profile picture; read back, cropped and deleted. -->
+    <cache-path name="camera" path="camera/" />
 </paths>

@@ -256,7 +256,7 @@ fun GroupDeviceSettings(groups: GroupsState, store: GroupStore) {
     Text("This device", style = geist(14.5.sp, FontWeight.Medium), color = p.ink)
     Text(groups.deviceId ?: "Not set up yet", style = geistMono(13.sp), color = p.body)
     Text("Fingerprint", style = geist(14.5.sp, FontWeight.Medium), color = p.ink)
-    Text(groups.fingerprint?.chunked(5)?.joinToString(" ") ?: "—", style = geistMono(15.sp, FontWeight.Medium), color = p.ink, modifier = Modifier.testTag("deviceFingerprint"))
+    Text(groups.fingerprint?.filter(Char::isDigit)?.chunked(5)?.joinToString(" ") ?: "—", style = geistMono(15.sp, FontWeight.Medium), color = p.ink, modifier = Modifier.testTag("deviceFingerprint"))
     Text("Others in your groups see this fingerprint when this device is added. Compare it with what they see if you want to be sure no one else added a device for you.",
         style = geist(12.sp), color = p.muted)
     if (!groups.persistent) Text("This device cannot keep group keys between launches.", color = p.heldText)

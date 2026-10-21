@@ -106,7 +106,7 @@ private fun InvitationCard(g: Group, groups: GroupsState, inbox: InboxState, sto
         GroupAvatar(g.id, g.name, 38.dp)
         Column(Modifier.weight(1f)) {
             Text(g.name, style = geist(14.5.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(listOfNotNull(g.my?.invitedBy?.let { "From " + name(it) }, "someone you don’t know".takeIf { g.my?.filtered == true }, "${g.memberCount} members").joinToString(" · "),
+            Text(listOfNotNull(g.my?.invitedBy?.let { "From " + name(it) }, "someone you don’t know".takeIf { g.my?.filtered == true }, "${g.memberCount} ${if (g.memberCount == 1) "member" else "members"}").joinToString(" · "),
                 style = geist(12.sp), color = p.secondary, maxLines = 2)
         }
         TextButton({ store.answerInvitation(g, false) }, enabled = !groups.busy) { Text("Decline") }
@@ -265,7 +265,7 @@ fun GroupPane(model: InboxViewModel, groups: GroupsState, inbox: InboxState, sto
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         if (active && groups.call?.active == true && model.calls != null) {
-            Row(Modifier.fillMaxWidth().background(p.autoFill).clickable(enabled = !calling) { model.calls.callGroup(g.id, g.name, video = groups.call.kind == "video", join = true) }
+            Row(Modifier.fillMaxWidth().background(p.autoFill).clickable(enabled = !calling) { model.calls.callGroup(g.id, g.name, video = groups.call?.kind == "video", join = true) }
                 .padding(horizontal = 16.dp, vertical = 10.dp).testTag("joinGroupCall"), verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.Outlined.Call, null, Modifier.size(18.dp), tint = p.autoText)
                 Text("Call in progress — Join", Modifier.padding(start = 10.dp), style = geist(14.sp, FontWeight.SemiBold), color = p.autoText)
@@ -390,7 +390,7 @@ private fun GroupBubble(x: HistoryItem, g: Group, groups: GroupsState, sender: S
                 x.undecryptable -> Text("Encrypted message — not readable on this device", style = geist(14.sp).copy(fontStyle = FontStyle.Italic), color = p.muted)
                 blocked && !reveal -> TextButton({ reveal = true }, contentPadding = PaddingValues(0.dp)) { Text("Message from someone you blocked · Show", style = geist(13.5.sp), color = p.muted) }
                 else -> {
-                    if (!x.text.isNullOrEmpty()) SelectionContainer { Text(x.text!!, style = geist(15.sp), color = if (mine) p.mineInk else p.body, modifier = Modifier.padding(end = 8.dp)) }
+                    if (!x.text.isNullOrEmpty()) SelectionContainer { Text(x.text!!, style = geist(15.sp), color = if (mine) p.mineText else p.body, modifier = Modifier.padding(end = 8.dp)) }
                     x.files.forEach { f ->
                         Row(Modifier.padding(top = 6.dp, end = 8.dp).clip(RoundedCornerShape(10.dp)).background(if (mine) p.mineRule else p.field)
                             .clickable(onClickLabel = "Open ${f.name}") { openFile(f, "view") }.padding(start = 10.dp).testTag("groupFile:" + f.name),
@@ -553,7 +553,7 @@ private fun MemberRow(g: Group, m: GroupMember, groups: GroupsState, name: Strin
             Box {
                 ActionIcon("Actions for $name", Icons.Outlined.MoreVert) { menu = true }
                 DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
-                    val act = { label: String, role: String?, state: String? ->
+                    @Composable fun act(label: String, role: String?, state: String?) {
                         DropdownMenuItem({ Text(label) }, { menu = false
                             if (state == "removed" || state == "banned") confirm("$name loses access at once. Messages they already saw stay on their devices.") { store.changeMember(g.id, m, role, state) }
                             else store.changeMember(g.id, m, role, state) })

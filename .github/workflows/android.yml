@@ -2,10 +2,10 @@ name: Android
 
 on:
   pull_request:
-    paths: ['apps/android/**', '.github/workflows/android.yml']
+    paths: ['apps/android/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/android.yml']
   push:
     branches: [main]
-    paths: ['apps/android/**', '.github/workflows/android.yml']
+    paths: ['apps/android/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/android.yml']
   workflow_dispatch:
 
 permissions:
@@ -18,9 +18,11 @@ concurrency:
 jobs:
   build-and-test:
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 35
+    timeout-minutes: 50
     env:
       PIGEONPOST_FIREBASE_API_KEY: ${{ secrets.PIGEONPOST_FIREBASE_API_KEY }}
+      # The real-MLS JVM tests must run, not skip, in CI.
+      GROUPCRYPTO_REQUIRED: '1'
     defaults:
       run:
         working-directory: apps/android
@@ -39,8 +41,19 @@ jobs:
       - name: Set up the Android SDK
         uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
         with:
-          packages: platform-tools platforms;android-36 build-tools;35.0.0
+          packages: platform-tools platforms;android-36 build-tools;35.0.0 ndk;27.2.12479018
           log-accepted-android-sdk-licenses: false
+      # The runner is self-hosted: install the crate's pinned toolchain rather than relying on the image.
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+      - name: Group encryption library (Android AAR and the host build for JVM tests)
+        working-directory: crates/pigeonpost-groupcrypto
+        run: |
+          eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.2.12479018" scripts/build-android.sh
+          cargo build --release --locked -p pigeonpost-groupcrypto-ffi
       - name: Unit tests, lint, APK and release bundle
         run: ./gradlew :core:test :app:lintDebug :app:assembleDebug :app:assembleRelease :app:bundleRelease --no-daemon --console=plain
       - name: Enable the emulator accelerator

@@ -83,7 +83,8 @@ class PolicyUiTest {
             shown("The Android build is ready for review.")
             ui.onNodeWithContentDescription("Conversation info").performClick()
             ui.onNodeWithText("Block sender").performScrollTo().performClick()
-            ui.onNodeWithText("Confirm").performClick()
+            ui.onNodeWithText("They won’t be able to message or call you, and won’t be told.").assertExists()
+            ui.onNode(hasText("Block") and hasClickAction() and hasAnyAncestor(hasTestTag("blockSheet"))).performClick()
             shown("Unblock sender")
         }
     }

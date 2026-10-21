@@ -35,6 +35,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pigeonpost.core.*
+import dev.pigeonpost.core.groups.Group
+import dev.pigeonpost.core.groups.GroupFile
+import dev.pigeonpost.core.groups.GroupsState
+import androidx.compose.ui.semantics.contentDescription
 import dev.pigeonpost.inbox.BuildConfig
 import dev.pigeonpost.inbox.InboxViewModel
 import dev.pigeonpost.inbox.calls.CallHost
@@ -48,25 +52,33 @@ import dev.pigeonpost.inbox.calls.CallHost
 @Composable
 fun TabletInbox(state: InboxState, store: InboxStore, model: InboxViewModel, username: String?, callMode: CallHost.Mode,
     newConversation: () -> Unit, settings: () -> Unit, info: () -> Unit, newSubject: () -> Unit,
-    chooseFile: () -> Unit, choosePhoto: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit) {
+    chooseFile: () -> Unit, choosePhoto: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
+    groups: GroupsState = GroupsState(), newGroup: () -> Unit = {}, groupInfo: () -> Unit = {},
+    openGroupFile: (Group, GroupFile, String) -> Unit = { _, _, _ -> }, openFiltered: (FilteredGroup) -> Unit = {}, openPeer: (String) -> Unit = store::selectPeer) {
     val p = Pp.colors
     var columns by rememberSaveable { mutableStateOf(true) }
+    val groupOpen = groups.open != null && model.groups != null
     BoxWithConstraints(Modifier.fillMaxSize()) {
         val sidebarWidth = if (maxWidth >= 1000.dp) 300.dp else 264.dp
         val subjectsWidth = if (maxWidth >= 1000.dp) 220.dp else 190.dp
         Row(Modifier.fillMaxSize()) {
             AnimatedVisibility(columns, enter = expandHorizontally(), exit = shrinkHorizontally()) {
                 Row(Modifier.fillMaxHeight()) {
-                    Sidebar(state, store, username, Modifier.width(sidebarWidth).fillMaxHeight().background(p.sidebar),
-                        hide = { columns = false }, newConversation = newConversation, settings = settings)
+                    Sidebar(state, store, model, groups, username, Modifier.width(sidebarWidth).fillMaxHeight().background(p.sidebar),
+                        hide = { columns = false }, newConversation = newConversation, newGroup = newGroup, settings = settings, openFiltered = openFiltered, openPeer = openPeer)
                     Seam(Modifier.width(1.dp).fillMaxHeight())
-                    SubjectsColumn(state, store, Modifier.width(subjectsWidth).fillMaxHeight().background(p.column), newSubject)
-                    Seam(Modifier.width(1.dp).fillMaxHeight())
+                    // A group has no subjects: its thread takes the space.
+                    if (!groupOpen) {
+                        SubjectsColumn(state, store, Modifier.width(subjectsWidth).fillMaxHeight().background(p.column), newSubject)
+                        Seam(Modifier.width(1.dp).fillMaxHeight())
+                    }
                 }
             }
             val show = if (columns) null else ({ columns = true })
             Box(Modifier.weight(1f).fillMaxHeight().background(p.wash)) {
                 when {
+                    groupOpen -> GroupPane(model, groups, state, model.groups!!, Modifier.fillMaxSize(), wide = true, callMode = callMode, info = groupInfo,
+                        chooseFile = chooseFile, choosePhoto = choosePhoto, openFile = openGroupFile, showSidebar = show)
                     state.selectedPeer != null -> ConversationPane(state, store, model, Modifier.fillMaxSize(), wide = true, callMode = callMode,
                         info = info, newSubject = newSubject, chooseFile = chooseFile, choosePhoto = choosePhoto,
                         attachment = attachment, openLink = openLink, showSidebar = show)
@@ -84,10 +96,20 @@ fun TabletInbox(state: InboxState, store: InboxStore, model: InboxViewModel, use
 }
 
 @Composable
-private fun Sidebar(state: InboxState, store: InboxStore, username: String?, modifier: Modifier, hide: () -> Unit,
-    newConversation: () -> Unit, settings: () -> Unit) {
+private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel, groups: GroupsState, username: String?, modifier: Modifier, hide: () -> Unit,
+    newConversation: () -> Unit, newGroup: () -> Unit, settings: () -> Unit, openFiltered: (FilteredGroup) -> Unit, openPeer: (String) -> Unit) {
     val p = Pp.colors
     var searching by rememberSaveable { mutableStateOf(false) }
+    var invitesOpen by rememberSaveable { mutableStateOf(true) }
+    if (state.leftView == LeftView.CALLS) {
+        CallsPane(state, store, modifier, phone = false, open = openPeer, callBack = { key, video -> openPeer(key); model.calls?.call(key, video) },
+            back = { store.showView(LeftView.INBOX) })
+        return
+    }
+    if (state.leftView == LeftView.FILTERED) {
+        FilteredPane(state, modifier, phone = false, back = { store.showView(LeftView.INBOX) }, open = openFiltered)
+        return
+    }
     var switching by rememberSaveable { mutableStateOf(false) }
     LaunchedEffect(state.acting?.address) { switching = false }
     Column(modifier) {
@@ -97,27 +119,41 @@ private fun Sidebar(state: InboxState, store: InboxStore, username: String?, mod
             Text(if (state.viewingArchive) "Archive" else "Inbox", Modifier.weight(1f).padding(start = 4.dp), style = geist(17.sp, FontWeight.SemiBold), color = p.ink)
             ActionIcon("Search conversations", Icons.Outlined.Search) { searching = !searching; if (!searching) store.filter("") }
             ActionIcon("New conversation", Icons.Outlined.Edit, action = newConversation)
+            if (groups.enabled) ActionIcon("New group", Icons.Outlined.GroupAdd, action = newGroup)
             ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         MailboxSwitcher(state, username, switching, { switching = !switching }) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
+        // Calls, under the mailbox switcher (SDS §12.1), with the unseen-missed badge.
+        if (state.has(Features.CALL_HISTORY)) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .clickable(onClickLabel = "Open calls") { store.showView(LeftView.CALLS) }.padding(horizontal = 10.dp, vertical = 9.dp).testTag("sidebar:calls")
+            .semantics(mergeDescendants = true) { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" },
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Outlined.Call, null, Modifier.size(18.dp), tint = p.secondary)
+            Text("Calls", Modifier.weight(1f), style = geist(14.sp, FontWeight.Medium), color = p.ink)
+            if (state.calls.unseen > 0) UnreadBadge(state.calls.unseen)
+        }
         if (state.loading) Row(Modifier.padding(horizontal = 14.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp, color = p.muted)
             Text(if (state.loaded) "Updating inbox…" else "Loading inbox…", style = geist(12.sp), color = p.muted)
         }
         if (searching) SearchField(state.filter, store::filter, "Search conversations", Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, bottom = 10.dp))
         if (state.offline) Text("Offline · showing the last loaded conversations", Modifier.padding(horizontal = 16.dp, vertical = 6.dp), color = p.heldText, style = geist(12.sp, FontWeight.Medium))
-        if (state.visible.isEmpty()) EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
+        val filtered = if (!state.viewingArchive && state.filter.isEmpty()) state.filteredGroups.size else 0
+        val hasGroups = groups.enabled && (groups.joined.isNotEmpty() || groups.invitations.isNotEmpty()) && !state.viewingArchive
+        if (state.visible.isEmpty() && !hasGroups && filtered == 0) EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
             if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
         else LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(vertical = 2.dp)) {
+            model.groups?.let { gs -> groupRows(groups, state, gs, phone = false, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup) }
             items(state.visible, key = { it.peer }) { conversation ->
-                ConversationRow(conversation, conversation.peer == state.selectedPeer, phone = false) { store.selectPeer(conversation.peer) }
+                ConversationRow(conversation, conversation.peer == state.selectedPeer && groups.open == null, phone = false) { openPeer(conversation.peer) }
             }
+            if (filtered > 0) item(key = "filtered") { FilteredEntry(filtered) { store.showView(LeftView.FILTERED) } }
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         Row(Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             Text("Pigeonpost ${BuildConfig.VERSION_NAME}", Modifier.weight(1f), style = geist(12.sp), color = p.muted)
-            ActionIcon("Refresh", Icons.Outlined.Refresh, enabled = !state.loading) { store.refresh() }
+            ActionIcon("Refresh", Icons.Outlined.Refresh, enabled = !state.loading) { store.refresh(); model.groups?.poke() }
         }
     }
 }
