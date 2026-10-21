@@ -823,7 +823,8 @@ public static class NativeFileDragSource {
         $null = Wait-Like 'Safety number *'
         $null = Wait-Like '*devices: win-*'
         Capture 'group-info.png'
-        Invoke-Control 'Close'
+        (Dialog-Button 'CloseButton').GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+        Start-Sleep -Milliseconds 500
         Invoke-Control 'Chats'
         Write-Host 'Phase 1b and groups screens passed.'
     } else {

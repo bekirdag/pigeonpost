@@ -34,7 +34,8 @@ public sealed partial class MainWindow
         callHistory = new CallHistoryModel(postbox);
         avatars = new AvatarDirectory(postbox);
 #if UI_TESTS
-        groupsModel = new GroupsModel(postbox, _ => new MemoryGroupStateStore());
+        var stores = new Dictionary<string, IGroupStateStore>(StringComparer.Ordinal);
+        groupsModel = new GroupsModel(postbox, mailbox => stores.TryGetValue(mailbox, out var store) ? store : stores[mailbox] = new MemoryGroupStateStore());
 #else
         var protector = new DpapiProtector();
         groupsModel = new GroupsModel(postbox, _ => new FileGroupStateStore(FileGroupStateStore.DefaultFolder(), protector));
