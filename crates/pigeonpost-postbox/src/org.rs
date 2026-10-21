@@ -429,7 +429,7 @@ pub(crate) fn org_json(c: &Connection, o: &OrgRow, now: u64) -> GResult<Value> {
     Ok(json!({
         "id": o.id,
         "name": o.name,
-        "namespace": format!("/{}", o.namespace),
+        "namespace": o.namespace,
         "status": o.status,
         "seats": o.seats,
         "seats_used": seats_used(c, &o.id, now)?,

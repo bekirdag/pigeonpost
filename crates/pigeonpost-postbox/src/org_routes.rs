@@ -1479,7 +1479,7 @@ async fn preview(
             return Err(invalid_invite());
         }
         Ok(Outcome::ok(json!({
-            "org": { "name": f.org.name, "namespace": format!("/{}", f.org.namespace) },
+            "org": { "name": f.org.name, "namespace": f.org.namespace },
             "handle": f.member.handle,
             "first_name": f.member.first_name,
             "role_names": f.roles,
@@ -1640,7 +1640,7 @@ async fn accept(
 
 fn accepted_body(c: &Connection, o: &org::OrgRow, m: &org::MemberRow, now: u64) -> GResult<Value> {
     Ok(json!({
-        "org": { "id": o.id, "name": o.name, "namespace": format!("/{}", o.namespace) },
+        "org": { "id": o.id, "name": o.name, "namespace": o.namespace },
         "member": member_json(c, m, now)?,
         "mailbox": { "address": m.identity, "handle": m.handle },
     }))
