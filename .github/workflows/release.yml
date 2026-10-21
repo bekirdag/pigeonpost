@@ -16,10 +16,13 @@ concurrency:
 env:
   CARGO_TERM_COLOR: always
 
+# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
+# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
+# never select the self-hosted pool, whatever the variable says.
 jobs:
   validate:
     name: validate release tag
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     outputs:
       version: ${{ steps.version.outputs.version }}
       created: ${{ steps.version.outputs.created }}
@@ -127,7 +130,7 @@ jobs:
     name: build ${{ matrix.target }}
     needs: [validate, ci]
     if: needs.validate.outputs.resume != 'true'
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
     permissions:
       contents: read
     strategy:
@@ -345,7 +348,7 @@ jobs:
     name: push an untagged multi-architecture candidate
     needs: [validate, ci, build]
     if: needs.validate.outputs.resume != 'true'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     outputs:
       built: ${{ steps.existing_image.outputs.build }}
       digest: ${{ steps.exact_image.outputs.digest }}
@@ -509,7 +512,7 @@ jobs:
     name: verify, scan, and execute the exact OCI candidate
     needs: [validate, ci, build, container_candidate, container_attest]
     if: needs.validate.outputs.resume != 'true'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: read
@@ -707,7 +710,7 @@ jobs:
         needs.release_verify.result == 'success' &&
         needs.release_create.result == 'success' &&
         needs.release_resume.result == 'skipped'))
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       packages: write
@@ -862,7 +865,7 @@ jobs:
     name: generate SBOM for ${{ matrix.asset }} without publication authority
     needs: [validate, ci, build]
     if: needs.validate.outputs.resume != 'true'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     strategy:
@@ -927,7 +930,7 @@ jobs:
       needs.build.result == 'success' &&
       needs.container_verify.result == 'success' &&
       needs.release_sbom.result == 'success'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     env:
@@ -1252,7 +1255,7 @@ jobs:
     name: verify exact release artifact provenance
     needs: [validate, ci, build, container_verify, release_sbom, release_assemble, release_attest]
     if: needs.validate.outputs.resume != 'true'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       attestations: read
@@ -1337,7 +1340,7 @@ jobs:
       needs.release_assemble.result == 'success' &&
       needs.release_attest.result == 'success' &&
       needs.release_verify.result == 'success'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
     steps:
@@ -1505,7 +1508,7 @@ jobs:
       needs.release_attest.result == 'skipped' &&
       needs.release_verify.result == 'skipped' &&
       needs.release_create.result == 'skipped'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       attestations: read
@@ -1657,7 +1660,7 @@ jobs:
         needs.release_verify.result == 'success' &&
         needs.release_create.result == 'success' &&
         needs.release_resume.result == 'skipped'))
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
     steps:
@@ -1819,7 +1822,7 @@ jobs:
       !cancelled() &&
       needs.validate.result == 'success' &&
       needs.npm_publish.result == 'success'
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: read
       id-token: write
