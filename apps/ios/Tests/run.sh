@@ -35,3 +35,8 @@ mkdir -p "$out/group-logic-src" && cp Tests/GroupLogicTests.swift "$out/group-lo
 swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/APIError.swift \
   Shared/Groups/GroupModels.swift Shared/Groups/GroupText.swift Shared/Groups/GroupVault.swift
 "$out/group-logic"
+swiftc -O -o "$out/phase1b" Tests/phase1b/main.swift \
+  Shared/API/Models.swift Shared/API/Phase1bModels.swift Shared/Model/Blocking.swift Shared/Model/AvatarCrop.swift \
+  Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Time.swift \
+  Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
+"$out/phase1b"

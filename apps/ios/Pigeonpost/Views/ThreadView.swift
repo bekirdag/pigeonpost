@@ -85,8 +85,8 @@ struct ThreadView: View {
         guard let conversation else { return [] }
         // Missed calls are lines in the conversation, whichever subject is on screen.
         let lines = callLog?.lines(for: conversation) ?? []
-        guard let subthread else { return CallLog.merge(conversation.messages, lines) }
-        return CallLog.merge(conversation.messages.filter { ($0.threadId ?? "") == subthread }, lines)
+        guard let subthread else { return CallLogEntry.merge(conversation.messages, lines) }
+        return CallLogEntry.merge(conversation.messages.filter { ($0.threadId ?? "") == subthread }, lines)
     }
 
     var body: some View {

@@ -5,16 +5,6 @@
 import Foundation
 import Observation
 
-/// One sender's filtered mail.
-struct FilteredSender: Identifiable, Equatable {
-    let peer: String
-    var messages: [Message]
-    var last: Int
-    var id: String { peer }
-    /// The address their latest message came from, which is what `accept` names.
-    var from: String { messages.last?.from ?? peer }
-}
-
 @MainActor
 @Observable
 final class FilteredMail {
@@ -32,28 +22,7 @@ final class FilteredMail {
     /// Grouped by sender, newest sender first, without anybody already blocked.
     func senders(contacts: [Contact]) -> [FilteredSender] {
         guard enabled else { return [] }
-        return Self.group(messages, contacts: contacts)
-    }
-
-    nonisolated static func group(_ messages: [Message], contacts: [Contact]) -> [FilteredSender] {
-        var order: [String] = []
-        var byPeer: [String: FilteredSender] = [:]
-        for message in messages where !message.isOutgoing {
-            let key = message.peerKey
-            if ConversationBuilder.contact(for: key, in: contacts)?.admission == "block" { continue }
-            if byPeer[key] == nil {
-                byPeer[key] = FilteredSender(peer: key, messages: [], last: 0)
-                order.append(key)
-            }
-            byPeer[key]?.messages.append(message)
-            let last = max(byPeer[key]?.last ?? 0, message.at)
-            byPeer[key]?.last = last
-        }
-        return order.compactMap { key in
-            guard var sender = byPeer[key] else { return nil }
-            sender.messages.sort { $0.at < $1.at }
-            return sender
-        }.sorted { $0.last > $1.last }
+        return FilteredSender.group(messages, contacts: contacts)
     }
 
     func refresh() async {

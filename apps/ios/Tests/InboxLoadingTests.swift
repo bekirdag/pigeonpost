@@ -17,6 +17,7 @@ enum AuthError: Error { case sessionExpired }
     let session = Session()
     let client: PostboxClient
     #if MAC_INBOX_UI_TESTS
+    // Nothing switched on: the Phase 1b surfaces stay out of the way of these checks.
     let features = Features()
     #endif
     var ownAgents: [Mailbox] { mailboxes.filter { $0.address != me?.address } }
