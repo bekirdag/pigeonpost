@@ -165,7 +165,7 @@ final class CallLog {
     /// Missed calls from this peer, as lines for its conversation. Incoming, missed, one to one.
     func missedLines(for keys: Set<String>) -> [CallLogEntry] {
         guard enabled else { return [] }
-        return CallLog.missed(in: recent, keys: keys)
+        return CallLogEntry.missed(in: recent, keys: keys)
     }
 
     /// The missed-call lines for one conversation, ready to sort in among its messages.
@@ -175,28 +175,7 @@ final class CallLog {
         for message in conversation.messages where message.kind == .incoming {
             if let address = message.address { keys.insert(address) }
         }
-        return missedLines(for: keys).map(Self.line)
-    }
-
-    nonisolated static func line(_ entry: CallLogEntry) -> ThreadMessage {
-        ThreadMessage(id: "call:" + entry.id, kind: .system, at: entry.startedAt,
-                      body: "Missed \(entry.isVideo ? "video" : "voice") call · \(Time.clockTime(entry.startedAt))",
-                      threadId: nil)
-    }
-
-    /// `messages` with `lines` in their places by time.
-    nonisolated static func merge(_ messages: [ThreadMessage], _ lines: [ThreadMessage]) -> [ThreadMessage] {
-        guard !lines.isEmpty else { return messages }
-        return (messages + lines).sorted { $0.at < $1.at }
-    }
-
-    /// Pure, for the tests: which entries become a "Missed call" line in a conversation with
-    /// `keys` (its handle, plus the addresses its mail came from).
-    nonisolated static func missed(in entries: [CallLogEntry], keys: Set<String>) -> [CallLogEntry] {
-        entries.filter { entry in
-            entry.isIncoming && entry.outcome == "missed" && entry.groupId == nil
-                && (entry.peerHandle.map(keys.contains) ?? false || entry.peer.map(keys.contains) ?? false)
-        }
+        return missedLines(for: keys).map(CallLogEntry.line)
     }
 
     // ---- fixtures ---------------------------------------------------------------------------------
