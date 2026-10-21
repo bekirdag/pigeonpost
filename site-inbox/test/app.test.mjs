@@ -471,7 +471,7 @@ check("its code spans are inline children, not blocks", bul.querySelectorAll("ul
 check("a bullet is not a table", bul.querySelectorAll("ul.md-list table").length, 0);
 
 console.log("\n— copy —");
-const copyButton = [...$("messages").querySelectorAll(".bubble .meta .copy")].pop();
+const copyButton = [...$("messages").querySelectorAll(".msg-actions .copy")].pop();
 check("every message offers copy", Boolean(copyButton), true);
 check("copy is a real button", copyButton.tagName, "BUTTON");
 check("and is labelled for a screen reader", copyButton.getAttribute("aria-label"), "Copy message");

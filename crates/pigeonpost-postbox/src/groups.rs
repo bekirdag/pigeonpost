@@ -2889,7 +2889,8 @@ pub(crate) async fn messages(
         let device = ctx.device()?;
         let me = ctx.address();
         let now = now_unix();
-        state
+        let (gid, who) = (id.clone(), me.clone());
+        let out = state
             .store
             .group_read(move |c: &Connection| -> GResult<Outcome> {
                 let g = live_group(c, &id)?;
@@ -2905,7 +2906,12 @@ pub(crate) async fn messages(
                     now,
                 )?))
             })
-            .await
+            .await;
+        // Listing a page is delivering it to this member (SDS §14C, group ticks).
+        if let Ok(o) = &out {
+            crate::msgactions::note_group_page(&state, &gid, &who, &o.body).await;
+        }
+        out
     }
     .await;
     finish(&state, result)

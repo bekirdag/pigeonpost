@@ -350,7 +350,9 @@ pub(crate) async fn message_by_id(
     let value = request(
         credential,
         reqwest::Method::GET,
-        "/v1/inbox?include_read=false",
+        // `actions=1`: raw bodies, and each edit as its own message carrying `edit_of`, which is
+        // what lets the daemon tell an amendment from a new request (docs/message-actions.md).
+        "/v1/inbox?include_read=false&actions=1",
         None,
     )
     .await?;
@@ -364,22 +366,150 @@ pub(crate) async fn message_by_id(
         .cloned())
 }
 
-/// Send from a mailbox this machine holds, without printing anything. Returns the message id.
-pub(crate) async fn send_as(
+/// What a send may carry besides its text (SDS §14C): a reference of its own, and the message it
+/// answers or edits.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct SendExtras {
+    pub reply_to: Option<String>,
+    pub quote: Option<String>,
+    pub edit_of: Option<String>,
+}
+
+/// Send from a mailbox this machine holds, without printing anything, optionally as a reply or an
+/// edit. Returns the message id.
+pub(crate) async fn send_as_with(
     credential: &Credential,
     to: &str,
     body: &str,
     thread_id: Option<&str>,
+    extras: &SendExtras,
 ) -> Result<String, Error> {
     // An answer belongs where the question was asked. Without the thread the postbox files every
     // reply under the default thread, so a peer who opened a thread to ask about one thing got the
     // answer somewhere else entirely — and the conversation they were reading stayed silent.
-    let mut payload = serde_json::json!({ "to": to, "body": body });
+    let mut payload = serde_json::json!({ "to": to, "body": body, "msg_ref": new_msg_ref() });
     if let Some(thread_id) = thread_id {
         payload["thread_id"] = serde_json::Value::String(thread_id.to_string());
     }
-    let value = request(credential, reqwest::Method::POST, "/v1/send", Some(payload)).await?;
+    apply_extras(&mut payload, extras);
+    // A postbox from before message actions refuses a reply reference it has no flag for. The
+    // answer still matters more than its link to the question, so it then goes without one. The
+    // error is reduced to a decision before the retry: it is not `Send`, and a daemon task awaits
+    // across this.
+    let first = request(
+        credential,
+        reqwest::Method::POST,
+        "/v1/send",
+        Some(payload.clone()),
+    )
+    .await
+    .map_err(|e| e.to_string());
+    let retry_plain = match &first {
+        Err(e) => {
+            extras.edit_of.is_none() && extras.reply_to.is_some() && e.contains("feature_disabled")
+        }
+        Ok(_) => false,
+    };
+    let value = if retry_plain {
+        if let Some(obj) = payload.as_object_mut() {
+            obj.remove("reply_to");
+            obj.remove("quote");
+        }
+        request(credential, reqwest::Method::POST, "/v1/send", Some(payload)).await?
+    } else {
+        first?
+    };
     Ok(value["message_id"].as_str().unwrap_or_default().to_string())
+}
+
+fn apply_extras(payload: &mut serde_json::Value, extras: &SendExtras) {
+    if let Some(r) = &extras.reply_to {
+        payload["reply_to"] = r.clone().into();
+    }
+    if let Some(q) = &extras.quote {
+        payload["quote"] = clip_chars(q, 200).into();
+    }
+    if let Some(e) = &extras.edit_of {
+        payload["edit_of"] = e.clone().into();
+    }
+}
+
+fn clip_chars(text: &str, max: usize) -> String {
+    text.chars().take(max).collect()
+}
+
+/// A fresh conversation-level message reference: `mref_` and 26 characters of lowercase base32,
+/// i.e. 128 random bits (docs/message-actions.md §1). Generated here so a retried send is the
+/// same message rather than a second one.
+pub(crate) fn new_msg_ref() -> String {
+    use rand_core::RngCore;
+    let mut bytes = [0u8; 16];
+    rand_core::OsRng.fill_bytes(&mut bytes);
+    format!("mref_{}", base32_lower(&bytes))
+}
+
+/// Unpadded RFC 4648 base32, lowercase.
+fn base32_lower(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 32] = b"abcdefghijklmnopqrstuvwxyz234567";
+    let mut out = String::new();
+    let mut buffer: u32 = 0;
+    let mut bits = 0u32;
+    for &b in bytes {
+        buffer = (buffer << 8) | b as u32;
+        bits += 8;
+        while bits >= 5 {
+            out.push(ALPHABET[((buffer >> (bits - 5)) & 31) as usize] as char);
+            bits -= 5;
+        }
+    }
+    if bits > 0 {
+        out.push(ALPHABET[((buffer << (5 - bits)) & 31) as usize] as char);
+    }
+    out
+}
+
+/// Whether `value` has the shape of a message reference rather than a row id.
+#[cfg(test)]
+pub(crate) fn is_msg_ref(value: &str) -> bool {
+    value.len() == 31
+        && value.starts_with("mref_")
+        && value[5..]
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || (b'2'..=b'7').contains(&b))
+}
+
+/// Tell the postbox what happened to messages this mailbox received (docs/message-actions.md §4).
+///
+/// Best-effort and quiet: a postbox from before receipts answers 404 or `feature_disabled`, and a
+/// receipt is never worth failing the work it describes. Returns whether the postbox took it.
+pub(crate) async fn post_receipt(
+    credential: &Credential,
+    message_ids: &[String],
+    msg_refs: &[String],
+    kind: &str,
+    status: Option<&str>,
+) -> bool {
+    if message_ids.is_empty() && msg_refs.is_empty() {
+        return false;
+    }
+    let mut payload = serde_json::json!({ "kind": kind });
+    if !message_ids.is_empty() {
+        payload["message_ids"] = serde_json::json!(message_ids);
+    }
+    if !msg_refs.is_empty() {
+        payload["msg_refs"] = serde_json::json!(msg_refs);
+    }
+    if let Some(s) = status {
+        payload["status"] = s.into();
+    }
+    request(
+        credential,
+        reqwest::Method::POST,
+        "/v1/receipts",
+        Some(payload),
+    )
+    .await
+    .is_ok()
 }
 
 /// Mark a message read, so a handled request stops coming back on the next look.
@@ -885,6 +1015,7 @@ pub fn print_token(home: &Path, address: Option<&str>) -> Result<(), Error> {
 }
 
 /// Send a message from a hosted mailbox.
+#[allow(clippy::too_many_arguments)]
 pub async fn send_message(
     home: &Path,
     as_address: Option<&str>,
@@ -892,10 +1023,12 @@ pub async fn send_message(
     body: &str,
     thread: Option<&str>,
     new_thread: Option<&str>,
+    reply_to: Option<&str>,
+    quote: Option<&str>,
     json: bool,
 ) -> Result<(), Error> {
     let credential = credential_for(home, as_address)?;
-    let mut payload = serde_json::json!({ "to": to, "body": body });
+    let mut payload = serde_json::json!({ "to": to, "body": body, "msg_ref": new_msg_ref() });
     // Naming neither is the ordinary case and means the peer's default thread, which is what every
     // send did before threads existed.
     if let Some(id) = thread {
@@ -903,6 +1036,14 @@ pub async fn send_message(
     } else if let Some(title) = new_thread {
         payload["thread"] = title.into();
     }
+    apply_extras(
+        &mut payload,
+        &SendExtras {
+            reply_to: reply_to.map(str::to_string),
+            quote: quote.map(str::to_string),
+            edit_of: None,
+        },
+    );
     let value = request(
         &credential,
         reqwest::Method::POST,
@@ -914,9 +1055,87 @@ pub async fn send_message(
         println!("{value}");
     } else {
         println!(
-            "sent to {to} ({})",
-            value["message_id"].as_str().unwrap_or("?")
+            "sent to {to} ({}, {})",
+            value["message_id"].as_str().unwrap_or("?"),
+            value["msg_ref"].as_str().unwrap_or("no msg_ref"),
         );
+    }
+    Ok(())
+}
+
+/// Edit a message this mailbox sent (SDS §14C.3): only its sender, within 24 hours.
+///
+/// `reference` is the message's `msg_ref` or this mailbox's own copy id. The peer is read from the
+/// sent copy when it is still listed; `--to` is needed only when it is not.
+pub async fn edit_message(
+    home: &Path,
+    as_address: Option<&str>,
+    reference: &str,
+    body: &str,
+    to: Option<&str>,
+    json: bool,
+) -> Result<(), Error> {
+    let credential = credential_for(home, as_address)?;
+    let listing = request(
+        &credential,
+        reqwest::Method::GET,
+        "/v1/inbox?include_read=true&include_sent=true&actions=1",
+        None,
+    )
+    .await?;
+    let found = listing["messages"].as_array().and_then(|messages| {
+        messages
+            .iter()
+            .find(|m| {
+                m["message_id"].as_str() == Some(reference)
+                    || m["msg_ref"].as_str() == Some(reference)
+            })
+            .cloned()
+    });
+    let peer = match (&found, to) {
+        (_, Some(to)) => to.to_string(),
+        (Some(m), None) if m["direction"].as_str() == Some("out") => {
+            m["peer"].as_str().unwrap_or_default().to_string()
+        }
+        (Some(_), None) => {
+            return Err("only a message you sent can be edited — that one was sent to you".into())
+        }
+        (None, None) => {
+            return Err(format!(
+            "no message {reference} in this mailbox's listing — pass --to <peer> to edit it anyway"
+        )
+            .into())
+        }
+    };
+    // The original's own reference when it is known: an edit names the original, never an edit.
+    let edit_of = found
+        .as_ref()
+        .and_then(|m| {
+            m["edit_of"]
+                .as_str()
+                .or_else(|| m["msg_ref"].as_str())
+                .map(str::to_string)
+        })
+        .unwrap_or_else(|| reference.to_string());
+    let mut payload = serde_json::json!({ "to": peer, "body": body, "msg_ref": new_msg_ref() });
+    apply_extras(
+        &mut payload,
+        &SendExtras {
+            edit_of: Some(edit_of.clone()),
+            ..Default::default()
+        },
+    );
+    let value = request(
+        &credential,
+        reqwest::Method::POST,
+        "/v1/send",
+        Some(payload),
+    )
+    .await?;
+    if json {
+        println!("{value}");
+    } else {
+        println!("edited {edit_of} (sent to {peer})");
     }
     Ok(())
 }
@@ -933,7 +1152,7 @@ pub async fn read_thread(
 ) -> Result<(), Error> {
     let credential = credential_for(home, as_address)?;
     let path = format!(
-        "/v1/inbox?include_read=true&include_sent=true&thread_id={}",
+        "/v1/inbox?include_read=true&include_sent=true&actions=1&thread_id={}",
         urlencode(thread_id)
     );
     let value = request(&credential, reqwest::Method::GET, &path, None).await?;
@@ -1023,6 +1242,8 @@ pub async fn show_inbox(
     if let Some(id) = thread {
         path.push_str(&format!("&thread_id={}", urlencode(id)));
     }
+    // Raw bodies with reply and edit context (docs/message-actions.md §3).
+    path.push_str("&actions=1");
     // A long poll legitimately outlives the ordinary request timeout, so give the client enough
     // rope for the server's own ceiling plus a margin for the round trip.
     let timeout = HTTP_TIMEOUT + Duration::from_secs(wait.unwrap_or(0));
@@ -1302,12 +1523,25 @@ fn print_message(m: &serde_json::Value) {
         .unwrap_or("?")
         .get(..12)
         .unwrap_or("?");
+    let edited = match m["edit_count"].as_u64() {
+        Some(n) if n > 0 => "  (edited)",
+        _ => "",
+    };
 
     // A sent copy is not mail that arrived, and describing it with a sender's standing and a
     // held-for-review reason reads as though your own words were somebody's untrusted request.
     // Only a conversation view shows these at all, and there they are the half that says "you".
     if m["direction"].as_str() == Some("out") {
-        println!("{id}  you → {}", m["peer"].as_str().unwrap_or("?"));
+        let ticks = receipt_label(m)
+            .map(|l| format!("  [{l}]"))
+            .unwrap_or_default();
+        println!(
+            "{id}  you → {}{edited}{ticks}",
+            m["peer"].as_str().unwrap_or("?")
+        );
+        for line in context_lines(m) {
+            println!("    {line}");
+        }
         for line in m["body"].as_str().unwrap_or("").lines() {
             println!("    {line}");
         }
@@ -1327,12 +1561,50 @@ fn print_message(m: &serde_json::Value) {
         ),
     };
     println!(
-        "{id}  {who}  [{standing}]  sender {}",
+        "{id}  {who}  [{standing}]  sender {}{edited}",
         m["sender_standing"].as_str().unwrap_or("?"),
     );
+    for line in context_lines(m) {
+        println!("    {line}");
+    }
     for line in m["body"].as_str().unwrap_or("").lines() {
         println!("    {line}");
     }
+}
+
+/// The reply and edit lines printed above a body, so a reader knows what a message answers or
+/// amends without opening anything else.
+pub(crate) fn context_lines(m: &serde_json::Value) -> Vec<String> {
+    let mut out = Vec::new();
+    if let Some(edit_of) = m["edit_of"].as_str() {
+        out.push(format!("✎ edit of {edit_of}"));
+    }
+    let reply = &m["reply_to"];
+    if reply.is_object() {
+        let from = match reply["direction"].as_str() {
+            Some("out") => "you".to_string(),
+            _ => reply["from"]
+                .as_str()
+                .unwrap_or("an earlier message")
+                .to_string(),
+        };
+        let excerpt = reply["excerpt"]
+            .as_str()
+            .or_else(|| reply["quote"].as_str())
+            .unwrap_or("(no longer available)");
+        out.push(format!("↪ reply to {from}: {}", clip_chars(excerpt, 120)));
+    }
+    out
+}
+
+/// The receipt on a sent copy, in words: the ticks a terminal cannot draw.
+fn receipt_label(m: &serde_json::Value) -> Option<String> {
+    match m["agent_status"]["state"].as_str() {
+        Some("working") => return Some("agent working".into()),
+        Some("failed") => return Some("agent run failed".into()),
+        _ => {}
+    }
+    m["receipt"]["state"].as_str().map(str::to_string)
 }
 
 /// Which verbs this postbox will let a mailbox grant.
@@ -1836,6 +2108,40 @@ fn now_unix() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `mref_` + 26 lowercase base32 characters, 128 random bits (docs/message-actions.md §1).
+    #[test]
+    fn a_msg_ref_has_the_documented_shape_and_is_fresh_each_time() {
+        let a = new_msg_ref();
+        let b = new_msg_ref();
+        assert_eq!(a.len(), 31);
+        assert!(is_msg_ref(&a), "{a}");
+        assert_ne!(a, b);
+        assert!(!is_msg_ref("0123456789abcdef"));
+        assert_eq!(base32_lower(&[0xff; 16]).len(), 26);
+        assert_eq!(base32_lower(b"f"), "my");
+    }
+
+    #[test]
+    fn reply_and_edit_context_is_printed_above_the_body() {
+        let m = serde_json::json!({
+            "edit_of": "mref_aaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "reply_to": {"direction": "out", "excerpt": "the build is green"},
+        });
+        assert_eq!(
+            context_lines(&m),
+            vec![
+                "✎ edit of mref_aaaaaaaaaaaaaaaaaaaaaaaaaa".to_string(),
+                "↪ reply to you: the build is green".to_string(),
+            ]
+        );
+        let gone = serde_json::json!({"reply_to": {"from": "/bekir/main", "quote": "q"}});
+        assert_eq!(
+            context_lines(&gone),
+            vec!["↪ reply to /bekir/main: q".to_string()]
+        );
+        assert!(context_lines(&serde_json::json!({})).is_empty());
+    }
 
     #[test]
     fn solution_meets_the_stated_difficulty() {

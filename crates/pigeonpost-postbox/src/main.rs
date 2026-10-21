@@ -83,6 +83,9 @@ mod groups_tests;
 mod internal_api;
 mod mcp;
 mod mls;
+mod msgactions;
+#[cfg(test)]
+mod msgactions_tests;
 mod oidc;
 mod org;
 mod org_agents;
@@ -647,6 +650,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/inbox", get(inbox))
         .route("/v1/ack", post(ack))
         .route("/v1/messages/delete", post(delete_message))
+        .route("/v1/messages/{id}/info", get(msgactions::info))
+        .route("/v1/receipts", post(msgactions::receipts))
         .route(
             "/v1/attachments",
             post(upload_attachment).layer(axum::extract::DefaultBodyLimit::max(upload_limit)),
@@ -743,6 +748,7 @@ fn build_router(state: AppState) -> Router {
             delete(groups::delete_message),
         )
         .route("/v1/groups/{id}/read", post(groups::read_cursor))
+        .route("/v1/groups/{id}/receipts", get(msgactions::group_receipts))
         .route(
             "/v1/groups/{id}/notifications",
             axum::routing::put(groups::notifications),
@@ -2827,7 +2833,10 @@ pub(crate) fn effective_autonomy(
 }
 
 /// Load an identity's signing key from the vault into memory (zeroizing the seed once built).
-fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identity, ApiError> {
+pub(crate) fn open_identity(
+    state: &AppState,
+    id: &store::StoredIdentity,
+) -> Result<Identity, ApiError> {
     match state.vault.unwrap(&id.wrapped_seed) {
         Ok(mut seed) => {
             let identity = Identity::from_seed(seed);
@@ -3061,12 +3070,35 @@ async fn resolve_thread(
     }
 }
 
+#[cfg_attr(not(test), allow(dead_code))]
 pub(crate) async fn do_send(
     state: &AppState,
     sender: &store::StoredIdentity,
     to: &str,
     body: &str,
     thread: ThreadRequest<'_>,
+) -> Result<serde_json::Value, ApiError> {
+    do_send_with(
+        state,
+        sender,
+        to,
+        body,
+        thread,
+        &msgactions::SendExtras::default(),
+        false,
+    )
+    .await
+}
+
+/// `do_send` with the message-action fields (SDS §14C): `msg_ref`, `reply_to`, `quote`, `edit_of`.
+pub(crate) async fn do_send_with(
+    state: &AppState,
+    sender: &store::StoredIdentity,
+    to: &str,
+    body: &str,
+    thread: ThreadRequest<'_>,
+    extras: &msgactions::SendExtras,
+    has_attachments: bool,
 ) -> Result<serde_json::Value, ApiError> {
     // Two different mistakes deserve two different answers. Telling someone who mistyped an address
     // that "only hosted recipients are deliverable" sends them looking for a delivery feature when
@@ -3102,6 +3134,18 @@ pub(crate) async fn do_send(
             "this organization is read-only until its payment is settled",
         ));
     }
+    // References are resolved against the sender's own mailbox, before anything is decided about
+    // the recipient: a retry returns its first answer, and a bad reference says so.
+    let prepared =
+        msgactions::prepare(state, sender, &recipient.address, extras, has_attachments).await?;
+    if let Some(duplicate) = prepared.duplicate {
+        return Ok(duplicate);
+    }
+    // An edit stays in the conversation it edits, whatever thread the request named.
+    let thread = match prepared.edit_thread.as_deref() {
+        Some(id) => ThreadRequest::Existing(id),
+        None => thread,
+    };
     let sender_subject = sender
         .handle
         .clone()
@@ -3173,6 +3217,8 @@ pub(crate) async fn do_send(
             }
         }
     }
+    // An edit of something filed in Filtered is filed there too.
+    filtered |= admitted && prepared.force_filtered;
     if !admitted {
         tracing::info!(from = %sender.address, to = %recipient.address, "send refused: not admitted");
         return Err(ApiError::new(
@@ -3357,6 +3403,20 @@ pub(crate) async fn do_send(
         }
     };
 
+    msgactions::record_copies(
+        state,
+        &sender_identity,
+        sender,
+        &sender_vk,
+        &recipient,
+        &recipient_vk,
+        &prepared,
+        &message_id,
+        sent_copy_id.as_deref(),
+        now,
+    )
+    .await;
+
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.
     state.inbox_signal.notify_waiters();
@@ -3427,6 +3487,7 @@ pub(crate) async fn do_send(
         "message_id": message_id,
         "sent_copy_id": sent_copy_id,
         "recipient": recipient.address,
+        "msg_ref": prepared.msg_ref,
     }))
 }
 
@@ -3477,17 +3538,33 @@ pub(crate) async fn do_inbox(
     include_read: bool,
     thread_id: Option<&str>,
 ) -> Result<serde_json::Value, ApiError> {
-    do_inbox_view(state, me, include_sent, include_read, thread_id, false).await
+    // Agents (MCP, thread reads) see edits and replies as they are: each edit is something to act on.
+    do_inbox_view_with(
+        state,
+        me,
+        include_sent,
+        include_read,
+        thread_id,
+        false,
+        msgactions::View {
+            actions: true,
+            fold: false,
+        },
+    )
+    .await
 }
 
-/// [`do_inbox`], or — with `filtered_only` — only the mail filed in Filtered (SDS §13.4).
-pub(crate) async fn do_inbox_view(
+/// [`do_inbox`] for any view; with `filtered_only`, only the mail filed in Filtered (SDS §13.4).
+///
+/// The inbox in the shape a client asked for (SDS §14C views: legacy, `actions`, `actions+fold`).
+pub(crate) async fn do_inbox_view_with(
     state: &AppState,
     me: &store::StoredIdentity,
     include_sent: bool,
     include_read: bool,
     thread_id: Option<&str>,
     filtered_only: bool,
+    view: msgactions::View,
 ) -> Result<serde_json::Value, ApiError> {
     let messages = state
         .store
@@ -3537,8 +3614,54 @@ pub(crate) async fn do_inbox_view(
     // Company rules per distinct sender, evaluated once (SDS §9.3).
     let mut org_verdicts: std::collections::HashMap<String, Option<org_rules::Verdict>> =
         std::collections::HashMap::new();
+
+    // Message actions (SDS §14C): every row's reference, and which rows are edits of which.
+    let metas = state
+        .store
+        .meta_for(
+            me.address.clone(),
+            messages.iter().map(|m| m.id.clone()).collect(),
+        )
+        .await
+        .map_err(|_| ApiError::server("store_error"))?;
+    // The original of each `msg_ref` in this mailbox, and its edits in order.
+    let mut originals: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    let mut edits: std::collections::HashMap<&str, Vec<usize>> = std::collections::HashMap::new();
+    for (i, m) in messages.iter().enumerate() {
+        if let Some(meta) = metas.get(&m.id) {
+            match &meta.edit_of {
+                Some(root) => edits.entry(root.as_str()).or_default().push(i),
+                None => {
+                    originals.entry(meta.msg_ref.as_str()).or_insert(i);
+                }
+            }
+        }
+    }
+    let receipt_view = msgactions::ReceiptView::for_mailbox(state, me).await;
+    let mut opened: std::collections::HashMap<usize, Option<String>> =
+        std::collections::HashMap::new();
+    let mut open_at = |i: usize| -> Option<String> {
+        opened
+            .entry(i)
+            .or_insert_with(|| msgactions::open_text(&me_identity, &messages[i].wrap_blob))
+            .clone()
+    };
     let mut out = Vec::new();
-    for m in messages {
+    for m in messages.iter() {
+        let meta = metas.get(&m.id);
+        let edit_root = meta.and_then(|x| x.edit_of.as_deref());
+        // The versions of this row, when it is an original that has been edited here.
+        let own_edits: &[usize] = meta
+            .filter(|x| x.edit_of.is_none())
+            .and_then(|x| edits.get(x.msg_ref.as_str()))
+            .map(Vec::as_slice)
+            .unwrap_or(&[]);
+        // Folded, an edit is shown as its original's latest text, and not as a row of its own.
+        if view.fold && edit_root.is_some_and(|root| originals.contains_key(root)) {
+            continue;
+        }
+        let folded_read = !view.fold || own_edits.iter().all(|&e| messages[e].read);
+        let m_read = m.read && folded_read;
         // Sent copies are opt-in. Every existing caller — the CLI's `postbox inbox`, the MCP tool an
         // agent drains on wake — treats this list as "mail addressed to me", and quietly adding the
         // caller's own messages to it would have agents reading their own words as someone's
@@ -3563,7 +3686,7 @@ pub(crate) async fn do_inbox_view(
         // re-derive "what is actually new" from ids it remembered itself — which is the job this
         // endpoint exists to do. Sent copies are never filtered this way: they carry no read
         // state, and a conversation view wants both halves.
-        if !m.outgoing && m.read && !include_read {
+        if !m.outgoing && m_read && !include_read {
             continue;
         }
         let wrap: envelope::Wrap = match serde_json::from_slice(&m.wrap_blob) {
@@ -3571,6 +3694,74 @@ pub(crate) async fn do_inbox_view(
             Err(_) => continue,
         };
         if let Ok((from_vk, body)) = envelope::open(&me_identity, &wrap) {
+            // What this row says, and what the client is shown (SDS §14C).
+            let original_body = body.as_str().to_string();
+            let latest_body = match own_edits.last() {
+                Some(&e) if view.fold => open_at(e).unwrap_or_else(|| original_body.clone()),
+                _ => original_body.clone(),
+            };
+            let reply = meta.and_then(|x| x.reply_to.as_deref()).map(|parent_ref| {
+                let quote = meta.and_then(|x| msgactions::sealed_quote(&me_identity, x));
+                match originals.get(parent_ref).copied() {
+                    Some(p) => {
+                        let parent_body = edits
+                            .get(parent_ref)
+                            .and_then(|e| e.last().copied())
+                            .and_then(&mut open_at)
+                            .or_else(|| open_at(p));
+                        match parent_body {
+                            Some(b) => msgactions::reply_json(
+                                parent_ref,
+                                Some((
+                                    &messages[p].id,
+                                    &messages[p].sender,
+                                    messages[p].outgoing,
+                                    &b,
+                                )),
+                                quote,
+                            ),
+                            None => msgactions::reply_json(parent_ref, None, quote),
+                        }
+                    }
+                    None => msgactions::reply_json(parent_ref, None, quote),
+                }
+            });
+            let shown_body = if view.actions {
+                latest_body.clone()
+            } else if edit_root.is_some() {
+                msgactions::legacy_edit_body(&original_body)
+            } else if let Some(r) = &reply {
+                let quote = r["excerpt"]
+                    .as_str()
+                    .or_else(|| r["quote"].as_str())
+                    .unwrap_or_default();
+                msgactions::legacy_reply_body(&original_body, quote)
+            } else {
+                original_body.clone()
+            };
+            // The original of an edit, when it is still here: its words decide whether the edit
+            // may be acted on (an edit never raises a held request).
+            let root_body = edit_root
+                .and_then(|root| originals.get(root).copied())
+                .and_then(&mut open_at);
+            let annotate = |v: &mut serde_json::Value| {
+                if let Some(x) = meta {
+                    v["msg_ref"] = json!(x.msg_ref);
+                    v["edit_of"] = json!(x.edit_of);
+                    v["edit_of_message_id"] = json!(x
+                        .edit_of
+                        .as_deref()
+                        .and_then(|root| originals.get(root))
+                        .map(|&i| messages[i].id.clone()));
+                }
+                if let Some(r) = &reply {
+                    v["reply_to"] = r.clone();
+                }
+                if let Some(&last) = own_edits.last() {
+                    v["edited_at"] = json!(messages[last].created_at);
+                    v["edit_count"] = json!(own_edits.len());
+                }
+            };
             let from = Address::from_pubkey(&from_vk).as_str().to_string();
             // Who the conversation is *with*. For received mail that is whoever wrote it; for a
             // sent copy the sender is this mailbox, so the counterparty is the address it went to.
@@ -3601,7 +3792,7 @@ pub(crate) async fn do_inbox_view(
                     "to": m.recipient,
                     "peer": peer,
                     "peer_handle": sender_handles.get(&peer),
-                    "body": body.as_str(),
+                    "body": shown_body,
                     "alias": contact.and_then(|c| c.alias.clone()),
                     // Your own message is not untrusted input, and it was never subject to a
                     // decision — say so with absent fields rather than plausible-looking ones.
@@ -3613,6 +3804,12 @@ pub(crate) async fn do_inbox_view(
                     "thread_id": m.thread_id,
                     "filtered": false,
                 }));
+                if let Some(last) = out.last_mut() {
+                    annotate(last);
+                    if let Some(x) = meta {
+                        receipt_view.annotate(last, x);
+                    }
+                }
                 continue;
             }
 
@@ -3636,7 +3833,25 @@ pub(crate) async fn do_inbox_view(
             } else {
                 &org_granted
             };
-            let decision = verbs::decide(body.as_str(), auto, granted);
+            let decision = verbs::decide(&latest_body, auto, granted);
+            // An edit is evaluated as the request it now is, but never raises a held original:
+            // only the recipient's grants can do that (SDS §14C.3).
+            let original_decision = if own_edits.is_empty() || !view.fold {
+                root_body
+                    .as_deref()
+                    .map(|b| verbs::decide(b, auto, granted))
+            } else {
+                Some(verbs::decide(&original_body, auto, granted))
+            };
+            let decision = match (&decision, original_decision) {
+                (verbs::Decision::Auto { verb }, Some(verbs::Decision::Review { held, .. })) => {
+                    verbs::Decision::Review {
+                        held,
+                        verb: Some(verb.clone()),
+                    }
+                }
+                _ => decision,
+            };
 
             // Inbox reads re-evaluate the same messages on every poll. These diagnostics belong
             // at debug: logging each decision at info lets unread mail fill the server's disk.
@@ -3661,6 +3876,13 @@ pub(crate) async fn do_inbox_view(
                     (AUTONOMY_REVIEW, Some(held.as_str()), verb.clone())
                 }
             };
+            // A client that does not know edits sees one as a new message, and must not act on it
+            // as one: it is held, whatever it asks.
+            let (autonomy, held_because) = if !view.actions && edit_root.is_some() {
+                (AUTONOMY_REVIEW, Some("edit"))
+            } else {
+                (autonomy, held_because)
+            };
 
             // What this sender has earned, alongside what the recipient granted. Stamped as words
             // as well as a number: an agent should not have to guess the scale to know that
@@ -3680,7 +3902,7 @@ pub(crate) async fn do_inbox_view(
                 "to": me.address,
                 "peer": peer,
                 "peer_handle": sender_handles.get(&peer),
-                "body": body.as_str(),
+                "body": shown_body,
                 "sender_score": score,
                 "sender_standing": standing,
                 "sender_tier": tier.as_str(),
@@ -3706,10 +3928,24 @@ pub(crate) async fn do_inbox_view(
                 // from "you asked for the wrong thing".
                 "held_because": held_because,
                 "received_at": m.created_at,
-                "read": m.read,
+                "read": m_read,
                 "filtered": m.filtered,
             }));
+            if let Some(last) = out.last_mut() {
+                annotate(last);
+            }
         }
+    }
+    // A client fetching the mailbox has received what is in it (SDS §14C.6): every copy, whatever
+    // this view showed — the Filtered list included, so delivery says nothing about filing.
+    let delivered_now: Vec<String> = messages
+        .iter()
+        .filter(|m| !m.outgoing)
+        .filter(|m| metas.get(&m.id).is_some_and(|x| x.delivered_at.is_none()))
+        .map(|m| m.id.clone())
+        .collect();
+    if !delivered_now.is_empty() {
+        msgactions::receipt_for_rows(state, me, delivered_now, store::ReceiptKind::Delivered).await;
     }
     // Attachments, in one query for the whole listing rather than one per message. A conversation
     // with fifty messages should not cost fifty round trips to the database to find out that none
@@ -3758,7 +3994,9 @@ pub(crate) async fn do_inbox_view(
         .filters(me.address.clone())
         .await
         .map_err(|_| ApiError::server("store_error"))?;
-    Ok(json!({ "messages": out, "policy": filtering::full_policy_json(policy, &filters) }))
+    let mut policy = filtering::full_policy_json(policy, &filters);
+    policy["read_receipts"] = json!(receipt_view.read_receipts);
+    Ok(json!({ "messages": out, "policy": policy }))
 }
 
 /// Mark one of `me`'s messages read (scoped to the recipient).
@@ -3767,8 +4005,39 @@ pub(crate) async fn do_ack(
     me: &store::StoredIdentity,
     message_id: String,
 ) -> Result<serde_json::Value, ApiError> {
-    match state.store.mark_read(message_id, me.address.clone()).await {
-        Ok(true) => Ok(json!({ "ok": true })),
+    do_ack_with(state, me, message_id, false).await
+}
+
+/// `do_ack`, optionally with the original's edits; reading a message is seeing it (SDS §14C.6).
+pub(crate) async fn do_ack_with(
+    state: &AppState,
+    me: &store::StoredIdentity,
+    message_id: String,
+    with_edits: bool,
+) -> Result<serde_json::Value, ApiError> {
+    match state
+        .store
+        .mark_read(message_id.clone(), me.address.clone())
+        .await
+    {
+        Ok(true) => {
+            let mut seen = vec![message_id.clone()];
+            if with_edits {
+                if let Ok(Some((msg_ref, None))) =
+                    state.store.msg_ref_of(me.address.clone(), message_id).await
+                {
+                    if let Ok(ids) = state
+                        .store
+                        .mark_edits_read(me.address.clone(), msg_ref)
+                        .await
+                    {
+                        seen.extend(ids);
+                    }
+                }
+            }
+            msgactions::receipt_for_rows(state, me, seen, store::ReceiptKind::Seen).await;
+            Ok(json!({ "ok": true }))
+        }
         Ok(false) => Err(ApiError::new(
             StatusCode::NOT_FOUND,
             "not_found",
@@ -3782,7 +4051,7 @@ pub(crate) async fn do_ack(
 }
 
 /// Resolve which identity a messaging request acts as, from the header token + an optional selector.
-async fn acting_identity(
+pub(crate) async fn acting_identity(
     state: &AppState,
     headers: &HeaderMap,
     explicit: Option<&str>,
@@ -3812,6 +4081,9 @@ struct SendReq {
     /// again because the message it belonged to was refused.
     #[serde(default)]
     attachments: Vec<String>,
+    /// `msg_ref`, `reply_to`, `quote`, `edit_of` (SDS §14C).
+    #[serde(flatten)]
+    extras: msgactions::SendExtras,
 }
 
 /// `POST /v1/send` — seal a message to a hosted recipient and enqueue it.
@@ -3829,10 +4101,24 @@ async fn send(
         (None, Some(title)) => ThreadRequest::New(title.as_str()),
         (None, None) => ThreadRequest::Default,
     };
-    let sent = match do_send(&state, &me, &req.to, &req.body, thread).await {
+    let sent = match do_send_with(
+        &state,
+        &me,
+        &req.to,
+        &req.body,
+        thread,
+        &req.extras,
+        !req.attachments.is_empty(),
+    )
+    .await
+    {
         Ok(v) => v,
         Err(e) => return e.into_response(),
     };
+    // A retried send: the message and its files went the first time.
+    if sent["duplicate"].as_bool() == Some(true) {
+        return (StatusCode::OK, Json(sent)).into_response();
+    }
 
     // After delivery, not before. An attachment bound to a message that was then refused would be
     // spent — unclaimable by the retry, and counted against a quota for mail nobody received.
@@ -3895,6 +4181,12 @@ struct InboxQuery {
     /// `block` narrows `GET /v1/contacts` to blocks (the Blocked list).
     #[serde(default)]
     admission: Option<String>,
+    /// `1`: the client understands `edit_of`/`reply_to` (raw bodies). SDS §14C.
+    #[serde(default)]
+    actions: Option<String>,
+    /// `1` with `actions=1`: fold edits into their original.
+    #[serde(default)]
+    fold: Option<String>,
 }
 
 #[derive(serde::Deserialize)]
@@ -3928,6 +4220,9 @@ struct PolicyReq {
     auto_accept_known: Option<bool>,
     #[serde(default)]
     identity: Option<String>,
+    /// Send read receipts (SDS §14C.6). Omitted leaves it alone.
+    #[serde(default)]
+    read_receipts: Option<bool>,
     /// The filtering settings (SDS §13.1), all optional.
     #[serde(flatten)]
     filters: filtering::FilterFields,
@@ -4505,8 +4800,27 @@ async fn put_policy(
         },
         Err(e) => return e.into_response(),
     };
+    if let Some(on) = req.read_receipts {
+        if state
+            .store
+            .set_read_receipts(me.address.clone(), on, now_unix())
+            .await
+            .is_err()
+        {
+            return ApiError::server("store_error").into_response();
+        }
+    }
+    let read_receipts = state
+        .store
+        .read_receipts(me.address.clone())
+        .await
+        .unwrap_or(true);
     match filtering::do_set_filters(&state, &me, update, TrustActor::Human).await {
-        Ok(filters) => Json(filtering::full_policy_json(policy, &filters)).into_response(),
+        Ok(filters) => {
+            let mut v = filtering::full_policy_json(policy, &filters);
+            v["read_receipts"] = json!(read_receipts);
+            Json(v).into_response()
+        }
         Err(e) => e.into_response(),
     }
 }
@@ -4528,13 +4842,14 @@ async fn inbox(
         await_mail(&state, &me.address, wait.min(MAX_INBOX_WAIT_SECS)).await;
     }
     let filtered_only = matches!(q.filtered.as_deref(), Some("1" | "true"));
-    match do_inbox_view(
+    match do_inbox_view_with(
         &state,
         &me,
         q.include_sent,
         q.include_read,
         q.thread_id.as_deref(),
         filtered_only,
+        msgactions::View::from_query(q.actions.as_deref(), q.fold.as_deref()),
     )
     .await
     {
@@ -4548,6 +4863,9 @@ struct AckReq {
     message_id: String,
     #[serde(default)]
     identity: Option<String>,
+    /// Acknowledge the original's edits with it (clients showing edits folded). SDS §14C.
+    #[serde(default)]
+    with_edits: bool,
 }
 
 #[derive(serde::Deserialize)]
@@ -5579,7 +5897,7 @@ async fn ack(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
-    match do_ack(&state, &me, req.message_id).await {
+    match do_ack_with(&state, &me, req.message_id, req.with_edits).await {
         Ok(v) => Json(v).into_response(),
         Err(e) => e.into_response(),
     }
@@ -5840,6 +6158,26 @@ async fn delete_message(
         Ok(m) => m,
         Err(e) => return e.into_response(),
     };
+    // An original takes every version of itself with it (SDS §14C.3).
+    for version in msgactions::versions_to_delete(&state, &me.address, &req.message_id).await {
+        if let Ok(true) = state
+            .store
+            .delete_message(me.address.clone(), version.clone())
+            .await
+        {
+            if let Ok(orphaned) = state
+                .store
+                .release_attachments(me.address.clone(), version)
+                .await
+            {
+                if let Some(blobs) = state.blobs.clone() {
+                    for sha in orphaned {
+                        blobs.remove(&sha);
+                    }
+                }
+            }
+        }
+    }
     match state
         .store
         .delete_message(me.address.clone(), req.message_id.clone())

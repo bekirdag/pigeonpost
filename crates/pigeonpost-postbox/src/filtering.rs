@@ -375,7 +375,13 @@ pub(crate) async fn get_policy(
     ) else {
         return ApiError::server("store_error").into_response();
     };
-    Json(full_policy_json(p, &f)).into_response()
+    let mut v = full_policy_json(p, &f);
+    v["read_receipts"] = serde_json::json!(state
+        .store
+        .read_receipts(me.address.clone())
+        .await
+        .unwrap_or(true));
+    Json(v).into_response()
 }
 
 // ---- accept from Filtered ----------------------------------------------------------------------
