@@ -780,7 +780,7 @@ public static class NativeFileDragSource {
         Invoke-Control 'Account'
         Invoke-Control 'Privacy and filtering…'
         $null = Wait-Element 'Keep call history'
-        $null = Wait-Element 'Calls from people you don’t know'
+        $null = Wait-Like 'Calls from people you don?t know'
         Capture 'privacy-settings.png'
         Invoke-Control 'Done'
         Invoke-Control 'Account'
