@@ -21,6 +21,13 @@ from .vault import Vault
 from .previews import ThumbnailCache, supports as preview_supported
 from .theme import CHOICES, Design, Preferences, apply_appearance
 from .viewer import AttachmentViewer
+from .widgets import (SettingsNavigation, address_row, box, button, clear, label, scroll, settings_group,  # noqa: F401
+                      settings_row)
+from .avatars import AvatarCache
+from .features import AVATARS, CALL_HISTORY, DISAPPEARING, GROUPS, MESSAGE_FILTERING, live_messages, missed_call_lines, timer_label
+from .window_calls import CallsMixin
+from .window_groups import GroupsMixin
+from .window_privacy import PrivacyMixin
 
 WEB_INBOX = "https://inbox.pigeonpost.dev/"
 
@@ -54,157 +61,7 @@ def main_later(seconds, fn):
     GLib.timeout_add_seconds(seconds, lambda: (fn(), False)[1])
 
 
-def box(spacing=8, horizontal=False, margin=0):
-    widget = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL if horizontal else Gtk.Orientation.VERTICAL, spacing=spacing)
-    for edge in ("top", "bottom", "start", "end"):
-        getattr(widget, "set_margin_" + edge)(margin)
-    return widget
-
-
-def label(text, style=None, wrap=False):
-    widget = Gtk.Label(label=str(text), xalign=0)
-    if style:
-        widget.add_css_class(style)
-    if wrap:
-        widget.set_wrap(True)
-        widget.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-    else:
-        widget.set_ellipsize(Pango.EllipsizeMode.END)
-    return widget
-
-
-def button(text, callback, icon=None, style=None):
-    widget = Gtk.Button(label=text) if not icon else Gtk.Button(icon_name=icon)
-    widget.set_tooltip_text(text)
-    widget.update_property([Gtk.AccessibleProperty.LABEL], [text])
-    if style:
-        widget.add_css_class(style)
-    widget.connect("clicked", lambda _: callback())
-    return widget
-
-
-def clear(widget):
-    while widget.get_first_child():
-        widget.remove(widget.get_first_child())
-
-
-def address_row(address):
-    row = box(4, horizontal=True)
-    text = label(address, "dim-label", wrap=True)
-    text.set_selectable(True)
-    text.set_hexpand(True)
-    row.append(text)
-
-    def copied():
-        copy.get_clipboard().set(address)
-        copy.set_icon_name("emblem-ok-symbolic")
-        copy.set_tooltip_text("Address copied")
-        copy.update_property([Gtk.AccessibleProperty.LABEL], ["Address copied"])
-        if copy.reset_source:
-            GLib.source_remove(copy.reset_source)
-        copy.reset_source = GLib.timeout_add_seconds(2, reset)
-
-    def reset():
-        copy.set_icon_name("edit-copy-symbolic")
-        copy.set_tooltip_text("Copy address " + address)
-        copy.update_property([Gtk.AccessibleProperty.LABEL], ["Copy address " + address])
-        copy.reset_source = None
-        return False
-
-    copy = button("Copy address " + address, copied, "edit-copy-symbolic", "flat")
-    copy.reset_source = None
-    copy.set_sensitive(bool(address))
-    copy.set_valign(Gtk.Align.CENTER)
-    row.append(copy)
-    return row
-
-
-def scroll(child):
-    widget = Gtk.ScrolledWindow(hexpand=True, vexpand=True)
-    widget.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-    widget.set_child(child)
-    return widget
-
-
-def settings_row(title, detail, icon, callback):
-    row = Adw.ActionRow(title=title, subtitle=detail, activatable=True)
-    row.set_title_lines(0)
-    row.set_subtitle_lines(0)
-    row.add_prefix(Gtk.Image(icon_name=icon))
-    row.add_suffix(Gtk.Image(icon_name="go-next-symbolic"))
-    row.connect("activated", lambda _: callback())
-    return row
-
-
-def settings_group(content, *rows):
-    group = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
-    group.add_css_class("boxed-list")
-    for row in rows:
-        group.append(row)
-    content.append(group)
-
-
-class SettingsNavigation:
-    """One native window with a back stack, compatible with libadwaita 1.2."""
-    def __init__(self, owner, title="Settings"):
-        self.window = Adw.Window(title=title, transient_for=owner, modal=True,
-                                 default_width=560, default_height=600)
-        self.window.settings_navigation = self
-        self.pages = []
-        root = box(0)
-        header = Adw.HeaderBar()
-        self.heading = Adw.WindowTitle(title=title)
-        header.set_title_widget(self.heading)
-        self.back_button = button("Back", self.back, "go-previous-symbolic")
-        header.pack_start(self.back_button)
-        root.append(header)
-        self.stack = Gtk.Stack(vexpand=True, transition_type=Gtk.StackTransitionType.SLIDE_LEFT_RIGHT)
-        root.append(self.stack)
-        self.window.set_content(root)
-        keys = Gtk.EventControllerKey()
-        keys.connect("key-pressed", self.key_pressed)
-        self.window.add_controller(keys)
-        owner.dialogs.append(self.window)
-        self.window.connect("close-request", lambda w: owner.dialogs.remove(w) if w in owner.dialogs else None)
-        self.content = self.push(title)
-
-    def push(self, title):
-        focus = self.window.get_focus()
-        content = box(18, margin=24)
-        view = scroll(content)
-        self.pages.append((title, view, focus))
-        self.stack.add_child(view)
-        self.stack.set_visible_child(view)
-        self.heading.set_title(title)
-        self.window.set_title(title)
-        self.back_button.set_visible(len(self.pages) > 1)
-        GLib.idle_add(lambda: (content.child_focus(Gtk.DirectionType.TAB_FORWARD), False)[1])
-        return content
-
-    def back(self):
-        if len(self.pages) < 2:
-            return
-        _, old, focus = self.pages.pop()
-        title, view, _ = self.pages[-1]
-        self.stack.set_visible_child(view)
-        self.stack.remove(old)
-        self.heading.set_title(title)
-        self.window.set_title(title)
-        self.back_button.set_visible(len(self.pages) > 1)
-        if focus:
-            focus.grab_focus()
-
-    def key_pressed(self, _, key, _code, _state):
-        if key != Gdk.KEY_Escape:
-            return False
-        if len(self.pages) > 1:
-            self.back()
-        else:
-            self.window.close()
-        return True
-
-
-class Window(Adw.ApplicationWindow):
+class Window(PrivacyMixin, CallsMixin, GroupsMixin, Adw.ApplicationWindow):
     def __init__(self, app, session=None, api=None, restore=True, preferences=None, calls=None):
         super().__init__(application=app, title="Pigeonpost", default_width=1180, default_height=780)
         self.set_size_request(800, 540)
@@ -222,6 +79,15 @@ class Window(Adw.ApplicationWindow):
         self.mailboxes, self.messages, self.threads, self.contacts, self.archived = [], [], [], [], []
         self.vocabulary, self.quota = {}, {}
         self.identity = self.peer = self.subject = None
+        # Phase 1b and 3: what the postbox enables (GET /v1/capabilities), and the state behind it.
+        self.features = frozenset()
+        self.capabilities_at = 0
+        self.side_data_at = 0
+        self.filtered = []
+        self.own_avatar_texture = None
+        self.avatars = AvatarCache(self)
+        self.reset_calls()
+        self.reset_groups()
         self.drafts, self.files = {}, {}
         self.previews = ThumbnailCache()
         self.polling = self.sending = self.rendering = self.acking = False
@@ -389,8 +255,38 @@ class Window(Adw.ApplicationWindow):
             index = next((i for i, row in enumerate(rows) if self.notification_target and row["address"] == self.notification_target[0]), 0)
             self.mailbox_picker.set_selected(index)
             self.select_mailbox()
+            self.load_capabilities()
         else:
             self.empty_thread("Create your inbox to start messaging.")
+
+    def load_capabilities(self):
+        """Every Phase 1b and 3 feature stays invisible until the postbox says it is on, so this app
+        degrades to 1.0.8 behaviour against an older server."""
+        self.capabilities_at = GLib.get_monotonic_time()
+        def read():
+            if hasattr(self.api, "capabilities"):
+                return self.api.capabilities()
+            features = self.api.call("GET", "/v1/capabilities").get("features")
+            return frozenset(str(f) for f in features) if isinstance(features, list) else frozenset()
+        self._work(read, self.apply_features, lambda _: None)
+
+    def apply_features(self, features):
+        changed = frozenset(features) != self.features
+        self.features = frozenset(features)
+        if changed or not self.avatars.enabled == (AVATARS in self.features):
+            self.avatars.reset(AVATARS in self.features)
+        self.sync_side_nav()
+        self.start_groups()
+        self.load_calls(quiet=True)
+        self.load_filtered()
+        if changed:
+            self.render_all()
+
+    def refresh_side_data(self):
+        """Call history, the Filtered list and expiry: slower than the inbox poll."""
+        self.side_data_at = GLib.get_monotonic_time()
+        self.load_calls(quiet=True)
+        self.load_filtered()
 
     def create_inbox(self):
         self.create_button.set_sensitive(False)
@@ -420,10 +316,48 @@ class Window(Adw.ApplicationWindow):
         sidebar.append(self.post_address)
         self.create_button = button("Create my inbox", self.create_inbox, style="suggested-action")
         sidebar.append(self.create_button)
+        # Calls (SDS §12.1): under the mailbox switcher, with the unseen missed-call count.
+        self.calls_button = Gtk.Button()
+        calls_content = box(8, horizontal=True)
+        calls_content.append(Gtk.Image(icon_name="call-start-symbolic"))
+        self.calls_button_label = label("Calls")
+        calls_content.append(self.calls_button_label)
+        self.calls_button.set_child(calls_content)
+        self.calls_button.add_css_class("flat")
+        self.calls_button.set_tooltip_text("Call history")
+        self.calls_button.connect("clicked", lambda _: self.show_page("calls"))
+        self.calls_button.set_visible(False)
+        sidebar.append(self.calls_button)
         self.peer_search = Gtk.SearchEntry(placeholder_text="Search conversations")
         self.peer_search.connect("search-changed", lambda _: self.render_peers())
         sidebar.append(self.peer_search)
-        sidebar.append(button("New conversation", self.new_conversation, "list-add-symbolic", "pp-pill-button"))
+        compose_row = box(6, horizontal=True)
+        compose_row.set_homogeneous(True)
+        new_conversation = Gtk.Button()
+        conversation_content = box(6, horizontal=True)
+        conversation_content.set_halign(Gtk.Align.CENTER)
+        conversation_content.append(Gtk.Image(icon_name="list-add-symbolic"))
+        conversation_content.append(label("New conversation"))
+        new_conversation.set_child(conversation_content)
+        new_conversation.add_css_class("pp-pill-button")
+        new_conversation.set_tooltip_text("New conversation")
+        new_conversation.update_property([Gtk.AccessibleProperty.LABEL], ["New conversation"])
+        new_conversation.connect("clicked", lambda _: self.new_conversation())
+        compose_row.append(new_conversation)
+        # New group (SDS §4.2): a labelled button beside compose, shown only while groups are on.
+        self.new_group_button = Gtk.Button()
+        group_content = box(6, horizontal=True)
+        group_content.set_halign(Gtk.Align.CENTER)
+        group_content.append(Gtk.Image(icon_name="system-users-symbolic"))
+        group_content.append(label("New group"))
+        self.new_group_button.set_child(group_content)
+        self.new_group_button.add_css_class("pp-pill-button")
+        self.new_group_button.set_tooltip_text("New group")
+        self.new_group_button.update_property([Gtk.AccessibleProperty.LABEL], ["New group"])
+        self.new_group_button.connect("clicked", lambda _: self.new_group())
+        self.new_group_button.set_visible(False)
+        compose_row.append(self.new_group_button)
+        sidebar.append(compose_row)
         self.peer_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE)
         self.peer_list.add_css_class("navigation-sidebar")
         self.peer_list.add_css_class("pp-list")
@@ -455,9 +389,14 @@ class Window(Adw.ApplicationWindow):
         detail.add_css_class("pp-wash")
         toolbar = box(4, horizontal=True, margin=12)
         toolbar.add_css_class("pp-toolbar")
+        self.peer_avatar = box(0)
+        toolbar.append(self.peer_avatar)
         self.peer_title = label("Your inbox", "pp-title")
         self.peer_title.set_hexpand(True)
         toolbar.append(self.peer_title)
+        self.timer_badge = label("", "pp-meta")
+        self.timer_badge.set_visible(False)
+        toolbar.append(self.timer_badge)
         # Calls run in the web inbox: no Linux WebKitGTK build ships WebRTC (see README).
         self.voice_call_button = button("Voice call", lambda: self.call(False), "call-start-symbolic", "flat")
         self.video_call_button = button("Video call", lambda: self.call(True), "camera-video-symbolic", "flat")
@@ -465,6 +404,20 @@ class Window(Adw.ApplicationWindow):
         toolbar.append(self.video_call_button)
         toolbar.append(button("Contact details", lambda: self.contact_editor(self.peer), "avatar-default-symbolic", "flat"))
         toolbar.append(button("Archive conversation", self.archive_peer, "folder-download-symbolic", "flat"))
+        # Conversation menu: Block (SDS §15.2) and Disappearing messages (§17.1).
+        conversation_actions = Gio.SimpleActionGroup()
+        for name, handler in (("block", lambda: self.ask_block(self.peer, self.peer_title.get_text())),
+                              ("timer", self.choose_direct_timer)):
+            action = Gio.SimpleAction.new(name, None)
+            action.connect("activate", lambda *_, run=handler: run())
+            conversation_actions.add_action(action)
+        self.insert_action_group("conversation", conversation_actions)
+        self.conversation_actions = conversation_actions
+        self.conversation_menu = Gtk.MenuButton(icon_name="view-more-symbolic")
+        self.conversation_menu.add_css_class("flat")
+        self.conversation_menu.set_tooltip_text("Conversation menu")
+        self.conversation_menu.update_property([Gtk.AccessibleProperty.LABEL], ["Conversation menu"])
+        toolbar.append(self.conversation_menu)
         detail.append(toolbar)
         self.message_search = Gtk.SearchEntry(placeholder_text="Search this conversation")
         self.message_search.set_margin_start(16)
@@ -477,6 +430,14 @@ class Window(Adw.ApplicationWindow):
         detail.append(self.message_scroll)
         self.file_chips = box(horizontal=True, margin=8)
         detail.append(self.file_chips)
+        self.blocked_banner = box(8, horizontal=True, margin=12)
+        self.blocked_banner.add_css_class("pp-banner")
+        banner_text = label("You blocked this person", wrap=True)
+        banner_text.set_hexpand(True)
+        self.blocked_banner.append(banner_text)
+        self.blocked_banner.append(button("Unblock", lambda: self.unblock_peer()))
+        self.blocked_banner.set_visible(False)
+        detail.append(self.blocked_banner)
         composer = box(6, horizontal=True, margin=16)
         composer.set_margin_top(4)
         composer.add_css_class("pp-composer")
@@ -509,9 +470,16 @@ class Window(Adw.ApplicationWindow):
         right.set_resize_start_child(False)
         right.set_shrink_start_child(False)
         right.set_shrink_end_child(False)
+        # The right side shows a conversation, a group, call history or the Filtered list.
+        self.main_stack = Gtk.Stack(transition_type=Gtk.StackTransitionType.CROSSFADE, hexpand=True)
+        self.main_stack.add_named(right, "conversation")
+        self.main_stack.add_named(self.build_calls_page(), "calls")
+        self.main_stack.add_named(self.build_filtered_page(), "filtered")
+        self.main_stack.add_named(self.build_group_page(), "group")
+        self.main_stack.set_visible_child_name("conversation")
         panes = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, position=270)
         panes.set_start_child(sidebar_ground)
-        panes.set_end_child(right)
+        panes.set_end_child(self.main_stack)
         panes.set_resize_start_child(False)
         panes.set_shrink_start_child(False)
         panes.set_shrink_end_child(False)
@@ -535,16 +503,38 @@ class Window(Adw.ApplicationWindow):
         self.messages, self.contacts, self.threads, self.archived = [], [], [], []
         self.quota, self.vocabulary, self.known_ids = {}, {}, None
         self.polling = self.sending = self.acking = False
+        self.filtered = []
+        self.reset_calls()
+        self.reset_groups()
+        self.avatars.reset(AVATARS in self.features)
+        if self.page() != "conversation":
+            self.main_stack.set_visible_child_name("conversation")
         self.title.set_subtitle(row.get("handle") or row.get("label") or row["address"])
         self.restore_draft()
         self.render_all()
         self.refresh()
+        if self.features:
+            self.sync_side_nav()
+            self.start_groups()
+            self.refresh_side_data()
 
     def tick(self):
         if self.closed:
             return False
         if self.identity and not self.polling:
             self.refresh(wait=25)
+        if self.identity:
+            now = GLib.get_monotonic_time()
+            if self.mailboxes and now - self.capabilities_at > 600 * 1_000_000:
+                self.load_capabilities()
+            elif self.features and now - self.side_data_at > 30 * 1_000_000:
+                self.refresh_side_data()
+            self.groups_tick()
+            if any(m.get("expires_at") for m in self.messages):
+                live = live_messages(self.messages)
+                if len(live) != len(self.messages):
+                    self.messages = live  # disappearing messages leave by this device's clock too
+                    self.render_all()
         return True
 
     def refresh(self, wait=0):
@@ -566,12 +556,13 @@ class Window(Adw.ApplicationWindow):
             if revision != self.revision:
                 return  # A mutation completed after this snapshot began; fetch again next tick.
             messages, threads, contacts, archived, quota = result
+            messages = live_messages(messages)
             ids = {m["message_id"] for m in messages}
             if self.known_ids is not None:
                 new = [m for m in messages if m["message_id"] not in self.known_ids and m.get("direction") != "out" and not m.get("read")]
                 for message in new:
                     peer = next((p for p, rows in conversations(messages).items() if any(m["message_id"] == message["message_id"] for m in rows)), None)
-                    visible = (self.is_active() and self.peer == peer
+                    visible = (self.is_active() and self.peer == peer and self.page() == "conversation"
                                and (self.subject is None or (message.get("thread_id") or "") == self.subject)
                                and self.message_search.get_text().casefold() in message_text(message).casefold())
                     if not visible:
@@ -648,6 +639,7 @@ class Window(Adw.ApplicationWindow):
         self.rendering = True
         clear(self.peer_list)
         search = self.peer_search.get_text().casefold()
+        self.render_group_rows(search)
         rows = conversations(self.messages, self.contacts)
         if self.peer:
             rows.setdefault(self.peer, [])
@@ -657,20 +649,55 @@ class Window(Adw.ApplicationWindow):
             if peer in self.archived or search not in (name + " " + peer).casefold():
                 continue
             row = Gtk.ListBoxRow()
-            row.peer = peer
-            content = box(3, margin=9)
+            row.peer, row.kind = peer, "peer"
+            content = box(10, horizontal=True, margin=9)
+            content.append(self.avatars.widget(peer, name, 32))
+            text = box(3)
             unread = unread_count(messages)
-            content.append(label(name + (f"  • {unread}" if unread else ""), "pp-peer"))
-            content.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "pp-preview"))
+            text.append(label(name + (f"  • {unread}" if unread else ""), "pp-peer"))
+            text.append(label(message_text(messages[-1]).replace("\n", " ")[:120] if messages else "Start a conversation", "pp-preview"))
+            content.append(text)
             row.set_child(content)
             self.peer_list.append(row)
-            if peer == self.peer:
+            if peer == self.peer and self.page() == "conversation":
+                self.peer_list.select_row(row)
+        # Filtered (SDS §13.4): at the bottom of the conversation list, only when something is.
+        filtered = self.filtered_groups() if MESSAGE_FILTERING in self.features else []
+        if filtered and not search:
+            row = Gtk.ListBoxRow()
+            row.kind, row.peer = "filtered", None
+            content = box(10, horizontal=True, margin=9)
+            content.append(Gtk.Image(icon_name="mail-mark-junk-symbolic"))
+            content.append(label(f"Filtered ({len(filtered)})", "pp-peer"))
+            row.set_child(content)
+            row.update_property([Gtk.AccessibleProperty.LABEL],
+                                [f"Filtered, {len(filtered)} {'conversation' if len(filtered) == 1 else 'conversations'}"])
+            self.peer_list.append(row)
+            if self.page() == "filtered":
                 self.peer_list.select_row(row)
         self.rendering = False
+
+    def avatars_changed(self):
+        """A picture arrived; widgets made before it are updated in place by the cache."""
 
     def peer_selected(self, _, row):
         if self.rendering or not row:
             return
+        kind = getattr(row, "kind", "peer")
+        if kind == "filtered":
+            self.peer = self.subject = None
+            self.group_open = None
+            self.show_page("filtered")
+            return
+        if kind in ("group", "invitations"):
+            self.group_row_selected(row)
+            return
+        if kind != "peer":
+            return
+        self.group_open = None
+        if self.page() != "conversation":
+            self.main_stack.set_visible_child_name("conversation")
+            self.sync_side_nav()
         self.peer, self.subject, self.message_limit = row.peer, None, 200
         self.message_search.set_text("")
         self.render_subjects()
@@ -718,22 +745,74 @@ class Window(Adw.ApplicationWindow):
         self.message_list.append(label(text, "pp-status", wrap=True))
         self.update_send()
 
+    def render_conversation_chrome(self):
+        """Header picture, timer badge, menu and the blocked banner of a one-to-one conversation."""
+        clear(self.peer_avatar)
+        self.timer_badge.set_visible(False)
+        self.blocked_banner.set_visible(False)
+        menu = Gio.Menu()
+        if self.peer:
+            name = self.peer_title.get_text()
+            self.peer_avatar.append(self.avatars.widget(self.peer, name, 28))
+            secs = self.direct_timer()
+            if secs:
+                self.timer_badge.set_text("⏱ " + timer_label(secs))
+                self.timer_badge.set_tooltip_text(f"Messages disappear after {timer_label(secs)}")
+                self.timer_badge.set_visible(True)
+            blocked = self.blocked(self.peer)
+            self.blocked_banner.set_visible(blocked)
+            if DISAPPEARING in self.features and self.direct_timer_thread():
+                menu.append("Disappearing messages…", "conversation.timer")
+            if not blocked:
+                menu.append("Block…", "conversation.block")
+        self.conversation_menu.set_menu_model(menu)
+        self.conversation_menu.set_visible(bool(self.peer))
+
+    def unblock_peer(self):
+        """The banner's Unblock: removes the exact block, or the namespace rule that covers it."""
+        peer = self.peer
+        if not peer:
+            return
+        rule = next((c["peer"] for c in self.contacts if c.get("admission") == "block" and c.get("peer") == peer), None)
+        if rule is None:
+            rule = next((c["peer"] for c in self.contacts if c.get("admission") == "block" and c.get("peer", "").endswith("/*")
+                         and peer.startswith(c["peer"][:-1])), None)
+        if rule:
+            self.unblock(rule)
+
     def render_messages(self):
         if not self.peer:
             self.peer_title.set_text("Your inbox")
+            self.render_conversation_chrome()
             self.empty_thread("Choose a conversation, or start a new one.")
             return
         self.peer_title.set_text(contact_for(self.peer, self.contacts).get("alias") or display_name(self.peer))
+        self.render_conversation_chrome()
         adj = self.message_scroll.get_vadjustment()
         bottom = adj.get_value() + adj.get_page_size() >= adj.get_upper() - 80
         clear(self.message_list)
         query = self.message_search.get_text().casefold()
         rows = [m for m in self.shown_messages() if query in message_text(m).casefold()]
+        # Missed calls read as small lines in the conversation they belong to (SDS §12.1).
+        lines = []
+        if CALL_HISTORY in self.features and not query and (self.subject is None or self.subject == (self.direct_timer_thread() or {}).get("thread_id")):
+            keys = {self.peer} | {m.get("from") for m in rows if m.get("direction") != "out" and m.get("from")}
+            lines = missed_call_lines(self.call_state["entries"], keys)
         if len(rows) > self.message_limit:
             self.message_list.append(button(f"Load earlier messages ({len(rows) - self.message_limit})", self.load_earlier, style="pp-pill-button"))
-        if not rows:
-            self.message_list.append(label("No matching messages." if query else "Say hello to start this conversation.", "pp-status", wrap=True))
-        for message in rows[-self.message_limit:]:
+        if not rows and not lines:
+            secs = self.direct_timer()
+            self.message_list.append(label("No matching messages." if query else f"Messages disappear after {timer_label(secs)}." if secs
+                                           else "Say hello to start this conversation.", "pp-status", wrap=True))
+        shown = rows[-self.message_limit:]
+        first_at = timestamp(shown[0]) if len(rows) > self.message_limit and shown else 0
+        first_at = first_at / 1000 if first_at > 10**11 else first_at
+        pending = [line for line in lines if line["at"] >= first_at]
+        for message in shown:
+            when_s = timestamp(message)
+            when_s = when_s / 1000 if when_s > 10**11 else when_s
+            while pending and pending[0]["at"] <= when_s:
+                self.message_list.append(self.call_line(pending.pop(0)))
             outgoing = message.get("direction") == "out"
             bubble = box(6)
             bubble.add_css_class("pp-bubble")
@@ -779,15 +858,26 @@ class Window(Adw.ApplicationWindow):
                 save.set_halign(Gtk.Align.START)
                 inner.append(save)
             actions = box(2, horizontal=True)
+            if message.get("expires_at"):
+                timer = Gtk.Image(icon_name="alarm-symbolic")
+                try:
+                    timer.set_tooltip_text("Disappears " + datetime.datetime.fromtimestamp(message["expires_at"]).strftime("%d %b %H:%M"))
+                except (ValueError, OSError, OverflowError):
+                    pass
+                timer.set_valign(Gtk.Align.CENTER)
+                actions.append(timer)
             actions.append(button("Copy message", lambda m=message: self.get_clipboard().set(message_text(m)), "edit-copy-symbolic", "flat"))
             actions.append(button("Delete message", lambda m=message: self.delete_message(m), "user-trash-symbolic", "flat"))
             if not outgoing:
                 actions.append(button("Report spam", lambda m=message: self.report_message(m), "dialog-warning-symbolic", "flat"))
+                actions.append(button("Block sender", lambda m=message: self.block_sender(m), "action-unavailable-symbolic", "flat"))
             inner.append(actions)
             bubble.append(inner)
             bubble.set_margin_start(64 if outgoing else 0)
             bubble.set_margin_end(0 if outgoing else 64)
             self.message_list.append(bubble)
+        for line in pending:
+            self.message_list.append(self.call_line(line))
         self.update_send()
         if bottom and not query:
             GLib.idle_add(lambda: adj.set_value(max(0, adj.get_upper() - adj.get_page_size())))
@@ -805,8 +895,19 @@ class Window(Adw.ApplicationWindow):
         menu.append("Delete message", "message.delete")
         if message.get("direction") != "out":
             menu.append("Report spam", "message.report")
+            menu.append("Block sender", "message.block")
         text.set_extra_menu(menu)
         return text
+
+    def call_line(self, line):
+        widget = label(line["text"], "pp-system")
+        widget.set_halign(Gtk.Align.CENTER)
+        widget.call_line = line
+        return widget
+
+    def block_sender(self, message):
+        peer = self.peer or message.get("peer_handle") or message.get("from")
+        self.ask_block(peer, contact_for(peer, self.contacts).get("alias") or display_name(peer), message_id=message.get("message_id"))
 
     def message_actions(self, message, outgoing):
         group = Gio.SimpleActionGroup()
@@ -814,6 +915,7 @@ class Window(Adw.ApplicationWindow):
                     "delete": lambda: self.delete_message(message)}
         if not outgoing:
             handlers["report"] = lambda: self.report_message(message)
+            handlers["block"] = lambda: self.block_sender(message)
         for name, handler in handlers.items():
             action = Gio.SimpleAction.new(name, None)
             action.connect("activate", lambda *_, run=handler: run())
@@ -825,7 +927,7 @@ class Window(Adw.ApplicationWindow):
         self.render_messages()
 
     def ack_visible(self):
-        if not self.identity or not self.peer or not self.is_active():
+        if not self.identity or not self.peer or not self.is_active() or self.page() != "conversation":
             return
         # Only actual displayed messages, not hidden subjects/search results or unloaded history.
         query = self.message_search.get_text().casefold()
@@ -877,7 +979,8 @@ class Window(Adw.ApplicationWindow):
         self.update_send()
 
     def update_send(self):
-        enabled = bool(self.peer and self.identity and not self.sending)
+        # A blocked conversation keeps its history, but the composer is off (SDS §15.2).
+        enabled = bool(self.peer and self.identity and not self.sending and not self.blocked(self.peer))
         self.voice_call_button.set_sensitive(bool(self.peer and self.identity))
         self.video_call_button.set_sensitive(bool(self.peer and self.identity))
         self.composer.set_sensitive(enabled)
@@ -1018,7 +1121,7 @@ class Window(Adw.ApplicationWindow):
             self.calls.decline(room)
 
     def sent_snapshot(self, messages):
-        self.messages = messages
+        self.messages = live_messages(messages)
         self.render_all()
 
     def reload_messages(self):
@@ -1310,6 +1413,19 @@ class Window(Adw.ApplicationWindow):
         content.append(self.appearance_picker())
         settings_group(content, settings_row("Account", self.title.get_subtitle() or "Your profile and devices",
                        "avatar-default-symbolic", lambda: self.account_settings(navigation)))
+        # Phase 1b pages: each only where the postbox has the feature on; Blocked always (SDS §15).
+        privacy_rows = []
+        if AVATARS in self.features and self.identity:
+            privacy_rows.append(settings_row("Profile picture", "Your picture and who can see it", "camera-photo-symbolic",
+                                             lambda: self.profile_settings(navigation)))
+        if self.privacy_available() and self.identity:
+            privacy_rows.append(settings_row("Privacy & filtering", "Calls and messages from people you don’t know",
+                                             "security-high-symbolic", lambda: self.privacy_settings(navigation)))
+        if self.identity:
+            privacy_rows.append(settings_row("Blocked", "People who can’t message or call you", "action-unavailable-symbolic",
+                                             lambda: self.blocked_settings(navigation)))
+        if privacy_rows:
+            settings_group(content, *privacy_rows)
         settings_group(content,
             settings_row("Handles", "Your names and subscriptions", "insert-link-symbolic", lambda: self.handles(navigation)),
             settings_row("Inbox and storage", "Storage and archived conversations", "mail-unread-symbolic", lambda: self.inbox_settings(navigation)),
@@ -1445,6 +1561,9 @@ class Window(Adw.ApplicationWindow):
             self._work(lambda: self.api.call("PUT", "/v1/contacts", identity, data=payload), done,
                        lambda error: error_label.set_text(self.error_text(error)))
         content.append(button("Save contact", save, style="suggested-action"))
+        if peer and not self.blocked(peer):
+            content.append(button("Block…", lambda: (window.close(), self.ask_block(peer, original.get("alias") or display_name(peer))),
+                                  style="destructive-action"))
         if original:
             content.append(button("Remove contact", lambda: self.confirm("Remove this contact?", "The sender will use your mailbox's default policy.", lambda: save(True), "Remove"), style="destructive-action"))
         window.present()
@@ -1544,6 +1663,17 @@ class Window(Adw.ApplicationWindow):
             self.calls.stop()
         for dialog in list(self.dialogs):
             dialog.close()
+        self.features = frozenset()
+        self.filtered = []
+        self.own_avatar_texture = None
+        self.avatars.reset()
+        self.reset_calls()
+        self.group_clients = {}
+        self.reset_groups()
+        if self.page() != "conversation":
+            self.main_stack.set_visible_child_name("conversation")
+        self.new_group_button.set_visible(False)
+        self.sync_side_nav()
         self.identity = self.peer = self.subject = None
         self.messages, self.contacts, self.threads, self.archived, self.mailboxes = [], [], [], [], []
         self.drafts, self.files, self.quota, self.vocabulary = {}, {}, {}, {}
@@ -1561,11 +1691,23 @@ class Window(Adw.ApplicationWindow):
     def sign_out(self):
         def signout():
             self.cancel.set()
+            mailboxes = [row["address"] for row in self.mailboxes] if GROUPS in self.features else []
+            clients = dict(self.group_clients)
             self.generation += 1
             self.clear_account()
             self.show_signin("Signing out…")
             self.login_button.set_sensitive(False)
-            self._work(self.session.sign_out, lambda _: self.show_signin("You have signed out."),
+
+            def leave():
+                # This computer's group devices end with the session: revoked at the postbox (members see
+                # it), their keys deleted here. A later sign-in enrols new devices without history.
+                self.group_clients = clients
+                try:
+                    self.retire_group_devices(mailboxes)
+                finally:
+                    self.group_clients = {}
+                self.session.sign_out()
+            self._work(leave, lambda _: self.show_signin("You have signed out."),
                        lambda error: self.show_signin("Could not clear your desktop keyring. Unlock it and sign out again."))
         self.confirm("Sign out?", "Unsent drafts and staged attachments on this device will be discarded.", signout, "Sign out")
 
@@ -1586,6 +1728,9 @@ class Application(Adw.Application):
         action = Gio.SimpleAction.new("open-message", GLib.VariantType.new("(ss)"))
         action.connect("activate", self.open_message)
         self.add_action(action)
+        action = Gio.SimpleAction.new("open-group", GLib.VariantType.new("(ss)"))
+        action.connect("activate", self.open_group_notification)
+        self.add_action(action)
         for name, handler in (("call-answer", "answer_call"), ("call-decline", "decline_call")):
             action = Gio.SimpleAction.new(name, GLib.VariantType.new("s"))
             action.connect("activate", self.call_action, handler)
@@ -1599,6 +1744,12 @@ class Application(Adw.Application):
             getattr(self.window, handler)(room)
         else:
             self.withdraw_notification("call-" + room)
+
+    def open_group_notification(self, action, parameter):
+        self.activate()
+        identity, gid = parameter.unpack()
+        if self.window and self.window.identity == identity and self.window.group_by_id(gid):
+            self.window.open_group(gid)
 
     def open_message(self, action, parameter):
         self.activate()

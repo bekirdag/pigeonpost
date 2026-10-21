@@ -4,9 +4,9 @@ on:
   push:
     branches: [main, 'codex/linux-desktop-*']
     tags: ['linux-desktop-*']
-    paths: ['apps/linux/**', '.github/workflows/linux-desktop.yml']
+    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/linux-desktop.yml']
   pull_request:
-    paths: ['apps/linux/**', '.github/workflows/linux-desktop.yml']
+    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/linux-desktop.yml']
   workflow_dispatch:
 
 permissions:
@@ -17,7 +17,69 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  native:
+    # The group encryption library (UniFFI Python binding + shared library) for both processors.
+    # Built on Ubuntu 22.04 so it needs at most glibc 2.35: Debian 12, Ubuntu 22.04+ and the
+    # GNOME 50 Flatpak runtime all load it.
+    strategy:
+      matrix:
+        include:
+          - runner: ubuntu-22.04
+            arch: x86_64
+          - runner: ubuntu-22.04-arm
+            arch: aarch64
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+          key: linux-native-${{ matrix.arch }}
+      - name: Build the library
+        working-directory: apps/linux
+        run: ./build-native.sh
+      - name: Check processor and glibc floor
+        working-directory: apps/linux/pigeonpost/native/${{ matrix.arch }}
+        run: |
+          file libpigeonpost_groupcrypto_ffi.so
+          newest=$(objdump -T libpigeonpost_groupcrypto_ffi.so | grep -o 'GLIBC_[0-9.]*' | sort -V | tail -1)
+          echo "newest glibc symbol: $newest"
+          test "$(printf '%s\nGLIBC_2.35\n' "$newest" | sort -V | tail -1)" = GLIBC_2.35
+          sha256sum libpigeonpost_groupcrypto_ffi.so pigeonpost_groupcrypto.py
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: groupcrypto-native-${{ matrix.arch }}
+          path: apps/linux/pigeonpost/native/${{ matrix.arch }}/
+          if-no-files-found: error
+
+  interop:
+    # The Linux client's group code against a real postbox, with the web inbox's client as the
+    # other member, plus the Phase 1b routes as the window calls them.
+    needs: native
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: groupcrypto-native-x86_64
+          path: apps/linux/pigeonpost/native/x86_64
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: linux-interop-postbox
+      - name: Install Python GObject (for the picture the client uploads)
+        run: sudo apt-get update -qq && sudo apt-get install -y python3-gi gir1.2-gdkpixbuf-2.0
+      - name: Build the postbox
+        run: cargo build --locked -q -p pigeonpost-postbox
+      - name: Linux ↔ web groups and Phase 1b routes against the real postbox
+        run: POSTBOX_BIN="$PWD/target/debug/pigeonpost-postbox" PYTHON=/usr/bin/python3 node apps/linux/tests/live_interop.mjs
+
   build:
+    needs: native
     strategy:
       matrix:
         include:
@@ -32,34 +94,51 @@ jobs:
         working-directory: apps/linux
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          pattern: groupcrypto-native-*
+          path: native-artifacts
+      - name: Place the group encryption library for both processors
+        run: |
+          for arch in x86_64 aarch64; do
+            mkdir -p pigeonpost/native/$arch
+            cp ../../native-artifacts/groupcrypto-native-$arch/* pigeonpost/native/$arch/
+          done
+          ls -l pigeonpost/native/*
       - name: Install native build and test dependencies
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gir1.2-poppler-0.18 gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 libgtk-4-media-gstreamer gstreamer1.0-plugins-good gstreamer1.0-libav gnome-keyring dbus-x11 xvfb xdotool imagemagick desktop-file-utils appstream flatpak flatpak-builder xdg-desktop-portal-gtk
       - name: Domain and authentication regressions
         run: python3 -m unittest discover -s tests -p test_core.py -v
+      - name: Group encryption (MLS round trips with the Python binding)
+        env:
+          PIGEONPOST_REQUIRE_GROUPCRYPTO: "1"
+        run: python3 -m unittest discover -s tests -p test_groups.py -v
       - name: Build and install Debian package
         run: |
           desktop-file-validate data/dev.pigeonpost.Desktop.desktop
           appstreamcli validate --no-net data/dev.pigeonpost.Desktop.metainfo.xml
           python3 package-deb.py
-          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.8_all.deb
+          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.9_all.deb
           pigeonpost-desktop --version
+          python3 -I -c "import sys; sys.path.insert(0, '/usr/share/pigeonpost-desktop'); from pigeonpost import groupcrypto; gc = groupcrypto.load(); assert gc, groupcrypto.reason(); print('Installed package loads group encryption:', gc.enc_scheme())"
       - name: Build Flatpak
         run: |
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo --install build-dir dev.pigeonpost.Desktop.json
-          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.8-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.9-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Native GTK and installed Flatpak desktop integration
         env:
           GSK_RENDERER: cairo
           GTK_A11Y: none
+          PIGEONPOST_REQUIRE_GROUPCRYPTO: "1"
           PIGEONPOST_SCREENSHOT_DIR: ${{ github.workspace }}/apps/linux/dist/screenshots
         run: |
           # Keep one desktop bus alive through native and sandbox tests. Flatpak maps the
           # standard /run/user/<uid>/doc path; a custom runtime directory breaks file forwarding.
           xvfb-run -a -s '-screen 0 1280x900x24' dbus-run-session -- sh -c '
-            python3 -m unittest discover -s tests -p test_ui.py -v &&
+            python3 -m unittest discover -s tests -p "test_ui*.py" -v &&
             flatpak run --command=pigeonpost-desktop dev.pigeonpost.Desktop --version &&
             python3 tests/installed_smoke.py'
       - name: Checksums
@@ -99,10 +178,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management.
+          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management. 1.0.9 adds end-to-end encrypted groups (with device fingerprints, safety numbers and device-change notices), call history, the Filtered list, privacy filters, blocking, profile pictures and disappearing messages.
 
-          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.8_all.deb` on Debian 12+ or Ubuntu 24.04+. For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.8-x86_64.flatpak`. The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
+          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.9_all.deb` on Debian 12+ or Ubuntu 24.04+ (x86_64 and ARM64). For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.9-x86_64.flatpak` (use the aarch64 bundle on ARM64). The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
 
           Handle purchases open the Pigeonpost website. Messages and drafts remain in memory; closing the app stops notifications. See the build plan and validation ledger in apps/linux.
           EOF
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.8' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.9' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
