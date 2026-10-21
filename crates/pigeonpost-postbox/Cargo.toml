@@ -46,6 +46,12 @@ time = { version = "0.3", features = ["parsing"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp"] }
 webp = { version = "0.3", default-features = false }
+# Calendar (SDS §14B): RFC 5545 recurrence expanded in the event's IANA zone, and guest device
+# proofs (ECDSA P-256, what every browser's WebCrypto can sign with).
+chrono = { version = "0.4", default-features = false, features = ["std", "clock"] }
+chrono-tz = "0.10"
+rrule = "0.14"
+p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
 
 # `statvfs`, for the free-space floor under the blob volume. Already in the tree through tokio and
 # rusqlite; this only makes the use direct.

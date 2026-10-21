@@ -59,6 +59,9 @@ pub(crate) struct MemberSession {
     /// A client-credentials token minted for a Keycloak service account. Signed by the same realm,
     /// but nobody signed in.
     pub service_account: bool,
+    /// The token carried a sign-in address the realm marks verified (Phase 3B: needed before a
+    /// person may send calendar invitations to contact addresses, SDS §14B.6).
+    pub address_verified: bool,
 }
 
 impl MemberSession {
@@ -78,6 +81,7 @@ impl MemberSession {
             acr: claims.acr.clone(),
             amr: claims.amr.clone(),
             service_account,
+            address_verified: claims.address().is_some() && claims.address_is_verified(),
         }
     }
 

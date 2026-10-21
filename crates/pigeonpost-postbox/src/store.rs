@@ -15,6 +15,7 @@ use std::sync::{Arc, Mutex};
 mod apple_plans;
 pub(crate) mod audit;
 mod avatars;
+mod calendar;
 mod calllog;
 mod deletion;
 mod entitlements;
@@ -963,6 +964,7 @@ impl Store {
         conn.execute_batch(calllog::SCHEMA)?;
         conn.execute_batch(avatars::SCHEMA)?;
         conn.execute_batch(groups::SCHEMA)?;
+        conn.execute_batch(calendar::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

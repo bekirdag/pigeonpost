@@ -114,6 +114,9 @@ pub struct CallEvent {
     /// Addresses, or `guest:<name>` for guests without a mailbox.
     pub participants: Vec<String>,
     pub at: u64,
+    /// The scheduled meeting this room belongs to (Phase 3B), if any.
+    pub calendar_event_id: Option<String>,
+    pub occurrence_id: Option<String>,
 }
 
 /// One history entry, as the API returns it.
@@ -129,6 +132,8 @@ pub struct CallLogEntry {
     pub peer_handle: Option<String>,
     pub participants: Vec<String>,
     pub group_id: Option<String>,
+    pub calendar_event_id: Option<String>,
+    pub occurrence_id: Option<String>,
     pub started_at: u64,
     pub answered_at: Option<u64>,
     pub ended_at: Option<u64>,
@@ -155,7 +160,8 @@ pub struct FoldResult {
 }
 
 const ENTRY_COLS: &str = "id, owner, room_id, direction, outcome, kind, peer, peer_handle, \
-                          participants, group_id, started_at, answered_at, ended_at, seen";
+                          participants, group_id, started_at, answered_at, ended_at, seen, \
+                          calendar_event_id, occurrence_id";
 
 fn read_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<CallLogEntry> {
     let started_at = r.get::<_, i64>(10)? as u64;
@@ -183,6 +189,8 @@ fn read_entry(r: &rusqlite::Row<'_>) -> rusqlite::Result<CallLogEntry> {
             _ => None,
         },
         seen: r.get::<_, i64>(13)? != 0,
+        calendar_event_id: r.get(14)?,
+        occurrence_id: r.get(15)?,
     })
 }
 
@@ -269,8 +277,9 @@ impl Fold<'_> {
         let id = new_id();
         self.c.execute(
             "INSERT INTO call_log (id, owner, room_id, direction, kind, peer, peer_handle,
-                                   started_at, seen, last_event_version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+                                   started_at, seen, last_event_version, calendar_event_id,
+                                   occurrence_id)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 id,
                 address,
@@ -283,6 +292,8 @@ impl Fold<'_> {
                 // Only an incoming missed call is news; everything else starts seen.
                 (direction == "outgoing") as i64,
                 self.ev.seq,
+                self.ev.calendar_event_id,
+                self.ev.occurrence_id,
             ],
         )?;
         self.touch(&id);
@@ -400,7 +411,14 @@ fn fold(c: &Connection, ev: &CallEvent, now: u64) -> Result<FoldResult, StoreErr
             }
         }
         CallEventKind::Answer | CallEventKind::Join => {
-            if let Some(by) = ev.by.as_deref() {
+            // The caller joining their own room (a scheduled meeting's organizer) is not an
+            // incoming call to them.
+            let by_caller = |b: &str| {
+                caller
+                    .as_ref()
+                    .is_some_and(|me| me.0 == b || me.1.as_deref() == Some(b))
+            };
+            if let Some(by) = ev.by.as_deref().filter(|b| !by_caller(b)) {
                 if let Some(id) = callee_row(&mut f, by)? {
                     f.set_outcome(&id, "answered")?;
                 }
@@ -738,6 +756,8 @@ mod tests {
             by: None,
             participants: Vec::new(),
             at,
+            calendar_event_id: None,
+            occurrence_id: None,
         }
     }
 

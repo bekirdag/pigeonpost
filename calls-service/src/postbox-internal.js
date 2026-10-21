@@ -29,6 +29,16 @@ export const INTERNAL_LIMITS = {
 
 const DECISIONS = new Set(["ring", "silence", "block"]);
 const ADDRESS = /^\/[A-Za-z0-9._~\-/]{1,200}$/;
+// Phase 3B: scheduled meetings.
+const MEETING_ID = /^mtg_[A-Za-z0-9]{1,64}$/;
+const EVENT_ID = /^evt_[A-Za-z0-9]{1,64}$/;
+// The postbox's occurrence ids are `occ_<event suffix>_<recurrence key>` (docs/calendar.md §1).
+const OCCURRENCE_ID = /^occ_[A-Za-z0-9_]{1,80}$/;
+const ATTENDEE_ID = /^att_[A-Za-z0-9]{1,64}$/;
+const MEETING_CODE = /^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$/;
+const MEETING_ROLES = new Set(["host", "cohost", "attendee", "guest", "none"]);
+const MEETING_ADMISSIONS = new Set(["direct", "knock", "deny"]);
+const MEETING_REASONS = new Set(["unavailable", "window_closed", "not_invited", "declined", "cancelled", "ticket_invalid", "choose_occurrence"]);
 
 export function createPostboxInternal({ url, token, fetch, now, setTimeout: setTimer, limits } = {}) {
   const L = { ...INTERNAL_LIMITS, ...(limits || {}) };
@@ -153,6 +163,77 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return value;
   }
 
+  // ---- Phase 3B: scheduled meeting access (docs/calendar.md §8) -----------------------------------
+  //
+  // `POST /internal/v1/calendar/meeting-access {code, occurrence_id?, actor, purpose, extend_minutes?}`.
+  // Never cached: every join, recheck and extension asks again. Returns null when unconfigured,
+  // unreachable or the answer does not validate; callers fail closed (join) or keep the status quo
+  // (recheck).
+
+  function validMeetingAccess(v) {
+    if (!v || typeof v !== "object" || typeof v.allowed !== "boolean") return null;
+    const time = (x) => (Number.isInteger(x) && x >= 0 && x <= 1e11 ? x : 0);
+    const occurrences = (Array.isArray(v.occurrences) ? v.occurrences : []).slice(0, 50).flatMap((o) => {
+      if (!o || typeof o !== "object" || !OCCURRENCE_ID.test(String(o.occurrence_id || ""))) return [];
+      return [{ occurrence_id: o.occurrence_id, starts_at: time(o.starts_at), ends_at: time(o.ends_at), opens_at: time(o.opens_at), closes_at: time(o.closes_at) }];
+    });
+    const out = {
+      allowed: v.allowed,
+      reason: v.allowed ? null : (MEETING_REASONS.has(v.reason) ? v.reason : "unavailable"),
+      role: MEETING_ROLES.has(v.role) ? v.role : "none",
+      admission: MEETING_ADMISSIONS.has(v.admission) ? v.admission : "deny",
+      can_admit: v.can_admit === true,
+      occurrences,
+    };
+    if (typeof v.meeting_id === "string" && MEETING_ID.test(v.meeting_id)) out.meeting_id = v.meeting_id;
+    if (typeof v.event_id === "string" && EVENT_ID.test(v.event_id)) out.event_id = v.event_id;
+    if (typeof v.occurrence_id === "string" && OCCURRENCE_ID.test(v.occurrence_id)) out.occurrence_id = v.occurrence_id;
+    if (typeof v.code === "string" && MEETING_CODE.test(v.code.toUpperCase())) out.code = v.code.toUpperCase();
+    for (const k of ["starts_at", "ends_at", "opens_at", "closes_at"]) out[k] = time(v[k]);
+    const p = v.participant && typeof v.participant === "object" ? v.participant : null;
+    out.participant = p ? {
+      address: typeof p.address === "string" && ADDRESS.test(p.address) ? p.address : null,
+      handle: typeof p.handle === "string" && ADDRESS.test(p.handle) ? p.handle : null,
+      attendee_id: typeof p.attendee_id === "string" && ATTENDEE_ID.test(p.attendee_id) ? p.attendee_id : null,
+      name: typeof p.name === "string" ? p.name.slice(0, 200) : "",
+      verified: p.verified === true,
+    } : null;
+    const o = v.organizer && typeof v.organizer === "object" ? v.organizer : null;
+    out.organizer = o && typeof o.address === "string" && ADDRESS.test(o.address)
+      ? { address: o.address, ...(typeof o.handle === "string" && ADDRESS.test(o.handle) ? { handle: o.handle } : {}) }
+      : null;
+    const pol = v.policy && typeof v.policy === "object" ? v.policy : {};
+    const word = (x) => (typeof x === "string" && /^[a-z_]{1,32}$/.test(x) ? x : null);
+    out.policy = {
+      waiting: word(pol.waiting), admit: word(pol.admit), allow_knock: pol.allow_knock === true,
+      participant_limit: Number.isInteger(pol.participant_limit) && pol.participant_limit >= 1 && pol.participant_limit <= 30 ? pol.participant_limit : 6,
+      transport: pol.transport === "sfu" ? "sfu" : "mesh",
+    };
+    out.admitters = (Array.isArray(v.admitters) ? v.admitters : []).filter((x) => typeof x === "string" && ADDRESS.test(x)).slice(0, 500);
+    out.policy_version = typeof v.policy_version === "string" ? v.policy_version.slice(0, 32) : "";
+    // An admission without the room's identity cannot be acted on.
+    if (out.allowed && (!out.meeting_id || !out.event_id || !out.occurrence_id || !out.closes_at)) return null;
+    return out;
+  }
+
+  async function meetingAccess(body) {
+    if (!configured) return null;
+    let value = null;
+    try {
+      const res = await post("/internal/v1/calendar/meeting-access", body, L.admissionTimeoutMs);
+      if (res.ok) value = validMeetingAccess(await res.json());
+    } catch (_) {
+      value = null;
+    }
+    if (!value) {
+      counters.admission_failed++;
+      console.warn(`calls: meeting access unavailable (failures=${counters.admission_failed})`);
+      return null;
+    }
+    counters.admission_ok++;
+    return value;
+  }
+
   // ---- lifecycle events ---------------------------------------------------------------------------
 
   function report(event) {
@@ -225,5 +306,5 @@ export function createPostboxInternal({ url, token, fetch, now, setTimeout: setT
     return { configured, queued: queue.length, ...counters };
   }
 
-  return { configured, admit, groupAdmit, report, health, flush, _queue: queue, _cache: cache };
+  return { configured, admit, groupAdmit, meetingAccess, report, health, flush, _queue: queue, _cache: cache };
 }

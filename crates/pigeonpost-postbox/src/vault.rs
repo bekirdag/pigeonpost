@@ -31,6 +31,8 @@ pub struct Vault {
     /// A key derived from the master key for keyed lookups (`keyed_hash`): stable across restarts,
     /// useless for opening anything sealed here.
     lookup_key: [u8; 32],
+    /// Root for purpose-bound subkeys (calendar sealing, keyed hashes). Derived, never the master.
+    subkeys: [u8; 32],
 }
 
 impl Vault {
@@ -42,7 +44,68 @@ impl Vault {
         Vault {
             cipher: XChaCha20Poly1305::new(Key::from_slice(&master)),
             lookup_key: h.finalize().into(),
+            subkeys: {
+                let mut s = Sha256::new();
+                s.update(b"pigeonpost vault subkeys v1\0");
+                s.update(master);
+                s.finalize().into()
+            },
         }
+    }
+
+    /// A 32-byte key bound to `label`, derived from the master key. Distinct labels give
+    /// independent keys; nothing derived can be turned back into the master.
+    pub fn subkey(&self, label: &str) -> [u8; 32] {
+        use hmac::{Hmac, Mac};
+        let mut mac = <Hmac<sha2::Sha256> as Mac>::new_from_slice(&self.subkeys)
+            .expect("hmac takes any key length");
+        mac.update(label.as_bytes());
+        mac.finalize().into_bytes().into()
+    }
+
+    /// Seal bytes under a purpose-bound subkey: `nonce(24) || ciphertext`. `aad` binds the
+    /// ciphertext to where it is stored (a row id), so it cannot be moved to another row.
+    pub fn seal_labeled(
+        &self,
+        label: &str,
+        aad: &[u8],
+        plain: &[u8],
+    ) -> Result<Vec<u8>, VaultError> {
+        use chacha20poly1305::aead::Payload;
+        let key = self.subkey(label);
+        let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
+        let mut nonce = [0u8; 24];
+        rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut nonce);
+        let ct = cipher
+            .encrypt(XNonce::from_slice(&nonce), Payload { msg: plain, aad })
+            .map_err(|_| VaultError::Seal)?;
+        let mut out = nonce.to_vec();
+        out.extend_from_slice(&ct);
+        Ok(out)
+    }
+
+    /// Open what [`Vault::seal_labeled`] sealed with the same label and `aad`.
+    pub fn open_labeled(
+        &self,
+        label: &str,
+        aad: &[u8],
+        sealed: &[u8],
+    ) -> Result<Vec<u8>, VaultError> {
+        use chacha20poly1305::aead::Payload;
+        if sealed.len() < 24 + 16 {
+            return Err(VaultError::Open);
+        }
+        let key = self.subkey(label);
+        let cipher = XChaCha20Poly1305::new(Key::from_slice(&key));
+        cipher
+            .decrypt(
+                XNonce::from_slice(&sealed[..24]),
+                Payload {
+                    msg: &sealed[24..],
+                    aad,
+                },
+            )
+            .map_err(|_| VaultError::Open)
     }
 
     /// Seal arbitrary small bytes (an invitation's contact address, a link awaiting delivery).
@@ -111,6 +174,21 @@ impl Vault {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn labeled_seals_are_bound_to_label_and_row() {
+        let vault = Vault::new([7u8; 32]);
+        let sealed = vault
+            .seal_labeled("calendar", b"evt_1", b"Design review")
+            .unwrap();
+        assert_eq!(
+            vault.open_labeled("calendar", b"evt_1", &sealed).unwrap(),
+            b"Design review"
+        );
+        assert!(vault.open_labeled("calendar", b"evt_2", &sealed).is_err());
+        assert!(vault.open_labeled("other", b"evt_1", &sealed).is_err());
+        assert_ne!(vault.subkey("a"), vault.subkey("b"));
+    }
 
     #[test]
     fn seal_open_round_trip() {

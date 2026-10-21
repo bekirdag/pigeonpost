@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<!-- The invitation token is in the fragment, which browsers never send to a server. This page reads
+     it, removes it from the address bar at once, keeps it in memory only, and sends it to the postbox
+     only in POST bodies. No referrer leaves this page, and no third-party script runs on it. -->
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; worker-src 'self' blob:; connect-src 'self' https://postbox.pigeonpost.dev wss:; base-uri 'none'; form-action 'none'; object-src 'none'">
+<!-- Served for /m/<meeting code or event id> (invitations and meeting links) and /m/u (unsubscribe). -->
+<title>Pigeonpost — Meeting</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+<script src="/theme.js?v=20261019-theme"></script>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css?v=20261020-p1a-sfu">
+<link rel="stylesheet" href="/calendar.css?v=20261021-p3b">
+</head>
+<body data-page="meeting">
+
+<main class="join meeting-page" id="join">
+  <div class="join-card">
+    <header class="join-head">
+      <span class="join-mark" aria-hidden="true">
+        <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="15" rx="2" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="M3.5 10h17M8 3v4M16 3v4" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>
+      </span>
+      <div>
+        <h1 id="m-title">Meeting</h1>
+        <p class="join-meta" id="m-sub"></p>
+      </div>
+    </header>
+    <div id="m-content" aria-live="polite"><p class="join-note">Loading…</p></div>
+    <p class="join-error sheet-error" id="m-error" role="alert" hidden></p>
+  </div>
+</main>
+
+<script src="/config.js"></script>
+<script src="/m.js?v=20261021-p3b"></script>
+<script src="/names.js?v=20261020-p1d"></script>
+<script src="/calls.js?v=20261021-p3b-p1d"></script>
+</body>
+</html>

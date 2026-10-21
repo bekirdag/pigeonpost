@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 20 October 2026</p>
+  <p class="updated">Last updated 21 October 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -124,6 +124,23 @@
   <h3>Disappearing messages</h3>
   <p>
     You can set a conversation or a group so that new messages disappear after a chosen time (5 minutes to 4 weeks), counted from when they are sent. When the time is up we delete the message and its attachments from our server, and the apps remove them from your devices. Disappearing messages limit how long messages are kept; they cannot stop someone from taking a screenshot, copying the text, or keeping a notification that was already shown, and they do not reach copies made outside Pigeonpost. Our database backups and write-ahead logs can hold a deleted message for a short time after it is deleted, until they are overwritten.
+  </p>
+
+  <h3 id="calendar">Calendar and scheduled meetings</h3>
+  <p>
+    Calendar events are not end-to-end encrypted. Their titles, descriptions, locations and the notes people add to their answers are stored encrypted at rest on our server, but our server can read them, because it uses them to send reminders and invitations. Times, time zones, repeat rules, who organized an event, who is invited, their answers, and meeting codes are stored as they are, because reminders, availability and meeting admission depend on them. Your calendar is visible to you; the people you invite see the event and the list of people invited (people invited by contact address are shown only by the name you gave them, never by their address).
+  </p>
+  <p>
+    <strong>Invitations to Pigeonpost users</strong> follow their own settings, as messages do: someone who blocked you receives nothing and you are not told; someone whose filters catch you sees the invitation under Filtered. <strong>Invitations to contact addresses</strong> (people without a Pigeonpost handle) are messages that we render and send through our notification service, which uses Novu (run on our own server) and our message delivery provider, Postmark. They carry the event's title, time, location and description, a calendar file, the organizer's handle, and personal links. The calendar file never contains a link that grants anything. We keep the address, sealed, so that updates and cancellations reach it, together with a keyed fingerprint of it that cannot be turned back into the address. Every invitation message has links to stop invitations from that organizer or from anyone on Pigeonpost; we keep only the keyed fingerprint to honour that choice. A guest who asks to confirm their address receives a single-use code that expires after 10 minutes. Delivery states (queued, delivered, failed, suppressed) are kept so the organizer can see them; the reason a message was suppressed is not shown to them.
+  </p>
+  <p>
+    <strong>Meetings.</strong> A meeting code is a locator, not a password: someone with only the code learns nothing about the event and cannot get in unless the organizer allows people to ask to join. Who may enter, wait or let others in is decided by our server from the event at the moment of joining. Call history entries of scheduled meetings record which event and occurrence the call belonged to. Calls themselves are handled as described under Voice and video calls.
+  </p>
+  <p>
+    <strong>Calendar feeds and files.</strong> If you turn on a secret feed link, anyone with the link can read the feed until you reset or turn it off, or it expires after a year; private events and invitations appear only as Busy, and feeds never contain meeting links, guest lists or descriptions. Files and feeds you add to Google, Apple, Outlook or another calendar are copied there and kept under that provider's terms; resetting the link stops future reads but cannot recall copies already made. Imported .ics files are read on our server without fetching anything they refer to, and become private copies; nobody is invited.
+  </p>
+  <p>
+    <strong>Retention.</strong> Your own events stay until you delete or cancel them or delete your account. The address, name and notes of a person invited by contact address are erased 30 days after the event's last occurrence, its cancellation, or their removal; invitation links expire after at most 30 days, guest sessions after at most 24 hours and join tickets after 2 minutes. Delivery records are kept up to 90 days. Requests to stop invitations are kept as keyed fingerprints until you ask us to remove them. Copies held by Novu, Postmark, recipients' mailboxes and calendar apps follow their own retention and cannot be recalled by us.
   </p>
 
   <h2>3. Sender attribution</h2>
@@ -245,6 +262,12 @@
       <td>To run the groups you create or join</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
       <td>While you are a member and the group exists; encrypted messages until their disappearing timer ends or the group is deleted (removed within 30 days); key-change messages until every member device has processed them, at most 90 days</td>
+    </tr>
+    <tr>
+      <td>Calendar events, invitations, answers, reminders and delivery records</td>
+      <td>To run the calendars and scheduled meetings you create or are invited to</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b)); for people invited by contact address, the organizer's legitimate interest in inviting them (Art. 6(1)(f))</td>
+      <td>Your events until you delete them or your account; contact addresses, names and notes of invited guests erased <strong>30 days</strong> after the event's last occurrence, cancellation or their removal; delivery records 90 days; requests to stop invitations kept as keyed fingerprints</td>
     </tr>
     <tr>
       <td>Profile pictures</td>
