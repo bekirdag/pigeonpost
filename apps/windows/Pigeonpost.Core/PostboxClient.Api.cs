@@ -44,6 +44,20 @@ public sealed partial class PostboxClient
         return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
     }
 
+    // The calls service shares the inbox's origin (inbox.pigeonpost.dev/calls/v1). The member token
+    // goes there and nowhere else: any other host is refused.
+    internal async Task<T> GetCallsJsonAsync<T>(Uri absolute, CancellationToken cancellationToken)
+    {
+        if (!(absolute.Scheme == Uri.UriSchemeHttps && absolute.Host == "inbox.pigeonpost.dev" || absolute.IsLoopback))
+            throw new ArgumentException("Not the calls service.", nameof(absolute));
+        using var request = new HttpRequestMessage(HttpMethod.Get, absolute);
+        request.Headers.Authorization = new("Bearer", await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false));
+        request.Headers.Accept.Add(new("application/json"));
+        using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccessStatusCode) throw new PostboxException((int)response.StatusCode, "calls_unavailable");
+        return await DecodeAsync<T>(response, cancellationToken).ConfigureAwait(false);
+    }
+
     private static string Scoped(string path, string? identity) => identity is null ? path
         : path + (path.Contains('?') ? "&" : "?") + "identity=" + Uri.EscapeDataString(identity);
 

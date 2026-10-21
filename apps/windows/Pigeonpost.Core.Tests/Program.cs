@@ -1033,6 +1033,7 @@ tests.AddRange(AccountTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
+tests.AddRange(GroupsModelTests.All());
 var failed = 0;
 foreach (var test in tests)
 {

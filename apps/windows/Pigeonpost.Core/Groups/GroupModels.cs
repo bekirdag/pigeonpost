@@ -119,7 +119,7 @@ public sealed record UploadedAttachment(string Id, long? Bytes, string? Sha256);
 public sealed record InviteResult(string Address, string Status);
 public sealed record CreatedGroup(GroupInfo Group, IReadOnlyList<InviteResult>? Invitations);
 public sealed record GroupLink(string? LinkToken, string? Url);
-public sealed record GroupCallStatus(bool Active, string? Room = null, string? Kind = null, IReadOnlyList<string>? Participants = null);
+public sealed record GroupCallStatus(bool Active, string? Room = null, string? Kind = null, int? Participants = null, bool? Full = null);
 
 // ---- local, decrypted history (only ever on this device, encrypted at rest) ------------------
 
@@ -166,6 +166,8 @@ public sealed class GroupLine
     public List<DeviceSummary>? Added { get; set; }
     public List<DeviceSummary>? Removed { get; set; }
     public List<DeviceSummary>? Updated { get; set; }
+    // Devices added to mailboxes that were already in the group: shown as device changes.
+    public List<DeviceSummary>? NewDevices { get; set; }
     public string? Warning { get; set; }
     public bool Local { get; set; }
 }

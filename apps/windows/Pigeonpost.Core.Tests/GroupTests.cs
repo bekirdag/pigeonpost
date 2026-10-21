@@ -280,3 +280,75 @@ internal static class GroupTests
         });
     }
 }
+
+// The Groups page model over the same stand-in postbox: rows, invitations, words for notices and
+// device changes, announcement mode and the composer.
+internal static class GroupsModelTests
+{
+    private sealed class Tokens : IAccessTokenProvider
+    {
+        public Task<string> GetTokenAsync(CancellationToken token) => Task.FromResult("test");
+        public Task<string> RefreshTokenAsync(CancellationToken token) => Task.FromResult("test");
+    }
+    private static void Require(bool condition, string reason) { if (!condition) throw new Exception(reason); }
+
+    public static IEnumerable<(string Name, Func<Task> Run)> All()
+    {
+        yield return ("Groups page: invitation row, accept, keying, chat lines with names, announcement bar and info", async () =>
+        {
+            var server = new PreviewPostbox();
+            var alice = server.AddMailbox(PreviewPostbox.Seed(71), "/alice/main");
+            var bob = server.AddMailbox(PreviewPostbox.Seed(72), "/bob/main");
+            using var client = new PostboxClient(new HttpClient(server), new Tokens(), new Uri("http://127.0.0.1:9"));
+            var features = await client.GetCapabilitiesAsync(default);
+            using var a = new GroupsModel(client, _ => new MemoryGroupStateStore());
+            using var b = new GroupsModel(client, _ => new MemoryGroupStateStore());
+            await a.ActivateAsync(new Mailbox(alice, "/alice/main"), features, [new Mailbox(alice, "/alice/main")], []);
+            await b.ActivateAsync(new Mailbox(bob, "/bob/main"), features, [new Mailbox(bob, "/bob/main")], [new Contact("/alice/main", "Alice A.", "allow", "review")]);
+            Require(a.Enabled && b.Enabled && a.DeviceFingerprint is not null, "Groups enabled with a device fingerprint.");
+            Require(a.EmptyText.Length > 0, "Empty list explains how to start.");
+
+            var created = await a.CreateAsync(new GroupSettings("Design crit"), ["/bob/main", "/nobody/here"]);
+            Require(created is not null && a.Selected?.Id == created.Id && a.Status == "Not invited: /nobody/here", "Create selects the group and reports who was not invited: " + a.Status);
+            await b.RefreshAsync();
+            var invitation = b.Groups.Single();
+            Require(invitation.IsInvitation && b.Invitations == 1 && invitation.Detail.StartsWith("Invitation", StringComparison.Ordinal), "Invitation row at the top.");
+            await b.SelectAsync(invitation);
+            Require(b.ShowsInvitation && !b.ShowsComposer, "An invitation shows Accept/Decline, not a composer.");
+            await b.AnswerInvitationAsync(true);
+            Require(b.Groups.Single().IsKeying && b.ShowsKeying, "Accepted invitation waits for keys.");
+            await a.RefreshAsync(); // Alice's device adds Bob's
+            await b.RefreshAsync(); // Bob's device joins from the welcome
+            await b.SelectAsync(b.Groups.Single());
+            Require(b.ShowsComposer && !b.ShowsKeying, "Bob can post once keyed.");
+
+            a.Draft = "Morning! Draft is up.";
+            Require(a.CanSend && await a.SendAsync(), "Alice sends.");
+            await b.RefreshAsync();
+            var line = b.Lines.Last(l => l.IsMessage);
+            Require(line.Text == "Morning! Draft is up." && line.Sender == "Alice A." && !line.Mine, "Sender shown by the name Bob knows: " + line.Sender);
+            Require(b.Lines.Any(l => l.Text == "You joined the group") && b.Groups.Single().Preview.StartsWith("Alice:", StringComparison.Ordinal),
+                "Join notice and preview with the sender's short name: " + b.Groups.Single().Preview);
+
+            await a.SetPostPolicyAsync(adminsOnly: true);
+            await b.RefreshAsync();
+            await b.SelectAsync(b.Groups.Single());
+            Require(b.ShowsAnnouncementBar && !b.ShowsComposer && b.AnnouncementText == "Only admins can send messages", "Announcement mode replaces the composer.");
+            Require(b.Lines.Any(l => l.Text == "Posting set to admins only"), "Settings notice reads as a sentence.");
+
+            await a.SetTimerAsync(3600);
+            await a.RefreshAsync();
+            await a.SelectAsync(a.Groups.Single());
+            Require(a.TimerBanner == "Messages disappear after 1 hour" && a.Lines.Any(l => l.Text == "You set disappearing messages to 1 hour"), "Timer banner and notice.");
+
+            var (members, safety) = await a.LoadInfoAsync();
+            Require(members.Count == 2 && members[0].RoleLabel == "Owner" && members.All(m => m.Devices.Count == 1), "Members with roles and devices.");
+            Require(safety is { Length: > 0 } && members.All(m => m.DevicesLabel.Contains(" · ", StringComparison.Ordinal)), "Safety number and device fingerprints.");
+
+            // Bob blocks Alice: her content is hidden for him, not removed for anyone else.
+            b.SetContacts([new Contact("/alice/main", "Alice A.", "block", "review")]);
+            await b.SelectAsync(b.Groups.Single());
+            Require(b.Lines.Where(l => l.IsMessage).All(l => l.Text == "Hidden: you blocked this sender."), "Blocked sender's messages are hidden.");
+        });
+    }
+}

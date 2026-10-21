@@ -313,6 +313,7 @@ public sealed class GroupClient : IDisposable
             Kind = "commit", Seq = seq, Epoch = (long)o.Epoch, CreatedAt = created,
             Committer = Summary(o.Committer), Added = o.Added.Select(Summary).ToList(),
             Removed = o.Removed.Select(Summary).ToList(), Updated = o.Updated.Select(Summary).ToList(),
+            NewDevices = o.Added.Where(a => beforeMailboxes.Contains(a.Mailbox)).Select(Summary).ToList(),
         };
         Remember(gid, line);
         if (o.SelfRemoved) return;
@@ -650,6 +651,20 @@ public sealed class GroupClient : IDisposable
         Members(gid).ToDictionary(m => m.Mailbox + "|" + m.DeviceId, m => m.Fingerprint, StringComparer.Ordinal);
 
     private static DeviceSummary Summary(MemberInfo m) => new(m.Mailbox, m.DeviceId, Hex(m.Fingerprint));
+
+    // A device fingerprint (hex, as kept in history) in the digits people compare aloud.
+    public static string Digits(string fingerprintHex)
+    {
+        try { return Pigeonpost.GroupCrypto.GroupCrypto.FingerprintDigits(Convert.FromHexString(fingerprintHex)); }
+        catch (Exception) { return fingerprintHex; }
+    }
+
+    // Whether the group library can be used on this machine. Without it groups are hidden.
+    public static bool LibraryAvailable()
+    {
+        try { return Pigeonpost.GroupCrypto.GroupCrypto.EncScheme().Length > 0; }
+        catch (Exception ex) when (ex is DllNotFoundException or EntryPointNotFoundException or TypeInitializationException or BadImageFormatException) { return false; }
+    }
     private static string Hex(byte[] bytes) => Convert.ToHexString(bytes).ToLowerInvariant();
 
     private static Dictionary<string, string>? Flatten(JsonElement? metadata)
