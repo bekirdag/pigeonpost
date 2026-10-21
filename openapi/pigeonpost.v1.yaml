@@ -23,6 +23,8 @@ info:
 servers:
   - url: https://postbox.pigeonpost.dev
 tags:
+  - name: calendar
+    description: Calendars, events, invitations, feeds and guest routes (Phase 3B, docs/calendar.md).
   - name: meta
     description: Health, onboarding and discovery.
   - name: accounts
@@ -7126,6 +7128,986 @@ paths:
           $ref: '#/components/responses/GroupError'
         '409':
           $ref: '#/components/responses/GroupError'
+  /v1/calendars:
+    get:
+      tags: [calendar]
+      operationId: listCalendars
+      summary: The acting mailbox's calendars
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    post:
+      tags: [calendar]
+      operationId: createCalendar
+      summary: Create a calendar
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendars/{id}:
+    patch:
+      tags: [calendar]
+      operationId: updateCalendar
+      summary: Rename, recolor or make default
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    delete:
+      tags: [calendar]
+      operationId: deleteCalendar
+      summary: Delete a calendar (cancels events the caller organizes in it)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events:
+    get:
+      tags: [calendar]
+      operationId: listCalendarOccurrences
+      summary: Effective occurrences in a window (≤ 62 days)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: to
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: calendars
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: include
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    post:
+      tags: [calendar]
+      operationId: createCalendarEvent
+      summary: Create an event (and invitations)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '201':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}:
+    get:
+      tags: [calendar]
+      operationId: getCalendarEvent
+      summary: One event, or `{id}.ics` for the caller's iCalendar copy
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: occurrence_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    patch:
+      tags: [calendar]
+      operationId: updateCalendarEvent
+      summary: Change an event (scope all, this or following)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/cancel:
+    post:
+      tags: [calendar]
+      operationId: cancelCalendarEvent
+      summary: Cancel an event, one occurrence or the rest of a series
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/attendees:
+    post:
+      tags: [calendar]
+      operationId: changeCalendarAttendees
+      summary: Add or remove attendees (organizer)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/attendees/{attendee_id}/link:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestLink
+      summary: A fresh personal invitation link for a contact-address guest (organizer)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: attendee_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/rsvp:
+    post:
+      tags: [calendar]
+      operationId: rsvpCalendarEvent
+      summary: Answer an invitation
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/reminders:
+    put:
+      tags: [calendar]
+      operationId: setCalendarReminders
+      summary: The caller's own reminders for an event
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/placement:
+    put:
+      tags: [calendar]
+      operationId: placeCalendarInvitation
+      summary: Move an invitation to another of the caller's calendars
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/events/{id}/linked-group:
+    patch:
+      tags: [calendar]
+      operationId: linkCalendarGroup
+      summary: Link (or unlink) a meeting chat group (organizer)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/invitations:
+    get:
+      tags: [calendar]
+      operationId: listCalendarInvitations
+      summary: Pending or filtered invitations
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: state
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/settings:
+    get:
+      tags: [calendar]
+      operationId: getCalendarSettings
+      summary: Calendar settings
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    put:
+      tags: [calendar]
+      operationId: putCalendarSettings
+      summary: Change calendar settings
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/freebusy:
+    post:
+      tags: [calendar]
+      operationId: calendarFreeBusy
+      summary: Busy intervals (own mailboxes only in this phase; others `unknown`)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/feeds/{calendar_id}:
+    get:
+      tags: [calendar]
+      operationId: getCalendarFeed
+      summary: Whether a secret feed is on (never the link)
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: calendar_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+    post:
+      tags: [calendar]
+      operationId: setCalendarFeed
+      summary: Turn a secret feed on (new link, shown once) or off
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: calendar_id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/feed/{secret}:
+    get:
+      tags: [calendar]
+      operationId: calendarFeed
+      summary: The subscribable feed (`{secret}.ics`; the secret is the grant)
+      description: No bearer. Redacted projection; private events and invitations are Busy.
+      security: []
+      parameters:
+        - name: secret
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/import/preview:
+    post:
+      tags: [calendar]
+      operationId: previewCalendarImport
+      summary: Parse an uploaded .ics into a private draft
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: calendar_id
+          in: query
+          required: false
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          text/calendar:
+            schema:
+              type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/import/{draft}/confirm:
+    post:
+      tags: [calendar]
+      operationId: confirmCalendarImport
+      summary: Create private copies of selected draft events
+      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: draft
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/preview:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestPreview
+      summary: Limited preview of one's invitation
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/ics:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestIcs
+      summary: The guest's own iCalendar copy
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/rsvp:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestRsvp
+      summary: Answer as a guest
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/verify/start:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestVerifyStart
+      summary: Send a verification code to the invited address
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/verify/complete:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestVerifyComplete
+      summary: Confirm the code and get a device-bound guest session
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/recover:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestRecover
+      summary: Ask for a code for a live invitation (always the same answer)
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/join:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestJoin
+      summary: A single-use join ticket for the calls service
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /v1/calendar/guest/unsubscribe:
+    post:
+      tags: [calendar]
+      operationId: calendarGuestUnsubscribe
+      summary: Stop invitations from one organizer or everyone
+      description: 'Guest route (no Pigeonpost account): see docs/calendar.md §6. Purpose-bound credentials in the body; refusals are a generic `guest_token_invalid`.'
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/CalendarError'
+        '404':
+          $ref: '#/components/responses/CalendarError'
+  /internal/v1/calendar/meeting-access:
+    post:
+      tags: [internal]
+      x-internal: true
+      operationId: internalCalendarMeetingAccess
+      summary: Role and admission for a scheduled meeting room (calls service)
+      description: See docs/calendar.md §8. Refusals are `200 {allowed:false, reason}`.
+      security:
+        - serviceToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [code, actor]
+              properties:
+                code:
+                  type: string
+                occurrence_id:
+                  type: string
+                actor:
+                  type: object
+                purpose:
+                  type: string
+                  enum: [status, join, recheck, extend]
+                extend_minutes:
+                  type: integer
+      responses:
+        '200':
+          description: '`{allowed, reason?, meeting_id, event_id, occurrence_id, role, admission, can_admit, participant, organizer, policy, admitters, opens_at, closes_at, …}`'
+          content:
+            application/json:
+              schema:
+                type: object
 components:
   securitySchemes:
     capToken:
@@ -7698,6 +8680,12 @@ components:
           enum: [cursor_expired]
 
   responses:
+    CalendarError:
+      description: 'A calendar refusal: `{error, message, …}` with codes from docs/calendar.md §0 (`feature_disabled`, `not_found`, `forbidden`, `human_required`, `revision_conflict`, `time_invalid`, `recurrence_invalid`, `expansion_limit`, `attendee_limit`, `invite_limit`, `meeting_capacity`, `guest_token_invalid`, `window_closed`, …).'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
     GroupError:
       description: 'A group refusal: `{error, detail, message}` with codes from docs/groups.md (`not_member`, `not_admin`, `owner_only`, `posting_restricted`, `banned`, `group_full`, `invalid_link`, `invite_required`, `already_member`, `human_required`, `group_deleted`, `revision_conflict`, `epoch_conflict`, `key_activation_pending`, `idempotency_conflict`, `feature_disabled`, …).'
       content:

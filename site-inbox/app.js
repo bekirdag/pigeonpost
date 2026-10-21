@@ -135,6 +135,7 @@
     state = freshState();
     resetPhase1b();
     window.PigeonpostGroups?.reset(); // Phase 3a
+    window.PigeonpostCalendar?.reset(); // Phase 3B
     const banner = $("offline-banner");
     if (banner) banner.hidden = true;
     render();
@@ -923,7 +924,7 @@
       inboxRequest: 0,
       acceptedInboxRequest: 0,
       sectionRequests: {},
-      leftView: "inbox", // inbox | calls | filtered
+      leftView: "inbox", // inbox | calls | filtered | calendar (Phase 3B)
       calls: { entries: [], unseen: 0, filter: "all", next: null, loaded: false, loading: false, filtered: null },
       filtered: [],      // messages the server filed as filtered
     };
@@ -1186,6 +1187,7 @@
     renderSubs();
     renderThread();
     window.PigeonpostGroups?.render(); // Phase 3a
+    window.PigeonpostCalendar?.render(); // Phase 3B
   }
 
   function renderSubs() {
@@ -1481,7 +1483,7 @@
     // With several threads on a peer the phone stops at the list of them, so "a peer is selected"
     // is no longer the same question as "there are messages to show".
     const open = Boolean(state.openPeer);
-    $("pane-thread").dataset.open = String((open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length)) || Boolean(window.PigeonpostGroups?.isOpen()));
+    $("pane-thread").dataset.open = String((open && (!onPhone() || state.openThread !== null || !subthreadsFor(state.openPeer).length)) || Boolean(window.PigeonpostGroups?.isOpen()) || Boolean(window.PigeonpostCalendar?.isOpen())); // Phase 3B: calendar
     $("thread-head").hidden = !open;
     window.PigeonpostCalls?.renderHead();
     $("composer").hidden = !open;
@@ -2579,6 +2581,7 @@
 
   async function openThread(peer) {
     window.PigeonpostGroups?.close(); // Phase 3a
+    if (state.leftView === "calendar") state.leftView = "inbox"; // Phase 3B: a conversation replaces the calendar
     stashDraft();
     const wasClosed = !state.openPeer;
     state.openPeer = peer;
@@ -2771,6 +2774,7 @@
     renderIdentityMenu();
     render();
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
+    window.PigeonpostCalendar?.onMailbox(); // Phase 3B
     // The stream regardless: an opening that did not arrive is exactly when the mailbox most needs
     // something retrying behind it.
     try { await loadAll(); }
@@ -3945,6 +3949,7 @@
     Avatars.enabled = has("avatars");
     syncSideNav();
     window.PigeonpostGroups?.onMailbox(); // Phase 3a
+    window.PigeonpostCalendar?.onMailbox(); // Phase 3B
   }
 
   function resetPhase1b() {
@@ -3985,6 +3990,7 @@
       loadThreads().then(render).catch(() => {});
     }
     if (/^(group\.|mls\.|message\.expired|thread\.settings)/.test(event)) window.PigeonpostGroups?.onEvent(event, frame); // Phase 3a
+    if (/^event\./.test(event)) window.PigeonpostCalendar?.onEvent(event, frame); // Phase 3B
   }
 
   // ---- profile pictures ---------------------------------------------------------------------
@@ -4646,8 +4652,10 @@
   // ---- side views: calls and filtered ---------------------------------------------------------
 
   function syncSideNav() {
-    const on = has("call_history") && Boolean(state.me);
+    const on = (has("call_history") || has("calendar")) && Boolean(state.me); // Phase 3B: or calendar
     $("side-nav").hidden = !on;
+    $("calls-btn").hidden = !has("call_history"); // Phase 3B
+    window.PigeonpostCalendar?.syncNav(); // Phase 3B
     const unseen = on ? state.calls.unseen : 0;
     $("calls-badge").hidden = !unseen;
     $("calls-badge").textContent = unseen > 99 ? "99+" : String(unseen);
@@ -4659,6 +4667,7 @@
   function renderSideViews() {
     if (state.leftView === "calls" && !has("call_history")) state.leftView = "inbox";
     if (state.leftView === "filtered" && !has("message_filtering")) state.leftView = "inbox";
+    if (state.leftView === "calendar" && !has("calendar")) state.leftView = "inbox"; // Phase 3B
     syncSideNav();
     const view = state.leftView, inbox = view === "inbox";
     $("threads").hidden = !inbox;
@@ -5299,6 +5308,27 @@
     reloadThreads: () => loadThreads().then(render),
     pruneExpired: pruneExpiredDirect,
     rerender: () => render(),
+  };
+
+  // Phase 3B: what calendar.js may ask of the inbox. Calendar data is not end-to-end encrypted; it is
+  // fetched and rendered in calendar.js and never passes through here.
+  window.PigeonpostCalendarHost = {
+    postbox: () => cfg.postbox,
+    token: () => getToken(),
+    renew: () => renewSession(),
+    mailbox: () => (state.me ? { address: state.me.address, handle: state.me.handle || null } : null),
+    contacts: () => state.contacts.slice(),
+    features: () => new Set(features),
+    leftView: () => (state.viewingArchive ? "archive" : state.leftView),
+    setLeftView: (view) => setLeftView(view),
+    onPhone: () => onPhone(),
+    toast,
+    closeConversation: () => window.PigeonpostGroupsHost.closeConversation(),
+    openConversation: (peer) => {
+      if (!peer) return;
+      setLeftView("inbox");
+      openThread(peer);
+    },
   };
 
   async function boot() {

@@ -64,6 +64,14 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         ORG_INVITE_EMAIL,
         "Org invitations are delivered through saas_be's pigeonpost-org-invite workflow (SDS §7.2)",
     ),
+    (
+        CALENDAR,
+        "Calendar and scheduled meetings: /v1/calendars, /v1/calendar/*, event.* events (SDS §14B)",
+    ),
+    (
+        CALENDAR_EMAIL,
+        "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
+    ),
 ];
 
 /// Incoming-call pushes (Phase 1c, docs/call-alerting.md).
@@ -89,6 +97,11 @@ pub(crate) const ORGS: &str = "orgs";
 pub(crate) const ENTERPRISE_PORTAL: &str = "enterprise_portal";
 /// Invitation delivery through saas_be/Novu (SDS §7.2). Off until the sender domain is verified.
 pub(crate) const ORG_INVITE_EMAIL: &str = "org_invite_email";
+/// Calendar and scheduled meetings (SDS §14B).
+pub(crate) const CALENDAR: &str = "calendar";
+/// Calendar messages to contact addresses through saas_be/Novu (SDS §14B.6). Separate, because
+/// it waits on the sender domain being verified.
+pub(crate) const CALENDAR_EMAIL: &str = "calendar_email";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[
@@ -111,6 +124,11 @@ pub(crate) const EVENT_TYPES: &[&str] = &[
     "org.member",
     "org.policy",
     "org.status",
+    "event.invite",
+    "event.updated",
+    "event.cancelled",
+    "event.rsvp",
+    "event.reminder",
 ];
 
 pub(crate) fn known_names() -> Vec<&'static str> {

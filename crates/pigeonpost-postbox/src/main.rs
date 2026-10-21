@@ -62,6 +62,7 @@ mod billing_internal;
 #[cfg(test)]
 mod billing_tests;
 mod blobs;
+mod calendar;
 mod call_alerts;
 #[cfg(test)]
 mod call_alerts_tests;
@@ -180,6 +181,8 @@ struct AppState {
     avatar_processor: Arc<avatars::Processor>,
     /// Ring attempts per caller→callee pair, for call admission.
     call_pairs: Arc<filtering::PairLimiter>,
+    /// Calendar delivery client and worker wakeup (Phase 3B).
+    calendar: Arc<calendar::Runtime>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -391,6 +394,8 @@ async fn serve(cfg: Config) {
     ephemeral::start_worker(state.clone());
     // Org invitation delivery, lifecycle and domain re-checks (Phase 4).
     org_notify::start_worker(state.clone());
+    // Calendar deliveries, reminders and retention (SDS §14B.12).
+    calendar::worker::start(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -523,6 +528,7 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
         avatar_blobs: avatar_blobs.map(Arc::new),
         avatar_processor: Arc::new(avatars::Processor::from_env()),
         call_pairs: Arc::new(filtering::PairLimiter::new()),
+        calendar: Arc::new(calendar::Runtime::from_env(&cfg.public_url)),
     })
 }
 
@@ -774,6 +780,91 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/mls/welcomes/{welcome_id}/ack", post(mls::welcome_ack))
         // Phase 4: organizations (SDS §5–§10, docs/orgs.md).
         .merge(org_routes::router())
+        // Phase 3B: calendar and scheduled meetings (SDS §14B.5, docs/calendar.md).
+        .route(
+            "/v1/calendars",
+            get(calendar::calendars::list).post(calendar::calendars::create),
+        )
+        .route(
+            "/v1/calendars/{id}",
+            axum::routing::patch(calendar::calendars::patch).delete(calendar::calendars::delete),
+        )
+        .route(
+            "/v1/calendar/events",
+            get(calendar::events::list).post(calendar::events::create),
+        )
+        .route(
+            "/v1/calendar/events/{id}",
+            get(calendar::events::get_one).patch(calendar::events::patch),
+        )
+        .route(
+            "/v1/calendar/events/{id}/cancel",
+            post(calendar::events::cancel),
+        )
+        .route(
+            "/v1/calendar/events/{id}/attendees",
+            post(calendar::events::attendees),
+        )
+        .route(
+            "/v1/calendar/events/{id}/attendees/{attendee_id}/link",
+            post(calendar::events::attendee_link),
+        )
+        .route(
+            "/v1/calendar/events/{id}/rsvp",
+            post(calendar::events::rsvp),
+        )
+        .route(
+            "/v1/calendar/events/{id}/reminders",
+            axum::routing::put(calendar::events::reminders),
+        )
+        .route(
+            "/v1/calendar/events/{id}/placement",
+            axum::routing::put(calendar::events::placement),
+        )
+        .route(
+            "/v1/calendar/events/{id}/linked-group",
+            axum::routing::patch(calendar::events::linked_group),
+        )
+        .route(
+            "/v1/calendar/invitations",
+            get(calendar::events::invitations),
+        )
+        .route(
+            "/v1/calendar/settings",
+            get(calendar::calendars::get_settings).put(calendar::calendars::put_settings),
+        )
+        .route("/v1/calendar/freebusy", post(calendar::calendars::freebusy))
+        .route(
+            "/v1/calendar/feeds/{calendar_id}",
+            get(calendar::calendars::get_feed).post(calendar::calendars::set_feed),
+        )
+        .route("/v1/calendar/feed/{secret}", get(calendar::calendars::feed))
+        .route(
+            "/v1/calendar/import/preview",
+            post(calendar::calendars::import_preview)
+                .layer(axum::extract::DefaultBodyLimit::max(600 * 1024)),
+        )
+        .route(
+            "/v1/calendar/import/{draft}/confirm",
+            post(calendar::calendars::import_confirm),
+        )
+        .route("/v1/calendar/guest/preview", post(calendar::guest::preview))
+        .route("/v1/calendar/guest/ics", post(calendar::guest::ics))
+        .route("/v1/calendar/guest/rsvp", post(calendar::guest::rsvp))
+        .route(
+            "/v1/calendar/guest/verify/start",
+            post(calendar::guest::verify_start),
+        )
+        .route(
+            "/v1/calendar/guest/verify/complete",
+            post(calendar::guest::verify_complete),
+        )
+        .route("/v1/calendar/guest/recover", post(calendar::guest::recover))
+        .route("/v1/calendar/guest/join", post(calendar::guest::join))
+        .route(
+            "/v1/calendar/guest/unsubscribe",
+            post(calendar::guest::unsubscribe),
+        )
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .layer(middleware::from_fn(cors))
@@ -6201,6 +6292,7 @@ mod tests {
             avatar_blobs: None,
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
+            calendar: Arc::new(calendar::Runtime::for_test()),
         }
     }
 
@@ -8908,6 +9000,7 @@ mod tests {
             avatar_blobs: None,
             avatar_processor: Arc::new(avatars::Processor::new(avatars::Isolation::Inline)),
             call_pairs: Arc::new(filtering::PairLimiter::new()),
+            calendar: Arc::new(calendar::Runtime::for_test()),
         };
         let _ = build_router(state);
     }

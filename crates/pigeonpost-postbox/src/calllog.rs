@@ -294,6 +294,11 @@ pub(crate) struct EventReq {
     /// Set for a group call (Phase 3a): start and end become notices in the group.
     #[serde(default)]
     group_id: Option<String>,
+    /// Set for a scheduled meeting room (Phase 3B).
+    #[serde(default)]
+    calendar_event_id: Option<String>,
+    #[serde(default)]
+    occurrence_id: Option<String>,
 }
 
 fn token_ok(s: &str, max: usize) -> bool {
@@ -311,6 +316,17 @@ impl EventReq {
     fn validate(self, now: u64) -> Result<CallEvent, &'static str> {
         if !token_ok(&self.event_id, 128) || !token_ok(&self.room_id, 128) {
             return Err("event_id and room_id must be short tokens");
+        }
+        if self
+            .calendar_event_id
+            .as_deref()
+            .is_some_and(|e| !token_ok(e, 64))
+            || self
+                .occurrence_id
+                .as_deref()
+                .is_some_and(|o| !token_ok(o, 80))
+        {
+            return Err("calendar ids must be short tokens");
         }
         if !matches!(self.kind.as_str(), "audio" | "video") {
             return Err("kind must be audio or video");
@@ -358,6 +374,8 @@ impl EventReq {
             by: self.by,
             participants,
             at: self.at,
+            calendar_event_id: self.calendar_event_id,
+            occurrence_id: self.occurrence_id,
         })
     }
 }

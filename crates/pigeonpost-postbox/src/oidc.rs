@@ -325,6 +325,12 @@ pub(crate) fn test_person_claims(address: &str, acr: Option<&str>) -> serde_json
     v
 }
 
+/// A member token whose realm-verified sign-in address is `address` (calendar tests).
+#[cfg(test)]
+pub(crate) fn test_member_token_with_address(issuer: &str, sub: &str, address: &str) -> String {
+    test_member_token_with(issuer, sub, test_person_claims(address, None))
+}
+
 /// The same, with the realm saying the address is not verified.
 #[cfg(test)]
 pub(crate) fn test_unverified_claims(address: &str) -> serde_json::Value {
