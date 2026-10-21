@@ -28,7 +28,10 @@ import { randomBytes } from "node:crypto";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const SITE = path.resolve(HERE, "../..");
 const CATALOG = JSON.parse(readFileSync(path.resolve(SITE, "../store-adapter/catalog/pigeonpost-catalog.json"), "utf8"));
-const CHROME = process.env.CHROME || "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome";
+const CHROME = [process.env.CHROME, "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+  "/usr/bin/google-chrome", "/usr/bin/google-chrome-stable", "/usr/bin/chromium", "/usr/bin/chromium-browser"]
+  .find((c) => c && existsSync(c));
+if (!CHROME) throw new Error("no Chrome found; set CHROME=/path/to/chrome");
 const REAL = process.env.POSTBOX_URL || null;
 const work = mkdtempSync(path.join(os.tmpdir(), "ppe-e2e-"));
 const children = [];
