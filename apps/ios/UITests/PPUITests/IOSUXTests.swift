@@ -334,6 +334,18 @@ final class IPadLayoutTests: XCTestCase {
             Scene(name: "group-info", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000", "-sheet=group-info"], ready: "Group info"),
             Scene(name: "new-group", arguments: ["-fixtures", "-sheet=new-group"], ready: "New group"),
             Scene(name: "join-group", arguments: ["-fixtures", "-join=grp_fixturejoin00000000000000"], ready: "joinGroup"),
+            // Phase 1b.
+            Scene(name: "calls-sidebar", arguments: open, ready: "sideCalls") { app in
+                app.descendants(matching: .any)["sideCalls"].tap()
+                _ = app.descendants(matching: .any)["call:c1"].waitForExistence(timeout: 5)
+            },
+            Scene(name: "calls", arguments: ["-fixtures", "-sheet=calls"], ready: "callsFilter"),
+            Scene(name: "filtered", arguments: ["-fixtures", "-sheet=filtered"], ready: "filtered:/olga/main"),
+            Scene(name: "privacy", arguments: ["-fixtures", "-sheet=privacy"], ready: "policy-unknown_calls"),
+            Scene(name: "blocked", arguments: ["-fixtures", "-sheet=blocked"], ready: "blockAddressField"),
+            Scene(name: "profile", arguments: ["-fixtures", "-sheet=profile"], ready: "profilePicture"),
+            Scene(name: "block", arguments: open + ["-sheet=block"], ready: "blockConfirm"),
+            Scene(name: "blocked-conversation", arguments: ["-fixtures", "-open=/noisy/bot"], ready: "blockedBanner"),
         ]
     }
 

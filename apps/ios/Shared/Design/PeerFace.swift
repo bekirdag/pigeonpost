@@ -91,7 +91,7 @@ enum PeerFace {
 /// root. Absent — a test, a preview, a postbox without pictures — the face is the initials, which is
 /// also what shows underneath while a picture loads and whenever there is none.
 struct AvatarLookup {
-    let image: @MainActor (String) -> Image?
+    let image: @MainActor (String) -> CGImage?
 }
 
 private struct AvatarLookupKey: EnvironmentKey {
@@ -122,13 +122,14 @@ struct Avatar: View {
                     .kerning(size * 0.32 * 0.02)
                     .foregroundStyle(PeerFace.toneInk(peer))
             )
+            // Painted as the circle's fill rather than laid over it as an image view: an image view is
+            // an accessibility element of its own, and a face is never something to read out.
             .overlay {
-                if let peer, let picture = lookup?.image(peer) {
-                    picture
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: size, height: size)
-                        .clipShape(Circle())
+                if let peer, let picture = lookup?.image(peer), picture.width > 0, picture.height > 0 {
+                    Circle().fill(ImagePaint(
+                        image: Image(decorative: picture, scale: 1),
+                        scale: size / CGFloat(min(picture.width, picture.height))
+                    ))
                 }
             }
             .accessibilityHidden(true)
