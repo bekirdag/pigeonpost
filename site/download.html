@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Download Pigeonpost</title>
-<meta name="description" content="Download the native Pigeonpost desktop app for Mac, Windows or Linux, or open your inbox in a browser.">
+<meta name="description" content="Download Pigeonpost for iPhone, iPad, Android, Mac, Windows or Linux, or open your inbox in a browser.">
 <meta name="color-scheme" content="light dark">
 <link rel="canonical" href="https://pigeonpost.dev/download">
 <link rel="icon" href="/favicon.ico" sizes="any">
@@ -14,7 +14,7 @@
 <link rel="stylesheet" href="/style.css">
 <link rel="stylesheet" href="/brand.css">
 <link rel="stylesheet" href="/download.css?v=20260913-linux">
-<script src="/download.js?v=20260913-linux" defer></script>
+<script src="/download.js?v=20261021-mobile-stores" defer></script>
 </head>
 <body>
 <svg class="platform-symbols" xmlns="http://www.w3.org/2000/svg" aria-hidden="true" focusable="false">
@@ -22,6 +22,7 @@
     <path d="M16.4 1.3c.2 1.4-.4 2.8-1.2 3.8-.9 1-2.2 1.6-3.5 1.5-.2-1.3.5-2.7 1.3-3.6.9-1 2.3-1.7 3.4-1.7zM20.9 17.5c-.5 1.2-.8 1.8-1.5 2.9-1 1.5-2.4 3.3-4.1 3.3-1.5 0-1.9-1-4-1s-2.5 1-4 1c-1.7 0-3-1.6-4-3.1C.5 16.4.1 10.9 1.9 8.4c1.3-1.8 3.3-2.7 5.2-2.7 1.6 0 2.7 1 4 1 1.2 0 3.2-1.2 5.4-1 1.9.1 3.4 1 4.4 2.3-3.9 2.2-3.3 7.6 0 9.5z" transform="translate(2 0) scale(.88)"/>
   </symbol>
   <symbol id="icon-windows" viewBox="0 0 24 24"><path d="M2 2h9v9H2zm11 0h9v9h-9zM2 13h9v9H2zm11 0h9v9h-9z"/></symbol>
+  <symbol id="icon-android" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M7 1h10a3 3 0 0 1 3 3v16a3 3 0 0 1-3 3H7a3 3 0 0 1-3-3V4a3 3 0 0 1 3-3zm0 2a1 1 0 0 0-1 1v14h12V4a1 1 0 0 0-1-1H7zm4 17v1h2v-1h-2z"/></symbol>
   <symbol id="icon-linux" viewBox="0 0 24 24">
     <path fill-rule="evenodd" d="M12 1c-3 0-4.5 2.3-4.5 5.3 0 1.5-.5 3.1-1.7 4.8-1.4 2-2.4 4.2-1.9 5.8.2.7.8.8 1.5.1C5.5 20 8.3 22 12 22s6.5-2 6.6-5c.7.7 1.3.6 1.5-.1.5-1.6-.5-3.8-1.9-5.8-1.2-1.7-1.7-3.3-1.7-4.8C16.5 3.3 15 1 12 1zm-1.6 4c-.5 0-.9.6-.9 1.3s.4 1.3.9 1.3.9-.6.9-1.3-.4-1.3-.9-1.3zm3.2 0c-.5 0-.9.6-.9 1.3s.4 1.3.9 1.3.9-.6.9-1.3-.4-1.3-.9-1.3zM12 8l-2.2 1L12 10.5 14.2 9 12 8zm0 3c-2.6 0-4.5 3-4.5 5.7 0 2 1.8 3.3 4.5 3.3s4.5-1.3 4.5-3.3C16.5 14 14.6 11 12 11z"/>
     <path d="m5.5 18-3 3 .5 1.5 6 .5 1-2.5zm13 0 3 3-.5 1.5-6 .5-1-2.5z"/>
@@ -38,26 +39,40 @@
 
   <main>
     <div class="hero download-hero">
-      <p class="download-eyebrow">Pigeonpost Desktop</p>
+      <p class="download-eyebrow">Pigeonpost apps</p>
       <h1>Download Pigeonpost.</h1>
-      <p class="lede">Keep up with your agents, wherever you work. Find the app for your desktop or pick up your conversations in the browser.</p>
+      <p class="lede">Keep up with your people and agents, wherever you are. Get Pigeonpost on your phone, tablet or desktop.</p>
     </div>
 
     <section class="download-feature" aria-labelledby="recommended-title">
       <p class="download-badge" id="device-recommendation" aria-live="polite">Choose your platform</p>
       <h2 id="recommended-title">Make yourself at home.</h2>
-      <p id="recommended-description">Choose a desktop release below, or use the web inbox on any device.</p>
+      <p id="recommended-description">Choose the app for your device below, or use the web inbox on any device.</p>
       <div class="cta">
         <a class="btn btn-primary" id="recommended-download" href="#all-downloads">Browse downloads</a>
         <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev" id="web-inbox"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
       </div>
-      <a class="download-other-link" id="other-downloads" href="#all-downloads" hidden>See all desktop releases</a>
+      <a class="download-other-link" id="other-downloads" href="#all-downloads" hidden>See all apps</a>
     </section>
 
     <section aria-labelledby="all-downloads">
-      <h2 id="all-downloads">Desktop releases</h2>
-      <p>Choose another platform or download for another computer.</p>
+      <h2 id="all-downloads">Apps for every device</h2>
+      <p>Choose your phone, tablet or computer.</p>
       <div class="download-options">
+        <article class="download-option" data-platform="ios" data-recommendation-title="Pigeonpost for iPhone and iPad">
+          <h3>iPhone and iPad</h3>
+          <span class="release-status">Available on the App Store</span>
+          <p class="platform-description">Your conversations with people and agents, on your iPhone or iPad.</p>
+          <p class="download-meta">Install and update through the App Store.</p>
+          <a class="btn btn-secondary platform-action" href="https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-mac"/></svg><span>Download on the App Store</span></a>
+        </article>
+        <article class="download-option" data-platform="android" data-recommendation-title="Pigeonpost for Android">
+          <h3>Android</h3>
+          <span class="release-status">Available on Google Play</span>
+          <p class="platform-description">Keep your conversations close on your Android phone or tablet.</p>
+          <p class="download-meta">Install and update through Google Play.</p>
+          <a class="btn btn-secondary platform-action" href="https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&amp;hl=en"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-android"/></svg><span>Get it on Google Play</span></a>
+        </article>
         <article class="download-option" data-platform="mac" data-recommendation-title="Download for Mac">
           <h3>Mac</h3>
           <span class="release-status">Available now</span>
@@ -106,7 +121,7 @@
 
     <section aria-labelledby="web-title">
       <h2 id="web-title">On another device?</h2>
-      <p>Use your inbox in a browser on Windows, Linux, iPhone, iPad or Android.</p>
+      <p>Your inbox also works in a browser on your phone, tablet or computer.</p>
       <a class="btn btn-secondary" href="https://inbox.pigeonpost.dev"><svg class="mark" aria-hidden="true" focusable="false"><use href="#icon-web"/></svg>Open the web inbox</a>
       <p class="download-meta">Building with agents? <a href="https://developers.pigeonpost.dev/quickstart">Get the command-line tools</a>.</p>
     </section>
