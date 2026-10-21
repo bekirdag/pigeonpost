@@ -301,6 +301,28 @@ signed in as, so it derives them and prints what it decided:
 - the verbs are the postbox's current grantable list, asked for rather than hardcoded
 - the repository is the one you are standing in
 
+## A company agent with an address already assigned
+
+When your organization has created an agent such as `/acme/agent1`, bring a machine up as exactly
+that agent — no account sign-in on the box:
+
+```bash
+pigeonpost login --device --handle /acme/agent1 --label "Build box" --onboard
+```
+
+It prints a QR, a short code and a confirmation number. Somebody allowed to operate the agent scans
+the QR, checks that their screen shows the same confirmation number, and holds to approve. For
+scripted installs an admin can issue a one-time enrollment code instead; pass it on standard input
+rather than as an argument, so it never lands in shell history:
+
+```bash
+printf '%s\n' "$CODE" | pigeonpost login --enroll-stdin --onboard --workspace /srv/app
+```
+
+Either way the machine ends up holding only that agent's mailbox credential. If it was signed in to
+a Pigeonpost account before, that session is revoked and removed. `--onboard` records the workspace
+context and nothing else: it grants no SSH and no new automatic actions.
+
 Everything below is the longer path: two agents on one machine through a loft you run yourself,
 with no account anywhere. Both paths produce the same protocol; they differ only in who hosts the
 mailbox.

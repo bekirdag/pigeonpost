@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/favicon-180.png">
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/site.css">
+<title>Secure payment — Pigeonpost for teams</title>
+<meta name="robots" content="noindex">
+<!-- The web server replaces this placeholder with the per-request CSP nonce. -->
+<meta name="csp-nonce" content="__CSP_NONCE__">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><img class="logo-light" src="/logo.png" alt="Pigeonpost" width="640" height="213"><img class="logo-dark" src="/logo_white.png" alt="" width="640" height="213"><span class="brand-tag">for teams</span></a>
+  <div class="top-spacer"></div>
+  <div class="account" id="ppe-account"></div>
+</header>
+<main class="page narrow">
+  <div class="card">
+    <h1 id="pay-title">Secure payment</h1>
+    <p class="muted" id="pay-summary" role="status">Preparing the iyzico payment form…</p>
+    <p class="note">Your card details go directly to iyzico. Pigeonpost never sees or stores them.</p>
+    <div id="pay-form"></div>
+    <p><a href="/start">Back</a></p>
+  </div>
+</main>
+<script src="/config.js"></script>
+<script src="/core.js"></script>
+<script src="/checkout.js"></script>
+</body>
+</html>

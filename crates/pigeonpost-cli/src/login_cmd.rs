@@ -79,6 +79,9 @@ struct Endpoints {
     token_endpoint: String,
     #[serde(default)]
     device_authorization_endpoint: Option<String>,
+    /// RFC 7009 token revocation, used when a machine is downgraded to one mailbox credential.
+    #[serde(default)]
+    revocation_endpoint: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -586,6 +589,67 @@ pub fn logout(home: &Path) -> Result<(), Error> {
     Ok(())
 }
 
+/// What happened to an account session when the machine was enrolled as one agent mailbox.
+pub(crate) enum Downgrade {
+    /// There was none.
+    NoSession,
+    /// Revoked at the realm, and the file removed.
+    Revoked(PathBuf),
+    /// Removed locally; revoking it at the realm failed for the reason given.
+    RemovedOnly(PathBuf, String),
+}
+
+impl Downgrade {
+    pub(crate) fn as_json(&self) -> serde_json::Value {
+        match self {
+            Downgrade::NoSession => serde_json::json!("none"),
+            Downgrade::Revoked(_) => serde_json::json!("revoked"),
+            Downgrade::RemovedOnly(_, why) => {
+                serde_json::json!({ "removed": true, "revoke_error": why })
+            }
+        }
+    }
+}
+
+/// Revoke the account session this home uses (its own, or the machine-wide one it borrows) and
+/// delete it, so a machine enrolled as one org agent keeps no token that reaches a whole account
+/// (SDS §10.2 step 5). Revocation is best-effort: the file is removed either way.
+pub(crate) async fn revoke_and_forget(home: &Path) -> Downgrade {
+    let path = session_path(home);
+    let session: Session = match std::fs::read(&path)
+        .ok()
+        .and_then(|b| serde_json::from_slice(&b).ok())
+    {
+        Some(s) => s,
+        None => return Downgrade::NoSession,
+    };
+    let revoked = async {
+        let endpoints = discover(&session.issuer).await?;
+        let endpoint = endpoints
+            .revocation_endpoint
+            .ok_or("the realm advertises no revocation endpoint")?;
+        let response = http_client()?
+            .post(&endpoint)
+            .form(&[
+                ("token", session.refresh_token.as_str()),
+                ("token_type_hint", "refresh_token"),
+                ("client_id", CLIENT_ID),
+            ])
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err::<(), Error>(format!("revocation answered {}", response.status()).into());
+        }
+        Ok(())
+    }
+    .await;
+    let _ = std::fs::remove_file(&path);
+    match revoked {
+        Ok(()) => Downgrade::Revoked(path),
+        Err(e) => Downgrade::RemovedOnly(path, e.to_string()),
+    }
+}
+
 pub fn load(home: &Path) -> Result<Option<Session>, Error> {
     match std::fs::read(session_path(home)) {
         Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
@@ -740,7 +804,7 @@ fn urldecode(value: &str) -> String {
 /// Black on white explicitly: on a dark terminal theme an uncoloured render comes out inverted, and
 /// scanners will not read that either. The four-module quiet zone is the part people leave out and
 /// then wonder why nothing works.
-fn print_qr(text: &str) {
+pub(crate) fn print_qr(text: &str) {
     use qrcodegen::{QrCode, QrCodeEcc};
 
     let code = match QrCode::encode_text(text, QrCodeEcc::Low) {

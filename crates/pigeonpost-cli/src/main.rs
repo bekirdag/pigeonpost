@@ -5,6 +5,7 @@
 //! a message is one command away from hosting.
 
 mod agentd_cmd;
+mod device_login_cmd;
 mod directory_cmd;
 mod executor;
 mod group_cmd;
@@ -235,6 +236,30 @@ enum Command {
         /// Print the URL and wait, without trying to launch a browser.
         #[arg(long)]
         no_browser: bool,
+        /// With --device: bring this machine up as one organization agent, e.g. /acme/agent1.
+        /// A person with authority over that agent approves it by scanning the QR; the machine
+        /// gets only that mailbox's credential, never an account sign-in.
+        #[arg(long, requires = "device", conflicts_with_all = ["enroll", "enroll_stdin"])]
+        handle: Option<String>,
+        /// Redeem a one-time enrollment code for an organization agent. Prefer --enroll-stdin:
+        /// a code on the command line can end up in shell history.
+        #[arg(long, conflicts_with_all = ["device", "enroll_stdin"])]
+        enroll: Option<String>,
+        /// Read the one-time enrollment code from standard input.
+        #[arg(long, conflicts_with = "device")]
+        enroll_stdin: bool,
+        /// A label for this machine, shown to whoever approves it.
+        #[arg(long)]
+        label: Option<String>,
+        /// The directory this agent works in (for --onboard). Defaults to the current one.
+        #[arg(long)]
+        workspace: Option<std::path::PathBuf>,
+        /// After enrolling, record the workspace context for the agent mailbox. Grants nothing.
+        #[arg(long)]
+        onboard: bool,
+        /// Postbox to enroll with.
+        #[arg(long, env = "PIGEONPOST_POSTBOX", default_value = postbox_cmd::DEFAULT_POSTBOX)]
+        postbox: String,
     },
 
     /// The resident process that turns incoming mail into a wake-up, so nothing has to poll.
@@ -1337,7 +1362,41 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
             device,
             issuer,
             no_browser,
+            handle,
+            enroll,
+            enroll_stdin,
+            label,
+            workspace,
+            onboard,
+            postbox,
         } => {
+            let opts = device_login_cmd::Options {
+                home: &home,
+                postbox,
+                label: label.as_deref(),
+                workspace: workspace.clone(),
+                onboard: *onboard,
+                json: cli.json,
+            };
+            if let Some(handle) = handle {
+                return device_login_cmd::login_device_handle(&opts, handle).await;
+            }
+            if *enroll_stdin || enroll.is_some() {
+                let code = match enroll {
+                    Some(code) => code.clone(),
+                    None => {
+                        let mut line = String::new();
+                        std::io::stdin().read_line(&mut line)?;
+                        line
+                    }
+                };
+                return device_login_cmd::login_enroll(&opts, &code).await;
+            }
+            if *onboard || workspace.is_some() {
+                return Err(
+                    "--onboard and --workspace go with --device --handle or --enroll".into(),
+                );
+            }
             return if *device {
                 login_cmd::login_device(&home, issuer).await
             } else {

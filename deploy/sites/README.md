@@ -9,6 +9,7 @@ the first two and no application server for any of them: `site-developers/` is g
 | `site/` | wodomini | `/var/www/pigeonpost` | `pigeonpost.dev` |
 | `site-inbox/` | wodomini | `/var/www/pigeonpost-inbox` | `inbox.pigeonpost.dev` |
 | `site-developers/` | wodomini | `/var/www/pigeonpost-developers` | `developers.pigeonpost.dev` |
+| `site-enterprise/` | raijin (wodomini proxies TLS) | `/var/www/pigeonpost-enterprise` | `enterprise.pigeonpost.dev` |
 
 All three roots are owned by `www-data` and are not writable by the login user, so **every step
 below needs `sudo` on wodomini**. There is no passwordless rule for any of it, and there is
@@ -143,3 +144,32 @@ automatic update channel. Only update links after public assets and their checks
 
 The 2026-09-13 Linux website rollout backed up `download.html`, `download.css` and `download.js` in
 `/var/backups/pigeonpost/linux-downloads-20260913`. Existing homepage routing and CSP remain in place.
+
+## enterprise.pigeonpost.dev
+
+`site-enterprise/` (Phase 4, SDS §5) is served by raijin's nginx and reached through wodomini's TLS
+proxy, like the inbox since the 2026-10-15 migration. The server blocks are in
+`deploy/sites/enterprise.conf`: the files, `/api/` proxied to the billing bridge on 127.0.0.1:8787,
+clean URLs, `/app/*` → `app.html`, and `/checkout`, the only page whose CSP admits iyzico.
+
+Keycloak (`pigeonpost-prod`, client `pigeonpost-web`) must list the redirect URI
+`https://enterprise.pigeonpost.dev/auth/callback`, the post-logout redirect
+`https://enterprise.pigeonpost.dev/`, and the web origin `https://enterprise.pigeonpost.dev`.
+The postbox must admit the origin in CORS; the bridge already does.
+
+Deploy the same staging-directory way as the inbox (wodo's home, then one `sudo -S`):
+
+```bash
+ts="$(date -u +%Y%m%dT%H%M%SZ)"
+rsync -a --delete --exclude node_modules --exclude test --exclude package.json \
+  --exclude package-lock.json --exclude README.md site-enterprise/ raijin:pp-enterprise-stage/
+printf '%s\n' "$PW" | ssh raijin "sudo -S -p '' sh -c '
+  [ -d /var/www/pigeonpost-enterprise ] && cp -a /var/www/pigeonpost-enterprise /var/www/pigeonpost-enterprise.bak-$ts
+  mkdir -p /var/www/pigeonpost-enterprise
+  rsync -a --delete ~wodo/pp-enterprise-stage/ /var/www/pigeonpost-enterprise/
+  chown -R www-data:www-data /var/www/pigeonpost-enterprise'"
+```
+
+Check: `curl -sI https://enterprise.pigeonpost.dev/` returns 200 with the strict CSP, `/checkout`
+returns the iyzico CSP with a nonce, and `/api/healthz` answers from the bridge. Before DNS exists,
+test through raijin directly: `curl -s -H 'Host: enterprise.pigeonpost.dev' http://192.168.12.165:48880/`.
