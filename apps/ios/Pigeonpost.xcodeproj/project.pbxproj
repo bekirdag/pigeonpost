@@ -527,6 +527,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				BUNDLE_LOADER = "$(TEST_HOST)";
+				OTHER_SWIFT_FLAGS = "$(inherited) -Xcc -fmodule-map-file=$(SRCROOT)/../../crates/pigeonpost-groupcrypto/bindings/swift/PigeonpostGroupCryptoFFI.modulemap";
 				CODE_SIGN_STYLE = Automatic;
 				DEVELOPMENT_TEAM = AH277897AV;
 				GENERATE_INFOPLIST_FILE = YES;
