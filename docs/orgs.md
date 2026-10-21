@@ -75,7 +75,7 @@ actions: they are human-only (`403 human_required`).
 | GET | `/v1/orgs/{id}/directory` | `?q=&limit≤50` | `{entries:[{handle, address, kind: member\|agent, name?}]}`. Active members only. |
 | GET | `/v1/orgs/{id}/billing` | | `{plan_code, seats, seats_used, agent_limit, agents_used, status, period_end, paid_through, storage_bytes}`. Owner/admin/billing admin. Payment changes go through the billing bridge. |
 
-`Org`: `{id, name, namespace, status, seats, seats_used, agent_limit, agents_used, plan_code,
+`Org`: `{id, name, namespace (bare, e.g. `acme`), status, seats, seats_used, agent_limit, agents_used, plan_code,
 period_end, settings:{require_mfa, invite_domains_only, rooms_creation}, created_at, revision}`.
 `OrgSummary`: `Org` plus `{my_roles, my_mailbox}`.
 
