@@ -312,8 +312,25 @@ pub(crate) async fn mailbox_for(
         Some((account, credential)) => Principal::Account(account, credential),
         None => Principal::Identity(me.clone()),
     };
+    // An operated org agent (a live `read_inbox` delegation, resolved from server state).
+    let delegated = match &principal {
+        Principal::Account(account, _) if me.account_id.as_deref() != Some(account.as_str()) => {
+            let (a, m, now) = (account.clone(), me.address.clone(), now_unix());
+            state
+                .store
+                .group_read(
+                    move |c: &rusqlite::Connection| -> Result<bool, crate::groups::GErr> {
+                        Ok(crate::org::operates_in(c, &a, &m, now)?)
+                    },
+                )
+                .await
+                .unwrap_or(false)
+        }
+        _ => false,
+    };
     let facts = Facts {
         now: now_unix(),
+        delegated,
         ..Facts::default()
     };
     authorize(
@@ -524,10 +541,25 @@ pub(crate) async fn decide_call_with(
         .inbox_policy(callee.address.clone())
         .await
         .map_err(se)?;
+    // Company rules (SDS §9.3) apply to calls as to messages; a personal block still wins.
+    let org =
+        crate::org_rules::verdict(state, callee, &caller.address, caller.handle.as_deref()).await;
+    let contact = state
+        .store
+        .governing_contact(
+            callee.address.clone(),
+            caller
+                .handle
+                .clone()
+                .unwrap_or_else(|| caller.address.clone()),
+        )
+        .await
+        .map_err(se)?;
+    let decision = crate::decide_admission(&rel, contact.as_ref(), org.as_ref(), policy);
     let facts = CallFacts {
-        blocked: rel.blocked,
-        known: rel.known(),
-        closed_to_strangers: !rel.allowed && !policy.accept_all,
+        blocked: rel.blocked || (!decision.admitted && decision.decided_by == "org_rule"),
+        known: decision.known,
+        closed_to_strangers: !decision.known && !rel.allowed && !policy.accept_all,
         unnamed: caller.handle.is_none(),
         caller_score: sender_score(state, caller).await,
         pair_limited,

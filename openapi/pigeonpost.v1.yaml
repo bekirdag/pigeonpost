@@ -59,6 +59,10 @@ tags:
     description: End-to-end-encrypted groups (ciphertext and routing metadata only; docs/groups.md).
   - name: mls
     description: MLS delivery service for groups (devices, key packages, commits, Welcomes; docs/group-e2ee.md).
+  - name: organizations
+    description: Organizations, members, invitations, agents, delegations, rooms, rules, domains and audit (docs/orgs.md).
+  - name: device-login
+    description: Device pairing and one-time enrollment for org agents (docs/orgs.md §8).
 
 paths:
   /:
@@ -5481,6 +5485,1647 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
 
+  /v1/orgs:
+    get:
+      tags: [organizations]
+      operationId: org_listMine
+      summary: List mine
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag.'
+      security:
+        - memberToken: []
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}:
+    get:
+      tags: [organizations]
+      operationId: org_getOrg
+      summary: Get org
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    patch:
+      tags: [organizations]
+      operationId: org_patchOrg
+      summary: Patch org
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    delete:
+      tags: [organizations]
+      operationId: org_deleteOrg
+      summary: Delete org
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/transfer:
+    post:
+      tags: [organizations]
+      operationId: org_transfer
+      summary: Transfer
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/me/mailbox:
+    post:
+      tags: [organizations]
+      operationId: org_myMailbox
+      summary: My mailbox
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/directory:
+    get:
+      tags: [organizations]
+      operationId: org_directory
+      summary: Directory
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/billing:
+    get:
+      tags: [organizations]
+      operationId: org_billing
+      summary: Billing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/members:
+    get:
+      tags: [organizations]
+      operationId: org_members
+      summary: Members
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/members/{member}:
+    patch:
+      tags: [organizations]
+      operationId: org_patchMember
+      summary: Patch member
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/members/{member}/remove:
+    post:
+      tags: [organizations]
+      operationId: org_removeMember
+      summary: Remove member
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: member
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/invites:
+    post:
+      tags: [organizations]
+      operationId: org_invite
+      summary: Invite
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/invites/{invite}/resend:
+    post:
+      tags: [organizations]
+      operationId: org_resend
+      summary: Resend
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: invite
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/invites/{invite}:
+    delete:
+      tags: [organizations]
+      operationId: org_revokeInvite
+      summary: Revoke invite
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: invite
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/org-invites/preview:
+    post:
+      tags: [organizations]
+      operationId: org_preview
+      summary: Preview
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag.'
+      security:
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/org-invites/accept:
+    post:
+      tags: [organizations]
+      operationId: org_accept
+      summary: Accept
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/rooms:
+    get:
+      tags: [organizations]
+      operationId: org_rooms
+      summary: Rooms
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createRoom
+      summary: Create room
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/rooms/{room}:
+    patch:
+      tags: [organizations]
+      operationId: org_patchRoom
+      summary: Patch room
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: room
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    delete:
+      tags: [organizations]
+      operationId: org_deleteRoom
+      summary: Delete room
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: room
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/rules:
+    get:
+      tags: [organizations]
+      operationId: org_rules
+      summary: Rules
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createRule
+      summary: Create rule
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/rules/evaluate:
+    post:
+      tags: [organizations]
+      operationId: org_evaluate
+      summary: Evaluate
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/rules/{rule}:
+    patch:
+      tags: [organizations]
+      operationId: org_patchRule
+      summary: Patch rule
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: rule
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    delete:
+      tags: [organizations]
+      operationId: org_deleteRule
+      summary: Delete rule
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: rule
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/domains:
+    get:
+      tags: [organizations]
+      operationId: org_domains
+      summary: Domains
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_addDomain
+      summary: Add domain
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/domains/{domain}/verify:
+    post:
+      tags: [organizations]
+      operationId: org_verifyDomain
+      summary: Verify domain
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/domains/{domain}:
+    delete:
+      tags: [organizations]
+      operationId: org_deleteDomain
+      summary: Delete domain
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: domain
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/audit:
+    get:
+      tags: [organizations]
+      operationId: org_audit
+      summary: Audit
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/audit/export:
+    get:
+      tags: [organizations]
+      operationId: org_auditExport
+      summary: Audit export
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/agents:
+    get:
+      tags: [organizations]
+      operationId: org_agents
+      summary: Agents
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createAgent
+      summary: Create agent
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/agents/{address}:
+    patch:
+      tags: [organizations]
+      operationId: org_patchAgent
+      summary: Patch agent
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    delete:
+      tags: [organizations]
+      operationId: org_deleteAgent
+      summary: Delete agent
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/agents/{address}/enrollments:
+    post:
+      tags: [organizations]
+      operationId: org_createEnrollment
+      summary: Create enrollment
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/agents/{address}/devices:
+    get:
+      tags: [organizations]
+      operationId: org_devices
+      summary: Devices
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: address
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/devices/{device}:
+    delete:
+      tags: [organizations]
+      operationId: org_revokeDevice
+      summary: Revoke device
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: device
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/delegations:
+    get:
+      tags: [organizations]
+      operationId: org_delegations
+      summary: Delegations
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+    post:
+      tags: [organizations]
+      operationId: org_createDelegation
+      summary: Create delegation
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/orgs/{id}/delegations/{delegation}:
+    delete:
+      tags: [organizations]
+      operationId: org_revokeDelegation
+      summary: Revoke delegation
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: delegation
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/device-pairings:
+    post:
+      tags: [device-login]
+      operationId: org_createPairing
+      summary: Create pairing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag.'
+      security:
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/device-pairings/resolve:
+    post:
+      tags: [device-login]
+      operationId: org_resolvePairing
+      summary: Resolve pairing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/device-pairings/claim:
+    post:
+      tags: [device-login]
+      operationId: org_claimPairing
+      summary: Claim pairing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag.'
+      security:
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/device-pairings/{pairing}/approve:
+    post:
+      tags: [device-login]
+      operationId: org_approvePairing
+      summary: Approve pairing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. Needs a recent strong sign-in (`step_up_required` with `acr_values` and `max_age`). A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: pairing
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/device-pairings/{pairing}/deny:
+    post:
+      tags: [device-login]
+      operationId: org_denyPairing
+      summary: Deny pairing
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag. A person signed in (member token); automation gets `human_required`.'
+      security:
+        - memberToken: []
+      parameters:
+        - name: pairing
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
+  /v1/enrollments/redeem:
+    post:
+      tags: [device-login]
+      operationId: org_redeemEnrollment
+      summary: Redeem enrollment
+      description: 'See docs/orgs.md. Requires the `orgs` feature flag.'
+      security:
+        - {}
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+      responses:
+        '200':
+          description: Success.
+          content:
+            application/json:
+              schema:
+                type: object
+        '400':
+          $ref: '#/components/responses/GroupError'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
+        '409':
+          $ref: '#/components/responses/GroupError'
 components:
   securitySchemes:
     capToken:

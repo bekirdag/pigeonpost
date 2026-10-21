@@ -83,6 +83,14 @@ mod internal_api;
 mod mcp;
 mod mls;
 mod oidc;
+mod org;
+mod org_agents;
+mod org_notify;
+mod org_rooms;
+mod org_routes;
+mod org_rules;
+#[cfg(test)]
+mod org_tests;
 #[cfg(test)]
 mod p1b_tests;
 mod policy;
@@ -381,6 +389,8 @@ async fn serve(cfg: Config) {
     start_internal_listener(&state).await;
     // Disappearing-message expiry and group maintenance (SDS §17.2, §4.3), every 30 s.
     ephemeral::start_worker(state.clone());
+    // Org invitation delivery, lifecycle and domain re-checks (Phase 4).
+    org_notify::start_worker(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -762,6 +772,8 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/mls/key-packages/count", get(mls::key_package_count))
         .route("/v1/mls/welcomes", get(mls::welcomes))
         .route("/v1/mls/welcomes/{welcome_id}/ack", post(mls::welcome_ack))
+        // Phase 4: organizations (SDS §5–§10, docs/orgs.md).
+        .merge(org_routes::router())
         .route("/v1/{*rest}", any(v1_stub))
         .fallback(not_found)
         .layer(middleware::from_fn(cors))
@@ -1680,10 +1692,11 @@ async fn delete_identity(
 /// Web origins allowed to call the API from a browser: the signed-in account page on
 /// pigeonpost.dev, and the inbox app, which is a separate origin because it is a separate
 /// deployment rather than a page of the marketing site.
-const CORS_ORIGINS: [&str; 3] = [
+const CORS_ORIGINS: [&str; 4] = [
     "https://pigeonpost.dev",
     "https://www.pigeonpost.dev",
     "https://inbox.pigeonpost.dev",
+    "https://enterprise.pigeonpost.dev",
 ];
 
 /// The request headers a browser may send us.
@@ -1726,6 +1739,11 @@ async fn cors(req: Request, next: Next) -> Response {
             HeaderValue::from_static(CORS_ALLOW_HEADERS),
         );
         h.insert(header::VARY, HeaderValue::from_static("Origin"));
+        // Step-up challenges (RFC 9470) and rate limits must be readable cross-origin.
+        h.insert(
+            header::ACCESS_CONTROL_EXPOSE_HEADERS,
+            HeaderValue::from_static("www-authenticate, retry-after"),
+        );
     }
     resp
 }
@@ -2314,9 +2332,15 @@ pub(crate) async fn identity_for_token(
     let token = token.ok_or_else(|| ApiError::unauthorized("missing bearer capability token"))?;
     match state.store.get_by_cap(sha256(token.as_bytes())).await {
         Ok(Some(id)) => Ok(id),
-        Ok(None) => Err(ApiError::unauthorized(
-            "unknown or revoked capability token",
-        )),
+        // An org agent's enrolled device credential (SDS §10.3): one mailbox, its own revocation.
+        Ok(None) => {
+            match org_agents::identity_for_device_token(state, sha256(token.as_bytes())).await? {
+                Some(id) => Ok(id),
+                None => Err(ApiError::unauthorized(
+                    "unknown or revoked capability token",
+                )),
+            }
+        }
         Err(e) => {
             tracing::error!(error = %e, "auth lookup failed");
             Err(ApiError::server("store_error"))
@@ -2540,6 +2564,20 @@ async fn resolve_acting_identity(
     principal: Principal,
     explicit: Option<&str>,
 ) -> Result<store::StoredIdentity, ApiError> {
+    let id = resolve_acting_identity_inner(state, principal, explicit).await?;
+    // Org mailboxes: a suspended member, a removed member's detached mailbox, a deleted agent or a
+    // suspended org cannot be used through any route (SDS §3.3 step 3).
+    if let org::Gate::Closed(code) = org::mailbox_gate(state, &id.address).await {
+        return Err(org::closed_error(code));
+    }
+    Ok(id)
+}
+
+async fn resolve_acting_identity_inner(
+    state: &AppState,
+    principal: Principal,
+    explicit: Option<&str>,
+) -> Result<store::StoredIdentity, ApiError> {
     match principal {
         Principal::Identity(id) => {
             if explicit.is_some_and(|a| a != id.address) {
@@ -2553,6 +2591,9 @@ async fn resolve_acting_identity(
         }
         Principal::Account(account, _) => {
             if let Some(addr) = explicit {
+                if let Some(operated) = operated_mailbox(state, &account, addr).await? {
+                    return Ok(operated);
+                }
                 return state
                     .store
                     .get_in_account(account, addr.to_string())
@@ -2591,6 +2632,109 @@ async fn resolve_acting_identity(
     }
 }
 
+/// An org agent's mailbox this account operates through a live `read_inbox` delegation (SDS §6.5).
+pub(crate) async fn operated_mailbox(
+    state: &AppState,
+    account: &str,
+    address: &str,
+) -> Result<Option<store::StoredIdentity>, ApiError> {
+    let found = match resolve_recipient_raw(state, address).await? {
+        Some(id) if id.account_id.as_deref() != Some(account) => id,
+        _ => return Ok(None),
+    };
+    let (acct, addr, now) = (account.to_string(), found.address.clone(), now_unix());
+    let ok = state
+        .store
+        .group_read(
+            move |c: &rusqlite::Connection| -> Result<bool, groups::GErr> {
+                Ok(org::operates_in(c, &acct, &addr, now)?)
+            },
+        )
+        .await
+        .unwrap_or(false);
+    Ok(ok.then_some(found))
+}
+
+/// What admission says about one sender, combining the personal block, org rules, the personal
+/// contact and the inbox policy in the SDS §9.3 order.
+pub(crate) struct AdmissionDecision {
+    pub admitted: bool,
+    pub known: bool,
+    pub decided_by: &'static str,
+    pub explanation: String,
+}
+
+pub(crate) fn decide_admission(
+    rel: &store::Relationship,
+    contact: Option<&store::Contact>,
+    org: Option<&org_rules::Verdict>,
+    policy: store::InboxPolicy,
+) -> AdmissionDecision {
+    let org_known = org.is_some_and(|v| v.known());
+    if rel.blocked {
+        return AdmissionDecision {
+            admitted: false,
+            known: false,
+            decided_by: "personal_block",
+            explanation: "A personal block always wins.".into(),
+        };
+    }
+    let known = rel.known() || org_known;
+    if let Some(a) = org.and_then(|v| v.locked_admission()) {
+        return AdmissionDecision {
+            admitted: a,
+            known,
+            decided_by: "org_rule",
+            explanation: "A locked company rule decides for this agent.".into(),
+        };
+    }
+    if let Some(c) = contact {
+        return AdmissionDecision {
+            admitted: c.admission != ADMISSION_BLOCK,
+            known,
+            decided_by: "personal_contact",
+            explanation: format!("The mailbox's own contact entry for {} decides.", c.peer),
+        };
+    }
+    if let Some(a) = org.and_then(|v| v.admission()) {
+        return AdmissionDecision {
+            admitted: a,
+            known,
+            decided_by: "org_rule",
+            explanation: "A company rule decides.".into(),
+        };
+    }
+    AdmissionDecision {
+        admitted: policy.accept_all,
+        known,
+        decided_by: "inbox_policy",
+        explanation: if policy.accept_all {
+            "No rule applies; the inbox accepts new senders.".into()
+        } else {
+            "No rule applies; the inbox is closed to strangers.".into()
+        },
+    }
+}
+
+/// Whether mail from this sender may drive automation, and which verbs: a locked company `review`
+/// wins; else the personal contact; else a company rule for an agent (never a member).
+pub(crate) fn effective_autonomy(
+    contact: Option<&store::Contact>,
+    policy: store::InboxPolicy,
+    org: Option<&org_rules::Verdict>,
+) -> (bool, Vec<String>) {
+    if org.is_some_and(|v| v.locked_review()) {
+        return (false, Vec::new());
+    }
+    if let Some(c) = contact {
+        return (sender_is_auto(Some(c), policy), c.allowed_verbs.clone());
+    }
+    match org.and_then(|v| v.org_auto_verbs()) {
+        Some(verbs) => (true, verbs),
+        None => (false, Vec::new()),
+    }
+}
+
 /// Load an identity's signing key from the vault into memory (zeroizing the seed once built).
 fn open_identity(state: &AppState, id: &store::StoredIdentity) -> Result<Identity, ApiError> {
     match state.vault.unwrap(&id.wrapped_seed) {
@@ -2623,6 +2767,24 @@ fn is_addressable(to: &str) -> bool {
 /// identical either way. Addressing a fleet by `/bekir/deployer` rather than by a base32 digest is
 /// the entire point of buying a namespace.
 async fn resolve_recipient(
+    state: &AppState,
+    to: &str,
+) -> Result<Option<store::StoredIdentity>, ApiError> {
+    match resolve_recipient_raw(state, to).await? {
+        // A closed org mailbox reads exactly like an address that does not exist (SDS §6.6).
+        Some(id)
+            if matches!(
+                org::mailbox_gate(state, &id.address).await,
+                org::Gate::Closed(_)
+            ) =>
+        {
+            Ok(None)
+        }
+        other => Ok(other),
+    }
+}
+
+async fn resolve_recipient_raw(
     state: &AppState,
     to: &str,
 ) -> Result<Option<store::StoredIdentity>, ApiError> {
@@ -2841,6 +3003,14 @@ pub(crate) async fn do_send(
     // The governing contact: the sender's own row if they have one, else their namespace's. A
     // handle sender is addressed by name here rather than by /k/ digest, because a fleet is
     // trusted as `/bekir/*`, not as a list of digests.
+    // A read-only org (payment lapsed past its grace) cannot send from its mailboxes (§6.6).
+    if org::mailbox_gate(state, &sender.address).await == org::Gate::ReadOnly {
+        return Err(ApiError::new(
+            StatusCode::FORBIDDEN,
+            "org_read_only",
+            "this organization is read-only until its payment is settled",
+        ));
+    }
     let sender_subject = sender
         .handle
         .clone()
@@ -2866,11 +3036,21 @@ pub(crate) async fn do_send(
         )
         .await
         .map_err(|_| ApiError::server("store_error"))?;
-    let admitted = !relationship.blocked
-        && match &contact {
-            Some(c) => c.admission != ADMISSION_BLOCK,
-            None => policy.accept_all,
-        };
+    // Company rules (SDS §9.3): after the personal block, before the inbox policy.
+    let org_verdict =
+        org_rules::verdict(state, &recipient, &sender.address, sender.handle.as_deref()).await;
+    let decision = decide_admission(
+        &relationship,
+        contact.as_ref(),
+        org_verdict.as_ref(),
+        policy,
+    );
+    let admitted = decision.admitted;
+    // A company "known" rule counts as knowing the sender for filters and the stranger throttle.
+    let mut relationship = relationship;
+    if decision.known && !relationship.blocked {
+        relationship.allowed = true;
+    }
     // Filtering (SDS §13.4), decided once here so every device agrees. `block` is refused exactly
     // like a closed inbox; `filter` is delivered, and the sender cannot tell it from any other
     // delivery.
@@ -2915,7 +3095,7 @@ pub(crate) async fn do_send(
     // than a firehose. Only strangers: once the recipient has added a contact, that human decision
     // outranks anything the score inferred. Refused loudly, never dropped silently — the sender is
     // told to slow down, and the recipient is not quietly edited.
-    if contact.is_none() {
+    if contact.is_none() && !decision.known {
         let standing = sender_score(state, sender).await;
         if reputation::throttles_strangers(standing) {
             let since = now_unix().saturating_sub(reputation::STRANGER_WINDOW_SECS);
@@ -3263,6 +3443,9 @@ pub(crate) async fn do_inbox_view(
         }
     }
 
+    // Company rules per distinct sender, evaluated once (SDS §9.3).
+    let mut org_verdicts: std::collections::HashMap<String, Option<org_rules::Verdict>> =
+        std::collections::HashMap::new();
     let mut out = Vec::new();
     for m in messages {
         // Sent copies are opt-in. Every existing caller — the CLI's `postbox inbox`, the MCP tool an
@@ -3345,7 +3528,24 @@ pub(crate) async fn do_inbox_view(
             // The two halves meet here: *who* the recipient trusts (Phase 2) and *what* this
             // particular message asks for (Phase 3). Only when both say yes does the message
             // arrive marked `auto`.
-            let decision = verbs::decide(body.as_str(), sender_is_auto(contact, policy), granted);
+            if !org_verdicts.contains_key(&from) {
+                let v = org_rules::verdict(
+                    state,
+                    me,
+                    &from,
+                    sender_handles.get(&from).map(String::as_str),
+                )
+                .await;
+                org_verdicts.insert(from.clone(), v);
+            }
+            let org_verdict = org_verdicts.get(&from).and_then(|v| v.as_ref());
+            let (auto, org_granted) = effective_autonomy(contact, policy, org_verdict);
+            let granted: &[String] = if contact.is_some() {
+                granted
+            } else {
+                &org_granted
+            };
+            let decision = verbs::decide(body.as_str(), auto, granted);
 
             // Inbox reads re-evaluate the same messages on every poll. These diagnostics belong
             // at debug: logging each decision at info lets unread mail fill the server's disk.
@@ -3396,7 +3596,9 @@ pub(crate) async fn do_inbox_view(
                 // Stays true at every autonomy level: `auto` says the recipient chose to act on
                 // this sender's messages, not that the text stopped being someone else's input.
                 "untrusted": true,
-                "sender_known": contact.is_some(),
+                "sender_known": contact.is_some() || org_verdict.is_some_and(|v| v.known()),
+                // Which company rule spoke, when one did ("Allowed by company rule: …").
+                "matched_rule": org_verdict.map(|v| v.matched_json()).unwrap_or(serde_json::Value::Null),
                 "alias": contact.and_then(|c| c.alias.clone()),
                 // Which entry spoke for this sender. A fleet-wide grant and a personal one are
                 // very different amounts of trust, and an agent should be able to tell them apart.

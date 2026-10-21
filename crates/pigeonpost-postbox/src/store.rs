@@ -13,7 +13,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 use std::sync::{Arc, Mutex};
 
 mod apple_plans;
-mod audit;
+pub(crate) mod audit;
 mod avatars;
 mod calllog;
 mod deletion;
@@ -25,6 +25,7 @@ mod filtering;
 mod googleplay;
 mod groups;
 mod lifecycle;
+mod org_model;
 mod orgs;
 pub use audit::AuditRow;
 pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
@@ -975,6 +976,8 @@ impl Store {
                 }
             }
         }
+        // Organizations (Phase 4): additive tables plus three columns on `orgs`.
+        org_model::migrate(&conn)?;
         // Mirror provider state into the unified entitlements table. Idempotent; it never changes
         // namespaces or the provider tables, so an older binary that ignores the table is unaffected.
         {

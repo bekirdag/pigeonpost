@@ -416,13 +416,14 @@ async fn org_drafts_activate_once_and_never_take_a_claimed_name() {
         .unwrap()
         .is_empty());
 
-    // Lapse makes it read-only; recovery makes it active again.
+    // Lapse suspends it; recovery makes it active again.
     let (s, b) = call(put.clone(), format!("{internal}/internal/v1/orgs/{org}/entitlement"), Some(BILLING), Some(json!({
         "provider": "iyzico", "environment": "live", "reference": "sub-org-1", "plan_code": "ent-30-yearly-usd",
         "plan_version": "2026", "seats": 30, "status": "expired", "period_end": 10, "paid_through": 10, "reconciliation_version": 2}))).await;
     assert_eq!(
         (s, b["org"]["status"].as_str()),
-        (StatusCode::OK, Some("read_only"))
+        // Paid access ended long ago: past the 7 + 14 day lapse timeline (D-14).
+        (StatusCode::OK, Some("suspended"))
     );
     let (s, b) = call(
         reqwest::Method::GET,

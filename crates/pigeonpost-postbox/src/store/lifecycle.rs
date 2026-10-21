@@ -42,11 +42,32 @@ pub(super) fn visible_handle(
         .split('/')
         .next()
         .unwrap_or_default();
-    Ok(if may_mint(c, namespace, account, now)? {
-        Some(handle)
-    } else {
-        None
-    })
+    Ok(
+        if may_mint(c, namespace, account, now)? || org_alias(c, &handle, account)? {
+            Some(handle)
+        } else {
+            None
+        },
+    )
+}
+
+/// An org namespace is held by the org's internal account, while its member mailboxes belong to
+/// the members' own accounts (SDS §6.1). Such a handle is visible while the membership (or the
+/// org agent) is live and the org is provisioned; a removed member's old mailbox loses it.
+fn org_alias(c: &Connection, handle: &str, account: Option<&str>) -> Result<bool, StoreError> {
+    let Some(account) = account else {
+        return Ok(false);
+    };
+    Ok(c.query_row(
+        "SELECT EXISTS(SELECT 1 FROM org_members m JOIN orgs o ON o.id = m.org_id
+                 WHERE m.handle = ?1 AND m.account_id = ?2 AND m.status IN ('active','suspended')
+                   AND o.status IN ('active','past_due','read_only','suspended'))
+             OR EXISTS(SELECT 1 FROM org_agents a JOIN orgs o ON o.id = a.org_id
+                 WHERE a.handle = ?1 AND o.internal_account_id = ?2 AND a.status IN ('active','suspended')
+                   AND o.status IN ('active','past_due','read_only','suspended'))",
+        params![handle, account],
+        |r| r.get(0),
+    )?)
 }
 
 pub(super) fn visible_identity(

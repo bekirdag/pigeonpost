@@ -604,6 +604,8 @@ fn every_route_is_in_the_openapi_spec_and_nothing_else_is() {
     for (source, router_fn) in [
         (include_str!("main.rs"), "fn build_router("),
         (include_str!("internal_api.rs"), "pub(crate) fn router("),
+        (include_str!("org_routes.rs"), "pub(crate) fn router("),
+        (include_str!("org_agents.rs"), "pub(crate) fn router("),
     ] {
         served.extend(routes_in(source, router_fn));
     }

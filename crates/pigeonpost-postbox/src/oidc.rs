@@ -291,6 +291,46 @@ pub(crate) fn test_member_token(issuer: &str, sub: &str) -> String {
     .unwrap()
 }
 
+/// A member token with extra claims (verified address, `acr`, `auth_time` …) for org tests.
+#[cfg(test)]
+pub(crate) fn test_member_token_with(issuer: &str, sub: &str, extra: serde_json::Value) -> String {
+    use jsonwebtoken::{encode, EncodingKey, Header};
+    let mut h = Header::new(Algorithm::RS256);
+    h.kid = Some("test-kid".into());
+    let now = crate::now_unix();
+    let mut claims = serde_json::json!({
+        "sub": sub, "iss": issuer, "exp": now + 3600, "iat": now, "auth_time": now,
+        "azp": "pigeonpost-web", "typ": "Bearer",
+    });
+    if let (Some(base), Some(more)) = (claims.as_object_mut(), extra.as_object()) {
+        for (k, v) in more {
+            base.insert(k.clone(), v.clone());
+        }
+    }
+    encode(
+        &h,
+        &claims,
+        &EncodingKey::from_rsa_pem(tests::PRIV.as_bytes()).unwrap(),
+    )
+    .unwrap()
+}
+
+/// The claims an org test person signs in with: a verified address, optionally a strong `acr`.
+#[cfg(test)]
+pub(crate) fn test_person_claims(address: &str, acr: Option<&str>) -> serde_json::Value {
+    let mut v = serde_json::json!({ "email": address, "email_verified": true });
+    if let Some(a) = acr {
+        v["acr"] = serde_json::json!(a);
+    }
+    v
+}
+
+/// The same, with the realm saying the address is not verified.
+#[cfg(test)]
+pub(crate) fn test_unverified_claims(address: &str) -> serde_json::Value {
+    serde_json::json!({ "email": address, "email_verified": false })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
