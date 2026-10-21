@@ -90,7 +90,7 @@ internal static class PrivacyTests
             var filtered = await client.GetFilteredAsync(me, default);
             var senders = FilteredSender.Group(filtered, [new Contact("/k/gone", null, "block", "review")]);
             Equal(string.Join(",", senders.Select(s => s.Peer)), "/new/main,/k/spam1");
-            Equal(senders[0].CountLabel, "2 messages"); Equal(senders[0].Preview, "Again"); Equal(senders[0].Name, "/new");
+            Equal(senders[0].CountLabel, "2 messages"); Equal(senders[0].Preview, "Again"); Equal(senders[0].Name, "New");
             await client.AcceptFilteredAsync(me, "/new/main", default);
             Equal(FilteredSender.Group(await client.GetFilteredAsync(me, default), []).Count, 2);
             await client.ReportMessageAsync(me, "f1", default);
