@@ -36,7 +36,7 @@ defaults:
 jobs:
   rust:
     name: fmt, clippy, tests and fuzz
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     env:
       RUSTFLAGS: -D warnings
     steps:
@@ -53,7 +53,7 @@ jobs:
 
   audit:
     name: cargo audit (group crypto lockfile)
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the exact compatible cargo-audit release
@@ -70,7 +70,7 @@ jobs:
 
   generated:
     name: committed WASM bundle and bindings are reproducible
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -98,7 +98,7 @@ jobs:
 
   interop-linux:
     name: interop (Linux — Rust, WASM/Node, Kotlin/JVM, Python, C#)
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -154,7 +154,7 @@ jobs:
 
   android:
     name: Android AAR (arm64-v8a, armeabi-v7a, x86_64)
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -164,10 +164,15 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Build the AAR with the runner's NDK
+      - name: Install the pinned Android NDK
+        uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+        with:
+          packages: 'ndk;28.2.13676358'
+          log-accepted-android-sdk-licenses: false
+      - name: Build the AAR with the pinned NDK
         run: |
           eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
-          ANDROID_NDK_HOME="${ANDROID_NDK_LATEST_HOME:-$ANDROID_NDK_HOME}" scripts/build-android.sh
+          ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" scripts/build-android.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: groupcrypto-android-aar

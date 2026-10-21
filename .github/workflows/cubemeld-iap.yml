@@ -28,7 +28,7 @@ concurrency:
 jobs:
   catalog:
     name: audit or provision Gold products
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     environment: production-release
     steps:

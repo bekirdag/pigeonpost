@@ -19,8 +19,8 @@ concurrency:
 jobs:
   native:
     # The group encryption library (UniFFI Python binding + shared library) for both processors.
-    # Built on Ubuntu 22.04 so it needs at most glibc 2.35: Debian 12, Ubuntu 22.04+ and the
-    # GNOME 50 Flatpak runtime all load it.
+    # Every build must pass the glibc 2.35 floor check below: Debian 12, Ubuntu 22.04+ and the
+    # GNOME 50 Flatpak runtime all load it. matrix.runner retains the hosted fallback label.
     strategy:
       matrix:
         include:
@@ -28,7 +28,7 @@ jobs:
             arch: x86_64
           - runner: ubuntu-22.04-arm
             arch: aarch64
-    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -57,7 +57,7 @@ jobs:
     # The Linux client's group code against a real postbox, with the web inbox's client as the
     # other member, plus the Phase 1b routes as the window calls them.
     needs: native
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -87,7 +87,7 @@ jobs:
             arch: x86_64
           - runner: ubuntu-24.04-arm
             arch: aarch64
-    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
     timeout-minutes: 35
     defaults:
       run:
@@ -155,7 +155,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/linux-desktop-')
     needs: build
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
       id-token: write
