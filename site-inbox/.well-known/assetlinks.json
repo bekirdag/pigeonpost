@@ -1,0 +1,15 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "dev.pigeonpost.inbox",
+      "sha256_cert_fingerprints": [
+        "79:38:8D:61:15:9C:01:34:E4:8F:DB:C6:EF:51:C0:AA:EF:00:BA:04:07:64:27:5A:72:28:2A:BE:D3:3F:C9:50",
+        "62:B3:EB:6D:4E:AA:A7:F1:B7:86:57:2D:DF:4E:67:B8:57:61:FB:2A:A9:AA:E7:E7:10:53:13:BB:11:94:6C:4F",
+        "16:32:20:FC:5C:B7:2D:B2:37:8B:D6:2B:E1:D7:88:46:51:BD:1F:68:E1:BA:88:0F:CD:08:85:51:59:14:76:82",
+        "0B:CA:DC:AC:62:EA:1F:18:D9:26:39:DD:64:C8:5F:10:88:81:2A:18:D5:84:28:58:7F:FE:36:D7:A8:48:3D:A0"
+      ]
+    }
+  }
+]

@@ -50,9 +50,16 @@ val WideLayoutWidth = 700.dp
 @Composable
 fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, chooseFile: () -> Unit,
     choosePhoto: () -> Unit, scan: () -> Unit, attachment: (Attachment, String) -> Unit, openLink: (String) -> Unit,
-    notificationSettings: () -> Unit = {}, fullScreenCalls: () -> (() -> Unit)? = { null }) {
+    notificationSettings: () -> Unit = {}, fullScreenCalls: () -> (() -> Unit)? = { null },
+    choosePicture: () -> Unit = {}, takePicture: () -> Unit = {}) {
     val session by model.session.state.collectAsStateWithLifecycle()
     val state by model.inbox.state.collectAsStateWithLifecycle()
+    val groupStore = model.groups
+    val groups by (groupStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.groups.GroupsState()) }).collectAsStateWithLifecycle()
+    val cropping by model.crop.collectAsStateWithLifecycle()
+    val profileState by model.profile.state.collectAsStateWithLifecycle()
+    var blockTarget by remember { mutableStateOf<BlockTarget?>(null) }
+    var filteredOpen by remember { mutableStateOf<String?>(null) }
     val handleState by model.handles.state.collectAsStateWithLifecycle()
     val appearance by model.appearance.collectAsStateWithLifecycle()
     val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
@@ -62,13 +69,14 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); store.clearError() } }
+    LaunchedEffect(groups.notice) { groups.notice?.let { snackbar.showSnackbar(it); groupStore?.clearNotice() } }
     // Preserve a Settings subpage through rotation, but never carry it to another account/inbox.
     var sheetOwner by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(session.signedIn, session.loading, session.username, state.acting?.address) {
         val owner = if (session.signedIn && state.acting != null) "${session.username}\n${state.acting?.address}" else null
         val signedOut = !session.loading && !session.signedIn
         if (signedOut || (owner != null && sheetOwner != null && owner != sheetOwner)) {
-            sheet = null; editContact = null; viewing = null
+            sheet = null; editContact = null; viewing = null; blockTarget = null; filteredOpen = null
         }
         if (owner != null || signedOut) sheetOwner = owner
     }
@@ -80,9 +88,16 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     }
     // The in-app viewer for files Android can show safely; anything else keeps the existing open/share/save.
     val open: (Attachment, String) -> Unit = { file, action ->
-        if (action == "view" || (action == "open" && AttachmentKinds.viewer(file.filename, file.mediaType) != null)) viewing = file
-        else attachment(file, action)
+        if (action == "view" || (action == "open" && AttachmentKinds.viewer(file.filename, file.mediaType) != null)) {
+            if (AttachmentKinds.viewer(file.filename, file.mediaType) != null) viewing = file else attachment(file, "open")
+        } else attachment(file, action)
     }
+    // A group file is opened the same ways; its bytes come from the group and are decrypted here.
+    val openGroupFile: (dev.pigeonpost.core.groups.Group, dev.pigeonpost.core.groups.GroupFile, String) -> Unit = { g, f, action ->
+        open(Attachment("gfile:${g.id}|${f.id}", f.name, f.mime, f.size), action)
+    }
+    // The Calls or Filtered view stays where it was, so going back returns to it.
+    val openPeer: (String) -> Unit = { peer -> model.openPeer(peer) }
     val dark = appearance.isDark()
     val view = LocalView.current
     if (!view.isInEditMode) SideEffect {
@@ -93,15 +108,18 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
         }
     }
     PigeonpostTheme(dark) {
+      CompositionLocalProvider(LocalAvatars provides model.pictures, LocalAskBlock provides { target -> blockTarget = target }) {
         val p = Pp.colors
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val wide = maxWidth >= WideLayoutWidth
             BackHandler(enabled = !wide && state.selectedPeer != null && sheet == null) { store.selectPeer(null) }
+            BackHandler(enabled = !wide && groups.open != null && sheet == null) { groupStore?.close() }
+            BackHandler(enabled = state.leftView != LeftView.INBOX && groups.open == null && (wide || state.selectedPeer == null) && sheet == null) { store.showView(LeftView.INBOX) }
             BackHandler(enabled = state.viewingArchive && (wide || state.selectedPeer == null) && sheet == null) { store.showArchive(false) }
             val ground = when {
                 !session.signedIn || !session.termsAccepted || state.acting == null -> p.app
                 wide -> p.sidebar
-                state.selectedPeer != null -> p.wash
+                state.selectedPeer != null || groups.open != null -> p.wash
                 else -> p.sidebar
             }
             Scaffold(snackbarHost = { SnackbarHost(snackbar) { Snackbar(it, containerColor = p.toastFill, contentColor = androidx.compose.ui.graphics.Color.White) } },
@@ -117,14 +135,19 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                         wide -> TabletInbox(state, store, model, session.username, callMode,
                             newConversation = { sheet = "new" }, settings = { sheet = "settings" },
                             info = { sheet = "peer" }, newSubject = { sheet = "subject" },
-                            chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = open, openLink = openLink)
+                            chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = open, openLink = openLink,
+                            groups = groups, newGroup = { sheet = "newGroup" }, groupInfo = { sheet = "groupInfo" }, openGroupFile = openGroupFile,
+                            openFiltered = { filteredOpen = it.peer }, openPeer = openPeer)
+                        groups.open != null && groupStore != null -> GroupPane(model, groups, state, groupStore, Modifier.fillMaxSize(), wide = false, callMode = callMode,
+                            info = { sheet = "groupInfo" }, chooseFile = chooseFile, choosePhoto = choosePhoto, openFile = openGroupFile)
                         state.selectedPeer != null -> Box(Modifier.fillMaxSize().background(p.wash)) {
                             ConversationPane(state, store, model, Modifier.fillMaxSize(), wide = false, callMode = callMode,
                                 info = { sheet = "peer" }, newSubject = { sheet = "subject" },
                                 chooseFile = chooseFile, choosePhoto = choosePhoto, attachment = open, openLink = openLink)
                         }
-                        else -> InboxList(state, store, Modifier.fillMaxSize().background(p.sidebar),
-                            mailbox = { sheet = "mailbox" }, new = { sheet = "new" }, settings = { sheet = "settings" })
+                        else -> PhoneHome(state, store, model, groups, Modifier.fillMaxSize().background(p.sidebar),
+                            mailbox = { sheet = "mailbox" }, new = { sheet = "new" }, newGroup = { sheet = "newGroup" }, settings = { sheet = "settings" },
+                            openFiltered = { filteredOpen = it.peer }, openPeer = openPeer)
                     }
                 }
             }
@@ -138,21 +161,35 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                 accountHandles = model.accountHandles, refreshMailboxes = { store.loadAccount() },
                 openInbox = { store.switchMailbox(it); sheet = null }, dismiss = { sheet = null },
                 contacts = { sheet = "contacts" }, archive = { store.showArchive(true); sheet = null }, scan = scan,
-                signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings,
+                signOut = { sheet = "signout" }, openLink = openLink, notificationSettings = notificationSettings, model = model, groups = groups, choosePicture = choosePicture, takePicture = takePicture,
                 fullScreenCalls = fullScreenCalls(),
                 appearance = appearance, chooseAppearance = model::chooseAppearance)
             "contacts" -> ContactsDialog(state, { editContact = it; sheet = "contact" }, { sheet = null }, back = { sheet = "settings" })
             "contact" -> ContactDialog(state, editContact, { store.saveContact(it) { sheet = "contacts" } },
                 { peer -> store.removeContact(peer) { sheet = "contacts" } }, { sheet = "contacts" })
             "peer" -> PeerDialog(state, store, { sheet = null }, { contact -> editContact = contact; sheet = "contact" })
+            "newGroup" -> if (groupStore != null) NewGroupDialog(state, groups, groupStore) { sheet = null }
+            "groupInfo" -> if (groupStore != null) GroupInfoDialog(groups, state, groupStore) { sheet = null }
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
         }
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null
-            else AttachmentViewer(identity, file, model.files, download = { attachment(file, "download") }, dismiss = { viewing = null })
+            else AttachmentViewer(identity, file, { model.fetch(identity, file) }, download = { attachment(file, "download") }, dismiss = { viewing = null })
         }
+        filteredOpen?.let { peer ->
+            val group = state.filteredGroups.firstOrNull { it.peer == peer }
+            if (group == null) LaunchedEffect(peer) { filteredOpen = null } else FilteredSheet(group, state, store) { filteredOpen = null }
+        }
+        blockTarget?.let { target ->
+            BlockSheet(target, state.actionBusy, confirm = { wide, report ->
+                store.blockSender(target.peer, wide, report, target.messageId, target.callId) { blockTarget = null }
+            }, dismiss = { blockTarget = null })
+        }
+        if (groupStore != null) JoinGroupDialog(groups, groupStore, state)
+        cropping?.let { bitmap -> CropDialog(bitmap, profileState.saving, profileState.error, model::saveCrop, model::cancelCrop) }
+      }
     }
 }
 
@@ -219,9 +256,39 @@ fun SearchField(value: String, change: (String) -> Unit, placeholder: String, mo
         })
 }
 
+/**
+ * The phone's front page: Conversations and, when the postbox keeps call history, a Calls tab
+ * beside it (SDS §12.1) with the unseen-missed badge. Filtered mail opens from the list's last row.
+ */
 @Composable
-private fun InboxList(state: InboxState, store: InboxStore, modifier: Modifier, mailbox: () -> Unit, new: () -> Unit, settings: () -> Unit) {
+private fun PhoneHome(state: InboxState, store: InboxStore, model: InboxViewModel, groups: dev.pigeonpost.core.groups.GroupsState, modifier: Modifier,
+    mailbox: () -> Unit, new: () -> Unit, newGroup: () -> Unit, settings: () -> Unit, openFiltered: (FilteredGroup) -> Unit, openPeer: (String) -> Unit) {
     val p = Pp.colors
+    Column(modifier) {
+        Box(Modifier.weight(1f)) {
+            when (state.leftView) {
+                LeftView.CALLS -> CallsPane(state, store, Modifier.fillMaxSize(), phone = true, open = openPeer,
+                    callBack = { key, video -> openPeer(key); model.calls?.call(key, video) })
+                LeftView.FILTERED -> FilteredPane(state, Modifier.fillMaxSize(), phone = true, back = { store.showView(LeftView.INBOX) }, open = openFiltered)
+                LeftView.INBOX -> InboxList(state, store, model, groups, Modifier.fillMaxSize(), mailbox, new, newGroup, settings, openPeer)
+            }
+        }
+        if (state.has(Features.CALL_HISTORY)) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
+            NavigationBarItem(state.leftView != LeftView.CALLS, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
+                label = { Text("Conversations") }, modifier = Modifier.testTag("tab:conversations"))
+            NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
+                BadgedBox(badge = { if (state.calls.unseen > 0) Badge { Text(if (state.calls.unseen > 99) "99+" else state.calls.unseen.toString()) } }) { Icon(Icons.Outlined.Call, null) }
+            }, label = { Text("Calls") }, modifier = Modifier.testTag("tab:calls").semantics { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" })
+        }
+    }
+}
+
+@Composable
+private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewModel, groups: dev.pigeonpost.core.groups.GroupsState, modifier: Modifier,
+    mailbox: () -> Unit, new: () -> Unit, newGroup: () -> Unit, settings: () -> Unit, openPeer: (String) -> Unit) {
+    val p = Pp.colors
+    var compose by remember { mutableStateOf(false) }
+    var invitesOpen by rememberSaveable { mutableStateOf(true) }
     Column(modifier) {
         Row(Modifier.fillMaxWidth().padding(start = 8.dp, end = 4.dp, top = 6.dp, bottom = 2.dp), verticalAlignment = Alignment.CenterVertically) {
             if (state.viewingArchive) ActionIcon("Back to inbox", Icons.AutoMirrored.Outlined.ArrowBack, tint = p.accent) { store.showArchive(false) }
@@ -236,25 +303,36 @@ private fun InboxList(state: InboxState, store: InboxStore, modifier: Modifier, 
                     state.acting?.let { Text(it.name, style = geistMono(12.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.MiddleEllipsis) }
                 }
             }
-            ActionIcon("New conversation", Icons.Outlined.Edit, action = new)
+            // New group sits in the compose menu on a phone (SDS §4.2), when groups are on.
+            if (groups.enabled) Box {
+                ActionIcon("New conversation", Icons.Outlined.Edit) { compose = true }
+                DropdownMenu(compose, { compose = false }, containerColor = p.ground) {
+                    DropdownMenuItem({ Text("New conversation") }, { compose = false; new() }, leadingIcon = { Icon(Icons.Outlined.Edit, null) })
+                    DropdownMenuItem({ Text("New group") }, { compose = false; newGroup() }, leadingIcon = { Icon(Icons.Outlined.GroupAdd, null) }, modifier = Modifier.testTag("menu:newGroup"))
+                }
+            } else ActionIcon("New conversation", Icons.Outlined.Edit, action = new)
             ActionIcon("Settings", Icons.Outlined.Settings, action = settings)
         }
         SearchField(state.filter, store::filter, "Search conversations", Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp))
         if (state.loading) LinearProgressIndicator(Modifier.fillMaxWidth().height(2.dp), color = p.accent, trackColor = p.rule)
         else Seam(Modifier.fillMaxWidth().height(1.dp))
         if (state.offline) Text("Offline · showing the last loaded conversations", Modifier.padding(16.dp), color = p.heldText, style = geist(12.5.sp, FontWeight.Medium))
-        if (state.visible.isEmpty()) {
+        val filtered = if (!state.viewingArchive && state.filter.isEmpty()) state.filteredGroups.size else 0
+        val hasGroups = groups.enabled && (groups.joined.isNotEmpty() || groups.invitations.isNotEmpty()) && !state.viewingArchive
+        if (state.visible.isEmpty() && !hasGroups && filtered == 0) {
             EmptyPane(if (state.filter.isNotEmpty()) "No matches" else if (state.viewingArchive) "Archive is empty" else "No conversations yet",
                 if (state.filter.isNotEmpty()) "Try a name or address." else "Your conversations will appear here.", Modifier.weight(1f))
         } else LazyColumn(Modifier.weight(1f)) {
+            model.groups?.let { gs -> groupRows(groups, state, gs, phone = true, invitesOpen = invitesOpen, toggleInvites = { invitesOpen = !invitesOpen }, open = model::openGroup) }
             items(state.visible, key = { it.peer }) { conversation ->
-                ConversationRow(conversation, false, phone = true) { store.selectPeer(conversation.peer) }
+                ConversationRow(conversation, false, phone = true) { openPeer(conversation.peer) }
             }
+            if (filtered > 0) item(key = "filtered") { FilteredEntry(filtered) { store.showView(LeftView.FILTERED) } }
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
             Text("${state.visible.size} conversations", style = geist(12.sp), color = p.muted)
-            TextButton({ store.refresh() }, enabled = !state.loading) {
+            TextButton({ store.refresh(); model.groups?.poke() }, enabled = !state.loading) {
                 Icon(Icons.Outlined.Refresh, null, Modifier.size(16.dp), tint = p.secondary); Spacer(Modifier.width(6.dp)); Text("Refresh", color = p.secondary, style = geist(13.sp, FontWeight.Medium))
             }
         }

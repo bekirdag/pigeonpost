@@ -98,6 +98,7 @@ fun SubjectDialog(busy: Boolean, create: (String) -> Unit, dismiss: () -> Unit) 
 
 private enum class SettingsPage(val title: String) {
     ROOT("Settings"), ACCOUNT("Account"), HANDLES("Handles"), PURCHASES("Get a handle"),
+    PROFILE("Profile picture"), PRIVACY("Privacy & filtering"), BLOCKED("Blocked"), GROUPS("Group encryption"),
     SUBSCRIPTIONS("Google Play subscriptions"), PREVIEW("Tester registration"), INBOX("Inbox and storage"), HELP("Help and about")
 }
 
@@ -121,12 +122,17 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
     openInbox: (Mailbox) -> Unit, dismiss: () -> Unit, contacts: () -> Unit,
     archive: () -> Unit, scan: () -> Unit, signOut: () -> Unit, openLink: (String) -> Unit,
     notificationSettings: () -> Unit = {}, fullScreenCalls: (() -> Unit)? = null, appearance: AppearanceChoice = AppearanceChoice.SYSTEM,
-    chooseAppearance: (AppearanceChoice) -> Unit = {}) {
+    chooseAppearance: (AppearanceChoice) -> Unit = {}, model: dev.pigeonpost.inbox.InboxViewModel? = null,
+    groups: dev.pigeonpost.core.groups.GroupsState = dev.pigeonpost.core.groups.GroupsState(), choosePicture: () -> Unit = {}, takePicture: () -> Unit = {}) {
     var pageName by rememberSaveable { mutableStateOf(SettingsPage.ROOT.name) }
     val page = SettingsPage.valueOf(pageName)
     fun navigate(next: SettingsPage) { pageName = next.name }
     val back: (() -> Unit)? = if (page == SettingsPage.ROOT) null else ({
-        navigate(if (page in setOf(SettingsPage.PURCHASES, SettingsPage.PREVIEW, SettingsPage.SUBSCRIPTIONS)) SettingsPage.HANDLES else SettingsPage.ROOT)
+        navigate(when (page) {
+            SettingsPage.PURCHASES, SettingsPage.PREVIEW, SettingsPage.SUBSCRIPTIONS -> SettingsPage.HANDLES
+            SettingsPage.BLOCKED -> SettingsPage.PRIVACY
+            else -> SettingsPage.ROOT
+        })
     })
     PageDialog(page.title, dismiss, back = back) {
         when (page) {
@@ -135,7 +141,12 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Scan for login", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
                 SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
+                if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }
                 SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
+                if (state.has(Features.CALL_ADMISSION) || state.has(Features.MESSAGE_FILTERING) || state.has(Features.CALL_HISTORY))
+                    SettingsRow("Privacy & filtering", "Strangers, calls, call history and blocking", Icons.Outlined.Shield) { navigate(SettingsPage.PRIVACY) }
+                else SettingsRow("Blocked", "People and namespaces you blocked", Icons.Outlined.Block) { navigate(SettingsPage.BLOCKED) }
+                if (groups.enabled && model?.groups != null) SettingsRow("Group encryption", "This device’s keys and fingerprint", Icons.Outlined.Lock) { navigate(SettingsPage.GROUPS) }
                 SettingsRow("Help and about", "Support, privacy and app information", Icons.Outlined.HelpOutline) { navigate(SettingsPage.HELP) }
                 AppearancePicker(appearance, chooseAppearance)
             }
@@ -179,6 +190,13 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             SettingsPage.PURCHASES -> paidHandles?.let { PaidHandleSection(it, openLink) }
             SettingsPage.SUBSCRIPTIONS -> paidHandles?.let { PaidHandleManagement(it, state.mailboxes, openInbox, openLink) }
             SettingsPage.PREVIEW -> HandleSection(handleState, handles, state.mailboxes, openInbox)
+            SettingsPage.PROFILE -> model?.let { m ->
+                val all by m.pictureForAll.collectAsStateWithLifecycle()
+                ProfileSettings(state, m.profile, choosePicture, takePicture, all) { m.pictureForAll.value = it }
+            }
+            SettingsPage.PRIVACY -> model?.let { PrivacySettings(state, it.inbox) { navigate(SettingsPage.BLOCKED) } }
+            SettingsPage.BLOCKED -> model?.let { BlockedSettings(state, it.inbox) }
+            SettingsPage.GROUPS -> model?.groups?.let { GroupDeviceSettings(groups, it) }
             SettingsPage.INBOX -> {
                 Text("Storage", style = MaterialTheme.typography.titleMedium)
                 state.quota?.let { quota ->
@@ -272,6 +290,9 @@ fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: 
     val exact = state.contacts.firstOrNull { it.peer == peer }
     val full = contact?.autonomy == "auto" && state.vocabulary.safeGrantable.isNotEmpty() && contact.allowedVerbs.orEmpty().containsAll(state.vocabulary.safeGrantable)
     var confirmation by remember { mutableStateOf<String?>(null) }
+    val askBlock = LocalAskBlock.current
+    val pictures = LocalAvatars.current
+    val known by (pictures?.store?.pictures ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) }).collectAsStateWithLifecycle()
     PageDialog("Conversation info", dismiss) {
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             Avatar(peer, state.conversation?.name ?: displayName(peer), 44.dp); Text(state.conversation?.name ?: displayName(peer), style = MaterialTheme.typography.titleLarge)
@@ -290,17 +311,30 @@ fun PeerDialog(state: InboxState, store: InboxStore, dismiss: () -> Unit, edit: 
         val standing = state.conversation?.messages?.lastOrNull { !it.outgoing }
         if (standing?.standing != null) Text("Standing: ${standing.standing}" + (standing.tier?.let { " · $it" } ?: ""), style = MaterialTheme.typography.bodyMedium)
         HorizontalDivider()
+        // Disappearing messages (SDS §17): either side sets it, for both; they see who changed it.
+        val thread = state.subject?.id?.takeIf { it.isNotEmpty() }
+        if (state.has(Features.DISAPPEARING) && thread != null) {
+            HorizontalDivider()
+            Text("Disappearing messages", style = MaterialTheme.typography.titleSmall)
+            TimerPicker("New messages in “${state.subject?.name}” disappear after", state.subject?.ephemeralSecs, enabled = !state.actionBusy) { store.setThreadTimer(thread, it) }
+            Text("Applies to both of you; they see who changed it. The clock starts when a message is sent. $DISAPPEARING_LIMITS", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+        HorizontalDivider()
         OutlinedButton({ store.archive(peer, peer !in state.archived); dismiss() }, Modifier.fillMaxWidth(), enabled = !state.actionBusy) { Text(if (peer in state.archived) "Unarchive conversation" else "Archive conversation") }
-        TextButton({ confirmation = if (contact?.admission == "block") "unblock" else "block" }, enabled = !state.actionBusy) { Text(if (contact?.admission == "block") "Unblock sender" else "Block sender", color = MaterialTheme.colorScheme.error) }
+        if (state.has(Features.AVATARS) && known[peer] != null) TextButton({ confirmation = "picture" }, enabled = !state.actionBusy) { Text("Report profile picture") }
+        TextButton({ if (contact?.admission == "block") confirmation = "unblock" else askBlock(BlockTarget(peer, state.conversation?.name ?: displayName(peer))) }, enabled = !state.actionBusy,
+            modifier = Modifier.testTag("peerBlock")) { Text(if (contact?.admission == "block") "Unblock sender" else "Block sender", color = MaterialTheme.colorScheme.error) }
     }
-    confirmation?.let { action -> Confirm(when (action) { "full" -> "Grant available permissions?"; "forget" -> "Remove contact?"; "unblock" -> "Unblock sender?"; else -> "Block sender?" },
+    confirmation?.let { action -> Confirm(when (action) { "full" -> "Grant available permissions?"; "forget" -> "Remove contact?"; "unblock" -> "Unblock sender?"; "picture" -> "Report this picture?"; else -> "Block sender?" },
         when (action) {
             "full" -> "Requests from $peer may run automatically for: ${state.vocabulary.safeGrantable.joinToString { it.replace('_', ' ') }}. Requests the server always holds still need review."
             "forget" -> "This removes the exact contact. A matching namespace rule may still apply."
             "unblock" -> "Messages will be accepted. Requests will require review."
+            "picture" -> "Report $peer’s profile picture as abusive. Pigeonpost reviews reported pictures."
             else -> "New messages from $peer will be blocked."
         }, "Confirm", {
-            when (action) { "full" -> store.fullPermissions(peer, true); "forget" -> store.removeContact(peer); "unblock" -> store.saveContact(Contact(peer, contact?.alias)); else -> store.block(peer) }
+            when (action) { "full" -> store.fullPermissions(peer, true); "forget" -> store.removeContact(peer); "unblock" -> store.unblock(contact?.peer ?: peer)
+                "picture" -> store.reportAvatar(peer); else -> store.block(peer) }
             confirmation = null
         }, { confirmation = null }) }
 }

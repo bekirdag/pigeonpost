@@ -14,6 +14,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.CallMissed
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -65,6 +66,9 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
     var editorFocused by remember { mutableStateOf(false) }
     val calling = callMode != CallHost.Mode.HIDDEN
     val calls = model.calls
+    val askBlock = LocalAskBlock.current
+    var headerMenu by remember { mutableStateOf(false) }
+    val timer = subject?.ephemeralSecs
     Column(modifier.fillMaxHeight().background(p.wash)) {
         // The bar: who this is with (the name is the button for "who is this"), then the actions.
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).background(p.wash).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp),
@@ -78,11 +82,20 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                     Text(name, style = geistMono(14.5.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(peer, style = geistMono(11.5.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
+                if (timer != null) Icon(Icons.Outlined.Timer, "Messages disappear after ${timerLabel(timer)}", Modifier.size(16.dp).testTag("timerBadge"), tint = p.muted)
             }
             ActionIcon("Find in conversation", Icons.Outlined.Search) { searching = !searching; if (!searching) query = "" }
             ActionIcon("Voice call", Icons.Outlined.Call, enabled = !calling, tint = p.accent) { calls?.call(peer, video = false) }
             ActionIcon("Video call", Icons.Outlined.Videocam, enabled = !calling, tint = p.accent) { calls?.call(peer, video = true) }
             ActionIcon("Conversation info", Icons.Outlined.Info, action = info)
+            Box {
+                ActionIcon("More conversation actions", Icons.Outlined.MoreVert) { headerMenu = true }
+                DropdownMenu(headerMenu, { headerMenu = false }, containerColor = p.ground) {
+                    if (state.has(Features.DISAPPEARING)) DropdownMenuItem({ Text("Disappearing messages") }, { headerMenu = false; info() })
+                    if (state.blockedPeer) DropdownMenuItem({ Text("Unblock") }, { headerMenu = false; state.conversation?.contact?.let { store.unblock(it.peer) } })
+                    else if (state.conversation?.identity == null) DropdownMenuItem({ Text("Block", color = p.blockedText) }, { headerMenu = false; askBlock(BlockTarget(peer, name)) })
+                }
+            }
             if (wide && subject?.id?.isNotEmpty() == true) ActionIcon("Delete subject", Icons.Outlined.DeleteOutline) { deleteSubject = true }
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
@@ -106,16 +119,18 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
             Text(if (hits.isEmpty()) "0" else "${match.mod(hits.size) + 1}/${hits.size}", Modifier.padding(8.dp), style = geist(12.sp), color = p.muted)
             ActionIcon("Next match", Icons.Outlined.ArrowDownward) { if (hits.isNotEmpty()) match++ }
         }
-        if (messages.isEmpty()) EmptyPane("Start a conversation", "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
+        if (messages.isEmpty()) EmptyPane("Start a conversation", timer?.let { "Messages disappear after ${timerLabel(it)}." } ?: "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
         else key(state.acting?.address, peer, subject?.id) {
             ConversationHistory(messages, Modifier.weight(1f),
                 searchTarget = if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
-                MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true),
+                if (message.system) CallLine(message.body) else MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true),
                     hits.isNotEmpty() && hits[match.mod(hits.size)] == message.id, store, attachment, openLink, model, state.acting?.address.orEmpty())
             }
         }
+        // A blocked person: the banner and Unblock instead of the composer (SDS §15.2).
+        if (state.blockedPeer) BlockedBanner(name, state.actionBusy) { state.conversation?.contact?.let { store.unblock(it.peer) } }
         // The composer: one card holding the attach button, the field and the send button.
-        Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)
+        else Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)
             .clip(RoundedCornerShape(16.dp)).background(p.composer).border(1.dp, p.stroke, RoundedCornerShape(16.dp))) {
             if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
@@ -185,6 +200,7 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
     var original by remember { mutableStateOf(false) }
     var confirm by remember { mutableStateOf<String?>(null) }
     var copied by remember { mutableStateOf(false) }
+    val askBlock = LocalAskBlock.current
     LaunchedEffect(copied) { if (copied) { delay(1400); copied = false } }
     val clipboard = LocalClipboardManager.current
     val mine = message.outgoing
@@ -230,6 +246,8 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                     Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy message", Modifier.size(16.dp), tint = meta)
                 }
                 Spacer(Modifier.weight(1f))
+                message.expiresAt?.let { at -> Icon(Icons.Outlined.Timer, "Disappears " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000)),
+                    Modifier.padding(end = 4.dp).size(13.dp), tint = meta) }
                 Text(when (message.status) { Delivery.SENDING -> "Sending…"; Delivery.FAILED -> "Delivery unconfirmed"; Delivery.SENT -> shortTime(message.at) },
                     style = geist(12.sp, if (message.status == Delivery.FAILED) FontWeight.SemiBold else FontWeight.Normal),
                     color = if (message.status == Delivery.FAILED) p.blockedText else meta)
@@ -240,6 +258,8 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                         DropdownMenuItem({ Text("Original message") }, { menu = false; original = true })
                         if (message.status != Delivery.SENDING) DropdownMenuItem({ Text(if (message.status == Delivery.FAILED) "Dismiss failed message" else "Delete message") }, { menu = false; confirm = "delete" })
                         if (!message.outgoing) DropdownMenuItem({ Text("Report message") }, { menu = false; confirm = "spam" })
+                        if (!message.outgoing) DropdownMenuItem({ Text("Block sender", color = p.blockedText) }, { menu = false
+                            store.state.value.selectedPeer?.let { peer -> askBlock(BlockTarget(peer, store.state.value.conversation?.name ?: displayName(peer), messageId = message.id)) } })
                     }
                 }
             }
@@ -288,3 +308,15 @@ private fun AttachmentTile(file: Attachment, identity: String, model: InboxViewM
 
 @Composable
 internal fun Dot(color: Color) = Box(Modifier.size(6.dp).background(color, CircleShape))
+
+/** "Missed video call · 14:32": a call this conversation had, drawn as a quiet line (SDS §12.1). */
+@Composable
+fun CallLine(text: String) {
+    val p = Pp.colors
+    Box(Modifier.fillMaxWidth().padding(vertical = 2.dp), contentAlignment = Alignment.Center) {
+        Row(Modifier.clip(RoundedCornerShape(10.dp)).background(p.tile).padding(horizontal = 10.dp, vertical = 5.dp).testTag("missedCall"), verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.AutoMirrored.Outlined.CallMissed, null, Modifier.size(14.dp), tint = p.blockedText)
+            Text(" $text", style = geist(12.sp, FontWeight.Medium), color = p.secondary)
+        }
+    }
+}

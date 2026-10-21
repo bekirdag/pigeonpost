@@ -11,6 +11,10 @@ import com.google.firebase.messaging.RemoteMessage
 import dev.pigeonpost.core.displayName
 import dev.pigeonpost.core.validAddress
 import dev.pigeonpost.inbox.MainActivity
+import dev.pigeonpost.inbox.AvatarPictures
+import dev.pigeonpost.core.groups.GroupLinks
+import androidx.core.app.Person
+import androidx.core.graphics.drawable.IconCompat
 import dev.pigeonpost.inbox.R
 import dev.pigeonpost.inbox.calls.IncomingCalls
 
@@ -31,8 +35,12 @@ internal fun displayPush(context: Context, data: Map<String, String>) {
     val peer = data["peer"] ?: return
     val id = data["message_id"] ?: return
     val preferences = context.getSharedPreferences("push", Context.MODE_PRIVATE)
-    if (preferences.getString("identity", null) != identity || !validAddress(identity) || !validAddress(peer)
-        || id.isBlank() || id.length > 200 || !PushNotifications.allowed(context) || PushNotifications.foreground) return
+    // A group push names the group (`grp_…`) as its peer and the group's name as its title; it never
+    // carries content, because the postbox cannot read group messages.
+    val group = GroupLinks.isGroupId(peer)
+    if (preferences.getString("identity", null) != identity || !validAddress(identity) || !(group || validAddress(peer))
+        || id.isBlank() || id.length > 200 || !PushNotifications.allowed(context)) return
+    if (PushNotifications.foreground) { if (group) PushNotifications.groupPoke?.invoke(); return }
     val intent = Intent(context, MainActivity::class.java)
         .setData(Uri.Builder().scheme("pigeonpost-notification").authority("message").appendPath(id).build())
         .putExtra("push_identity", identity).putExtra("push_peer", peer)
@@ -40,9 +48,14 @@ internal fun displayPush(context: Context, data: Map<String, String>) {
     val pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
     val public = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
         .setSmallIcon(R.drawable.ic_notification).setContentTitle("Pigeonpost").setContentText("You have a new message.").build()
+    val title = if (group) data["title"]?.filter { !it.isISOControl() }?.take(80)?.ifBlank { null } ?: "Group" else displayName(peer)
+    // The sender's face, as last seen in the app (SDS §16.1: Android `Person` icon). Never fetched here.
+    val face = if (group) null else AvatarPictures.forNotification(context, peer)
+    val person = Person.Builder().setName(title).setKey(peer).apply { face?.let { setIcon(IconCompat.createWithBitmap(it)) } }.build()
     val notification = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
-        .setSmallIcon(R.drawable.ic_notification).setContentTitle(displayName(peer))
-        .setContentText("New message in ${displayName(data["mailbox"] ?: identity)}")
+        .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
+        .setContentText(if (group) "New message" else "New message in ${displayName(data["mailbox"] ?: identity)}")
+        .addPerson(person).apply { face?.let { setLargeIcon(it) } }
         .setCategory(NotificationCompat.CATEGORY_MESSAGE).setPriority(NotificationCompat.PRIORITY_HIGH)
         .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(public)
         .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build()
