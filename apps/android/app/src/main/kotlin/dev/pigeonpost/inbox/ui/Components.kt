@@ -29,6 +29,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import dev.pigeonpost.core.PeerFace
+import dev.pigeonpost.inbox.AvatarPictures
+import androidx.compose.ui.semantics.testTag
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
@@ -66,12 +68,38 @@ fun PostAddressRow(address: String, modifier: Modifier = Modifier) {
     }
 }
 
-/** A tinted disc with the initials in the same hue; the tone is hashed from the address, as on the web. */
+/** Profile pictures for every face on screen; null where pictures are off (fixtures without them, previews). */
+val LocalAvatars = staticCompositionLocalOf<AvatarPictures?> { null }
+
+/**
+ * A tinted disc with the initials in the same hue; the tone is hashed from the address, as on the
+ * web. When the person has a picture this account may see, it is laid over the initials, which stay
+ * underneath as the fallback.
+ */
 @Composable
 fun Avatar(peer: String?, name: String, size: Dp = 38.dp) {
     val index = PeerFace.toneIndex(peer) - 1
-    Box(Modifier.size(size).background(Pp.colors.tones[index], CircleShape), contentAlignment = Alignment.Center) {
+    val pictures = LocalAvatars.current
+    val known by (pictures?.store?.pictures ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) }).collectAsState()
+    val picture = peer?.let { known[it] }
+    if (pictures != null && peer != null && peer !in known) LaunchedEffect(peer) { pictures.store.want(peer) }
+    val image by produceState(picture?.let { pictures?.cached(it) }, picture?.cacheKey) {
+        if (picture != null && pictures != null && value == null) value = pictures.bitmap(peer, picture)
+        else if (picture == null) value = null
+    }
+    Box(Modifier.size(size).clip(CircleShape).background(Pp.colors.tones[index], CircleShape).semantics { testTag = "avatar:" + (peer ?: "") + if (image != null) ":photo" else "" },
+        contentAlignment = Alignment.Center) {
         Text(PeerFace.initials(name), color = Pp.colors.toneInk[index], style = geist((size.value * 0.32f).sp, FontWeight.Bold), maxLines = 1)
+        image?.let { androidx.compose.foundation.Image(it, null, Modifier.fillMaxSize(), contentScale = androidx.compose.ui.layout.ContentScale.Crop) }
+    }
+}
+
+/** A group's face: its initials on a tone hashed from its id (groups have no pictures yet). */
+@Composable
+fun GroupAvatar(id: String, name: String, size: Dp = 38.dp) {
+    val index = PeerFace.toneIndex(id) - 1
+    Box(Modifier.size(size).background(Pp.colors.tones[index], RoundedCornerShape(size * 0.3f)), contentAlignment = Alignment.Center) {
+        Text(PeerFace.initials(name.replace(' ', '/')), color = Pp.colors.toneInk[index], style = geist((size.value * 0.32f).sp, FontWeight.Bold), maxLines = 1)
     }
 }
 

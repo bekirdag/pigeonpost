@@ -223,3 +223,16 @@ class SafetyTest {
         } finally { server.shutdown() }
     }
 }
+
+class GroupLinksTest {
+    @Test fun onlyInboxGroupLinksAreAccepted() {
+        val id = "grp_abcdefghijklmnopqrstuvwxyz"
+        assertEquals(id to "tok-en_1", dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id#tok-en_1"))
+        assertEquals(id to null, dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id/"))
+        assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("http://inbox.pigeonpost.dev/g/$id#t"))
+        assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://evil.example/g/$id#t"))
+        assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/grp_short#t"))
+        assertNull(dev.pigeonpost.core.groups.GroupLinks.parse("https://user@inbox.pigeonpost.dev/g/$id#t"))
+        assertEquals(id to null, dev.pigeonpost.core.groups.GroupLinks.parse("https://inbox.pigeonpost.dev/g/$id#bad<token>"))
+    }
+}

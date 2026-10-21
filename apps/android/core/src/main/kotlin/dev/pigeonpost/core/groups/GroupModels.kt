@@ -245,3 +245,20 @@ class MemoryGroupStorage : GroupStorage {
     override suspend fun save(mailbox: String, record: GroupRecord) { synchronized(rows) { rows[mailbox] = record } }
     override suspend fun remove(mailbox: String) { synchronized(rows) { rows.remove(mailbox) } }
 }
+
+/** `https://inbox.pigeonpost.dev/g/<id>#<token>` links, from a web page, a message or an App Link. */
+object GroupLinks {
+    private val ID = Regex("grp_[a-z2-7]{26}")
+    fun isGroupId(value: String) = ID.matches(value)
+
+    /** The group id and the link token (the fragment), or null for anything else. */
+    fun parse(url: String?): Pair<String, String?>? {
+        if (url == null || url.length > 512) return null
+        val uri = try { java.net.URI(url) } catch (_: Exception) { return null }
+        if (!uri.scheme.equals("https", true) || !uri.host.equals("inbox.pigeonpost.dev", true) || (uri.port != -1 && uri.port != 443) || uri.rawUserInfo != null) return null
+        val id = uri.rawPath?.removePrefix("/g/")?.trimEnd('/') ?: return null
+        if (uri.rawPath?.startsWith("/g/") != true || !isGroupId(id)) return null
+        val token = uri.rawFragment?.takeIf { it.isNotEmpty() && it.length <= 200 && it.all { c -> c.isLetterOrDigit() || c in "-_" } }
+        return id to token
+    }
+}

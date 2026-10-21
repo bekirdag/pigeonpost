@@ -25,13 +25,34 @@ import dev.pigeonpost.inbox.push.PushNotifications
 import dev.pigeonpost.inbox.calls.CallHost
 import dev.pigeonpost.inbox.calls.CallsOverride
 import dev.pigeonpost.inbox.ui.AppearanceChoice
+import dev.pigeonpost.core.groups.GroupCryptoLibrary
+import dev.pigeonpost.core.groups.GroupStorage
+import dev.pigeonpost.core.groups.GroupStore
+import dev.pigeonpost.core.groups.GroupLinks
+import dev.pigeonpost.core.groups.GroupTransport
+import dev.pigeonpost.core.groups.UniffiGroupCrypto
+import dev.pigeonpost.inbox.groups.KeystoreGroupStorage
+import kotlinx.coroutines.CoroutineScope
 
-data class AppGraph(val session: UserSession, val api: PostboxApi, val fixtures: Boolean = false) {
+data class AppGraph(
+    val session: UserSession,
+    val api: PostboxApi,
+    val fixtures: Boolean = false,
+    /** The postbox's group routes; null hides groups entirely. */
+    val groupTransport: GroupTransport? = api as? GroupTransport,
+    /** Loads the group-crypto library; null (or a failure) means groups are unavailable here. */
+    val groupCrypto: () -> GroupCryptoLibrary? = { loadGroupCrypto() },
+    val groupStorage: (Application) -> GroupStorage = { KeystoreGroupStorage(it) },
+    /** Starts once the graph is in use: a fixture's other people, for instance. */
+    val start: (CoroutineScope) -> Unit = {},
+) {
     companion object {
         fun live(app: Application): AppGraph {
             val session = Session(app)
             return AppGraph(session, PostboxClient(session))
         }
+        /** The native library must load and work, or groups stay hidden: there is no weaker fallback. */
+        fun loadGroupCrypto(): GroupCryptoLibrary? = try { UniffiGroupCrypto().also { check(it.generateStateKey().size == 32) } } catch (_: Throwable) { null }
     }
 }
 class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(this) } }
@@ -54,6 +75,11 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val inbox = InboxStore(graph.api, viewModelScope,
         rememberMailbox = { preferences.edit().putString("mailbox", it).apply() },
         onSessionExpired = { signOut() })
+    /** Profile pictures over the initials, once the postbox says `avatars` is on. */
+    val avatars = AvatarStore(graph.api, viewModelScope)
+    val pictures = AvatarPictures(app, avatars)
+    /** End-to-end encrypted groups (Phase 3b), once the postbox says `groups` is on. */
+    val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), viewModelScope, onSessionExpired = { signOut() }) }
     val handles = HandleStore(graph.api, viewModelScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, viewModelScope, onSessionExpired = { signOut() }) }
@@ -68,6 +94,15 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     var attachmentTarget: DraftKey? = null
     var pendingSave: File? = null
     init {
+        graph.start(viewModelScope)
+        viewModelScope.launch {
+            combine(session.state, inbox.state) { session, state ->
+                if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null) Triple(state.acting!!.address, state.acting!!.handle, state.features) else null
+            }.distinctUntilChanged().collect { target ->
+                avatars.enable(target != null && Features.AVATARS in target.third)
+                groups?.onMailbox(target?.first, target?.second, target?.third.orEmpty())
+            }
+        }
         calls?.let { host ->
             viewModelScope.launch {
                 combine(session.state, inbox.state) { session, state ->
@@ -86,7 +121,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         viewModelScope.launch {
             session.state.filter { !it.loading }.map { it.signedIn && it.termsAccepted }.distinctUntilChanged().collect { ready ->
                 if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore() }
-                else { inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
+                else { inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
             }
         }
     }
@@ -94,13 +129,38 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() {
         val token = push?.clear()
-        handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset()
+        handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset(); avatars.reset(); groups?.reset()
         viewModelScope.launch { push?.unregister(graph.api as? DevicePushApi, token); session.signOut() }
     }
     fun refreshPushRegistration() {
         push?.update(inbox.state.value.acting?.address?.takeIf { session.state.value.signedIn && session.state.value.termsAccepted })
     }
+    /** One thing open at a time: a direct conversation or a group. */
+    fun openPeer(peer: String?) { groups?.close(); inbox.selectPeer(peer) }
+    fun openGroup(id: String) { inbox.selectPeer(null); inbox.showView(LeftView.INBOX); groups?.open(id) }
+    fun setActive(value: Boolean) { inbox.setActive(value); groups?.setActive(value) }
+
+    /** `https://inbox.pigeonpost.dev/g/<id>#<token>`: show the group before anything is joined. */
+    fun openGroupLink(uri: Uri?) {
+        val link = GroupLinks.parse(uri?.toString()) ?: return
+        groups?.resolveJoin(link.first, link.second)
+    }
+
     fun openNotification(identity: String?, peer: String?) {
+        if (identity != null && peer != null && validAddress(identity) && GroupLinks.isGroupId(peer)) {
+            viewModelScope.launch {
+                val signedIn = session.state.first { !it.loading }
+                if (!signedIn.signedIn || !signedIn.termsAccepted) return@launch
+                val ready = inbox.state.first { it.accountLoaded || !session.state.value.signedIn }
+                val mailbox = ready.mailboxes.firstOrNull { it.address == identity } ?: return@launch
+                if (ready.acting?.address != identity) inbox.switchMailbox(mailbox)
+                val store = groups ?: return@launch
+                store.state.first { (it.enabled || it.unavailable) && it.mailbox == identity }
+                store.refresh()
+                if (store.state.value.groups.any { it.id == peer }) openGroup(peer)
+            }
+            return
+        }
         if (identity == null || peer == null || !validAddress(identity) || !validAddress(peer)) return
         viewModelScope.launch {
             val signedIn = session.state.first { !it.loading }
@@ -109,7 +169,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             if (!session.state.value.signedIn) return@launch
             val mailbox = ready.mailboxes.firstOrNull { it.address == identity } ?: return@launch
             if (ready.acting?.address != identity) inbox.switchMailbox(mailbox)
-            inbox.selectPeer(peer)
+            openPeer(peer)
         }
     }
     override fun onCleared() { billing?.close(); calls?.destroy(); super.onCleared() }
