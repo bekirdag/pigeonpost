@@ -24,6 +24,7 @@ struct GroupView: View {
     @State private var pickingPhotos = false
     @State private var photos: [PhotosPickerItem] = []
     @State private var deleting: Int?
+    @State private var blocking: BlockTarget?
     @FocusState private var composing: Bool
 
     private var group: GroupSummary? { groups.group(groupId) }
@@ -70,6 +71,7 @@ struct GroupView: View {
         } message: {
             Text("It is removed from the postbox. Copies people already saw on their screens stay where they are.")
         }
+        .sheet(item: $blocking) { target in BlockSheet(target: target) }
         .onAppear { if Fixtures.sheet == "group-info" { showingInfo = true } }
     }
 
@@ -201,7 +203,10 @@ struct GroupView: View {
         case .message:
             if let item = line.item {
                 GroupBubble(item: item, group: group, showSender: line.showSender, mine: item.sender == account.me?.address,
-                            onDelete: { deleting = $0 })
+                            onDelete: { deleting = $0 },
+                            onBlock: { sender in
+                                blocking = BlockTarget(peer: groups.key(sender), name: groups.name(sender), origin: .group)
+                            })
             }
         }
     }
@@ -405,6 +410,7 @@ struct GroupBubble: View {
     let showSender: Bool
     let mine: Bool
     let onDelete: (Int) -> Void
+    var onBlock: (String) -> Void = { _ in }
 
     @Environment(GroupStore.self) private var groups
 
@@ -454,6 +460,9 @@ struct GroupBubble: View {
                 }
                 if deletable, let seq = item.seq {
                     Button(role: .destructive) { onDelete(seq) } label: { Label("Delete for everyone", systemImage: "trash") }
+                }
+                if !mine, let sender = item.sender {
+                    Button(role: .destructive) { onBlock(sender) } label: { Label("Block sender…", systemImage: "hand.raised") }
                 }
             }
             if !mine { Spacer(minLength: 40) }

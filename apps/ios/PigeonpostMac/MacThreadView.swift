@@ -185,8 +185,12 @@ struct MacThreadView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { findBar }
             // Voice and video, beside the find bar: what you do *with* this conversation.
-            ToolbarItem(placement: .primaryAction) { DirectTimerBadge(peer: peer) }
-            ToolbarItem(placement: .primaryAction) { CallButtons(peer: peer) }
+            ToolbarItem(placement: .primaryAction) {
+                HStack(spacing: 8) {
+                    DirectTimerBadge(peer: peer)
+                    CallButtons(peer: peer)
+                }
+            }
             // Block, beside the call buttons and drawn the same way: a tapped image, not a Button.
             ToolbarItem(placement: .primaryAction) {
                 if let conversation, !conversation.isBlocked {

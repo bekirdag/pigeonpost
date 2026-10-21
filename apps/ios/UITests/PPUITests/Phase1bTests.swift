@@ -32,8 +32,15 @@ final class Phase1bTests: XCTestCase {
         let calls = app.buttons["callsButton"]
         XCTAssertTrue(calls.waitForExistence(timeout: 10))
         let buttons = [app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Acting as")).firstMatch,
-                       calls, app.buttons["New conversation"], app.buttons["Settings"]]
-        for button in buttons { XCTAssertTrue(button.exists && button.isHittable, "\(button) is not reachable") }
+                       calls, app.buttons["composeMenu"].exists ? app.buttons["composeMenu"] : app.buttons["New conversation"],
+                       app.buttons["Settings"]]
+        let screen = app.windows.firstMatch.frame
+        // A toolbar Menu (New conversation / New group, once groups are on) reports itself as not
+        // hittable; on screen and inside the bar is what matters for it.
+        for button in buttons {
+            XCTAssertTrue(button.exists && (button.isHittable || (screen.contains(button.frame) && button.frame.width > 10)),
+                          "\(button) is not reachable")
+        }
         for (i, a) in buttons.enumerated() {
             for b in buttons[(i + 1)...] {
                 let overlap = a.frame.intersection(b.frame)
@@ -103,8 +110,21 @@ final class Phase1bTests: XCTestCase {
         launch(["-open=/bekir/docdex"])
         let composer = app.textViews["messageComposer"]
         XCTAssertTrue(composer.waitForExistence(timeout: 10))
-        app.buttons["threadMenu"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
-        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Block ")).firstMatch.tap()
+        if app.buttons["threadMenu"].exists {
+            app.buttons["threadMenu"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        } else {
+            // An iPad mini's narrow detail column folds the bar into the system's overflow menu,
+            // where the thread's own menu ("More") is a submenu.
+            app.buttons["More"].firstMatch.tap()
+            let more = app.buttons.matching(NSPredicate(format: "label == %@", "More"))
+            _ = more.element(boundBy: 1).waitForExistence(timeout: 3)
+            // The submenu row sits below the bar; the overflow button itself is in it.
+            more.allElementsBoundByIndex.first { $0.frame.minY > 60 }?.tap()
+        }
+        // "Block /bekir/docdex…" on the phone's menu, "Block…" on the iPad's.
+        let block = app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ AND elementType IN %@", "Block", [XCUIElement.ElementType.button.rawValue, XCUIElement.ElementType.menuItem.rawValue])).firstMatch
+        XCTAssertTrue(block.waitForExistence(timeout: 5))
+        block.tap()
         XCTAssertTrue(app.buttons["blockConfirm"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.switches["blockWide"].exists, "a handle in a namespace offers blocking the namespace")
         app.buttons["blockConfirm"].tap()

@@ -130,8 +130,14 @@ struct ThreadView: View {
         .toolbarBackground(Theme.wash, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) { DirectTimerBadge(peer: peer) }
-            ToolbarItem(placement: .topBarTrailing) { CallButtons(peer: peer) }
+            // One item: an empty badge in an item of its own still takes a slot, and on an iPad's
+            // narrow detail column that pushed the bar into the system's overflow menu.
+            ToolbarItem(placement: .topBarTrailing) {
+                HStack(spacing: 8) {
+                    DirectTimerBadge(peer: peer)
+                    CallButtons(peer: peer)
+                }
+            }
             // One button, not two. Archiving is a decision about this conversation and belongs
             // beside the other decisions about it — known, trusted, blocked — rather than sitting
             // in the bar as a thing to hit by accident on the way to reading.

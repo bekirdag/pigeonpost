@@ -21,6 +21,8 @@ struct GroupInfoSheet: View {
     @State private var confirm: Confirm?
     @State private var transferTo = ""
     @State private var expanded: Set<String> = []
+    /// Blocking a member (SDS §15.2): their direct mail and calls, and their group posts to you.
+    @State private var blocking: BlockTarget?
 
     private struct Confirm: Identifiable {
         let id = UUID()
@@ -50,6 +52,7 @@ struct GroupInfoSheet: View {
             await groups.loadMembers(groupId)
             if let group { name = group.name; about = group.description ?? "" }
         }
+        .sheet(item: $blocking) { target in BlockSheet(target: target) }
         .confirmationDialog(confirm?.title ?? "", isPresented: Binding(get: { confirm != nil }, set: { if !$0 { confirm = nil } }),
                             titleVisibility: .visible, presenting: confirm) { pending in
             Button(pending.action, role: .destructive) { Task { await pending.run() } }
@@ -225,6 +228,9 @@ struct GroupInfoSheet: View {
         }
         if !me {
             Button { Clipboard.copy(member.key) } label: { Label("Copy address", systemImage: "doc.on.doc") }
+            Button(role: .destructive) {
+                blocking = BlockTarget(peer: member.key, name: groups.name(member.address), origin: .group)
+            } label: { Label("Block…", systemImage: "hand.raised") }
         }
     }
 
