@@ -343,7 +343,7 @@ try {
   await until(() => A.evaluate(`document.querySelectorAll(".rule").length > 0`), "template rule shown", 10000);
   await A.click("#content button", "Test a rule");
   await A.fill(".sheet input", "/acme/john", 0);
-  await A.fill(".sheet input", "/acme/owner", 1);
+  await A.fill(".sheet input", process.env.OWNER_HANDLE || "/acme/owner", 1);
   await A.click(".sheet button", "Test");
   await until(() => A.text(".sheet").then((t) => t.includes("Delivered")), "rule test result");
   check((await A.text(".sheet")).includes("Known contact"), "test explains the outcome");
