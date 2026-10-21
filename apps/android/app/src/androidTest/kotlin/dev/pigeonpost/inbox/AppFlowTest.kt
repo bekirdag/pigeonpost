@@ -54,7 +54,7 @@ class AppFlowTest {
     @Test fun conversationsSubjectsComposeFindAndBack() {
         launch().use { scenario ->
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
             ui.onNodeWithText("Message").performTextInput("Hello from Android")
             ui.onNodeWithContentDescription("Send message").performClick()
@@ -102,8 +102,8 @@ class AppFlowTest {
     }
     @Test fun longMarkdownHistoryOpensAtTheFooterAndSearchesOlderMessages() {
         launch("long-tall").use {
-            shown("demo/builder")
-            ui.onNodeWithText("demo/builder").performClick()
+            shown("Demo Builder")
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("Newest report footer")
             ui.onNodeWithText("Newest report footer").assertIsDisplayed()
             ui.onNodeWithTag("conversation-history").assert(SemanticsMatcher.expectValue(dev.pigeonpost.inbox.ui.LoadedMessageCount, 10))
@@ -155,7 +155,7 @@ class AppFlowTest {
     @Test fun mailboxSwitchAndServerPermissions() {
         launch().use {
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             ui.onNodeWithContentDescription("Conversation info").performClick()
             ui.onNodeWithText("Choose permissions").performScrollTo().performClick()
             shown("Allow selected requests automatically")
@@ -254,7 +254,7 @@ class AppFlowTest {
     @Test fun nativeImagePasteStagesMultiplePreviewsAndSendsWithoutACaption() {
         launch().use {
             shown("Inbox")
-            ui.onNodeWithText("demo/builder").performClick()
+            ui.onNodeWithText("Demo Builder").performClick()
             shown("The Android build is ready for review.")
             ui.onNodeWithText("Message").performTextInput("Keep this caption")
             val folder = File(context.cacheDir, "received/paste-test").apply { mkdirs() }

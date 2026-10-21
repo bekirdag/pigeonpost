@@ -56,22 +56,92 @@ internal sealed class DesktopNotifications : IDisposable
         previous?.Dispose();
     }
 
-    public static bool Announce(MessageArrival arrival)
+    // A real Windows toast, which Windows places bottom-right and files in the notification centre:
+    // the sender's name and face, a preview the user's setting allows, an inline Reply box and
+    // Mark as read. Clicking the body opens the conversation. Every action carries the mailbox, peer
+    // and message, and App re-checks them against the signed-in account before doing anything.
+    public static bool Announce(MessageArrival arrival, MessageAlert alert, string? mailboxName = null)
     {
         try
         {
-            var notification = new AppNotificationBuilder()
+            AppNotificationButton Action(string label, string action) => new AppNotificationButton(label)
+                .AddArgument("action", action).AddArgument("mailbox", arrival.Mailbox).AddArgument("peer", arrival.Peer)
+                .AddArgument("thread", arrival.ThreadId ?? "").AddArgument("message", arrival.MessageId);
+            var builder = new AppNotificationBuilder()
+                .AddArgument("action", "open")
                 .AddArgument("mailbox", arrival.Mailbox).AddArgument("peer", arrival.Peer)
                 .AddArgument("thread", arrival.ThreadId ?? "").AddArgument("message", arrival.MessageId)
-                .AddText("New Pigeonpost message")
-                .AddText("Open Pigeonpost to read your message.").BuildNotification();
-            notification.Tag = NotificationKey(arrival.MessageId);
-            notification.Group = NotificationKey(arrival.Mailbox);
+                .AddText(alert.Title)
+                .AddText(alert.Text)
+                .SetTimeStamp(DateTime.Now)
+                .AddTextBox(ReplyInput, "Reply", "")
+                .AddButton(Action("Reply", "reply").SetInputId(ReplyInput))
+                .AddButton(Action("Mark as read", "read"));
+            if (!string.IsNullOrEmpty(mailboxName)) builder.SetAttributionText("To " + mailboxName);
+            if (alert.Title != MessageAlerts.GenericTitle && AvatarUri(alert) is { } avatar)
+                builder.SetAppLogoOverride(avatar, AppNotificationImageCrop.Circle);
+            var notification = builder.BuildNotification();
+            notification.Tag = alert.Tag;
+            notification.Group = alert.Group;
             AppNotificationManager.Default.Show(notification);
             if (notification.Id == 0) DesktopLog.Write($"Windows did not accept an alert; setting {AppNotificationManager.Default.Setting}");
             return notification.Id != 0;
         }
         catch (Exception ex) { DesktopLog.Error("Showing an alert failed", ex); return false; }
+    }
+
+    internal const string ReplyInput = "reply";
+
+    // One conversation's toasts leave the notification centre together once it has been read.
+    public static async Task RemoveConversationAsync(string mailbox, string peer)
+    {
+        try { await AppNotificationManager.Default.RemoveByGroupAsync(MessageAlerts.GroupKey(mailbox, peer)); }
+        catch (Exception ex) { DesktopLog.Error("Removing a conversation's alerts failed", ex); }
+    }
+
+    // The sender's initials on a disc, written where Windows can read it: the package's temporary
+    // folder when installed, the user's temp folder in an unpackaged run.
+    private static Uri? AvatarUri(MessageAlert alert)
+    {
+        try
+        {
+            string folder; Func<string, Uri> uri;
+            try
+            {
+                folder = Path.Combine(Windows.Storage.ApplicationData.Current.TemporaryFolder.Path, "avatars");
+                uri = name => new Uri("ms-appdata:///temp/avatars/" + name);
+            }
+            catch (InvalidOperationException)
+            {
+                folder = Path.Combine(Path.GetTempPath(), "Pigeonpost", "avatars");
+                uri = name => new Uri(Path.Combine(folder, name));
+            }
+            Directory.CreateDirectory(folder);
+            var file = MessageAlerts.Key(alert.Initials + "\n" + alert.Group) + ".png";
+            var path = Path.Combine(folder, file);
+            if (!File.Exists(path))
+            {
+                using var bitmap = new Bitmap(96, 96);
+                using (var graphics = Graphics.FromImage(bitmap))
+                {
+                    graphics.SmoothingMode = SmoothingMode.AntiAlias;
+                    graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+                    graphics.Clear(Color.Transparent);
+                    var tones = new[] { Color.FromArgb(22, 50, 107), Color.FromArgb(37, 99, 235), Color.FromArgb(15, 118, 110),
+                        Color.FromArgb(124, 58, 237), Color.FromArgb(180, 83, 9), Color.FromArgb(190, 18, 60) };
+                    using var background = new SolidBrush(tones[Convert.ToInt32(alert.Group[..2], 16) % tones.Length]);
+                    graphics.FillEllipse(background, 0, 0, 96, 96);
+                    using var font = new Font("Segoe UI", alert.Initials.Length > 2 ? 30 : 38, FontStyle.Bold, GraphicsUnit.Pixel);
+                    using var format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center };
+                    graphics.DrawString(alert.Initials, font, Brushes.White, new RectangleF(0, 2, 96, 96), format);
+                }
+                var temporary = path + ".tmp";
+                bitmap.Save(temporary, System.Drawing.Imaging.ImageFormat.Png);
+                File.Move(temporary, path, overwrite: true);
+            }
+            return uri(file);
+        }
+        catch (Exception ex) { DesktopLog.Error("Drawing a toast avatar failed", ex); return null; }
     }
 
     public static bool ShowTrayHint()
@@ -85,9 +155,6 @@ internal sealed class DesktopNotifications : IDisposable
         }
         catch (Exception ex) { DesktopLog.Error("Showing the notification-area hint failed", ex); return false; }
     }
-
-    internal static string NotificationKey(string value) => Convert.ToHexString(
-        System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(value)))[..16];
 
     public static async Task ClearAlertsAsync()
     {

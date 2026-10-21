@@ -204,7 +204,7 @@ final class IOSUXTests: XCTestCase {
         XCTAssertEqual(app.buttons["mailbox:/sofya/main"].value as? String, "Selected")
         screenshot("mailbox-order-with-sofya-selected")
         first.tap()
-        app.buttons["Acting as /bekir. Change mailbox"].tap()
+        app.buttons["Acting as Bekir. Change mailbox"].tap()
         XCTAssertEqual(app.buttons["mailbox:/bekir/main"].value as? String, "Selected")
         XCTAssertLessThan(app.buttons["mailbox:/bekir/main"].frame.minY, app.buttons["mailbox:/lidya/main"].frame.minY)
     }

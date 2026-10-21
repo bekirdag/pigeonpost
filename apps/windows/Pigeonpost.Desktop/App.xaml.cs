@@ -29,7 +29,13 @@ public partial class App : Application
                 var values = activation.Arguments;
                 if (values.TryGetValue("mailbox", out var mailbox) && values.TryGetValue("peer", out var peer)
                     && values.TryGetValue("message", out var message))
-                    await window.OpenNotificationAsync(new(mailbox, peer, values.TryGetValue("thread", out var thread) ? thread : null, message));
+                {
+                    MessageArrival target = new(mailbox, peer, values.TryGetValue("thread", out var thread) && thread.Length > 0 ? thread : null, message);
+                    var action = values.TryGetValue("action", out var named) ? named : "open";
+                    if (action is "reply" or "read")
+                        await window.HandleNotificationActionAsync(action, target, activation.UserInput.TryGetValue(DesktopNotifications.ReplyInput, out var reply) ? reply : null);
+                    else await window.OpenNotificationAsync(target);
+                }
                 else window.ShowInbox();
             });
         void HandleActivation(AppActivationArguments activation)

@@ -6,23 +6,31 @@
 import SwiftUI
 
 enum PeerFace {
-    /// The whole handle, with a trailing `/main` dropped.
-    ///
-    /// Showing the last segment alone is what made a conversation with `/ozgur/main` read as
-    /// "main" — and every other namespace's default inbox reads as "main" too, so the one name on
-    /// screen was the one word that identified nobody. The rest of a handle is not decoration
-    /// either: `/wodo/home` and `/bekir/home` are different mailboxes, and a row saying only "home"
-    /// does not say whose. So the namespace always survives; only the `main` that a bare
-    /// `/<namespace>` already resolves to is worth dropping.
+    /// Short segments that read as acronyms: "/wodo/hr" is "Wodo HR", not "Wodo Hr". The same list
+    /// as `ACRONYMS` in site-inbox/names.js and the Android, Windows and Linux copies.
+    static let acronyms: Set<String> = ["hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev"]
+
+    /// A handle as a person's name: "/bekir/main" and "/bekir" are "Bekir", "/wodo/hr" is
+    /// "Wodo HR", "/acme/john-doe" is "Acme John Doe". Every segment survives — "/wodo/home" and
+    /// "/bekir/home" are different mailboxes — and only the `main` that a bare `/<namespace>`
+    /// already resolves to is dropped. Key addresses, address-style handles and GitHub logins keep
+    /// their old display; anything that is not a handle is returned as it is. A contact alias wins
+    /// over this, and callers check for one first.
     static func displayName(_ peer: String?) -> String {
         guard let peer, !peer.isEmpty else { return "unknown" }
         if peer.hasPrefix("/k/") { return String(peer.prefix(12)) + "…" }
-        let parts = peer.split(separator: "/").filter { !$0.isEmpty }
-        guard !parts.isEmpty else { return peer }
-        if parts.count > 1, parts.last == "main" {
-            return "/" + parts.dropLast().joined(separator: "/")
-        }
-        return "/" + parts.joined(separator: "/")
+        var parts = peer.split(separator: "/").filter { !$0.isEmpty }.map(String.init)
+        guard peer.hasPrefix("/"), !parts.isEmpty else { return peer }
+        if parts.count > 1, parts.last == "main" { parts.removeLast() }
+        if peer.contains("@") || parts.first == "github" { return "/" + parts.joined(separator: "/") }
+        let name = parts.map { part in
+            part.split(whereSeparator: { $0 == "-" || $0 == "_" }).map { word -> String in
+                let lower = word.lowercased()
+                if acronyms.contains(lower) { return lower.uppercased() }
+                return lower.prefix(1).uppercased() + lower.dropFirst()
+            }.joined(separator: " ")
+        }.filter { !$0.isEmpty }.joined(separator: " ")
+        return name.isEmpty ? peer : name
     }
 
     static func conversationAddressInput(_ input: String) -> String {
@@ -41,14 +49,19 @@ enum PeerFace {
         }
     }
 
-    /// Letters come from the last segment of the name, not from the whole of it. The badge is two
-    /// characters wide, and now that the name carries its namespace, taking them off the front
-    /// would give every mailbox in one fleet the same face.
-    static func initials(_ peer: String?) -> String {
-        let name = displayName(peer)
-        let last = name.split(separator: "/").last.map(String.init) ?? name
-        let letters = last.filter { $0.isLetter || $0.isNumber }
-        return letters.isEmpty ? "··" : String(letters.prefix(2)).uppercased()
+    /// Two letters for a face, taken from the name it shows: "Bekir" is "BE", "Wodo HR" is "WH" (the
+    /// first and last words). Pass `name` when the person has an alias; otherwise the handle's
+    /// derived name is used. A name that is still a path (a key or an address) is lettered from its
+    /// last segment.
+    static func initials(_ peer: String?, name: String? = nil) -> String {
+        let shown = (name?.isEmpty == false ? name! : displayName(peer)).trimmingCharacters(in: .whitespaces)
+        let base = shown.contains("/") ? (shown.split(separator: "/").last.map(String.init) ?? shown) : shown
+        let words = base.split(whereSeparator: { $0.isWhitespace || $0 == "-" || $0 == "_" })
+            .map { $0.filter { $0.isLetter || $0.isNumber } }
+            .filter { !$0.isEmpty }
+        guard let first = words.first else { return "··" }
+        let letters = words.count > 1 ? String(first.prefix(1)) + String(words.last!.prefix(1)) : String(first.prefix(2))
+        return letters.uppercased()
     }
 
     /// Which of the six tones a peer keeps, 1...6 — the numbering the web app's `data-tone` uses,
@@ -77,13 +90,15 @@ enum PeerFace {
 struct Avatar: View {
     let peer: String?
     var size: CGFloat = 38
+    /// The name shown beside the face, when it is an alias rather than the handle's own name.
+    var name: String? = nil
 
     var body: some View {
         Circle()
             .fill(PeerFace.tone(peer))
             .frame(width: size, height: size)
             .overlay(
-                Text(PeerFace.initials(peer))
+                Text(PeerFace.initials(peer, name: name))
                     .font(.geist(size * 0.32, .bold))
                     .kerning(size * 0.32 * 0.02)
                     .foregroundStyle(PeerFace.toneInk(peer))

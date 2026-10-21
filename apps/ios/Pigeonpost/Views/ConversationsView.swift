@@ -277,7 +277,7 @@ struct ConversationRow: View {
 
     var body: some View {
         HStack(alignment: .center, spacing: 12) {
-            Avatar(peer: conversation.peer, size: 40)
+            Avatar(peer: conversation.peer, size: 40, name: conversation.name)
             VStack(alignment: .leading, spacing: 3) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)

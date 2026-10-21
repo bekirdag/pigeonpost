@@ -480,7 +480,7 @@ struct DesktopInboxView: View {
                     ToolbarItem(placement: .navigation) {
                         Button { showPeer(conversation) } label: {
                             HStack(spacing: 10) {
-                                Avatar(peer: conversation.peer, size: 28)
+                                Avatar(peer: conversation.peer, size: 28, name: conversation.name)
                                 Text(conversation.name)
                                     .font(.geistMono(14, .semibold))
                                     .foregroundStyle(Theme.ink)
@@ -676,7 +676,7 @@ private struct DesktopConversationRow: View {
         // next to the column and it takes the width instead: the name and preview collapse to two
         // characters and an ellipsis while the sidebar sits there half empty.
         HStack(alignment: .center, spacing: 11) {
-            Avatar(peer: conversation.peer, size: 38)
+            Avatar(peer: conversation.peer, size: 38, name: conversation.name)
             VStack(alignment: .leading, spacing: 2) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text(conversation.name)

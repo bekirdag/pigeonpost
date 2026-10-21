@@ -66,7 +66,7 @@ class CallRingsTest {
         assertEquals(displayName("/k/bob00000000000000000000000b"), value.callerName)
         assertEquals("/k/bob00000000000000000000000b", value.callerDetail)
         val handleOnly = CallRings.ring(ring("from_display" to ""), me, now)!!
-        assertEquals("/bob", handleOnly.callerName)
+        assertEquals("Bob", handleOnly.callerName)
         assertNull(handleOnly.callerDetail)
         assertNull(CallRings.ring(ring("code" to "<script>"), me, now)!!.code)
     }

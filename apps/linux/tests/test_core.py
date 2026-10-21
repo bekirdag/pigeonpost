@@ -231,10 +231,24 @@ class ModelTests(unittest.TestCase):
                                       {"message_id": "read", "read": True}]), 1)
         self.assertEqual(unread_count([]), 0)
 
+    def test_handles_read_as_names(self):
+        from pigeonpost.model import NAME_ACRONYMS, display_name, initials
+        for handle, name in [("/bekir/main", "Bekir"), ("/bekir", "Bekir"), ("/wodo/hr", "Wodo HR"),
+                             ("/wodo/ceo", "Wodo CEO"), ("/acme/john-doe", "Acme John Doe"),
+                             ("/acme/john_doe", "Acme John Doe"), ("/acme/qa/bot", "Acme QA Bot"),
+                             ("/main", "Main"), ("Team inbox", "Team inbox"),
+                             ("/github/alex", "/github/alex"), ("/alex@example.com", "/alex@example.com")]:
+            self.assertEqual(display_name(handle), name, handle)
+        self.assertEqual(NAME_ACRONYMS, ("hr", "it", "qa", "ui", "ux", "pr", "ai", "ceo", "cto", "cfo", "ops", "dev"))
+        self.assertEqual(initials(display_name("/bekir/main")), "BE")
+        self.assertEqual(initials(display_name("/wodo/hr")), "WH")
+        self.assertEqual(initials(display_name("/acme/john-doe")), "AD")
+        self.assertEqual(initials(""), "··")
+
     def test_peer_validation(self):
         from pigeonpost.model import conversation_address_input, display_name
-        self.assertEqual(display_name("/bekir/main"), "/bekir")
-        self.assertEqual(display_name("/alp/main"), "/alp")
+        self.assertEqual(display_name("/bekir/main"), "Bekir")
+        self.assertEqual(display_name("/alp/main"), "Alp")
         self.assertEqual(display_name("/k/main"), "/k/main")
         self.assertEqual(conversation_address_input("bekir"), "/bekir")
         self.assertEqual(conversation_address_input(" /bekir/main "), "/bekir/main")
@@ -411,7 +425,7 @@ class CallTests(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer member")
         self.assertIsNone(request.get_header("Origin"))
         # The ring before `ready` is ignored, and a repeated ring does not notify twice.
-        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming video call", "/bob")])
+        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming video call", "Bob")])
         self.assertIn(ROOM_ID, notifier.withdrawn)
         self.assertEqual(ringtone.events[0], "start")
         self.assertEqual(ringtone.events[-1], "stop")
@@ -424,7 +438,7 @@ class CallTests(unittest.TestCase):
             [stream], name_for=lambda address, handle: "<i>Alp</i> (" + display_name(handle) + ")")
         client.start()
         self.assertTrue(done.wait(5))
-        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming voice call", "iAlp/i (/alp)")])
+        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming voice call", "iAlp/i (Alp)")])
         client.stop()
 
     def test_expiry_and_stream_loss_withdraw(self):

@@ -108,8 +108,12 @@
   };
 
   // Faces: the same two letters and tone the inbox uses, so a person looks the same in both places.
+  // A handle is named first ("/bekir/main" -> "Bekir" -> "BE"), never lettered from its last segment.
   function initials(name) {
-    const base = String(name || "").split("/").filter(Boolean).pop() || String(name || "");
+    const text = String(name || "");
+    const named = text.startsWith("/") ? displayName(text) : text;
+    if (window.PigeonpostNames) return window.PigeonpostNames.initials(named);
+    const base = named.split("/").filter(Boolean).pop() || named;
     const letters = base.replace(/[^\p{L}\p{N}]/gu, "");
     return (letters.slice(0, 2) || "··").toUpperCase();
   }
@@ -125,17 +129,14 @@
     // Phase 1b: the inbox may lay a profile picture over the initials (falls back to them).
     host()?.decorateAvatar?.(node, name);
   }
-  // The name a call shows for someone. The shared naming rule ("Bob", not "/bob") is coming as a
-  // helper (Phase 1d); until it lands this is the inbox's own display name, and it is the one
-  // place the call screen asks — swap the helper in here.
+  // The name a call shows for someone: the shared naming rule (names.js, "Bob" not "/bob"),
+  // applied through displayName so a contact alias still wins.
   function callName(m) {
-    const helper = window.PigeonpostNames && window.PigeonpostNames.display;
-    const name = displayName(m);
-    return helper ? helper(name) : name;
+    return displayName(m);
   }
   function displayName(m) {
     if (!m) return "Guest";
-    if (typeof m === "string") return host()?.displayName ? host().displayName(m) : m;
+    if (typeof m === "string") return host()?.displayName ? host().displayName(m) : window.PigeonpostNames ? window.PigeonpostNames.displayName(m) : m;
     if (m.mailbox) return displayName(m.mailbox.handle || m.mailbox.address);
     return m.name || "Guest";
   }

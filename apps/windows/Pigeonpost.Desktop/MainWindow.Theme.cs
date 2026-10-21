@@ -14,6 +14,24 @@ public sealed partial class MainWindow
     {
         Root.ActualThemeChanged += (_, _) => UpdateTitleBar();
         ApplyTheme(preferences.LoadTheme());
+        ShowNotificationPreview(preferences.LoadNotificationPreview());
+    }
+
+    private void ShowNotificationPreview(NotificationPreview preview)
+    {
+        PreviewMessageItem.IsChecked = preview == NotificationPreview.NameAndMessage;
+        PreviewNameItem.IsChecked = preview == NotificationPreview.NameOnly;
+        PreviewHiddenItem.IsChecked = preview == NotificationPreview.Hidden;
+    }
+
+    // What a new-message toast may show. Windows can still hide toast content on the lock screen.
+    private void NotificationPreview_Click(object sender, RoutedEventArgs e)
+    {
+        if (sender is not RadioMenuFlyoutItem { Tag: string tag }) return;
+        var preview = AppPreferences.ParseNotificationPreview(tag);
+        ShowNotificationPreview(preview);
+        try { preferences.SaveNotificationPreview(preview); }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { AccountStatus.Text = "Could not save the notification preference."; }
     }
 
     // Root carries the choice; dialogs copy Root.ActualTheme when they open. System leaves

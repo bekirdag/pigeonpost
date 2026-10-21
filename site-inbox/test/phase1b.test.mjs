@@ -120,6 +120,7 @@ async function app(t, { features = ALL, configure = () => {} } = {}) {
   w.URL.createObjectURL = () => "blob:fixture-" + (++objects);
   w.URL.revokeObjectURL = () => {};
   w.localStorage.setItem("ppi_token", "fixture_account");
+  w.eval(read("names.js"));
   w.eval(read("config.js"));
   w.eval(read("crop.js"));
   w.eval(read("app.js"));

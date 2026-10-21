@@ -36,7 +36,7 @@ defaults:
 jobs:
   rust:
     name: fmt, clippy, tests and fuzz
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     env:
       RUSTFLAGS: -D warnings
     steps:
@@ -53,7 +53,7 @@ jobs:
 
   audit:
     name: cargo audit (group crypto lockfile)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Install the exact compatible cargo-audit release
@@ -70,7 +70,7 @@ jobs:
 
   generated:
     name: committed WASM bundle and bindings are reproducible
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -98,7 +98,7 @@ jobs:
 
   interop-linux:
     name: interop (Linux — Rust, WASM/Node, Kotlin/JVM, Python, C#)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
@@ -154,7 +154,7 @@ jobs:
 
   android:
     name: Android AAR (arm64-v8a, armeabi-v7a, x86_64)
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2

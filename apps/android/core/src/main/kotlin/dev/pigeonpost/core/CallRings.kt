@@ -21,7 +21,7 @@ data class CallRing(
 ) {
     val video get() = kind == "video"
     /** What the call screen calls the caller: the name they gave, else their handle, else their address. */
-    val callerName: String get() = fromDisplay ?: fromHandle?.let(::displayName)?.let { "/" + it.removePrefix("/") } ?: displayName(fromAddress)
+    val callerName: String get() = fromDisplay ?: fromHandle?.let(::displayName) ?: displayName(fromAddress)
     /** The second line: the handle (or address) under a display name. */
     val callerDetail: String? get() = if (fromDisplay != null) fromHandle ?: fromAddress else if (fromHandle != null) null else fromAddress
 }
