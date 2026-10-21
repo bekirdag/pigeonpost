@@ -13,8 +13,9 @@ MAX_FILE = 25 * 1024 * 1024
 
 
 class APIError(Exception):
-    def __init__(self, status=0, code="network_error", detail=""):
+    def __init__(self, status=0, code="network_error", detail="", body=None):
         self.status, self.code = status, code
+        self.body = body if isinstance(body, dict) else {}
         messages = {
             "network_error": "Could not reach Pigeonpost. Check your connection and try again.",
             "invalid_grant": "Your session has expired. Please sign in again.",
@@ -33,12 +34,16 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
 
 
 class Transport:
-    def __init__(self):
+    def __init__(self, allow_loopback_http=False):
         self.opener = urllib.request.build_opener(NoRedirect())
+        # Tests against a locally started postbox only; the app never sets this.
+        self.allow_loopback_http = allow_loopback_http
 
     def request(self, method, url, *, data=None, form=None, token=None, headers=None,
                 raw=None, binary=False, timeout=35):
-        if urllib.parse.urlsplit(url).scheme != "https":
+        parts = urllib.parse.urlsplit(url)
+        loopback = self.allow_loopback_http and parts.scheme == "http" and parts.hostname == "127.0.0.1"
+        if parts.scheme != "https" and not loopback:
             raise APIError(0, "invalid_response", "HTTPS is required.")
         hdr = {"Accept": "application/json", "User-Agent": "Pigeonpost-Linux/" + VERSION}
         if token:
@@ -71,7 +76,8 @@ class Transport:
                         error = {}
                 except (ValueError, UnicodeError):
                     error = {}
-            raise APIError(exc.code, error.get("error", f"http_{exc.code}"), error.get("detail", "")) from None
+            raise APIError(exc.code, error.get("error", f"http_{exc.code}"),
+                           error.get("detail") or error.get("message") or "", error) from None
         except (urllib.error.URLError, OSError, TimeoutError):
             raise APIError() from None
         except (ValueError, UnicodeError):
@@ -79,9 +85,10 @@ class Transport:
 
 
 class Postbox:
-    def __init__(self, session, transport=None):
+    def __init__(self, session, transport=None, base=POSTBOX):
         self.session = session
         self.transport = transport or Transport()
+        self.base = base.rstrip("/")
 
     def call(self, method, path, identity=None, data=None, query=None, **kwargs):
         params = dict(query or {})
@@ -93,16 +100,42 @@ class Postbox:
             params["identity"] = identity
         elif identity and data is not None:
             data = dict(data, identity=identity)
-        url = POSTBOX + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        url = self.base + path + ("?" + urllib.parse.urlencode(params) if params else "")
+        return self._send(method, url, data=data, **kwargs)
+
+    def _send(self, method, url, **kwargs):
         token = self.session.access_token()
         try:
-            return self.transport.request(method, url, token=token, data=data, **kwargs)
+            return self.transport.request(method, url, token=token, **kwargs)
         except APIError as exc:
             if exc.status != 401:
                 raise
             # A 401 rejects the operation before it is processed. Other failures never replay writes.
             token = self.session.access_token(rejected=token)
-            return self.transport.request(method, url, token=token, data=data, **kwargs)
+            return self.transport.request(method, url, token=token, **kwargs)
+
+    def scoped(self, method, path, identity, data=None, *, device=None, raw=None,
+               content_type="application/octet-stream", binary=False, timeout=35):
+        """Group and MLS routes: the acting mailbox and device travel only as headers, so the JSON
+        body (and with it the idempotency hash of `request_key`) is exactly what the caller built."""
+        headers = {"x-pigeonpost-identity": identity}
+        if device:
+            headers["x-pigeonpost-device"] = device
+        if raw is not None:
+            headers["Content-Type"] = content_type
+        return self._send(method, self.base + path, data=data, raw=raw, headers=headers,
+                          binary=binary, timeout=timeout)
+
+    def capabilities(self):
+        """Features this postbox switched on for the account; an empty set when it cannot say."""
+        try:
+            result = self.call("GET", "/v1/capabilities")
+        except APIError as exc:
+            if exc.code == "invalid_grant":
+                raise
+            return frozenset()
+        features = result.get("features")
+        return frozenset(str(f) for f in features) if isinstance(features, list) else frozenset()
 
     def identities(self):
         rows = self.call("GET", "/v1/identities").get("identities", [])

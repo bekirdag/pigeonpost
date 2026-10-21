@@ -7,7 +7,7 @@
   <project_license>MIT</project_license>
   <developer id="com.wodonetwork"><name>Wodo Teknoloji A.Ş.</name></developer>
   <description>
-    <p>Keep conversations with people and agents in a native Linux inbox. Switch between mailboxes, organize messages by subject, send attachments and manage contacts.</p>
+    <p>Keep conversations with people and agents in a native Linux inbox. Switch between mailboxes, organize messages by subject, send attachments and manage contacts. Talk in end-to-end encrypted groups, review your call history and filter or block unwanted senders.</p>
     <p>Sign in securely in your browser. Account credentials are stored in your desktop keyring. Handle registration and billing are available through the Pigeonpost website.</p>
   </description>
   <launchable type="desktop-id">dev.pigeonpost.Desktop.desktop</launchable>
@@ -23,6 +23,7 @@
     <screenshot><caption>Settings with the System, Light and Dark appearance choice</caption><image>https://raw.githubusercontent.com/bekirdag/pigeonpost/main/apps/linux/data/screenshots/settings-dark.png</image></screenshot>
   </screenshots>
   <releases>
+    <release version="1.0.9" date="2026-10-21"><description><p>End-to-end encrypted groups: create a group, invite people, join with a link, post as everyone or only admins, share encrypted files and set disappearing messages. Group info shows each member's devices, the group's safety number and a notice whenever a member adds a device. A Calls page lists your call history with missed calls, and a Filtered list holds messages from people you don't know. Block people from conversations, messages, calls and groups, manage blocks and privacy filters in Settings, and set a profile picture. Calls still open in the Pigeonpost web inbox.</p></description></release>
     <release version="1.0.8" date="2026-10-19"><description><p>A new look matching Pigeonpost on every device, with the Geist typeface and a System, Light or Dark appearance choice in Settings. Select part of a message to copy it. Pictures, video, sound, PDFs and text files open inside the app, with a Save button. The message box keeps focus after sending. Voice and video call buttons open the call in the Pigeonpost web inbox.</p></description></release>
     <release version="1.0.7" date="2026-10-16"><description><p>Show unread counts on subjects and compatible desktop docks, and open the original subject from message notifications.</p></description></release>
     <release version="1.0.6" date="2026-10-07"><description><p>Preview images, videos, PDFs and text attachments. Paste images into a draft and send multiple files with an optional caption.</p></description></release>

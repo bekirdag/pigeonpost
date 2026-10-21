@@ -118,6 +118,11 @@ list.pp-list > row:selected { background-color: @pp_selected; color: @pp_ink; }
 .pp-file { background-color: @pp_tile; border: 1px solid @pp_stroke; color: @pp_quiet; border-radius: 8px; font-size: 12.5px; box-shadow: none; }
 .pp-file:hover { background-color: @pp_chip; color: @pp_ink; }
 .pp-preview-button { padding: 0; border-radius: 10px; background: none; }
+.pp-system { font-size: 12px; color: @pp_muted; }
+.pp-system.pp-security { color: @pp_ink; font-weight: 500; }
+.pp-call-missed .title, .pp-call-missed .subtitle { color: @error_color; }
+.pp-banner { background-color: alpha(@error_color, 0.08); border: 1px solid alpha(@error_color, 0.35); border-radius: 10px; margin-left: 16px; margin-right: 16px; padding: 4px 4px 4px 12px; }
+.pp-badge { font-size: 11px; font-weight: 600; color: @pp_mine_text; background-color: @pp_accent; border-radius: 9px; padding: 0 6px; }
 .pp-preview-button > frame, .pp-chip-preview { border-radius: 10px; border: 1px solid @pp_stroke; background-color: @pp_tile; }
 
 .pp-composer { background-color: @pp_composer; border: 1px solid @pp_stroke_strong; border-radius: 14px; padding: 6px; }
