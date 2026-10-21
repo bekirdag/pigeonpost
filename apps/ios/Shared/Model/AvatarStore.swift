@@ -54,7 +54,7 @@ final class AvatarStore {
     /// The lookup `Avatar` reads from the environment.
     var lookup: AvatarLookup {
         AvatarLookup { [weak self] key in
-            self?.image(for: key).map(ImageTools.swiftUIImage)
+            self?.image(for: key).flatMap(ImageTools.cgImage)
         }
     }
 

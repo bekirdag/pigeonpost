@@ -69,11 +69,21 @@ enum ImageTools {
         #endif
     }
 
+    /// Decorative: a face is never something for VoiceOver to read out as an image of its own.
     static func swiftUIImage(_ image: PlatformImage) -> Image {
         #if canImport(UIKit)
+        if let cg = image.cgImage { return Image(decorative: cg, scale: image.scale) }
         return Image(uiImage: image)
         #else
         return Image(nsImage: image)
+        #endif
+    }
+
+    static func cgImage(_ image: PlatformImage) -> CGImage? {
+        #if canImport(UIKit)
+        return image.cgImage
+        #else
+        return image.cgImage(forProposedRect: nil, context: nil, hints: nil)
         #endif
     }
 
