@@ -425,7 +425,7 @@ class CallTests(unittest.TestCase):
         self.assertEqual(request.get_header("Authorization"), "Bearer member")
         self.assertIsNone(request.get_header("Origin"))
         # The ring before `ready` is ignored, and a repeated ring does not notify twice.
-        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming video call", "/bob")])
+        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming video call", "Bob")])
         self.assertIn(ROOM_ID, notifier.withdrawn)
         self.assertEqual(ringtone.events[0], "start")
         self.assertEqual(ringtone.events[-1], "stop")
@@ -438,7 +438,7 @@ class CallTests(unittest.TestCase):
             [stream], name_for=lambda address, handle: "<i>Alp</i> (" + display_name(handle) + ")")
         client.start()
         self.assertTrue(done.wait(5))
-        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming voice call", "iAlp/i (/alp)")])
+        self.assertEqual(notifier.shown, [(ROOM_ID, "Incoming voice call", "iAlp/i (Alp)")])
         client.stop()
 
     def test_expiry_and_stream_loss_withdraw(self):
