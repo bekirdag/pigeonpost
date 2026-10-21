@@ -52,6 +52,15 @@ final class GroupTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Bringing gloves"].waitForExistence(timeout: 5))
     }
 
+    func testTappingAGroupOpensIt() {
+        launch([])
+        let row = element("group:Garden club")
+        XCTAssertTrue(row.waitForExistence(timeout: 10))
+        row.tap()
+        XCTAssertTrue(element("groupComposer").waitForExistence(timeout: 8))
+        XCTAssertTrue(element("groupTitle").exists)
+    }
+
     func testAnnouncementGroupHasNoComposerForMembers() {
         launch(["-open=grp_fixtureannounce0000000000"])
         XCTAssertTrue(element("groupAnnounce").waitForExistence(timeout: 10))
