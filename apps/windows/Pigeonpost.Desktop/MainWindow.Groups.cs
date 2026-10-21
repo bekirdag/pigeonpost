@@ -397,7 +397,7 @@ public sealed partial class MainWindow
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
                 row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-                var face = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Tag = groupsModel.KeyOf(member.Address), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0x80, 0x88, 0x99)) };
+                var face = new Border { Width = 32, Height = 32, CornerRadius = new CornerRadius(16), Tag = groupsModel.KeyOf(member.Address), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x33, 0x80, 0x88, 0x99)) };
                 face.Child = new TextBlock { Text = member.Initials, FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center, IsHitTestVisible = false };
                 face.Loaded += Avatar_Loaded;
                 face.Unloaded += Avatar_Unloaded;
@@ -570,10 +570,10 @@ public sealed class GroupLineSelector : DataTemplateSelector
 {
     public DataTemplate? Incoming { get; set; }
     public DataTemplate? Outgoing { get; set; }
-    public DataTemplate? System { get; set; }
+    public DataTemplate? Notice { get; set; }
     protected override DataTemplate SelectTemplateCore(object item) => item switch
     {
-        GroupLineRow { IsSystem: true } => System!,
+        GroupLineRow { IsSystem: true } => Notice!,
         GroupLineRow { Mine: true } => Outgoing!,
         _ => Incoming!
     };

@@ -286,7 +286,7 @@
                     </StackPanel>
                 </Border>
             </DataTemplate>
-            <local:GroupLineSelector x:Key="GroupLineSelector" Incoming="{StaticResource GroupIncomingLine}" Outgoing="{StaticResource GroupOutgoingLine}" System="{StaticResource GroupSystemLine}" />
+            <local:GroupLineSelector x:Key="GroupLineSelector" Incoming="{StaticResource GroupIncomingLine}" Outgoing="{StaticResource GroupOutgoingLine}" Notice="{StaticResource GroupSystemLine}" />
             <!-- A missed call in a 1:1 conversation: a small centred line, not a message. -->
             <DataTemplate x:Key="SystemLine" x:DataType="core:ThreadMessage">
                 <Border HorizontalAlignment="Center" Margin="24,6" Padding="12,4" CornerRadius="10" Background="{ThemeResource ChipSurfaceBrush}">
@@ -294,7 +294,7 @@
                 </Border>
             </DataTemplate>
             <local:MessageTemplateSelector x:Key="MessageTemplateSelector"
-                Incoming="{StaticResource IncomingMessage}" Outgoing="{StaticResource OutgoingMessage}" System="{StaticResource SystemLine}" />
+                Incoming="{StaticResource IncomingMessage}" Outgoing="{StaticResource OutgoingMessage}" Notice="{StaticResource SystemLine}" />
             </ResourceDictionary>
         </Grid.Resources>
         <Grid.KeyboardAccelerators>

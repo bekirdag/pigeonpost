@@ -503,10 +503,10 @@ public sealed class MessageTemplateSelector : DataTemplateSelector
 {
     public DataTemplate? Incoming { get; set; }
     public DataTemplate? Outgoing { get; set; }
-    public DataTemplate? System { get; set; }
+    public DataTemplate? Notice { get; set; }
     protected override DataTemplate SelectTemplateCore(object item) => item switch
     {
-        ThreadMessage { IsSystem: true } when System is not null => System,
+        ThreadMessage { IsSystem: true } when Notice is not null => Notice,
         ThreadMessage { IsOutgoing: true } => Outgoing!,
         _ => Incoming!
     };

@@ -734,7 +734,7 @@ public sealed partial class MainWindow
             catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Own picture", ex); }
             byte[]? picked = null;
             (int Width, int Height) size = (0, 0);
-            var preview = new Border { Width = 160, Height = 160, CornerRadius = new CornerRadius(80), Background = new SolidColorBrush(Windows.UI.Color.FromArgb(0x33, 0x80, 0x88, 0x99)), HorizontalAlignment = HorizontalAlignment.Center };
+            var preview = new Border { Width = 160, Height = 160, CornerRadius = new CornerRadius(80), Background = new SolidColorBrush(Microsoft.UI.ColorHelper.FromArgb(0x33, 0x80, 0x88, 0x99)), HorizontalAlignment = HorizontalAlignment.Center };
             AutomationProperties.SetName(preview, "Picture preview");
             var previewImage = new Image { Stretch = Stretch.UniformToFill };
             var scale = new ScaleTransform { CenterX = 80, CenterY = 80 };
