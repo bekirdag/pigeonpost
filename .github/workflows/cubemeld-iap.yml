@@ -28,7 +28,7 @@ concurrency:
 jobs:
   catalog:
     name: audit or provision Gold products
-    runs-on: ubuntu-latest
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     timeout-minutes: 15
     environment: production-release
     steps:

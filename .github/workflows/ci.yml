@@ -20,7 +20,7 @@ env:
 jobs:
   inbox:
     name: inbox web
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     defaults:
       run:
         working-directory: site-inbox
@@ -54,7 +54,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -98,7 +98,7 @@ jobs:
 
   lint:
     name: fmt + clippy
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the fail-closed Cubemeld App Store broker
@@ -875,7 +875,7 @@ jobs:
 
   audit:
     name: cargo audit
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -888,7 +888,7 @@ jobs:
     # a clean-room implementation (docs/sds.md §8). A change here is a protocol break, and it
     # should be obvious in the checks list which job failed.
     name: conformance vectors
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -901,7 +901,7 @@ jobs:
     # and capture the exact generated reverse proxy under real Caddy. These are SDS §8 release
     # gates that crate-level tests alone cannot prove.
     name: black-box delivery + proxy privacy
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -957,7 +957,7 @@ jobs:
     # The online binary may seal records but must never acquire the offline unseal/custody crate.
     # This is a build invariant from docs/sds.md §4, not a deployment convention.
     name: online/offline custody boundary
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -1211,7 +1211,7 @@ jobs:
 
   launcher:
     name: npm launcher (Node ${{ matrix.node }})
-    runs-on: ubuntu-24.04
+    runs-on: [self-hosted, Linux, X64, wodo-ci]
     strategy:
       fail-fast: false
       matrix:
