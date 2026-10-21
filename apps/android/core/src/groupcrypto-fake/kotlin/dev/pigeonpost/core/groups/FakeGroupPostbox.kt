@@ -468,15 +468,16 @@ class FakeGroupPostbox {
 
 /** Ed25519 public-key derivation (RFC 8032), for test fixtures only: slow, not constant time. */
 internal object Ed25519Public {
-    private val P = java.math.BigInteger.TWO.pow(255) - java.math.BigInteger.valueOf(19)
+    private val TWO = java.math.BigInteger.valueOf(2) // BigInteger.TWO is API 33
+    private val P = TWO.pow(255) - java.math.BigInteger.valueOf(19)
     private val D = java.math.BigInteger.valueOf(-121665).mod(P) * java.math.BigInteger.valueOf(121666).modInverse(P) % P
-    private fun inv(x: java.math.BigInteger) = x.modPow(P - java.math.BigInteger.TWO, P)
+    private fun inv(x: java.math.BigInteger) = x.modPow(P - TWO, P)
     private data class Pt(val x: java.math.BigInteger, val y: java.math.BigInteger, val z: java.math.BigInteger, val t: java.math.BigInteger)
     private fun add(a: Pt, b: Pt): Pt {
         val aa = (a.y - a.x) * (b.y - b.x) % P
         val bb = (a.y + a.x) * (b.y + b.x) % P
-        val cc = java.math.BigInteger.TWO * a.t * b.t % P * D % P
-        val dd = java.math.BigInteger.TWO * a.z * b.z % P
+        val cc = TWO * a.t * b.t % P * D % P
+        val dd = TWO * a.z * b.z % P
         val e = bb - aa; val f = dd - cc; val g = dd + cc; val h = bb + aa
         return Pt((e * f).mod(P), (g * h).mod(P), (f * g).mod(P), (e * h).mod(P))
     }
@@ -484,7 +485,7 @@ internal object Ed25519Public {
         val y = java.math.BigInteger.valueOf(4) * inv(java.math.BigInteger.valueOf(5)) % P
         val xx = (y * y - java.math.BigInteger.ONE) * inv(D * y * y + java.math.BigInteger.ONE) % P
         var x = xx.modPow((P + java.math.BigInteger.valueOf(3)) / java.math.BigInteger.valueOf(8), P)
-        if ((x * x - xx).mod(P) != java.math.BigInteger.ZERO) x = x * java.math.BigInteger.TWO.modPow((P - java.math.BigInteger.ONE) / java.math.BigInteger.valueOf(4), P) % P
+        if ((x * x - xx).mod(P) != java.math.BigInteger.ZERO) x = x * TWO.modPow((P - java.math.BigInteger.ONE) / java.math.BigInteger.valueOf(4), P) % P
         if (x.testBit(0)) x = P - x
         Pt(x, y, java.math.BigInteger.ONE, x * y % P)
     }
