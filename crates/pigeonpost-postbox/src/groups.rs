@@ -74,6 +74,8 @@ pub(crate) struct GErr {
     pub message: String,
     pub extra: Map<String, Value>,
     pub retry_after: Option<u64>,
+    /// A `WWW-Authenticate` value (RFC 9470 step-up challenges).
+    pub challenge: Option<String>,
 }
 
 impl GErr {
@@ -84,6 +86,7 @@ impl GErr {
             message: message.into(),
             extra: Map::new(),
             retry_after: None,
+            challenge: None,
         }
     }
     pub(crate) fn bad(code: &'static str, message: impl Into<String>) -> Self {
@@ -133,6 +136,7 @@ impl From<ApiError> for GErr {
             message: e.message,
             extra: Map::new(),
             retry_after: e.retry_after,
+            challenge: None,
         }
     }
 }
@@ -148,6 +152,9 @@ impl IntoResponse for GErr {
             if let Ok(v) = HeaderValue::from_str(&secs.to_string()) {
                 resp.headers_mut().insert(header::RETRY_AFTER, v);
             }
+        }
+        if let Some(v) = self.challenge.and_then(|c| HeaderValue::from_str(&c).ok()) {
+            resp.headers_mut().insert(header::WWW_AUTHENTICATE, v);
         }
         resp
     }
@@ -1242,11 +1249,9 @@ pub(crate) async fn create(
                 "history is never shared with new members (D-08)",
             ));
         }
-        if req.org_id.is_some() {
-            return Err(GErr::forbidden(
-                "not_org_member",
-                "organization rooms arrive with the enterprise beta",
-            ));
+        let org_id = req.org_id.clone();
+        if org_id.is_some() && req.ephemeral_secs.is_some() {
+            return Err(GErr::bad("bad_request", "set a room's timer after it is created"));
         }
         if !timer_ok(req.ephemeral_secs) {
             return Err(GErr::bad("bad_request", "unsupported ephemeral_secs"));
@@ -1286,16 +1291,21 @@ pub(crate) async fn create(
                             ));
                         }
                     }
+                    if let Some(org) = &org_id {
+                        // Org rooms: the acting mailbox must be a live member's org mailbox and
+                        // the org's room-creation policy must allow it (SDS §4.4, §6.4).
+                        crate::org_rooms::may_create_in(tx, org, &me)?;
+                    }
                     let gid = new_group_id();
                     tx.execute(
-                        "INSERT INTO groups (id, name, description, join_policy, post_policy, visibility,
+                        "INSERT INTO groups (id, org_id, name, description, join_policy, post_policy, visibility,
                                 members_can_invite, members_can_change_timer, ephemeral_secs, created_by,
                                 created_by_account, created_at, last_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
+                         VALUES (?1, ?13, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?12)",
                         params![
                             gid, name, description, join_policy, post_policy, visibility,
                             mcan as i64, mtimer as i64, timer.map(|t| t as i64), me, account,
-                            now as i64
+                            now as i64, org_id
                         ],
                     )?;
                     tx.execute(
@@ -2072,7 +2082,7 @@ pub(crate) async fn unban(
 }
 
 /// Move a member to `keying` (accepted invitation or public join) and ask devices to add them.
-fn start_keying(
+pub(crate) fn start_keying(
     tx: &Connection,
     g: &GroupRow,
     who: &str,
@@ -2240,11 +2250,14 @@ pub(crate) fn join_in(
             GErr::forbidden("invite_required", "this group is invite-only")
         });
     }
-    if g.org_id.is_some() {
-        return Err(GErr::forbidden(
-            "not_org_member",
-            "organization rooms are for their members",
-        ));
+    if let Some(org) = g.org_id.as_deref() {
+        // Every org-room join needs live membership of that org; a link never overrides it.
+        if !crate::org_rooms::member_mailbox_in(tx, org, &me)? {
+            return Err(GErr::forbidden(
+                "not_org_member",
+                "organization rooms are for their members",
+            ));
+        }
     }
     if !(g.visibility == "listed" || link_ok) {
         return Err(GErr::forbidden("invalid_link", "this link is not valid"));
@@ -2568,6 +2581,8 @@ pub(crate) struct RoomsQuery {
     #[serde(default)]
     identity: Option<String>,
     #[serde(default)]
+    org_id: Option<String>,
+    #[serde(default)]
     q: Option<String>,
 }
 
@@ -2581,26 +2596,37 @@ pub(crate) async fn rooms(
         let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
         let me = ctx.address();
         let needle = q.q.unwrap_or_default().trim().chars().take(80).collect::<String>();
+        let org_id = q.org_id.clone();
         state
             .store
             .group_read(move |c: &Connection| -> GResult<Outcome> {
+                if let Some(org) = &org_id {
+                    // The org directory: listed rooms, for live members of that org only.
+                    if !crate::org_rooms::member_mailbox_in(c, org, &me)? {
+                        return Err(GErr::forbidden("not_org_member", "act as your organization mailbox to browse its rooms"));
+                    }
+                }
                 let pattern = format!("%{}%", needle.replace(['%', '_'], ""));
                 let mut stmt = c.prepare(
                     "SELECT g.id, g.name, g.description,
                             (SELECT COUNT(*) FROM group_members m WHERE m.group_id = g.id AND m.state IN ('active','keying')),
-                            (SELECT state FROM group_members m WHERE m.group_id = g.id AND m.member = ?2)
+                            (SELECT state FROM group_members m WHERE m.group_id = g.id AND m.member = ?2),
+                            g.join_policy
                        FROM groups g
-                      WHERE g.deleted_at IS NULL AND g.activation_state = 'active' AND g.org_id IS NULL
-                        AND g.join_policy = 'public' AND g.visibility = 'listed' AND g.name LIKE ?1
+                      WHERE g.deleted_at IS NULL AND g.activation_state = 'active' AND g.org_id IS ?3
+                        AND (g.visibility = 'listed' OR ?3 IS NOT NULL AND EXISTS (SELECT 1 FROM group_members x
+                             WHERE x.group_id = g.id AND x.member = ?2 AND x.state = 'invited'))
+                        AND (g.join_policy = 'public' OR ?3 IS NOT NULL) AND g.name LIKE ?1
                       ORDER BY g.last_at DESC LIMIT 50",
                 )?;
-                let rows = stmt.query_map(params![pattern, me], |r| {
+                let rows = stmt.query_map(params![pattern, me, org_id], |r| {
                     Ok(json!({
                         "id": r.get::<_, String>(0)?,
                         "name": r.get::<_, String>(1)?,
                         "description": r.get::<_, Option<String>>(2)?,
                         "member_count": r.get::<_, i64>(3)?,
                         "my_state": r.get::<_, Option<String>>(4)?,
+                        "join_policy": r.get::<_, String>(5)?,
                     }))
                 })?;
                 Ok(Outcome::ok(json!({ "rooms": rows.collect::<Result<Vec<_>, _>>()? })))
@@ -3187,6 +3213,13 @@ pub(crate) async fn post(
     let result = async {
         let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
         let device = ctx.device()?;
+        // A read-only org's mailboxes cannot post (SDS §6.6: rooms read-only).
+        if crate::org::mailbox_gate(&state, &ctx.me.address).await == crate::org::Gate::ReadOnly {
+            return Err(GErr::forbidden(
+                "org_read_only",
+                "this organization is read-only until its payment is settled",
+            ));
+        }
         let (req, hash): (PostReq, String) = parse(body)?;
         rate_limit(&format!("post:{}", ctx.address()), POSTS_PER_MINUTE, 60)?;
         let quota = group_quota(&state, &id).await;

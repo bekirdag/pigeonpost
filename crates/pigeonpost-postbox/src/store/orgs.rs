@@ -108,31 +108,34 @@ pub enum ActivateOutcome {
 }
 
 /// Keep an activated org's status and limits in step with its best entitlement. Drafts and
-/// paid-but-unprovisioned orgs keep their status: only activation provisions a namespace.
+/// paid-but-unprovisioned orgs keep their status: only activation provisions a namespace. A
+/// provisioned org follows the D-14 lapse timeline (`crate::org::lifecycle_status`).
 pub(super) fn follow_entitlement(c: &Connection, org: &str, now: u64) -> Result<(), StoreError> {
     let Some(current) = get(c, org)? else {
         return Ok(());
     };
+    if current.status == "deleted" {
+        return Ok(());
+    }
     let rows = entitlements::for_subject(c, "org", org, now)?;
     let best = rows
         .iter()
         .filter(|e| e.active)
         .max_by_key(|e| (e.seats.unwrap_or(0), e.paid_through.unwrap_or(i64::MAX)))
-        .or_else(|| rows.first());
+        .or_else(|| rows.iter().max_by_key(|e| e.paid_through.unwrap_or(0)));
     let Some(best) = best else {
         return Ok(());
     };
-    let status = if !best.active {
-        "read_only"
-    } else if matches!(best.status.as_str(), "past_due" | "grace") {
-        "past_due"
-    } else {
-        "active"
-    };
-    let provisioned = matches!(current.status.as_str(), "active" | "past_due" | "read_only");
+    let provisioned = matches!(
+        current.status.as_str(),
+        "active" | "past_due" | "read_only" | "suspended"
+    );
+    let status = crate::org::lifecycle_status(Some(best), &current.status, now);
     let seats = best.seats.unwrap_or(current.seats).max(1);
     c.execute(
-        "UPDATE orgs SET status=CASE WHEN ?2 THEN ?3 ELSE status END, seats=?4, agent_limit=?4*10,
+        "UPDATE orgs SET status=CASE WHEN ?2 THEN ?3 ELSE status END,
+            status_since=CASE WHEN ?2 AND status<>?3 THEN ?9 ELSE status_since END,
+            seats=?4, agent_limit=?4*10,
             storage_bytes=?5, plan_code=?6, billing_ref=?7, period_end=?8 WHERE id=?1",
         params![
             org,
@@ -142,7 +145,8 @@ pub(super) fn follow_entitlement(c: &Connection, org: &str, now: u64) -> Result<
             best.storage_bytes.unwrap_or(seats * STORAGE_PER_SEAT),
             best.plan_code,
             best.provider_ref,
-            best.paid_through
+            best.paid_through,
+            now as i64
         ],
     )?;
     Ok(())
@@ -287,7 +291,13 @@ impl Store {
                 } else {
                     "paid_unprovisioned"
                 };
-                tx.execute("UPDATE orgs SET status=?2 WHERE id=?1", params![org_id, status])?;
+                tx.execute(
+                    "UPDATE orgs SET status=?2, status_since=?3 WHERE id=?1",
+                    params![org_id, status, now as i64],
+                )?;
+                if status == "active" {
+                    crate::org::provision_in(&tx, &org_id, now)?;
+                }
             }
             let mut input = entitlement;
             input.subject_kind = "org".into();
@@ -302,6 +312,40 @@ impl Store {
             let org = get(&tx, &org_id)?.ok_or(StoreError::Corrupt("org disappeared"))?;
             tx.commit()?;
             Ok(ActivateOutcome::Done(org, saved))
+        })
+        .await
+        .map_err(|_| StoreError::Join)?
+    }
+
+    /// Re-derive every provisioned org's lifecycle status from its entitlements (the worker runs
+    /// this periodically so lapses advance without a billing event). Returns the orgs whose status
+    /// changed, with their old and new status.
+    pub async fn org_lifecycle_sweep(
+        &self,
+        now: u64,
+    ) -> Result<Vec<(String, String, String)>, StoreError> {
+        let conn = self.conn.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut c = conn.lock().expect("store lock");
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let ids: Vec<(String, String)> = {
+                let mut stmt = tx.prepare(
+                    "SELECT id, status FROM orgs WHERE status IN ('active','past_due','read_only','suspended')",
+                )?;
+                let rows = stmt.query_map([], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                rows.collect::<Result<_, _>>()?
+            };
+            let mut changed = Vec::new();
+            for (id, before) in ids {
+                follow_entitlement(&tx, &id, now)?;
+                let after: String =
+                    tx.query_row("SELECT status FROM orgs WHERE id=?1", [&id], |r| r.get(0))?;
+                if after != before {
+                    changed.push((id, before, after));
+                }
+            }
+            tx.commit()?;
+            Ok(changed)
         })
         .await
         .map_err(|_| StoreError::Join)?

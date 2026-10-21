@@ -52,7 +52,7 @@ pub struct AuditRow {
 
 /// Append inside the caller's transaction, so the record commits or rolls back with the change it
 /// describes.
-pub(super) fn append_in(c: &Connection, row: &AuditRow) -> Result<i64, StoreError> {
+pub(crate) fn append_in(c: &Connection, row: &AuditRow) -> Result<i64, StoreError> {
     c.execute(
         "INSERT INTO audit_log
             (org_id, at, actor_account, actor_kind, action, target, details, ip_hash, user_agent)

@@ -72,6 +72,15 @@ pub(crate) enum Action {
     GroupManage,
     /// `POST /internal/v1/group-call-admission`.
     GroupCallAdmission,
+    /// An organization action a person takes on the org's administrative surface (`/v1/orgs/…`):
+    /// the org role matrix (SDS §6.4) is resolved into `Facts::org_permitted` beforehand.
+    OrgAdminister,
+    /// The §3.4 sensitive org actions: appoint/remove full admins, delete the org, transfer
+    /// ownership, export the audit log, issue enrollment codes, approve a device login.
+    OrgSensitive,
+    /// Redeem a one-time enrollment code or claim an approved pairing: possession of the code or
+    /// claim secret plus the device key is the credential (SDS §10.2).
+    DeviceEnroll,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -86,6 +95,11 @@ pub(crate) enum Resource<'a> {
         address: &'a str,
         account: Option<&'a str>,
     },
+    /// An organization, by id. The grant is the caller's live role or delegation, resolved from
+    /// server state into [`Facts::org_permitted`].
+    Org(&'a str),
+    /// A pending device pairing or enrollment, by id.
+    DeviceGrant(&'a str),
     /// A mailbox's picture, with the facts its visibility is decided on.
     Avatar {
         visibility: crate::store::Visibility,
@@ -135,7 +149,9 @@ impl Action {
             | Action::ModerateAvatars
             | Action::GroupCallAdmission => Requirement::Service,
             Action::GroupParticipate => Requirement::NotConnector,
-            Action::GroupManage => Requirement::Human,
+            Action::GroupManage | Action::OrgAdminister => Requirement::Human,
+            Action::OrgSensitive => Requirement::HumanStepUp,
+            Action::DeviceEnroll => Requirement::Anyone,
         }
     }
 }
@@ -151,6 +167,16 @@ pub(crate) struct Facts {
     pub account_suspended: bool,
     /// An explicit block or ban covers this actor and resource.
     pub blocked: bool,
+    /// The caller's live org membership, role or delegation grants the requested org action
+    /// (SDS §6.4), as resolved from server state. False by default: no grant.
+    pub org_permitted: bool,
+    /// The org or membership the action depends on is not live (suspended org, suspended or
+    /// removed member, deleted agent).
+    pub org_inactive: bool,
+    /// The caller holds a live `read_inbox` delegation for this agent mailbox (SDS §6.5).
+    pub delegated: bool,
+    /// The device grant or code was verified (hash, expiry, single use, key proof) by the caller.
+    pub device_proof: bool,
 }
 
 /// Why a request was refused. Stable; mapped to an HTTP status and error code.
@@ -207,8 +233,17 @@ fn deny_blocked(_: &Actor, _: Action, _: &Resource, f: &Facts) -> Option<&'stati
     f.blocked.then_some("blocked")
 }
 
+fn deny_org_inactive(_: &Actor, _: Action, _: &Resource, f: &Facts) -> Option<&'static str> {
+    f.org_inactive.then_some("org_inactive")
+}
+
 /// The hooks every decision runs.
-pub(crate) const MANDATORY_DENIES: &[MandatoryDeny] = &[deny_revoked, deny_suspended, deny_blocked];
+pub(crate) const MANDATORY_DENIES: &[MandatoryDeny] = &[
+    deny_revoked,
+    deny_suspended,
+    deny_blocked,
+    deny_org_inactive,
+];
 
 /// Decide with the standard mandatory hooks.
 pub(crate) fn authorize(
@@ -277,7 +312,15 @@ pub(crate) fn authorize_with(
             Principal::Account(account, _) => account == id,
             Principal::Identity(identity) => identity.account_id.as_deref() == Some(*id),
         },
-        (Actor::Principal(p), Resource::Mailbox { address, account }) => owns(p, address, *account),
+        (Actor::Principal(p), Resource::Mailbox { address, account }) => {
+            // An operated agent mailbox (a live `read_inbox` delegation) is reachable by the
+            // delegate's own account credential, never by a token bound to another mailbox.
+            owns(p, address, *account) || (facts.delegated && matches!(p, Principal::Account(_, _)))
+        }
+        (Actor::Principal(_), Resource::Org(_)) => facts.org_permitted,
+        (_, Resource::DeviceGrant(_)) => {
+            matches!(action, Action::DeviceEnroll) && facts.device_proof
+        }
         (
             actor,
             Resource::Avatar {

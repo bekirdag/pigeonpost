@@ -1039,6 +1039,8 @@ fn apply_commit(
         for (member, by) in invited {
             release_invitation(tx, &g, &member, by.as_deref().unwrap_or(me), now, &mut out)?;
         }
+        // An auto-join org room queues the members who joined the org meanwhile (SDS §4.2).
+        crate::org_rooms::on_room_activated(tx, &g, now, &mut out)?;
     }
     for member in &activated {
         if !(activating && member == me) {

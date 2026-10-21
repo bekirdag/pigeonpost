@@ -52,6 +52,18 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         CALL_PUSH,
         "Incoming calls pushed to the callee's devices (VoIP, FCM, Mac alert, WNS)",
     ),
+    (
+        ORGS,
+        "Organizations: /v1/orgs, invitations, roles, agents, delegations, org rules, org rooms and device login (SDS §6, §7, §9, §10)",
+    ),
+    (
+        ENTERPRISE_PORTAL,
+        "Clients may show the enterprise portal's start wizard and dashboard (SDS §5)",
+    ),
+    (
+        ORG_INVITE_EMAIL,
+        "Org invitations are delivered through saas_be's pigeonpost-org-invite workflow (SDS §7.2)",
+    ),
 ];
 
 /// Incoming-call pushes (Phase 1c, docs/call-alerting.md).
@@ -71,6 +83,12 @@ pub(crate) const AVATARS: &str = "avatars";
 pub(crate) const GROUPS: &str = "groups";
 /// Disappearing messages (SDS §17).
 pub(crate) const DISAPPEARING: &str = "disappearing";
+/// Organizations (SDS §6).
+pub(crate) const ORGS: &str = "orgs";
+/// The enterprise portal's signed-in surfaces (SDS §5).
+pub(crate) const ENTERPRISE_PORTAL: &str = "enterprise_portal";
+/// Invitation delivery through saas_be/Novu (SDS §7.2). Off until the sender domain is verified.
+pub(crate) const ORG_INVITE_EMAIL: &str = "org_invite_email";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[
@@ -90,6 +108,9 @@ pub(crate) const EVENT_TYPES: &[&str] = &[
     "mls.key_packages_low",
     "message.expired",
     "thread.settings",
+    "org.member",
+    "org.policy",
+    "org.status",
 ];
 
 pub(crate) fn known_names() -> Vec<&'static str> {
