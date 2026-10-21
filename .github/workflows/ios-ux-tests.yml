@@ -8,6 +8,7 @@ on:
       - 'apps/ios/Shared/**'
       - 'apps/ios/Tests/**'
       - 'apps/ios/UITests/**'
+      - 'crates/pigeonpost-groupcrypto/bindings/swift/**'
       - '.github/workflows/ios-ux-tests.yml'
 
 permissions:
@@ -69,7 +70,7 @@ jobs:
             -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-tests" \
             -resultBundlePath "$RUNNER_TEMP/ios-ux.xcresult" \
             -only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests \
-            -only-testing:PPUITests/ComposerTests
+            -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

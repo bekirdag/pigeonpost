@@ -88,7 +88,7 @@ struct ConversationsView: View {
             async let expiry: Void = pruneDirectMessages()
             _ = await (cadence, expiry)
         }
-        .onChange(of: groups.pendingJoin) { _, link in
+        .onChange(of: groups.pendingJoin, initial: true) { _, link in
             guard let link else { return }
             groups.pendingJoin = nil
             sheet = .join(link)

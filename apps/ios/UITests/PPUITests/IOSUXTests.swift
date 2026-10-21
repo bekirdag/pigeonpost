@@ -329,6 +329,11 @@ final class IPadLayoutTests: XCTestCase {
             Scene(name: "new-thread", arguments: open + ["-sheet=thread"], ready: "New thread"),
             Scene(name: "mailboxes", arguments: ["-fixtures", "-sheet=identities"], ready: "Mailboxes"),
             Scene(name: "sender", arguments: open + ["-sheet=peer"], ready: "Known sender"),
+            Scene(name: "group", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000"], ready: "groupComposer"),
+            Scene(name: "group-announce", arguments: ["-fixtures", "-open=grp_fixtureannounce0000000000"], ready: "groupAnnounce"),
+            Scene(name: "group-info", arguments: ["-fixtures", "-open=grp_fixturegarden000000000000", "-sheet=group-info"], ready: "Group info"),
+            Scene(name: "new-group", arguments: ["-fixtures", "-sheet=new-group"], ready: "New group"),
+            Scene(name: "join-group", arguments: ["-fixtures", "-join=grp_fixturejoin00000000000000"], ready: "joinGroup"),
         ]
     }
 

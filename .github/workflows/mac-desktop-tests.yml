@@ -53,3 +53,20 @@ jobs:
           path: ${{ runner.temp }}/mac-inbox-ui
           if-no-files-found: warn
           retention-days: 14
+
+  groups-e2e:
+    # Group E2EE through the Swift binding and the app's own GroupEngine, against a real postbox
+    # built from this commit, beside the web inbox's own client for interop (apps/ios/Tests/groups-e2e.sh).
+    runs-on: macos-14
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24.19.0"
+      - name: Select Swift 6 on Sonoma
+        run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
+      - name: Groups end to end
+        run: sh apps/ios/Tests/groups-e2e.sh
