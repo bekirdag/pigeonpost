@@ -1,11 +1,22 @@
 #!/usr/bin/env python3
-"""Build an architecture-independent Debian package with declared native dependencies."""
+"""Build the Debian package with declared native dependencies.
+
+One package serves x86_64 and ARM64: the only native code, the group encryption library, is
+shipped for both processors (pigeonpost/native/<arch>) and the app loads the one that matches.
+"""
 import pathlib
 import subprocess
+import sys
 import tempfile
 from pigeonpost import VERSION
 
 root = pathlib.Path(__file__).resolve().parent
+missing = [arch for arch in ("x86_64", "aarch64")
+           if not (root / "pigeonpost/native" / arch / "libpigeonpost_groupcrypto_ffi.so").is_file()
+           or not (root / "pigeonpost/native" / arch / "pigeonpost_groupcrypto.py").is_file()]
+if missing and "--allow-missing-native" not in sys.argv:
+    raise SystemExit("group encryption library missing for " + ", ".join(missing) + " (see build-native.sh); "
+                     "pass --allow-missing-native for a local build without groups there")
 out = root / "dist"
 out.mkdir(exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="pigeonpost-deb-") as staging:
@@ -23,7 +34,10 @@ Recommends: gnome-keyring | keepassxc, xdg-desktop-portal, xdg-desktop-portal-gt
 Homepage: https://pigeonpost.dev
 Description: Native Pigeonpost desktop messaging client
  A GTK 4 and libadwaita inbox for people and agents with secure
- browser sign-in, subjects, attachments and contact permissions.
+ browser sign-in, subjects, attachments, contact permissions, call
+ history, filtering, blocking, profile pictures and end-to-end
+ encrypted groups. Includes the group encryption library
+ (OpenMLS, MIT) for x86_64 and ARM64.
 """)
     destination = out / f"pigeonpost-desktop_{VERSION}_all.deb"
     subprocess.run(["dpkg-deb", "--root-owner-group", "--build", staging, str(destination)], check=True)

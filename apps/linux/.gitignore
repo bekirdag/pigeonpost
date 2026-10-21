@@ -4,3 +4,4 @@ dist/
 build-dir/
 repo/
 .flatpak-builder/
+pigeonpost/native/

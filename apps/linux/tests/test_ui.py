@@ -304,9 +304,9 @@ class NativeTests(unittest.TestCase):
             return found
         root = navigation.stack.get_visible_child()
         self.assertEqual([row.get_title() for row in rows(root)],
-                         ["Account", "Handles", "Inbox and storage", "Contacts and permissions", "Help and about"])
+                         ["Account", "Blocked", "Handles", "Inbox and storage", "Contacts and permissions", "Help and about"])
         self.assertFalse(navigation.back_button.get_visible())
-        rows(root)[1].emit("activated")
+        rows(root)[2].emit("activated")
         self.assertEqual(navigation.window.get_title(), "Handles")
         rows(navigation.stack.get_visible_child())[0].emit("activated")
         self.assertEqual(navigation.window.get_title(), "Get a handle")
@@ -392,7 +392,7 @@ class NativeTests(unittest.TestCase):
         self.assertEqual(self.clipboard_text(), text[4:9])
         menu = body.get_extra_menu()
         labels = [menu.get_item_attribute_value(i, "label").unpack() for i in range(menu.get_n_items())]
-        self.assertEqual(labels, ["Copy message", "Delete message", "Report spam"])
+        self.assertEqual(labels, ["Copy message", "Delete message", "Report spam", "Block sender"])
         self.assertTrue(body.activate_action("message.copy", None))
         self.assertEqual(self.clipboard_text(), text)
         mine = [b for b in self.bodies() if b.get_parent().get_parent().has_css_class("pp-mine")]
