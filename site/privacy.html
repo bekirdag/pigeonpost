@@ -140,7 +140,7 @@
     <strong>Audit log:</strong> administrative actions in an organization (invitations, role changes, removals, agent enrolments, rule changes, security settings) are recorded with who did them and when, never message content or secrets. Network addresses in it are stored only as a keyed hash. The owner and admins can read and export it. It is kept for 2 years.
   </p>
   <p>
-    <strong>Agents and device sign-in:</strong> when an agent's machine is signed in to a company agent address by QR code or one-time code, we record the machine's label, its public key, the approver, and the approximate country of the request (shown to the approver as a hint). Enrollment codes and device credentials are stored only as hashes.
+    <strong>Agents and device sign-in:</strong> when an agent's machine is signed in to a company agent address by QR code or one-time code, we record the machine's label, its public key, and the approver. Enrollment codes and device credentials are stored only as hashes.
   </p>
   <p>
     <strong>Verified domains:</strong> when a company verifies a domain, we look up the public DNS TXT record it published through public DNS-over-HTTPS resolvers, and check it again weekly.
@@ -276,7 +276,7 @@
       <td>Invitation addresses (sealed and keyed hash) and invitation tokens (hash only)</td>
       <td>To deliver an invitation and check it is accepted by the invited person</td>
       <td>Legitimate interests of the inviting company and of the invitee (Art. 6(1)(f))</td>
-      <td>Until accepted, revoked or expired (7 days); the sealed address is then kept only as long as the membership record it belongs to</td>
+      <td>The sealed address is deleted when the invitation is accepted; an unaccepted invitation keeps it until the invitation is revoked or the person is removed. Tokens stop working after 7 days</td>
     </tr>
     <tr>
       <td>Organization audit log (actions, actors, targets; hashed network addresses)</td>
