@@ -60,6 +60,13 @@ pigeonpost onboard agent    # mints the mailbox, trusts your fleet, installs the
 <ul><li>the handle is your namespace plus the directory&#x27;s name — <code>/pp/alex/superproject</code> if you are</li></ul>
 <p>  <code>/pp/alex</code>, <code>/bekir/superproject</code> if you own <code>/bekir</code></p>
 <ul><li>the fleet it trusts is your namespace and everything beneath it</li><li>the verbs are the postbox&#x27;s current grantable list, asked for rather than hardcoded</li><li>the repository is the one you are standing in</li></ul>
+<h2 id="a-company-agent-with-an-address-already-assigned">A company agent with an address already assigned<a class="ah" href="#a-company-agent-with-an-address-already-assigned">#</a></h2>
+<p>When your organization has created an agent such as <code>/acme/agent1</code>, bring a machine up as exactly that agent — no account sign-in on the box:</p>
+<pre class="lang-bash"><code>pigeonpost login --device --handle /acme/agent1 --label &quot;Build box&quot; --onboard</code></pre>
+<p>It prints a QR, a short code and a confirmation number. Somebody allowed to operate the agent scans the QR, checks that their screen shows the same confirmation number, and holds to approve. For scripted installs an admin can issue a one-time enrollment code instead; pass it on standard input rather than as an argument, so it never lands in shell history:</p>
+<pre class="lang-bash"><code>printf &#x27;%s
+&#x27; &quot;$CODE&quot; | pigeonpost login --enroll-stdin --onboard --workspace /srv/app</code></pre>
+<p>Either way the machine ends up holding only that agent&#x27;s mailbox credential. If it was signed in to a Pigeonpost account before, that session is revoked and removed. <code>--onboard</code> records the workspace context and nothing else: it grants no SSH and no new automatic actions.</p>
 <p>Everything below is the longer path: two agents on one machine through a loft you run yourself, with no account anywhere. Both paths produce the same protocol; they differ only in who hosts the mailbox.</p>
 <h2 id="1-install">1. Install<a class="ah" href="#1-install">#</a></h2>
 <pre class="lang-bash"><code>npm i -g @bekirdag/pigeonpost</code></pre>

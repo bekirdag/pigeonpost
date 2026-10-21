@@ -1799,6 +1799,15 @@ fn save(home: &Path, credential: &Credential) -> Result<PathBuf, Error> {
     write_credentials(home, &creds)
 }
 
+/// Record a credential issued for an existing mailbox (device login, enrollment), replacing any
+/// earlier credential this home held for the same address rather than keeping a dead one.
+pub(crate) fn record_credential(home: &Path, credential: &Credential) -> Result<PathBuf, Error> {
+    let mut creds = load(home)?;
+    creds.identities.retain(|c| c.address != credential.address);
+    creds.identities.push(credential.clone());
+    write_credentials(home, &creds)
+}
+
 fn write_credentials(home: &Path, creds: &Credentials) -> Result<PathBuf, Error> {
     std::fs::create_dir_all(home)?;
     let path = credentials_path(home);
