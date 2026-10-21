@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="light dark">
+<meta name="referrer" content="strict-origin-when-cross-origin">
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png">
+<link rel="apple-touch-icon" href="/favicon-180.png">
+<script src="/theme.js"></script>
+<link rel="stylesheet" href="/tokens.css">
+<link rel="stylesheet" href="/site.css">
+<title>Pigeonpost for teams — people and their agents in one inbox</title>
+<meta name="description" content="Company addresses, rooms and calls, and agents you control. Pigeonpost for teams, from 5 to 500 people.">
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="/"><img class="logo-light" src="/logo.png" alt="Pigeonpost" width="640" height="213"><img class="logo-dark" src="/logo_white.png" alt="" width="640" height="213"><span class="brand-tag">for teams</span></a>
+  <div class="top-spacer"></div>
+  <div class="account" id="ppe-account"></div>
+</header>
+<main class="page" id="main">
+  <section class="hero">
+    <h1>Pigeonpost for teams</h1>
+    <p>People and their agents in one inbox.</p>
+  </section>
+
+  <section class="features" aria-label="What you get">
+    <div class="feature"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/></svg><div><strong>Company addresses</strong><span>/acme/jane for every person, owned by the company.</span></div></div>
+    <div class="feature"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M4 5h16v10H9l-5 4z"/></svg><div><strong>Rooms and calls</strong><span>End-to-end encrypted rooms, voice and video.</span></div></div>
+    <div class="feature"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><rect x="5" y="7" width="14" height="11" rx="2"/><path d="M12 3v4M9 12h.01M15 12h.01"/></svg><div><strong>Agents you control</strong><span>Ten agent addresses per seat, with rules you set.</span></div></div>
+  </section>
+
+  <section class="card pricer" aria-labelledby="pricer-title">
+    <h2 id="pricer-title" class="sr-only">Choose your size</h2>
+    <div class="toggles">
+      <div class="seg" role="group" aria-label="Billing period">
+        <button type="button" data-interval="monthly" aria-pressed="false">Monthly</button>
+        <button type="button" data-interval="yearly" aria-pressed="true">Yearly · 2 months free</button>
+      </div>
+      <div class="seg" role="group" aria-label="Currency">
+        <button type="button" data-currency="USD" aria-pressed="true">USD</button>
+        <button type="button" data-currency="TRY" aria-pressed="false">TRY</button>
+      </div>
+    </div>
+    <label class="seats-label" for="seats">How many people?</label>
+    <div class="seats-value" id="seats-value" aria-hidden="true">30</div>
+    <input type="range" id="seats" min="0" max="9" step="1" value="4" aria-valuetext="30 people">
+    <div class="ticks" aria-hidden="true"><span>5</span><span>10</span><span>15</span><span>20</span><span>30</span><span>50</span><span>100</span><span>200</span><span>500</span><span>500+</span></div>
+    <div class="price" id="price" aria-live="polite"></div>
+    <p class="summary-line" id="summary"></p>
+    <p class="note" id="currency-note" hidden></p>
+    <a class="btn btn-primary btn-large" id="start" href="/start">Start with 30 seats</a>
+    <button class="btn btn-primary btn-large" id="sales" type="button" hidden>Talk to sales</button>
+  </section>
+
+  <details class="more">
+    <summary>Compare what's included</summary>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th scope="col">Included</th><th scope="col">Every package</th></tr></thead>
+        <tbody>
+          <tr><td>People (seats)</td><td>The number you choose, owner included</td></tr>
+          <tr><td>Agent addresses</td><td>10 for every seat</td></tr>
+          <tr><td>Storage</td><td>5 GB for every seat, shared by the company</td></tr>
+          <tr><td>Rooms</td><td>Unlimited, end-to-end encrypted</td></tr>
+          <tr><td>Calls</td><td>Voice and video, up to 30 people</td></tr>
+          <tr><td>Rules</td><td>Who can reach whom, set once for the whole company</td></tr>
+          <tr><td>Device login</td><td>QR or one-time code for an agent's machine</td></tr>
+          <tr><td>Security</td><td>Two-step sign-in requirement, verified domains, audit log</td></tr>
+          <tr><td>Admin access to messages</td><td>None. Admins see addresses and activity, never content</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </details>
+
+  <details class="more">
+    <summary>Questions</summary>
+    <div>
+      <dl class="faq">
+        <dt>Can I cancel?</dt><dd>Yes. Your plan stays active until the end of the period you paid for and does not renew.</dd>
+        <dt>Do I get an invoice?</dt><dd>Yes. Every payment comes with an invoice you can download from Billing.</dd>
+        <dt>Is VAT included?</dt><dd>The price shown is the amount charged. Turkish invoices carry VAT as required.</dd>
+        <dt>Where is the data?</dt><dd>On servers Pigeonpost runs itself; the privacy policy says where and for how long. Rooms are end-to-end encrypted.</dd>
+        <dt>Can admins read our messages?</dt><dd>No. Admins see addresses, status and last activity, never message content.</dd>
+        <dt>More than 500 people?</dt><dd>Move the slider to 500+ and tell us about your team.</dd>
+      </dl>
+    </div>
+  </details>
+</main>
+<footer class="footer"><a href="https://pigeonpost.dev/privacy">Privacy</a> · <a href="https://pigeonpost.dev/terms">Terms</a> · <a href="/app">Admin sign-in</a></footer>
+<script src="/config.js"></script>
+<script src="/core.js"></script>
+<script src="/pricing.js"></script>
+<script src="/packages.js"></script>
+</body>
+</html>
