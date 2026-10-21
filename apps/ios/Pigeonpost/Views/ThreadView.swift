@@ -113,6 +113,7 @@ struct ThreadView: View {
         .toolbarBackground(Theme.wash, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         .toolbar {
+            ToolbarItem(placement: .topBarTrailing) { DirectTimerBadge(peer: peer) }
             ToolbarItem(placement: .topBarTrailing) { CallButtons(peer: peer) }
             // One button, not two. Archiving is a decision about this conversation and belongs
             // beside the other decisions about it — known, trusted, blocked — rather than sitting

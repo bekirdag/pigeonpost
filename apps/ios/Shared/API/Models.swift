@@ -39,6 +39,9 @@ struct Message: Decodable, Identifiable, Equatable {
     let untrusted: Bool?
     /// Files that came with it. Absent on messages that carry none, which is most of them.
     let attachments: [MessageAttachment]?
+    /// When a disappearing conversation's message goes (SDS §17). Dropped locally at that moment
+    /// whether or not the postbox has said so yet.
+    var expiresAt: Int? = nil
 
     var id: String { messageId }
     var isOutgoing: Bool { direction == "out" }
@@ -100,6 +103,8 @@ struct ServerThread: Decodable, Equatable {
     let createdAt: Int?
     let lastAt: Int?
     let archived: Bool?
+    /// The thread's disappearing-message timer, shared by both sides; `nil` is off.
+    var ephemeralSecs: Int? = nil
 }
 
 struct ThreadsResponse: Decodable {

@@ -16,6 +16,9 @@ enum AuthError: Error { case sessionExpired }
     #endif
     let session = Session()
     let client: PostboxClient
+    #if MAC_INBOX_UI_TESTS
+    let features = Features()
+    #endif
     var ownAgents: [Mailbox] { mailboxes.filter { $0.address != me?.address } }
     init() { client = PostboxClient(base: URL(string: "https://pigeonpost.test")!, tokens: session) }
     func sessionExpired() { expired = true }

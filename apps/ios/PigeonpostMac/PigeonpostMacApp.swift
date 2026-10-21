@@ -14,6 +14,7 @@ struct PigeonpostMacApp: App {
     @State private var account: Account
     @State private var inbox: Inbox
     @State private var calls = CallHost.shared
+    @State private var groups: GroupStore
 
     init() {
         let session = Session()
@@ -22,6 +23,10 @@ struct PigeonpostMacApp: App {
         _account = State(initialValue: account)
         let inbox = Inbox(account: account)
         _inbox = State(initialValue: inbox)
+        let groups = GroupStore(account: account)
+        groups.inbox = inbox
+        account.groups = groups
+        _groups = State(initialValue: groups)
         #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
         // Keychain or the network: see `Session.init` and the `Fixtures.enabled` guards on every
@@ -41,7 +46,11 @@ struct PigeonpostMacApp: App {
                 .environment(inbox)
                 .environment(MacPushDelegate.service)
                 .environment(calls)
+                .environment(groups)
                 .appliesAppearanceChoice()
+                .onOpenURL { url in
+                    if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+                }
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)

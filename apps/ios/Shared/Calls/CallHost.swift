@@ -166,6 +166,18 @@ final class CallHost: NSObject {
         evaluate("PigeonpostNative.call(\(Self.json(peer)), \(Self.json(kind)))")
     }
 
+    /// Start or join a group's call (docs/groups.md §6) through the call page's own group client.
+    /// The calls service rechecks membership; this only asks.
+    func callGroup(_ id: String, name: String, video: Bool, join: Bool) {
+        guard ready else {
+            inbox?.toast = "Calling isn't available right now. Try again in a moment."
+            return
+        }
+        let kind = video ? "video" : "audio"
+        let method = join ? "joinGroup" : "placeGroup"
+        evaluate("window.PigeonpostCalls && PigeonpostCalls.\(method) && PigeonpostCalls.\(method)(\(Self.json(kind)), {id: \(Self.json(id)), name: \(Self.json(name))})")
+    }
+
     private func configure() async {
         guard ready, let session, let account, var me = account.me else { return }
         var token: String?

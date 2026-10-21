@@ -10,6 +10,7 @@ struct MacInboxView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
+    @Environment(GroupStore.self) private var groups
 
     /// The conversation being read. The sidebar's selection.
     @State private var peer: String?
@@ -22,10 +23,15 @@ struct MacInboxView: View {
     private enum Sheet: Identifiable {
         case settings
         case peer(Conversation)
+        case newGroup, joinLink
+        case join(GroupStore.JoinLink)
 
         var id: String {
             switch self {
             case .settings: return "settings"
+            case .newGroup: return "new-group"
+            case .joinLink: return "join-link"
+            case .join(let link): return "join:" + link.id
             case .peer(let conversation): return "peer:\(conversation.peer)"
             }
         }
@@ -40,8 +46,20 @@ struct MacInboxView: View {
             newConversation: { showingNew = true },
             openSettings: { sheet = .settings },
             showPeer: { sheet = .peer($0) },
-            visit: visit
+            visit: visit,
+            newGroup: { sheet = .newGroup },
+            joinLink: { sheet = .joinLink }
         )
+        // Groups keep their own cadence: the app holds no event stream (see GroupStore).
+        .task(id: "\(account.me?.address ?? "")|\(account.features.groups)") {
+            await groups.attach()
+            await groups.live()
+        }
+        .onChange(of: groups.pendingJoin, initial: true) { _, link in
+            guard let link else { return }
+            groups.pendingJoin = nil
+            sheet = .join(link)
+        }
         // Mail for another conversation, said inside the window rather than by Notification Centre.
         // A desktop notification is right when the app is behind something and wrong when it is in
         // front — see `Announcer`, and `Inbox.tell(about:)` for which of the two happens when.
@@ -54,12 +72,14 @@ struct MacInboxView: View {
             switch Fixtures.sheet {
             case "settings": sheet = .settings
             case "new": showingNew = true
+            case "new-group": sheet = .newGroup
             default: break
             }
             guard !Fixtures.enabled else { return }
             push.attach(to: account)
             push.attach(to: inbox)
             account.push = push
+            push.onGroupPush = { [weak groups] group in groups?.wake(group) }
             // Asked on the way in rather than at first launch. A desktop app that wants to notify
             // you before it has shown you anything is a dialog people dismiss.
             await push.askIfNeeded()
@@ -97,7 +117,7 @@ struct MacInboxView: View {
         // `initial: true` because the count is already right when this appears — the first listing
         // lands before anybody changes anything, and waiting for a change would leave the Dock
         // blank through the one moment somebody is most likely to look at it.
-        .onChange(of: inbox.unreadCount, initial: true) { _, count in
+        .onChange(of: inbox.unreadCount + groups.unreadCount, initial: true) { _, count in
             DockBadge.show(count)
             MenuBarItem.shared.show(unread: count)
         }
@@ -131,6 +151,15 @@ struct MacInboxView: View {
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
+            case .newGroup:
+                NewGroupSheet { id in peer = id; subthread = nil }
+                    .frame(width: 480, height: 600)
+            case .joinLink:
+                JoinLinkSheet { link in sheet = .join(link) }
+                    .frame(width: 460, height: 240)
+            case .join(let link):
+                JoinGroupSheet(link: link) { id in peer = id; subthread = nil }
+                    .frame(width: 460, height: 360)
             case .peer(let conversation):
                 // Keep the presented content alive independently of inbox selection. Removing
                 // its conversation while the sheet is open must not leave an empty modal panel.

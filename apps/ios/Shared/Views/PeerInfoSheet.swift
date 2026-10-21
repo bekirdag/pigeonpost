@@ -127,6 +127,8 @@ struct PeerInfoSheet: View {
                 // What cannot be changed from here. Admission and autonomy were listed here once
                 // and are not any more: they are the toggles above, and printing a value twice
                 // invites the two copies to disagree.
+                DirectTimerSection(peer: conversation.peer)
+
                 Section("What the postbox knows") {
                     row("Contact", contactState)
                     row("Granted verbs", grantedVerbs)

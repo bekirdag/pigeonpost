@@ -176,6 +176,7 @@ struct MacThreadView: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) { findBar }
             // Voice and video, beside the find bar: what you do *with* this conversation.
+            ToolbarItem(placement: .primaryAction) { DirectTimerBadge(peer: peer) }
             ToolbarItem(placement: .primaryAction) { CallButtons(peer: peer) }
         }
         .task(id: taskKey) {

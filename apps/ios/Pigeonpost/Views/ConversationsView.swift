@@ -12,6 +12,7 @@ struct ConversationsView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
+    @Environment(GroupStore.self) private var groups
     @Environment(\.scenePhase) private var scenePhase
 
     @Environment(\.horizontalSizeClass) private var sizeClass
@@ -33,8 +34,9 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner
+        case identities, settings, new, scanner, newGroup, joinLink
         case peer(Conversation)
+        case join(GroupStore.JoinLink)
 
         init?(staged: String) {
             switch staged {
@@ -42,6 +44,7 @@ struct ConversationsView: View {
             case "settings": self = .settings
             case "new": self = .new
             case "scanner": self = .scanner
+            case "new-group": self = .newGroup
             default: return nil
             }
         }
@@ -52,6 +55,9 @@ struct ConversationsView: View {
             case .settings: return "settings"
             case .new: return "new"
             case .scanner: return "scanner"
+            case .newGroup: return "new-group"
+            case .joinLink: return "join-link"
+            case .join(let link): return "join:" + link.id
             case .peer(let conversation): return "peer:" + conversation.peer
             }
         }
@@ -73,6 +79,20 @@ struct ConversationsView: View {
         // it when the mailbox changes and cancels it on the way to the background — a long poll held
         // open by a suspended app is a socket the system kills anyway, and one this app would then
         // believe in.
+        // Groups: their own cadence (no event stream here), restarted with the mailbox and paused in
+        // the background like the long poll.
+        .task(id: GroupTaskKey(mailbox: account.me?.address, phase: scenePhase, on: account.features.groups)) {
+            guard scenePhase == .active else { return }
+            await groups.attach()
+            async let cadence: Void = groups.live()
+            async let expiry: Void = pruneDirectMessages()
+            _ = await (cadence, expiry)
+        }
+        .onChange(of: groups.pendingJoin) { _, link in
+            guard let link else { return }
+            groups.pendingJoin = nil
+            sheet = .join(link)
+        }
         .task(id: TaskKey(mailbox: account.me?.address, phase: scenePhase)) {
             // Stage the launch destination once; switching inboxes must not reopen Settings.
             if !didStageFixtures {
@@ -108,6 +128,9 @@ struct ConversationsView: View {
             case .settings: SettingsSheet()
             case .scanner: ScanView()
             case .new: NewConversationSheet { peer in selection = peer }
+            case .newGroup: NewGroupSheet { id in selection = id }
+            case .joinLink: JoinLinkSheet { link in sheet = .join(link) }
+            case .join(let link): JoinGroupSheet(link: link) { id in selection = id }
             case .peer(let conversation):
                 PeerInfoSheet(conversation: conversation) { mailbox in
                     pendingMailbox = mailbox
@@ -127,7 +150,9 @@ struct ConversationsView: View {
                 newConversation: { sheet = .new },
                 openSettings: { sheet = .settings },
                 showPeer: { sheet = .peer($0) },
-                visit: visit
+                visit: visit,
+                newGroup: { sheet = .newGroup },
+                joinLink: { sheet = .joinLink }
             )
         } else {
             phone
@@ -162,7 +187,10 @@ struct ConversationsView: View {
                 .toolbarBackground(Theme.sidebar, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
         } detail: {
-            if let selection, inbox.conversation(with: selection) != nil {
+            if let selection, GroupSelection.isGroup(selection) {
+                GroupView(groupId: selection)
+                    .id(selection)
+            } else if let selection, inbox.conversation(with: selection) != nil {
                 ThreadView(peer: selection)
                     .id(selection)
             } else {
@@ -187,31 +215,69 @@ struct ConversationsView: View {
                     .foregroundStyle(Theme.muted)
                     .listRowBackground(Theme.wash)
             }
-            ForEach(inbox.visible) { conversation in
-                ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
-                    .tag(conversation.peer)
-                    .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty {
+                GroupInvitations()
+                    .listRowBackground(Theme.sidebar)
                     .listRowSeparatorTint(Theme.rule)
-                    .swipeActions(edge: .trailing) {
-                        Button {
-                            Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
-                        } label: {
-                            Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
-                        }
-                        .tint(Theme.navy)
-                    }
+            }
+            ForEach(entries) { entry in
+                switch entry {
+                case let .group(group):
+                    GroupRow(group: group, isSelected: group.id == selection)
+                        .tag(group.id)
+                        .listRowBackground(group.id == selection ? Theme.selected : Theme.sidebar)
+                        .listRowSeparatorTint(Theme.rule)
+                case let .conversation(conversation):
+                    conversationRow(conversation)
+                }
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Theme.sidebar)
         .overlay { emptyState }
-        .refreshable { await inbox.loadAll() }
+        .refreshable {
+            await inbox.loadAll()
+            await groups.refresh()
+        }
+    }
+
+    /// Conversations and groups together, unless the archive (which holds no groups) is open.
+    private var entries: [InboxEntry] {
+        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+    }
+
+    private func pruneDirectMessages() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            inbox.pruneExpired()
+        }
+    }
+
+    private struct GroupTaskKey: Equatable {
+        let mailbox: String?
+        let phase: ScenePhase
+        let on: Bool
+    }
+
+    private func conversationRow(_ conversation: Conversation) -> some View {
+        ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
+            .tag(conversation.peer)
+            .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+            .listRowSeparatorTint(Theme.rule)
+            .swipeActions(edge: .trailing) {
+                Button {
+                    Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
+                } label: {
+                    Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
+                }
+                .tint(Theme.navy)
+            }
     }
 
     @ViewBuilder
     private var emptyState: some View {
-        if inbox.visible.isEmpty, inbox.hasLoaded {
+        if inbox.visible.isEmpty, inbox.hasLoaded, entries.isEmpty, groups.invitations.isEmpty || !groups.enabled {
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
             } else if inbox.viewingArchive {
@@ -254,8 +320,20 @@ struct ConversationsView: View {
         // button that presents a sheet is one fewer presentation to go wrong than a menu that
         // presents a sheet.
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
-                .accessibilityLabel("New conversation")
+            if groups.enabled {
+                Menu {
+                    Button { sheet = .new } label: { Label("New conversation", systemImage: "square.and.pencil") }
+                    Button { sheet = .newGroup } label: { Label("New group", systemImage: "person.3") }
+                    Button { sheet = .joinLink } label: { Label("Join with a link", systemImage: "link") }
+                } label: {
+                    Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary)
+                }
+                .accessibilityLabel("New conversation or group")
+                .accessibilityIdentifier("composeMenu")
+            } else {
+                Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
+                    .accessibilityLabel("New conversation")
+            }
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button { sheet = .settings } label: { Image(systemName: "gearshape").foregroundStyle(Theme.secondary) }

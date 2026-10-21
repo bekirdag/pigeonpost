@@ -189,6 +189,8 @@ final class Account {
     /// than a dependency in the initializer: push needs the account to register, and the account
     /// needs push only for this one moment.
     weak var push: PushService?
+    /// Likewise for groups: signing out revokes this device's group keys and erases them here.
+    weak var groups: GroupStore?
 
     /// Somebody chose to sign out. Ends the session at the realm too — see `Session.signOut`.
     func signOut() async {
@@ -197,6 +199,7 @@ final class Account {
         if let push {
             await push.unregister()
         }
+        await groups?.signOut()
         forgetLocal()
         await session.signOut()
     }

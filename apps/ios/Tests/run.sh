@@ -31,3 +31,7 @@ swiftc -O -o "$out/ios-navigation" Tests/IOSNavigationTests.swift Shared/API/Mod
 "$out/ios-navigation"
 swiftc -O -parse-as-library -o "$out/call-rings" Tests/CallRingTests.swift Shared/Calls/CallRing.swift
 "$out/call-rings"
+mkdir -p "$out/group-logic-src" && cp Tests/GroupLogicTests.swift "$out/group-logic-src/main.swift"
+swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/APIError.swift \
+  Shared/Groups/GroupModels.swift Shared/Groups/GroupText.swift Shared/Groups/GroupVault.swift
+"$out/group-logic"

@@ -8,6 +8,7 @@ import WebKit
 
 @MainActor @Observable final class PushService {
     var pendingPeer: String?
+    var onGroupPush: ((String) -> Void)?
     func attach(to account: Account) {}
     func attach(to inbox: Inbox) {}
     // A delayed notification authorization must never block inbox loading.
@@ -68,6 +69,7 @@ extension Notification.Name {
         let push = PushService()
         let calls = CallHost()
         let view = MacInboxView().environment(account).environment(inbox).environment(push).environment(calls)
+            .environment(GroupStore(account: account))
         let host = NSHostingView(rootView: view)
         let window = NSWindow(contentRect: NSRect(x: 100, y: 100, width: 1100, height: 720),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)

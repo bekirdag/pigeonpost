@@ -410,3 +410,26 @@ enum GroupTimers {
     /// Said wherever a timer can be chosen (SDS §17).
     static let limits = "Recipients can still take screenshots or copy text, notifications already shown may stay on screen, and copies made outside Pigeonpost are not affected."
 }
+
+/// A group join link: `https://inbox.pigeonpost.dev/g/<id>#<token>`. The token is a fragment, so it
+/// never reaches a server log; the app sends it only in a request body.
+struct GroupJoinLink: Equatable, Identifiable {
+    let groupId: String
+    let token: String?
+    var id: String { groupId + (token ?? "") }
+
+    init(groupId: String, token: String?) {
+        self.groupId = groupId
+        self.token = token
+    }
+
+    /// `https://inbox.pigeonpost.dev/g/<id>#<token>` (or `/g/<id>` with no token, for a listed
+    /// public group). Anything else is not a join link.
+    init?(url: URL) {
+        let parts = url.path.split(separator: "/")
+        guard url.scheme == "https", url.host == "inbox.pigeonpost.dev" || url.host == "pigeonpost.dev",
+              parts.count == 2, parts[0] == "g", parts[1].hasPrefix("grp_"),
+              parts[1].allSatisfy({ $0.isLetter || $0.isNumber || $0 == "_" }) else { return nil }
+        self.init(groupId: String(parts[1]), token: url.fragment.flatMap { $0.isEmpty ? nil : $0 })
+    }
+}

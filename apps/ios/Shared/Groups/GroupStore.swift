@@ -43,11 +43,7 @@ final class GroupStore {
     var pendingJoin: JoinLink?
     var invitationsOpen = false
 
-    struct JoinLink: Equatable, Identifiable {
-        let groupId: String
-        let token: String?
-        var id: String { groupId + (token ?? "") }
-    }
+    typealias JoinLink = GroupJoinLink
 
     @ObservationIgnored let account: Account
     @ObservationIgnored weak var inbox: Inbox?
