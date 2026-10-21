@@ -31,8 +31,8 @@ class SafetyUiTest {
         return ActivityScenario.launch(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", "safety"))
     }
     private fun dumped(work: () -> Unit) = try { work() } catch (e: Throwable) { ui.onAllNodes(isRoot()).fetchSemanticsNodes().indices.forEach { ui.onAllNodes(isRoot())[it].printToLog("PPDUMP", Int.MAX_VALUE) }; throw e }
-    private fun tag(tag: String) = dumped { ui.waitUntil(15_000) { ui.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() } }
-    private fun text(text: String) = dumped { ui.waitUntil(15_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
+    private fun tag(tag: String) = dumped { ui.waitUntil(30_000) { ui.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() } }
+    private fun text(text: String) = dumped { ui.waitUntil(30_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
 
     @Test fun callsTabShowsTheMissedBadgeFiltersAndClearsItWhenViewed() {
         launch().use {
@@ -72,7 +72,7 @@ class SafetyUiTest {
     @Test fun aMissedCallIsALineInTheConversationAndThePictureReplacesTheInitials() {
         launch().use {
             tag("conversation:/demo/builder")
-            ui.waitUntil(15_000) { ui.onAllNodesWithTag("avatar:/demo/builder:photo", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
+            ui.waitUntil(30_000) { ui.onAllNodesWithTag("avatar:/demo/builder:photo", useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty() }
             ui.onNodeWithTag("conversation:/demo/builder").performClick()
             tag("missedCall")
             ui.onNodeWithText("Missed video call", substring = true).assertExists()

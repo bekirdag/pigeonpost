@@ -52,7 +52,11 @@ android {
         buildConfig = true
         resValues = true
     }
-    packaging { resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1") }
+    packaging {
+        resources.excludes += setOf("META-INF/AL2.0", "META-INF/LGPL2.1")
+        // JNA's AAR also carries ABIs this app never shipped and the group library is not built for.
+        jniLibs.excludes += setOf("lib/armeabi/**", "lib/mips/**", "lib/mips64/**")
+    }
     testOptions { unitTests.isReturnDefaultValues = true }
     sourceSets.getByName("androidTest").assets.srcDir("../../../tests/fixtures/attachments")
     // The UniFFI adapter for group encryption, shared with core's JVM tests.
