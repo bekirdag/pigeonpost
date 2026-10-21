@@ -5,6 +5,7 @@ on:
   pull_request:
     paths:
       - 'apps/windows/**'
+      - 'crates/pigeonpost-groupcrypto/**'
       - '.github/workflows/windows-desktop.yml'
       # The call test runs the web call client and the call service from this repository.
       - 'site-inbox/native-call.*'
@@ -23,7 +24,7 @@ jobs:
   core:
     name: Core behavior
     runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
-    timeout-minutes: 10
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -31,7 +32,13 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
-      - name: Run domain, API and state tests
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+      - name: Build the group crypto library (MLS round trips in the core tests)
+        working-directory: crates/pigeonpost-groupcrypto
+        run: cargo build --locked --release -p pigeonpost-groupcrypto-ffi
+      - name: Run domain, API, state and group encryption tests
         working-directory: apps/windows
         run: dotnet run --project Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c Release
 
@@ -39,7 +46,7 @@ jobs:
     name: Windows ${{ matrix.architecture }}
     needs: core
     runs-on: windows-latest
-    timeout-minutes: 30
+    timeout-minutes: 50
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +58,10 @@ jobs:
       - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5
         with:
           dotnet-version: '10.0.x'
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          workspaces: crates/pigeonpost-groupcrypto
+          key: ${{ matrix.architecture }}
       - name: Compile native app and validate unsigned MSIX
         shell: pwsh
         run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package

@@ -31,7 +31,9 @@ public sealed partial class MainWindow
         else await SaveAttachmentsAsync([attachment]);
     }
 
-    private async Task OpenViewerAsync(MessageAttachment attachment)
+    // `load` supplies the bytes when they don't come from the mailbox's attachments (a group
+    // file, decrypted on this device).
+    private async Task OpenViewerAsync(MessageAttachment attachment, Func<CancellationToken, Task<byte[]>>? load = null)
     {
         if (dialogOpen || ViewModel.SelectedMailbox is not { } mailbox) return;
         var kind = AttachmentViewer.Kind(attachment.Filename, attachment.MediaType);
@@ -50,7 +52,7 @@ public sealed partial class MainWindow
         ViewerClose.Focus(FocusState.Programmatic);
         try
         {
-            var bytes = await postbox.DownloadAsync(mailbox.Address, attachment.Id, cancellation.Token);
+            var bytes = load is not null ? await load(cancellation.Token) : await postbox.DownloadAsync(mailbox.Address, attachment.Id, cancellation.Token);
             cancellation.Token.ThrowIfCancellationRequested();
             if (bytes.Length is 0 or > PostboxClient.MaxAttachmentBytes) throw new IOException("Attachment size limit.");
             viewerBytes = bytes;

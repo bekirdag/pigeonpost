@@ -316,13 +316,13 @@ AsyncTest("A stale mailbox load cannot overwrite the new mailbox", async () =>
     var service = new WrappedService();
     var firstStarted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     var releaseFirst = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
-    service.BeforeLoad = async (identity, _) => { if (identity == "/k/preview-main") { firstStarted.TrySetResult(); await releaseFirst.Task; } };
+    service.BeforeLoad = async (identity, _) => { if (identity == "/k/ec55xq18rbwdnwpsvkht07az40") { firstStarted.TrySetResult(); await releaseFirst.Task; } };
     using var vm = new InboxViewModel(service);
     var initial = vm.InitializeAsync();
     await firstStarted.Task;
     await vm.SwitchMailboxAsync(vm.Mailboxes[1]);
     releaseFirst.SetResult(); await initial;
-    Equal(vm.SelectedMailbox!.Address, "/k/preview-team");
+    Equal(vm.SelectedMailbox!.Address, "/k/rywv63mb6h0hhrpfjewrrttspw");
     Check(vm.Messages.All(m => m.Id.StartsWith("team-")), "A cancelled response replaced the active mailbox.");
 });
 
@@ -615,7 +615,7 @@ AsyncTest("Opening an existing draft does not send it without review", async () 
 AsyncTest("Empty subjects and owned addresses remain discoverable", async () =>
 {
     using var vm = new InboxViewModel(new PreviewInboxService()); await vm.InitializeAsync();
-    await vm.StartConversationAsync("/k/preview-team", "");
+    await vm.StartConversationAsync("/k/rywv63mb6h0hhrpfjewrrttspw", "");
     Equal(vm.SelectedConversation!.Peer, "/preview/team"); Check(vm.SelectedConversation.IsMine, "Own mailbox not recognized.");
     await vm.CreateSubjectAsync("Empty subject");
     Equal(vm.SubjectTitle, "Empty subject"); Equal(vm.Messages.Count, 0);
@@ -681,7 +681,7 @@ AsyncTest("Known sender does not grant requests; full grants exclude forbidden a
 AsyncTest("Removing an exact contact reverts to namespace policy", async () =>
 {
     var service = new PreviewInboxService();
-    await service.SetContactAsync("/k/preview-main", new("/preview/*", "Fleet", "allow", "review", []), default);
+    await service.SetContactAsync("/k/ec55xq18rbwdnwpsvkht07az40", new("/preview/*", "Fleet", "allow", "review", []), default);
     using var vm = new InboxViewModel(service); await vm.InitializeAsync();
     var peer = vm.SelectedConversation!.Peer;
     await vm.SaveContactAsync(peer, false, null, false, []);
@@ -736,7 +736,7 @@ AsyncTest("Contact vocabulary is decoded and conflicting forbidden verbs cannot 
 AsyncTest("Canonical contact edits remove the actual existing namespace address rule", async () =>
 {
     var service = new PreviewInboxService();
-    await service.SetContactAsync("/k/preview-main", new("/person", "Person", "allow", "auto", ["run_tests"]), default);
+    await service.SetContactAsync("/k/ec55xq18rbwdnwpsvkht07az40", new("/person", "Person", "allow", "auto", ["run_tests"]), default);
     using var vm = new InboxViewModel(service); await vm.InitializeAsync();
     await vm.StartConversationAsync("/person", "");
     Equal(vm.ExactContact("/person/main")!.Peer, "/person");
@@ -870,7 +870,7 @@ AsyncTest("Files stage with the text draft and Send creates one message with all
     await vm.RefreshAsync(background: true); Equal(vm.DraftAttachments.Count, 2);
     await vm.SendDraftAsync();
     Equal(files.UploadCount, 2); Equal(files.SendCount, 1); Equal(service.SendCount, 0);
-    Equal(files.Identity, "/k/preview-main"); Equal(files.Peer, "/preview/design"); Equal(files.Thread, subject.Id);
+    Equal(files.Identity, "/k/ec55xq18rbwdnwpsvkht07az40"); Equal(files.Peer, "/preview/design"); Equal(files.Thread, subject.Id);
     Equal(RequestEnvelope.DisplayText(files.Body!), "Text written before attaching files");
     Check(files.SentIds!.SequenceEqual(new[] { "uploaded-two.txt", "uploaded-one.txt" }), "Files were split or removed incorrectly.");
     Equal(vm.Draft, ""); Equal(vm.DraftAttachments.Count, 0);

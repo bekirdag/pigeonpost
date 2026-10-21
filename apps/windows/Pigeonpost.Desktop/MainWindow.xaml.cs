@@ -44,8 +44,13 @@ public sealed partial class MainWindow : Window
         preview = new PreviewInboxService(longHistory: true);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
+        var stand_in = new Pigeonpost.Core.Preview.PreviewPostbox();
+        PreviewSideData.Seed(stand_in);
+        postbox.Dispose();
+        postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens());
         ViewModel = new InboxViewModel(preview, postbox);
 #endif
+        CreateSideModels();
         InitializeComponent();
         MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
@@ -73,6 +78,7 @@ public sealed partial class MainWindow : Window
             ViewModel.MessagesUpdated -= Messages_Updated;
             ViewModel.InboxUpdated -= Inbox_Updated;
             ViewModel.Dispose();
+            groupsModel.Dispose();
         };
     }
 
@@ -393,8 +399,9 @@ public sealed partial class MainWindow : Window
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
+        if (e.PropertyName == nameof(InboxViewModel.IsSelectedBlocked)) BlockMenuItem.Text = ViewModel.IsSelectedBlocked ? "Unblock" : "Block…";
         if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) UpdateCallButtons();
-        if (e.PropertyName == nameof(InboxViewModel.SelectedMailbox)) _ = ConfigureCallsAsync();
+        if (e.PropertyName == nameof(InboxViewModel.SelectedMailbox)) { _ = ConfigureCallsAsync(); _ = MailboxChangedForSideViewsAsync(); }
         if (e.PropertyName == nameof(InboxViewModel.Find))
             foreach (var body in messageBodies.Keys) HighlightBody(body);
         if (e.PropertyName == nameof(InboxViewModel.CurrentMatch) && ViewModel.CurrentMatch is { } match)
@@ -496,6 +503,12 @@ public sealed class MessageTemplateSelector : DataTemplateSelector
 {
     public DataTemplate? Incoming { get; set; }
     public DataTemplate? Outgoing { get; set; }
-    protected override DataTemplate SelectTemplateCore(object item) => item is ThreadMessage { IsOutgoing: true } ? Outgoing! : Incoming!;
+    public DataTemplate? System { get; set; }
+    protected override DataTemplate SelectTemplateCore(object item) => item switch
+    {
+        ThreadMessage { IsSystem: true } when System is not null => System,
+        ThreadMessage { IsOutgoing: true } => Outgoing!,
+        _ => Incoming!
+    };
     protected override DataTemplate SelectTemplateCore(object item, DependencyObject container) => SelectTemplateCore(item);
 }

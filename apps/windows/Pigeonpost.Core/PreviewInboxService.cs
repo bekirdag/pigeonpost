@@ -6,10 +6,14 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
     private readonly Dictionary<string, InboxSnapshot> snapshots;
     private int sequence;
     private const long Epoch = 1789113600;
+    // Real /k/ addresses (of fixed demonstration seeds 0xA1… and 0xA2…), so the preview's stand-in
+    // postbox can run groups with the real encryption library.
+    public static readonly byte[] MainSeed = Enumerable.Repeat((byte)0xA1, 32).ToArray();
+    public static readonly byte[] TeamSeed = Enumerable.Repeat((byte)0xA2, 32).ToArray();
     private readonly Mailbox[] mailboxes =
     [
-        new("/k/preview-main", "/preview/main", "Main inbox"),
-        new("/k/preview-team", "/preview/team", "Team inbox")
+        new("/k/ec55xq18rbwdnwpsvkht07az40", "/preview/main", "Main inbox"),
+        new("/k/rywv63mb6h0hhrpfjewrrttspw", "/preview/team", "Team inbox")
     ];
 
     public PreviewInboxService(bool longHistory = false)

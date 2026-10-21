@@ -78,7 +78,8 @@ internal sealed class DesktopNotifications : IDisposable
                 .AddButton(Action("Reply", "reply").SetInputId(ReplyInput))
                 .AddButton(Action("Mark as read", "read"));
             if (!string.IsNullOrEmpty(mailboxName)) builder.SetAttributionText("To " + mailboxName);
-            if (alert.Title != MessageAlerts.GenericTitle && AvatarUri(alert) is { } avatar)
+            // The sender's profile picture when the app has shown it (Phase 1b, SDS §16), else initials.
+            if (alert.Title != MessageAlerts.GenericTitle && (AvatarFiles.For(arrival.Peer) ?? AvatarUri(alert)) is { } avatar)
                 builder.SetAppLogoOverride(avatar, AppNotificationImageCrop.Circle);
             var notification = builder.BuildNotification();
             notification.Tag = alert.Tag;
