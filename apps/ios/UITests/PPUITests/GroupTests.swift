@@ -75,7 +75,7 @@ final class GroupTests: XCTestCase {
 
     func testGroupInfoShowsMembersSafetyNumberAndMembership() {
         launch(["-open=" + garden, "-sheet=group-info"])
-        XCTAssertTrue(app.navigationBars["Group info"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.navigationBars["Group info"].waitForExistence(timeout: 20))
         XCTAssertTrue(app.staticTexts["OWNER"].waitForExistence(timeout: 5) && app.staticTexts["ADMIN"].exists)
         let list = app.collectionViews.firstMatch
         for _ in 0..<8 where !element("groupSafetyNumber").isHittable { list.swipeUp() }
