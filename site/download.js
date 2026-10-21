@@ -5,13 +5,15 @@
   const hint = navigator.userAgentData?.platform || "";
   const platform = navigator.platform || "";
   const desktopIPad = /Mac/i.test(`${platform} ${ua}`) && navigator.maxTouchPoints > 1;
-  const mobile = desktopIPad || navigator.userAgentData?.mobile || /iPhone|iPad|iPod|Android/i.test(`${hint} ${ua}`) || /^(iOS|Android)$/i.test(hint);
+  const ios = desktopIPad || /iPhone|iPad|iPod|iOS/i.test(`${hint} ${platform} ${ua}`);
+  const android = /Android/i.test(`${hint} ${ua}`);
+  const mobile = navigator.userAgentData?.mobile;
   const chromeOS = /Chrome OS|ChromeOS|CrOS/i.test(`${hint} ${ua}`);
   // Prefer an explicit browser platform hint. Apple silicon browsers also say
   // "Intel", so never infer a Mac's chip: its release is a universal app.
   const desktop = { macos: "mac", windows: "windows", linux: "linux" }[hint.toLowerCase()];
   const fallback = `${platform} ${ua}`;
-  const detected = mobile || chromeOS ? "web" : desktop || (
+  const detected = ios ? "ios" : chromeOS ? "web" : android ? "android" : mobile ? "web" : desktop || (
     /Win32|Win64|Windows/i.test(fallback) ? "windows" :
     /Mac/i.test(fallback) ? "mac" :
     /Linux/i.test(fallback) ? "linux" : null
@@ -30,7 +32,7 @@
     ? card.dataset.recommendationTitle : "Your inbox in the browser";
   document.getElementById("recommended-description").textContent = card
     ? card.querySelector(".platform-description").textContent
-    : "Use Pigeonpost in your browser, or choose a desktop release below for another computer.";
+    : "Use Pigeonpost in your browser, or choose an app below for another device.";
   const primary = document.getElementById("recommended-download");
   primary.href = action.href;
   primary.replaceChildren(...Array.from(action.childNodes, node => node.cloneNode(true)));

@@ -8,6 +8,8 @@ const source = readFileSync(new URL("../../site/download.js", import.meta.url), 
 const homepage = readFileSync(new URL("../../site/index.html", import.meta.url), "utf8");
 const macArchive = "https://github.com/bekirdag/pigeonpost/releases/download/macos-1.0-49/Pigeonpost-Desktop-1.0-49.zip";
 const windowsStore = "https://apps.microsoft.com/detail/9N0NWJ9L8XDP";
+const appStore = "https://apps.apple.com/tr/app/pigeonpost-inbox/id6803521541";
+const googlePlay = "https://play.google.com/store/apps/details?id=dev.pigeonpost.inbox&hl=en";
 const webInbox = "https://inbox.pigeonpost.dev/";
 const linuxArchive = "https://github.com/bekirdag/pigeonpost/releases/download/linux-desktop-1.0.9/Pigeonpost-Desktop-1.0.9-x86_64.flatpak";
 const linuxArmArchive = linuxArchive.replace("x86_64", "aarch64");
@@ -23,14 +25,17 @@ function page(t, navigator = {}, runScript = true) {
 }
 
 function platformChoices(document) {
-  for (const platform of ["mac", "windows", "linux"]) {
+  for (const [platform, href, icon] of [
+    ["ios", appStore, "mac"], ["android", googlePlay, "android"],
+    ["mac", macArchive, "mac"], ["windows", windowsStore, "windows"], ["linux", linuxArchive, "linux"],
+  ]) {
     const card = document.querySelector(`[data-platform="${platform}"]`);
     assert.equal(card.closest("[hidden]"), null, `${platform} stays visible`);
     const action = card.querySelector(".platform-action");
-    assert.equal(action.href, platform === "mac" ? macArchive : platform === "linux" ? linuxArchive : windowsStore);
-    assert.equal(action.querySelector("use").getAttribute("href"), `#icon-${platform}`);
+    assert.equal(action.href, href);
+    assert.equal(action.querySelector("use").getAttribute("href"), `#icon-${icon}`);
     assert.equal(action.querySelector("svg").getAttribute("aria-hidden"), "true");
-    assert.ok(document.getElementById(`icon-${platform}`).querySelector("path"));
+    assert.ok(document.getElementById(`icon-${icon}`).querySelector("path"));
     assert.ok(action.textContent.trim(), "icons have accompanying text labels");
   }
   assert.match(document.querySelector('[data-platform="windows"]').textContent, /Available on Microsoft Store/);
@@ -62,24 +67,29 @@ for (const chip of ["arm", "x86"]) {
   });
 }
 
-for (const [name, navigator, icon] of [
+for (const [name, navigator, recommendation] of [
   ["Windows", { platform: "Win32", userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" }, "windows"],
   ["ChromeOS", { platform: "Linux x86_64", userAgent: "Mozilla/5.0 (X11; CrOS x86_64)" }, "web"],
   ["ChromeOS client hint", { platform: "Linux x86_64", userAgent: "", userAgentData: { platform: "Chrome OS" } }, "web"],
-  ["Android", { platform: "Linux aarch64", userAgent: "Mozilla/5.0 (Linux; Android 15)" }, "web"],
-  ["Android client hint", { userAgent: "", userAgentData: { platform: "Android" } }, "web"],
+  ["Android", { platform: "Linux aarch64", userAgent: "Mozilla/5.0 (Linux; Android 15)" }, "android"],
+  ["Android client hint", { userAgent: "", userAgentData: { platform: "Android" } }, "android"],
   ["mobile client hint", { platform: "MacIntel", userAgent: "", userAgentData: { platform: "macOS", mobile: true } }, "web"],
-  ["iOS client hint", { userAgent: "", userAgentData: { platform: "iOS" } }, "web"],
-  ["iPhone", { platform: "iPhone", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" }, "web"],
-  ["iPad desktop mode", { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5 }, "web"],
+  ["iOS client hint", { userAgent: "", userAgentData: { platform: "iOS" } }, "ios"],
+  ["iPhone", { platform: "iPhone", userAgent: "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X)" }, "ios"],
+  ["iPad desktop mode", { platform: "MacIntel", userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)", maxTouchPoints: 5 }, "ios"],
 ]) {
-  test(`${name} gets its platform recommendation and retains all desktop choices`, (t) => {
+  test(`${name} gets its platform recommendation and retains all app choices`, (t) => {
     const document = page(t, navigator);
-    assert.equal(document.getElementById("recommended-download").href, icon === "windows" ? windowsStore : webInbox);
+    const [href, icon, title] = {
+      windows: [windowsStore, "windows", "Pigeonpost on Windows"],
+      web: [webInbox, "web", "Your inbox in the browser"],
+      ios: [appStore, "mac", "Pigeonpost for iPhone and iPad"],
+      android: [googlePlay, "android", "Pigeonpost for Android"],
+    }[recommendation];
+    assert.equal(document.getElementById("recommended-download").href, href);
     assert.equal(document.querySelector("#recommended-download use").getAttribute("href"), `#icon-${icon}`);
-    assert.equal(document.getElementById("recommended-title").textContent,
-      icon === "web" ? "Your inbox in the browser" : `Pigeonpost on ${name}`);
-    assert.equal(document.getElementById("web-inbox").hidden, icon !== "windows", "avoid duplicate primary web actions");
+    assert.equal(document.getElementById("recommended-title").textContent, title);
+    assert.equal(document.getElementById("web-inbox").hidden, recommendation === "web", "keep web access beside native store links");
     assert.equal(document.getElementById("other-downloads").hidden, false);
     platformChoices(document);
   });

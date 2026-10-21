@@ -28,6 +28,7 @@ import { createPostboxInternal } from "./postbox-internal.js"; // Phase 1b
 import { readFileSync } from "node:fs";
 import { createGroupCalls } from "./group-calls.js"; // Phase 3a
 import { createRingAlerts, newRingToken, ringTokenMatches } from "./ring-alerts.js"; // Phase 1c
+import { createScheduledMeetings } from "./scheduled.js"; // Phase 3B
 
 export function configFromEnv(env = process.env) {
   const turnUrls = (env.CALLS_TURN_URLS || "").split(/[\s,]+/).filter(Boolean);
@@ -199,6 +200,10 @@ export function createCallsService(cfgIn, deps = {}) {
     cfg, internal, HttpError, KINDS, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, // Phase 3a
     addParticipant, reportCall, sessionsByName, sessions, send, stopRinging, endRoom, roomView, admitted, participantName, // Phase 3a
   }); // Phase 3a
+  const scheduledMeetings = createScheduledMeetings({ // Phase 3B
+    cfg, internal, HttpError, LIMITS, now, norm, liveSession, mailboxFor, sessionInRoom, limited, makeRoom, addParticipant, reportCall, sessions, send, endRoom, // Phase 3B
+    roomView, admitted, participantName, roomsByCode, removeParticipant, resolveKnock, broadcast, clientIp, cleanName, authenticate, participantFor, // Phase 3B
+  }); // Phase 3B
   // One lifecycle event for the room, with a per-room increasing sequence number.
   function reportCall(room, event, extra = {}) {
     if (!room.caller) return;
@@ -208,6 +213,7 @@ export function createCallsService(cfgIn, deps = {}) {
       from: room.caller, callee: (room.targets && room.targets[0]) || room.dialed || undefined,
       to: room.targets || [], at: Math.floor(now() / 1000),
       ...(room.group_id ? { group_id: room.group_id } : {}), // Phase 3a
+      ...(room.scheduled ? { calendar_event_id: room.scheduled.event_id, occurrence_id: room.scheduled.occurrence_id } : {}), // Phase 3B
       ...extra,
     });
   }
@@ -366,6 +372,7 @@ export function createCallsService(cfgIn, deps = {}) {
   // check them against each other through the room's security code.
   function participantView(p) {
     const view = { participant: p.id, name: p.name, mailbox: p.mailbox, guest: p.guest };
+    if (p.sched) view.verified = p.sched.verified; // Phase 3B
     if (p.key) Object.assign(view, { key: p.key, epoch: p.epoch });
     return view;
   }
@@ -375,6 +382,7 @@ export function createCallsService(cfgIn, deps = {}) {
       room: room.id, code: room.code, kind: room.kind, state: room.state, topology: room.topology,
       you: you ? you.id : undefined,
       participants: [...room.participants.values()].map(participantView),
+      ...(room.scheduled ? { scheduled: scheduledMeetings.view(room, you) } : {}), // Phase 3B
     };
   }
 
@@ -406,11 +414,12 @@ export function createCallsService(cfgIn, deps = {}) {
     return room;
   }
 
-  function addParticipant(room, session, { name, mailbox, guest, e2ee }) {
+  function addParticipant(room, session, { name, mailbox, guest, e2ee, sched }) { // Phase 3B: sched
     const problem = admissionProblem(room, e2ee);
     if (problem) throw admissionError(problem);
     if (room.topology === "mesh" && room.participants.size >= cfg.meshMax) moveToSfu(room);
     const p = { id: newId(), sessionId: session.id, account: session.account, name, mailbox: mailbox || null, guest: Boolean(guest), e2ee: e2ee === true, key: null, epoch: 0, joinedAt: now(), grace: null };
+    if (sched) { p.sched = sched; if (room.state === "waiting") room.state = "active"; } // Phase 3B
     room.participants.set(p.id, p);
     return p;
   }
@@ -433,6 +442,7 @@ export function createCallsService(cfgIn, deps = {}) {
   function admissionProblem(room, e2ee) {
     const n = room.participants.size;
     if (n >= LIMITS.participants) return "room_full";
+    if (room.scheduled && scheduledMeetings.capacityProblem(room)) return "room_full"; // Phase 3B: the meeting's own limit and transport
     if (room.topology === "mesh" && n < cfg.meshMax) return null;
     if (!sfuEnabled()) return "room_full";
     if (e2ee !== true) return "needs_e2ee";
@@ -728,7 +738,7 @@ export function createCallsService(cfgIn, deps = {}) {
       reportCall(room, "cancelled", room.ring && room.ring.decision === "quiet" ? { to: [] } : {}); // Phase 1b
       stopRinging(room, "cancelled");
       endRoom(room, "cancelled");
-    } else if (room.state !== "ringing" && room.participants.size < (room.group_id ? 1 : 2) && !room.knocks.size) { // Phase 3a: a group call lives while anyone is in it
+    } else if (room.state !== "ringing" && room.participants.size < (room.group_id || room.scheduled ? 1 : 2) && !room.knocks.size) { // Phase 3B: a scheduled room too // Phase 3a: a group call lives while anyone is in it
       endRoom(room, "ended");
     }
   }
@@ -810,6 +820,7 @@ export function createCallsService(cfgIn, deps = {}) {
 
   function answerKnock(auth, room, knockId, body) {
     const decider = participantFor(room, auth, body.session);
+    if (room.scheduled) scheduledMeetings.checkAnswer(room, decider); // Phase 3B: only admitters
     const k = room.knocks.get(String(knockId || ""));
     if (!k) throw new HttpError(404, "no_request");
     resolveKnock(room, k, body.admit === true, body.admit === true ? "admitted" : "denied", decider);
@@ -830,10 +841,10 @@ export function createCallsService(cfgIn, deps = {}) {
     broadcast(room, "knock_resolved", { room: room.id, knock: k.id, admitted: admit, by: decider ? decider.id : null, reason });
     if (!admit || !knocker || room.state === "ended") {
       send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: false, reason });
-      if (room.state !== "ringing" && room.participants.size < 2 && !room.knocks.size) endRoom(room, "ended");
+      if (room.state !== "ringing" && room.participants.size < (room.scheduled ? 1 : 2) && !room.knocks.size) endRoom(room, "ended"); // Phase 3B
       return;
     }
-    const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest, e2ee: k.e2ee });
+    const p = addParticipant(room, knocker, { name: k.name, mailbox: k.mailbox, guest: k.guest, e2ee: k.e2ee, sched: k.sched }); // Phase 3B: sched
     if (room.state === "ringing" && room.participants.size >= 2) room.state = "active";
     if (k.mailbox) reportCall(room, "join", { by: k.mailbox.address, participants: [...room.participants.values()].map(participantName) }); // Phase 1b
     send(knocker, "knock_result", { room: room.id, knock: k.id, admitted: true });
@@ -860,6 +871,7 @@ export function createCallsService(cfgIn, deps = {}) {
     const to = room.participants.get(String(body.to || ""));
     if (!to || to.id === from.id) throw new HttpError(404, "no_participant");
     if (!SIGNALS.has(body.type)) throw new HttpError(400, "bad_signal");
+    if (room.scheduled && body.type === "mute") scheduledMeetings.checkMute(from); // Phase 3B: hosts and co-hosts only
     const data = validSignal(body.type, body.data, room);
     if (limited("sig:" + from.id, LIMITS.signalsPerMinute, 60_000)) throw new HttpError(429, "rate_limited");
     if (!send(sessions.get(to.sessionId), "signal", { room: room.id, from: from.id, type: body.type, data })) {
@@ -921,6 +933,7 @@ export function createCallsService(cfgIn, deps = {}) {
     const p = room.participants.get(String(body.participant || ""));
     if (!p || p.account !== auth.account) throw new HttpError(403, "not_in_room");
     await groupCalls.recheck(room, p); // Phase 3a: still a member?
+    await scheduledMeetings.recheck(room, p); // Phase 3B: still invited?
     p.sessionId = session.id;
     clearTimeout(p.grace);
     p.grace = null;
@@ -1012,6 +1025,9 @@ export function createCallsService(cfgIn, deps = {}) {
       if (ringPath && req.method === "POST" && ringPath[2]) {
         return json(res, 200, declineByToken(req, ringPath[1], await readJson(req)));
       }
+      const scheduled = /^\/v1\/meetings\/scheduled\/([A-Za-z0-9-]{1,32})(\/join)?$/.exec(path); // Phase 3B
+      if (req.method === "GET" && scheduled && !scheduled[2]) return json(res, 200, await scheduledMeetings.status(req, scheduled[1], url.searchParams)); // Phase 3B
+      if (req.method === "POST" && scheduled && scheduled[2]) { const a = await authenticate(req); return json(res, 200, await scheduledMeetings.join(req, a, scheduled[1], await readJson(req))); } // Phase 3B
       const meeting = /^\/v1\/meetings\/([A-Za-z0-9]{6})$/.exec(path);
       if (req.method === "GET" && meeting) return json(res, 200, meetingInfo(req, meeting[1]));
 
@@ -1029,6 +1045,8 @@ export function createCallsService(cfgIn, deps = {}) {
         const body = await readJson(req);
         return json(res, 200, answerKnock(auth, roomFor(knockAnswer[1]), knockAnswer[2], body));
       }
+      const hostAction = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(end|extend)$/.exec(path); // Phase 3B
+      if (req.method === "POST" && hostAction) { const body = await readJson(req); return json(res, 200, await scheduledMeetings[hostAction[2]](auth, roomFor(hostAction[1]), body)); } // Phase 3B
       const m = /^\/v1\/rooms\/([A-Za-z0-9_-]{10,64})\/(accept|decline|leave|signal|resume|report|sfu|e2ee)$/.exec(path);
       if (req.method === "POST" && m) {
         const body = await readJson(req);
@@ -1047,7 +1065,7 @@ export function createCallsService(cfgIn, deps = {}) {
     }
   }
 
-  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps };
+  return { handle, state: { sessions, rooms, roomsByCode, authCache, guests }, internal, sfuLoadMbps, scheduled: scheduledMeetings }; // Phase 3B: scheduled
 }
 
 // The media server's admin API (LiveKit's Twirp RoomService), reached over TLS that trusts exactly

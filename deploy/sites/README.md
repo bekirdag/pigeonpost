@@ -72,17 +72,23 @@ ssh wodomini 'shasum -a256 /var/www/pigeonpost-inbox/app.js'
 ## Desktop downloads
 
 The homepage has one platform-neutral Download link. `site/download.html` serves `/download`,
-recommends the released package for the visitor's OS, and lists every desktop platform below.
-The Mac package is universal for Apple silicon and Intel. Windows is an unreleased preview;
-Linux has no desktop release. Both offer the web inbox until a native app is ready. CLI binaries
-must never be presented as desktop installers. Platform actions carry Mac, Windows or Linux icons.
+recommends the app for the visitor's OS, and lists all mobile and desktop platforms below.
+iPhone and iPad use the App Store, Android uses Google Play, and Windows uses Microsoft Store.
+The Mac package is universal for Apple silicon and Intel; Linux offers its released packages.
+CLI binaries must never be presented as desktop installers. Platform actions include text labels.
 
 The script reads each platform's description and action from its HTML card, keeping package URLs
-in one place. Unknown devices and visitors without JavaScript get manual choices. Mobile devices,
-including iPad desktop mode, and ChromeOS get the web inbox. It does not infer a Mac's chip from an
-`Intel` browser user agent. Update a platform card only after its real installer passes validation.
+in one place. Unknown devices and visitors without JavaScript get manual choices. iPads in desktop
+mode still get the App Store recommendation. ChromeOS and unidentified mobile platforms get the
+web inbox; the web inbox also remains available beside native app links. It does not infer a Mac's
+chip from an `Intel` browser user agent. Update a platform card only after its real installer passes validation.
 Versioned GitHub release links keep archives independent of static-site deployment and safe from
 the `rsync --delete` above.
+
+As verified on 2026-10-21, the live download files are on **raijin** at `/var/www/pigeonpost`, behind
+the wodomini proxy; its old static copy is not the current origin. For a downloads-only update,
+compare live hashes, back up the affected files outside the web root, and deploy only those files
+(JavaScript before HTML). Recheck current routing before using the historical whole-site commands above.
 
 The direct download must use **Developer ID Application** signing, hardened runtime, both
 `arm64` and `x86_64`, and an Apple notarization ticket. App Store signing and ad-hoc signatures

@@ -39,7 +39,8 @@
   const LIVEKIT_INTEGRITY = "sha384-5qI/UmLG0CvuWCt6vqjMW1oRwzXu+MNhbw4x6yo9NARdlqi94LwQfq9wvDTIcfrD";
   const E2EE_SCRIPT = "/calls-e2ee.js?v=20261020-sfu";
   const E2EE_WORKER = "/calls-e2ee-worker.js?v=20261020-sfu";
-  const PAGE = document.body?.dataset.page === "join" ? "join" : "inbox";
+  // Phase 3B: "meeting" is the scheduled-meeting page (m.html), which joins through joinScheduled.
+  const PAGE = document.body?.dataset.page === "join" ? "join" : document.body?.dataset.page === "meeting" ? "meeting" : "inbox";
 
   const supported = Boolean(window.RTCPeerConnection && navigator.mediaDevices && navigator.mediaDevices.getUserMedia);
   const canShareScreen = Boolean(navigator.mediaDevices && navigator.mediaDevices.getDisplayMedia);
@@ -215,7 +216,7 @@
     });
     if (res.status === 401 && !renewed && host() && (await host().renew())) return request(method, path, body, true);
     const value = await res.json().catch(() => ({}));
-    if (!res.ok) throw Object.assign(new Error(value.error || "http_" + res.status), { status: res.status, code: value.error });
+    if (!res.ok) throw Object.assign(new Error(value.error || "http_" + res.status), { status: res.status, code: value.error, body: value }); // Phase 3B: body
     return value;
   }
   const post = (path, body) => request("POST", path, body);
@@ -378,6 +379,10 @@
         return;
       case "knock_result":
         if (PAGE === "join") Join.onResult(data);
+        else if (room && room.state === "waiting" && data.knock === room.knock) onScheduledKnock(data); // Phase 3B
+        return;
+      case "scheduled_window": // Phase 3B: a host extended the meeting
+        if (room && room.id === data.room && room.scheduled) { room.scheduled.closes_at = data.closes_at ?? room.scheduled.closes_at; renderScheduled(); }
         return;
       case "ended":
         if (room && room.id === data.room) endRoom(endedMessage(data.reason), { notify: false });
@@ -582,6 +587,7 @@
       room = newRoom({ kind: data.kind, title: "Call", id: data.room });
     }
     Object.assign(room, { id: data.room, code: data.code, you: data.you, kind: data.kind || room.kind, state: "active", topology: data.topology || "mesh" });
+    if (data.scheduled) { room.scheduled = data.scheduled; $("call-lobby") && ($("call-lobby").hidden = true); renderScheduled(); } // Phase 3B
     setMembers(data.participants);
     tellHost("callState", { state: "active", room: data.room, kind: room.kind });
     stopTone();
@@ -1905,7 +1911,8 @@
     stopTone();
     clearInterval(ending.timer);
     clearInterval(ending.statsTimer);
-    if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
+    if (notify && ending.state === "waiting" && ending.knock && session) post("/knocks/withdraw", { session, knock: ending.knock }).catch(() => {}); // Phase 3B
+    else if (notify && ending.id && session) post(`/rooms/${ending.id}/leave`, { session }).catch(() => {});
     Sfu.leave(ending);
     for (const p of [...peers.values()]) closePeer(p);
     hideShareIndicators();
@@ -1929,6 +1936,9 @@
     if (message) toast(message);
     else if (notify && ending.startedAt) toast("Call ended" + last + ".");
     if (PAGE === "join") Join.left(message);
+    if (PAGE === "meeting") window.PigeonpostMeetingPage?.left?.(message); // Phase 3B
+    if ($("call-host-tools")) $("call-host-tools").hidden = true; // Phase 3B
+    if ($("call-lobby")) $("call-lobby").hidden = true; // Phase 3B
   }
 
   window.addEventListener("pagehide", () => {
@@ -2082,12 +2092,18 @@
                 el("span", { class: "call-page-label", id: "call-page-label", "aria-live": "polite" }),
                 el("button", { class: "call-icon-btn call-top-btn call-page-next", id: "call-page-next", type: "button", "aria-label": "Next page of people", title: "Next page", onclick: () => turnPage(1) }, svg(ICON.back))),
               el("button", { class: "call-back", id: "call-layout", type: "button", hidden: true, onclick: () => toggleLayout() }, svg(ICON.people), el("span", { text: "Grid" })),
+              // Phase 3B: a scheduled meeting's host may extend it or end it for everyone.
+              el("div", { class: "call-host-tools", id: "call-host-tools", role: "group", "aria-label": "Host controls", hidden: true },
+                el("button", { class: "call-pill", id: "call-extend-15", type: "button", text: "+15 min", title: "Keep the meeting open 15 minutes longer", onclick: () => extendScheduled(15) }),
+                el("button", { class: "call-pill", id: "call-extend-30", type: "button", text: "+30 min", title: "Keep the meeting open 30 minutes longer", onclick: () => extendScheduled(30) }),
+                el("button", { class: "call-pill call-pill-danger", id: "call-end-all", type: "button", text: "End for everyone", onclick: () => endScheduled() })),
               (document.fullscreenEnabled || document.webkitFullscreenEnabled) ? el("button", { class: "call-icon-btn call-top-btn", id: "call-fullscreen", type: "button", "aria-label": "Full screen", title: "Full screen", onclick: () => toggleFullscreen() }, svg(ICON.fullscreen)) : null,
             ),
           ),
           el("div", { class: "call-knocks", id: "call-knocks", "aria-live": "polite" }),
           el("div", { class: "call-grid", id: "call-grid", "data-count": "0", "data-layout": "grid" }, el("div", { class: "call-strip", id: "call-strip" })),
-          el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" })),
+          el("div", { class: "call-waiting", id: "call-waiting" }, el("span", { class: "avatar call-avatar", id: "call-face", "aria-hidden": "true" }),
+            el("p", { class: "call-lobby", id: "call-lobby", role: "status", hidden: true, text: "Waiting for the host to let you in…" })), // Phase 3B
           el("div", { class: "call-self", id: "call-self", "data-screen": "false", "data-corner": savedCorner(), tabindex: "0",
             role: "group", "aria-label": "Your video. Drag it, or use the arrow keys, to move it to another corner." },
             el("video", { id: "call-self-screen", class: "call-self-screen", autoplay: true, playsinline: true, muted: true }),
@@ -2120,7 +2136,7 @@
             el("section", { class: "call-invite" },
               el("p", { class: "call-panel-label", text: "Invite link" }),
               el("div", { class: "call-link-row" }, el("code", { id: "call-link" }), el("button", { class: "call-pill", type: "button", id: "call-link-copy" }, svg(ICON.link), el("span", { text: "Copy" }))),
-              el("p", { class: "call-panel-note", text: "Anyone with the link can ask to join. Someone in the call has to let them in. Up to 30 people." }),
+              el("p", { class: "call-panel-note", id: "call-invite-note", text: "Anyone with the link can ask to join. Someone in the call has to let them in. Up to 30 people." }),
             ),
             el("ul", { class: "call-knock-list", id: "call-knock-list" }),
             el("p", { class: "call-panel-label", text: "In the call" }),
@@ -2226,6 +2242,7 @@
   }
 
   function meetingLink() {
+    if (room && room.code && room.scheduled) return location.origin + "/m/" + room.code; // Phase 3B
     return room && room.code ? location.origin + "/" + room.code : "";
   }
 
@@ -2628,16 +2645,17 @@
     const who = k.mailbox ? (k.mailbox.handle || k.mailbox.address) : k.name;
     const face = el("span", { class: "avatar", "aria-hidden": "true" });
     paintFace(face, who);
-    const answer = (admit) => post(`/rooms/${room.id}/knocks/${k.knock}`, { session, admit }).catch((err) => { if (err.code === "room_full") toast("The call is full."); });
+    const answer = (admit) => post(`/rooms/${room.id}/knocks/${k.knock}`, { session, admit }).catch((err) => { if (err.code === "room_full") toast("The call is full."); else if (err.code === "not_allowed") toast("Only the people the organizer chose can let others in."); });
+    const canAdmit = !room.scheduled || Boolean(room.scheduled.can_admit); // Phase 3B
     // (Whether a person who was let in fits is decided then; `knock_resolved` says why not.)
     return el("div", { class: cls, role: "group", "aria-label": who + " wants to join" },
       face,
       el("div", { class: "call-knock-text" },
         el("p", { class: "call-knock-name", text: who }),
-        el("p", { class: "call-knock-note", text: k.mailbox ? "Pigeonpost member · wants to join" : "Guest · name not verified · wants to join" }),
+        el("p", { class: "call-knock-note", text: k.mailbox ? "Pigeonpost member · wants to join" : k.verified ? "Invited guest · address confirmed · wants to join" : "Guest · name not verified · wants to join" }),
       ),
-      el("button", { class: "call-pill", type: "button", text: "Deny", onclick: () => answer(false) }),
-      el("button", { class: "call-pill call-pill-primary", type: "button", text: "Let in", onclick: () => answer(true) }),
+      canAdmit ? el("button", { class: "call-pill", type: "button", text: "Deny", onclick: () => answer(false) }) : null,
+      canAdmit ? el("button", { class: "call-pill call-pill-primary", type: "button", text: "Let in", onclick: () => answer(true) }) : el("span", { class: "call-knock-note", text: "A host will answer" }),
     );
   }
 
@@ -2664,6 +2682,8 @@
       if (p.state.muted) notes.push("muted");
       if (p.state.aec === false) notes.push("no echo cancellation — ask them to use headphones");
       const r = row(displayName(p), notes.join(" · "), p.security?.code, key);
+      // Phase 3B: in a scheduled meeting only hosts and co-hosts may mute others.
+      if (room && room.scheduled && !["host", "cohost"].includes(room.scheduled.role)) { list.append(r); continue; }
       const mute = el("button", { class: "call-pill call-person-mute", type: "button", text: p.state.muted ? "Muted" : "Mute", disabled: p.state.muted, "aria-label": p.state.muted ? displayName(p) + " is muted" : "Mute " + displayName(p) });
       mute.addEventListener("click", () => muteOther(p));
       r.append(mute);
@@ -2989,6 +3009,109 @@
     }
   }
 
+  // ---- Phase 3B: scheduled meetings ------------------------------------------------------------
+  //
+  // docs/calendar.md §7. Members join with their own session and `as`; guests with the single-use
+  // `ticket` the postbox gave them; uninvited link holders with a `name`, and only when the organizer
+  // allows knocking. The result tells the caller what happened, so the calendar or the meeting page
+  // can ask which occurrence when two windows overlap.
+  const scheduledWords = {
+    window_closed: "This meeting isn’t open right now. It opens shortly before it starts and closes 30 minutes after it ends.",
+    not_invited: "You aren’t invited to this meeting.",
+    declined: "You declined this meeting. Change your answer in the calendar to join.",
+    event_cancelled: "This meeting was cancelled.",
+    cancelled: "This meeting was cancelled.",
+    ticket_invalid: "That join link has expired. Try again.",
+    unavailable: "This meeting isn’t open.",
+    calendar_unavailable: "The calendar service can’t be reached right now. Try again in a moment.",
+    room_full: "This meeting is full.",
+    needs_e2ee: NEEDS_NEWER,
+    rate_limited: "Too many attempts. Wait a minute and try again.",
+  };
+  async function joinScheduled(code, opts) {
+    const o = opts || {};
+    if (!supported) { toast("This browser can’t make calls. Try a recent Chrome, Edge, Firefox or Safari."); return { state: "error", code: "unsupported" }; }
+    if (room || ring) { toast("Finish the current call first."); return { state: "error", code: "busy" }; }
+    try {
+      if (o.guest || !authHeader()) await ensureGuest();
+    } catch (_) { toast("Couldn’t reach the call service. Check your connection and try again."); return { state: "error", code: "network" }; }
+    start();
+    const title = o.title || "Meeting " + (code.length === 10 ? code.slice(0, 5) + "-" + code.slice(5) : code);
+    openRoomUI({ title, sub: "", face: title, status: "Joining…" });
+    room = newRoom({ kind: o.kind === "audio" ? "audio" : "video", title, code, scheduledCode: code });
+    try {
+      await startLocalMedia(room.kind === "video");
+    } catch (err) {
+      endRoom(mediaMessage(err, room ? room.kind : "audio"), { notify: false });
+      return { state: "error", code: "media" };
+    }
+    if (!room) return { state: "cancelled" };
+    await whenReady();
+    if (!room) return { state: "cancelled" };
+    let res;
+    try {
+      const body = { session, e2ee: canEncryptFrames };
+      if (o.as) body.as = o.as;
+      if (o.occurrenceId) body.occurrence_id = o.occurrenceId;
+      if (o.ticket) body.ticket = o.ticket;
+      if (o.name) body.name = o.name;
+      res = await post(`/meetings/scheduled/${encodeURIComponent(code)}/join`, body);
+    } catch (err) {
+      if (err.code === "choose_occurrence") {
+        endRoom(null, { notify: false });
+        return { state: "choose_occurrence", occurrences: (err.body && err.body.occurrences) || [] };
+      }
+      const message = scheduledWords[err.code] || "Couldn’t join the meeting.";
+      endRoom(message, { notify: false });
+      return { state: "error", code: err.code, message };
+    }
+    if (!room) { if (res && res.room && res.state === "joined") post(`/rooms/${res.room}/leave`, { session }).catch(() => {}); return { state: "cancelled" }; }
+    if (res.scheduled) room.scheduled = res.scheduled;
+    if (res.state === "waiting") {
+      Object.assign(room, { id: res.room && typeof res.room === "object" ? res.room.room : res.room, state: "waiting", knock: res.knock && typeof res.knock === "object" ? res.knock.knock : res.knock });
+      setStatus("Waiting to be let in");
+      $("call-lobby").textContent = "Waiting for the host to let you in…";
+      $("call-lobby").hidden = false;
+      $("call-waiting").hidden = false;
+      return { state: "waiting" };
+    }
+    onJoined(res);
+    renderScheduled();
+    return { state: "joined" };
+  }
+  function onScheduledKnock(data) {
+    if (data.admitted) { $("call-lobby").textContent = "You’re in. Connecting…"; return; }
+    const reasons = { denied: "The host didn’t let you in.", timeout: "Nobody answered your request. You can ask again.", ended: "This meeting has ended.", room_full: "This meeting is full." };
+    endRoom(reasons[data.reason] || "You weren’t let in.", { notify: false });
+  }
+  function renderScheduled() {
+    const tools = $("call-host-tools");
+    if (!tools || !room) return;
+    const s = room.scheduled;
+    tools.hidden = !(s && s.role === "host");
+    const note = $("call-invite-note");
+    if (note && s) note.textContent = "Invited people join from their calendar or invitation. Others with the link can only ask to join if the organizer allows it.";
+    renderKnocks();
+    renderPeople();
+  }
+  async function extendScheduled(minutes) {
+    if (!room || !room.id) return;
+    try {
+      const res = await post(`/rooms/${room.id}/extend`, { session, minutes });
+      if (res && res.closes_at && room.scheduled) room.scheduled.closes_at = res.closes_at;
+      toast(res && res.closes_at ? "The meeting stays open until " + new Date(res.closes_at * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) + "." : "The meeting was extended.");
+    } catch (err) {
+      toast(err.code === "forbidden" || err.code === "not_allowed" ? "Only the host can extend the meeting." : "The meeting can’t be extended further (at most two hours past its end).");
+    }
+  }
+  async function endScheduled() {
+    if (!room || !room.id) return;
+    try {
+      await post(`/rooms/${room.id}/end`, { session });
+      endRoom("You ended the meeting for everyone.", { notify: false });
+    } catch (_) { toast("Couldn’t end the meeting."); }
+  }
+
   function wire() {
     if (PAGE === "join") { Join.init(); return; }
     // `?answer=<room>`: opened by an app that cannot hold a call itself (Linux) to answer one ring.
@@ -2998,6 +3121,7 @@
       if (wanted && ROOM_ID.test(wanted)) pendingAnswer = { room: wanted, ringToken: null, at: Date.now() };
       if (url.searchParams.has("answer")) { url.searchParams.delete("answer"); history.replaceState(history.state, "", url.pathname + url.search + url.hash); }
     } catch (_) { /* fine */ }
+    if (PAGE === "meeting") { buildUI(); return; } // Phase 3B: m.js decides when to join
     buildUI();
     $("call-audio-btn")?.addEventListener("click", () => place("audio"));
     $("call-video-btn")?.addEventListener("click", () => place("video"));
@@ -3017,6 +3141,8 @@
     decline: declineFromOutside,
     setMuted: (muted) => { if (local.mic && Boolean(muted) !== local.muted) toggleMute(); },
     hangUp: () => { if (ring) declineRing(); else leave(); },
+    // Phase 3B
+    joinScheduled,
     // For automated checks: who is connected, by which route, at what resolution and rate, and with
     // which security codes. Contains no media and no message text.
     inspect: () => ({

@@ -20,7 +20,7 @@ env:
 jobs:
   inbox:
     name: inbox web
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     defaults:
       run:
         working-directory: site-inbox
@@ -61,7 +61,7 @@ jobs:
 
   test:
     name: test (${{ matrix.os }})
-    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
+    runs-on: ${{ startsWith(matrix.os, 'ubuntu-') && !endsWith(matrix.os, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.os }}
     strategy:
       fail-fast: false
       matrix:
@@ -105,7 +105,7 @@ jobs:
 
   lint:
     name: fmt + clippy
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - name: Test the fail-closed Cubemeld App Store broker
@@ -363,6 +363,15 @@ jobs:
               .reject { |action| action.start_with?('actions/') }
             raise "#{name} runs a non-first-party action with release authority: #{foreign.join(', ')}" unless
               foreign.empty?
+          end
+
+          # Build/test workers may be self-hosted; these identity-producing jobs cannot be.
+          # Consumers reject self-hosted attestations, and npm trusted publishing needs its
+          # supported hosted OIDC environment. Do not remove the verifier to change scheduling.
+          %w[container_attest release_attest npm_publish].each do |name|
+            unless jobs.fetch(name).fetch('runs-on') == 'ubuntu-24.04'
+              raise "#{name} must remain on the GitHub-hosted provenance/publication runner"
+            end
           end
 
           build_steps = jobs.fetch('build').fetch('steps')
@@ -885,7 +894,7 @@ jobs:
 
   audit:
     name: cargo audit
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -898,7 +907,7 @@ jobs:
     # a clean-room implementation (docs/sds.md §8). A change here is a protocol break, and it
     # should be obvious in the checks list which job failed.
     name: conformance vectors
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -911,7 +920,7 @@ jobs:
     # and capture the exact generated reverse proxy under real Caddy. These are SDS §8 release
     # gates that crate-level tests alone cannot prove.
     name: black-box delivery + proxy privacy
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -967,7 +976,7 @@ jobs:
     # The online binary may seal records but must never acquire the offline unseal/custody crate.
     # This is a build invariant from docs/sds.md §4, not a deployment convention.
     name: online/offline custody boundary
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
@@ -1221,7 +1230,7 @@ jobs:
 
   launcher:
     name: npm launcher (Node ${{ matrix.node }})
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     strategy:
       fail-fast: false
       matrix:

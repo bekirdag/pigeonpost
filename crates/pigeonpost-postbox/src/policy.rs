@@ -81,6 +81,12 @@ pub(crate) enum Action {
     /// Redeem a one-time enrollment code or claim an approved pairing: possession of the code or
     /// claim secret plus the device key is the credential (SDS §10.2).
     DeviceEnroll,
+    /// Use one's own calendar as one's own mailbox (SDS §14B.5). Agents may (handle-only events);
+    /// a connector acting for the member may not. Sending to contact addresses additionally needs
+    /// a person with a verified sign-in address, checked by the calendar routes.
+    CalendarUse,
+    /// `POST /internal/v1/calendar/meeting-access` (SDS §14B.7).
+    MeetingAccess,
 }
 
 /// The resource acted on, with bindings resolved from server state.
@@ -148,7 +154,8 @@ impl Action {
             | Action::CallEvents
             | Action::ModerateAvatars
             | Action::GroupCallAdmission => Requirement::Service,
-            Action::GroupParticipate => Requirement::NotConnector,
+            Action::GroupParticipate | Action::CalendarUse => Requirement::NotConnector,
+            Action::MeetingAccess => Requirement::Service,
             Action::GroupManage | Action::OrgAdminister => Requirement::Human,
             Action::OrgSensitive => Requirement::HumanStepUp,
             Action::DeviceEnroll => Requirement::Anyone,

@@ -19,7 +19,7 @@ concurrency:
   cancel-in-progress: false
 jobs:
   prepare:
-    runs-on: [self-hosted, Linux, X64, wodo-ci]
+    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-latest' }}
     timeout-minutes: 15
     steps:
       - name: Validate immutable source
