@@ -83,8 +83,10 @@ struct ThreadView: View {
 
     private var shown: [ThreadMessage] {
         guard let conversation else { return [] }
-        // Missed calls are lines in the conversation, whichever subject is on screen.
-        let lines = callLog?.lines(for: conversation) ?? []
+        // Missed calls are lines in the conversation as a whole and in its General subject — a call
+        // is not about any one of the others.
+        let general = subthread.map { id in subthreads.first { $0.id == id }?.isDefault ?? true } ?? true
+        let lines = general ? (callLog?.lines(for: conversation) ?? []) : []
         guard let subthread else { return CallLogEntry.merge(conversation.messages, lines) }
         return CallLogEntry.merge(conversation.messages.filter { ($0.threadId ?? "") == subthread }, lines)
     }

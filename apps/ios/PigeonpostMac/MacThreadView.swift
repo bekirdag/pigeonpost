@@ -46,8 +46,9 @@ struct MacThreadView: View {
         let messages = subthread.map { id in
             conversation.messages.filter { ($0.threadId ?? "") == id }
         } ?? conversation.messages
-        // Missed calls are lines in the conversation, whichever subject is chosen.
-        return CallLogEntry.merge(messages, callLog?.lines(for: conversation) ?? [])
+        // Missed calls are lines in the whole conversation and in its General subject only.
+        let general = subthread.map { id in subthreads.first { $0.id == id }?.isDefault ?? true } ?? true
+        return CallLogEntry.merge(messages, general ? (callLog?.lines(for: conversation) ?? []) : [])
     }
 
     /// The messages the find bar has matched, in the order they appear.
