@@ -335,8 +335,15 @@ final class IPadLayoutTests: XCTestCase {
             Scene(name: "new-group", arguments: ["-fixtures", "-sheet=new-group"], ready: "New group"),
             Scene(name: "join-group", arguments: ["-fixtures", "-join=grp_fixturejoin00000000000000"], ready: "joinGroup"),
             // Phase 1b.
-            Scene(name: "calls-sidebar", arguments: open, ready: "sideCalls") { app in
-                app.descendants(matching: .any)["sideCalls"].tap()
+            Scene(name: "calls-sidebar", arguments: open) { app in
+                // iOS 26 in portrait opens on the conversation with the sidebar folded away.
+                let side = app.descendants(matching: .any)["sideCalls"]
+                if !side.waitForExistence(timeout: 3) {
+                    let show = app.buttons["showSidebar"]
+                    if show.waitForExistence(timeout: 3) { show.tap() }
+                }
+                _ = side.waitForExistence(timeout: 5)
+                side.tap()
                 _ = app.descendants(matching: .any)["call:c1"].waitForExistence(timeout: 5)
             },
             Scene(name: "calls", arguments: ["-fixtures", "-sheet=calls"], ready: "callsFilter"),
