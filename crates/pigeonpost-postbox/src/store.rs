@@ -26,6 +26,7 @@ mod filtering;
 mod googleplay;
 mod groups;
 mod lifecycle;
+mod msgactions;
 mod org_model;
 mod orgs;
 pub use audit::AuditRow;
@@ -42,6 +43,7 @@ pub use googleplay::GoogleBinding;
 pub(crate) use groups::append_event;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
+pub use msgactions::{MessageMeta, ReceiptKind, RefRow};
 pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
 
 const SCHEMA: &str = "
@@ -965,6 +967,7 @@ impl Store {
         conn.execute_batch(avatars::SCHEMA)?;
         conn.execute_batch(groups::SCHEMA)?;
         conn.execute_batch(calendar::SCHEMA)?;
+        conn.execute_batch(msgactions::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)
