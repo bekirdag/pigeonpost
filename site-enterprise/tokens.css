@@ -1,0 +1,446 @@
+/* Copied verbatim from site-inbox/app.css lines 9-452 (fonts and design tokens). A test keeps
+   the copy exact; change the inbox first, then re-copy. */
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist";
+  src: url("fonts/Geist-Italic-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("fonts/GeistMono-Variable.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: light dark;
+  /* The accent. `--navy` and `--blue` keep their old roles (filled marks, and links / primary
+     actions) and now both sit in the mockup's one blue family. */
+  --navy: #2563eb;
+  --navy-hover: #1d4fd8;
+  --blue: #2457d6;
+  --blue-hover: #1d48b8;
+  --accent-fill: #2563eb;
+  --accent-fill-hover: #1d4fd8;
+  /* What sits on an accent fill: white on the deep light-mode blue, near-black on the pale dark-mode
+     blue, which is what the mockup's Send button does. */
+  --on-accent: #ffffff;
+  --green: #22c55e;
+  --amber: #8a5208;
+  --ink: #12161c;
+  --body: #343c47;
+  --muted: #59626e;
+  --faint: #636c78;
+  --rule: #e4e7ec;
+  --wash: #f4f6f8;
+
+  /* Three panes, three slightly different grounds, as in the mockup: the mailbox column, the
+     threads column and the conversation each read as their own surface without a heavy rule. */
+  --page: #f4f6f8;
+  --pane-list: #fafbfc;
+  --pane-subs: #f6f7f9;
+
+  /* The raised surfaces — a bubble, a sheet, a menu — as against `--wash`, the recessed ground they
+     sit on. */
+  --ground: #ffffff;
+  --card-edge: #e1e5ea;
+  --card-rule: #eceef2;
+  --raised: #ffffff;
+  --inset: #f6f7f9;
+  --field: #eef1f4;
+  --field-deep: #ffffff;
+  --label: #252c35;
+  --sel: #e6ebf3;
+  --hover: #eef1f5;
+  --hover-strong: #e4e9f0;
+  --tray: #ffffff;
+  --tray-hover: #f0f3f7;
+  --tray-active: #e4e9f0;
+  --edge: #d5dae1;
+  --edge-hover: #b8c0cb;
+  --edge-focus: #2563eb;
+  --accent-row: #2563eb;
+  --send-off: #e3e7ed;
+  --send-off-text: #6b7480;
+  /* A segmented choice: its recessed track and the lifted segment that is on. */
+  --seg-track: #e9edf2;
+  --seg-on: #ffffff;
+
+  /* Your own messages: the mockup's blue-tinted card, not a solid fill. */
+  --mine-fill: #eaf1fe;
+  --mine-edge: #c8d9fa;
+  --mine-text: #13203b;
+  --mine-sub: #31446a;
+  --mine-meta: #4a5b80;
+  --mine-rule: #d3e0fa;
+  --mine-chip: #dae6fc;
+
+  /* Inline and block code. */
+  --code-fill: #f0f2f5;
+  --code-edge: #dfe3e8;
+  --code-text: #262d37;
+
+  /* Avatar tones: a tinted ground and a strong letter, so a peer's face is the same hue in either
+     appearance without being a shout of saturated colour in a list of them. */
+  --tone1-bg: #e1eafb;
+  --tone1-fg: #1d4690;
+  --tone2-bg: #e6e7fb;
+  --tone2-fg: #3a40ad;
+  --tone3-bg: #dbf2ee;
+  --tone3-fg: #0d6458;
+  --tone4-bg: #ece6fd;
+  --tone4-fg: #5735b0;
+  --tone5-bg: #faefd9;
+  --tone5-fg: #7f4b06;
+  --tone6-bg: #fbe3e9;
+  --tone6-fg: #9c2240;
+
+  /* The toast carries white text in both appearances, so its fill cannot be `--ink`. */
+  --toast-fill: #1a1f27;
+
+  --held-text: #8a5208;
+  --held-strong: #6a3f05;
+  --held-fill: #fdf3e1;
+  --held-card: #fffaf0;
+  --held-edge: #f0d6a4;
+  --auto-text: #17703d;
+  --auto-fill: #e5f5eb;
+  --auto-edge: #bfe5cc;
+  --blocked-text: #a3243f;
+  --blocked-fill: #fdecef;
+  --blocked-edge: #f5c2cc;
+
+  --danger: #b42318;
+  --danger-fill: #fdf0ef;
+  --danger-edge: #ebb3ad;
+  --danger-edge-hover: #db8f86;
+
+  --scrim: rgba(18, 22, 28, 0.42);
+  --stripe: rgba(18, 22, 28, .03);
+  --shadow-menu: rgba(18, 22, 28, .12);
+  --shadow-sheet: rgba(18, 22, 28, 0.22);
+  --shadow-toast: rgba(18, 22, 28, .22);
+  --shadow-bubble: rgba(18, 22, 28, .04);
+  --shadow-btn: rgba(18, 22, 28, .05);
+  --mono: "Geist Mono", ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  --sans: "Geist", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  /* Laid over the conversation while a file is being dragged onto it. */
+  --drop-veil: rgba(244, 246, 248, 0.72);
+
+  /* The layer over the chat doodle. Alpha is its strength: high enough that the pattern is a
+     texture you notice only if you look for it, so the cards read as sitting on a flat ground. */
+  --doodle-veil: rgba(244, 246, 248, 0.90);
+
+  --find-text: #31205f;
+  --find-fill: #eadfff;
+  --find-edge: #9563d7;
+  --list-w: 320px;
+  --subs-w: 240px;
+  --head-h: 64px;
+
+  /* The call screen: dark in either appearance (see the calls section). */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
+}
+
+/* Dark. The mockup's colours, exactly. Applied when the device is dark and Settings says System
+   (no data-theme), or when Settings says Dark (the explicit block after this one).
+
+   Every token is overridden here and nothing else is: a rule that names a colour outside `:root`
+   is a rule that will be wrong in one of the two appearances. */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --find-text: #f5edff;
+    --find-fill: #5c3a81;
+    --find-edge: #b795e5;
+    --navy: #8ab4ff;
+    --navy-hover: #a5c5ff;
+    --blue: #8ab4ff;
+    --blue-hover: #b5ceff;
+    --accent-fill: #8ab4ff;
+    --accent-fill-hover: #a5c5ff;
+    --on-accent: #0d0f12;
+    --green: #7dd3a0;
+    --amber: #f0b860;
+    --ink: #e8eaed;
+    --body: #d7dce3;
+    --muted: #9aa3ae;
+    --faint: #7d8590;
+    --rule: #1f242b;
+    --wash: #0f1216;
+    --page: #0d0f12;
+    --pane-list: #111419;
+    --pane-subs: #13161b;
+    --ground: #171b21;
+    --card-edge: #262b33;
+    --card-rule: #22272f;
+    --raised: #161a20;
+    --inset: #1b1f26;
+    --field: #171b21;
+    --field-deep: #0f1216;
+    --label: #d7dce3;
+    --sel: #1c2129;
+    --hover: #191d24;
+    --hover-strong: #1f242c;
+    --tray: #171b21;
+    --tray-hover: #1f242c;
+    --tray-active: #252b34;
+    --edge: #2a3039;
+    --edge-hover: #3a414c;
+    --edge-focus: #8ab4ff;
+    --accent-row: #8ab4ff;
+    --send-off: #252b34;
+    --send-off-text: #7d8590;
+    --seg-track: #0f1216;
+    --seg-on: #252b34;
+
+    --mine-fill: #131c2e;
+    --mine-edge: #263556;
+    --mine-text: #e6ecf8;
+    --mine-sub: #c5d0e6;
+    --mine-meta: #8c9ab8;
+    --mine-rule: #1f2c47;
+    --mine-chip: #1b2740;
+
+    --code-fill: #1e232b;
+    --code-edge: #2a3039;
+    --code-text: #d7dce3;
+
+    --tone1-bg: #17263f;
+    --tone1-fg: #8db4f5;
+    --tone2-bg: #1e2140;
+    --tone2-fg: #a3a9f5;
+    --tone3-bg: #12302d;
+    --tone3-fg: #6fd6c4;
+    --tone4-bg: #2a2142;
+    --tone4-fg: #b9a2ff;
+    --tone5-bg: #33280f;
+    --tone5-fg: #f0b860;
+    --tone6-bg: #3a1a22;
+    --tone6-fg: #f29aae;
+
+    --toast-fill: #252b34;
+
+    --held-text: #f0b860;
+    --held-strong: #f6d9a6;
+    --held-fill: #2a2213;
+    --held-card: #1c1810;
+    --held-edge: #45361a;
+    --auto-text: #7dd3a0;
+    --auto-fill: #142a1f;
+    --auto-edge: #1e3f2d;
+    --blocked-text: #f29aae;
+    --blocked-fill: #2a1519;
+    --blocked-edge: #4a2029;
+
+    --danger: #f29aae;
+    --danger-fill: #2a1519;
+    --danger-edge: #4a2029;
+    --danger-edge-hover: #6b2c36;
+
+    --scrim: rgba(6, 8, 11, 0.72);
+    --stripe: rgba(255, 255, 255, .045);
+    /* A shadow on a dark ground is not a lighter grey, it is more black. */
+    --shadow-menu: rgba(0, 0, 0, .5);
+    --shadow-sheet: rgba(0, 0, 0, .45);
+    --shadow-toast: rgba(0, 0, 0, .5);
+    --shadow-bubble: rgba(0, 0, 0, 0);
+    --shadow-btn: rgba(0, 0, 0, 0);
+
+    --drop-veil: rgba(15, 18, 22, 0.72);
+
+    /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
+       the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
+    --doodle-veil: rgba(15, 18, 22, 0.90);
+    /* The call screen is the same dark in both appearances. */
+    --call-ground: #0d0f12;
+    --call-ink: #e8eaed;
+    --call-muted: #9aa3ae;
+    --call-body: #c3c9d1;
+    --call-edge: #2a3039;
+    --call-secure: #7dd3a0;
+    --call-tile: #171b21;
+    --call-rule: #1f242b;
+    --call-btn: #1e232b;
+    --call-btn-hover: #262b33;
+    --call-btn-edge-hover: #3a414c;
+    --call-end: #e5484d;
+    --call-end-hover: #cf3c41;
+    --call-on-solid: #fff;
+    --call-accept: #3fbf7f;
+    --call-accept-hover: #33a86d;
+    --call-focus: #8ab4ff;
+    --call-scrim-top: rgba(13, 15, 18, .86);
+    --call-scrim-clear: rgba(13, 15, 18, 0);
+    --call-chip: rgba(23, 27, 33, .88);
+    --call-shadow: rgba(0, 0, 0, .45);
+    --call-dock: rgba(17, 20, 25, .82);
+  }
+}
+
+/* The same palette when Dark is chosen in Settings, whatever the device is set to. It must stay
+   identical to the block above; a test compares the two token for token. */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --find-text: #f5edff;
+  --find-fill: #5c3a81;
+  --find-edge: #b795e5;
+  --navy: #8ab4ff;
+  --navy-hover: #a5c5ff;
+  --blue: #8ab4ff;
+  --blue-hover: #b5ceff;
+  --accent-fill: #8ab4ff;
+  --accent-fill-hover: #a5c5ff;
+  --on-accent: #0d0f12;
+  --green: #7dd3a0;
+  --amber: #f0b860;
+  --ink: #e8eaed;
+  --body: #d7dce3;
+  --muted: #9aa3ae;
+  --faint: #7d8590;
+  --rule: #1f242b;
+  --wash: #0f1216;
+  --page: #0d0f12;
+  --pane-list: #111419;
+  --pane-subs: #13161b;
+  --ground: #171b21;
+  --card-edge: #262b33;
+  --card-rule: #22272f;
+  --raised: #161a20;
+  --inset: #1b1f26;
+  --field: #171b21;
+  --field-deep: #0f1216;
+  --label: #d7dce3;
+  --sel: #1c2129;
+  --hover: #191d24;
+  --hover-strong: #1f242c;
+  --tray: #171b21;
+  --tray-hover: #1f242c;
+  --tray-active: #252b34;
+  --edge: #2a3039;
+  --edge-hover: #3a414c;
+  --edge-focus: #8ab4ff;
+  --accent-row: #8ab4ff;
+  --send-off: #252b34;
+  --send-off-text: #7d8590;
+  --seg-track: #0f1216;
+  --seg-on: #252b34;
+
+  --mine-fill: #131c2e;
+  --mine-edge: #263556;
+  --mine-text: #e6ecf8;
+  --mine-sub: #c5d0e6;
+  --mine-meta: #8c9ab8;
+  --mine-rule: #1f2c47;
+  --mine-chip: #1b2740;
+
+  --code-fill: #1e232b;
+  --code-edge: #2a3039;
+  --code-text: #d7dce3;
+
+  --tone1-bg: #17263f;
+  --tone1-fg: #8db4f5;
+  --tone2-bg: #1e2140;
+  --tone2-fg: #a3a9f5;
+  --tone3-bg: #12302d;
+  --tone3-fg: #6fd6c4;
+  --tone4-bg: #2a2142;
+  --tone4-fg: #b9a2ff;
+  --tone5-bg: #33280f;
+  --tone5-fg: #f0b860;
+  --tone6-bg: #3a1a22;
+  --tone6-fg: #f29aae;
+
+  --toast-fill: #252b34;
+
+  --held-text: #f0b860;
+  --held-strong: #f6d9a6;
+  --held-fill: #2a2213;
+  --held-card: #1c1810;
+  --held-edge: #45361a;
+  --auto-text: #7dd3a0;
+  --auto-fill: #142a1f;
+  --auto-edge: #1e3f2d;
+  --blocked-text: #f29aae;
+  --blocked-fill: #2a1519;
+  --blocked-edge: #4a2029;
+
+  --danger: #f29aae;
+  --danger-fill: #2a1519;
+  --danger-edge: #4a2029;
+  --danger-edge-hover: #6b2c36;
+
+  --scrim: rgba(6, 8, 11, 0.72);
+  --stripe: rgba(255, 255, 255, .045);
+  /* A shadow on a dark ground is not a lighter grey, it is more black. */
+  --shadow-menu: rgba(0, 0, 0, .5);
+  --shadow-sheet: rgba(0, 0, 0, .45);
+  --shadow-toast: rgba(0, 0, 0, .5);
+  --shadow-bubble: rgba(0, 0, 0, 0);
+  --shadow-btn: rgba(0, 0, 0, 0);
+
+  --drop-veil: rgba(15, 18, 22, 0.72);
+
+  /* The artwork is near-black strokes and CSS cannot recolour a background image, so in the dark
+     the pattern reads as the faintest texture under a near-opaque layer of the mockup's ground. */
+  --doodle-veil: rgba(15, 18, 22, 0.90);
+  /* The call screen is the same dark in both appearances. */
+  --call-ground: #0d0f12;
+  --call-ink: #e8eaed;
+  --call-muted: #9aa3ae;
+  --call-body: #c3c9d1;
+  --call-edge: #2a3039;
+  --call-secure: #7dd3a0;
+  --call-tile: #171b21;
+  --call-rule: #1f242b;
+  --call-btn: #1e232b;
+  --call-btn-hover: #262b33;
+  --call-btn-edge-hover: #3a414c;
+  --call-end: #e5484d;
+  --call-end-hover: #cf3c41;
+  --call-on-solid: #fff;
+  --call-accept: #3fbf7f;
+  --call-accept-hover: #33a86d;
+  --call-focus: #8ab4ff;
+  --call-scrim-top: rgba(13, 15, 18, .86);
+  --call-scrim-clear: rgba(13, 15, 18, 0);
+  --call-chip: rgba(23, 27, 33, .88);
+  --call-shadow: rgba(0, 0, 0, .45);
+  --call-dock: rgba(17, 20, 25, .82);
+}
+
+/* Light chosen in Settings: the :root palette, and native parts (scrollbars, form controls)
+   drawn light even on a dark device. */
+:root[data-theme="light"] { color-scheme: light; }

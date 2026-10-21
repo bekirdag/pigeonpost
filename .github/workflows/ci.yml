@@ -36,6 +36,13 @@ jobs:
       - name: Exercise the iyzico billing bridge against saas_be and postbox fixtures
         working-directory: store-adapter
         run: npm test
+      - name: Enterprise portal (jsdom)
+        working-directory: site-enterprise
+        run: npm ci --ignore-scripts && npm test
+      - name: Enterprise portal end to end (headless Chrome, mock postbox, bridge and realm)
+        working-directory: site-enterprise
+        timeout-minutes: 4
+        run: CHROME="$(command -v google-chrome || command -v chromium)" npm run test:e2e
       - name: Call signaling (authorization, ringing, signals, TURN credentials)
         working-directory: calls-service
         run: npm test
@@ -198,6 +205,8 @@ jobs:
           # a serde field cannot be renamed around a word.
           # App Store Connect invitation tooling also uses Apple's fixed transport enum.
           # So does Sign in with Apple's requested-scope enum in the iOS session.
+          # site-enterprise/config.js requests the realm's standard address scope by its spec name,
+          # because invitation acceptance matches the verified sign-in address (SDS §7.2).
           # Hosted-app privacy/deletion pages and the Google Play service identity likewise
           # describe actual sign-in and support addresses, rather than Pigeonpost messaging.
           # The private deletion-queue notifier imports Python's standard transport module.
@@ -211,6 +220,7 @@ jobs:
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
               ':(exclude)site/account-config.js' \
+              ':(exclude)site-enterprise/config.js' \
               ':(exclude)site/reserved.js' \
               ':(exclude)site/app-privacy.html' \
               ':(exclude)site/delete-account.html' \

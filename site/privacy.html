@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 20 October 2026</p>
+  <p class="updated">Last updated 21 October 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -124,6 +124,26 @@
   <h3>Disappearing messages</h3>
   <p>
     You can set a conversation or a group so that new messages disappear after a chosen time (5 minutes to 4 weeks), counted from when they are sent. When the time is up we delete the message and its attachments from our server, and the apps remove them from your devices. Disappearing messages limit how long messages are kept; they cannot stop someone from taking a screenshot, copying the text, or keeping a notification that was already shown, and they do not reach copies made outside Pigeonpost. Our database backups and write-ahead logs can hold a deleted message for a short time after it is deleted, until they are overwritten.
+  </p>
+
+  <h3>Organizations</h3>
+  <p>
+    A company can buy Pigeonpost for its team at enterprise.pigeonpost.dev. The company's address space (for example /acme) belongs to the company; each person's company mailbox (/acme/jane) sits in that person's own Pigeonpost account, and the company keeps control of it: its admins can suspend it, remove it, or give the address to someone new.
+  </p>
+  <p>
+    <strong>What a company's admins can see:</strong> the people and agents in the organization, their company addresses, names, roles, status (invited, active, suspended), when they joined and were last active, and how much storage the organization uses. They can see the organization's rooms, rules, enrolled agent machines and audit log. <strong>They cannot see message content</strong> — not your direct messages and not room messages, which are end-to-end encrypted — and removing you or giving your address to someone else does not hand them, or the next person, your message history. Your personal mailboxes and personal account are never visible to the company.
+  </p>
+  <p>
+    <strong>Invitations:</strong> to invite you, an admin gives us your name and the address the invitation is sent to. We keep that address sealed (encrypted) for showing a masked form and resending, and as a keyed hash so we can check that whoever accepts signs in with the same verified address. The invitation link carries a single-use token in the part of the address that browsers never send to a server; we store only a hash of it. Invitations expire after 7 days. Invitation messages are delivered through our notification provider (saas_be, with Novu and Postmark) once that delivery is switched on; until then the admin shares the link themselves. Before you accept, the invitation page tells you what the company's admins will see and which rooms you will join.
+  </p>
+  <p>
+    <strong>Audit log:</strong> administrative actions in an organization (invitations, role changes, removals, agent enrolments, rule changes, security settings) are recorded with who did them and when, never message content or secrets. Network addresses in it are stored only as a keyed hash. The owner and admins can read and export it. It is kept for 2 years.
+  </p>
+  <p>
+    <strong>Agents and device sign-in:</strong> when an agent's machine is signed in to a company agent address by QR code or one-time code, we record the machine's label, its public key, the approver, and the approximate country of the request (shown to the approver as a hint). Enrollment codes and device credentials are stored only as hashes.
+  </p>
+  <p>
+    <strong>Verified domains:</strong> when a company verifies a domain, we look up the public DNS TXT record it published through public DNS-over-HTTPS resolvers, and check it again weekly.
   </p>
 
   <h2>3. Sender attribution</h2>
@@ -245,6 +265,24 @@
       <td>To run the groups you create or join</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
       <td>While you are a member and the group exists; encrypted messages until their disappearing timer ends or the group is deleted (removed within 30 days); key-change messages until every member device has processed them, at most 90 days</td>
+    </tr>
+    <tr>
+      <td>Organization membership: names, company addresses, roles, status, join and last-active times</td>
+      <td>To run the organization the company bought, and to let its admins manage it</td>
+      <td>Performance of the contract with the company and with you (Art. 6(1)(b)); the company's legitimate interest in administering its workspace (Art. 6(1)(f))</td>
+      <td>While you are a member. After removal, the audit log keeps the record of it, and the company may keep the address reserved for someone new</td>
+    </tr>
+    <tr>
+      <td>Invitation addresses (sealed and keyed hash) and invitation tokens (hash only)</td>
+      <td>To deliver an invitation and check it is accepted by the invited person</td>
+      <td>Legitimate interests of the inviting company and of the invitee (Art. 6(1)(f))</td>
+      <td>Until accepted, revoked or expired (7 days); the sealed address is then kept only as long as the membership record it belongs to</td>
+    </tr>
+    <tr>
+      <td>Organization audit log (actions, actors, targets; hashed network addresses)</td>
+      <td>Accountability and security for the company's administration</td>
+      <td>Legitimate interests in security and accountability (Art. 6(1)(f))</td>
+      <td><strong>2 years</strong>, append-only</td>
     </tr>
     <tr>
       <td>Profile pictures</td>
