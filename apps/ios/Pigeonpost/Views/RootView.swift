@@ -5,6 +5,7 @@ struct RootView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(CallHost.self) private var calls
+    @Environment(AvatarStore.self) private var avatars: AvatarStore?
 
     var body: some View {
         Group {
@@ -30,9 +31,12 @@ struct RootView: View {
         .task(id: callIdentity) {
             if Fixtures.enabled && !CallHost.debugEnabled { return }
             if session.status == .signedIn, account.me != nil {
+                calls.avatars = avatars
                 calls.attach(session: session, account: account, inbox: inbox)
             } else {
                 calls.detach()
+                // Another account may sign in next; what this one could see is not theirs.
+                if session.status == .signedOut { avatars?.reset() }
             }
         }
         .task(id: session.status) {

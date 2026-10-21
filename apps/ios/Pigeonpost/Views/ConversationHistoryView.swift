@@ -169,6 +169,8 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
                    point: CGPoint) -> UIContextMenuConfiguration? {
         guard rows.indices.contains(indexPath.row) else { return nil }
         let message = rows[indexPath.row]
+        // A missed-call line is the app's own sentence, not a message: nothing to copy or report.
+        guard message.kind != .system else { return nil }
         return UIContextMenuConfiguration(identifier: message.id as NSString, previewProvider: nil) { [weak self] _ in
             self?.menu(for: message)
         }
@@ -214,10 +216,32 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
             actions.append(UIAction(title: "Report spam", image: UIImage(systemName: "exclamationmark.bubble"),
                                     attributes: .destructive) { [weak self] _ in self?.confirmReport(message) })
         }
+        // Blocking the sender from the message that prompted it (SDS §15.2).
+        if !mine, let peer = inbox?.reading, let inbox, !(inbox.conversation(with: peer)?.isBlocked ?? false) {
+            actions.append(UIAction(title: "Block sender", image: UIImage(systemName: "hand.raised"),
+                                    attributes: .destructive) { [weak self] _ in self?.block(peer, message: message) })
+        }
         // Both directions: a sent copy takes up the same room in the mailbox as a received one.
         actions.append(UIAction(title: "Delete", image: UIImage(systemName: "trash"),
                                 attributes: .destructive) { [weak self] _ in self?.confirmDelete(message) })
         return UIMenu(children: actions)
+    }
+
+    private func block(_ peer: String, message: ThreadMessage) {
+        guard let inbox, let account else { return }
+        let name = inbox.conversation(with: peer)?.name ?? PeerFace.displayName(peer)
+        let target = BlockTarget(peer: peer, name: name, origin: .message, messageId: message.id)
+        var sheet: UIViewController?
+        let host = UIHostingController(rootView: AnyView(
+            BlockSheet(target: target) { sheet?.dismiss(animated: true) }
+                .environment(account)
+                .environment(inbox)
+        ))
+        sheet = host
+        if let presentation = host.sheetPresentationController {
+            presentation.detents = [.medium(), .large()]
+        }
+        present(host, animated: true)
     }
 
     private func confirmReport(_ message: ThreadMessage) {

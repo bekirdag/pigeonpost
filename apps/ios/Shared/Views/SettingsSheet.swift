@@ -40,14 +40,32 @@ struct SettingsSheet: View {
         case inbox = "Inbox and storage"
         case contacts = "Contacts and permissions"
         case help = "Help and about"
+        // Phase 1b. Each is its own list, not rows inside this one.
+        case profile = "Profile"
+        case privacy = "Privacy & filtering"
+        case blocked = "Blocked"
+
+        /// `-sheet=privacy` and friends open Settings already on that page.
+        init?(staged: String?) {
+            switch staged {
+            case "profile": self = .profile
+            case "privacy": self = .privacy
+            case "blocked": self = .blocked
+            default: return nil
+            }
+        }
     }
     @State private var confirmSignOut = false
+    @State private var path: [Page] = []
 
     var body: some View {
-        NavigationStack {
+        NavigationStack(path: $path) {
             List {
                 Section {
                     destination(.account, icon: "person.crop.circle", detail: session.username ?? "Your profile and devices")
+                    if account.features.avatars {
+                        destination(.profile, icon: "person.crop.square", detail: "Your picture and who can see it")
+                    }
                     #if os(iOS)
                     Button { sheet = .scan } label: { Label("Scan for login", systemImage: "qrcode.viewfinder") }
                     #endif
@@ -61,6 +79,10 @@ struct SettingsSheet: View {
                         .disabled(handle == nil)
                     destination(.inbox, icon: "tray", detail: "Storage and archived conversations")
                     destination(.contacts, icon: "person.2", detail: "Senders you know and trust")
+                    if account.features.privacy {
+                        destination(.privacy, icon: "hand.raised", detail: "Who can call you, and what gets filtered")
+                    }
+                    destination(.blocked, icon: "nosign", detail: "Senders who can’t message or call you")
                 }
                 Section {
                     AppearancePicker()
@@ -76,13 +98,13 @@ struct SettingsSheet: View {
             .inlineTitle()
             .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             .navigationDestination(for: Page.self) { page in
-                List { pageContent(page) }
-                    .sheetSurface()
+                pageList(page)
                     .navigationTitle(page.rawValue)
                     .inlineTitle()
                     .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
             }
         }
+        .onAppear { if path.isEmpty, let staged = Page(staged: Fixtures.sheet) { path = [staged] } }
         // Keep one store alive while moving between pages, including an unfinished purchase.
         .task {
             #if DEBUG
@@ -132,8 +154,21 @@ struct SettingsSheet: View {
         .accessibilityIdentifier("settings-" + String(describing: page))
     }
 
+    @ViewBuilder private func pageList(_ page: Page) -> some View {
+        switch page {
+        case .profile: ProfilePage()
+        case .privacy: PrivacyPage()
+        case .blocked: BlockedPage()
+        default:
+            List { pageContent(page) }
+                .sheetSurface()
+        }
+    }
+
     @ViewBuilder private func pageContent(_ page: Page) -> some View {
         switch page {
+        case .profile, .privacy, .blocked:
+            EmptyView()
         case .account:
             Section("Your account") {
                 LabeledContent("Signed in as", value: session.username ?? "—")

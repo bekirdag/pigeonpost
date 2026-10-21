@@ -21,6 +21,8 @@ final class Account {
 
     let session: Session
     let client: PostboxClient
+    /// What the postbox has switched on. Account-wide: capabilities are per account, not per mailbox.
+    let features = Features()
     @ObservationIgnored private var purchaseStore: HandleStore?
 
     var handles: HandleStore {
@@ -58,6 +60,7 @@ final class Account {
             mailboxes = resolved
             me = preferred(among: resolved)
             load = .ready
+            await features.load(using: client)
         } catch let error as APIError {
             load = .failed(error.errorDescription ?? "Could not reach the postbox.")
         } catch is AuthError {
@@ -129,6 +132,7 @@ final class Account {
         self.mailboxes = mailboxes
         self.me = me
         load = .ready
+        features.installFixture()
     }
 
     /// A load that finished and found nothing — the state of every account on its first sign-in.
@@ -185,6 +189,8 @@ final class Account {
     /// than a dependency in the initializer: push needs the account to register, and the account
     /// needs push only for this one moment.
     weak var push: PushService?
+    /// Likewise for groups: signing out revokes this device's group keys and erases them here.
+    weak var groups: GroupStore?
 
     /// Somebody chose to sign out. Ends the session at the realm too — see `Session.signOut`.
     func signOut() async {
@@ -193,6 +199,7 @@ final class Account {
         if let push {
             await push.unregister()
         }
+        await groups?.signOut()
         forgetLocal()
         await session.signOut()
     }
@@ -208,6 +215,7 @@ final class Account {
     private func forgetLocal() {
         purchaseStore?.reset()
         purchaseStore = nil
+        features.reset()
         mailboxes = []
         me = nil
         load = .idle

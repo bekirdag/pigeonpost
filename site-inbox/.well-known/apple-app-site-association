@@ -1,0 +1,12 @@
+{
+  "applinks": {
+    "details": [
+      {
+        "appIDs": ["AH277897AV.dev.pigeonpost.inbox"],
+        "components": [
+          { "/": "/g/grp_*", "comment": "Group join links: open in the app when it is installed." }
+        ]
+      }
+    ]
+  }
+}

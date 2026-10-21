@@ -12,7 +12,12 @@ struct ConversationsView: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(PushService.self) private var push
+    @Environment(GroupStore.self) private var groups
     @Environment(\.scenePhase) private var scenePhase
+    @Environment(CallHost.self) private var calls
+    // Phase 1b. Optional, so a host that does not provide them simply shows none of it.
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @Environment(FilteredMail.self) private var filtered: FilteredMail?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -33,15 +38,19 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner
+        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered
         case peer(Conversation)
+        case join(GroupStore.JoinLink)
 
         init?(staged: String) {
             switch staged {
             case "identities": self = .identities
-            case "settings": self = .settings
+            case "settings", "privacy", "blocked", "profile": self = .settings
+            case "calls": self = .calls
+            case "filtered": self = .filtered
             case "new": self = .new
             case "scanner": self = .scanner
+            case "new-group": self = .newGroup
             default: return nil
             }
         }
@@ -52,6 +61,11 @@ struct ConversationsView: View {
             case .settings: return "settings"
             case .new: return "new"
             case .scanner: return "scanner"
+            case .newGroup: return "new-group"
+            case .joinLink: return "join-link"
+            case .join(let link): return "join:" + link.id
+            case .calls: return "calls"
+            case .filtered: return "filtered"
             case .peer(let conversation): return "peer:" + conversation.peer
             }
         }
@@ -73,6 +87,20 @@ struct ConversationsView: View {
         // it when the mailbox changes and cancels it on the way to the background — a long poll held
         // open by a suspended app is a socket the system kills anyway, and one this app would then
         // believe in.
+        // Groups: their own cadence (no event stream here), restarted with the mailbox and paused in
+        // the background like the long poll.
+        .task(id: GroupTaskKey(mailbox: account.me?.address, phase: scenePhase, on: account.features.groups)) {
+            guard scenePhase == .active else { return }
+            await groups.attach()
+            async let cadence: Void = groups.live()
+            async let expiry: Void = pruneDirectMessages()
+            _ = await (cadence, expiry)
+        }
+        .onChange(of: groups.pendingJoin, initial: true) { _, link in
+            guard let link else { return }
+            groups.pendingJoin = nil
+            sheet = .join(link)
+        }
         .task(id: TaskKey(mailbox: account.me?.address, phase: scenePhase)) {
             // Stage the launch destination once; switching inboxes must not reopen Settings.
             if !didStageFixtures {
@@ -92,7 +120,13 @@ struct ConversationsView: View {
             await push.refreshRegistrationIfAuthorized()
             await push.register()
             await inbox.loadAll()
+            await refreshPhase1b()
             await inbox.live()
+        }
+        // A call that has just ended is a new row in the history, and maybe a missed one.
+        .onChange(of: calls.mode) { _, mode in
+            guard mode == .hidden, !Fixtures.enabled else { return }
+            Task { await callLog?.refresh() }
         }
         // A tapped notification names the conversation it was about. Opening anything else would be
         // answering a different question from the one that was asked.
@@ -107,7 +141,19 @@ struct ConversationsView: View {
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
             case .scanner: ScanView()
+            case .calls:
+                if let callLog {
+                    CallsSheet(callLog: callLog, open: { peer in
+                        selection = peer
+                        sheet = nil
+                    }, callBack: callBack)
+                }
+            case .filtered:
+                if let filtered { FilteredSheet(filtered: filtered) }
             case .new: NewConversationSheet { peer in selection = peer }
+            case .newGroup: NewGroupSheet { id in selection = id }
+            case .joinLink: JoinLinkSheet { link in sheet = .join(link) }
+            case .join(let link): JoinGroupSheet(link: link) { id in selection = id }
             case .peer(let conversation):
                 PeerInfoSheet(conversation: conversation) { mailbox in
                     pendingMailbox = mailbox
@@ -127,10 +173,30 @@ struct ConversationsView: View {
                 newConversation: { sheet = .new },
                 openSettings: { sheet = .settings },
                 showPeer: { sheet = .peer($0) },
-                visit: visit
+                visit: visit,
+                newGroup: { sheet = .newGroup },
+                joinLink: { sheet = .joinLink },
+                openFiltered: { sheet = .filtered }
             )
         } else {
             phone
+        }
+    }
+
+    /// The call history's badge and Filtered's senders, for the mailbox being read.
+    private func refreshPhase1b() async {
+        async let log: Void = callLog?.refresh() ?? ()
+        async let mail: Void = filtered?.refresh() ?? ()
+        _ = await (log, mail)
+    }
+
+    /// Ring somebody back from the call log: the sheet goes first, so the call is not under it.
+    private func callBack(_ peer: String, _ video: Bool) {
+        sheet = nil
+        selection = peer
+        Task {
+            try? await Task.sleep(nanoseconds: 450_000_000)
+            calls.call(peer, video: video)
         }
     }
 
@@ -162,7 +228,10 @@ struct ConversationsView: View {
                 .toolbarBackground(Theme.sidebar, for: .navigationBar)
                 .toolbarBackground(.visible, for: .navigationBar)
         } detail: {
-            if let selection, inbox.conversation(with: selection) != nil {
+            if let selection, GroupSelection.isGroup(selection) {
+                GroupView(groupId: selection)
+                    .id(selection)
+            } else if let selection, inbox.conversation(with: selection) != nil {
                 ThreadView(peer: selection)
                     .id(selection)
             } else {
@@ -187,31 +256,78 @@ struct ConversationsView: View {
                     .foregroundStyle(Theme.muted)
                     .listRowBackground(Theme.wash)
             }
-            ForEach(inbox.visible) { conversation in
-                ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
-                    .tag(conversation.peer)
-                    .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty {
+                GroupInvitations()
+                    .listRowBackground(Theme.sidebar)
                     .listRowSeparatorTint(Theme.rule)
-                    .swipeActions(edge: .trailing) {
-                        Button {
-                            Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
-                        } label: {
-                            Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
-                        }
-                        .tint(Theme.navy)
-                    }
+            }
+            ForEach(entries) { entry in
+                switch entry {
+                case let .group(group):
+                    GroupRow(group: group, isSelected: group.id == selection)
+                        .tag(group.id)
+                        .listRowBackground(group.id == selection ? Theme.selected : Theme.sidebar)
+                        .listRowSeparatorTint(Theme.rule)
+                case let .conversation(conversation):
+                    conversationRow(conversation)
+                }
+            }
+            // Filtered mail, at the foot of the list: looked at on purpose, never among the rest.
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+               case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
+                Button { sheet = .filtered } label: { FilteredEntryRow(count: senders.count) }
+                    .buttonStyle(.plain)
+                    .listRowBackground(Theme.sidebar)
+                    .listRowSeparatorTint(Theme.rule)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         .background(Theme.sidebar)
         .overlay { emptyState }
-        .refreshable { await inbox.loadAll() }
+        .refreshable {
+            await inbox.loadAll()
+            await groups.refresh()
+            await refreshPhase1b()
+        }
+    }
+
+    /// Conversations and groups together, unless the archive (which holds no groups) is open.
+    private var entries: [InboxEntry] {
+        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+    }
+
+    private func pruneDirectMessages() async {
+        while !Task.isCancelled {
+            try? await Task.sleep(nanoseconds: 5_000_000_000)
+            inbox.pruneExpired()
+        }
+    }
+
+    private struct GroupTaskKey: Equatable {
+        let mailbox: String?
+        let phase: ScenePhase
+        let on: Bool
+    }
+
+    private func conversationRow(_ conversation: Conversation) -> some View {
+        ConversationRow(conversation: conversation, isSelected: conversation.peer == selection)
+            .tag(conversation.peer)
+            .listRowBackground(conversation.peer == selection ? Theme.selected : Theme.sidebar)
+            .listRowSeparatorTint(Theme.rule)
+            .swipeActions(edge: .trailing) {
+                Button {
+                    Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
+                } label: {
+                    Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
+                }
+                .tint(Theme.navy)
+            }
     }
 
     @ViewBuilder
     private var emptyState: some View {
-        if inbox.visible.isEmpty, inbox.hasLoaded {
+        if inbox.visible.isEmpty, inbox.hasLoaded, entries.isEmpty, groups.invitations.isEmpty || !groups.enabled {
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
             } else if inbox.viewingArchive {
@@ -235,6 +351,11 @@ struct ConversationsView: View {
                     Text(actingName)
                         .font(.geistMono(14.5, .semibold))
                         .foregroundStyle(Theme.ink)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        // Bounded, so a long handle cannot push the trailing buttons into an
+                        // overflow menu of the system's own making (see below).
+                        .frame(maxWidth: 132, alignment: .leading)
                     Image(systemName: "chevron.down")
                         .font(.geist(11, .semibold))
                         .foregroundStyle(Theme.secondary)
@@ -253,9 +374,30 @@ struct ConversationsView: View {
         // per machine and then forget exists, so it was never worth a permanent slot; and a plain
         // button that presents a sheet is one fewer presentation to go wrong than a menu that
         // presents a sheet.
+        // Calls, when the postbox keeps call history. A third trailing button, which is why the
+        // mailbox name beside it is bounded: three fit on the narrowest phone with that limit, and
+        // `PhoneTopBarTests` holds it to that.
+        if let callLog, account.features.callHistory {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button { sheet = .calls } label: { CallsButtonLabel(unseen: callLog.unseen) }
+                    .accessibilityIdentifier("callsButton")
+            }
+        }
         ToolbarItem(placement: .topBarTrailing) {
-            Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
-                .accessibilityLabel("New conversation")
+            if groups.enabled {
+                Menu {
+                    Button { sheet = .new } label: { Label("New conversation", systemImage: "square.and.pencil") }
+                    Button { sheet = .newGroup } label: { Label("New group", systemImage: "person.3") }
+                    Button { sheet = .joinLink } label: { Label("Join with a link", systemImage: "link") }
+                } label: {
+                    Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary)
+                }
+                .accessibilityLabel("New conversation or group")
+                .accessibilityIdentifier("composeMenu")
+            } else {
+                Button { sheet = .new } label: { Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary) }
+                    .accessibilityLabel("New conversation")
+            }
         }
         ToolbarItem(placement: .topBarTrailing) {
             Button { sheet = .settings } label: { Image(systemName: "gearshape").foregroundStyle(Theme.secondary) }

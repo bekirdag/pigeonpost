@@ -14,6 +14,10 @@ struct PigeonpostMacApp: App {
     @State private var account: Account
     @State private var inbox: Inbox
     @State private var calls = CallHost.shared
+    @State private var groups: GroupStore
+    @State private var callLog: CallLog
+    @State private var filtered: FilteredMail
+    @State private var avatars: AvatarStore
 
     init() {
         let session = Session()
@@ -22,6 +26,15 @@ struct PigeonpostMacApp: App {
         _account = State(initialValue: account)
         let inbox = Inbox(account: account)
         _inbox = State(initialValue: inbox)
+        let groups = GroupStore(account: account)
+        groups.inbox = inbox
+        account.groups = groups
+        _groups = State(initialValue: groups)
+        let callLog = CallLog(account: account)
+        let filtered = FilteredMail(account: account)
+        _callLog = State(initialValue: callLog)
+        _filtered = State(initialValue: filtered)
+        _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
         // Keychain or the network: see `Session.init` and the `Fixtures.enabled` guards on every
@@ -29,6 +42,8 @@ struct PigeonpostMacApp: App {
         if Fixtures.enabled {
             Fixtures.apply(session: session, account: account, inbox: inbox)
             LongThread.install(into: inbox)
+            callLog.installFixture()
+            filtered.installFixture()
         }
         #endif
     }
@@ -41,7 +56,15 @@ struct PigeonpostMacApp: App {
                 .environment(inbox)
                 .environment(MacPushDelegate.service)
                 .environment(calls)
+                .environment(groups)
+                .environment(callLog)
+                .environment(filtered)
+                .environment(avatars)
+                .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
+                .onOpenURL { url in
+                    if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+                }
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)

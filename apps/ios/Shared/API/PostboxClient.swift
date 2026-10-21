@@ -310,14 +310,18 @@ struct PostboxClient {
 
     // ---- the wire ------------------------------------------------------------------------------
 
-    private func send<T: Decodable>(
+    /// One JSON route, decoded. Internal rather than private: the Phase 1b and group routes live in
+    /// extensions of their own (`PostboxClient+Phase1b.swift`, `Groups/GroupAPI.swift`) and go
+    /// through exactly this wire, 401 retry included.
+    func send<T: Decodable>(
         _ path: String,
         method: String = "GET",
         query: [URLQueryItem] = [],
         json: [String: Any]? = nil,
+        headers: [String: String] = [:],
         as type: T.Type
     ) async throws -> T {
-        let data = try await sendRaw(path, method: method, query: query, json: json)
+        let data = try await sendRaw(path, method: method, query: query, json: json, headers: headers)
         do {
             return try Self.decoder.decode(T.self, from: data)
         } catch {
@@ -325,16 +329,37 @@ struct PostboxClient {
         }
     }
 
+    /// Decode with the client's own key strategy, for callers that hold raw bytes.
+    static func decode<T: Decodable>(_ type: T.Type, from data: Data) throws -> T {
+        try decoder.decode(T.self, from: data)
+    }
+
+    /// The wire. `body` (with `contentType`) sends bytes instead of JSON — a profile picture, a
+    /// sealed group attachment — and `headers` carries the per-route extras such as
+    /// `x-pigeonpost-device`.
     @discardableResult
-    private func sendRaw(
+    func sendRaw(
         _ path: String,
         method: String = "GET",
         query: [URLQueryItem] = [],
-        json: [String: Any]? = nil
+        json: [String: Any]? = nil,
+        body: Data? = nil,
+        contentType: String? = nil,
+        headers: [String: String] = [:],
+        timeout: TimeInterval? = nil
     ) async throws -> Data {
         guard let tokens else { throw AuthError.sessionExpired }
 
-        var components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        var components: URLComponents
+        if path.contains("%") {
+            // Already percent-encoded by the caller — an address as one path segment (`/k/…` with its
+            // slashes as %2F). `appendingPathComponent` would encode the `%` a second time.
+            components = URLComponents(url: base, resolvingAgainstBaseURL: false)!
+            components.percentEncodedPath = (components.percentEncodedPath.hasSuffix("/")
+                ? String(components.percentEncodedPath.dropLast()) : components.percentEncodedPath) + path
+        } else {
+            components = URLComponents(url: base.appendingPathComponent(path), resolvingAgainstBaseURL: false)!
+        }
         if !query.isEmpty { components.queryItems = query }
         let url = components.url!
 
@@ -346,11 +371,15 @@ struct PostboxClient {
             if let json {
                 request.setValue("application/json", forHTTPHeaderField: "content-type")
                 request.httpBody = try JSONSerialization.data(withJSONObject: json)
+            } else if let body {
+                request.setValue(contentType ?? "application/octet-stream", forHTTPHeaderField: "content-type")
+                request.httpBody = body
             }
+            for (name, value) in headers { request.setValue(value, forHTTPHeaderField: name) }
             // A long poll is held open for as long as the postbox will hold it; the default 60s
             // timeout would cut a `wait=25` call short only sometimes, which is the worst kind of
             // bug to look for.
-            request.timeoutInterval = path.hasPrefix("/v1/claims/") || path.hasPrefix("/v1/handles/") ? 25 : 90
+            request.timeoutInterval = timeout ?? (path.hasPrefix("/v1/claims/") || path.hasPrefix("/v1/handles/") ? 25 : 90)
             let (data, response) = try await URLSession.shared.data(for: request)
             return (data, response as? HTTPURLResponse ?? HTTPURLResponse())
         }
@@ -363,12 +392,8 @@ struct PostboxClient {
             (data, response) = try await attempt(renewed)
         }
         guard (200..<300).contains(response.statusCode) else {
-            let body = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
-            throw APIError(
-                status: response.statusCode,
-                code: body?["error"] as? String,
-                detail: body?["detail"] as? String
-            )
+            throw APIError(status: response.statusCode, body: data,
+                           retryAfter: response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init))
         }
         return data
     }

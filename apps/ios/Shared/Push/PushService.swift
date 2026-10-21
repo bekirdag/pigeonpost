@@ -17,6 +17,8 @@ import UIKit
 final class PushService: NSObject {
     /// Where a tapped notification wants to go. The conversation list watches this and opens it.
     var pendingPeer: String?
+    /// A group's push (its `peer` is the group id): the screen syncs that group at once.
+    var onGroupPush: ((String) -> Void)?
 
     /// Whether this device has been asked yet. Asked once, on the first conversation opened, rather
     /// than at launch — a permission dialog in front of a signed-out sign-in screen is a dialog
@@ -240,6 +242,7 @@ extension PushService: UNUserNotificationCenterDelegate {
         let peer = info["peer"] as? String
         let messageId = info["message_id"] as? String ?? notification.request.identifier
         await MainActor.run {
+            if let peer, peer.hasPrefix("grp_") { self.onGroupPush?(peer) }
             guard let peer, let inbox = self.inbox else { return }
             inbox.tell(
                 remote: peer,

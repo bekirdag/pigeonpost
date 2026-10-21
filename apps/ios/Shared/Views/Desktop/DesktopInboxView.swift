@@ -27,9 +27,21 @@ struct DesktopInboxView: View {
     let showPeer: (Conversation) -> Void
     /// Switch to another of this account's mailboxes. The caller resets what it owns.
     let visit: (Mailbox) -> Void
+    /// Groups (Phase 3): offered beside "New conversation" when the postbox has them on.
+    var newGroup: (() -> Void)? = nil
+    var joinLink: (() -> Void)? = nil
+    /// Open the Filtered senders. The caller owns the sheet, as it owns Settings.
+    var openFiltered: () -> Void = {}
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
+    @Environment(GroupStore.self) private var groups
+    @Environment(CallHost.self) private var calls
+    // Phase 1b. Optional, so a host that does not provide them shows the inbox as it was.
+    @Environment(CallLog.self) private var callLog: CallLog?
+    @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    /// The sidebar shows the call history instead of the conversations (the web's left view).
+    @State private var showingCalls = false
 
     @State private var openingThread: ThreadTarget?
     /// The subject a right-click asked to delete, held until the question is answered. Deleting mail
@@ -112,6 +124,7 @@ struct DesktopInboxView: View {
         .onChange(of: account.me?.address) { _, _ in
             openingThread = nil
             deletingThread = nil
+            showingCalls = false
         }
         .sheet(item: $openingThread) { target in
             NewThreadSheet(peer: target.id) { id in
@@ -148,6 +161,7 @@ struct DesktopInboxView: View {
         return VStack(spacing: 0) {
             mailboxBar
             if switchingMailbox { mailboxList }
+            if callLog != nil, account.features.callHistory { sideSwitch }
             if inbox.loading {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
@@ -188,7 +202,16 @@ struct DesktopInboxView: View {
                     }
                     #endif
             }
-            conversationList
+            if showingCalls, let callLog, account.features.callHistory {
+                CallLogList(callLog: callLog, open: { key in
+                    peer = key
+                }, callBack: { key, video in
+                    peer = key
+                    calls.call(key, video: video)
+                })
+            } else {
+                conversationList
+            }
             // Which build this window is. Settings carries it too, but a released app is asked
             // "is the fix in this one?" far more often than Settings is opened, and the answer was
             // not visible anywhere in the window.
@@ -250,12 +273,26 @@ struct DesktopInboxView: View {
                 .help("Search senders")
                 .accessibilityLabel("Search senders")
 
-                Button(action: newConversation) {
-                    Image(systemName: "square.and.pencil")
-                        .foregroundStyle(Theme.secondary)
+                if groups.enabled, let newGroup {
+                    Menu {
+                        Button("New Conversation", action: newConversation)
+                        Button("New Group", action: newGroup)
+                        if let joinLink { Button("Join with a Link…", action: joinLink) }
+                    } label: {
+                        Image(systemName: "square.and.pencil")
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    .help("New conversation or group")
+                    .accessibilityLabel("New conversation or group")
+                    .accessibilityIdentifier("composeMenu")
+                } else {
+                    Button(action: newConversation) {
+                        Image(systemName: "square.and.pencil")
+                            .foregroundStyle(Theme.secondary)
+                    }
+                    .help("New conversation")
+                    .accessibilityLabel("New conversation")
                 }
-                .help("New conversation")
-                .accessibilityLabel("New conversation")
 
                 Button(action: openSettings) {
                     Image(systemName: "gearshape")
@@ -287,33 +324,42 @@ struct DesktopInboxView: View {
                 .listRowBackground(Color.clear)
                 .listRowSeparator(.hidden)
             }
-            ForEach(inbox.visible) { conversation in
-                let isSelected = conversation.peer == peer
-                DesktopConversationRow(conversation: conversation, isSelected: isSelected)
-                    .selectable(isSelected, radius: 10) { peer = conversation.peer }
-                    .accessibilityIdentifier("conversation:" + conversation.peer)
-                    #if os(iOS)
-                    .swipeActions(edge: .trailing) {
-                        Button {
-                            Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
-                        } label: {
-                            Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
-                        }
-                        .tint(Theme.navy)
-                    }
-                    #endif
+            if groups.enabled, !inbox.viewingArchive, inbox.filter.isEmpty {
+                GroupInvitations()
+                    .listRowInsets(EdgeInsets(top: 4, leading: 18, bottom: 4, trailing: 18))
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
+            ForEach(entries) { entry in
+                if case let .group(group) = entry {
+                    GroupRow(group: group, isSelected: group.id == peer, compact: true)
+                        .selectable(group.id == peer, radius: 10) { peer = group.id }
+                } else if case let .conversation(conversation) = entry {
+                    conversationRow(conversation)
+                }
+            }
+            // Filtered mail at the foot of the list, as on the phone and the web.
+            if let filtered, !inbox.viewingArchive, inbox.filter.isEmpty,
+               case let senders = filtered.senders(contacts: inbox.contacts), !senders.isEmpty {
+                FilteredEntryRow(count: senders.count)
+                    .selectable(false, radius: 10, choose: openFiltered)
             }
         }
         .listStyle(.plain)
         .scrollContentBackground(.hidden)
         #if os(iOS)
-        .refreshable { await inbox.loadAll() }
+        .refreshable {
+            await inbox.loadAll()
+            await groups.refresh()
+            await callLog?.refresh()
+            await filtered?.refresh()
+        }
         #else
         // The arrow keys still walk the list, as they did while the system owned the selection.
         .focusable()
         .focusEffectDisabled()
         .onMoveCommand { direction in
-            let peers = inbox.visible.map(\.peer)
+            let peers = entries.map(\.id)
             guard !peers.isEmpty else { return }
             let at = peer.flatMap { peers.firstIndex(of: $0) }
             switch direction {
@@ -326,9 +372,32 @@ struct DesktopInboxView: View {
         .overlay { emptyConversations }
     }
 
+    /// Conversations and groups together; the archive holds no groups.
+    private var entries: [InboxEntry] {
+        InboxEntry.merge(inbox.visible, groups.enabled && !inbox.viewingArchive ? groups.listed(filter: inbox.filter) : [])
+    }
+
+    @ViewBuilder
+    private func conversationRow(_ conversation: Conversation) -> some View {
+        let isSelected = conversation.peer == peer
+        DesktopConversationRow(conversation: conversation, isSelected: isSelected)
+            .selectable(isSelected, radius: 10) { peer = conversation.peer }
+            .accessibilityIdentifier("conversation:" + conversation.peer)
+            #if os(iOS)
+            .swipeActions(edge: .trailing) {
+                Button {
+                    Task { await inbox.setArchived(conversation.peer, archived: !inbox.viewingArchive) }
+                } label: {
+                    Label(inbox.viewingArchive ? "Unarchive" : "Archive", systemImage: "archivebox")
+                }
+                .tint(Theme.navy)
+            }
+            #endif
+    }
+
     @ViewBuilder
     private var emptyConversations: some View {
-        if inbox.hasLoaded, inbox.visible.isEmpty {
+        if inbox.hasLoaded, entries.isEmpty, !(groups.enabled && !groups.invitations.isEmpty) {
             #if os(iOS)
             if !inbox.filter.isEmpty {
                 ContentUnavailableView.search(text: inbox.filter)
@@ -359,7 +428,26 @@ struct DesktopInboxView: View {
     /// another one.
     @ViewBuilder
     private var threadsColumn: some View {
-        if let peer, let conversation = inbox.conversation(with: peer) {
+        if let peer, GroupSelection.isGroup(peer), let group = groups.group(peer) {
+            // A group has no subjects; the column says what it is instead of standing empty.
+            VStack(alignment: .leading, spacing: 10) {
+                GroupFace(id: group.id, name: group.name, size: 44)
+                Text(group.name).font(.geist(14, .semibold)).foregroundStyle(Theme.ink).lineLimit(2)
+                Label("End-to-end encrypted group", systemImage: "lock")
+                    .font(.geist(12)).foregroundStyle(Theme.muted)
+                Text("\(group.members) \(group.members == 1 ? "member" : "members")")
+                    .font(.geist(12)).foregroundStyle(Theme.secondary)
+                Spacer()
+            }
+            .padding(18)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(Theme.column)
+            .overlay(alignment: .trailing) { seam }
+            .navigationSplitViewColumnWidth(min: 170, ideal: roomy ? 210 : 170, max: 340)
+            #if os(iOS)
+            .toolbar(.hidden, for: .navigationBar)
+            #endif
+        } else if let peer, let conversation = inbox.conversation(with: peer) {
             VStack(spacing: 0) {
                 HStack(spacing: 8) {
                     VStack(alignment: .leading, spacing: 2) {
@@ -468,6 +556,9 @@ struct DesktopInboxView: View {
             }
             .padding(30)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let peer, GroupSelection.isGroup(peer) {
+            GroupView(groupId: peer)
+                .id(peer)
         } else if let peer, let conversation = inbox.conversation(with: peer) {
             // Keyed on the peer alone. Changing subject inside one conversation is not a different
             // screen, and rebuilding it would throw away the scroll position along with the draft.
@@ -523,6 +614,43 @@ struct DesktopInboxView: View {
             .fill(Theme.rule)
             .frame(width: 1)
             .ignoresSafeArea()
+    }
+
+    /// Inbox or Calls: two chips under the mailbox, the Calls one carrying the missed badge. Tapped
+    /// shapes rather than `Button`s, for the reason the toolbar note gives.
+    private var sideSwitch: some View {
+        HStack(spacing: 6) {
+            sideChip("Inbox", symbol: "tray", on: !showingCalls, badge: 0, id: "sideInbox") { showingCalls = false }
+            sideChip("Calls", symbol: "phone", on: showingCalls, badge: callLog?.unseen ?? 0, id: "sideCalls") {
+                showingCalls = true
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 10)
+    }
+
+    private func sideChip(_ title: String, symbol: String, on: Bool, badge: Int, id: String,
+                          action: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: symbol)
+                .font(.geist(12, .semibold))
+            Text(title)
+                .font(.geist(13, on ? .semibold : .medium))
+            if badge > 0 { UnreadBadge(count: min(badge, 99)) }
+        }
+        .foregroundStyle(on ? Theme.ink : Theme.secondary)
+        .padding(.horizontal, 11)
+        .frame(height: 30)
+        .background(on ? Theme.selected : Color.clear, in: Capsule())
+        .overlay(Capsule().stroke(on ? Theme.strokeStrong : Theme.stroke, lineWidth: 1))
+        .fixedSize()
+        .contentShape(Capsule())
+        .onTapGesture(perform: action)
+        .accessibilityElement(children: .combine)
+        .accessibilityAddTraits(on ? [.isButton, .isSelected] : .isButton)
+        .accessibilityLabel(badge > 0 ? "\(title), \(badge) missed" : title)
+        .accessibilityIdentifier(id)
     }
 
     /// Which mailbox is being read, and the way to change it.

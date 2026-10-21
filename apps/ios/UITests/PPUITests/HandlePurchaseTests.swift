@@ -74,7 +74,13 @@ final class HandlePurchaseTests: XCTestCase {
     }
 
     private func expectPastedAddress(_ address: String) {
-        app.buttons["New conversation"].tap()
+        // With groups on, the compose button is a menu: New conversation / New group / Join.
+        if app.buttons["composeMenu"].exists {
+            app.buttons["composeMenu"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            app.buttons["New conversation"].firstMatch.tap()
+        } else {
+            app.buttons["New conversation"].tap()
+        }
         let field = app.textFields["/bekir/agent1 or /k/…"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
@@ -144,6 +150,8 @@ final class HandlePurchaseTests: XCTestCase {
         app.buttons["settings-contacts"].tap()
         XCTAssertTrue(app.buttons["Add a sender"].waitForExistence(timeout: 8))
         app.navigationBars["Contacts and permissions"].buttons.element(boundBy: 0).tap()
+        // Profile, Privacy & filtering and Blocked (Phase 1b) push Help below the fold.
+        for _ in 0..<4 where !app.buttons["settings-help"].isHittable { app.swipeUp() }
         app.buttons["settings-help"].tap()
         screenshot("settings-help")
         app.buttons["Done"].tap()
