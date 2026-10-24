@@ -1047,7 +1047,7 @@ pub(crate) async fn group_receipts(
     if let Err(e) = member {
         return crate::groups::finish(&state, Err(e));
     }
-    let mine = state.store.read_receipts(me.clone()).await.unwrap_or(true);
+    let mine = state.store.read_receipts(me.clone()).await.unwrap_or(false);
     let rows = match state.store.group_receipt_rows(id, me).await {
         Ok(r) => r,
         Err(_) => return ApiError::server("store_error").into_response(),
