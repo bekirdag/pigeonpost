@@ -27,6 +27,7 @@ jobs:
         working-directory: apps/ios
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - name: Select Xcode and an available iPhone
         run: |
           python3 - <<'PY'
@@ -89,6 +90,7 @@ jobs:
         working-directory: apps/ios
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - name: Select Xcode and an available iPad
         run: |
           python3 - <<'PY'
@@ -151,6 +153,7 @@ jobs:
         working-directory: apps/ios
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@8632757d5a758c452f724e9d837848c694a7bb48 # 1.91.1
       - name: Select the StoreKit-compatible simulator
         run: |
           sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
