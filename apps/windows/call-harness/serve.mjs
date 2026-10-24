@@ -28,7 +28,8 @@ http.createServer(async (req, res) => {
     if (file === "/") file = "/index.html";
     if (file.includes("..")) throw new Error("path");
     let body = await readFile(path.join(root, file));
-    if (file === "/index.html") body = String(body).replace('<script src="config.js"></script>', '<script src="/__fixture.js"></script><script src="/__synth.js"></script><script src="config.js"></script>');
+    if (file === "/index.html") body = String(body).replace(/<script src="config\.js(?:\?[^\"]*)?"><\/script>/,
+      (tag) => '<script src="/__fixture.js"></script><script src="/__synth.js"></script>' + tag);
     res.writeHead(200, { "content-type": types[path.extname(file)] || "application/octet-stream", "content-security-policy": policy });
     res.end(body);
   } catch { res.writeHead(404); res.end(); }

@@ -90,7 +90,8 @@ const server = http.createServer(async (req, res) => {
     if (!file.startsWith(ROOT + path.sep)) { res.writeHead(403); return res.end(); }
     let body = readFileSync(file);
     if (p === "/" || p === "/index.html") {
-      body = String(body).replace('<script src="config.js"></script>', '<script src="/__fixture.js"></script><script src="/__media.js"></script><script src="config.js"></script>');
+      body = String(body).replace(/<script src="config\.js(?:\?[^\"]*)?"><\/script>/,
+        (tag) => '<script src="/__fixture.js"></script><script src="/__media.js"></script>' + tag);
     } else if (p === "/native-call.html") {
       body = String(body).replace('<body data-page="native">', '<body data-page="native"><script src="/__media.js"></script>');
     }
