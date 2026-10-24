@@ -4,7 +4,14 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Active implementation continuation. PR #83's pairing decisions and tests are repaired; CLI credential custody is under validation. PR #89's message delivery/edit/expiry races are repaired and tested. PR #87's newer-runtime iPad audit passes; iPhone purchase visibility and explicit Rust setup fixes are pushed. Shared dependency hardening is in draft PR #90. Shared baseline #90 is merged at `26f10b8`; no production deployment made by this continuation yet. Native releases remain batched and the existing Apple pre-submission review requirement is preserved.
+Shared baseline #90 is merged at `26f10b8`; enterprise/device-login #83 is merged at `8db5df3`.
+The enterprise portal, inbox approval page, privacy/terms updates and sales-validation endpoint are
+now deployed and verified on the origin and public URLs. The postbox process still runs source
+`c0d6a4b` (already includes the Phase 4 server); the shared Rust security update and #89 server
+changes await its controlled deployment. #89 is integrated with #83 and its current CI is running.
+#87 passes the newer iPad audit; two iPhone cases are being repaired. Native round two has a
+committed/tested Apple wire foundation, with screens and remaining platforms still pending.
+Native releases remain batched; the owner's Apple pre-submission review hold is preserved.
 
 ## Intake evidence
 
@@ -111,3 +118,21 @@ Active implementation continuation. PR #83's pairing decisions and tests are rep
 - #89 Windows CI failed an unrelated existing registry test: `timed_out_final_commit_recovers_the_exact_atomic_challenge_result` never reached its post-SQLite barrier. Inspection showed its 25 ms per-blocking-operation budget could expire during preparation/admission. The test now uses the normal 30-second budget for real preliminary work, asserts the request and permit are still held at the committed-write barrier, then pauses/advances only that Tokio runtime's test clock to expire the final adapter deadline. Recovery assertions (one append, same log index, `appended=false`) are unchanged. Tokio `test-util` is enabled **only as a dev feature**; production code and limits are unchanged. Focused case passes in 0.01 seconds; full registry tests and all-target/all-feature Clippy pass. Windows requalification is required.
 - #87's Cargo-location fix is built into the integrated run; iPhone now passes fixture installation and reaches native UI tests. Newer iPad and iPhone results remain pending at this checkpoint. Local custom-Cargo-home reproduction fails with the old build script and passes with the corrected one, while retaining SDK/compiler environment isolation for Rust.
 - Native round two has an isolated branch `codex/native-round2-20261024`, checkpoint `dd90fc7`: shared Apple action DTO/API/projection and local read-state preservation, with **88 inbox/wire checks** and full standalone model suites passing. UI, calendar, enterprise client screens and the other platforms remain pending; no native release.
+
+
+## Checkpoint — enterprise deployed and publicly verified
+
+- #83 passed every check and merged as `8db5df3c5ae4c16e4d070235b3d490bcb155b45d`. Staged 49 whitelisted, tracked production assets from that exact tree. Production bridge source hashes matched its reviewed predecessor before mutation. Published portal assets, `pair.html/css/js`, website privacy/terms and the bridge sales module/route. Bridge health and validation of an empty sales request pass (400, no lead created).
+- Private server-side backup: `/var/backups/pigeonpost/enterprise-20261024T195415Z` on raijin, mode 0700, outside web roots. The deployment script and validation log are retained in the private release directory. Origin checks compare the deployed HTML/JS bytes to the staged commit and verify CSP, checkout nonce policy and clean `/app/*`, `/invite`, `/auth/callback` routing.
+- Public browser/request checks pass for enterprise `/`, `/app` and inbox `/pair.html`. The shared browser initially reused the old placeholder; normal reload retrieves the complete portal, fonts and scripts, with the closed-USD notice. Added HTML revalidation to the enterprise nginx block; static assets retain their five-minute override. An immediate-header probe after the first reload did not observe the new header and triggered rollback; the exact cause was not established. Retried against the exact web-app nginx master with bounded header polling; syntax validation and origin revalidation headers pass. No DNS, identity, global feature or payment configuration was changed.
+- Portal visual evidence: `~/.local/share/codex-browser/artifacts/enterprise-live-20261024.png`; public scripts and Geist fonts load. Cloudflare DNS console remains at sign-in; the existing wildcard route works for the portal. TURN DNS verification is still pending.
+- #89's integration with #83 required retaining both CLI modules (`agentd_edits`, `device_login_cmd`), both Node test suites, and both privacy disclosures/retention rows. Its copied enterprise design tokens also needed the new inbox receipt colors. Exact-copy test is retained; portal **31/31** and combined inbox **195/195** pass after synchronization. Full CLI integration validation is running.
+- #87 at `b7a7eff`: newer iPad passes, iPhone reaches UI and fails only an arbitrary cell-index composer entry and the fifth-plan price assertion. Exported the newer result bundle and recording. Composer now uses the established explicit fixture-thread argument. Purchase controls are revealed fully below the translucent bar and selected-plan accessibility state is checked before payment; failure hierarchy/screenshot capture is added. Local build/targeted tests and fresh newer-runtime CI remain required.
+- The public runbook no longer points active deployments at retired `159.69.201.24`. It records current source/runtime paths, both Compose image references, loopback bindings, backup/rollback rules and the existing bounded logs on `45.132.181.100`. This is a runbook correction, not a postbox restart.
+
+
+## Checkpoint — native controls and account-switch test synchronization
+
+- #87 now commits the exact-thread composer fixture, fully visible purchase-control gestures and selected-plan accessibility value at `339540d`. All three targeted iPhone tests pass locally, including every SKU purchase and the original $40 price assertion. Evidence: private `iphone-selection-visible.xcresult` and `iphone-selection-visible.log`. The newer-runtime iPhone CI result is still required; its previous iPad and StoreKit jobs passed.
+- #89's Windows jobs, native call harness and all Rust/platform checks pass at `531eb12`. The remaining portal failure was an asynchronous test checking navigation before native SHA-256 completed. Added a captured-navigation promise and deliberately gated digest regression, preserving all masking, prompt and token-custody assertions; all 31 portal tests pass. Fix pushed at `5755eb7`, fresh CI pending. The first attempt to capture the focused test log used an unsupported run-node `--args` flag; its error is retained and the corrected invocation was run.
+- Full integrated #83/#89 CLI validation passes, including the Unix storage-custody integration. No production postbox restart or native store submission occurred.
