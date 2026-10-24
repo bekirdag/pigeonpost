@@ -143,6 +143,7 @@ final class ControlledURLProtocol: URLProtocol {
     static func main() async {
         URLProtocol.registerClass(ControlledURLProtocol.self)
         await messageActionWireAndAcknowledgement()
+        await editRetryAndMailboxIsolation()
         await initialLoadAndSwitch()
         await oldLoadCannotFinishNewSpinner()
         await rapidReturnToSameMailbox()
@@ -230,6 +231,104 @@ final class ControlledURLProtocol: URLProtocol {
             let response = try await sending.value
             check(response.sentCopyId == "own" && response.msgRef == reference, "send response exposes shared reference")
         } catch { check(false, "reply should complete after renewal") }
+    }
+
+    static func actionHistory(_ marker: String, text: String = "original") -> String {
+        let request: [String: Any] = ["v": 1, "verb": "review", "args": ["task": text, "nested": ["retain": true]], "note": "independent note"]
+        let body = String(data: try! JSONSerialization.data(withJSONObject: request), encoding: .utf8)!
+        let message: [String: Any] = ["message_id": marker, "from": a.address, "peer": "/test/peer",
+            "body": body, "direction": "out", "sent_at": Int(Date().timeIntervalSince1970) - 10,
+            "thread_id": "subject", "msg_ref": "mref_" + String(repeating: "a", count: 26)]
+        return String(data: try! JSONSerialization.data(withJSONObject: ["messages": [message]]), encoding: .utf8)!
+    }
+
+    static func nextSend() async -> [String: Any] {
+        await wait("message action POST") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/send" } }
+        return requestBody(ControlledURLProtocol.requests().first { $0.url?.path == "/v1/send" }!)
+    }
+
+    static func editRetryAndMailboxIsolation() async {
+        let (account, inbox) = make()
+        let loading = Task { await inbox.loadAll() }
+        await pending(a.address, count: 5)
+        finish(a.address, marker: "root", inboxBody: actionHistory("root"))
+        await loading.value
+        let scope = MessageActionScope(mailbox: a.address, peer: "/test/peer", subject: nil)
+        let root = inbox.conversation(with: scope.peer)!.messages.first!
+        inbox.beginMessageAction(.edit, message: root, in: scope)
+        let actionID = inbox.action(in: scope)!.id
+        inbox.updateMessageAction(actionID, text: "new words")
+        let initial = inbox.action(in: scope)!
+        let first = Task { await inbox.saveMessageEdit(initial) }
+        let body = await nextSend()
+        check(body["edit_of"] as? String == root.reference && body["from"] as? String == a.address,
+              "edit names the original reference and captured mailbox")
+        let content = (try! JSONSerialization.jsonObject(with: Data((body["body"] as! String).utf8))) as! [String: Any]
+        let args = content["args"] as! [String: Any]
+        check(content["verb"] as? String == "review" && args["task"] as? String == "new words"
+              && (args["nested"] as? [String: Bool])?["retain"] == true && content["note"] as? String == "independent note",
+              "editing preserves the request verb, nested arguments and independent note")
+        check(inbox.actionSending, "edit visibly waits for the postbox")
+        let duplicate = await inbox.saveMessageEdit(inbox.action(in: scope)!)
+        check(!duplicate && ControlledURLProtocol.requests().filter { $0.url?.path == "/v1/send" }.count == 1,
+              "double save cannot create a second concurrent edit")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed first edit")
+        let firstResult = await first.value
+        check(!firstResult && !inbox.actionSending && inbox.action(in: scope)?.text == "new words",
+              "failed edit keeps the draft and unlocks retry")
+        let retryAction = inbox.action(in: scope)!
+        let retry = Task { await inbox.saveMessageEdit(retryAction) }
+        let retryBody = await nextSend()
+        check(retryBody["msg_ref"] as? String == body["msg_ref"] as? String,
+              "unchanged edit retry keeps its stable idempotency reference")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed retry")
+        _ = await retry.value
+        inbox.updateMessageAction(actionID, text: "revised again")
+        let revisedAction = inbox.action(in: scope)!
+        let revised = Task { await inbox.saveMessageEdit(revisedAction) }
+        let revisedBody = await nextSend()
+        check(revisedBody["msg_ref"] as? String != body["msg_ref"] as? String,
+              "changed edit text receives a new reference")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"edit\",\"sent_copy_id\":\"edit-own\"}", status: 201), "saved revised edit")
+        await pending(a.address, count: 1)
+        check(ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: actionHistory("root", text: "revised again")), "reloaded folded history")
+        let revisedResult = await revised.value
+        check(revisedResult && inbox.composerAction == nil && !inbox.actionSending,
+              "successful edit clears its action after refreshing the captured mailbox")
+
+        let current = inbox.conversation(with: scope.peer)!.messages.first!
+        inbox.beginMessageAction(.edit, message: current, in: scope)
+        let oldAction = inbox.action(in: scope)!
+        let old = Task { await inbox.saveMessageEdit(oldAction) }
+        _ = await nextSend()
+        switchTo(b, account: account, inbox: inbox)
+        let newLoad = Task { await inbox.loadAll() }
+        await pending(b.address, count: 5)
+        finish(b.address, marker: "b-root", inboxBody: actionHistory("b-root"))
+        await newLoad.value
+        let bScope = MessageActionScope(mailbox: b.address, peer: "/test/peer", subject: nil)
+        inbox.beginMessageAction(.edit, message: inbox.conversation(with: bScope.peer)!.messages.first!, in: bScope)
+        let bActionID = inbox.action(in: bScope)!.id
+        inbox.updateMessageAction(bActionID, text: "B draft")
+        let bAction = inbox.action(in: bScope)!
+        let bEdit = Task { await inbox.saveMessageEdit(bAction) }
+        await wait("two mailbox sends") { ControlledURLProtocol.requests().filter { $0.url?.path == "/v1/send" }.count == 2 }
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"late-a\"}", status: 201), "completed old mailbox edit")
+        _ = await old.value
+        check(inbox.action(in: bScope)?.id == bActionID && inbox.action(in: bScope)?.text == "B draft" && inbox.actionSending,
+              "late A success cannot clear B's action, draft or in-flight state")
+        check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/inbox" }, "late edit does not reload another mailbox")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed current B edit")
+        _ = await bEdit.value
+        check(!inbox.actionSending && inbox.action(in: bScope)?.text == "B draft", "B retains its own failed edit")
+        inbox.cancelMessageAction(bActionID)
+
+        let oldSend = Task { await inbox.send("old B draft", to: "/test/peer", threadId: nil) }
+        _ = await nextSend()
+        switchTo(a, account: account, inbox: inbox)
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed stale ordinary send")
+        _ = await oldSend.value
+        check(inbox.toast == nil && inbox.pending.isEmpty, "late send failure cannot report against another mailbox")
     }
 
     static func initialLoadAndSwitch() async {

@@ -78,6 +78,9 @@ final class Inbox {
 
     /// A transient message for the person, in the app's own voice.
     var toast: String?
+    private(set) var composerAction: MessageComposerAction?
+    private(set) var actionOperation: UUID?
+    var actionSending: Bool { actionOperation != nil }
 
     var filter = "" { didSet { rebuild() } }
     var viewingArchive = false
@@ -289,6 +292,8 @@ final class Inbox {
         loading = false
         offline = false
         toast = nil
+        composerAction = nil
+        actionOperation = nil
         reading = nil
         readingSubthread = nil
         quota = nil
@@ -667,8 +672,14 @@ final class Inbox {
     }
 
     @discardableResult
-    func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = []) async -> Bool {
-        guard let me, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return false }
+    func send(_ text: String, to peer: String, threadId: String?, files: [StagedFile] = [],
+              msgRef: String = MessageReference.make(), reply: MessageComposerAction? = nil) async -> Bool {
+        guard let me, let request = mailboxRequest,
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !files.isEmpty else { return false }
+        if let reply {
+            guard reply.kind == .reply, reply.scope.mailbox == me.address, reply.scope.peer == peer else { return false }
+        }
+        let targetThread = reply?.message.threadId ?? threadId
         // Everything sent from this app asks for work, at the most it can ask for. The optimistic
         // row carries the envelope too, so what is on screen the second after pressing send is what
         // the next poll will bring back.
@@ -680,13 +691,20 @@ final class Inbox {
             body: wire,
             at: Int(Date().timeIntervalSince1970),
             status: .sending,
-            threadId: threadId
+            threadId: targetThread,
+            msgRef: msgRef,
+            replyTo: reply.map { action in MessageReplyReference(
+                msgRef: action.message.msgRef, messageId: action.message.id,
+                from: action.message.kind == .outgoing ? me.address : action.message.address,
+                direction: action.message.kind == .outgoing ? "out" : "in", excerpt: nil,
+                quote: action.message.replyQuote) }
         )
         pending.append(row)
         rebuild()
 
         if Fixtures.enabled {
             update(row.id) { $0.status = .sent }
+            if let reply { cancelMessageAction(reply.id) }
             rebuild()
             return true
         }
@@ -708,7 +726,8 @@ final class Inbox {
                 update(row.id) { $0.attachments.append(MessageAttachment(id: uploaded.id, filename: uploaded.filename, mediaType: uploaded.mediaType, bytes: uploaded.bytes)) }
             }
             let sent = try await client.sendMessage(
-                from: me.address, to: peer, body: wire, threadId: threadId, attachments: ids)
+                from: me.address, to: peer, body: wire, threadId: targetThread, attachments: ids,
+                msgRef: msgRef, replyTo: reply?.message.reference, quote: reply?.message.replyQuote)
             update(row.id) {
                 $0.status = .sent
                 $0.sentCopyId = sent.sentCopyId
@@ -719,16 +738,89 @@ final class Inbox {
                 pending.removeAll { $0.id == row.id }
             }
             succeeded = true
-            Task { await loadInbox() }
+            if isCurrent(request) {
+                if let reply { cancelMessageAction(reply.id) }
+                Task { await loadInbox(for: request) }
+            }
         } catch let error as APIError {
             update(row.id) { $0.status = .failed }
-            toast = error.sendFailureMessage
+            if isCurrent(request) { toast = error.sendFailureMessage }
         } catch {
             update(row.id) { $0.status = .failed }
-            toast = "Could not reach the postbox."
+            if isCurrent(request) { toast = "Could not reach the postbox." }
         }
         rebuild()
         return succeeded
+    }
+
+    func action(in scope: MessageActionScope) -> MessageComposerAction? {
+        guard let action = composerAction, action.scope == scope, scope.mailbox == me?.address else { return nil }
+        return action
+    }
+
+    func beginMessageAction(_ kind: MessageComposerAction.Kind, message: ThreadMessage, in scope: MessageActionScope) {
+        guard !actionSending, scope.mailbox == me?.address, me != nil,
+              message.kind != .system, message.status == .sent, !message.id.hasPrefix("local_"),
+              message.expiresAt.map({ $0 > Int(Date().timeIntervalSince1970) }) ?? true,
+              conversation(with: scope.peer)?.messages.contains(where: { $0.id == message.id }) == true else { return }
+        if kind == .edit && !message.isEditable() { return }
+        composerAction = MessageComposerAction(kind: kind, scope: scope, message: message,
+                                               text: kind == .edit ? message.editingText : "")
+    }
+
+    func updateMessageAction(_ id: UUID, text: String) {
+        guard composerAction?.id == id, !actionSending else { return }
+        composerAction?.text = text
+    }
+
+    func cancelMessageAction(_ id: UUID) {
+        if composerAction?.id == id { composerAction = nil }
+    }
+
+    @discardableResult
+    func saveMessageEdit(_ action: MessageComposerAction) async -> Bool {
+        guard !actionSending, action.kind == .edit, composerAction?.id == action.id,
+              let request = mailboxRequest, request.identity == action.scope.mailbox,
+              !action.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        guard action.message.isEditable(),
+              conversation(with: action.scope.peer)?.messages.contains(where: { $0.id == action.message.id }) == true else {
+            toast = "That message is no longer editable."
+            return false
+        }
+        let operation = UUID()
+        actionOperation = operation
+        defer { if actionOperation == operation { actionOperation = nil } }
+        let old = action.attempt
+        let attempt = old?.matches(text: action.text, fileIDs: [], replyTo: nil, editOf: action.message.reference) == true
+            ? old! : MessageSendAttempt(text: action.text, fileIDs: [], editOf: action.message.reference)
+        composerAction?.attempt = attempt
+        let wire = action.message.bodyForEdit(action.text)
+        if Fixtures.enabled {
+            if let index = messages.firstIndex(where: { $0.messageId == action.message.id }) {
+                messages[index].body = wire
+                messages[index].editedAt = Int(Date().timeIntervalSince1970)
+                messages[index].editCount = (messages[index].editCount ?? 0) + 1
+                rebuild()
+            }
+            cancelMessageAction(action.id)
+            return true
+        }
+        do {
+            _ = try await client.sendMessage(from: request.identity, to: action.scope.peer, body: wire,
+                                             threadId: action.message.threadId, msgRef: attempt.reference,
+                                             editOf: action.message.reference)
+            guard isCurrent(request) else { return true }
+            cancelMessageAction(action.id)
+            await loadInbox(for: request)
+            return true
+        } catch let error as APIError {
+            if isCurrent(request) {
+                toast = error.code == "edit_window_closed" ? "That message is no longer editable." : error.sendFailureMessage
+            }
+        } catch {
+            if isCurrent(request) { toast = "Could not save the edit. Try again." }
+        }
+        return false
     }
 
     private func update(_ id: String, _ change: (inout PendingMessage) -> Void) {

@@ -36,3 +36,13 @@ made in this phase. Existing PR checks are being finalized in their original wor
 - Model cases verify reference encoding/padding, exact 24-hour/expiry edit boundaries, legacy decoding and Unicode quote limits. Quote bounding preserves whole graphemes while staying within the server's Unicode-scalar budget.
 - Full standalone Apple Swift model suites pass in `validation/native2-apple-wire-models.log`, including **88 inbox/wire checks**, 31 group logic checks and 33 Phase 1b checks. This is API/model evidence, not native screen or newer-runtime qualification.
 - The three small DTO declarations came from a local draft and were reviewed against the contract before use. No new dependencies or authentication/authorization shortcuts.
+
+
+## Checkpoint — scoped edit actions and retries
+
+- Added mailbox/peer/subject action state and edit operations with operation identities. Late completions cannot clear a new mailbox's action or in-flight state. Ordinary send failures are also scoped before showing a toast.
+- Edits preserve structured request verbs, nested arguments, unknown context and independent notes; only the visible task/question changes. The native work envelope's duplicated note changes with its task. Pending local rows cannot be edited before a server copy exists.
+- Identical failed edit retries retain the exact reference; changing text creates a new attempt. Controlled transport checks include a rejected double save, 503/retry, successful folded refresh and two mailbox edits completing out of order. Full standalone suites pass: inbox **117 checks**, groups **31**, Phase 1b **33**, plus the added pure editing/fingerprint cases (`native2-action-behavior.log`, `native2-edit-model.log`).
+- Docdex's targeted index request returned an HTTP error, but the subsequent symbol and AST reads recovered; graph results contain no Swift edges, so shared targets and test scripts were inspected directly. Small local drafts for the fingerprint/tests were invalid and rejected; none were applied.
+- A direct test command's temporary cleanup was rejected by automatic execution review because it used rm -f. The safe retry retains its test binary in the private release folder and passes. No permission escalation or deletion was used.
+- UI, group message actions, calendar and enterprise screens remain incomplete. Attachment-upload identity across an ambiguous send retry still needs review before normal send retries can claim identical payloads. This checkpoint is not a release candidate.

@@ -53,8 +53,39 @@ struct ThreadMessage: Identifiable, Equatable {
     var reference: String { msgRef ?? id }
     var isEdited: Bool { (editCount ?? 0) > 0 || editedAt != nil }
     func isEditable(at now: Int = Int(Date().timeIntervalSince1970)) -> Bool {
-        kind == .outgoing && status == .sent && at > 0 && now >= at && now - at < 86_400
+        kind == .outgoing && status == .sent && !id.hasPrefix("local_") && at > 0 && now >= at && now - at < 86_400
             && (expiresAt.map { $0 > now } ?? true)
+    }
+
+    var replyQuote: String {
+        let words = copyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        return MessageReplyReference.boundedQuote(words.isEmpty ? attachments.first?.filename ?? "Message" : words)
+    }
+
+    /// Edit the visible task/question without changing a structured request's verb or other args.
+    /// Other message formats are edited as their complete raw body.
+    var editingText: String {
+        guard let root = rawRequest, let args = root["args"] as? [String: Any] else { return body }
+        return args["task"] as? String ?? args["question"] as? String ?? body
+    }
+
+    func bodyForEdit(_ text: String) -> String {
+        guard var root = rawRequest, var args = root["args"] as? [String: Any],
+              let key = ["task", "question"].first(where: { args[$0] is String }),
+              let previous = args[key] as? String else { return text }
+        args[key] = text
+        root["args"] = args
+        if root["note"] as? String == previous { root["note"] = text }
+        guard let bytes = try? JSONSerialization.data(withJSONObject: root, options: .sortedKeys),
+              let wire = String(data: bytes, encoding: .utf8) else { return text }
+        return wire
+    }
+
+    private var rawRequest: [String: Any]? {
+        guard let bytes = body.data(using: .utf8),
+              let root = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any],
+              root["v"] as? Int == 1, root["verb"] is String else { return nil }
+        return root
     }
 
     var isRequest: Bool { verb != nil }
@@ -95,6 +126,44 @@ struct PendingMessage: Identifiable {
     /// this row retire the moment that copy comes back, instead of the message appearing twice.
     var sentCopyId: String?
     var attachments: [MessageAttachment] = []
+    var msgRef: String? = nil
+    var replyTo: MessageReplyReference? = nil
+}
+
+struct MessageActionScope: Hashable {
+    let mailbox: String?
+    let peer: String
+    let subject: String?
+}
+
+struct MessageSendAttempt: Equatable {
+    let text: String
+    let fileIDs: [UUID]
+    let replyTo: String?
+    let editOf: String?
+    let reference: String
+
+    init(text: String, fileIDs: [UUID], replyTo: String? = nil, editOf: String? = nil) {
+        self.text = text
+        self.fileIDs = fileIDs
+        self.replyTo = replyTo
+        self.editOf = editOf
+        self.reference = MessageReference.make()
+    }
+
+    func matches(text: String, fileIDs: [UUID], replyTo: String?, editOf: String?) -> Bool {
+        self.text == text && self.fileIDs == fileIDs && self.replyTo == replyTo && self.editOf == editOf
+    }
+}
+
+struct MessageComposerAction: Identifiable, Equatable {
+    enum Kind: Equatable { case reply, edit }
+    let id = UUID()
+    let kind: Kind
+    let scope: MessageActionScope
+    let message: ThreadMessage
+    var text: String
+    var attempt: MessageSendAttempt?
 }
 
 struct Conversation: Identifiable, Equatable {
@@ -219,7 +288,9 @@ enum ConversationBuilder {
                 body: row.body,
                 threadId: row.threadId,
                 status: row.status,
-                attachments: row.attachments
+                attachments: row.attachments,
+                msgRef: row.msgRef,
+                replyTo: row.replyTo
             ))
         }
 

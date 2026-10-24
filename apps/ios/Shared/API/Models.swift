@@ -13,7 +13,7 @@ struct Message: Decodable, Identifiable, Equatable {
     let messageId: String
     let from: String?
     let to: String?
-    let body: String
+    var body: String
     /// `in` or `out`. Absent from a postbox older than sent copies, which only ever returned
     /// received mail — so absence reads as `in`.
     let direction: String?
