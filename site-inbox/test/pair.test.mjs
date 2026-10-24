@@ -18,7 +18,7 @@ const PAIRING = {
   ip_country: "TR", expires_at: Math.floor(Date.now() / 1000) + 500, can_approve: true,
 };
 
-function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = "", digestReady = Promise.resolve() } = {}) {
+function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = "", session = {}, digestReady = Promise.resolve() } = {}) {
   const dom = new JSDOM(html, { url: `https://inbox.pigeonpost.dev/pair.html${search}${hash}`, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
@@ -32,6 +32,7 @@ function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = 
   window.TextEncoder = TextEncoder;
   window.PIGEONPOST_INBOX = { postbox: "https://postbox.test", oidc: { issuer: "https://auth.test/realms/r", clientId: "pigeonpost-web", scope: "openid profile" } };
   if (token) window.localStorage.setItem("ppi_token", token);
+  for (const [key, value] of Object.entries(session)) window.sessionStorage.setItem(key, value);
   const calls = [];
   const assigned = [];
   let resolveNavigation;
@@ -162,6 +163,54 @@ test("deny ends the request", async (t) => {
   p.window.document.getElementById("pair-deny").click();
   await settle();
   assert.equal(denied, 1);
+  assert.match(p.window.document.getElementById("pair-done-text").textContent, /Declined/);
+});
+
+test("a malformed new link cannot resume a previous machine's code", async (t) => {
+  for (const hash of ["#invalid", "#%E0%A4%A"]) {
+    const p = page(t, { hash, session: { ppp_code: "WXYZ-1234", ppp_resume: "approve" } });
+    await p.start();
+    assert.equal(p.window.location.hash, "");
+    assert.equal(p.window.sessionStorage.getItem("ppp_code"), null);
+    assert.equal(p.window.sessionStorage.getItem("ppp_resume"), null);
+    assert.equal(p.calls.length, 0, "the stale machine must not be resolved");
+    assert.equal(p.window.document.getElementById("pair-error").hidden, false);
+  }
+});
+
+test("a sign-in return without a fragment preserves this tab's pending code", async (t) => {
+  const p = page(t, { hash: "", session: { ppp_code: "WXYZ-1234" }, responses: {
+    "/v1/device-pairings/resolve": { status: 200, body: PAIRING },
+  } });
+  await p.start();
+  assert.equal(p.calls[0].body.user_code, "WXYZ-1234");
+  assert.equal(p.window.document.getElementById("pair-review").hidden, false);
+});
+
+test("a failed denial never claims the machine was declined", async (t) => {
+  const p = page(t, { responses: {
+    "/v1/device-pairings/resolve": { status: 200, body: PAIRING },
+    "/v1/device-pairings/pair_1/deny": { status: 503, body: { error: "service_unavailable" } },
+  } });
+  await p.start();
+  p.window.document.getElementById("pair-deny").click();
+  await settle();
+  assert.equal(p.window.document.getElementById("pair-done").hidden, true);
+  assert.equal(p.window.document.getElementById("pair-error").hidden, false);
+  assert.equal(p.window.sessionStorage.getItem("ppp_code"), "ABCD-EFGH");
+});
+
+test("denial cancels an approval hold already in progress", async (t) => {
+  const p = page(t, { responses: {
+    "/v1/device-pairings/resolve": { status: 200, body: PAIRING },
+    "/v1/device-pairings/pair_1/deny": { status: 200, body: {} },
+  } });
+  await p.start();
+  p.window.document.getElementById("pair-approve").dispatchEvent(new p.window.Event("pointerdown"));
+  p.window.document.getElementById("pair-deny").click();
+  await sleep(p.window.PigeonpostPair.HOLD_MS + 200);
+  assert.equal(p.calls.filter((c) => c.path.endsWith("/approve")).length, 0);
+  assert.equal(p.calls.filter((c) => c.path.endsWith("/deny")).length, 1);
   assert.match(p.window.document.getElementById("pair-done-text").textContent, /Declined/);
 });
 

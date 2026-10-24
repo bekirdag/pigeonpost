@@ -50,9 +50,16 @@
 
   /// Take the code out of the fragment (and the address bar) into this tab's session storage.
   function captureCode() {
-    const raw = decodeURIComponent((window.location.hash || "").replace(/^#/, "")).trim().toUpperCase();
-    if (raw) {
+    const fragment = (window.location.hash || "").replace(/^#/, "");
+    if (fragment) {
       history.replaceState(null, "", window.location.pathname);
+      // A new link must replace the old target even when it is malformed.
+      // Never silently resume approval of another machine from this tab.
+      SS.removeItem(P.code);
+      SS.removeItem("ppp_resume");
+      let raw;
+      try { raw = decodeURIComponent(fragment).trim().toUpperCase(); }
+      catch (_) { return null; }
       if (CODE_RE.test(raw)) SS.setItem(P.code, raw.length === 8 ? raw.slice(0, 4) + "-" + raw.slice(4) : raw);
     }
     return SS.getItem(P.code);
@@ -216,6 +223,13 @@
   }
 
   let pairing = null;
+  let busy = false;
+
+  function setBusy(value) {
+    busy = value;
+    $("pair-approve").disabled = value || !pairing || pairing.can_approve === false;
+    $("pair-deny").disabled = value;
+  }
 
   function render(p) {
     pairing = p;
@@ -269,7 +283,7 @@
 
   function holdBegin(event) {
     const btn = $("pair-approve");
-    if (!pairing || btn.disabled || holdTimer) return;
+    if (!pairing || busy || btn.disabled || holdTimer) return;
     if (event && event.preventDefault) event.preventDefault();
     holdStart = Date.now();
     btn.classList.add("holding");
@@ -296,6 +310,8 @@
   }
 
   async function approve() {
+    if (busy || !pairing) return;
+    setBusy(true);
     const code = SS.getItem(P.code);
     setProgress(1);
     text("pair-status", "Approving…");
@@ -306,14 +322,24 @@
       show("done", `Approved. ${pairing.handle} is signing in on that machine; you can close this page.`);
     } catch (e) {
       handleError(e, true);
+    } finally {
+      setBusy(false);
     }
   }
 
   async function deny() {
+    if (busy || !pairing) return;
+    holdEnd();
+    setBusy(true);
     const code = SS.getItem(P.code);
     try {
       await post(`/v1/device-pairings/${encodeURIComponent(pairing.pairing_id)}/deny`, { user_code: code });
-    } catch (_) { /* a refused deny still ends the request here */ }
+    } catch (e) {
+      handleError(e, false);
+      return;
+    } finally {
+      setBusy(false);
+    }
     SS.removeItem(P.code);
     clearInterval(countdown);
     show("done", "Declined. The machine was not signed in.");
