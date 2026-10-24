@@ -301,12 +301,18 @@ async fn proof_of_work_is_enforced_at_the_recipients_floor() {
     let policy = RecipientPolicy::new(&bob, 8, false, vec![], 1);
     client.set_policy(&policy).await.unwrap();
 
-    let unstamped = envelope::wrap(&alice, &bob.verifying_key(), "unstamped", NOW).unwrap();
+    let mut unstamped = envelope::wrap(&alice, &bob.verifying_key(), "unstamped", NOW).unwrap();
+    // A random wrap with nonce zero already meets this low floor 1 in 256 times.
+    // Choose a known-invalid nonce so this checks refusal, not random luck.
+    let nonce = (0..1024)
+        .find(|&nonce| pigeonpost_core::pow::work(&unstamped.id(), nonce) < 8)
+        .expect("find a nonce below the required work floor");
+    unstamped.pow_nonce = nonce;
     let refused = client.publish(&unstamped, None).await;
-    assert!(matches!(
-        refused,
-        Err(ClientError::Refused { status: 403, .. })
-    ));
+    assert!(
+        matches!(refused, Err(ClientError::Refused { status: 403, .. })),
+        "{refused:?}"
+    );
 
     let mut stamped = envelope::wrap(&alice, &bob.verifying_key(), "stamped", NOW).unwrap();
     stamped.stamp(8, 5_000_000).unwrap();
