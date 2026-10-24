@@ -1,0 +1,24 @@
+/* Approve-a-machine page (pair.html). Uses the inbox tokens from app.css. */
+body[data-page="pair"] { background: var(--page); min-height: 100vh; margin: 0; }
+.pair { display: flex; justify-content: center; padding: 48px 16px; }
+.pair-card { width: 100%; max-width: 460px; background: var(--raised); border: 1px solid var(--card-edge); border-radius: 16px; padding: 28px; color: var(--body); box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+.pair-head h1 { margin: 0 0 4px; font-size: 22px; color: var(--ink); }
+.pair-sub { margin: 0 0 20px; color: var(--muted); }
+.pair-muted { color: var(--muted); font-size: 13px; }
+.pair-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 16px; margin: 0 0 20px; }
+.pair-facts dt { color: var(--muted); }
+.pair-facts dd { margin: 0; color: var(--ink); overflow-wrap: anywhere; }
+.pair-confirm { background: var(--inset); border-radius: 12px; padding: 16px; text-align: center; margin-bottom: 16px; }
+.pair-confirm p { margin: 4px 0; }
+.pair-number { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 34px; letter-spacing: .08em; color: var(--ink); font-weight: 600; }
+.pair-reason { color: var(--danger, #b42318); }
+.pair-actions { display: flex; gap: 12px; align-items: center; }
+.pair-wide { width: 100%; height: 44px; }
+.pair-hold { position: relative; flex: 1; height: 48px; border-radius: 24px; border: 0; background: var(--accent-fill); color: var(--on-accent); font: inherit; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 10px; cursor: pointer; user-select: none; -webkit-user-select: none; touch-action: none; }
+.pair-hold:disabled { opacity: .45; cursor: not-allowed; }
+.pair-hold:focus-visible { outline: 3px solid var(--edge-focus); outline-offset: 2px; }
+.pair-ring { --progress: 0; width: 22px; height: 22px; border-radius: 50%; background: conic-gradient(var(--on-accent) calc(var(--progress) * 360deg), rgba(255,255,255,.3) 0); -webkit-mask: radial-gradient(circle, transparent 6px, #000 7px); mask: radial-gradient(circle, transparent 6px, #000 7px); }
+.pair-hold.holding { background: var(--accent-fill-hover); }
+.pair-actions .btn-ghost { height: 48px; padding: 0 20px; }
+.pair-status { min-height: 1.4em; margin-top: 12px; }
+@media (prefers-reduced-motion: reduce) { .pair-ring { transition: none; } }
