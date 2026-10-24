@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test test/*.test.mjs",
-    "check": "node --check src/server.js && node --check src/billing.js && node --check src/saas.js && node --check src/postbox.js && node --check src/catalog.js && node --check src/state.js && node --check src/config.js && node --check src/masaas.js"
+    "check": "node --check src/server.js && node --check src/billing.js && node --check src/saas.js && node --check src/postbox.js && node --check src/catalog.js && node --check src/state.js && node --check src/config.js && node --check src/masaas.js && node --check src/sales.js"
   },
   "engines": {
     "node": ">=18"

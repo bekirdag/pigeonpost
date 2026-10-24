@@ -1,0 +1,12 @@
+{
+  "name": "pigeonpost-enterprise",
+  "private": true,
+  "description": "enterprise.pigeonpost.dev: static files; this manifest exists only so the tests can be run.",
+  "scripts": {
+    "test": "node --test test/*.test.mjs",
+    "test:e2e": "node test/e2e/run.mjs"
+  },
+  "devDependencies": {
+    "jsdom": "^27.0.0"
+  }
+}
