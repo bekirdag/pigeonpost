@@ -54,7 +54,10 @@ final class HandlePurchaseTests: XCTestCase {
         purchasePage.tap()
         scrollTo(app.textFields["yourname"])
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["handle-register"].exists)
+        // Newer Form layouts instantiate only visible rows. The name field can
+        // be visible while the purchase action below it has not been built yet.
+        scrollTo(buy)
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["handle-register"].label.contains("$8.00"))
         screenshot("direct-handle-purchase")
     }
@@ -244,7 +247,8 @@ final class HandlePurchaseTests: XCTestCase {
         }
         scrollTo(app.buttons["handle-product-" + ids[4]])
         app.buttons["handle-product-" + ids[4]].tap()
-        scrollTo(app.textFields["yourname"])
+        scrollTo(buy)
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
         XCTAssertTrue(buy.label.contains("$40.00"))
         enter("fifth")
         waitForEnabledBuy()
