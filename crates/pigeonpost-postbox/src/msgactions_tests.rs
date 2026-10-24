@@ -232,7 +232,10 @@ async fn only_the_sender_may_edit_and_only_within_a_day() {
     let (status, body) = srv
         .send(&c, &b, json!({ "body": "imposter", "msg_ref": mine }))
         .await;
-    assert_eq!((status, body["error"].as_str()), (StatusCode::CONFLICT, Some("msg_ref_in_use")));
+    assert_eq!(
+        (status, body["error"].as_str()),
+        (StatusCode::CONFLICT, Some("msg_ref_in_use"))
+    );
 
     // The recipient cannot edit it, by reference or by their own copy's id.
     for key in [
