@@ -15,11 +15,13 @@
 //! custody as every other mailbox token (`postbox.json`); the device key sits beside it in
 //! `device-keys.json`, also owner-only.
 
-use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ed25519_dalek::{Signer, SigningKey};
+use pigeonpost_directory::private_store::{
+    read_private_file_bounded, write_private_file_atomic, PrivateDirectory,
+};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use zeroize::Zeroize;
@@ -30,6 +32,7 @@ type Error = Box<dyn std::error::Error>;
 
 const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
 const DEVICE_KEYS_FILE: &str = "device-keys.json";
+const MAX_DEVICE_KEYS_BYTES: u64 = 1024 * 1024;
 /// Domain separation for the two proofs, exactly as `docs/orgs.md` §8 spells them.
 const PAIRING_CONTEXT: &[u8] = b"pigeonpost-pairing-claim-v1\0";
 const ENROLL_CONTEXT: &[u8] = b"pigeonpost-enroll-v1\0";
@@ -114,6 +117,12 @@ struct DeviceKey {
     created_at: u64,
 }
 
+impl Drop for DeviceKey {
+    fn drop(&mut self) {
+        self.secret_key.zeroize();
+    }
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct DeviceKeys {
     devices: Vec<DeviceKey>,
@@ -136,10 +145,13 @@ pub async fn login_device_handle(opts: &Options<'_>, handle: &str) -> Result<(),
     if !handle.starts_with('/') || handle.split('/').filter(|s| !s.is_empty()).count() < 2 {
         return Err("--handle must be an agent address like /acme/agent1".into());
     }
-    let mut seed = random32();
+    // Fail before issuing an enrollment or pairing if this home cannot retain
+    // credentials privately. Keep the guarded directory alive for the flow.
+    let _private_home = prepare_private_home(opts.home)?;
+    let mut seed = zeroize::Zeroizing::new(random32());
     let key = SigningKey::from_bytes(&seed);
-    let mut secret = random32();
-    let challenge = Sha256::digest(secret);
+    let mut secret = zeroize::Zeroizing::new(random32());
+    let challenge = Sha256::digest(&secret[..]);
 
     let client = http()?;
     let mut body = serde_json::json!({
@@ -199,7 +211,7 @@ pub async fn login_device_handle(opts: &Options<'_>, handle: &str) -> Result<(),
     let signature = key.sign(&message);
     let claim = serde_json::json!({
         "pairing_id": pairing.pairing_id,
-        "claim_secret": b64(&secret),
+        "claim_secret": b64(&secret[..]),
         "signature": b64(&signature.to_bytes()),
     });
     secret.zeroize();
@@ -243,7 +255,8 @@ pub async fn login_enroll(opts: &Options<'_>, code: &str) -> Result<(), Error> {
     if code.is_empty() {
         return Err("no enrollment code given".into());
     }
-    let mut seed = random32();
+    let _private_home = prepare_private_home(opts.home)?;
+    let mut seed = zeroize::Zeroizing::new(random32());
     let key = SigningKey::from_bytes(&seed);
     let mut message = ENROLL_CONTEXT.to_vec();
     message.extend_from_slice(code.as_bytes());
@@ -292,7 +305,6 @@ async fn finish(opts: &Options<'_>, issued: Issued, seed: &[u8; 32]) -> Result<(
         handle: issued.handle.clone(),
         created_at: now_unix(),
     };
-    let path = postbox_cmd::record_credential(opts.home, &credential)?;
     let key = SigningKey::from_bytes(seed);
     save_device_key(
         opts.home,
@@ -304,6 +316,7 @@ async fn finish(opts: &Options<'_>, issued: Issued, seed: &[u8; 32]) -> Result<(
             created_at: now_unix(),
         },
     )?;
+    let path = postbox_cmd::record_credential(opts.home, &credential)?;
 
     let downgraded = login_cmd::revoke_and_forget(opts.home).await;
 
@@ -370,27 +383,33 @@ fn device_keys_path(home: &Path) -> PathBuf {
     home.join(DEVICE_KEYS_FILE)
 }
 
+fn load_device_keys(home: &Path) -> Result<DeviceKeys, Error> {
+    let path = device_keys_path(home);
+    match read_private_file_bounded(&path, MAX_DEVICE_KEYS_BYTES) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|_| "device-keys.json is invalid; no device credentials were changed".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(DeviceKeys::default()),
+        Err(e) => Err(e.into()),
+    }
+}
+
+fn prepare_private_home(home: &Path) -> Result<PrivateDirectory, Error> {
+    let directory = PrivateDirectory::open_or_create(home)
+        .map_err(|e| format!("device credentials need a private PIGEONPOST_HOME directory: {e}"))?;
+    // Check existing state before consuming a one-time enrollment code. The
+    // bounded custody read refuses links and unsafe file permissions on each OS.
+    load_device_keys(home)?;
+    postbox_cmd::check_enrollment_credentials(home)?;
+    Ok(directory)
+}
+
 fn save_device_key(home: &Path, key: DeviceKey) -> Result<(), Error> {
     let path = device_keys_path(home);
-    let mut all: DeviceKeys = match std::fs::read(&path) {
-        Ok(bytes) => serde_json::from_slice(&bytes)?,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => DeviceKeys::default(),
-        Err(e) => return Err(e.into()),
-    };
+    let mut all = load_device_keys(home)?;
     all.devices.retain(|d| d.address != key.address);
     all.devices.push(key);
-    std::fs::create_dir_all(home)?;
-    let tmp = path.with_extension("json.tmp");
-    let mut file = std::fs::File::create(&tmp)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-    }
-    file.write_all(&serde_json::to_vec_pretty(&all)?)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, &path)?;
+    let bytes = zeroize::Zeroizing::new(serde_json::to_vec_pretty(&all)?);
+    write_private_file_atomic(&path, &bytes, MAX_DEVICE_KEYS_BYTES)?;
     Ok(())
 }
 
@@ -605,14 +624,15 @@ mod tests {
     }
 
     fn write_session(home: &Path, issuer: &str) {
-        std::fs::create_dir_all(home).unwrap();
-        std::fs::write(
-            home.join("auth.json"),
-            serde_json::to_vec(&serde_json::json!({
+        let _directory = PrivateDirectory::open_or_create(home).unwrap();
+        write_private_file_atomic(
+            &home.join("auth.json"),
+            &serde_json::to_vec(&serde_json::json!({
                 "issuer": issuer, "refresh_token": "rt_secret", "access_token": "at",
                 "expires_at": 0,
             }))
             .unwrap(),
+            MAX_DEVICE_KEYS_BYTES,
         )
         .unwrap();
     }
@@ -703,6 +723,105 @@ mod tests {
         let creds: serde_json::Value =
             serde_json::from_slice(&std::fs::read(home.join("postbox.json")).unwrap()).unwrap();
         assert_eq!(creds["identities"][0]["capability_token"], "cap_enrolled");
+    }
+
+    #[tokio::test]
+    async fn corrupt_credentials_are_refused_before_consuming_enrollment() {
+        let (mock, base) = serve(Outcome::Approve).await;
+        let dir = tempfile::tempdir().unwrap();
+        let damaged = b"{\"secret\":\"private-marker\",invalid}";
+        for name in ["device-keys.json", "postbox.json"] {
+            let home = dir.path().join(name);
+            let _directory = PrivateDirectory::open_or_create(&home).unwrap();
+            write_private_file_atomic(&home.join(name), damaged, MAX_DEVICE_KEYS_BYTES).unwrap();
+            let error = login_enroll(&opts(&home, &base), "enr_good")
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains(&format!("{name} is invalid")), "{error}");
+            assert!(!error.contains("private-marker"));
+            assert_eq!(std::fs::read(home.join(name)).unwrap(), damaged);
+            assert!(!mock.seen.lock().unwrap().enroll_ok);
+        }
+    }
+
+    #[tokio::test]
+    async fn oversized_keys_are_refused_before_consuming_enrollment() {
+        let (mock, base) = serve(Outcome::Approve).await;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("agent");
+        let _directory = PrivateDirectory::open_or_create(&home).unwrap();
+        let oversized = vec![b' '; MAX_DEVICE_KEYS_BYTES as usize + 1];
+        write_private_file_atomic(
+            &home.join(DEVICE_KEYS_FILE),
+            &oversized,
+            MAX_DEVICE_KEYS_BYTES + 1,
+        )
+        .unwrap();
+        assert!(login_enroll(&opts(&home, &base), "enr_good").await.is_err());
+        assert!(!mock.seen.lock().unwrap().enroll_ok);
+        assert!(!home.join("postbox.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn linked_credentials_and_nonprivate_homes_are_refused_before_enrollment() {
+        use std::os::unix::{fs::symlink, fs::PermissionsExt};
+
+        let (mock, base) = serve(Outcome::Approve).await;
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("unrelated");
+        std::fs::write(&target, b"unchanged").unwrap();
+        for name in ["device-keys.json", "postbox.json"] {
+            let home = dir.path().join(name);
+            let _directory = PrivateDirectory::open_or_create(&home).unwrap();
+            symlink(&target, home.join(name)).unwrap();
+            assert!(login_enroll(&opts(&home, &base), "enr_good").await.is_err());
+            assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+            assert!(!mock.seen.lock().unwrap().enroll_ok);
+        }
+        let home = dir.path().join("shared");
+        let _directory = PrivateDirectory::open_or_create(&home).unwrap();
+        std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let error = login_enroll(&opts(&home, &base), "enr_good")
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("private PIGEONPOST_HOME"));
+        assert!(!mock.seen.lock().unwrap().enroll_ok);
+        assert_eq!(
+            std::fs::metadata(&home).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn predictable_temporary_links_cannot_redirect_credential_writes() {
+        use std::os::unix::fs::symlink;
+
+        let (_mock, base) = serve(Outcome::Approve).await;
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path().join("agent");
+        let _directory = PrivateDirectory::open_or_create(&home).unwrap();
+        write_session(&home, &base);
+        let target = dir.path().join("unrelated");
+        std::fs::write(&target, b"unchanged").unwrap();
+        for name in ["device-keys.json.tmp", "postbox.json.tmp"] {
+            symlink(&target, home.join(name)).unwrap();
+        }
+        login_enroll(&opts(&home, &base), "enr_good").await.unwrap();
+        assert_eq!(std::fs::read(&target).unwrap(), b"unchanged");
+        assert_eq!(load_device_keys(&home).unwrap().devices.len(), 1);
+        assert!(
+            read_private_file_bounded(&home.join("postbox.json"), MAX_DEVICE_KEYS_BYTES).is_ok()
+        );
+        for name in ["device-keys.json.tmp", "postbox.json.tmp"] {
+            assert!(std::fs::symlink_metadata(home.join(name))
+                .unwrap()
+                .file_type()
+                .is_symlink());
+        }
     }
 
     #[test]

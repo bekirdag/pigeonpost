@@ -4,6 +4,15 @@ Server contract: `docs/orgs.md` §8. The web reference is `site-inbox/pair.html`
 native flow must behave the same way. Native screens are optional for the Phase 4 beta: until they
 ship, the QR opens `https://inbox.pigeonpost.dev/pair.html#CODE` in the browser, which works.
 
+The CLI requires a private `PIGEONPOST_HOME` before starting either enrollment flow. New homes
+are created with owner-only permissions (including an explicit private Windows ACL); existing
+homes and credential files are checked without silently changing their permissions. On Unix an
+existing home must be owned by the current user with mode `0700`. Use a dedicated agent directory,
+or deliberately correct the permissions on an existing agent directory before trying again.
+Device keys and mailbox credentials use bounded private reads and guarded atomic writes, reject
+linked or unsafe existing files, and never include their contents in parser errors. Preflight
+failures do not consume an enrollment code or start a pairing.
+
 ## Entry
 
 - `pigeonpost login --device --handle /acme/agent1` prints a QR of
