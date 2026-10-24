@@ -8,7 +8,9 @@ on:
       - 'apps/ios/Shared/**'
       - 'apps/ios/Tests/**'
       - 'apps/ios/UITests/**'
-      - 'crates/pigeonpost-groupcrypto/bindings/swift/**'
+      - 'apps/ios/scripts/**'
+      - 'apps/ios/Pigeonpost.xcodeproj/**'
+      - 'crates/pigeonpost-groupcrypto/**'
       - '.github/workflows/ios-ux-tests.yml'
 
 permissions:

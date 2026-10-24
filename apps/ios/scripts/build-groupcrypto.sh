@@ -26,11 +26,18 @@ lib=libpigeonpost_groupcrypto_ffi.a
 # would then try to link against the iPhone SDK. Cargo gets a clean environment instead.
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
 rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+# Hosted images may install the Rust shims outside CARGO_HOME/bin. Resolve their
+# directories before replacing Xcode's PATH; keep SDK/compiler variables out of run().
+cargo_bin="$(command -v cargo || true)"
+rustup_bin="$(command -v rustup || true)"
 path="$cargo_home/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+if [ -n "$cargo_bin" ] && [ -x "$cargo_bin" ]; then path="$(dirname "$cargo_bin"):$path"; fi
+if [ -n "$rustup_bin" ] && [ -x "$rustup_bin" ]; then path="$(dirname "$rustup_bin"):$path"; fi
 if ! PATH="$path" command -v cargo >/dev/null 2>&1; then
-  echo "error: cargo not found. Install Rust with rustup (https://rustup.rs); the crate pins its own toolchain." >&2
+  echo "error: cargo not found (CARGO_HOME=$cargo_home). Install Rust with rustup (https://rustup.rs); the crate pins its own toolchain." >&2
   exit 1
 fi
+echo "groupcrypto Rust tools: cargo=$(PATH="$path" command -v cargo), rustup=$(PATH="$path" command -v rustup)"
 toolchain="$(sed -n 's/^channel *= *"\(.*\)"/\1/p' "$crate/rust-toolchain.toml")"
 
 targets=""
