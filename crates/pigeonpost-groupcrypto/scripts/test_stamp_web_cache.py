@@ -1,4 +1,5 @@
 import tempfile
+import hashlib
 from pathlib import Path
 import unittest
 from stamp_web_cache import stamp
@@ -24,7 +25,7 @@ class CacheStampTests(unittest.TestCase):
                 index = (output / "index.html").read_text()
                 self.assertEqual(loader.count("?v=" + digest), 2)
                 self.assertIn("loader.js?v=" + digest, groups)
-                self.assertIn("groups.js?v=" + digest, index)
+                self.assertIn("groups.js?v=" + hashlib.sha256(groups.encode("utf-8")).hexdigest(), index)
                 (repo / "site-inbox/vendor/groupcrypto/loader.js").write_text(loader)
                 (repo / "site-inbox/groups.js").write_text(groups)
                 (repo / "site-inbox/index.html").write_text(index)
@@ -32,6 +33,20 @@ class CacheStampTests(unittest.TestCase):
                 self.assertEqual((output / "loader.js").read_text(), loader)
                 self.assertEqual((output / "groups.js").read_text(), groups)
                 self.assertEqual((output / "index.html").read_text(), index)
+
+    def test_group_ui_change_without_a_wasm_change_gets_a_fresh_entry_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            self.fixture(repo)
+            output = repo / "stamped"
+            digest = "a" * 64
+            stamp(repo, output, digest)
+            old_index = (output / "index.html").read_text()
+            source = repo / "site-inbox/groups.js"
+            source.write_text(source.read_text() + "window.groupUiVersion = 2;\n")
+            stamp(repo, output, digest)
+            self.assertNotEqual((output / "index.html").read_text(), old_index)
+            self.assertIn("loader.js?v=" + digest, (output / "groups.js").read_text())
 
     def test_invalid_digest_and_missing_or_duplicate_import_refuse_to_stamp(self):
         with tempfile.TemporaryDirectory() as tmp:
