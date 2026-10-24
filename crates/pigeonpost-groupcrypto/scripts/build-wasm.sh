@@ -10,6 +10,7 @@
 #   docker run --rm -v "$PWD":/src -w /src/crates/pigeonpost-groupcrypto rust:1.91.1 \
 #     sh -c 'cargo install wasm-bindgen-cli --version 0.2.128 --locked && scripts/build-wasm.sh'
 #
+# Python 3 is also required to stamp/check the digest-bound web cache keys.
 #   cargo install wasm-bindgen-cli --version 0.2.128 --locked
 #   crates/pigeonpost-groupcrypto/scripts/build-wasm.sh [--check]
 set -euo pipefail

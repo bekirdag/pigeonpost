@@ -4,14 +4,15 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Shared baseline #90 is merged at `26f10b8`; enterprise/device-login #83 is merged at `8db5df3`.
-The enterprise portal, inbox approval page, privacy/terms updates and sales-validation endpoint are
-now deployed and verified on the origin and public URLs. The postbox process still runs source
-`c0d6a4b` (already includes the Phase 4 server); the shared Rust security update and #89 server
-changes await its controlled deployment. #89 is integrated with #83 and its current CI is running.
-#87 passes the newer iPad audit; two iPhone cases are being repaired. Native round two has a
-committed/tested Apple wire foundation, with screens and remaining platforms still pending.
-Native releases remain batched; the owner's Apple pre-submission review hold is preserved.
+Shared baseline #90, enterprise/device-login #83 and message actions #89 are merged. The portal,
+approval page and postbox/reaper now run the reviewed changes; public health and authentication
+checks pass. The web inbox bundle awaits the cache-coupling fix and controlled static rollout.
+#87 is integrated with main at `c3a3f0f`; core/Windows/Mac/group checks pass and its Apple run is
+being qualified. Native round two has committed Apple direct edit/reply/status/privacy screens,
+five passing local UI cases and passing iPhone/Mac builds. Its newer iPad passes; newer iPhone
+keyboard focus and native StoreKit restore assertions need attention. Group actions, calendar,
+enterprise client screens and remaining native platforms are still pending. All native releases
+remain batched, with the owner's Apple pre-submission review hold preserved.
 
 ## Intake evidence
 
@@ -159,5 +160,5 @@ Native releases remain batched; the owner's Apple pre-submission review hold is 
 ## Checkpoint — coherent web crypto requests
 
 - The loader, its glue/manifest imports, WASM fetch and the HTML group-entry reference now use the same full pinned digest. Reproducible generation stamps these references and checks them alongside the binary; later rebuilds cannot silently leave an old entry URL. Changed HTML asset URLs get a fresh rollout version rather than reusing a URL that may already cache the previous app for four hours.
-- Two generator regressions pass, covering digest changes, idempotence, invalid digests and missing/duplicated import markers. Real WASM/MLS suite **10/10** passes, including a browser-style fetch returning stale bytes (refused), then current bytes (accepted), and exact no-cache/same-origin/digest request assertions. Full inbox suite **196/196** passed before the final added HTML-entry assertion; that focused MLS recheck is running. WASM bytes remain unchanged at `f185d0bd…`; Linux reproducible rebuild and hosted CI remain required before deployment.
+- Two generator regressions pass, covering digest changes, idempotence, invalid digests and missing/duplicated import markers. Real WASM/MLS suite **10/10** passes, including a browser-style fetch returning stale bytes (refused), then current bytes (accepted), and exact no-cache/same-origin/digest request assertions. Full inbox suite **196/196** passed before the final added HTML-entry assertion; the focused MLS recheck passes **10/10**. WASM bytes remain unchanged at `f185d0bd…`; Linux reproducible rebuild and hosted CI remain required before deployment.
 - Local draft supplied the small checked replacement helper and was reviewed; the Node test draft invented APIs and was rejected. Docdex indexed the edited script/test/group entry. Vendor symbols are excluded/missing and shell AST is unsupported, so actual module imports, workflow callers, parser checks and the real WASM runtime tests provide the additional checks.
