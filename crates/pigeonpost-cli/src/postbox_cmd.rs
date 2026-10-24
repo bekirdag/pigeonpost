@@ -23,6 +23,7 @@ pub const DEFAULT_POSTBOX: &str = "https://postbox.pigeonpost.dev";
 
 /// Where minted credentials land, under the agent's home.
 const CREDENTIALS_FILE: &str = "postbox.json";
+const MAX_ENROLLMENT_CREDENTIALS_BYTES: u64 = 4 * 1024 * 1024;
 
 /// Refuse absurd difficulty rather than spinning forever if a server misreports it. 26 bits is the
 /// postbox's own configured ceiling; ~10^8 hashes, seconds of CPU at worst.
@@ -2069,6 +2070,37 @@ fn save(home: &Path, credential: &Credential) -> Result<PathBuf, Error> {
     let mut creds = load(home)?;
     creds.identities.push(credential.clone());
     write_credentials(home, &creds)
+}
+
+/// Record a credential issued for an existing mailbox (device login, enrollment), replacing any
+/// earlier credential this home held for the same address rather than keeping a dead one.
+pub(crate) fn record_credential(home: &Path, credential: &Credential) -> Result<PathBuf, Error> {
+    let mut creds = load_enrollment_credentials(home)?;
+    creds.identities.retain(|c| c.address != credential.address);
+    creds.identities.push(credential.clone());
+    let path = credentials_path(home);
+    let body = zeroize::Zeroizing::new(serde_json::to_vec_pretty(&creds)?);
+    pigeonpost_directory::private_store::write_private_file_atomic(
+        &path,
+        &body,
+        MAX_ENROLLMENT_CREDENTIALS_BYTES,
+    )?;
+    Ok(path)
+}
+
+/// Refuse unsafe or corrupt existing state before consuming a one-time enrollment.
+pub(crate) fn check_enrollment_credentials(home: &Path) -> Result<(), Error> {
+    load_enrollment_credentials(home).map(|_| ())
+}
+
+fn load_enrollment_credentials(home: &Path) -> Result<Credentials, Error> {
+    use pigeonpost_directory::private_store::read_private_file_bounded;
+    match read_private_file_bounded(&credentials_path(home), MAX_ENROLLMENT_CREDENTIALS_BYTES) {
+        Ok(bytes) => serde_json::from_slice(&bytes)
+            .map_err(|_| "postbox.json is invalid; no mailbox credentials were changed".into()),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(Credentials::default()),
+        Err(e) => Err(e.into()),
+    }
 }
 
 fn write_credentials(home: &Path, creds: &Credentials) -> Result<PathBuf, Error> {

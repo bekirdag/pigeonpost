@@ -224,3 +224,11 @@ group safety number for comparison.
 ```nginx
 location ~ "^/g/grp_[A-Za-z0-9]{1,60}/?$" { try_files /g/index.html =404; }
 ```
+
+## Approve-a-machine page (`pair.html`)
+
+`pair.html` + `pair.js` + `pair.css` serve the QR printed by `pigeonpost login --device --handle`
+(`docs/orgs.md` §8). It is a static page under the existing inbox CSP; nginx needs no new location.
+Its sign-in returns to `https://inbox.pigeonpost.dev/pair.html`, so that URL must be an allowed
+redirect URI of the `pigeonpost-web` client (it is covered if the client allows
+`https://inbox.pigeonpost.dev/*`).

@@ -134,6 +134,26 @@
     To show ticks beside your messages, our server records when a message reached the recipient's app (delivered), when they opened it (seen), and, for agents that report it, when an agent started and finished working on it. These times are stored with the sender's copy of the message and deleted with it. You can turn <em>Send read receipts</em> off in Settings; then nobody is told when you have seen their messages, and you do not see when others have seen yours. Delivered ticks cannot be turned off. People you have blocked receive no receipts at all, and messages filed in Filtered never show more than delivered. In groups, members who share read receipts can see how far each member has read.
   </p>
 
+  <h3>Organizations</h3>
+  <p>
+    A company can buy Pigeonpost for its team at enterprise.pigeonpost.dev. The company's address space (for example /acme) belongs to the company; each person's company mailbox (/acme/jane) sits in that person's own Pigeonpost account, and the company keeps control of it: its admins can suspend it, remove it, or give the address to someone new.
+  </p>
+  <p>
+    <strong>What a company's admins can see:</strong> the people and agents in the organization, their company addresses, names, roles, status (invited, active, suspended), when they joined and were last active, and how much storage the organization uses. They can see the organization's rooms, rules, enrolled agent machines and audit log. <strong>They cannot see message content</strong> — not your direct messages and not room messages, which are end-to-end encrypted — and removing you or giving your address to someone else does not hand them, or the next person, your message history. Your personal mailboxes and personal account are never visible to the company.
+  </p>
+  <p>
+    <strong>Invitations:</strong> to invite you, an admin gives us your name and the address the invitation is sent to. We keep that address sealed (encrypted) for showing a masked form and resending, and as a keyed hash so we can check that whoever accepts signs in with the same verified address. The invitation link carries a single-use token in the part of the address that browsers never send to a server; we store only a hash of it. Invitations expire after 7 days. Invitation messages are delivered through our notification provider (saas_be, with Novu and Postmark) once that delivery is switched on; until then the admin shares the link themselves. Before you accept, the invitation page tells you what the company's admins will see and which rooms you will join.
+  </p>
+  <p>
+    <strong>Audit log:</strong> administrative actions in an organization (invitations, role changes, removals, agent enrolments, rule changes, security settings) are recorded with who did them and when, never message content or secrets. Network addresses in it are stored only as a keyed hash. The owner and admins can read and export it. It is kept for 2 years.
+  </p>
+  <p>
+    <strong>Agents and device sign-in:</strong> when an agent's machine is signed in to a company agent address by QR code or one-time code, we record the machine's label, its public key, and the approver. Enrollment codes and device credentials are stored only as hashes.
+  </p>
+  <p>
+    <strong>Verified domains:</strong> when a company verifies a domain, we look up the public DNS TXT record it published through public DNS-over-HTTPS resolvers, and check it again weekly.
+  </p>
+
   <h3 id="calendar">Calendar and scheduled meetings</h3>
   <p>
     Calendar events are not end-to-end encrypted. Their titles, descriptions, locations and the notes people add to their answers are stored encrypted at rest on our server, but our server can read them, because it uses them to send reminders and invitations. Times, time zones, repeat rules, who organized an event, who is invited, their answers, and meeting codes are stored as they are, because reminders, availability and meeting admission depend on them. Your calendar is visible to you; the people you invite see the event and the list of people invited (people invited by contact address are shown only by the name you gave them, never by their address).
@@ -276,6 +296,24 @@
       <td>To show delivery and reading ticks, edits and replies in conversations</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
       <td>Like the message they belong to: deleted when that copy is deleted or disappears</td>
+    </tr>
+    <tr>
+      <td>Organization membership: names, company addresses, roles, status, join and last-active times</td>
+      <td>To run the organization the company bought, and to let its admins manage it</td>
+      <td>Performance of the contract with the company and with you (Art. 6(1)(b)); the company's legitimate interest in administering its workspace (Art. 6(1)(f))</td>
+      <td>While you are a member. After removal, the audit log keeps the record of it, and the company may keep the address reserved for someone new</td>
+    </tr>
+    <tr>
+      <td>Invitation addresses (sealed and keyed hash) and invitation tokens (hash only)</td>
+      <td>To deliver an invitation and check it is accepted by the invited person</td>
+      <td>Legitimate interests of the inviting company and of the invitee (Art. 6(1)(f))</td>
+      <td>The sealed address is deleted when the invitation is accepted; an unaccepted invitation keeps it until the invitation is revoked or the person is removed. Tokens stop working after 7 days</td>
+    </tr>
+    <tr>
+      <td>Organization audit log (actions, actors, targets; hashed network addresses)</td>
+      <td>Accountability and security for the company's administration</td>
+      <td>Legitimate interests in security and accountability (Art. 6(1)(f))</td>
+      <td><strong>2 years</strong>, append-only</td>
     </tr>
     <tr>
       <td>Calendar events, invitations, answers, reminders and delivery records</td>

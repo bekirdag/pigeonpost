@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<meta name="referrer" content="no-referrer">
+<!-- Approve a machine that asked to sign in as an organization agent (docs/orgs.md §8). -->
+<title>Pigeonpost — Approve a machine</title>
+<link rel="icon" href="/favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32.png" media="(prefers-color-scheme: light)">
+<link rel="icon" type="image/png" sizes="32x32" href="/favicon-32-dark.png" media="(prefers-color-scheme: dark)">
+<link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
+<script src="/theme.js?v=20261019-theme"></script>
+<link rel="preload" href="/fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/app.css?v=20261020-p1a-sfu">
+<link rel="stylesheet" href="/pair.css?v=20261021-p4">
+</head>
+<body data-page="pair">
+<main class="pair">
+  <div class="pair-card">
+    <header class="pair-head">
+      <h1>Approve a machine</h1>
+      <p class="pair-sub">Code <code id="pair-code">—</code></p>
+    </header>
+
+    <section id="pair-loading" hidden><p class="pair-muted">Looking up the request…</p></section>
+
+    <section id="pair-signin" hidden>
+      <p id="pair-signin-text">Sign in with your Pigeonpost account to review this request.</p>
+      <button id="pair-signin-btn" class="btn-primary pair-wide" type="button">Sign in</button>
+    </section>
+
+    <section id="pair-review" hidden>
+      <dl class="pair-facts">
+        <dt>Organization</dt><dd id="pair-org">—</dd>
+        <dt>Signs in as</dt><dd><strong id="pair-handle">—</strong></dd>
+        <dt>Machine label</dt><dd id="pair-label">—</dd>
+        <dt>Access</dt><dd id="pair-capabilities">—</dd>
+        <dt>Approximate location</dt><dd><span id="pair-country">—</span> <span class="pair-muted">(from the network; not proof of anything)</span></dd>
+        <dt>Expires in</dt><dd id="pair-expires">—</dd>
+      </dl>
+      <div class="pair-confirm">
+        <p>Check that your terminal shows the same number:</p>
+        <p class="pair-number" id="pair-confirmation" aria-live="polite">—</p>
+        <p class="pair-muted">If it doesn't, or you didn't start this, choose Deny.</p>
+      </div>
+      <p id="pair-reason" class="pair-reason" role="alert" hidden></p>
+      <div class="pair-actions">
+        <button id="pair-approve" class="pair-hold" type="button" aria-describedby="pair-hold-hint">
+          <span id="pair-ring" class="pair-ring" aria-hidden="true"></span>
+          <span>Hold to approve</span>
+        </button>
+        <button id="pair-deny" class="btn-ghost" type="button">Deny</button>
+      </div>
+      <p id="pair-hold-hint" class="pair-muted">Press and hold the button (or hold Space) for about two seconds.</p>
+      <p id="pair-status" class="pair-status" role="status" aria-live="polite"></p>
+    </section>
+
+    <section id="pair-done" hidden><p id="pair-done-text" role="status"></p></section>
+    <section id="pair-error" hidden><p id="pair-error-text" role="alert"></p></section>
+  </div>
+</main>
+<script src="/config.js"></script>
+<script src="/pair.js?v=20261021-p4"></script>
+</body>
+</html>
