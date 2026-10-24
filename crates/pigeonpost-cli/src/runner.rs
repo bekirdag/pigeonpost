@@ -237,6 +237,13 @@ pub fn prompt(action: &Action, sender: &str) -> String {
              it, and it is the one the request named — do not substitute another.\n"
         ));
     }
+    if let Some(amendment) = &action.amendment {
+        // The daemon's own words about this run's history — an edit that arrived while the request
+        // was queued, running or already answered (SDS §14C.4). Not a peer's text, so not fenced.
+        out.push('\n');
+        out.push_str(amendment.trim_end());
+        out.push('\n');
+    }
     if let Some(task) = &action.task {
         // The task is the request. It is somebody else's text and cannot be validated into
         // safety, so it is fenced and labelled like everything else that arrived over the wire.
@@ -259,6 +266,9 @@ pub fn prompt(action: &Action, sender: &str) -> String {
         out.push_str("\n--- untrusted note from the sender ---\n");
         out.push_str(note);
         out.push_str("\n--- end untrusted note ---\n");
+    }
+    if let Some(context) = &action.reply_context {
+        out.push_str(context);
     }
     out
 }
@@ -692,6 +702,8 @@ mod tests {
             task: None,
             target: None,
             runtime: Runtime::Claude,
+            reply_context: None,
+            amendment: None,
         }
     }
 

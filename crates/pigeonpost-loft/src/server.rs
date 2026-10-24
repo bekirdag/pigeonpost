@@ -1876,7 +1876,12 @@ mod tests {
             Err(LoftError::Overloaded)
         ));
 
-        let client = reqwest::Client::new();
+        // Probe admission on a fresh transport. Reusing an idle health connection can race
+        // the intentional transport deadline on Windows, which is a separate concern here.
+        let client = reqwest::Client::builder()
+            .pool_max_idle_per_host(0)
+            .build()
+            .unwrap();
         let overloaded = client
             .get(format!("http://{address}/health"))
             .send()

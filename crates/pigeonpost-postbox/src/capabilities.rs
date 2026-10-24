@@ -69,6 +69,22 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Calendar and scheduled meetings: /v1/calendars, /v1/calendar/*, event.* events (SDS §14B)",
     ),
     (
+        MESSAGE_EDIT,
+        "Editing sent direct messages: edit_of on /v1/send, message.edited (SDS §14C)",
+    ),
+    (
+        MESSAGE_REPLY,
+        "Replying to a specific direct message: reply_to and quote on /v1/send (SDS §14C)",
+    ),
+    (
+        RECEIPTS,
+        "Delivered and seen receipts on sent messages, /v1/receipts, message.receipt (SDS §14C)",
+    ),
+    (
+        AGENT_STATUS,
+        "Agent run status (working, done, failed) on sent messages, reported by agentd (SDS §14C)",
+    ),
+    (
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
@@ -103,6 +119,15 @@ pub(crate) const CALENDAR: &str = "calendar";
 /// it waits on the sender domain being verified.
 pub(crate) const CALENDAR_EMAIL: &str = "calendar_email";
 
+/// Message edits (SDS §14C).
+pub(crate) const MESSAGE_EDIT: &str = "message_edit";
+/// Replies to a specific message (SDS §14C).
+pub(crate) const MESSAGE_REPLY: &str = "message_reply";
+/// Delivered/seen receipts (SDS §14C).
+pub(crate) const RECEIPTS: &str = "receipts";
+/// Agent run status on sent messages (SDS §14C).
+pub(crate) const AGENT_STATUS: &str = "agent_status";
+
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[
     "features.changed",
@@ -129,6 +154,8 @@ pub(crate) const EVENT_TYPES: &[&str] = &[
     "event.cancelled",
     "event.rsvp",
     "event.reminder",
+    "message.receipt",
+    "message.edited",
 ];
 
 pub(crate) fn known_names() -> Vec<&'static str> {

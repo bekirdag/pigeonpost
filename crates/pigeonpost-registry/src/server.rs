@@ -4780,7 +4780,10 @@ mod tests {
                 RegistryHttpConfig::direct()
                     .with_limits(RegistryLimits {
                         max_blocking_operations: 1,
-                        blocking_timeout_ms: 25,
+                        // Preparation/admission must finish before the timeout being tested.
+                        // A 25 ms wall-clock budget can expire in an earlier crypto/SQLite
+                        // phase on a busy runner, never reaching the commit barrier at all.
+                        blocking_timeout_ms: 30_000,
                         ..RegistryLimits::default()
                     })
                     .unwrap(),
@@ -4832,6 +4835,15 @@ mod tests {
             .await
             .expect("commit must reach the post-SQLite barrier")
             .unwrap();
+        assert!(
+            !first.is_finished(),
+            "the request must still be waiting at the committed-write barrier"
+        );
+        assert_eq!(state.blocking.available_permits(), 0);
+        // Freeze only after the real SQLite commit reached the barrier. Advancing this
+        // runtime's clock expires the adapter's deadline without timing preliminary work.
+        tokio::time::pause();
+        tokio::time::advance(Duration::from_millis(30_001)).await;
         assert!(matches!(
             tokio::time::timeout(Duration::from_secs(60), first)
                 .await
@@ -4839,6 +4851,7 @@ mod tests {
                 .unwrap(),
             Err(RegistryError::Overloaded)
         ));
+        tokio::time::resume();
 
         release.send(()).unwrap();
         tokio::time::timeout(Duration::from_secs(60), async {

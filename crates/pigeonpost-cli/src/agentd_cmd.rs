@@ -60,7 +60,7 @@ fn write_cursor(home: &Path, cursor: i64) -> Result<(), Error> {
 }
 
 /// A mailbox address is not a filename: `/k/…` and `/bekir/agent1` both contain separators.
-fn spool_file(home: &Path, mailbox: &str) -> PathBuf {
+pub(crate) fn spool_file(home: &Path, mailbox: &str) -> PathBuf {
     let safe: String = mailbox
         .chars()
         .map(|c| if c.is_ascii_alphanumeric() { c } else { '_' })
@@ -68,7 +68,7 @@ fn spool_file(home: &Path, mailbox: &str) -> PathBuf {
     home.join(SPOOL_DIR).join(format!("{safe}.jsonl"))
 }
 
-fn log_line(home: &Path, line: &str) {
+pub(crate) fn log_line(home: &Path, line: &str) {
     let stamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs())
@@ -168,11 +168,11 @@ fn applescript_quote(value: &str) -> String {
 
 /// One event off the wire.
 #[derive(Clone, serde::Deserialize)]
-struct MailEvent {
-    event_id: i64,
-    mailbox: String,
-    message_id: String,
-    sender: String,
+pub(crate) struct MailEvent {
+    pub(crate) event_id: i64,
+    pub(crate) mailbox: String,
+    pub(crate) message_id: String,
+    pub(crate) sender: String,
 }
 
 /// Run in the foreground, holding the stream. This is what the service manager starts.
@@ -317,6 +317,11 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
         .open(&path)?;
     writeln!(file, "{record}")?;
 
+    // Delivered to this machine (SDS §14C.6): said once the line is safely on disk.
+    if let Ok(config) = &routing {
+        crate::agentd_edits::spawn_delivered(home, config, event);
+    }
+
     match routing {
         // The message itself is what decides, and fetching it is network work that can be followed
         // by minutes of model work — so it happens in its own task. The stream loop has to stay
@@ -387,219 +392,19 @@ fn handle(home: &Path, event: &MailEvent) -> Result<(), Error> {
 /// is already sitting against. Restarting the daemon is what applies a new value.
 static SLOTS: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
 
-fn slots(max: usize) -> &'static tokio::sync::Semaphore {
+pub(crate) fn slots(max: usize) -> &'static tokio::sync::Semaphore {
     SLOTS.get_or_init(|| tokio::sync::Semaphore::new(max.max(1)))
 }
 
 /// Carry out one message, if the rails allow it. Every exit records why.
 ///
-/// Ordering is the same principle as `executor::classify`: the checks that need nothing from the
-/// network come first, so an unrouted or paused machine never fetches the message at all.
+/// The work, including what an edit to an earlier request does, lives in `agentd_edits`; this is
+/// the real network and runtime plugged into it.
 async fn act(home: &Path, config: &crate::executor::RoutingConfig, event: &MailEvent) {
-    let note = |outcome: &str, detail: Option<&str>| {
-        let _ = crate::executor::audit(home, &event.mailbox, &event.message_id, outcome, detail);
+    let ports = crate::agentd_edits::Live {
+        home: home.to_path_buf(),
     };
-    // Record why, and hand the mail back to the session at the same time. These two belong together
-    // on every failing path: an audit line nobody reads is not delivery, and the whole point of the
-    // claim is that it is temporary.
-    let give_back = |outcome: &str, detail: Option<&str>| {
-        note(outcome, detail);
-        release_claim(home, &event.mailbox, event.event_id);
-    };
-
-    let also_known_as = match other_name_for(home, &event.mailbox) {
-        Ok(name) => name,
-        // Reported as itself. A route naming this mailbox's handle cannot match while its address
-        // is ambiguous, and calling that `no_route` describes the consequence rather than the
-        // cause — the config it points at is fine.
-        Err(why) => {
-            log_line(home, &format!("cannot resolve {}: {why}", event.mailbox));
-            give_back("ambiguous_mailbox", Some(&why));
-            return;
-        }
-    };
-    if !config
-        .mailbox
-        .iter()
-        .any(|m| m.is_for(&event.mailbox, also_known_as.as_deref()))
-    {
-        give_back(crate::executor::Refusal::NoRoute.as_str(), None);
-        return;
-    }
-    if crate::executor::paused(home) {
-        give_back(crate::executor::Refusal::Paused.as_str(), None);
-        return;
-    }
-
-    let credential = match crate::postbox_cmd::credential_anywhere(home, &event.mailbox) {
-        Ok(c) => c,
-        Err(e) => return give_back("no_credential", Some(&e.to_string())),
-    };
-    let message = match crate::postbox_cmd::message_by_id(&credential, &event.message_id).await {
-        Ok(Some(m)) => m,
-        // Already acknowledged, most likely by a session that got there first. Not a failure, and
-        // nothing to hand back — but the claim still has to go, or the line outlives the message.
-        Ok(None) => return give_back("no_longer_waiting", None),
-        Err(e) => return give_back("fetch_failed", Some(&e.to_string())),
-    };
-
-    let action = match crate::executor::classify(
-        config,
-        home,
-        &event.mailbox,
-        also_known_as.as_deref(),
-        &message,
-    ) {
-        Ok(a) => a,
-        Err(refusal) => {
-            let detail = match &refusal {
-                crate::executor::Refusal::BadArguments(why) => Some(*why),
-                _ => None,
-            };
-            return give_back(refusal.as_str(), detail);
-        }
-    };
-
-    let sender_key = message["sender_handle"]
-        .as_str()
-        .or_else(|| message["from"].as_str())
-        .unwrap_or(&event.sender)
-        .to_string();
-    let now = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    if !crate::executor::within_daily_limit(
-        home,
-        &sender_key,
-        crate::executor::today(now),
-        action.route.daily_runs_per_sender,
-    ) {
-        // Told, not silently dropped: a peer that hears nothing retries, which is the behaviour a
-        // ceiling exists to stop.
-        let body = crate::runner::refusal_body(
-            &action.verb,
-            &event.message_id,
-            &format!(
-                "This mailbox accepts {} runs a day from one sender and has reached that. Try \
-                 again tomorrow, or ask its human to raise it.",
-                action.route.daily_runs_per_sender
-            ),
-        );
-        let _ = crate::postbox_cmd::send_as(
-            &credential,
-            &sender_key,
-            &body,
-            message["thread_id"].as_str(),
-        )
-        .await;
-        return give_back(
-            crate::executor::Refusal::DailyLimitReached.as_str(),
-            Some(&sender_key),
-        );
-    }
-
-    // Queue rather than refuse: a request that has to wait for a slot is still answered, and the
-    // sender is not waiting on a connection.
-    let _permit = match slots(config.max_concurrent).acquire().await {
-        Ok(p) => p,
-        Err(_) => return give_back("slots_closed", None),
-    };
-
-    let sender = message["sender_handle"]
-        .as_str()
-        .or_else(|| message["from"].as_str())
-        .unwrap_or(&event.sender)
-        .to_string();
-
-    // Every reply below goes back into the thread the request arrived in. A refusal is an answer
-    // too, and one filed somewhere else is a refusal nobody sees.
-    let thread_id = message["thread_id"].as_str().map(str::to_string);
-
-    log_line(
-        home,
-        &format!(
-            "running {} for {} on behalf of {sender}",
-            action.verb, event.mailbox
-        ),
-    );
-    let run = match crate::runner::run(home, &action, &sender, &event.message_id).await {
-        Ok(run) => run,
-        Err(failure) => {
-            // Say so rather than leaving the peer waiting on nothing. At read-only a silent
-            // failure costs an answer; at a tier that changes things it costs an answer about a
-            // half-finished change, which is the one outcome nobody can act on.
-            log_line(home, &format!("run failed: {failure}"));
-            // A blocked panel is not a run that fell over: the work was done and is committed
-            // locally, and this mailbox is configured to withhold the reply when nothing read it.
-            // Saying so is the difference between "retry" and "go and look".
-            let why = match &failure {
-                crate::runner::RunFailure::PanelBlocked(detail) => format!(
-                    "The work was done, but this mailbox will not send an answer nothing has \
-                     reviewed, and the review could not be held ({detail}). The work is committed \
-                     locally and nothing was published — ask its human to look, or ask again once \
-                     the reviewer is back."
-                ),
-                _ => format!(
-                    "The run failed ({}). Nothing here knows what state it left behind, so treat \
-                     this as unfinished rather than as not started.",
-                    failure.detail()
-                ),
-            };
-            let body = crate::runner::refusal_body(&action.verb, &event.message_id, &why);
-            let _ = crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref())
-                .await;
-            return give_back(failure.as_str(), Some(&failure.detail()));
-        }
-    };
-
-    // How the answer was produced, when that is worth a sentence. A route with no panel sends the
-    // exact two-line header it always has.
-    let provenance = run.panel.as_ref().and_then(crate::panel::provenance);
-    let body = crate::runner::reply_body(
-        &action.verb,
-        &event.message_id,
-        provenance.as_deref(),
-        &run.text,
-    );
-    if let Err(e) =
-        crate::postbox_cmd::send_as(&credential, &sender, &body, thread_id.as_deref()).await
-    {
-        // The work was done and is only in the audit trail now, which is worth saying loudly: the
-        // peer is still waiting and no retry will happen on its own.
-        log_line(home, &format!("reply to {sender} failed: {e}"));
-        return give_back("reply_failed", Some(&e.to_string()));
-    }
-
-    // Only after the answer is away: a message that is acknowledged but never answered is the one
-    // failure this loop cannot notice a second time.
-    if let Err(e) = crate::postbox_cmd::ack_as(&credential, &event.message_id).await {
-        // The reply is already away, so this is not handed back: a session picking it up would
-        // answer a second time, which is the failure the claim exists to prevent. The message stays
-        // unacknowledged on the postbox and the audit line says why.
-        log_line(home, &format!("ack failed: {e}"));
-        note("ack_failed", Some(&e.to_string()));
-        forget_spooled(home, &event.mailbox, event.event_id);
-        return;
-    }
-
-    // Answered, so the session must not be told about it as if it were new.
-    forget_spooled(home, &event.mailbox, event.event_id);
-
-    let detail = match (&run.adapter, run.truncated) {
-        (Some(a), true) => format!("{} via {a}, truncated", action.verb),
-        (Some(a), false) => format!("{} via {a}", action.verb),
-        (None, true) => format!("{}, truncated", action.verb),
-        (None, false) => action.verb.clone(),
-    };
-    // A clause on the end rather than a new shape, so anything already reading this log keeps
-    // working. The per-spawn `panel_spawn` lines are written by the panel itself.
-    let detail = match &run.panel {
-        Some(summary) => format!("{detail}, {}", crate::panel::audit_clause(summary)),
-        None => detail,
-    };
-    log_line(home, &format!("replied to {sender} ({detail})"));
-    note("executed", Some(&detail));
+    crate::agentd_edits::act_with(&ports, home, config, event).await;
 }
 
 /// Show what the daemon has seen, without needing the service manager's own tooling.
@@ -757,7 +562,7 @@ pub(crate) fn machine_home_of(home: &Path) -> PathBuf {
     machine_home(home)
 }
 
-fn machine_home(home: &Path) -> PathBuf {
+pub(crate) fn machine_home(home: &Path) -> PathBuf {
     let looks_like_agent_home = home
         .parent()
         .and_then(|p| p.file_name())
@@ -1142,7 +947,7 @@ pub fn answer(home: &Path, spec: &Answer<'_>) -> Result<(), Error> {
 /// Read-filter-write, unlocked, matching how [`collect`] already clears a file. A drain landing in
 /// the same instant can lose this line, which costs a notification and never a message — the
 /// message itself lives on the postbox until it is acknowledged.
-fn forget_spooled(home: &Path, mailbox: &str, event_id: i64) {
+pub(crate) fn forget_spooled(home: &Path, mailbox: &str, event_id: i64) {
     rewrite_spool(home, mailbox, event_id, |_| None);
 }
 
@@ -1152,7 +957,7 @@ fn forget_spooled(home: &Path, mailbox: &str, event_id: i64) {
 /// Every path out of [`act`] that is not a delivered reply comes through here. A claim that is
 /// taken and never released is mail that silently stops existing — worse than the double answer the
 /// claim prevents, because nothing reports it.
-fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
+pub(crate) fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
     rewrite_spool(home, mailbox, event_id, |mut line| {
         if let Some(obj) = line.as_object_mut() {
             obj.insert("claimed".into(), serde_json::Value::Bool(false));
@@ -1166,7 +971,7 @@ fn release_claim(home: &Path, mailbox: &str, event_id: i64) {
 /// The wire carries the `/k/` address; a config almost always names the handle. Reading the local
 /// credential is the only way to know they are the same mailbox, and it is a file read — cheap
 /// enough to do before deciding whether to claim an event.
-fn other_name_for(home: &Path, mailbox: &str) -> Result<Option<String>, String> {
+pub(crate) fn other_name_for(home: &Path, mailbox: &str) -> Result<Option<String>, String> {
     // The error is returned rather than swallowed. Losing it costs the diagnosis, not the lookup:
     // a mailbox held by two homes cannot be resolved, so a route naming its handle stops matching,
     // and the daemon reports `no_route` — which sends whoever is debugging to the routing config,
@@ -1250,7 +1055,7 @@ fn is_claimed(line: &str) -> bool {
 /// Read-filter-write, unlocked, matching how [`collect`] already clears a file. A drain landing in
 /// the same instant can lose a line, which costs a notification and never a message — the message
 /// itself lives on the postbox until it is acknowledged.
-fn rewrite_spool(
+pub(crate) fn rewrite_spool(
     home: &Path,
     mailbox: &str,
     event_id: i64,
@@ -2213,6 +2018,7 @@ mod tests {
             }],
             max_concurrent: 2,
             execute: true,
+            report_status: true,
         }
     }
 
@@ -2467,6 +2273,7 @@ mod tests {
             ],
             max_concurrent: 2,
             execute: true,
+            report_status: true,
         };
         // Deduplicated, and an unusable runtime contributes nothing rather than a bogus program.
         assert_eq!(runtime_programs(&config), vec!["claude", "mcoda"]);

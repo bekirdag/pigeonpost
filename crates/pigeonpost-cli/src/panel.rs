@@ -689,6 +689,8 @@ mod tests {
             task: Some("make the tests green".into()),
             target: Some("main".into()),
             runtime: Runtime::Claude,
+            reply_context: None,
+            amendment: None,
         }
     }
 

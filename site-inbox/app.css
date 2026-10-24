@@ -42,6 +42,7 @@
      blue, which is what the mockup's Send button does. */
   --on-accent: #ffffff;
   --green: #22c55e;
+  --tick-seen: #15a34a;
   --amber: #8a5208;
   --ink: #12161c;
   --body: #343c47;
@@ -199,6 +200,7 @@
     --accent-fill-hover: #a5c5ff;
     --on-accent: #0d0f12;
     --green: #7dd3a0;
+    --tick-seen: #4ade80;
     --amber: #f0b860;
     --ink: #e8eaed;
     --body: #d7dce3;
@@ -331,6 +333,7 @@
   --accent-fill-hover: #a5c5ff;
   --on-accent: #0d0f12;
   --green: #7dd3a0;
+  --tick-seen: #4ade80;
   --amber: #f0b860;
   --ink: #e8eaed;
   --body: #d7dce3;
@@ -2508,3 +2511,143 @@ audio.viewer-media { width: min(560px, 100%); background: none; }
   .call-grid[data-count="10"], .call-grid[data-count="11"], .call-grid[data-count="12"] { grid-template-columns: repeat(3, 1fr); gap: 6px; }
   .call-grid[data-count="13"], .call-grid[data-count="14"], .call-grid[data-count="15"], .call-grid[data-count="16"] { grid-template-columns: repeat(4, 1fr); gap: 4px; }
 }
+
+/* ---- Phase 1e: message actions, ticks, reply and edit (docs/message-actions.md) ---------------- */
+
+/* A message is a column: the bubble, then its action row underneath and outside it. The column, not
+   the bubble, takes the width limit, so the row lines up with the bubble's own edge. */
+.msg-stack {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: min(78%, 620px);
+}
+.mine .msg-stack { align-items: flex-end; }
+.msg-stack > .bubble { max-width: 100%; }
+@media (max-width: 780px) { .msg-stack { max-width: 88%; } }
+.bubble .meta-spacer { flex: 1 1 auto; }
+.bubble .meta .time { white-space: nowrap; }
+.bubble .meta .edited { font-style: italic; white-space: nowrap; }
+
+.msg-actions {
+  display: flex;
+  gap: 6px;
+  padding: 4px 8px 0;
+  min-height: 32px;
+  /* Always there, as in the reference design: quiet until the message is hovered or focused. */
+  opacity: .7;
+  transition: opacity .12s ease;
+}
+.messages > li:hover .msg-actions,
+.messages > li:focus-within .msg-actions { opacity: 1; }
+/* No hover on a touch screen: the row is always there, a little smaller. */
+@media (hover: none) {
+  .msg-actions { opacity: 1; gap: 2px; padding: 2px 4px 0; min-height: 28px; }
+  .msg-action { width: 28px; height: 28px; }
+}
+.msg-action {
+  appearance: none;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  width: 30px; height: 30px;
+  display: inline-grid; place-items: center;
+  padding: 0;
+  color: var(--faint);
+  cursor: pointer;
+  transition: background .12s ease, color .12s ease;
+}
+.msg-action svg { width: 18px; height: 18px; }
+.msg-action:hover, .msg-action:focus-visible { color: var(--ink); background: var(--hover-strong); }
+.msg-action.copied { color: var(--auto-text); }
+.msg-action:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+/* Ticks, right of the time inside a sent bubble. Gray is the bubble's own meta colour. */
+.ticks { display: inline-flex; align-items: center; gap: 4px; color: inherit; line-height: 1; }
+.ticks svg { width: 17px; height: 11px; flex: none; }
+.ticks-sent svg { width: 13px; }
+.ticks-pending svg, .ticks-working svg, .ticks-agent-failed svg { width: 14px; height: 14px; }
+.ticks-seen, .ticks-working { color: var(--tick-seen); }
+.mine .bubble .meta .ticks-seen, .mine .bubble .meta .ticks-working { color: var(--tick-seen); }
+.ticks-agent-failed { color: var(--blocked-text); }
+.ticks-button { cursor: pointer; border-radius: 4px; }
+.ticks-button:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
+.ticks-working svg { animation: tick-gear 3s linear infinite; transform-origin: 50% 50%; }
+.ticks-word { display: none; font-size: 11.5px; }
+@keyframes tick-gear { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) {
+  .ticks-working svg { animation: none; }
+  .ticks-word { display: inline; }
+  .messages > li.flash .bubble { animation: none; outline: 2px solid var(--blue); }
+}
+
+/* The quoted parent at the top of a reply. A button: it goes to the parent. */
+.reply-quote {
+  appearance: none;
+  display: flex; flex-direction: column; align-items: flex-start; gap: 1px;
+  width: 100%; min-width: 0;
+  margin: 0 0 8px;
+  padding: 6px 10px;
+  border: 0;
+  border-left: 3px solid var(--blue);
+  border-radius: 8px;
+  background: var(--inset);
+  color: var(--body);
+  font: inherit; text-align: left;
+  cursor: pointer;
+}
+.mine .reply-quote { background: var(--mine-chip); color: var(--mine-text); }
+.reply-quote .reply-who { font-size: 12.5px; font-weight: 650; color: var(--blue); }
+.reply-quote .reply-line {
+  font-size: 13px; max-width: 100%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.reply-quote:focus-visible { outline: 2px solid var(--blue); outline-offset: 1px; }
+
+.messages > li.flash .bubble { animation: msg-flash 1.6s ease; }
+@keyframes msg-flash { 0%, 35% { box-shadow: 0 0 0 3px var(--blue); } 100% { box-shadow: 0 1px 2px var(--shadow-bubble); } }
+
+/* Replying to or editing one message: a row of its own above the field, like staged files. */
+.compose-context:not([hidden]) {
+  flex-basis: 100%;
+  display: flex; align-items: center; gap: 10px;
+  min-width: 0;
+  padding: 6px 6px 6px 10px;
+  border-left: 3px solid var(--blue);
+  border-radius: 8px;
+  background: var(--inset);
+}
+.compose-context-icon { display: inline-grid; place-items: center; color: var(--blue); flex: none; }
+.compose-context-icon svg { width: 18px; height: 18px; }
+.compose-context-text { display: flex; flex-direction: column; min-width: 0; flex: 1 1 auto; }
+.compose-context-title { font-size: 12.5px; font-weight: 650; color: var(--blue); }
+.compose-context-line { font-size: 13px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.compose-context-close { flex: none; width: 32px; height: 32px; }
+.compose-context-close svg { width: 16px; height: 16px; }
+
+/* The full list, on right-click or long-press. */
+.msg-menu:not([hidden]) {
+  position: fixed; z-index: 70;
+  display: flex; flex-direction: column;
+  min-width: 160px; padding: 4px;
+  background: var(--ground);
+  border: 1px solid var(--card-edge);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px var(--shadow-menu);
+}
+.msg-menu button {
+  appearance: none; border: 0; background: none; text-align: left;
+  font: inherit; font-size: 14px; color: var(--ink);
+  padding: 8px 12px; border-radius: 6px; cursor: pointer;
+}
+.msg-menu button:hover, .msg-menu button:focus-visible { background: var(--hover-strong); outline: none; }
+
+.msg-info .info-row { display: flex; justify-content: space-between; gap: 16px; margin: 0 0 8px; font-size: 14px; }
+.msg-info .info-key { color: var(--muted); font-size: 13px; }
+.msg-info .info-value { color: var(--ink); text-align: right; }
+.msg-info .info-head { font-size: 13px; font-weight: 650; margin: 16px 0 8px; color: var(--ink); }
+.msg-info .info-versions { list-style: none; margin: 0; padding: 0; display: grid; gap: 10px; }
+.msg-info .info-versions li { display: flex; flex-direction: column; gap: 3px; }
+.msg-info .info-version-text { white-space: pre-wrap; overflow-wrap: anywhere; font-size: 14px; color: var(--body);
+  background: var(--inset); border-radius: 8px; padding: 8px 10px; }

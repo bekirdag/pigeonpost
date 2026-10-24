@@ -7,6 +7,16 @@ import UIKit
 /// Local StoreKit validation is separate from the required physical sandbox recording.
 @MainActor
 final class NativeHandleStoreKitTests: XCTestCase {
+    private func settledTransactions(_ apple: AppleHandlePurchases, expecting expected: Set<String>) async throws -> [HandleTransaction] {
+        let deadline = Date().addingTimeInterval(5)
+        var current = await apple.transactions()
+        while Set(current.filter(\.active).map(\.productId)) != expected && Date() < deadline {
+            try await Task.sleep(nanoseconds: 50_000_000)
+            current = await apple.transactions()
+        }
+        return current
+    }
+
     func testOneGroupUpgradesRestoresAndExpiresAsOnePlan() async throws {
         // Run inside the app so StoreKit can present purchases in its active scene.
         for _ in 0..<50 where !UIApplication.shared.connectedScenes.contains(where: { $0.activationState == .foregroundActive }) {
@@ -41,8 +51,14 @@ final class NativeHandleStoreKitTests: XCTestCase {
             XCTAssertEqual(Set(current.filter(\.active).map(\.productId)), [ids[index]], "An upgrade replaces the previous level")
         }
         try await apple.restore()
-        let restored = await apple.transactions()
-        XCTAssertEqual(Set(restored.filter(\.active).map(\.productId)), [ids[9]])
+        let restored = try await settledTransactions(apple, expecting: [ids[9]])
+        XCTAssertEqual(Set(restored.filter(\.active).map(\.productId)), [ids[9]],
+                       "Restoring must expose the current level, not an empty or older entitlement snapshot")
+        if !restored.contains(where: \.active) {
+            // Only local fake-product metadata; never log signed transactions, account tokens or ids.
+            let summary = restored.map { "\($0.productId): revoked=\($0.revoked), active=\($0.active)" }
+            print("StoreKit restore snapshot:", summary, "test environment transactions:", session.allTransactions().count)
+        }
         _ = try await apple.purchase(ids[0], accountToken: token)
         let afterDowngrade = await apple.transactions()
         XCTAssertEqual(Set(afterDowngrade.filter(\.active).map(\.productId)), [ids[9]])

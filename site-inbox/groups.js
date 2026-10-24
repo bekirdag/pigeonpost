@@ -85,6 +85,9 @@
     persistent: true,
     generation: 0,
     error: null,
+    receipts: new Map(), // gid → {members:[{address, handle, delivered_seq, seen_seq}], read_receipts} (Phase 1e)
+    receiptsPoll: null,
+    compose: null,       // {kind: "reply"|"edit", gid, x} while replying to or editing one message (Phase 1e)
   };
   const client = () => G.clients.get(G.mailbox) || null;
   const me = () => G.mailbox;
@@ -324,6 +327,7 @@
       case "group.handshake":
         if (gid) soon("sync:" + gid, () => syncGroup(gid));
         if (gid && !groupById(gid)) soon("refresh", refresh);
+        if (gid && gid === G.open) soon("receipts:" + gid, () => loadReceipts(gid), 1500); // Phase 1e
         break;
       case "group.crypto_pending":
         if (gid) soon("pending:" + gid, () => syncGroup(gid, { pending: true }), 50);
@@ -340,6 +344,7 @@
       case "group.read": {
         const g = groupById(gid);
         if (g && g.my && data.seq > (g.my.read_cursor || 0)) { g.my.read_cursor = data.seq; g.my.unread = 0; renderList(); }
+        if (gid && gid === G.open) soon("receipts:" + gid, () => loadReceipts(gid), 800); // Phase 1e
         break;
       }
       case "group.device":
@@ -557,9 +562,18 @@
       el("p", { class: "group-bar", id: "group-status", role: "status", hidden: true }),
       el("form", { class: "composer", id: "group-composer", onsubmit: (e) => { e.preventDefault(); sendFromComposer(); } },
         el("ul", { class: "pending-files", id: "group-files", hidden: true }),
+        el("div", { class: "compose-context", id: "group-compose-context", hidden: true },
+          el("span", { class: "compose-context-icon", id: "group-compose-context-icon", "aria-hidden": "true" }),
+          el("span", { class: "compose-context-text" },
+            el("span", { class: "compose-context-title", id: "group-compose-context-title" }),
+            el("span", { class: "compose-context-line", id: "group-compose-context-line" })),
+          el("button", { class: "icon-btn compose-context-close", id: "group-compose-context-close", type: "button", "aria-label": "Cancel", onclick: () => { cancelCompose(); $("group-compose").focus(); } }, svg(ICON.close))),
         el("input", { type: "file", id: "group-file-input", multiple: true, hidden: true, "aria-hidden": "true", tabindex: "-1", onchange: (e) => { stageFiles(e.target.files); e.target.value = ""; } }),
         el("button", { class: "attach", type: "button", "aria-label": "Attach a file", onclick: () => $("group-file-input").click() }, svg(ICON.attach)),
-        el("textarea", { id: "group-compose", rows: "1", placeholder: "Write to the group", "aria-label": "Message to the group", onkeydown: (e) => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendFromComposer(); } } }),
+        el("textarea", { id: "group-compose", rows: "1", placeholder: "Write to the group", "aria-label": "Message to the group", onkeydown: (e) => {
+          if (e.key === "Escape" && G.compose) { e.preventDefault(); e.stopPropagation(); cancelCompose(); return; }
+          if (e.key === "Enter" && !e.shiftKey && !e.isComposing) { e.preventDefault(); sendFromComposer(); }
+        } }),
         el("button", { class: "send", id: "group-send", type: "submit", "aria-label": "Send" }, svg(ICON.send))));
     pane.append(view);
   }
@@ -575,6 +589,10 @@
     renderAll();
     loadMembers(gid).then(() => renderView());
     syncGroup(gid, { pending: true });
+    if (G.compose && G.compose.gid !== gid) cancelCompose();
+    loadReceipts(gid);
+    clearInterval(G.receiptsPoll);
+    G.receiptsPoll = setInterval(() => { if (G.open) loadReceipts(G.open); }, 10000);
     pollCall();
     clearInterval(G.callPoll);
     G.callPoll = setInterval(pollCall, 15000);
@@ -585,6 +603,8 @@
     if (!G.open) return;
     G.open = null;
     clearInterval(G.callPoll);
+    clearInterval(G.receiptsPoll);
+    if (G.compose) cancelCompose();
     G.callState = null;
     const view = $("group-view");
     if (view) view.hidden = true;
@@ -752,6 +772,8 @@
       const bubble = el("div", { class: "bubble" });
       if (!mine && x.sender !== lastSender) bubble.append(el("div", { class: "group-sender", text: nameOf(x.sender) }));
       lastSender = x.sender;
+      // Phase 1e: the quoted parent of a reply, which goes to it when clicked.
+      if (x.reply_to != null && !x.deleted) bubble.append(groupQuote(list, x.reply_to));
       if (x.deleted) bubble.append(el("div", { class: "text muted-text", text: "This message was deleted" }));
       else if (x.undecryptable) bubble.append(el("div", { class: "text muted-text", text: "Encrypted message — not readable on this device" }));
       else {
@@ -764,17 +786,170 @@
       }
       const meta = el("div", { class: "meta" });
       if (x.expires_at) meta.append(el("span", { class: "timer-icon", title: "Disappears " + new Date(x.expires_at * 1000).toLocaleString() }, svg(ICON.timer)));
-      meta.append(el("span", { text: x.pending ? "Sending…" : (at && h ? h.clockTime(at) : "") }));
-      if (x.edit_of) meta.append(el("span", { text: " · edited" }));
       if (!x.deleted && x.seq != null && (mine || isAdmin(g)) && !x.pending) {
         meta.append(el("button", { type: "button", class: "linkish msg-delete", text: "Delete", "aria-label": "Delete this message for everyone", onclick: () => deleteMessage(g.id, x.seq) }));
       }
+      meta.append(el("span", { class: "meta-spacer" }));
+      if (x.edit_of) meta.append(el("span", { class: "edited", text: "edited" }));
+      meta.append(el("span", { class: "time", text: x.pending ? "Sending…" : (at && h ? h.clockTime(at) : "") }));
+      const UI = window.PigeonpostMessageActions;
+      if (mine && UI && !x.deleted) {
+        const state = groupTick(g.id, x);
+        const ticks = UI.tickNode(state, null);
+        if (ticks) {
+          if (x.seq != null) {
+            ticks.classList.add("ticks-button");
+            ticks.tabIndex = 0;
+            ticks.addEventListener("click", () => groupMessageInfo(g, x));
+            ticks.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); groupMessageInfo(g, x); } });
+          }
+          meta.append(ticks);
+        }
+      }
       bubble.append(meta);
-      li.append(bubble);
+      bubble.addEventListener("contextmenu", (e) => groupMenu(e, g, x, mine));
+      // Phase 1e: the action row, under the bubble and outside it.
+      const stack = el("div", { class: "msg-stack" }, bubble);
+      if (UI && !x.deleted && !x.undecryptable) {
+        const actions = el("div", { class: "msg-actions" });
+        const copyText = () => x.text || (x.files || []).map((f) => f.name).join("\n");
+        if (mine) {
+          if (groupEditable(g, x)) actions.append(UI.actionButton("edit", "Edit message", () => startGroupCompose("edit", g.id, x)));
+          actions.append(UI.copyButton(copyText));
+        } else {
+          actions.append(UI.copyButton(copyText));
+          if (x.seq != null && canPost(g)) actions.append(UI.actionButton("reply", "Reply", () => startGroupCompose("reply", g.id, x)));
+        }
+        stack.append(actions);
+      }
+      li.append(stack);
       ol.append(li);
     }
     const scroll = $("group-scroll");
     if (scroll) scroll.scrollTop = scroll.scrollHeight;
+  }
+
+  // ---- Phase 1e: reply, edit, ticks and message info (docs/message-actions.md §5) ------------------
+
+  const EDIT_WINDOW = 24 * 3600;
+  function groupEditable(g, x) {
+    if (!x || x.sender !== me() || x.deleted || x.pending || x.seq == null || !canPost(g)) return false;
+    if (!x.text) return false;
+    const at = x.created_at || 0;
+    return at > 0 && Date.now() / 1000 - at <= EDIT_WINDOW && !(x.expires_at && x.expires_at <= Date.now() / 1000);
+  }
+
+  function groupQuote(list, seq) {
+    const parent = list.find((y) => y.kind === "message" && String(y.seq) === String(seq));
+    const who = parent ? (parent.sender === me() ? "You" : nameOf(parent.sender)) : "";
+    const UI = window.PigeonpostMessageActions;
+    const line = !parent || parent.deleted ? "Original message unavailable"
+      : (UI ? UI.quoteExcerpt(parent.text || "", (parent.files || []).map((f) => ({ filename: f.name }))) : parent.text || "");
+    return el("button", { type: "button", class: "reply-quote", "aria-label": `Replying to ${who || "a message"}: ${line}. Show the original.`,
+      onclick: () => jumpToSeq(seq) },
+      el("span", { class: "reply-who", text: who }), el("span", { class: "reply-line", text: line }));
+  }
+
+  function jumpToSeq(seq) {
+    const row = $("group-messages")?.querySelector(`li[data-seq="${CSS.escape(String(seq))}"]`);
+    if (!row) { host().toast("The original message is no longer here."); return; }
+    row.scrollIntoView({ block: "center" });
+    row.classList.remove("flash");
+    void row.offsetWidth;
+    row.classList.add("flash");
+    setTimeout(() => row.classList.remove("flash"), 1600);
+  }
+
+  // Delivered when every other member's client has listed it; seen (green) when every member whose
+  // seen state is visible has read past it — and at least one is visible.
+  function groupTick(gid, x) {
+    if (x.pending) return "pending";
+    if (x.seq == null) return null;
+    const r = G.receipts.get(gid);
+    const members = (r && r.members) || [];
+    if (!r || !members.length) return "sent";
+    const visible = members.filter((m) => m.seen_seq != null);
+    if (visible.length && visible.every((m) => m.seen_seq >= x.seq)) return "seen";
+    if (members.every((m) => (m.delivered_seq || 0) >= x.seq)) return "delivered";
+    return "sent";
+  }
+
+  async function loadReceipts(gid) {
+    try {
+      const body = await api(groupPath(gid, "/receipts"));
+      const before = JSON.stringify(G.receipts.get(gid) || null);
+      G.receipts.set(gid, { members: Array.isArray(body.members) ? body.members : [], read_receipts: body.read_receipts !== false });
+      if (gid === G.open && before !== JSON.stringify(G.receipts.get(gid))) renderView();
+    } catch (_) {
+      // An older postbox has no receipts for groups: no ticks beyond "sent".
+    }
+  }
+
+  function setGroupComposeBar() {
+    const bar = $("group-compose-context");
+    if (!bar) return;
+    const c = G.compose;
+    bar.hidden = !c;
+    if (!c) return;
+    const UI = window.PigeonpostMessageActions;
+    $("group-compose-context-icon").innerHTML = UI ? (c.kind === "edit" ? UI.ICONS.edit : UI.ICONS.reply) : "";
+    $("group-compose-context-title").textContent = c.kind === "edit" ? "Editing message" : "Replying to " + (c.x.sender === me() ? "yourself" : nameOf(c.x.sender));
+    $("group-compose-context-line").textContent = UI ? UI.quoteExcerpt(c.x.text || "", (c.x.files || []).map((f) => ({ filename: f.name }))) : c.x.text || "";
+    $("group-compose-context-close").setAttribute("aria-label", c.kind === "edit" ? "Cancel editing" : "Cancel reply");
+  }
+  function startGroupCompose(kind, gid, x) {
+    const box = $("group-compose");
+    const draft = G.compose && G.compose.kind === "edit" ? G.compose.draft : box.value;
+    G.compose = { kind, gid, x, draft: kind === "edit" ? draft : null };
+    if (kind === "edit") box.value = x.text || "";
+    setGroupComposeBar();
+    box.focus();
+  }
+  function cancelCompose() {
+    const c = G.compose;
+    G.compose = null;
+    setGroupComposeBar();
+    if (c && c.kind === "edit") { const box = $("group-compose"); if (box) box.value = c.draft || ""; }
+  }
+
+  function groupMessageInfo(g, x) {
+    const r = G.receipts.get(g.id);
+    const members = (r && r.members) || [];
+    const name = (m) => (m.handle ? host().displayName(m.handle) : nameOf(m.address));
+    const when = x.created_at ? new Date(x.created_at * 1000).toLocaleString() : "—";
+    const seen = members.filter((m) => m.seen_seq != null && m.seen_seq >= x.seq);
+    const delivered = members.filter((m) => (m.delivered_seq || 0) >= x.seq && !seen.includes(m));
+    const waiting = members.filter((m) => !seen.includes(m) && !delivered.includes(m));
+    const list = (title, people) => el("div", { class: "info-group" },
+      el("h3", { class: "info-head", text: `${title} (${people.length})` }),
+      people.length ? el("ul", { class: "info-names" }, ...people.map((m) => el("li", { text: name(m) }))) : el("p", { class: "field-note", text: "Nobody" }));
+    const body = el("div", { class: "msg-info" },
+      el("p", { class: "info-row" }, el("span", { class: "info-key", text: "Sent" }), el("span", { class: "info-value", text: when })),
+      list("Seen", seen), list("Delivered", delivered), list("Not delivered yet", waiting));
+    if (r && r.read_receipts === false) body.append(el("p", { class: "field-note", text: "You turned off read receipts, so you don't see who has read messages." }));
+    else if (members.some((m) => m.seen_seq == null)) body.append(el("p", { class: "field-note", text: "Some members don't share when they have read messages." }));
+    document.getElementById("group-msg-info-sheet")?.remove();
+    sheet("group-msg-info-sheet", "Message info", body, el("button", { type: "button", class: "btn-ghost", text: "Done", onclick: () => hideSheet("group-msg-info-sheet") }));
+    showSheet("group-msg-info-sheet");
+  }
+
+  function groupMenu(event, g, x, mine) {
+    if (window.getSelection && String(window.getSelection()).trim()) return;
+    if (x.deleted || x.undecryptable) return;
+    const menu = document.getElementById("msg-menu");
+    if (!menu) return;
+    event.preventDefault();
+    menu.textContent = "";
+    const item = (label, fn) => menu.append(el("button", { type: "button", role: "menuitem", text: label, onclick: () => { menu.hidden = true; fn(); } }));
+    if (x.seq != null && canPost(g)) item("Reply", () => startGroupCompose("reply", g.id, x));
+    item("Copy", () => navigator.clipboard?.writeText(x.text || "").catch(() => {}));
+    if (groupEditable(g, x)) item("Edit", () => startGroupCompose("edit", g.id, x));
+    if (mine && x.seq != null) item("Info", () => groupMessageInfo(g, x));
+    if (x.seq != null && (mine || isAdmin(g))) item("Delete", () => deleteMessage(g.id, x.seq));
+    menu.hidden = false;
+    menu.style.left = Math.max(8, Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8)) + "px";
+    menu.style.top = Math.max(8, Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8)) + "px";
+    menu.querySelector("button")?.focus();
   }
 
   // ---- sending -------------------------------------------------------------------------------------
@@ -799,15 +974,24 @@
     const box = $("group-compose");
     const text = box.value.trim();
     if (!gid || (!text && !staged.length)) return;
+    // Phase 1e: an edit carries the new text and names the old seq; a reply names its parent.
+    const mode = G.compose && G.compose.gid === gid ? G.compose : null;
+    if (mode && mode.kind === "edit" && text === (mode.x.text || "").trim()) { cancelCompose(); return; }
+    const extra = mode ? (mode.kind === "edit"
+      ? { edit_of: mode.x.seq, ...(mode.x.reply_to != null ? { reply_to: mode.x.reply_to } : {}) }
+      : { reply_to: mode.x.seq }) : {};
+    if (mode) { const draft = mode.kind === "edit" ? mode.draft : ""; G.compose = null; setGroupComposeBar(); if (mode.kind === "edit") box.value = draft || ""; }
     const files = [];
     for (const f of staged) files.push({ name: f.name, mime: f.type || "application/octet-stream", bytes: new Uint8Array(await f.arrayBuffer()) });
-    box.value = "";
+    if (!mode || mode.kind !== "edit") box.value = "";
     staged = [];
     renderStaged();
     $("group-send").disabled = true;
     try {
-      await client().send(gid, { text, files });
+      await client().send(gid, { text, files, ...extra });
+      loadReceipts(gid);
     } catch (e) {
+      if (mode) { G.compose = mode; setGroupComposeBar(); }
       box.value = text;
       host().toast("Not sent: " + explain(e));
     } finally {

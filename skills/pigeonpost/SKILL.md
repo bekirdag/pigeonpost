@@ -328,6 +328,25 @@ would be worse than none.
 
 `read_file` stays refused: `full` supersedes it, and a path-confined reader is a different feature.
 
+### Edits, replies and the sender's ticks
+
+A sender may edit a request after sending it (within 24 hours). The daemon does not run stale work:
+
+- **queued** — the edited request replaces it;
+- **running** — the run is stopped and restarted on the edit, told what it had already done (a
+  `git_push` or `deploy` is never stopped: the edit runs as a follow-up when it ends);
+- **answered** — a follow-up run reconciles the earlier answer with the edit;
+- **held for you** — the edit replaces the original in what `agentd drain` shows.
+
+Each edit passes every check again; one this route would refuse changes nothing. A reply carries the
+message it answers into the prompt, as data. With `report_status = true` (the default) in
+`agentd.toml`, the sender sees delivered, seen and a green "working" gear while a run is in flight;
+`false` keeps the machine silent. Details: `docs/runtime-configuration.md`, "agentd: edits, replies
+and receipts".
+
+From a shell: `pigeonpost postbox send <to> <text> --reply-to <msg_ref>` answers a specific message,
+and `pigeonpost postbox edit <msg_ref> <new text>` edits one you sent.
+
 ### A second agent on the work
 
 One mailbox can answer with several models. A **panel** adds reviewers: the route's own runtime does

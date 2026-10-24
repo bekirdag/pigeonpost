@@ -764,3 +764,50 @@ purpose-separated custody public keys, operating independent witnesses, provisio
 verified cache, and approving retention/custody are external production prerequisites. Startup
 checks their machine-verifiable artifacts; it cannot truthfully manufacture their legal or
 organizational independence.
+
+## agentd: edits, replies and receipts
+
+`pigeonpost agentd` is a client, not a server, but its `agentd.toml` (in the machine home,
+`~/.pigeonpost/agentd.toml`) decides how a machine answers mail unattended. Phase 1e (SDS §14C,
+[`message-actions.md`](message-actions.md)) adds one setting and three behaviours.
+
+```toml
+execute = true
+max_concurrent = 2
+report_status = true   # default; false sends no receipts and no agent status at all
+```
+
+**`report_status`** (default `true`). When on, the daemon tells the sender's postbox what happened
+to each message (`POST /v1/receipts`): `delivered` when it spools the event, `seen` and
+`agent_status: working` (the sender's green gear) when a run takes the request up, and `done` or
+`failed` when the run ends. A follow-up run for an edit reports `working` again. Receipts are
+best-effort: a postbox without the `receipts` / `agent_status` flags refuses them quietly and nothing
+else changes. The recipient mailbox's own "Send read receipts" setting still governs `seen`.
+
+**Edits.** The daemon reads its inbox with `actions=1`, so an edit arrives as its own message with
+`edit_of` naming the original's `msg_ref`. What it does depends on where the original is:
+
+| Original | What the edit does | Audit outcome |
+|---|---|---|
+| Queued for a slot | Replaces the queued request; the run uses the edited text. Both versions are acknowledged together. | `edit_replaced_queued` |
+| Running (any verb but `git_push`/`deploy`) | Stops the run (the child process is killed) and restarts it on the edited request, with the elapsed time and a summary of the workspace (`git status --short`, `git diff --stat`, the last commits) in the prompt. | `edit_restart` |
+| Running a `git_push` or `deploy` | Never interrupted. The edit waits, and a follow-up run in the same thread starts when the first one ends, given the earlier answer. | `edit_amendment_queued`, then `edit_followup` |
+| Answered (or unknown to this daemon, e.g. after a restart) | A follow-up run, told: "the user edited their request after you finished; reconcile your result with the edited request", with the original request and the earlier answer quoted as data. Counts against the sender's daily runs. | `edit_followup` |
+| Held for a human | The edit replaces the original's line in the session spool, so the session sees only the latest version. | `edit_replaced_held` |
+
+Every edited message is classified again before it changes anything — the postbox's verdict, the
+route, the verb, the arguments, the permission tier and the branch allowlist. An edit those rails
+refuse is refused on its own (`edit_refused`, and the sender is told unless it was simply held for
+a human), and the run it tried to change carries on untouched.
+
+The runtimes agentd drives (`claude -p`, `codex exec`, `mcoda agent-run`) are one-shot processes,
+so none can take a new user turn mid-run; stop-and-restart with a summary is the substitute. The
+amendment framing is part of the prompt the run is given, which is the run's transcript.
+
+What agentd remembers about requests is in memory and bounded (25 hours, 2,048 settled requests):
+after a daemon restart, an edit to an earlier request is treated as an edit after completion.
+
+**Replies.** A message with `reply_to` gets the message it answers in its prompt, after the request
+itself and fenced as untrusted data: who sent it (or that it was this mailbox's own earlier answer),
+its excerpt or the sender's quote, and its verb and arguments if it was a request. Replies agentd
+sends answer the request's `msg_ref`, so the sender's client can show which message was answered.

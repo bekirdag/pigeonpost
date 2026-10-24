@@ -121,29 +121,6 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
-    /// Stamp an expiry on stored message copies (both sides of one send).
-    pub async fn set_message_expiry(
-        &self,
-        ids: Vec<String>,
-        expires_at: u64,
-    ) -> Result<(), StoreError> {
-        let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
-            let mut c = conn.lock().expect("store lock");
-            let tx = c.transaction()?;
-            for id in ids {
-                tx.execute(
-                    "UPDATE messages SET expires_at = ?2 WHERE id = ?1",
-                    params![id, expires_at as i64],
-                )?;
-            }
-            tx.commit()?;
-            Ok(())
-        })
-        .await
-        .map_err(|_| StoreError::Join)?
-    }
-
     /// Expiry times of the given message copies, for list responses.
     pub async fn message_expiries(
         &self,
