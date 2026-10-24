@@ -7,6 +7,16 @@ final class HandlePurchaseTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    override func tearDownWithError() throws {
+        if let run = testRun, run.failureCount > 0 {
+            screenshot("purchase-failure")
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "purchase-failure-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+    }
+
     private func open(_ state: String) {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=\(state)"]
         app.launch()
@@ -21,6 +31,21 @@ final class HandlePurchaseTests: XCTestCase {
     private func scrollTo(_ element: XCUIElement) {
         for _ in 0..<8 where !element.isHittable { app.swipeUp() }
         if !element.isHittable { for _ in 0..<12 where !element.isHittable { app.swipeDown() } }
+        // iOS 26 can call a row hittable while its tappable area sits under the
+        // translucent navigation bar. Reveal the complete control before tapping it.
+        for _ in 0..<6 {
+            guard element.exists && element.isHittable else { break }
+            let bar = app.navigationBars["Pigeonpost Cloud"]
+            let top = bar.exists ? bar.frame.maxY + 8 : app.frame.minY + 80
+            let bottom = app.frame.maxY - 40
+            let frame = element.frame
+            let offset: CGFloat
+            if frame.minY < top { offset = 110 }
+            else if frame.maxY > bottom { offset = -110 }
+            else { break }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: offset)))
+        }
     }
 
     private func screenshot(_ name: String) {
@@ -246,7 +271,10 @@ final class HandlePurchaseTests: XCTestCase {
             XCTAssertTrue(row.isHittable, "\(id) must be visible on the purchase screen")
         }
         scrollTo(app.buttons["handle-product-" + ids[4]])
-        app.buttons["handle-product-" + ids[4]].tap()
+        let selected = app.buttons["handle-product-" + ids[4]]
+        selected.tap()
+        expectation(for: NSPredicate(format: "value == %@", "Selected"), evaluatedWith: selected)
+        waitForExpectations(timeout: 5)
         scrollTo(buy)
         XCTAssertTrue(buy.waitForExistence(timeout: 8))
         XCTAssertTrue(buy.label.contains("$40.00"))

@@ -1,0 +1,832 @@
+// Pigeonpost for teams — the admin app (/app, SDS §5.2–5.3): People, Agents, Rooms, Rules, Billing,
+// Security, Organization. One primary action per page (top right), at most one table per page, one
+// sheet at a time. Every decision is the postbox's; this page only shows what it may do.
+(function () {
+  "use strict";
+  const PPE = window.PPE;
+  const R = PPE.rules;
+  const el = PPE.el;
+  const cfg = window.PPE_CONFIG || {};
+
+  const ADMIN = ["owner", "admin", "people_admin", "agent_admin", "billing_admin"];
+  const ROLE_NAMES = { owner: "Owner", admin: "Admin", people_admin: "People admin", agent_admin: "Agent admin", billing_admin: "Billing admin" };
+  const PAGES = [
+    { key: "people", title: "People", roles: ["owner", "admin", "people_admin"] },
+    { key: "agents", title: "Agents", roles: ["owner", "admin", "agent_admin"] },
+    { key: "rooms", title: "Rooms", roles: ADMIN },
+    { key: "rules", title: "Rules", roles: ["owner", "admin", "people_admin", "agent_admin"] },
+    { key: "billing", title: "Billing", roles: ["owner", "admin", "billing_admin"] },
+    { key: "security", title: "Security", roles: ["owner", "admin"] },
+    { key: "organization", title: "Organization", roles: ["owner", "admin"] },
+  ];
+  const CAPABILITIES = [
+    ["enroll", "Log it in on a machine"],
+    ["bind_handle", "Bind the address to a machine's mailbox"],
+    ["configure_rules", "Change its personal rules"],
+    ["read_inbox", "Read its inbox in the apps"],
+  ];
+
+  const app = { features: [], orgs: [], org: null, me: null, page: "people" };
+  PPE.app = app;
+
+  // ---- helpers ---------------------------------------------------------------------------------
+
+  const has = (...roles) => (app.me && Array.isArray(app.me.roles) ? app.me.roles.some((r) => roles.includes(r)) : false);
+  app.can = (page) => { const p = PAGES.find((x) => x.key === page); return Boolean(p && has(...p.roles)); };
+  /// Roles this admin may hand out (SDS §6.4, D-13): only the owner appoints full admins.
+  app.grantable = () => (has("owner") ? ["admin", "people_admin", "agent_admin", "billing_admin"]
+    : has("admin") ? ["people_admin", "agent_admin", "billing_admin"] : []);
+  const orgPath = (rest = "") => `/v1/orgs/${encodeURIComponent(app.org.id)}${rest}`;
+  const ns = () => (app.org ? app.org.namespace : "");
+  const inviteEmailOn = () => app.features.includes("org_invite_email");
+
+  function chipFor(status) {
+    const kind = { active: "chip-ok", invited: "chip-warn", suspended: "chip-bad", removed: "chip-bad", deleted: "chip-bad", provisioning: "chip-warn" }[status] || "";
+    const text = { active: "Active", invited: "Invited", suspended: "Suspended", provisioning: "Setting up" }[status] || status;
+    return el("span", { class: `chip ${kind}` }, text);
+  }
+  function head(title, sub, primary) {
+    return el("div", { class: "page-head" }, el("div", {}, el("h1", { tabindex: "-1" }, title), sub ? el("p", {}, sub) : null), primary || null);
+  }
+  function content(...nodes) {
+    const c = document.getElementById("content");
+    c.replaceChildren(...nodes);
+    const h = c.querySelector("h1");
+    if (h) h.focus();
+  }
+  function secretBox(text, onceNote) {
+    return el("div", {},
+      el("div", { class: "secret" }, el("code", {}, text), el("button", { class: "btn btn-small", type: "button", onclick: () => PPE.copy(text) }, "Copy")),
+      onceNote ? el("p", { class: "hint" }, onceNote) : null);
+  }
+  function busy(button, fn) {
+    return async (...args) => {
+      if (button) button.disabled = true;
+      try { await fn(...args); } catch (e) { PPE.fail(e); } finally { if (button && document.contains(button)) button.disabled = false; }
+    };
+  }
+
+  // ---- shell -----------------------------------------------------------------------------------
+
+  function gate(...nodes) {
+    document.getElementById("shell").hidden = true;
+    const g = document.getElementById("gate");
+    g.hidden = false;
+    g.replaceChildren(el("div", { class: "card center-card" }, ...nodes));
+  }
+
+  function renderNav() {
+    const nav = document.getElementById("nav");
+    nav.replaceChildren();
+    const admins = app.orgs.filter((o) => (o.my_roles || []).some((r) => ADMIN.includes(r)));
+    if (admins.length > 1) {
+      const pick = el("select", { "aria-label": "Organization" }, admins.map((o) => el("option", { value: o.id, selected: o.id === app.org.id }, o.name)));
+      pick.addEventListener("change", () => { PPE.store.set("ppe_org", pick.value); load(pick.value).then(() => go(app.page, true)); });
+      nav.append(pick);
+    }
+    nav.append(el("div", { class: "org-name" }, app.org.name), el("div", { class: "org-ns" }, `/${app.org.namespace}`));
+    for (const p of PAGES) {
+      if (!app.can(p.key)) continue;
+      const a = el("a", { href: `/app/${p.key}`, "aria-current": p.key === app.page ? "page" : null }, p.title);
+      a.addEventListener("click", (e) => { e.preventDefault(); go(p.key); });
+      nav.append(a);
+    }
+    nav.append(el("a", { href: cfg.inbox || "https://inbox.pigeonpost.dev" }, "Open inbox ↗"));
+  }
+
+  function banner() {
+    const s = app.org.status;
+    if (s === "past_due") return el("div", { class: "banner" }, "The last payment didn't go through. Update the card in Billing to avoid interruption.");
+    if (s === "read_only") return el("div", { class: "banner banner-danger" }, "The organization is read-only: no new invitations or agents, and company mailboxes can't send. Update the payment in Billing.");
+    if (s === "suspended") return el("div", { class: "banner banner-danger" }, "The organization is suspended: company addresses don't receive mail. Renew in Billing to restore it.");
+    return null;
+  }
+
+  /// The owner picks their own company address once (docs/orgs.md §2).
+  function firstRun() {
+    if (!has("owner") || (app.me && app.me.mailbox)) return null;
+    const name = el("input", { type: "text", maxlength: 32, spellcheck: "false", autocapitalize: "none", value: (PPE.whoami().username || "").toLowerCase().replace(/[^a-z0-9._-]/g, "").slice(0, 32) });
+    const status = el("p", { class: "status-line", role: "status" });
+    const save = el("button", { class: "btn btn-primary", type: "submit" }, "Use this address");
+    const form = el("form", { class: "card" },
+      el("h2", {}, `Choose your address in ${app.org.name}`),
+      el("p", { class: "muted" }, "This is how people reach you at work. The company's General room is set up with it."),
+      PPE.field("Your address", el("div", { class: "prefixed" }, el("span", {}, `/${ns()}/`), name)), status,
+      el("div", { class: "actions" }, save));
+    form.addEventListener("submit", busy(save, async (e) => {
+      e.preventDefault();
+      const v = name.value.trim().toLowerCase();
+      if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(v)) { status.className = "status-line status-bad"; status.textContent = "Use letters, numbers, dots, underscores or hyphens."; return; }
+      await PPE.postbox(orgPath("/me/mailbox"), { method: "POST", body: { handle: `/${ns()}/${v}` } });
+      PPE.toast(`You're /${ns()}/${v}. Open your inbox to finish setting up General.`);
+      await load(app.org.id);
+      go(app.page, true);
+    }));
+    return form;
+  }
+
+  async function go(page, replace = false) {
+    if (!app.can(page)) page = (PAGES.find((p) => app.can(p.key)) || PAGES[0]).key;
+    app.page = page;
+    const url = `/app/${page}`;
+    if (window.location.pathname !== url) (replace ? window.history.replaceState : window.history.pushState).call(window.history, {}, "", url);
+    renderNav();
+    document.title = `${PAGES.find((p) => p.key === page).title} — ${app.org.name}`;
+    content(el("p", { class: "muted" }, "Loading…"));
+    try {
+      const node = await PAGE[page]();
+      content(...[banner(), firstRun(), node].filter(Boolean));
+    } catch (e) {
+      if (e instanceof PPE.Redirecting) return;
+      content(el("div", { class: "card" }, el("h1", {}, "Couldn't load this page"), el("p", { class: "muted" }, PPE.explain(e))));
+    }
+  }
+  app.go = go;
+
+  // ---- People ----------------------------------------------------------------------------------
+
+  async function people() {
+    const { members = [] } = await PPE.postbox(orgPath("/members"));
+    app.members = members;
+    const o = app.org;
+    const invite = el("button", { class: "btn btn-primary", type: "button", onclick: () => inviteSheet() }, "Invite people");
+    if (o.status === "read_only" || o.status === "suspended") invite.disabled = true;
+    const rows = members.filter((m) => m.status !== "removed").map((m) => el("tr", {},
+      el("td", {}, `${m.first_name || ""} ${m.last_name || ""}`.trim() || "—", el("span", { class: "sub" }, m.contact_masked || "")),
+      el("td", { class: "mono" }, m.handle || m.address || ""),
+      el("td", {}, (m.roles || []).length ? m.roles.map((r) => el("span", { class: "chip" }, ROLE_NAMES[r] || r)) : el("span", { class: "muted" }, "Member")),
+      el("td", {}, chipFor(m.status), m.invite && m.invite.state === "expired" ? el("span", { class: "sub" }, "Expired — resend") : null),
+      el("td", {}, m.status === "invited" ? `Invited ${PPE.date(m.invited_at)}` : PPE.ago(m.last_active_at)),
+      el("td", { class: "row-actions" }, el("button", { class: "btn btn-small", type: "button", "aria-label": `Manage ${m.first_name || m.handle}`, onclick: () => memberSheet(m) }, "Manage"))));
+    return el("div", {},
+      head("People", `${o.seats_used ?? members.filter((m) => m.status !== "removed").length} of ${o.seats} seats used`, invite),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Name", "Address", "Role", "Status", "Last active", ""].map((h) => el("th", { scope: "col" }, h)))),
+        el("tbody", {}, rows))) : el("div", { class: "empty card" }, "No one here yet. Invite your first teammates."));
+  }
+  app.people = people;
+
+  /// Parse pasted CSV rows: first, last, contact[, handle].
+  app.parseRows = function (text) {
+    return String(text || "").split(/\r?\n/).map((line) => line.split(/[,;\t]/).map((c) => c.trim())).filter((c) => c.length >= 3 && c[2])
+      .slice(0, 200).map(([first_name, last_name, contact, handle]) => ({ first_name, last_name, contact, handle: handle || "" }));
+  };
+  app.handleFor = (first) => String(first || "").toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/ı/g, "i").replace(/[^a-z0-9._-]/g, "").slice(0, 32);
+
+  function inviteSheet() {
+    PPE.openSheet("Invite people", (body) => {
+      const list = el("div", {});
+      const grantable = app.grantable();
+      const addRow = (v = {}) => {
+        const first = el("input", { type: "text", maxlength: 60, value: v.first_name || "", "aria-label": "First name" });
+        const last = el("input", { type: "text", maxlength: 60, value: v.last_name || "", "aria-label": "Last name" });
+        const contact = el("input", { type: "text", maxlength: 254, spellcheck: "false", value: v.contact || "", "aria-label": "Contact address" });
+        const handle = el("input", { type: "text", maxlength: 32, spellcheck: "false", value: (v.handle || "").replace(`/${ns()}/`, ""), "aria-label": "Company address" });
+        let touched = Boolean(v.handle);
+        first.addEventListener("input", () => { if (!touched) handle.value = app.handleFor(first.value); });
+        handle.addEventListener("input", () => { touched = true; });
+        const role = el("select", { "aria-label": "Role" }, el("option", { value: "" }, "Member"), grantable.map((r) => el("option", { value: r }, ROLE_NAMES[r])));
+        const remove = el("button", { class: "btn btn-quiet btn-small", type: "button", onclick: () => row.remove() }, "Remove");
+        const row = el("div", { class: "card invite-row" },
+          el("div", { class: "row" }, PPE.field("First name", first), PPE.field("Last name", last)),
+          PPE.field("Contact address", contact, "The invitation goes here, and they must sign in with this address."),
+          PPE.field("Company address", el("div", { class: "prefixed" }, el("span", {}, `/${ns()}/`), handle)),
+          grantable.length ? PPE.field("Role", role) : null,
+          el("div", { class: "actions" }, remove));
+        row._read = () => ({ first_name: first.value.trim(), last_name: last.value.trim(), contact: contact.value.trim(),
+          handle: handle.value.trim() ? `/${ns()}/${handle.value.trim().toLowerCase()}` : "", roles: role.value ? [role.value] : [] });
+        list.append(row);
+      };
+      const paste = el("textarea", { "aria-label": "Paste rows", placeholder: "Jane, Doe, jane@acme.com, jane" });
+      const status = el("p", { class: "status-line", role: "status" });
+      const send = el("button", { class: "btn btn-primary", type: "button" }, "Send invitations");
+      addRow();
+      send.addEventListener("click", busy(send, async () => {
+        const invites = Array.from(list.children).map((r) => r._read()).filter((r) => r.first_name || r.contact);
+        const bad = invites.find((r) => !r.first_name || !r.last_name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(r.contact) || !/^\/[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]{0,31}$/.test(r.handle));
+        if (!invites.length || bad) { status.className = "status-line status-bad"; status.textContent = "Every row needs a first and last name, a valid contact address and a company address."; return; }
+        const r = await PPE.postbox(orgPath("/invites"), { method: "POST", body: { invites } });
+        inviteResults(r.results || [], invites);
+      }));
+      body.append(list,
+        el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => addRow() }, "Add another")),
+        el("details", {}, el("summary", {}, "Paste a list"),
+          PPE.field("One person per line: first name, last name, contact address, and optionally their address", paste),
+          el("button", { class: "btn btn-small", type: "button", onclick: () => { app.parseRows(paste.value).forEach(addRow); paste.value = ""; } }, "Add these")),
+        status, el("div", { class: "actions" }, send));
+    });
+  }
+
+  function inviteResults(results, asked) {
+    PPE.openSheet("Invitations", (body) => {
+      const once = inviteEmailOn() ? null : "Shown once. Send it to them yourself — it only works for the invited address.";
+      for (const [i, r] of results.entries()) {
+        const who = asked[i] ? `${asked[i].first_name} ${asked[i].last_name}` : r.handle;
+        const ok = r.status === "invited";
+        body.append(el("div", { class: "card" },
+          el("h3", {}, who, " ", el("span", { class: `chip ${ok ? "chip-ok" : "chip-bad"}` }, ok ? "Invited" : PPE.explain({ code: r.status, message: r.status }))),
+          el("p", { class: "mono muted" }, r.handle || ""),
+          ok && r.link ? secretBox(r.link, once) : ok ? el("p", { class: "muted" }, "The invitation is on its way.") : null));
+      }
+      body.append(el("div", { class: "actions" }, el("button", { class: "btn btn-primary", type: "button", onclick: () => { PPE.closeSheet(); go("people", true); } }, "Done")));
+    });
+  }
+
+  function memberSheet(m) {
+    PPE.openSheet(`${m.first_name || ""} ${m.last_name || ""}`.trim() || m.handle, (body) => {
+      const isOwner = (m.roles || []).includes("owner");
+      const first = el("input", { type: "text", value: m.first_name || "", maxlength: 60 });
+      const last = el("input", { type: "text", value: m.last_name || "", maxlength: 60 });
+      const saveName = el("button", { class: "btn btn-small", type: "button" }, "Save name");
+      saveName.addEventListener("click", busy(saveName, async () => {
+        await PPE.postbox(orgPath(`/members/${encodeURIComponent(m.id)}`), { method: "PATCH", body: { first_name: first.value.trim(), last_name: last.value.trim() } });
+        PPE.toast("Saved"); go("people", true);
+      }));
+      body.append(el("dl", { class: "kv" }, el("dt", {}, "Address"), el("dd", { class: "mono" }, m.handle || "—"),
+        el("dt", {}, "Status"), el("dd", {}, chipFor(m.status)), el("dt", {}, "Invited to"), el("dd", {}, m.contact_masked || "—")),
+      el("div", { class: "row" }, PPE.field("First name", first), PPE.field("Last name", last)), el("div", { class: "actions" }, saveName));
+
+      const grantable = app.grantable();
+      if (!isOwner && grantable.length && m.status !== "invited") {
+        const boxes = grantable.map((r) => { const c = el("input", { type: "checkbox", value: r, checked: (m.roles || []).includes(r) }); return el("label", { class: "check" }, c, ROLE_NAMES[r]); });
+        const saveRoles = el("button", { class: "btn btn-small", type: "button" }, "Save roles");
+        saveRoles.addEventListener("click", busy(saveRoles, async () => {
+          const roles = boxes.map((b) => b.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+          const keep = (m.roles || []).filter((r) => !grantable.includes(r));
+          await setRoles(m.id, [...keep, ...roles]);
+        }));
+        body.append(el("h3", {}, "Roles"), ...boxes, el("p", { class: "hint" }, "Admin roles never include reading anyone's messages."), el("div", { class: "actions" }, saveRoles));
+      }
+
+      const actions = el("div", { class: "actions" });
+      if (m.status === "invited" && m.invite) {
+        const resend = el("button", { class: "btn", type: "button" }, "Resend invitation");
+        resend.addEventListener("click", busy(resend, async () => {
+          const r = await PPE.postbox(orgPath(`/invites/${encodeURIComponent(m.invite.id)}/resend`), { method: "POST", body: {} });
+          PPE.openSheet("New invitation link", (b) => b.append(el("p", {}, "The old link no longer works."),
+            r.link ? secretBox(r.link, inviteEmailOn() ? null : "Shown once.") : el("p", {}, "The invitation is on its way.")));
+        }));
+        const revoke = el("button", { class: "btn btn-danger", type: "button" }, "Revoke invitation");
+        revoke.addEventListener("click", busy(revoke, async () => {
+          await PPE.postbox(orgPath(`/invites/${encodeURIComponent(m.invite.id)}`), { method: "DELETE" });
+          PPE.closeSheet(); PPE.toast("Invitation revoked"); go("people", true);
+        }));
+        actions.append(resend, revoke);
+      } else if (!isOwner && (m.status === "active" || m.status === "suspended")) {
+        const toggle = el("button", { class: "btn", type: "button" }, m.status === "active" ? "Suspend" : "Reactivate");
+        toggle.addEventListener("click", busy(toggle, async () => {
+          await PPE.postbox(orgPath(`/members/${encodeURIComponent(m.id)}`), { method: "PATCH", body: { status: m.status === "active" ? "suspended" : "active" } });
+          PPE.closeSheet(); PPE.toast(m.status === "active" ? "Suspended" : "Reactivated"); go("people", true);
+        }));
+        const remove = el("button", { class: "btn btn-danger", type: "button", onclick: () => removeSheet(m) }, "Remove…");
+        actions.append(toggle, remove);
+      }
+      body.append(actions);
+    });
+  }
+
+  PPE.onResume("app.roles", async (p) => setRoles(p.member_id, p.roles));
+  async function setRoles(memberId, roles) {
+    await PPE.postbox(orgPath(`/members/${encodeURIComponent(memberId)}`), { method: "PATCH", body: { roles }, resume: { name: "app.roles", payload: { member_id: memberId, roles } } });
+    PPE.closeSheet(); PPE.toast("Roles updated"); go("people", true);
+  }
+
+  function removeSheet(m) {
+    PPE.openSheet(`Remove ${m.first_name || m.handle}`, (body) => {
+      const keep = el("input", { type: "radio", name: "mode", value: "reserve", checked: true });
+      const del = el("input", { type: "radio", name: "mode", value: "delete" });
+      const go_ = el("button", { class: "btn btn-danger", type: "button" }, "Remove");
+      go_.addEventListener("click", busy(go_, async () => {
+        await PPE.postbox(orgPath(`/members/${encodeURIComponent(m.id)}/remove`), { method: "POST", body: { mode: keep.checked ? "reserve" : "delete" } });
+        PPE.closeSheet(); PPE.toast("Removed"); go("people", true);
+      }));
+      body.append(el("p", {}, `${m.handle} loses access to the company mailbox, rooms and every agent delegated to them. Their personal account is not affected.`),
+        el("label", { class: "check" }, keep, el("span", {}, el("strong", {}, "Keep the address for someone else. "), "Invite a new person to the same address later. They start with an empty mailbox; history doesn't move.")),
+        el("label", { class: "check" }, del, el("span", {}, el("strong", {}, "Delete the address. "), "Mail to it stops being delivered and the name is freed.")),
+        el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => PPE.closeSheet() }, "Cancel"), go_));
+    });
+  }
+
+  // ---- Agents ----------------------------------------------------------------------------------
+
+  async function agents() {
+    const { agents: list = [] } = await PPE.postbox(orgPath("/agents"));
+    const o = app.org;
+    const add = el("button", { class: "btn btn-primary", type: "button", onclick: () => addAgentSheet() }, "Add agent");
+    if (o.status === "read_only" || o.status === "suspended") add.disabled = true;
+    const rows = list.filter((a) => a.status !== "deleted").map((a) => el("tr", {},
+      el("td", { class: "mono" }, a.handle, a.label ? el("span", { class: "sub" }, a.label) : null),
+      el("td", {}, (a.operators || []).length ? a.operators.map((p) => el("span", { class: "chip" }, p.handle)) : el("span", { class: "muted" }, "Agent admins")),
+      el("td", {}, a.devices ? (a.last_seen_at ? `Last seen ${PPE.ago(a.last_seen_at)}` : "Connected") : "Never connected"),
+      el("td", {}, chipFor(a.status)),
+      el("td", { class: "row-actions" }, el("button", { class: "btn btn-small", type: "button", onclick: () => agentSheet(a) }, "Manage"))));
+    return el("div", {},
+      head("Agents", `${o.agents_used ?? rows.length} of ${o.agent_limit}`, add),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Address", "Operators", "Machine", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
+        el("tbody", {}, rows))) : el("div", { class: "empty card" }, "No agents yet. Add one and log it in on its machine."));
+  }
+
+  app.connectCommand = (handle, label) => `pigeonpost login --device --handle ${handle}${label ? ` --label "${String(label).replace(/["\\$`]/g, "")}"` : ""} --onboard`;
+
+  async function addAgentSheet() {
+    let members = app.members;
+    if (!members) { try { members = (await PPE.postbox(orgPath("/members"))).members || []; } catch { members = []; } }
+    PPE.openSheet("Add agent", (body) => {
+      const name = el("input", { type: "text", maxlength: 32, spellcheck: "false", autocapitalize: "none" });
+      const label = el("input", { type: "text", maxlength: 80, placeholder: "Build box" });
+      const ops = members.filter((m) => m.status === "active" && !(m.roles || []).some((r) => ["owner", "admin", "agent_admin"].includes(r)))
+        .map((m) => el("label", { class: "check" }, el("input", { type: "checkbox", value: m.id }), `${m.first_name} ${m.last_name} `, el("span", { class: "muted mono" }, m.handle)));
+      const how = ["qr", "code", "terminal"].map((v, i) => el("label", { class: "check" }, el("input", { type: "radio", name: "how", value: v, checked: i === 0 }),
+        el("span", {}, el("strong", {}, ["QR on the machine. ", "Enrollment code. ", "From the terminal. "][i]),
+          ["Run one command on the machine and approve it from your phone.", "A one-time code, valid for 24 hours, for scripted installs.", "Run the command yourself later."][i])));
+      const status = el("p", { class: "status-line", role: "status" });
+      const create = el("button", { class: "btn btn-primary", type: "button" }, "Add agent");
+      create.addEventListener("click", busy(create, async () => {
+        const v = name.value.trim().toLowerCase();
+        if (!/^[a-z0-9][a-z0-9._-]{0,31}$/.test(v)) { status.className = "status-line status-bad"; status.textContent = "Use letters, numbers, dots, underscores or hyphens."; return; }
+        const operators = ops.map((o) => o.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+        const r = await PPE.postbox(orgPath("/agents"), { method: "POST", body: { handle: `/${ns()}/${v}`, ...(label.value.trim() ? { label: label.value.trim() } : {}), operators } });
+        const choice = how.map((h) => h.querySelector("input")).find((c) => c.checked).value;
+        connectSheet(r.agent || { handle: `/${ns()}/${v}`, address: null, label: label.value.trim() }, choice);
+      }));
+      body.append(PPE.field("Address", el("div", { class: "prefixed" }, el("span", {}, `/${ns()}/`), name)),
+        PPE.field("Label", label, "Where it runs, so people recognize it."),
+        ops.length ? el("fieldset", { class: "card" }, el("legend", {}, "Operators: people who may log it in"), ...ops) : null,
+        el("fieldset", { class: "card" }, el("legend", {}, "How to connect"), ...how),
+        status, el("div", { class: "actions" }, create));
+    });
+  }
+
+  function connectSheet(agent, choice) {
+    PPE.openSheet(`Connect ${agent.handle}`, (body) => {
+      if (choice === "code") {
+        const make = el("button", { class: "btn btn-primary", type: "button" }, "Create enrollment code");
+        make.addEventListener("click", busy(make, () => enroll(agent)));
+        body.append(el("p", {}, "Creating a code needs a fresh, strong sign-in. The code works once, for this agent only."), el("div", { class: "actions" }, make));
+      } else {
+        body.append(el("p", {}, "On the agent's machine, run:"), secretBox(app.connectCommand(agent.handle, agent.label)),
+          el("p", { class: "muted" }, "It shows a QR code and a confirmation number. Scan it with your phone (or open the link), check the number matches, and hold Approve."));
+      }
+      body.append(el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => { PPE.closeSheet(); go("agents", true); } }, "Done")));
+    });
+  }
+
+  PPE.onResume("app.enroll", async (p) => enroll({ address: p.address, handle: p.handle }));
+  async function enroll(agent) {
+    const key = agent.address || agent.handle;
+    const r = await PPE.postbox(orgPath(`/agents/${encodeURIComponent(key)}/enrollments`), { method: "POST", body: { ttl_hours: 24 },
+      resume: { name: "app.enroll", payload: { address: agent.address, handle: agent.handle } } });
+    PPE.openSheet(`Enrollment code for ${agent.handle}`, (body) => body.append(
+      el("p", {}, `Valid until ${new Date(r.expires_at * 1000).toLocaleString()}. Shown once.`),
+      secretBox(r.code),
+      el("p", {}, "On the machine, paste it into:"),
+      secretBox("pigeonpost login --enroll-stdin --onboard"),
+      el("p", { class: "hint" }, "Reading it from standard input keeps the code out of shell history.")));
+  }
+
+  async function agentSheet(a) {
+    const [devices, delegations, members] = await Promise.all([
+      PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}/devices`)).then((r) => r.devices || []).catch(() => []),
+      PPE.postbox(orgPath("/delegations")).then((r) => (r.delegations || []).filter((d) => d.target === a.address || d.target === a.handle)).catch(() => []),
+      app.members ? Promise.resolve(app.members) : PPE.postbox(orgPath("/members")).then((r) => r.members || []).catch(() => []),
+    ]);
+    PPE.openSheet(a.handle, (body) => {
+      const label = el("input", { type: "text", maxlength: 80, value: a.label || "" });
+      const save = el("button", { class: "btn btn-small", type: "button" }, "Save");
+      save.addEventListener("click", busy(save, async () => {
+        await PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}`), { method: "PATCH", body: { label: label.value.trim() } });
+        PPE.toast("Saved"); go("agents", true);
+      }));
+      body.append(PPE.field("Label", label), el("div", { class: "actions" }, save));
+
+      body.append(el("h3", {}, "Machines"));
+      const live = devices.filter((d) => !d.revoked_at);
+      if (!live.length) body.append(el("p", { class: "muted" }, "Not logged in anywhere."), el("p", {}, "Run on the machine:"), secretBox(app.connectCommand(a.handle, a.label)));
+      for (const d of live) {
+        const rev = el("button", { class: "btn btn-small btn-danger", type: "button" }, "Disconnect");
+        rev.addEventListener("click", busy(rev, async () => {
+          await PPE.postbox(orgPath(`/devices/${encodeURIComponent(d.id)}`), { method: "DELETE" });
+          PPE.toast("Disconnected"); PPE.closeSheet(); go("agents", true);
+        }));
+        body.append(el("div", { class: "setting" }, el("p", {}, d.label || "Machine", el("span", { class: "sub muted" }, ` · since ${PPE.date(d.created_at)} · ${d.source}`)), rev));
+      }
+      const code = el("button", { class: "btn btn-small", type: "button" }, "New enrollment code");
+      code.addEventListener("click", busy(code, () => enroll(a)));
+      body.append(el("div", { class: "actions" }, code));
+
+      body.append(el("h3", {}, "Operators"));
+      for (const d of delegations) {
+        const rev = el("button", { class: "btn btn-small", type: "button" }, "Revoke");
+        rev.addEventListener("click", busy(rev, async () => {
+          await PPE.postbox(orgPath(`/delegations/${encodeURIComponent(d.id)}`), { method: "DELETE" });
+          PPE.toast("Revoked"); PPE.closeSheet(); go("agents", true);
+        }));
+        body.append(el("div", { class: "setting" }, el("p", {}, d.member_handle, el("span", { class: "sub muted" }, ` · ${(d.capabilities || []).join(", ")}${d.expires_at ? ` · until ${PPE.date(d.expires_at)}` : ""}`)), rev));
+      }
+      const who = el("select", { "aria-label": "Person" }, members.filter((m) => m.status === "active").map((m) => el("option", { value: m.id }, `${m.first_name} ${m.last_name} (${m.handle})`)));
+      const caps = CAPABILITIES.map(([k, t]) => el("label", { class: "check" }, el("input", { type: "checkbox", value: k, checked: k === "enroll" }), t));
+      const until = el("input", { type: "date", "aria-label": "Until (optional)" });
+      const grant = el("button", { class: "btn btn-small", type: "button" }, "Add operator");
+      grant.addEventListener("click", busy(grant, async () => {
+        const capabilities = caps.map((c) => c.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+        if (!who.value || !capabilities.length) return PPE.toast("Choose a person and at least one permission.", "error");
+        const expires_at = until.value ? Math.floor(Date.parse(until.value + "T23:59:59Z") / 1000) : undefined;
+        await PPE.postbox(orgPath("/delegations"), { method: "POST", body: { member_id: who.value, target: a.address, capabilities, ...(expires_at ? { expires_at } : {}) } });
+        PPE.toast("Operator added"); PPE.closeSheet(); go("agents", true);
+      }));
+      body.append(el("details", {}, el("summary", {}, "Add an operator"), PPE.field("Person", who), ...caps, PPE.field("Until (optional)", until), el("div", { class: "actions" }, grant)));
+
+      const toggle = el("button", { class: "btn", type: "button" }, a.status === "active" ? "Suspend" : "Reactivate");
+      toggle.addEventListener("click", busy(toggle, async () => {
+        await PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}`), { method: "PATCH", body: { status: a.status === "active" ? "suspended" : "active" } });
+        PPE.closeSheet(); go("agents", true);
+      }));
+      const del = el("button", { class: "btn btn-danger", type: "button" }, "Delete agent");
+      del.addEventListener("click", busy(del, async () => {
+        if (!window.confirm(`Delete ${a.handle}? Its machines are disconnected and the address stops receiving.`)) return;
+        await PPE.postbox(orgPath(`/agents/${encodeURIComponent(a.address)}`), { method: "DELETE" });
+        PPE.closeSheet(); PPE.toast("Deleted"); go("agents", true);
+      }));
+      body.append(el("div", { class: "actions" }, toggle, del));
+    });
+  }
+
+  // ---- Rooms -----------------------------------------------------------------------------------
+
+  async function rooms() {
+    const { rooms: list = [] } = await PPE.postbox(orgPath("/rooms"));
+    const create = el("button", { class: "btn btn-primary", type: "button", onclick: () => roomSheet() }, "Create room");
+    const rows = list.map((r) => el("tr", {},
+      el("td", {}, r.name, r.description ? el("span", { class: "sub" }, r.description) : null),
+      el("td", {}, String(r.member_count ?? 0)),
+      el("td", {}, r.post_policy === "admins" ? "Admins only" : "Everyone"),
+      el("td", {}, r.listed ? "Listed" : "Unlisted", r.join_policy === "private" ? el("span", { class: "sub" }, "Invite only") : null),
+      el("td", {}, r.auto_join ? "Yes" : "No"),
+      el("td", {}, r.activation_state === "provisioning" ? chipFor("provisioning") : chipFor("active")),
+      el("td", { class: "row-actions" }, el("button", { class: "btn btn-small", type: "button", onclick: () => manageRoom(r) }, "Manage"))));
+    return el("div", {}, head("Rooms", "Company rooms are end-to-end encrypted. New members join auto-join rooms when they accept.", create),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Room", "Members", "Who can post", "Directory", "Auto-join", "State", ""].map((h) => el("th", { scope: "col" }, h)))),
+        el("tbody", {}, rows))) : el("div", { class: "empty card" }, "No rooms yet."),
+      list.some((r) => r.activation_state === "provisioning") ? el("p", { class: "note" }, "A room is set up when its creator next opens the inbox: their device creates the encryption keys.") : null);
+  }
+
+  function roomSheet() {
+    PPE.openSheet("Create room", (body) => {
+      const name = el("input", { type: "text", maxlength: 80, placeholder: "design" });
+      const desc = el("textarea", { maxlength: 500 });
+      const join = el("select", {}, el("option", { value: "public" }, "Anyone at the company can join"), el("option", { value: "private" }, "Invite only"));
+      const post = el("select", {}, el("option", { value: "everyone" }, "Everyone"), el("option", { value: "admins" }, "Only room admins"));
+      const listed = el("input", { type: "checkbox", checked: true });
+      const auto = el("input", { type: "checkbox" });
+      const create = el("button", { class: "btn btn-primary", type: "button" }, "Create room");
+      create.addEventListener("click", busy(create, async () => {
+        if (!name.value.trim()) return PPE.toast("Give the room a name.", "error");
+        await PPE.postbox(orgPath("/rooms"), { method: "POST", body: { name: name.value.trim(), ...(desc.value.trim() ? { description: desc.value.trim() } : {}),
+          join_policy: join.value, post_policy: post.value, listed: listed.checked, auto_join: auto.checked } });
+        PPE.closeSheet(); PPE.toast("Room created. Open your inbox to finish setting up its encryption."); go("rooms", true);
+      }));
+      body.append(PPE.field("Name", name), PPE.field("Description (optional)", desc), PPE.field("Who can join", join), PPE.field("Who can post", post),
+        el("label", { class: "check" }, listed, "Listed in the company directory"),
+        el("label", { class: "check" }, auto, "Add everyone who joins the company"),
+        el("div", { class: "actions" }, create));
+    });
+  }
+
+  function manageRoom(r) {
+    PPE.openSheet(r.name, (body) => {
+      const listed = el("input", { type: "checkbox", checked: Boolean(r.listed) });
+      const auto = el("input", { type: "checkbox", checked: Boolean(r.auto_join) });
+      const save = el("button", { class: "btn", type: "button" }, "Save");
+      save.addEventListener("click", busy(save, async () => {
+        await PPE.postbox(orgPath(`/rooms/${encodeURIComponent(r.id)}`), { method: "PATCH", body: { listed: listed.checked, auto_join: auto.checked } });
+        PPE.closeSheet(); PPE.toast("Saved"); go("rooms", true);
+      }));
+      const del = el("button", { class: "btn btn-danger", type: "button" }, "Delete room");
+      del.addEventListener("click", busy(del, async () => {
+        if (!window.confirm(`Delete ${r.name}? Members see "This group was deleted" and its messages are purged within 30 days.`)) return;
+        await PPE.postbox(orgPath(`/rooms/${encodeURIComponent(r.id)}`), { method: "DELETE" });
+        PPE.closeSheet(); PPE.toast("Deleted"); go("rooms", true);
+      }));
+      body.append(el("label", { class: "check" }, listed, "Listed in the company directory"),
+        el("label", { class: "check" }, auto, "Add everyone who joins the company"),
+        el("p", { class: "hint" }, "Members, posting and history are managed in the room itself, in the inbox."),
+        el("div", { class: "actions" }, del, save));
+    });
+  }
+
+  // ---- Rules -----------------------------------------------------------------------------------
+
+  function picker(kind, custom, side) {
+    const sel = el("select", { "aria-label": side === "owners" ? "Who the rule is for" : "Who they hear from" },
+      el("option", { value: "everyone" }, side === "owners" ? `Everyone at ${app.org.name}` : `everyone at ${app.org.name}`),
+      el("option", { value: "members" }, side === "owners" ? `People at ${app.org.name}` : `people at ${app.org.name}`),
+      el("option", { value: "agents" }, side === "owners" ? `Agents at ${app.org.name}` : `agents at ${app.org.name}`),
+      side === "peers" ? el("option", { value: "anyone" }, "anyone") : null,
+      el("option", { value: "address" }, "a specific address…"));
+    sel.value = kind;
+    const text = el("input", { type: "text", value: custom, placeholder: side === "owners" ? `/${ns()}/agent1` : `/${ns()}/jane`, "aria-label": "Address or pattern", spellcheck: "false" });
+    text.hidden = kind !== "address";
+    sel.addEventListener("change", () => { text.hidden = sel.value !== "address"; if (!text.hidden) text.focus(); });
+    return { sel, text };
+  }
+
+  /// One rule card with its sentence editor. `rule` is null for a new one.
+  function ruleCard(rule, onDone, draft) {
+    const f = R.toForm(rule || draft || { owners: `/${ns()}/*`, peers: `/${ns()}/*`, admission: "allow", known: true, priority: 100 }, ns());
+    const owners = picker(f.ownersKind, f.ownersCustom, "owners");
+    const peers = picker(f.peersKind, f.peersCustom, "peers");
+    const admission = el("select", { "aria-label": "Mail" }, el("option", { value: "allow" }, "accept messages from"), el("option", { value: "block" }, "block messages from"), el("option", { value: "" }, "keep their own setting for"));
+    admission.value = f.admission;
+    const known = el("input", { type: "checkbox", checked: f.known });
+    const autonomy = el("select", { "aria-label": "Requests" }, el("option", { value: "" }, "their own setting"), el("option", { value: "review" }, "always ask a person"), el("option", { value: "auto" }, "act on their own for"));
+    autonomy.value = f.autonomy;
+    const verbs = el("input", { type: "text", value: f.verbs, placeholder: "report_status, run_tests", "aria-label": "Actions", spellcheck: "false" });
+    verbs.hidden = f.autonomy !== "auto";
+    autonomy.addEventListener("change", () => { verbs.hidden = autonomy.value !== "auto"; });
+    const locked = el("input", { type: "checkbox", checked: f.locked });
+    const priority = el("input", { type: "number", min: 1, max: 1000, value: f.priority, "aria-label": "Priority", style: null });
+    const desc = el("input", { type: "text", value: f.description, maxlength: 200, placeholder: "What this rule is for", "aria-label": "Description" });
+    const status = el("p", { class: "status-line", role: "status" });
+    const read = () => ({ ownersKind: owners.sel.value, ownersCustom: owners.text.value, peersKind: peers.sel.value, peersCustom: peers.text.value,
+      admission: admission.value, known: known.checked, autonomy: autonomy.value, verbs: verbs.value, locked: locked.checked, priority: priority.value, description: desc.value.trim() });
+    const save = el("button", { class: "btn btn-small btn-primary", type: "button" }, rule ? "Save" : "Add rule");
+    save.addEventListener("click", busy(save, async () => {
+      const body = R.fromForm(read(), ns());
+      if (body.error) { status.className = "status-line status-bad"; status.textContent = body.error; return; }
+      await PPE.postbox(orgPath(rule ? `/rules/${encodeURIComponent(rule.id)}` : "/rules"), { method: rule ? "PATCH" : "POST", body });
+      PPE.toast(rule ? "Rule saved" : "Rule added"); onDone();
+    }));
+    const del = rule ? el("button", { class: "btn btn-small btn-quiet", type: "button" }, "Delete") : el("button", { class: "btn btn-small btn-quiet", type: "button", onclick: () => card.remove() }, "Cancel");
+    if (rule) del.addEventListener("click", busy(del, async () => {
+      await PPE.postbox(orgPath(`/rules/${encodeURIComponent(rule.id)}`), { method: "DELETE" });
+      PPE.toast("Rule deleted"); onDone();
+    }));
+    const card = el("div", { class: "rule" },
+      el("div", { class: "sentence" }, owners.sel, owners.text, " ", admission, " ", peers.sel, peers.text,
+        el("label", { class: "check", style: null }, known, "as a known contact"), " Requests: ", autonomy, verbs),
+      el("div", { class: "meta" }, el("label", {}, locked, " Locked (agents can't override)"), el("label", {}, "Priority ", priority), desc),
+      rule ? el("p", { class: "note" }, R.sentence(rule, app.org.name, ns())) : null,
+      status, el("div", { class: "actions" }, del, save));
+    card._read = read;
+    return card;
+  }
+  app.ruleCard = ruleCard;
+
+  async function rules() {
+    const { rules: list = [] } = await PPE.postbox(orgPath("/rules"));
+    const wrap = el("div", {});
+    const reload = () => go("rules", true);
+    const add = el("button", { class: "btn btn-primary", type: "button", onclick: () => wrap.prepend(ruleCard(null, reload)) }, "Add rule");
+    const templates = el("div", { class: "templates" }, R.templates(ns()).map((t) => {
+      const b = el("button", { class: "btn btn-small", type: "button" }, t.title);
+      b.addEventListener("click", busy(b, async () => {
+        if (t.needsEdit) { wrap.prepend(ruleCard(null, reload, t.rules[0])); return; }
+        for (const rule of t.rules) await PPE.postbox(orgPath("/rules"), { method: "POST", body: rule });
+        PPE.toast("Template added"); reload();
+      }));
+      return b;
+    }));
+    for (const r of list.slice().sort((a, b) => a.priority - b.priority)) wrap.append(ruleCard(r, reload));
+    return el("div", {},
+      head("Rules", "Who can reach whom, for everyone at once. A person's own block always wins.", add),
+      el("p", { class: "muted" }, "Start from a template:"), templates,
+      el("div", { class: "actions", style: null }, el("button", { class: "btn btn-quiet btn-small", type: "button", onclick: testSheet }, "Test a rule")),
+      list.length ? null : el("div", { class: "empty card" }, "No rules yet. Everyone uses their own settings."),
+      wrap);
+  }
+
+  function testSheet() {
+    PPE.openSheet("Test a rule", (body) => {
+      const from = el("input", { type: "text", placeholder: "/acme/jane or any address", spellcheck: "false" });
+      const to = el("input", { type: "text", placeholder: `/${ns()}/agent1`, spellcheck: "false" });
+      const verb = el("input", { type: "text", placeholder: "run_tests (optional)", spellcheck: "false" });
+      const out = el("div", { role: "status", "aria-live": "polite" });
+      const run = el("button", { class: "btn btn-primary", type: "button" }, "Test");
+      run.addEventListener("click", busy(run, async () => {
+        const r = await PPE.postbox(orgPath("/rules/evaluate"), { method: "POST", body: { from: from.value.trim(), to: to.value.trim(), ...(verb.value.trim() ? { verb: verb.value.trim() } : {}) } });
+        out.replaceChildren(el("div", { class: "card" },
+          el("h3", {}, r.admitted ? "Delivered" : "Refused"),
+          el("dl", { class: "kv" }, el("dt", {}, "Known contact"), el("dd", {}, r.known ? "Yes" : "No"), el("dt", {}, "Requests"), el("dd", {}, r.autonomy === "auto" ? `Acted on without review: ${(r.verbs || []).join(", ") || "—"}` : "Wait for a person"),
+            el("dt", {}, "Decided by"), el("dd", {}, { personal_block: "Their own block", personal_contact: "Their own contact settings", org_rule: "A company rule", inbox_policy: "Their inbox settings" }[r.decided_by] || r.decided_by || "—")),
+          r.matched_rule ? el("p", { class: "note" }, `Rule: ${r.matched_rule.description || r.matched_rule.id}`) : null,
+          r.explanation ? el("p", { class: "muted" }, r.explanation) : null));
+      }));
+      body.append(PPE.field("From", from), PPE.field("To", to), PPE.field("Request", verb), el("div", { class: "actions" }, run), out);
+    });
+  }
+
+  // ---- Billing ---------------------------------------------------------------------------------
+
+  async function billing() {
+    const b = await PPE.postbox(orgPath("/billing"));
+    const m = /^ent-(\d+)-(monthly|yearly)-(usd|try)$/.exec(b.plan_code || "") || [];
+    const interval = m[2] || "yearly";
+    const change = el("a", { class: "btn btn-primary", href: `/?seats=${b.seats}&interval=${interval}&currency=${(m[3] || "usd").toUpperCase()}` }, "Change plan");
+    const pct = (used, max) => `${Math.min(100, Math.round(((used || 0) / Math.max(1, max || 1)) * 100))}%`;
+    let invoices = [];
+    try { invoices = ((await PPE.bridge("/v1/invoices")).invoices || []); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
+    const rows = invoices.map((i) => {
+      const pdf = el("button", { class: "btn btn-small", type: "button" }, "PDF");
+      pdf.addEventListener("click", busy(pdf, async () => { const r = await PPE.bridge(`/v1/invoices/${encodeURIComponent(i.id)}/download`); if (/^https:\/\//.test(r.url || "")) window.open(r.url, "_blank", "noopener"); }));
+      return el("tr", {}, el("td", {}, String(i.issued_at || i.created_at || "").slice(0, 10)), el("td", {}, i.number || "—"), el("td", {}, i.status || ""),
+        el("td", {}, i.total != null ? PPE.money(i.total, i.currency || "USD") : ""), el("td", { class: "row-actions" }, i.id ? pdf : null));
+    });
+    return el("div", {},
+      head("Billing", null, change),
+      el("div", { class: "card" },
+        el("h2", {}, `${b.seats} seats, ${interval}`),
+        el("p", { class: "muted" }, b.paid_through ? `Paid through ${PPE.date(b.paid_through)}` : b.period_end ? `Renews ${PPE.date(b.period_end)}` : ""),
+        el("p", {}, `Seats: ${b.seats_used} of ${b.seats}`), el("div", { class: "meter", role: "img", "aria-label": `${b.seats_used} of ${b.seats} seats used` }, el("span", { style: null, "data-w": pct(b.seats_used, b.seats) })),
+        el("p", {}, `Agents: ${b.agents_used} of ${b.agent_limit}`), el("div", { class: "meter", role: "img", "aria-label": `${b.agents_used} of ${b.agent_limit} agents` }, el("span", { "data-w": pct(b.agents_used, b.agent_limit) })),
+        el("p", { class: "note" }, "To lower the number of seats, first remove people or agents above the new size. To cancel or change the card, contact support@pigeonpost.dev — self-service changes for company plans are coming.")),
+      el("h2", {}, "Invoices"),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["Date", "Number", "Status", "Total", ""].map((h) => el("th", { scope: "col" }, h)))), el("tbody", {}, rows)))
+        : el("p", { class: "muted" }, "No invoices yet."));
+  }
+
+  // ---- Security --------------------------------------------------------------------------------
+
+  function toggle(sentence, checked, onChange) {
+    const input = el("input", { type: "checkbox", role: "switch", checked, "aria-label": sentence });
+    input.addEventListener("change", async () => {
+      input.disabled = true;
+      try { await onChange(input.checked); PPE.toast("Saved"); } catch (e) { input.checked = !input.checked; PPE.fail(e); } finally { input.disabled = false; }
+    });
+    return el("div", { class: "setting" }, el("p", {}, sentence), el("span", { class: "switch" }, input));
+  }
+  const patchSettings = (settings) => PPE.postbox(orgPath(""), { method: "PATCH", body: { settings } }).then((r) => { if (r.org) app.org = r.org; });
+
+  async function security() {
+    const s = app.org.settings || {};
+    const [{ domains = [] }, audit] = await Promise.all([PPE.postbox(orgPath("/domains")), PPE.postbox(orgPath("/audit?limit=50"))]);
+    const add = el("button", { class: "btn btn-primary", type: "button", onclick: domainSheet }, "Add domain");
+    const domainCards = domains.map((d) => {
+      const verify = el("button", { class: "btn btn-small", type: "button" }, "Verify");
+      verify.addEventListener("click", busy(verify, async () => {
+        const r = await PPE.postbox(orgPath(`/domains/${encodeURIComponent(d.domain)}/verify`), { method: "POST", body: {} });
+        PPE.toast(r.verified ? `${d.domain} is verified` : "The record isn't visible yet. DNS can take a while.", r.verified ? "info" : "error"); go("security", true);
+      }));
+      const remove = el("button", { class: "btn btn-small btn-quiet", type: "button" }, "Remove");
+      remove.addEventListener("click", busy(remove, async () => { await PPE.postbox(orgPath(`/domains/${encodeURIComponent(d.domain)}`), { method: "DELETE" }); go("security", true); }));
+      return el("div", { class: "card" }, el("h3", {}, d.domain, " ", d.verified_at ? el("span", { class: "chip chip-ok" }, "Verified") : el("span", { class: "chip chip-warn" }, "Not verified")),
+        d.verified_at ? el("p", { class: "muted" }, `Verified ${PPE.date(d.verified_at)}; checked again every week.`)
+          : el("div", {}, el("p", {}, "Add this TXT record at your DNS provider, then press Verify:"), secretBox(`${d.txt_name || d.domain}  TXT  "${d.txt_value}"`)),
+        el("div", { class: "actions" }, remove, d.verified_at ? null : verify));
+    });
+    const filter = el("input", { type: "search", placeholder: "Filter by action, e.g. member.invite", "aria-label": "Filter audit log" });
+    const tbody = el("tbody", {});
+    let next = audit.next_before_id || null;
+    const fill = (entries, append) => {
+      if (!append) tbody.replaceChildren();
+      for (const e of entries) tbody.append(el("tr", {}, el("td", {}, new Date(e.at * 1000).toLocaleString()), el("td", {}, e.actor || e.actor_kind || "—"), el("td", { class: "mono" }, e.action), el("td", { class: "mono" }, e.target || "")));
+    };
+    fill(audit.entries || []);
+    const more = el("button", { class: "btn btn-small", type: "button", hidden: !next }, "Load more");
+    const query = async (append) => {
+      const q = new URLSearchParams({ limit: "50" });
+      if (filter.value.trim()) q.set("action", filter.value.trim());
+      if (append && next) q.set("before_id", String(next));
+      const r = await PPE.postbox(orgPath(`/audit?${q}`));
+      next = r.next_before_id || null; more.hidden = !next; fill(r.entries || [], append);
+    };
+    more.addEventListener("click", busy(more, () => query(true)));
+    let t = null;
+    filter.addEventListener("input", () => { window.clearTimeout(t); t = window.setTimeout(() => query(false).catch(PPE.fail), 300); });
+    const exportBtn = (format) => { const b = el("button", { class: "btn btn-small", type: "button" }, `Export ${format.toUpperCase()}`); b.addEventListener("click", busy(b, () => exportAudit(format))); return b; };
+    return el("div", {},
+      head("Security", null, add),
+      el("div", { class: "card" },
+        toggle("Require two-step sign-in for everyone in the organization", Boolean(s.require_mfa), (v) => patchSettings({ require_mfa: v })),
+        toggle("Only invite addresses at verified domains", Boolean(s.invite_domains_only), (v) => patchSettings({ invite_domains_only: v }))),
+      el("h2", {}, "Domains"), domains.length ? domainCards : el("p", { class: "muted" }, "No domains yet. Verify your company's domain to restrict invitations to it."),
+      el("div", { class: "card" }, el("h2", {}, "API keys"), el("p", { class: "muted" }, "Coming in Phase 5: scoped keys for provisioning people and agents from your own systems.")),
+      el("h2", {}, "Audit log"),
+      el("div", { class: "row" }, filter, el("div", { class: "actions", style: null }, exportBtn("csv"), exportBtn("json"))),
+      el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["When", "Who", "Action", "Target"].map((h) => el("th", { scope: "col" }, h)))), tbody)),
+      el("div", { class: "actions" }, more));
+  }
+
+  function domainSheet() {
+    PPE.openSheet("Add domain", (body) => {
+      const d = el("input", { type: "text", placeholder: "acme.com", spellcheck: "false", autocapitalize: "none" });
+      const add = el("button", { class: "btn btn-primary", type: "button" }, "Add domain");
+      add.addEventListener("click", busy(add, async () => {
+        const v = d.value.trim().toLowerCase().replace(/\.$/, "");
+        if (!/^(?=.{4,253}$)([a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(v)) return PPE.toast("Enter a domain like acme.com.", "error");
+        await PPE.postbox(orgPath("/domains"), { method: "POST", body: { domain: v } });
+        PPE.closeSheet(); go("security", true);
+      }));
+      body.append(PPE.field("Domain", d, "You'll add one TXT record to prove you control it."), el("div", { class: "actions" }, add));
+    });
+  }
+
+  PPE.onResume("app.export", async (p) => exportAudit(p.format));
+  async function exportAudit(format) {
+    const res = await PPE.postbox(orgPath(`/audit/export?format=${format}`), { raw: true, resume: { name: "app.export", payload: { format } } });
+    const blob = await res.blob();
+    const a = el("a", { href: URL.createObjectURL(blob), download: `audit-${app.org.namespace}-${new Date().toISOString().slice(0, 10)}.${format}` });
+    document.body.append(a); a.click(); a.remove();
+    window.setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // ---- Organization ----------------------------------------------------------------------------
+
+  async function organization() {
+    const o = app.org;
+    const name = el("input", { type: "text", maxlength: 120, value: o.name });
+    const save = el("button", { class: "btn btn-primary", type: "button" }, "Save");
+    save.addEventListener("click", busy(save, async () => {
+      const r = await PPE.postbox(orgPath(""), { method: "PATCH", body: { name: name.value.trim() } });
+      if (r.org) app.org = r.org; PPE.toast("Saved"); go("organization", true);
+    }));
+    const rc = el("select", { "aria-label": "Who can create rooms" }, el("option", { value: "everyone" }, "everyone"), el("option", { value: "admins" }, "admins only"));
+    rc.value = (o.settings && o.settings.rooms_creation) || "everyone";
+    rc.addEventListener("change", async () => { try { await patchSettings({ rooms_creation: rc.value }); PPE.toast("Saved"); } catch (e) { PPE.fail(e); } });
+    const parts = [head("Organization", null, save),
+      el("div", { class: "card" }, PPE.field("Name", name),
+        el("dl", { class: "kv" }, el("dt", {}, "Address"), el("dd", { class: "mono" }, `/${o.namespace}`), el("dt", {}, "Status"), el("dd", {}, chipFor(o.status)), el("dt", {}, "Created"), el("dd", {}, PPE.date(o.created_at))),
+        el("p", { class: "hint" }, "The address can't change after creation.")),
+      el("div", { class: "card" }, el("div", { class: "setting" }, el("p", {}, "Rooms can be created by ", rc)))];
+    if (has("owner")) {
+      const confirm = el("input", { type: "text", spellcheck: "false", autocapitalize: "none", "aria-label": `Type ${o.namespace} to confirm` });
+      const del = el("button", { class: "btn btn-danger", type: "button", disabled: true }, "Delete organization");
+      confirm.addEventListener("input", () => { del.disabled = confirm.value.trim() !== o.namespace; });
+      del.addEventListener("click", busy(del, () => deleteOrg(confirm.value.trim())));
+      parts.push(el("div", { class: "card" }, el("h2", {}, "Delete organization"),
+        el("p", {}, "Mail to every company address stops at once. People keep their personal accounts; their company mailboxes are removed. Agents are disconnected. The address can be recovered for 30 days."),
+        PPE.field(`Type ${o.namespace} to confirm`, confirm), el("div", { class: "actions" }, del)));
+    }
+    return el("div", {}, ...parts);
+  }
+
+  PPE.onResume("app.delete", async (p) => deleteOrg(p.confirm));
+  async function deleteOrg(confirmNamespace) {
+    await PPE.postbox(orgPath(""), { method: "DELETE", body: { confirm_namespace: confirmNamespace }, resume: { name: "app.delete", payload: { confirm: confirmNamespace } } });
+    PPE.store.del("ppe_org");
+    gate(el("h1", {}, "Organization deleted"), el("p", { class: "muted" }, "Company mail has stopped. The address can be recovered for 30 days."), el("a", { class: "btn", href: "/" }, "Done"));
+  }
+
+  const PAGE = { people, agents, rooms, rules, billing, security, organization };
+
+  // ---- load ------------------------------------------------------------------------------------
+
+  async function load(id) {
+    const r = await PPE.postbox(`/v1/orgs/${encodeURIComponent(id)}`);
+    app.org = r.org;
+    app.me = r.me || {};
+    app.members = null;
+    PPE.store.set("ppe_org", id);
+  }
+
+  /// Meter widths without inline styles (the CSP allows none): applied after render.
+  new window.MutationObserver(() => {
+    for (const s of PPE.$$("[data-w]")) { s.style.width = s.dataset.w; s.removeAttribute("data-w"); }
+  }).observe(document.body, { childList: true, subtree: true });
+
+  async function init() {
+    PPE.renderAccount();
+    if (!PPE.signedIn()) {
+      gate(el("h1", {}, "Sign in to manage your organization"), el("p", { class: "muted" }, "Owners and admins manage people, agents and rooms here."),
+        el("div", { class: "actions" }, el("a", { class: "btn", href: "/" }, "See packages"), el("button", { class: "btn btn-primary", type: "button", onclick: () => PPE.signIn({ returnTo: window.location.pathname + window.location.search }) }, "Sign in")));
+      return;
+    }
+    try {
+      const caps = await PPE.postbox("/v1/capabilities");
+      app.features = Array.isArray(caps.features) ? caps.features : Object.keys(caps.features || {});
+      if (!app.features.includes("enterprise_portal") || !app.features.includes("orgs")) {
+        gate(el("h1", {}, "Coming soon"), el("p", { class: "muted" }, "Organizations are opening gradually."), el("a", { class: "btn", href: "/" }, "See packages"));
+        return;
+      }
+      const { orgs = [] } = await PPE.postbox("/v1/orgs");
+      app.orgs = orgs;
+      const admins = orgs.filter((o) => (o.my_roles || []).some((r) => ADMIN.includes(r)));
+      if (!admins.length) {
+        if (orgs.length) {
+          gate(el("h1", {}, "Your company workspace is in the inbox"), el("p", { class: "muted" }, "Rooms, people and your company address are all there. This page is for admins."),
+            el("div", { class: "actions" }, el("a", { class: "btn btn-primary", href: cfg.inbox || "https://inbox.pigeonpost.dev" }, "Open your inbox")));
+        } else {
+          gate(el("h1", {}, "No organization yet"), el("p", { class: "muted" }, "Create one for your team, or ask your admin for an invitation."),
+            el("div", { class: "actions" }, el("a", { class: "btn btn-primary", href: "/" }, "Create an organization")));
+        }
+        return;
+      }
+      const q = new URLSearchParams(window.location.search);
+      const wanted = q.get("org") || PPE.store.get("ppe_org");
+      const pick = admins.find((o) => o.id === wanted) || admins[0];
+      await load(pick.id);
+      document.getElementById("gate").hidden = true;
+      document.getElementById("shell").hidden = false;
+      const page = (window.location.pathname.split("/")[2] || "").replace(/[^a-z]/g, "");
+      await go(PAGE[page] ? page : "people", true);
+      await PPE.runResume().catch(PPE.fail);
+    } catch (e) {
+      if (e instanceof PPE.Redirecting) return;
+      gate(el("h1", {}, "Couldn't load your organization"), el("p", { class: "muted" }, PPE.explain(e)), el("button", { class: "btn", type: "button", onclick: () => window.location.reload() }, "Try again"));
+    }
+  }
+  window.addEventListener("popstate", () => { const page = window.location.pathname.split("/")[2]; if (app.org && PAGE[page]) go(page, true); });
+  app.init = init;
+  init();
+})();

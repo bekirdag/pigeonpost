@@ -15,9 +15,11 @@ import * as postbox from "./postbox.js";
 import { publicCatalog, isUuid } from "./catalog.js";
 import { State } from "./state.js";
 import { createBilling } from "./billing.js";
+import { createSales, sourceOf } from "./sales.js";
 
 const state = new State(config.stateDir);
 const billing = createBilling(state);
+const sales = createSales(config.stateDir);
 const MAX_BODY = 64 * 1024;
 
 function send(res, status, body, origin) {
@@ -93,6 +95,11 @@ const server = http.createServer(async (req, res) => {
       const name = decodeURIComponent(match[1]).toLowerCase();
       const available = await account.handleAvailable(name, bearer(req));
       return send(res, 200, { name, available: available === true, known: available !== null }, origin);
+    }
+
+    // Enterprise "Talk to sales" (above 500 seats). Public, validated, rate-limited per source.
+    if (method === "POST" && path === "/ent/sales") {
+      return send(res, 202, sales.record(sourceOf(req), await readJson(req)), origin);
     }
 
     // ---- everything below needs the customer's token ---------------------------------------
