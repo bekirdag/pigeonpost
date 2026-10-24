@@ -4,7 +4,14 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Active implementation continuation. PR #83's pairing decisions and tests are repaired; CLI credential custody is under validation. PR #89's message delivery/edit/expiry races are repaired and tested. PR #87's newer-runtime iPad audit passes; iPhone purchase visibility and explicit Rust setup fixes are pushed. Shared dependency hardening is in draft PR #90. No PR merged or production deployment made by this continuation yet. Native releases remain batched and the existing Apple pre-submission review requirement is preserved.
+Shared baseline #90 is merged at `26f10b8`; enterprise/device-login #83 is merged at `8db5df3`.
+The enterprise portal, inbox approval page, privacy/terms updates and sales-validation endpoint are
+now deployed and verified on the origin and public URLs. The postbox process still runs source
+`c0d6a4b` (already includes the Phase 4 server); the shared Rust security update and #89 server
+changes await its controlled deployment. #89 is integrated with #83 and its current CI is running.
+#87 passes the newer iPad audit; two iPhone cases are being repaired. Native round two has a
+committed/tested Apple wire foundation, with screens and remaining platforms still pending.
+Native releases remain batched; the owner's Apple pre-submission review hold is preserved.
 
 ## Intake evidence
 
@@ -102,3 +109,14 @@ Active implementation continuation. PR #83's pairing decisions and tests are rep
 - #87’s next iPhone run stopped before UI tests because the hosted image lacked Cargo in the Xcode build environment. Added the repository’s existing pinned Rust-toolchain action to all three iOS jobs, parsed workflow YAML, ran staged validation, and pushed `33d0a74`. The scroll-to-payment-button fix at `3a0dfeb` passed both targeted tests locally; newer-runtime confirmation remains pending.
 - #83 review found device keys used an unsafe predictable temporary filename and relied on inherited Windows permissions. The new flow now preflights a private home and both existing credential files before any request, uses the existing SDK’s bounded private-file custody and atomic writes for device keys and newly enrolled mailbox capabilities, and zeroizes key buffers. Existing shared/permissive homes are refused without changing their permissions. Focused tests cover corrupt/oversized files, linked leaves, unsafe homes and planted old temporary symlinks; the parser never echoes credential contents. Full CLI and Clippy validation are underway.
 - Small local drafts for the remap reorder and negative test used incorrect ordering/invalid Rust and were rejected. No generated draft was applied. Docdex graphs for scripts/workflows have no edges; workflow callers and build-script paths were inspected directly.
+
+
+## Checkpoint — enterprise deployed and publicly verified
+
+- #83 passed every check and merged as `8db5df3c5ae4c16e4d070235b3d490bcb155b45d`. Staged 49 whitelisted, tracked production assets from that exact tree. Production bridge source hashes matched its reviewed predecessor before mutation. Published portal assets, `pair.html/css/js`, website privacy/terms and the bridge sales module/route. Bridge health and validation of an empty sales request pass (400, no lead created).
+- Private server-side backup: `/var/backups/pigeonpost/enterprise-20261024T195415Z` on raijin, mode 0700, outside web roots. The deployment script and validation log are retained in the private release directory. Origin checks compare the deployed HTML/JS bytes to the staged commit and verify CSP, checkout nonce policy and clean `/app/*`, `/invite`, `/auth/callback` routing.
+- Public browser/request checks pass for enterprise `/`, `/app` and inbox `/pair.html`. The shared browser initially reused the old placeholder; normal reload retrieves the complete portal, fonts and scripts, with the closed-USD notice. Added HTML revalidation to the enterprise nginx block; static assets retain their five-minute override. An immediate-header probe after the first reload raced the worker transition and triggered rollback. Retried against the exact web-app nginx master with bounded header polling; syntax validation and origin revalidation headers pass. No DNS, identity, global feature or payment configuration was changed.
+- Portal visual evidence: `~/.local/share/codex-browser/artifacts/enterprise-live-20261024.png`; public scripts and Geist fonts load. Cloudflare DNS console remains at sign-in; the existing wildcard route works for the portal. TURN DNS verification is still pending.
+- #89's integration with #83 required retaining both CLI modules (`agentd_edits`, `device_login_cmd`), both Node test suites, and both privacy disclosures/retention rows. Its copied enterprise design tokens also needed the new inbox receipt colors. Exact-copy test is retained; portal **31/31** and combined inbox **195/195** pass after synchronization. Full CLI integration validation is running.
+- #87 at `b7a7eff`: newer iPad passes, iPhone reaches UI and fails only an arbitrary cell-index composer entry and the fifth-plan price assertion. Exported the newer result bundle and recording. Composer now uses the established explicit fixture-thread argument. Purchase controls are revealed fully below the translucent bar and selected-plan accessibility state is checked before payment; failure hierarchy/screenshot capture is added. Local build/targeted tests and fresh newer-runtime CI remain required.
+- The public runbook no longer points active deployments at retired `159.69.201.24`. It records current source/runtime paths, both Compose image references, loopback bindings, backup/rollback rules and the existing bounded logs on `45.132.181.100`. This is a runbook correction, not a postbox restart.
