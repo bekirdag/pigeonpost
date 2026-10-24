@@ -33,7 +33,7 @@ enum Fixtures {
 }
 #if !MAC_INBOX_UI_TESTS
 @MainActor enum AppLife { static var isActive = true }
-struct StagedFile { let data: Data; let name: String; let mediaType: String }
+struct StagedFile { let name: String; let mediaType: String; let data: Data }
 #endif
 
 final class ControlledURLProtocol: URLProtocol {
@@ -144,6 +144,7 @@ final class ControlledURLProtocol: URLProtocol {
         URLProtocol.registerClass(ControlledURLProtocol.self)
         await messageActionWireAndAcknowledgement()
         await editRetryAndMailboxIsolation()
+        await attachmentSendRetry()
         await initialLoadAndSwitch()
         await oldLoadCannotFinishNewSpinner()
         await rapidReturnToSameMailbox()
@@ -329,6 +330,43 @@ final class ControlledURLProtocol: URLProtocol {
         check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed stale ordinary send")
         _ = await oldSend.value
         check(inbox.toast == nil && inbox.pending.isEmpty, "late send failure cannot report against another mailbox")
+    }
+
+    static func attachmentSendRetry() async {
+        let (account, inbox) = make()
+        let file = StagedFile(name: "brief.txt", mediaType: "text/plain", data: Data("hello attachment".utf8))
+        let reference = MessageReference.make()
+        let first = Task { await inbox.send("with file", to: "/test/peer", threadId: "subject", files: [file], msgRef: reference) }
+        await wait("attachment upload") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" } }
+        check(ControlledURLProtocol.complete("/v1/attachments", identity: a.address,
+              body: "{\"id\":\"file-one\",\"filename\":\"brief.txt\",\"media_type\":\"text/plain\",\"bytes\":16}", status: 201), "uploaded the file once")
+        let body = await nextSend()
+        check(body["attachments"] as? [String] == ["file-one"], "send names the uploaded attachment")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "simulated an ambiguous file-send response")
+        _ = await first.value
+        let retry = Task { await inbox.send("with file", to: "/test/peer", threadId: "subject", files: [file], msgRef: reference) }
+        let retried = await nextSend()
+        check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }, "file retry reuses upload instead of changing the wire attachment ids")
+        check(retried["attachments"] as? [String] == body["attachments"] as? [String]
+              && retried["body"] as? String == body["body"] as? String
+              && retried["msg_ref"] as? String == body["msg_ref"] as? String,
+              "ambiguous retry keeps the exact body, attachments and reference")
+        check(inbox.pending.count == 1, "retry replaces its failed optimistic row")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"error\":\"unavailable\"}", status: 503), "failed the repeated file send")
+        _ = await retry.value
+        switchTo(b, account: account, inbox: inbox)
+        switchTo(a, account: account, inbox: inbox)
+        let fresh = Task { await inbox.send("with file", to: "/test/peer", threadId: "subject", files: [file], msgRef: reference) }
+        let afterReturn = await nextSend()
+        check(!ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/attachments" }
+              && afterReturn["attachments"] as? [String] == ["file-one"], "returning to the same mailbox preserves the exact send attempt's upload ids")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{\"message_id\":\"delivered\",\"sent_copy_id\":\"sent-copy\"}", status: 201), "accepted the fresh file send")
+        let success = await fresh.value
+        await pending(a.address, count: 1)
+        check(ControlledURLProtocol.complete("/v1/inbox", identity: a.address, body: actionHistory("sent-copy")), "refreshed file send history")
+        check(success, "fresh file send succeeds")
+        await wait("file send refresh drained") { ControlledURLProtocol.requests().isEmpty }
+        inbox.reset()
     }
 
     static func initialLoadAndSwitch() async {

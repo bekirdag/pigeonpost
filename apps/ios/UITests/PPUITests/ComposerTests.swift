@@ -5,6 +5,90 @@ import XCTest
 /// thread-model suite, which cannot press keys.
 final class ComposerTests: XCTestCase {
 
+    private func actionApp(features: String? = nil) -> XCUIApplication {
+        let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
+        app.launchArguments = ["-fixtures", "-open=/bekir/agent1", "-appearance=light"]
+        if let features { app.launchArguments.append("-features=" + features) }
+        app.launch()
+        XCTAssertTrue(app.textViews["messageComposer"].waitForExistence(timeout: 15))
+        return app
+    }
+
+    private func revealAction(_ id: String, in app: XCUIApplication) -> XCUIElement {
+        let button = app.buttons[id]
+        let history = app.tables["conversation-history"]
+        for _ in 0..<12 {
+            if button.exists {
+                let top = history.frame.minY + 8
+                let bottom = min(history.frame.maxY, app.textViews["messageComposer"].frame.minY) - 8
+                let frame = button.frame
+                if button.isHittable && frame.minY >= top && frame.maxY <= bottom { return button }
+                let distance = min(140, max(60, (bottom - top) / 3))
+                let direction: CGFloat = frame.maxY > bottom ? -1 : 1
+                let start = app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: history.frame.midX, dy: (top + bottom) / 2))
+                start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: direction * distance)))
+            } else { history.swipeDown() }
+        }
+        XCTAssertTrue(button.isHittable, "message action is not reachable: \(id)")
+        return button
+    }
+
+    func testReplyPreservesDraftAndClearsAfterSend() throws {
+        let app = actionApp()
+        let field = app.textViews["messageComposer"]
+        field.tap()
+        field.typeText("Keep my draft")
+        revealAction("message-reply:m_reply", in: app).tap()
+        XCTAssertTrue(app.buttons["Cancel reply"].waitForExistence(timeout: 5))
+        XCTAssertEqual(drafted(app), "Keep my draft")
+        app.buttons["Cancel reply"].tap()
+        XCTAssertEqual(drafted(app), "Keep my draft")
+        revealAction("message-reply:m_reply", in: app).tap()
+        app.buttons["Send"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["Cancel reply"])
+        waitForExpectations(timeout: 5)
+        assertCleared(app, "reply")
+        XCTAssertTrue(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "reply-quote:local_")).firstMatch.waitForExistence(timeout: 5), "sent reply must show its quoted message")
+    }
+
+    func testEditPreservesDraftAndShowsVersionHistory() throws {
+        let app = actionApp()
+        let field = app.textViews["messageComposer"]
+        field.tap()
+        field.typeText("My unsent draft")
+        revealAction("message-edit:m_out2", in: app).tap()
+        XCTAssertTrue(app.buttons["Cancel edit"].waitForExistence(timeout: 5))
+        XCTAssertEqual(drafted(app), "pin the flaky macOS test and push a fix")
+        app.buttons["Cancel edit"].tap()
+        XCTAssertEqual(drafted(app), "My unsent draft", "cancel must restore the ordinary draft")
+        revealAction("message-edit:m_out2", in: app).tap()
+        field.tap()
+        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: drafted(app).count) + "Revised task")
+        app.buttons["Save edit"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["Cancel edit"])
+        waitForExpectations(timeout: 5)
+        XCTAssertEqual(drafted(app), "My unsent draft", "saving an edit must preserve the ordinary draft")
+        revealAction("message-info:m_out2", in: app).tap()
+        XCTAssertTrue(app.staticTexts["Original"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.staticTexts["Edit 1"].exists)
+        XCTAssertTrue(app.staticTexts["Revised task"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "native-message-version-history"
+        shot.lifetime = .keepAlways
+        add(shot)
+        app.buttons["Done"].tap()
+        XCTAssertEqual(drafted(app), "My unsent draft")
+    }
+
+    func testMessageActionsStayHiddenWithoutCapabilities() throws {
+        let app = actionApp(features: "")
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "message-edit:")).firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "message-reply:")).firstMatch.exists)
+        XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "message-info:")).firstMatch.exists)
+        XCTAssertTrue(app.buttons["Copy message"].firstMatch.exists)
+    }
+
     private func openThread() -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
         app.launchArguments = ["-fixtures"]

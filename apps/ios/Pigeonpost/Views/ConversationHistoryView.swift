@@ -9,11 +9,12 @@ struct ConversationHistoryView: UIViewControllerRepresentable {
     let latestRequest: Int
     let account: Account
     let inbox: Inbox
+    let actionScope: MessageActionScope
 
     func makeUIViewController(context: Context) -> HistoryController { HistoryController() }
 
     func updateUIViewController(_ controller: HistoryController, context: Context) {
-        controller.update(messages, latestRequest: latestRequest, account: account, inbox: inbox)
+        controller.update(messages, latestRequest: latestRequest, account: account, inbox: inbox, scope: actionScope)
     }
 }
 
@@ -29,6 +30,7 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
     private var request: Int?
     private var account: Account?
     private var inbox: Inbox?
+    private var actionScope: MessageActionScope?
     private var loadingOlder = false
     private var dragStartOffset: CGFloat = 0
     private var userScrolling = false
@@ -87,10 +89,11 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         ])
     }
 
-    func update(_ messages: [ThreadMessage], latestRequest: Int, account: Account, inbox: Inbox) {
+    func update(_ messages: [ThreadMessage], latestRequest: Int, account: Account, inbox: Inbox, scope: MessageActionScope) {
         loadViewIfNeeded()
         self.account = account
         self.inbox = inbox
+        self.actionScope = scope
         let explicitlyRequested = request != nil && request != latestRequest
         request = latestRequest
         guard messages != source || explicitlyRequested else { return }
@@ -132,9 +135,9 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
             cell.contentConfiguration = UIHostingConfiguration {
                 VStack(spacing: 2) {
                     if showDay { HistoryDayBreak(label: Time.dayLabel(message.at)) }
-                    MessageBubble(message: message, showsMenu: false) { [weak self] frame in
-                        self?.cardFrames[message.id] = frame
-                    }
+                    MessageBubble(message: message, showsMenu: false, actionScope: actionScope,
+                                  jumpToMessage: { [weak self] id in self?.jump(to: id) },
+                                  onCardFrame: { [weak self] frame in self?.cardFrames[message.id] = frame })
                     #if DEBUG
                     if Fixtures.enabled && CommandLine.arguments.contains("-history-growth") && indexPath.row == 0 {
                         HistoryFixtureGrowth()
@@ -211,6 +214,28 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         var actions: [UIMenuElement] = [
             UIAction(title: "Copy", image: UIImage(systemName: "doc.on.doc")) { _ in Clipboard.copy(message.body) },
         ]
+        if let scope = actionScope, let inbox, let account, message.status == .sent, !message.id.hasPrefix("local_") {
+            if account.features.messageReply {
+                actions.append(UIAction(title: "Reply", image: UIImage(systemName: "arrowshape.turn.up.left")) { _ in
+                    inbox.beginMessageAction(.reply, message: message, in: scope)
+                })
+            }
+            if account.features.messageEdit && message.isEditable() {
+                actions.append(UIAction(title: "Edit", image: UIImage(systemName: "pencil")) { _ in
+                    inbox.beginMessageAction(.edit, message: message, in: scope)
+                })
+            }
+            if account.features.messageEdit || account.features.receipts {
+                actions.append(UIAction(title: "Message info", image: UIImage(systemName: "info.circle")) { [weak self] _ in
+                    guard let self else { return }
+                    weak var host: UIViewController?
+                    let controller = UIHostingController(rootView: MessageInfoSheet(message: message, scope: scope,
+                        close: { host?.dismiss(animated: true) }).environment(account).environment(inbox))
+                    host = controller
+                    self.present(controller, animated: true)
+                })
+            }
+        }
         // Only inbound. Reporting your own message would report yourself.
         if !mine {
             actions.append(UIAction(title: "Report spam", image: UIImage(systemName: "exclamationmark.bubble"),
@@ -323,6 +348,18 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         table.reloadData()
         table.setNeedsLayout()
         table.layoutIfNeeded()
+        updateLatestButton()
+    }
+
+    private func jump(to id: String) {
+        guard sourceIDs.contains(id) else { inbox?.toast = "The original message is no longer in this thread."; return }
+        table.followingLatest = false
+        while !window.ids.contains(id), window.hasOlder(in: sourceIDs) { window.loadOlder(sourceIDs) }
+        rebuildRows()
+        guard let row = rows.firstIndex(where: { $0.id == id }) else { return }
+        table.reloadData()
+        table.layoutIfNeeded()
+        table.scrollToRow(at: IndexPath(row: row, section: 0), at: .middle, animated: true)
         updateLatestButton()
     }
 

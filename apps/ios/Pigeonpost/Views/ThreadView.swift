@@ -32,21 +32,28 @@ struct ThreadView: View {
     private struct ComposerDraft {
         var text = ""
         var files: [StagedFile] = []
+        var attempt: MessageSendAttempt?
     }
     @State private var drafts: [HistoryKey: ComposerDraft] = [:]
     @State private var loading: [HistoryKey: Int] = [:]
     @State private var sending: Set<HistoryKey> = []
     private var composerKey: HistoryKey { HistoryKey(mailbox: account.me?.address, peer: peer, subthread: subthread) }
+    private var actionScope: MessageActionScope { MessageActionScope(mailbox: account.me?.address, peer: peer, subject: subthread) }
+    private var action: MessageComposerAction? { inbox.action(in: actionScope) }
+    private var editing: Bool { action?.kind == .edit }
     private var draft: String {
-        get { drafts[composerKey]?.text ?? "" }
-        nonmutating set { drafts[composerKey, default: ComposerDraft()].text = newValue }
+        get { editing ? action?.text ?? "" : drafts[composerKey]?.text ?? "" }
+        nonmutating set {
+            if let action, editing { inbox.updateMessageAction(action.id, text: newValue) }
+            else { drafts[composerKey, default: ComposerDraft()].text = newValue }
+        }
     }
     private var staged: [StagedFile] {
-        get { drafts[composerKey]?.files ?? [] }
-        nonmutating set { drafts[composerKey, default: ComposerDraft()].files = newValue }
+        get { editing ? [] : drafts[composerKey]?.files ?? [] }
+        nonmutating set { if !editing { drafts[composerKey, default: ComposerDraft()].files = newValue } }
     }
     private var loadingPhotos: Int { loading[composerKey, default: 0] }
-    private var sendPending: Bool { sending.contains(composerKey) }
+    private var sendPending: Bool { sending.contains(composerKey) || (editing && inbox.actionSending) }
 
     @State private var ownSubthread: String?
     private var subthread: String? {
@@ -92,7 +99,7 @@ struct ThreadView: View {
     }
 
     var body: some View {
-        ConversationHistoryView(messages: shown, latestRequest: latestRequest, account: account, inbox: inbox)
+        ConversationHistoryView(messages: shown, latestRequest: latestRequest, account: account, inbox: inbox, actionScope: actionScope)
             .id(HistoryKey(mailbox: account.me?.address, peer: peer, subthread: subthread))
             .background { DoodleBackground() }
             .onChange(of: composing) { _, focused in
@@ -196,6 +203,7 @@ struct ThreadView: View {
             }
             if Fixtures.sheet == "thread", !embedded { sheet = .newThread }
         }
+        .onChange(of: action?.id) { _, next in if next != nil { composing = true } }
     }
 
     /// Re-acknowledge when the subject changes or new mail lands, but not on every render.
@@ -253,6 +261,11 @@ struct ThreadView: View {
 
     private var composer: some View {
         VStack(spacing: 6) {
+            if let action {
+                MessageActionBanner(action: action, busy: sendPending) { inbox.cancelMessageAction(action.id) }
+                    .frame(maxWidth: 860).frame(maxWidth: .infinity)
+                    .padding(.horizontal, embedded ? 24 : 12)
+            }
             // Chosen but not yet sent, listed above the field. What is about to leave a mailbox
             // should be readable before it does, not hidden behind a count.
             if !staged.isEmpty {
@@ -305,7 +318,7 @@ struct ThreadView: View {
                     .contentShape(Rectangle())
             }
             .accessibilityLabel("Attach")
-            .disabled(sendPending)
+            .disabled(sendPending || editing)
 
             MessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), focused: $composing,
                           enabled: !sendPending, pasteImages: pasteImages)
@@ -325,7 +338,7 @@ struct ThreadView: View {
                     .background(sendable ? Theme.accent : Theme.chip, in: RoundedRectangle(cornerRadius: 9))
             }
             .disabled(!sendable)
-            .accessibilityLabel("Send")
+            .accessibilityLabel(editing ? "Save edit" : "Send")
         }
         // One card around the three, as the conversation design draws its composer.
         .padding(6)
@@ -425,6 +438,7 @@ struct ThreadView: View {
     /// A message needs words or a file. Sending a file with nothing typed is an ordinary thing.
     private var sendable: Bool {
         guard !sendPending else { return false }
+        if editing { return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
             || !staged.isEmpty
             // A photo still being read is something to send. Without this the button goes dead
@@ -443,6 +457,15 @@ struct ThreadView: View {
     private func send() {
         guard sendable else { return }
         let key = composerKey
+        if let action, editing {
+            sending.insert(key)
+            Task { @MainActor in
+                defer { sending.remove(key) }
+                _ = await inbox.saveMessageEdit(action)
+            }
+            return
+        }
+        let reply = action?.kind == .reply ? action : nil
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
         sending.insert(key)
@@ -454,16 +477,22 @@ struct ThreadView: View {
             guard account.me?.address == key.mailbox else { return }
             let files = drafts[key]?.files ?? []
             guard !text.isEmpty || !files.isEmpty else { return }
-            if await inbox.send(text, to: peer, threadId: threadId, files: files) {
+            let old = drafts[key]?.attempt
+            let same = old?.matches(text: text, fileIDs: files.map(\.id), replyTo: reply?.message.reference, editOf: nil) == true
+            if let old, !same { inbox.abandonSend(reference: old.reference, mailbox: key.mailbox) }
+            let attempt = same
+                ? old! : MessageSendAttempt(text: text, fileIDs: files.map(\.id), replyTo: reply?.message.reference)
+            drafts[key, default: ComposerDraft()].attempt = attempt
+            if await inbox.send(text, to: peer, threadId: threadId, files: files, msgRef: attempt.reference, reply: reply) {
                 drafts[key] = nil
-                if composerKey == key { clearComposer() }
+                if composerKey == key && !editing { clearComposer() }
             }
         }
     }
 
     private func pasteImages(_ providers: [NSItemProvider]) {
         let key = composerKey
-        guard !sendPending else { return }
+        guard !sendPending && !editing else { return }
         loading[key, default: 0] += 1
         Task { @MainActor in
             defer { loading[key, default: 1] -= 1 }

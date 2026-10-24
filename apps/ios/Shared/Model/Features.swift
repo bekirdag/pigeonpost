@@ -19,6 +19,10 @@ final class Features {
     /// Phase 3a.
     static let groups = "groups"
     static let disappearing = "disappearing"
+    static let messageEdit = "message_edit"
+    static let messageReply = "message_reply"
+    static let receipts = "receipts"
+    static let agentStatus = "agent_status"
 
     private(set) var enabled: Set<String> = []
     /// Whether an answer has arrived at all. Nothing is offered before it has.
@@ -31,6 +35,10 @@ final class Features {
     var avatars: Bool { has(Self.avatars) }
     var groups: Bool { has(Self.groups) }
     var disappearing: Bool { has(Self.disappearing) }
+    var messageEdit: Bool { has(Self.messageEdit) }
+    var messageReply: Bool { has(Self.messageReply) }
+    var receipts: Bool { has(Self.receipts) }
+    var agentStatus: Bool { has(Self.agentStatus) }
     /// Settings → Privacy & filtering is worth a row when any of its controls would be shown.
     var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) }
 
@@ -69,7 +77,7 @@ final class Features {
             enabled = Set(named.split(separator: ",").map(String.init))
         } else {
             enabled = [Self.messageFiltering, Self.callAdmission, Self.callHistory, Self.avatars,
-                       Self.groups, Self.disappearing]
+                       Self.groups, Self.disappearing, Self.messageEdit, Self.messageReply, Self.receipts, Self.agentStatus]
         }
         loaded = true
     }

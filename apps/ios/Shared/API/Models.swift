@@ -449,7 +449,7 @@ struct RequestEnvelope: Equatable {
             // asked rather than only what.
             "note": text,
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: envelope),
+        guard let data = try? JSONSerialization.data(withJSONObject: envelope, options: .sortedKeys),
               let json = String(data: data, encoding: .utf8)
         else { return text }
         return json

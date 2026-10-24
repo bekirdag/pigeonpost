@@ -18,17 +18,24 @@ struct MacThreadView: View {
     @Environment(\.scenePhase) private var scenePhase
     @Environment(CallLog.self) private var callLog: CallLog?
     @State private var blocking: BlockTarget?
-    private struct ComposerDraft { var text = ""; var files: [StagedFile] = [] }
+    private struct ComposerDraft { var text = ""; var files: [StagedFile] = []; var attempt: MessageSendAttempt? }
     @State private var drafts: [ScrollContext: ComposerDraft] = [:]
     @State private var sending: Set<ScrollContext> = []
     private var composerKey: ScrollContext { ScrollContext(mailbox: account.me?.address, peer: peer, subject: subthread) }
+    private var actionScope: MessageActionScope { MessageActionScope(mailbox: account.me?.address, peer: peer, subject: subthread) }
+    private var action: MessageComposerAction? { inbox.action(in: actionScope) }
+    private var editing: Bool { action?.kind == .edit }
+    private var sendPending: Bool { sending.contains(composerKey) || (editing && inbox.actionSending) }
     private var draft: String {
-        get { drafts[composerKey]?.text ?? "" }
-        nonmutating set { drafts[composerKey, default: ComposerDraft()].text = newValue }
+        get { editing ? action?.text ?? "" : drafts[composerKey]?.text ?? "" }
+        nonmutating set {
+            if let action, editing { inbox.updateMessageAction(action.id, text: newValue) }
+            else { drafts[composerKey, default: ComposerDraft()].text = newValue }
+        }
     }
     private var staged: [StagedFile] {
-        get { drafts[composerKey]?.files ?? [] }
-        nonmutating set { drafts[composerKey, default: ComposerDraft()].files = newValue }
+        get { editing ? [] : drafts[composerKey]?.files ?? [] }
+        nonmutating set { if !editing { drafts[composerKey, default: ComposerDraft()].files = newValue } }
     }
     @State private var dropping = false
     /// Counts finished sends; the composer takes focus back on each.
@@ -97,7 +104,12 @@ struct MacThreadView: View {
                                 MessageBubble(
                                     message: message,
                                     highlight: find,
-                                    isFound: message.id == foundMessage
+                                    isFound: message.id == foundMessage,
+                                    actionScope: actionScope,
+                                    jumpToMessage: { id in
+                                        if messages.contains(where: { $0.id == id }) { scroller.scrollTo(id, anchor: .center) }
+                                        else { inbox.toast = "The original message is no longer in this thread." }
+                                    }
                                 )
                             }
                             .id(message.id)
@@ -144,6 +156,7 @@ struct MacThreadView: View {
                         scroller.scrollTo(current, anchor: .center)
                     }
                 }
+                .onChange(of: action?.id) { _, next in if next != nil { sent += 1 } }
             }
             // A different subject needs fresh lazy layout measurements. The composer and its
             // draft stay outside this identity boundary.
@@ -275,6 +288,10 @@ struct MacThreadView: View {
 
     private var composer: some View {
         VStack(spacing: 6) {
+            if let action {
+                MessageActionBanner(action: action, busy: sendPending) { inbox.cancelMessageAction(action.id) }
+                    .frame(maxWidth: 860).frame(maxWidth: .infinity).padding(.horizontal, 24)
+            }
             if !staged.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -298,8 +315,9 @@ struct MacThreadView: View {
                 .buttonStyle(.plain)
                 .foregroundStyle(Theme.secondary)
                 .help("Attach a file")
+                .disabled(editing)
 
-                MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sending.contains(composerKey) { staged.append(contentsOf: $0) } },
+                MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sendPending && !editing { staged.append(contentsOf: $0) } },
                                  reportError: { inbox.toast = $0 }, send: send, refocus: sent)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
@@ -323,7 +341,7 @@ struct MacThreadView: View {
                 .keyboardShortcut(.return, modifiers: .command)
                 .disabled(!sendable)
                 .help("Send")
-                .accessibilityLabel("Send")
+                .accessibilityLabel(editing ? "Save edit" : "Send")
             }
             // One card around the three, as the conversation design draws its composer.
             .padding(6)
@@ -337,11 +355,11 @@ struct MacThreadView: View {
         .padding(.bottom, 16)
         .background(Theme.wash)
         .overlay(alignment: .top) { Rectangle().fill(Theme.rule).frame(height: 1) }
-        .disabled(sending.contains(composerKey))
+        .disabled(sendPending)
     }
 
     private var sendable: Bool {
-        !sending.contains(composerKey) && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty)
+        !sendPending && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || (!editing && !staged.isEmpty))
     }
 
     private static let floor = "thread-floor"
@@ -359,6 +377,7 @@ struct MacThreadView: View {
     }
 
     private func pick() {
+        guard !editing else { return }
         let panel = NSOpenPanel()
         panel.allowsMultipleSelection = true
         panel.canChooseDirectories = false
@@ -369,7 +388,7 @@ struct MacThreadView: View {
     /// Read now rather than at send time — the same reason as on the phone: the permission to read
     /// a chosen file is scoped to the moment it was chosen.
     private func stage(_ url: URL) {
-        guard !sending.contains(composerKey) else { return }
+        guard !sendPending && !editing else { return }
         do { staged.append(try MacClipboardFiles.readFile(url)) }
         catch { inbox.toast = error.localizedDescription }
     }
@@ -380,14 +399,30 @@ struct MacThreadView: View {
         let files = staged
         let key = composerKey
         sending.insert(key)
+        if let action, editing {
+            Task { @MainActor in
+                defer { sending.remove(key) }
+                if await inbox.saveMessageEdit(action), composerKey == key { sent += 1 }
+            }
+            return
+        }
+        let reply = action?.kind == .reply ? action : nil
+        let old = drafts[key]?.attempt
+        let same = old?.matches(text: text, fileIDs: files.map(\.id), replyTo: reply?.message.reference, editOf: nil) == true
+        if let old, !same { inbox.abandonSend(reference: old.reference, mailbox: key.mailbox) }
+        let attempt = same
+            ? old! : MessageSendAttempt(text: text, fileIDs: files.map(\.id), replyTo: reply?.message.reference)
+        drafts[key, default: ComposerDraft()].attempt = attempt
         // Whichever subject is on screen, including the single one a quiet peer has where no strip
         // is drawn. A reply that leaves the thread it answers is the only outcome nobody wants.
         let threadId = ConversationBuilder.targetThread(subthreads: subthreads, selected: subthread)
         Task {
             defer { sending.remove(key) }
             guard account.me?.address == key.mailbox else { return }
-            if await inbox.send(text, to: peer, threadId: threadId, files: files) { drafts[key] = nil }
-            sent += 1
+            if await inbox.send(text, to: peer, threadId: threadId, files: files, msgRef: attempt.reference, reply: reply) {
+                drafts[key] = nil
+                if composerKey == key { sent += 1 }
+            }
         }
     }
 }

@@ -5,6 +5,7 @@
 //  is `pending`, the seconds between pressing send and the next poll.
 
 import Foundation
+import CryptoKit
 import Observation
 
 @MainActor
@@ -62,6 +63,20 @@ final class Inbox {
     /// notification centre gets muted.
     private var listed: Set<String>?
     private(set) var pending: [PendingMessage] = []
+    private struct UploadSignature: Equatable {
+        let digest: Data
+        let name: String
+        let mediaType: String
+    }
+    private struct SendUploads {
+        let signature: [UploadSignature]
+        var attachments: [UploadedAttachment]
+    }
+    private struct UploadCacheKey: Hashable {
+        let mailbox: String
+        let reference: String
+    }
+    @ObservationIgnored private var sendUploads: [UploadCacheKey: SendUploads] = [:]
 
     /// The assembled list, rebuilt when something it is made of changes rather than on every read —
     /// a search filters this on each keystroke.
@@ -79,6 +94,7 @@ final class Inbox {
     /// A transient message for the person, in the app's own voice.
     var toast: String?
     private(set) var composerAction: MessageComposerAction?
+    private var fixtureMessageVersions: [String: [MessageVersion]] = [:]
     private(set) var actionOperation: UUID?
     var actionSending: Bool { actionOperation != nil }
 
@@ -293,6 +309,7 @@ final class Inbox {
         offline = false
         toast = nil
         composerAction = nil
+        fixtureMessageVersions = [:]
         actionOperation = nil
         reading = nil
         readingSubthread = nil
@@ -680,6 +697,19 @@ final class Inbox {
             guard reply.kind == .reply, reply.scope.mailbox == me.address, reply.scope.peer == peer else { return false }
         }
         let targetThread = reply?.message.threadId ?? threadId
+        let uploadKey = UploadCacheKey(mailbox: request.identity, reference: msgRef)
+        let signature = files.map { UploadSignature(digest: Data(SHA256.hash(data: $0.data)), name: $0.name, mediaType: $0.mediaType) }
+        if let cached = sendUploads[uploadKey], cached.signature != signature {
+            toast = "This send changed. Start a new attempt."
+            return false
+        }
+        // Only digests and server ids are retained, never a second copy of the files.
+        // Refuse before uploading if this session already has too many unfinished file sends.
+        if !files.isEmpty, sendUploads[uploadKey] == nil, sendUploads.count >= 64 {
+            toast = "Too many unfinished file sends. Finish an existing send first."
+            return false
+        }
+        var uploads = sendUploads[uploadKey] ?? SendUploads(signature: signature, attachments: [])
         // Everything sent from this app asks for work, at the most it can ask for. The optimistic
         // row carries the envelope too, so what is on screen the second after pressing send is what
         // the next poll will bring back.
@@ -699,6 +729,7 @@ final class Inbox {
                 direction: action.message.kind == .outgoing ? "out" : "in", excerpt: nil,
                 quote: action.message.replyQuote) }
         )
+        pending.removeAll { $0.mailbox == me.address && $0.msgRef == msgRef && $0.status == .failed }
         pending.append(row)
         rebuild()
 
@@ -715,13 +746,14 @@ final class Inbox {
             // sending it without the files it was about: half a message is worse than none,
             // because the sender cannot tell which half arrived.
             var ids: [String] = []
-            for file in files {
-                let uploaded = try await client.uploadAttachment(
-                    identity: me.address,
-                    data: file.data,
-                    filename: file.name,
-                    mediaType: file.mediaType
-                )
+            for (index, file) in files.enumerated() {
+                let uploaded: UploadedAttachment
+                if uploads.attachments.indices.contains(index) { uploaded = uploads.attachments[index] }
+                else {
+                    uploaded = try await client.uploadAttachment(identity: me.address, data: file.data, filename: file.name, mediaType: file.mediaType)
+                    uploads.attachments.append(uploaded)
+                    sendUploads[uploadKey] = uploads
+                }
                 ids.append(uploaded.id)
                 update(row.id) { $0.attachments.append(MessageAttachment(id: uploaded.id, filename: uploaded.filename, mediaType: uploaded.mediaType, bytes: uploaded.bytes)) }
             }
@@ -738,6 +770,7 @@ final class Inbox {
                 pending.removeAll { $0.id == row.id }
             }
             succeeded = true
+            sendUploads[uploadKey] = nil
             if isCurrent(request) {
                 if let reply { cancelMessageAction(reply.id) }
                 Task { await loadInbox(for: request) }
@@ -756,6 +789,27 @@ final class Inbox {
     func action(in scope: MessageActionScope) -> MessageComposerAction? {
         guard let action = composerAction, action.scope == scope, scope.mailbox == me?.address else { return nil }
         return action
+    }
+
+    func abandonSend(reference: String, mailbox: String?) {
+        guard let mailbox else { return }
+        sendUploads[UploadCacheKey(mailbox: mailbox, reference: reference)] = nil
+    }
+
+    func messageInformation(_ message: ThreadMessage, in scope: MessageActionScope) async throws -> MessageInformation {
+        guard let request = mailboxRequest, request.identity == scope.mailbox,
+              conversation(with: scope.peer)?.messages.contains(where: { $0.id == message.id }) == true else {
+            throw CancellationError()
+        }
+        if Fixtures.enabled {
+            return MessageInformation(messageId: message.id, msgRef: message.msgRef,
+                direction: message.kind == .outgoing ? "out" : "in", sentAt: message.at,
+                versions: fixtureMessageVersions[message.id] ?? [MessageVersion(messageId: message.id, body: message.body, at: message.at)],
+                replyTo: message.replyTo, receipt: message.receipt, agentStatus: message.agentStatus)
+        }
+        let information = try await client.messageInformation(identity: request.identity, messageId: message.id)
+        guard isCurrent(request) else { throw CancellationError() }
+        return information
     }
 
     func beginMessageAction(_ kind: MessageComposerAction.Kind, message: ThreadMessage, in scope: MessageActionScope) {
@@ -797,9 +851,13 @@ final class Inbox {
         let wire = action.message.bodyForEdit(action.text)
         if Fixtures.enabled {
             if let index = messages.firstIndex(where: { $0.messageId == action.message.id }) {
+                if fixtureMessageVersions[action.message.id] == nil {
+                    fixtureMessageVersions[action.message.id] = [MessageVersion(messageId: action.message.id, body: messages[index].body, at: action.message.at)]
+                }
                 messages[index].body = wire
                 messages[index].editedAt = Int(Date().timeIntervalSince1970)
                 messages[index].editCount = (messages[index].editCount ?? 0) + 1
+                fixtureMessageVersions[action.message.id]?.append(MessageVersion(messageId: UUID().uuidString, body: wire, at: Int(Date().timeIntervalSince1970)))
                 rebuild()
             }
             cancelMessageAction(action.id)
