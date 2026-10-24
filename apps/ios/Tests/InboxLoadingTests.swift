@@ -255,6 +255,12 @@ final class ControlledURLProtocol: URLProtocol {
         await pending(a.address, count: 5)
         task.cancel()
         await task.value
+        // URLSession delivers stopLoading on its own queue, potentially after
+        // data(for:) has resumed with cancellation. Drain those transports before
+        // another load of the same mailbox counts or answers its requests.
+        await wait("cancelled load transports stopped") {
+            ControlledURLProtocol.requests().isEmpty
+        }
         check(!inbox.loading && !inbox.hasLoaded, "cancelled load ends loading without claiming success")
         check(!inbox.offline && inbox.toast == nil, "navigation cancellation is not an offline error")
     }
@@ -287,6 +293,9 @@ final class ControlledURLProtocol: URLProtocol {
               "old live task exits instead of silently migrating to the new inbox")
         poll.cancel()
         await poll.value
+        await wait("cancelled stale poll transport stopped") {
+            ControlledURLProtocol.requests().isEmpty
+        }
     }
 
     static func oldUnauthorizedPollIsIgnored() async {

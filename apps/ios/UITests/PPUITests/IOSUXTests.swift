@@ -385,7 +385,7 @@ final class IPadLayoutTests: XCTestCase {
                         scene.prepare(app)
                         Thread.sleep(forTimeInterval: 1.2)
                         keep(state)
-                        let found = findProblems()
+                        let found = findProblems(sidebarMayOverlay: scene.name == "calls-sidebar")
                         if !found.isEmpty || scene.name == "calls-sidebar" {
                             let hitTests = ["sideCalls", "mailboxSwitcher", "messageComposer", "subthread:General"].map { id in
                                 let element = app.descendants(matching: .any)[id].firstMatch
@@ -475,16 +475,20 @@ final class IPadLayoutTests: XCTestCase {
         func contains(_ other: Node) -> Bool { other.path.starts(with: path) }
     }
 
-    private func findProblems(in scope: XCUIElement? = nil) -> [String] {
+    private func findProblems(in scope: XCUIElement? = nil, sidebarMayOverlay: Bool = false) -> [String] {
         guard let root = try? (scope ?? app).snapshot(), let screen = try? app.snapshot().frame else { return ["no accessibility snapshot"] }
         var nodes: [Node] = []
-        var titles: [(String, CGRect)] = []
+        var titles: [(String, CGRect, [Int])] = []
+        var sidebarToggle: [Int]?
+        var mailboxSwitcher: [Int]?
         func hasKeyboard(_ element: XCUIElementSnapshot) -> Bool {
             element.elementType == .keyboard || element.children.contains(where: hasKeyboard)
         }
         func walk(_ element: XCUIElementSnapshot, _ path: [Int], inBar: Bool, inScroller: Bool) {
             // The system keyboard and its bar are Apple's, in a window of their own.
             if element.elementType == .keyboard || (element.elementType == .window && hasKeyboard(element)) { return }
+            if element.identifier == "hideSidebar", sidebarToggle == nil { sidebarToggle = path }
+            if element.identifier == "mailboxSwitcher", mailboxSwitcher == nil { mailboxSwitcher = path }
             let bar = inBar || Self.bars.contains(element.elementType)
             let scroller = inScroller || Self.scrollers.contains(element.elementType)
             let frame = element.frame.intersection(screen)
@@ -495,7 +499,7 @@ final class IPadLayoutTests: XCTestCase {
             }
             if element.elementType == .navigationBar {
                 for child in element.children where child.elementType == .staticText && !child.label.isEmpty {
-                    titles.append((child.label, child.frame))
+                    titles.append((child.label, child.frame, path))
                 }
             }
             for (index, child) in element.children.enumerated() {
@@ -505,28 +509,89 @@ final class IPadLayoutTests: XCTestCase {
         walk(root, [], inBar: false, inScroller: false)
 
         var problems: [String] = []
+        // In portrait, NavigationSplitView may float its sidebar over dimmed
+        // columns. iOS 26 retains the covered controls in the AX snapshot. Locate
+        // the native column by the common ancestor of its toolbar and mailbox
+        // picker, then audit only the exposed parts of controls behind it. This
+        // keeps every overlap check inside the sidebar and in visible content;
+        // filtering all non-hittable controls would hide real layout defects.
+        var sidebar: (path: [Int], frame: CGRect)?
+        if sidebarMayOverlay, let toggle = sidebarToggle, let picker = mailboxSwitcher {
+            var common: [Int] = []
+            for (a, b) in zip(toggle, picker) {
+                guard a == b else { break }
+                common.append(a)
+            }
+            var column = root
+            for index in common { column = column.children[index] }
+            let frame = column.frame.intersection(screen)
+            if !common.isEmpty, frame.width > 100, frame.width < screen.width * 0.6,
+               frame.height > screen.height * 0.7 {
+                sidebar = (common, frame)
+                let covered = app.buttons.matching(identifier: "subthread:General").firstMatch
+                if covered.exists, frame.contains(covered.frame), covered.isHittable {
+                    problems.append("native sidebar leaves a covered thread button hittable")
+                }
+            }
+        }
+        func exposed(_ frame: CGRect, path: [Int]) -> [CGRect] {
+            guard let sidebar, !path.starts(with: sidebar.path) else { return [frame] }
+            return Self.exposedRects(frame, coveredBy: sidebar.frame)
+        }
+        func overlaps(_ first: [CGRect], _ second: [CGRect]) -> Bool {
+            first.contains { a in second.contains { b in
+                let overlap = a.intersection(b)
+                return overlap.width > 2 && overlap.height > 2
+            } }
+        }
+        let visible = nodes.map { exposed($0.frame, path: $0.path) }
         for i in nodes.indices {
             for j in nodes.indices where j > i {
                 let a = nodes[i], b = nodes[j]
                 if a.contains(b) || b.contains(a) { continue }
                 // Scrolled content passing under a bar is covered by the bar, not overlapping it.
                 if (a.inBar && b.inScroller && !b.inBar) || (b.inBar && a.inScroller && !a.inBar) { continue }
-                let overlap = a.frame.intersection(b.frame)
-                if overlap.width > 2, overlap.height > 2 {
+                if overlaps(visible[i], visible[j]) {
                     problems.append("\(a.label) \(Self.rect(a.frame)) overlaps \(b.label) \(Self.rect(b.frame))")
                 }
             }
         }
         // A bar title cut short: wider set than the room it was given, or drawn under a bar button.
-        let barButtons = nodes.filter { $0.inBar }
-        for (title, frame) in titles {
+        let barButtons = nodes.indices.filter { nodes[$0].inBar }
+        for (title, frame, path) in titles {
+            let visibleTitle = exposed(frame, path: path)
+            if visibleTitle.isEmpty { continue }
             let needed = (title as NSString).size(withAttributes: [.font: UIFont.systemFont(ofSize: 17, weight: .semibold)]).width
             if needed > frame.width * 1.15 + 6 { problems.append("bar title '\(title)' cut short (\(Int(frame.width)) of ~\(Int(needed)) pt)") }
-            for button in barButtons where button.frame.intersection(frame).width > 2 && button.frame.intersection(frame).height > 2 {
-                problems.append("bar title '\(title)' under \(button.label)")
+            for index in barButtons where overlaps(visibleTitle, visible[index]) {
+                problems.append("bar title '\(title)' under \(nodes[index].label)")
             }
         }
         return problems
+    }
+
+    private static func exposedRects(_ frame: CGRect, coveredBy cover: CGRect) -> [CGRect] {
+        let cut = frame.intersection(cover)
+        guard !cut.isNull, !cut.isEmpty else { return [frame] }
+        return [
+            CGRect(x: frame.minX, y: frame.minY, width: frame.width, height: cut.minY - frame.minY),
+            CGRect(x: frame.minX, y: cut.maxY, width: frame.width, height: frame.maxY - cut.maxY),
+            CGRect(x: frame.minX, y: cut.minY, width: cut.minX - frame.minX, height: cut.height),
+            CGRect(x: cut.maxX, y: cut.minY, width: frame.maxX - cut.maxX, height: cut.height),
+        ].filter { $0.width > 0 && $0.height > 0 }
+    }
+
+    func testSidebarOcclusionKeepsPartiallyVisibleControlsInTheAudit() {
+        let frame = CGRect(x: 0, y: 0, width: 100, height: 100)
+        XCTAssertEqual(Self.exposedRects(frame, coveredBy: frame), [])
+        XCTAssertEqual(Self.exposedRects(frame, coveredBy: CGRect(x: 0, y: 0, width: 30, height: 100)),
+                       [CGRect(x: 30, y: 0, width: 70, height: 100)])
+        let outside = CGRect(x: 120, y: 0, width: 20, height: 100)
+        XCTAssertEqual(Self.exposedRects(frame, coveredBy: outside), [frame])
+        let center = CGRect(x: 40, y: 40, width: 20, height: 20)
+        let remaining = Self.exposedRects(frame, coveredBy: center)
+        XCTAssertEqual(remaining.count, 4)
+        XCTAssertEqual(remaining.reduce(0) { $0 + $1.width * $1.height }, 9600)
     }
 
     private static func rect(_ r: CGRect) -> String { "[\(Int(r.minX)),\(Int(r.minY)) \(Int(r.width))x\(Int(r.height))]" }
