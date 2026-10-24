@@ -12,12 +12,14 @@ on:
       - crates/pigeonpost-groupcrypto/**
       - crates/pigeonpost-core/**
       - site-inbox/vendor/groupcrypto/**
+      - site-inbox/groups.js
       - .github/workflows/group-crypto.yml
   pull_request:
     paths:
       - crates/pigeonpost-groupcrypto/**
       - crates/pigeonpost-core/**
       - site-inbox/vendor/groupcrypto/**
+      - site-inbox/groups.js
       - .github/workflows/group-crypto.yml
   workflow_dispatch:
 
@@ -84,6 +86,8 @@ jobs:
           cargo install wasm-bindgen-cli --version 0.2.128 --locked
           cargo install uniffi-bindgen-cs --git https://github.com/NordSecurity/uniffi-bindgen-cs \
             --tag v0.11.1+v0.31.0 --locked
+      - name: Validate cache-key generation
+        run: python3 -m unittest discover -s scripts -p test_stamp_web_cache.py
       - name: Rebuild the vendored web bundle and compare byte for byte
         run: scripts/build-wasm.sh --check
       - name: Keep the mismatching rebuild for inspection

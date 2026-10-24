@@ -16,6 +16,40 @@ const Core = globalThis.PigeonpostGroupsCore;
 const { loadGroupCrypto } = await import(here("vendor/groupcrypto/loader.js"));
 const gc = await loadGroupCrypto({ wasmBytes: await readFile(here("vendor/groupcrypto/pigeonpost_groupcrypto_bg.wasm")) });
 
+test("the web loader binds its module and WASM requests to one digest and refuses stale bytes", async (t) => {
+  const { WASM_SHA256 } = await import(here("vendor/groupcrypto/integrity.js"));
+  const loaderSource = await readFile(here("vendor/groupcrypto/loader.js"), "utf8");
+  const groupsSource = await readFile(here("groups.js"), "utf8");
+  const indexSource = await readFile(here("index.html"), "utf8");
+  assert.ok(loaderSource.includes(`./integrity.js?v=${WASM_SHA256}`), "manifest cache key follows the pinned digest");
+  assert.ok(loaderSource.includes(`./pigeonpost_groupcrypto.js?v=${WASM_SHA256}`), "glue cache key follows the same digest");
+  assert.ok(groupsSource.includes(`vendor/groupcrypto/loader.js?v=${WASM_SHA256}`), "the inbox requests that loader version");
+  assert.ok(indexSource.includes(`groups.js?v=${WASM_SHA256}`), "the page requests the matching group entry module");
+  const bytes = new Uint8Array(await readFile(here("vendor/groupcrypto/pigeonpost_groupcrypto_bg.wasm")));
+  const stale = bytes.slice();
+  stale[0] ^= 1;
+  const originalFetch = globalThis.fetch;
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const requests = [];
+  let oldCache = true;
+  globalThis.fetch = async (url, options) => {
+    requests.push({ url: new URL(url), options });
+    return new Response(oldCache ? stale : bytes);
+  };
+  const fresh = await import(here("vendor/groupcrypto/loader.js?cache-fetch-test"));
+  await assert.rejects(fresh.loadGroupCrypto(), /wasm integrity check failed/);
+  oldCache = false;
+  const bindings = await fresh.loadGroupCrypto();
+  assert.equal(typeof bindings.GroupDevice, "function", "a corrected response can initialize the real module");
+  assert.equal(requests.length, 2, "a rejected response can be retried");
+  for (const request of requests) {
+    assert.equal(request.url.searchParams.get("v"), WASM_SHA256);
+    assert.ok(request.url.pathname.endsWith("/pigeonpost_groupcrypto_bg.wasm"));
+    assert.equal(request.options.cache, "no-cache");
+    assert.equal(request.options.credentials, "same-origin");
+  }
+});
+
 const text = (c, gid) => c.history(gid).filter((x) => x.kind === "message" && !x.deleted && !x.undecryptable).map((x) => x.text);
 
 async function world() {
