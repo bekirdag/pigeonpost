@@ -31,6 +31,8 @@ export function load(t, page, { url = "https://enterprise.pigeonpost.dev/", fetc
   if (!window.TextEncoder) window.TextEncoder = TextEncoder;
   const calls = [];
   const nav = [];
+  let resolveNavigation;
+  const navigation = new Promise((resolve) => { resolveNavigation = resolve; });
   window.fetch = async (u, init = {}) => {
     const call = { url: String(u), method: init.method || "GET", body: init.body ? JSON.parse(init.body) : undefined, headers: init.headers || {} };
     calls.push(call);
@@ -44,9 +46,9 @@ export function load(t, page, { url = "https://enterprise.pigeonpost.dev/", fetc
   for (const s of scripts) {
     if (s === "config.js") continue;
     window.eval(read(s));
-    if (s === "core.js") window.PPE.navigate = (to) => nav.push(to);
+    if (s === "core.js") window.PPE.navigate = (to) => { nav.push(to); resolveNavigation(to); };
   }
-  return { window, document: window.document, calls, nav, $: (s) => window.document.querySelector(s) };
+  return { window, document: window.document, calls, nav, navigation, $: (s) => window.document.querySelector(s) };
 }
 
 /// Strip jsdom realm prototypes so deepStrictEqual compares values only.

@@ -12,38 +12,43 @@ vault, persists to SQLite, returns a capability token; the capability-token-auth
 `ack_pigeonpost_message` / `list_pigeonpost_threads` / `read_pigeonpost_thread`. Point a Claude/ChatGPT client at `https://mcp.pigeonpost.dev/mcp` with the
 capability token as its bearer. Not yet built: cross-box delivery, accounts/OAuth, quotas, Postgres.
 
-## Host
+## Production host (verified 2026-10-24)
 
-- Box: **`159.69.201.24`** — `postbox.pigeonpost.dev` (A) + `mcp.pigeonpost.dev` (CNAME), both
-  **grey-cloud** (not Cloudflare-proxied) so MCP streaming isn't cut and Caddy can auto-issue TLS.
-- Both grey-cloud so MCP streaming isn't cut by an edge proxy.
+The postbox and reaper run on **45.132.181.100** (`ssh root@45.132.181.100`), behind nginx.
+Do not deploy to the retired **159.69.201.24** host. The old August Apache/manual-container
+instructions have been superseded by this deployment.
 
-## Production deploy (as actually live — 2026-08-12)
+- Clean Git source: `/opt/pigeonpost-src`, branch `main`.
+- Private runtime: `/opt/pigeonpost-postbox`; Compose file `compose.json`; service env files
+  `postbox.env` and `reaper.env`; sealed SQLite database and attachments under `data/`.
+- Compose services: `postbox` and `reaper`, using the **same** versioned image. Before the
+  continuation rollout both use `pigeonpost-postbox:p3b-c0d6a4b` at source `c0d6a4b`.
+- Postbox ports: `127.0.0.1:8990:8990` and `127.0.0.1:8991:8991`. The internal listener stays
+  loopback-only and is reached from raijin through the restricted SSH tunnel below.
+- Docker log limits are already configured on both services: `json-file`, `10m`, three files.
+  The production host supports the stock bookworm runtime in `deploy/postbox/Dockerfile`.
 
-`159.69.201.24` is a **shared box** (`web`) already running Apache on 80/443 (many vhosts + Drone +
-the pigeonpost loft) with old Docker 18.09 and no `docker compose`. So production does **not** use
-the Compose/Caddy stack below — it mirrors the loft's proven pattern: a loopback container behind an
-Apache vhost with certbot TLS. The Compose stack stays valid for a *dedicated* box.
+## Production deploy
 
-Live setup (SSH `-p 34251 root@159.69.201.24`):
-- Source at `/opt/pigeonpost-src` (rsync of `crates/` + manifests + `deploy/`); runtime state at
-  `/opt/pigeonpost-postbox` (`postbox.env`, `master.age`, `data/`) owned by uid `65532`.
-- Image built on the box (**bullseye base** — 18.09's seccomp blocks bookworm's `clone3`):
-  `docker build -f deploy/postbox/Dockerfile -t pigeonpost-postbox:0.2.0 .`
-- Two containers, `--restart unless-stopped`: `pigeonpost-postbox` (`-p 127.0.0.1:8990:8990`) and
-  `pigeonpost-postbox-reaper` (`--reaper`), sharing `/opt/pigeonpost-postbox/data`.
-- Apache vhost `pigeonpost-postbox.conf` proxies `postbox.` + `mcp.pigeonpost.dev` → `127.0.0.1:8990`
-  (always `apache2ctl configtest` before reload); `certbot --apache` issued the cert + HTTP→HTTPS.
-  The `ProxyPass` line carries **`flushpackets=on`** and the reason is `GET /v1/events`: without it
-  `mod_proxy_http` may hold the response body in its own buffer, so a Server-Sent Events stream is
-  accepted, answered 200, and then delivers nothing until enough has accumulated to flush. A client
-  cannot tell that apart from a quiet mailbox, which is why the web app treats silence past the
-  15-second keep-alive as a broken stream and goes back to long-polling. `timeout=120` stays: the
-  keep-alive is well inside it, so an idle stream is never mistaken for a dead backend.
-- **Redeploy:** keep the source directory as a clean Git checkout, fetch `origin`, and fast-forward
-  `main` to the tested deployment commit. Build from that checkout, tag the image with the commit,
-  then recreate both containers with the log limits below. Data, credentials, and TLS stay in the
-  separate runtime directory. Verify the source checkout's `HEAD` and clean status after deployment.
+1. Check that source is clean and the selected commit is merged and validated. Fetch `origin`
+   and fast-forward the source checkout to that exact commit.
+2. Before switching services, back up the live SQLite database through SQLite's backup API
+   (including committed WAL state), and copy the private Compose/env files into a mode-0700
+   directory under `/var/backups/pigeonpost/`. Retain the previous source/image references.
+   Keep these backups on the server, outside all web roots; never print their contents.
+3. Build from the reviewed checkout with `docker build -f deploy/postbox/Dockerfile -t
+   pigeonpost-postbox:<phase>-<commit> .`. Change only the two service image references in the
+   private `compose.json`; validate with `docker compose -f compose.json config --quiet`.
+4. Recreate **both** services with the reviewed image. Preserve env files, volumes, port bindings,
+   user ids, restart policy and log limits. Check source/image identity, service health, public
+   HTTPS and authenticated reads; verify a feature-cohort test independently from deployment.
+5. Roll back application failures by restoring the previous image references and recreating both
+   services. Do not restore an old database over messages received since deployment. Review any
+   schema compatibility before rollback; additive migrations normally remain in place.
+
+The reverse proxy must stream `/v1/events` without response buffering and allow idle time beyond
+the 15-second keep-alive. Verify real events when changing nginx; an HTTP 200 alone does not prove
+the stream is delivered. TLS and the runtime secrets are separate from the source checkout.
 
 ### Internal API (`/internal/v1`) exposure
 

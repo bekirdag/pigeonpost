@@ -1,4 +1,4 @@
-/* Copied verbatim from site-inbox/app.css lines 9-452 (fonts and design tokens). A test keeps
+/* Copied verbatim from site-inbox/app.css lines 9-455 (fonts and design tokens). A test keeps
    the copy exact; change the inbox first, then re-copy. */
 @font-face {
   font-family: "Geist";
@@ -36,6 +36,7 @@
      blue, which is what the mockup's Send button does. */
   --on-accent: #ffffff;
   --green: #22c55e;
+  --tick-seen: #15a34a;
   --amber: #8a5208;
   --ink: #12161c;
   --body: #343c47;
@@ -193,6 +194,7 @@
     --accent-fill-hover: #a5c5ff;
     --on-accent: #0d0f12;
     --green: #7dd3a0;
+    --tick-seen: #4ade80;
     --amber: #f0b860;
     --ink: #e8eaed;
     --body: #d7dce3;
@@ -325,6 +327,7 @@
   --accent-fill-hover: #a5c5ff;
   --on-accent: #0d0f12;
   --green: #7dd3a0;
+  --tick-seen: #4ade80;
   --amber: #f0b860;
   --ink: #e8eaed;
   --body: #d7dce3;

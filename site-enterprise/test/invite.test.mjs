@@ -28,8 +28,17 @@ test("the fragment token is removed from the address bar and only POSTed", async
   assert.match($("#invite button").textContent, /Sign in to accept/);
 });
 
-test("a mismatched account sees the masked address and a switch-account action", async (t) => {
-  const { $, calls, nav, window } = load(t, "invite.html", { url: `https://enterprise.pigeonpost.dev/invite#${TOKEN}`, session: jwt({ preferred_username: "someone" }),
+test("a mismatched account sees the masked address and a switch-account action", { timeout: 5_000 }, async (t) => {
+  let releaseDigest;
+  const digestGate = new Promise((resolve) => { releaseDigest = resolve; });
+  const { $, calls, nav, navigation, window } = load(t, "invite.html", { url: `https://enterprise.pigeonpost.dev/invite#${TOKEN}`, session: jwt({ preferred_username: "someone" }),
+    before: (w) => {
+      const crypto = w.crypto;
+      Object.defineProperty(w, "crypto", { configurable: true, value: {
+        getRandomValues: crypto.getRandomValues.bind(crypto),
+        subtle: { digest: async (...args) => { await digestGate; return crypto.subtle.digest(...args); } },
+      } });
+    },
     fetch: (c) => c.url.endsWith("/preview") ? reply(200, preview) : reply(403, { error: "invite_address_mismatch", contact_masked: "j***@acme.test" }) });
   await tick();
   assert.equal(calls.filter((c) => c.url.endsWith("/accept")).length, 0, "opening the page never accepts");
@@ -40,8 +49,13 @@ test("a mismatched account sees the masked address and a switch-account action",
   assert.match($("#invite").textContent, /sent to j\*\*\*@acme\.test/);
   assert.match($("#invite").textContent, /signed in as someone/);
   [...window.document.querySelectorAll("#invite button")].find((b) => /Switch account/.test(b.textContent)).click();
-  await tick();
-  assert.equal(new URL(nav.at(-1)).searchParams.get("prompt"), "login");
+  try {
+    await tick();
+    assert.equal(nav.length, 0, "sign-in waits for the native PKCE digest");
+  } finally {
+    releaseDigest();
+  }
+  assert.equal(new URL(await navigation).searchParams.get("prompt"), "login");
   assert.equal(window.sessionStorage.getItem("ppe_session"), null);
   assert.equal(window.sessionStorage.getItem("ppe_invite_token"), TOKEN, "the token survives the account switch");
 });

@@ -813,7 +813,28 @@ paths:
                   description: Attachment ids from `POST /v1/attachments`, uploaded by this mailbox and not yet sent.
                   items:
                     type: string
+                msg_ref:
+                  type: string
+                  pattern: '^mref_[a-z2-7]{26}$'
+                  description: Client-generated reference shared by both copies (docs/message-actions.md). Generated when absent; a repeat for the same recipient returns 200 with `duplicate`.
+                reply_to:
+                  type: string
+                  description: '`msg_ref` (or own-copy `message_id`) of the message answered. Feature `message_reply`.'
+                quote:
+                  type: string
+                  maxLength: 200
+                  description: Client-provided excerpt of the parent, kept sealed.
+                edit_of:
+                  type: string
+                  description: '`msg_ref` (or sent-copy `message_id`) of the own message edited, within 24 h. Feature `message_edit`.'
       responses:
+        '200':
+          description: A retry of a send that already happened (same `msg_ref`); nothing was sent again.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
         '201':
           description: Delivered.
           content:
@@ -829,8 +850,10 @@ paths:
                   recipient:
                     type: string
                     description: The resolved `/k/…` address.
+                  msg_ref:
+                    type: string
         '400':
-          description: '`invalid_recipient`, `unknown_thread`, `wrong_thread_peer`, `bad_thread_title`, `no_identity`, `identity_required`'
+          description: '`invalid_recipient`, `unknown_thread`, `wrong_thread_peer`, `bad_thread_title`, `no_identity`, `identity_required`, `invalid_msg_ref`, `edit_has_attachments`'
           content:
             application/json:
               schema:
@@ -838,19 +861,19 @@ paths:
         '401':
           $ref: '#/components/responses/Unauthorized'
         '403':
-          description: '`not_admitted`, `wrong_identity`, `not_in_account`'
+          description: '`not_admitted`, `wrong_identity`, `not_in_account`, `feature_disabled`, `edit_window_closed`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '404':
-          description: '`recipient_unresolved`'
+          description: '`recipient_unresolved`, `reference_not_found`'
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
         '409':
-          description: '`recipient_inbox_full`'
+          description: '`recipient_inbox_full`, `msg_ref_in_use`'
           content:
             application/json:
               schema:
@@ -900,9 +923,21 @@ paths:
           schema:
             type: string
             enum: ['1', 'true']
+        - name: actions
+          in: query
+          description: '`1`: the client understands `edit_of` and `reply_to`; bodies are raw. Absent, edits read "Edited: …" and are held, and replies to prose get a quote line (docs/message-actions.md).'
+          schema:
+            type: string
+            enum: ['1', 'true']
+        - name: fold
+          in: query
+          description: With `actions=1`, show each edited original with its latest text and omit edit rows.
+          schema:
+            type: string
+            enum: ['1', 'true']
       responses:
         '200':
-          description: Opened messages plus the inbox policy.
+          description: Opened messages plus the inbox policy. Listing marks received messages delivered.
           content:
             application/json:
               schema:
@@ -955,6 +990,103 @@ paths:
           $ref: '#/components/responses/NotFound'
         '500':
           $ref: '#/components/responses/ServerError'
+  /v1/messages/{id}/info:
+    get:
+      tags: [messaging]
+      operationId: messageInfo
+      summary: Receipts, versions and reply parent of one of the caller's copies
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: '`{message_id, msg_ref, direction, sent_at, versions:[{message_id, body, at}], reply_to, receipt, agent_status}`'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '400':
+          $ref: '#/components/responses/IdentitySelection'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /v1/receipts:
+    post:
+      tags: [messaging]
+      operationId: postReceipts
+      summary: Record delivered, seen or agent status for received messages
+      description: |
+        Recipient side. At most 100 references per call and 60 calls per minute per mailbox.
+        Only the caller's own received copies count. Blocked senders and Filtered messages are
+        handled as in docs/message-actions.md §4.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [kind]
+              properties:
+                identity:
+                  type: string
+                message_ids:
+                  type: array
+                  items:
+                    type: string
+                msg_refs:
+                  type: array
+                  items:
+                    type: string
+                kind:
+                  type: string
+                  enum: [delivered, seen, agent_status]
+                status:
+                  type: string
+                  enum: [working, done, failed]
+      responses:
+        '200':
+          description: '`{updated}`'
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updated:
+                    type: integer
+        '400':
+          description: '`invalid_kind`, `invalid_status`, `too_many`, identity selection'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/WrongIdentity'
+        '429':
+          description: '`rate_limited` (with `Retry-After`).'
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
   /v1/messages/delete:
     post:
       tags: [messaging]
@@ -4826,6 +4958,37 @@ paths:
           $ref: '#/components/responses/GroupError'
         '409':
           $ref: '#/components/responses/GroupError'
+  /v1/groups/{id}/receipts:
+    get:
+      tags: [groups]
+      operationId: groupReceipts
+      summary: Members' delivered and seen cursors, for group ticks
+      description: See docs/message-actions.md §5. Requires the `groups` and `receipts` feature flags.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: '#/components/parameters/Identity'
+      responses:
+        '200':
+          description: '`{members:[{address, handle, delivered_seq, seen_seq}], read_receipts}`'
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/GroupError'
+        '404':
+          $ref: '#/components/responses/GroupError'
   /v1/groups/{id}/notifications:
     put:
       tags: [groups]
@@ -8362,6 +8525,9 @@ components:
           type: string
         identity:
           type: string
+        with_edits:
+          type: boolean
+          description: '`/v1/ack` only: also acknowledge the edits of this original.'
     DeletionRequest:
       type: object
       additionalProperties: true
@@ -8378,6 +8544,9 @@ components:
       type: object
       additionalProperties: true
       properties:
+        read_receipts:
+          type: boolean
+          description: Send (and see) read receipts. Default true.
         accept_all:
           type: boolean
         auto_accept_known:
@@ -8517,6 +8686,27 @@ components:
       additionalProperties: true
       description: One opened message. Received bodies are untrusted content.
       properties:
+        msg_ref:
+          type: string
+          description: Reference shared by both copies (docs/message-actions.md).
+        reply_to:
+          type: [object, 'null']
+          description: '`{msg_ref, message_id, from, direction, excerpt, quote, verb, args}`'
+        edit_of:
+          type: [string, 'null']
+          description: The `msg_ref` this row edits.
+        edit_of_message_id:
+          type: [string, 'null']
+        edited_at:
+          type: integer
+        edit_count:
+          type: integer
+        receipt:
+          type: object
+          description: 'Sent copies, feature `receipts`: `{state: sent|delivered|seen, delivered_at, seen_at}`'
+        agent_status:
+          type: [object, 'null']
+          description: 'Sent copies, feature `agent_status`: `{state: working|done|failed, at}`'
         filtered:
           type: boolean
           description: Filed in Filtered by the recipient's settings.

@@ -21,8 +21,8 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/favicon-180.png">
 <script src="theme.js?v=20261019-theme"></script>
 <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin>
-<link rel="stylesheet" href="app.css?v=20261020-p1a-sfu">
-<link rel="stylesheet" href="groups.css?v=20261020-p3a">
+<link rel="stylesheet" href="app.css?v=20261021-p1e">
+<link rel="stylesheet" href="groups.css?v=20261021-p1e">
 <link rel="stylesheet" href="calendar.css?v=20261021-p3b">
 </head>
 <body>
@@ -192,6 +192,17 @@
       <!-- Chosen files, before they are sent. Listed rather than hidden behind a paperclip count,
            because what is about to leave a mailbox should be readable before it does. -->
       <ul class="pending-files" id="pending-files" hidden></ul>
+      <!-- Phase 1e: replying to or editing one message. A whole row above the field, like the files. -->
+      <div class="compose-context" id="compose-context" hidden>
+        <span class="compose-context-icon" id="compose-context-icon" aria-hidden="true"></span>
+        <span class="compose-context-text">
+          <span class="compose-context-title" id="compose-context-title"></span>
+          <span class="compose-context-line" id="compose-context-line"></span>
+        </span>
+        <button class="icon-btn compose-context-close" id="compose-context-close" type="button" aria-label="Cancel">
+          <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5L5 15" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
+        </button>
+      </div>
       <input type="file" id="file-input" multiple hidden aria-hidden="true" tabindex="-1">
       <button class="attach" id="attach-btn" type="button" aria-label="Attach a file">
         <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.5 6.5l-5.9 5.9a1.8 1.8 0 002.5 2.5l6.2-6.2a3.3 3.3 0 00-4.7-4.7L4.6 10.9a4.8 4.8 0 006.8 6.8l5.3-5.3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>
@@ -485,6 +496,16 @@
   </div>
 </div>
 
+<!-- Message info (Phase 1e) -------------------------------------------------------------- -->
+<div class="sheet-wrap" id="msg-info-sheet" hidden>
+  <div class="sheet" role="dialog" aria-modal="true" aria-labelledby="msg-info-title">
+    <header class="sheet-head"><h2 id="msg-info-title">Message info</h2></header>
+    <div class="sheet-body msg-info" id="msg-info-body"></div>
+    <footer class="sheet-foot"><button class="btn-ghost" id="msg-info-done" type="button">Done</button></footer>
+  </div>
+</div>
+<div class="msg-menu" id="msg-menu" role="menu" hidden></div>
+
 <!-- Filtered conversation (read-only) ------------------------------------------------------- -->
 <div class="sheet-wrap" id="filtered-sheet" hidden>
   <div class="sheet sheet-wide" role="dialog" aria-modal="true" aria-labelledby="filtered-title">
@@ -550,9 +571,9 @@
 <script src="names.js?v=20261020-p1d"></script>
 <script src="crop.js?v=20261020-p1b"></script>
 <script src="groups-core.js?v=20261020-p3a"></script>
-<script src="groups.js?v=20261020-p3a"></script>
+<script src="groups.js?v=20261021-p1e"></script>
 <script src="calendar.js?v=20261021-p3b"></script>
-<script src="app.js?v=20261021-p3b-p1d"></script>
+<script src="app.js?v=20261021-p1e"></script>
 <script src="calls.js?v=20261021-p3b-p1d"></script>
 </body>
 </html>
