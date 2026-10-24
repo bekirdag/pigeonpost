@@ -315,3 +315,61 @@ test("the events stream asks for typed events", async (t) => {
   assert.ok(ev, "stream opened");
   assert.equal(ev.query.get("typed"), "1");
 });
+
+test("Phase 1e: group bubbles get the action row, ticks from member cursors, reply and edit", async (t) => {
+  const gid = group().id;
+  const a = await app(t, {
+    features: ["groups", "receipts", "message_edit", "message_reply"],
+    histories: {
+      [gid]: [
+        { kind: "message", seq: 3, sender: JANE, text: "Shall we meet Saturday?", files: [], created_at: NOW - 200 },
+        { kind: "message", seq: 5, sender: OWNER, text: "Yes, 10am", files: [], reply_to: "3", created_at: NOW - 100 },
+      ],
+    },
+    configure: (server) => {
+      const inner = server.fetch;
+      server.fetch = async (url, opts = {}) => {
+        if (String(url).includes("/receipts")) {
+          server.receiptCalls = (server.receiptCalls || 0) + 1;
+          return response({ members: server.receiptMembers, read_receipts: true });
+        }
+        return inner(url, opts);
+      };
+      server.receiptMembers = [
+        { address: JANE, handle: "/jane/main", delivered_seq: 5, seen_seq: 5 },
+        { address: JOHN, handle: null, delivered_seq: 5, seen_seq: null },
+      ];
+    },
+  });
+  await until(() => a.$("groups-list")?.querySelector(".group-row"));
+  a.$("groups-list").querySelector(".group-row").click();
+  await until(() => a.$("group-messages").querySelector('li[data-seq="5"] .ticks-seen'));
+  const li = (seq) => a.$("group-messages").querySelector(`li[data-seq="${seq}"]`);
+  const kinds = (seq) => [...li(seq).querySelectorAll(".msg-actions .msg-action")].map((b) => b.classList[1]);
+  assert.deepEqual(kinds(3), ["copy", "reply"]);
+  assert.deepEqual(kinds(5), ["edit", "copy"]);
+  assert.equal(li(5).querySelector(":scope > .msg-stack > .bubble + .msg-actions") !== null, true, "the row is outside the bubble");
+  assert.ok(li(5).querySelector(".ticks").classList.contains("ticks-seen"), "every visible member has read it");
+  assert.equal(li(3).querySelector(".ticks"), null, "others' messages carry no ticks");
+  assert.equal(li(5).querySelector(".reply-quote .reply-line").textContent, "Shall we meet Saturday?");
+
+  li(5).querySelector(".ticks").click();
+  await until(() => !a.w.document.getElementById("group-msg-info-sheet")?.hidden);
+  assert.match(a.w.document.getElementById("group-msg-info-sheet").textContent, /Seen \(\d\)/);
+
+  li(3).querySelector(".msg-action.reply").click();
+  assert.equal(a.$("group-compose-context").hidden, false);
+  a.$("group-compose").value = "count me in";
+  a.$("group-composer").requestSubmit();
+  await until(() => a.server.sent.length === 1);
+  assert.equal(a.server.sent[0].doc.reply_to, 3);
+
+  await until(() => li(5));
+  li(5).querySelector(".msg-action.edit").click();
+  assert.equal(a.$("group-compose").value, "Yes, 10am");
+  a.$("group-compose").value = "Yes, 11am";
+  a.$("group-composer").requestSubmit();
+  await until(() => a.server.sent.length === 2);
+  assert.equal(a.server.sent[1].doc.edit_of, 5);
+  assert.equal(a.server.sent[1].doc.reply_to, "3", "an edited reply stays a reply");
+});

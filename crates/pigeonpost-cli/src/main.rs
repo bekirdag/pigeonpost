@@ -5,6 +5,7 @@
 //! a message is one command away from hosting.
 
 mod agentd_cmd;
+mod agentd_edits;
 mod device_login_cmd;
 mod directory_cmd;
 mod executor;
@@ -514,6 +515,29 @@ enum PostboxAction {
         /// Open a new conversation under this title, instead of continuing an existing one.
         #[arg(long, conflicts_with = "thread")]
         new_thread: Option<String>,
+        /// Answer a specific message: its msg_ref, or this mailbox's own copy id of it.
+        #[arg(long)]
+        reply_to: Option<String>,
+        /// A short quote of the message being answered (≤ 200 characters), shown if it is gone.
+        #[arg(long, requires = "reply_to")]
+        quote: Option<String>,
+        #[command(flatten)]
+        which: PostboxIdentity,
+    },
+
+    /// Edit a message this mailbox sent, within 24 hours of sending it.
+    ///
+    /// The recipient sees the new text marked as edited, and keeps the earlier versions. An agent
+    /// that already started on the request is told about the change rather than left running on
+    /// the old one.
+    Edit {
+        /// The message's msg_ref, or this mailbox's own copy id of it.
+        reference: String,
+        /// The new text.
+        body: String,
+        /// Whom it was sent to, when the original is no longer listed here.
+        #[arg(long)]
+        to: Option<String>,
         #[command(flatten)]
         which: PostboxIdentity,
     },
@@ -1550,6 +1574,8 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                 body,
                 thread,
                 new_thread,
+                reply_to,
+                quote,
                 which,
             } => {
                 postbox_cmd::send_message(
@@ -1559,6 +1585,24 @@ async fn run(cli: Cli) -> Result<(), Box<dyn std::error::Error>> {
                     body,
                     thread.as_deref(),
                     new_thread.as_deref(),
+                    reply_to.as_deref(),
+                    quote.as_deref(),
+                    cli.json,
+                )
+                .await
+            }
+            PostboxAction::Edit {
+                reference,
+                body,
+                to,
+                which,
+            } => {
+                postbox_cmd::edit_message(
+                    &home,
+                    which.address.as_deref(),
+                    reference,
+                    body,
+                    to.as_deref(),
                     cli.json,
                 )
                 .await

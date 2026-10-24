@@ -52,6 +52,146 @@
 
   const sameDay = (a, b) => new Date(a * 1000).toDateString() === new Date(b * 1000).toDateString();
 
+  // ---- Phase 1e: message actions and receipts (docs/message-actions.md) -----------------------
+  //
+  // Pure helpers first, so the rules can be tested without a page: which tick a sent message shows,
+  // whether it may still be edited, and what a reply quotes. The DOM that uses them is further down.
+
+  const MREF_ALPHABET = "abcdefghijklmnopqrstuvwxyz234567";
+  const EDIT_WINDOW_SECS = 24 * HOUR;
+  const QUOTE_MAX = 200;
+
+  // `mref_` + 26 base32 characters: the conversation-level id both copies of a message share.
+  function newMsgRef() {
+    const bytes = new Uint8Array(26);
+    crypto.getRandomValues(bytes);
+    let out = "mref_";
+    for (const b of bytes) out += MREF_ALPHABET[b & 31];
+    return out;
+  }
+  const isMsgRef = (value) => typeof value === "string" && /^mref_[a-z2-7]{26}$/.test(value);
+
+  // The marks inside a sent bubble. `null` means none: received mail, or a postbox without receipts.
+  // The agent's gear sits on top of the receipt while it works; `done` falls back to the receipt.
+  function tickState(m, flags) {
+    if (!m || m.kind !== "out" || !flags || !flags.receipts) return null;
+    if (m.status === "sending") return "pending";
+    if (m.status === "failed") return null;
+    if (flags.agentStatus && m.agent_status) {
+      if (m.agent_status.state === "working") return "working";
+      if (m.agent_status.state === "failed") return "agent-failed";
+    }
+    const state = m.receipt && m.receipt.state;
+    if (state === "seen") return "seen";
+    if (state === "delivered") return "delivered";
+    return "sent";
+  }
+
+  // Own, sent, on the server, inside the 24-hour window and not yet gone. The server enforces all of
+  // this again; the predicate only decides whether the pencil is worth showing.
+  function editable(m, now, flags) {
+    if (!m || m.kind !== "out" || !flags || !flags.edit) return false;
+    if (m.status === "sending" || m.status === "failed") return false;
+    if (!isMsgRef(m.msg_ref)) return false;
+    const at = Number(m.at) || 0;
+    if (!at || now - at > EDIT_WINDOW_SECS) return false;
+    if (m.expires_at && m.expires_at <= now) return false;
+    return true;
+  }
+
+  // What a reply quotes: the first line that says something, without its markdown, at most 200
+  // characters. A message that is only a file quotes the file's name.
+  function quoteExcerpt(text, attachments) {
+    for (const line of String(text == null ? "" : text).split(/\r?\n/)) {
+      const plain = line.trim().replace(/^#{1,6}\s*/, "").replace(/^[-*+>]\s+/, "").replace(/\*\*/g, "").replace(/`/g, "").trim();
+      if (!plain || plain.startsWith("```")) continue;
+      return plain.length > QUOTE_MAX ? plain.slice(0, QUOTE_MAX - 1) + "…" : plain;
+    }
+    const file = Array.isArray(attachments) && attachments[0];
+    if (file) return ("📎 " + (file.filename || file.name || "attachment")).slice(0, QUOTE_MAX);
+    return "";
+  }
+
+  // The listing's Phase 1e fields, carried onto the model a bubble is drawn from.
+  function actionFields(m) {
+    return {
+      msg_ref: m.msg_ref || null,
+      reply_to: m.reply_to || null,
+      edited_at: m.edited_at || null,
+      edit_count: m.edit_count || 0,
+      receipt: m.receipt || null,
+      agent_status: m.agent_status || null,
+    };
+  }
+
+  const ICONS = {
+    copy: '<svg viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="10" height="10" rx="2.2" fill="none" stroke="currentColor" stroke-width="1.6"/><path d="M13 4.6A2 2 0 0011.2 3.5H5.5a2 2 0 00-2 2v5.7A2 2 0 004.6 13" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    reply: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8 5L3.5 9.5 8 14" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 9.5h7.5a5 5 0 015 5v1" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/></svg>',
+    edit: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M13.6 3.6a2 2 0 012.8 2.8L7 15.8l-3.6.8.8-3.6 9.4-9.4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M12.2 5l2.8 2.8" fill="none" stroke="currentColor" stroke-width="1.6"/></svg>',
+    check: '<svg viewBox="0 0 16 12" aria-hidden="true"><path d="M1.5 6.5l3.5 3.5 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    checks: '<svg viewBox="0 0 20 12" aria-hidden="true"><path d="M1.5 6.5l3.5 3.5 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><path d="M9 9.2l.8.8 7-8" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+    clock: '<svg viewBox="0 0 16 16" aria-hidden="true"><circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" stroke-width="1.4"/><path d="M8 4.8V8l2.2 1.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>',
+    gear: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M8.6 2.5h2.8l.4 2a5.6 5.6 0 011.5.9l1.9-.7 1.4 2.4-1.5 1.3a5.6 5.6 0 010 1.7l1.5 1.3-1.4 2.4-1.9-.7a5.6 5.6 0 01-1.5.9l-.4 2H8.6l-.4-2a5.6 5.6 0 01-1.5-.9l-1.9.7-1.4-2.4 1.5-1.3a5.6 5.6 0 010-1.7L3.4 7.1l1.4-2.4 1.9.7a5.6 5.6 0 011.5-.9z" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/><circle cx="10" cy="10" r="2.2" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>',
+    warn: '<svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3l7.5 13h-15z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><path d="M10 8v3.5M10 13.8v.2" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>',
+  };
+
+  // The marks themselves, as a node. `seenAt` labels the green ticks with when.
+  function tickNode(kind, seenAt) {
+    if (!kind) return null;
+    const span = document.createElement("span");
+    span.className = "ticks ticks-" + kind;
+    span.setAttribute("role", "img");
+    const label = {
+      pending: "Sending",
+      sent: "Sent",
+      delivered: "Delivered",
+      seen: seenAt ? "Seen " + clockTime(seenAt) : "Seen",
+      working: "Agent working on this",
+      "agent-failed": "Agent run failed",
+    }[kind];
+    span.setAttribute("aria-label", label);
+    span.title = label;
+    span.innerHTML = { pending: ICONS.clock, sent: ICONS.check, delivered: ICONS.checks, seen: ICONS.checks,
+      working: ICONS.gear, "agent-failed": ICONS.warn }[kind];
+    if (kind === "working") {
+      // Shown only when motion is reduced, where the gear stands still and the word says it instead.
+      const word = document.createElement("span");
+      word.className = "ticks-word";
+      word.textContent = "Working…";
+      span.append(word);
+    }
+    return span;
+  }
+
+  // One small icon button for the row under a bubble.
+  function actionButton(kind, label, onClick) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "msg-action " + kind;
+    button.title = label;
+    button.setAttribute("aria-label", label);
+    button.innerHTML = ICONS[kind];
+    button.addEventListener("click", onClick);
+    return button;
+  }
+
+  // Copy, with the brief confirmation the old in-bubble button gave.
+  function copyButton(getText) {
+    const button = actionButton("copy", "Copy message", async () => {
+      try {
+        await navigator.clipboard.writeText(getText());
+        button.classList.add("copied");
+        button.innerHTML = ICONS.check;
+        setTimeout(() => { button.classList.remove("copied"); button.innerHTML = ICONS.copy; }, 1400);
+      } catch (_) {
+        // Clipboard access can be refused outright; say nothing rather than throw a dialog.
+      }
+    });
+    return button;
+  }
+
+  window.PigeonpostMessageActions = { newMsgRef, isMsgRef, tickState, editable, quoteExcerpt, actionFields, tickNode, actionButton, copyButton, ICONS, EDIT_WINDOW_SECS };
+
   // Default inboxes must identify their owner: /alp and /bekir are different people. The rule
   // itself ("/bekir/main" -> "Bekir", "/wodo/hr" -> "Wodo HR") lives in names.js, shared with calls.js.
   function displayName(peer) {
@@ -1069,6 +1209,7 @@
           thread_id: m.thread_id,
           attachments: m.attachments,
           expires_at: m.expires_at || null, // Phase 3a: disappearing messages
+          ...actionFields(m), // Phase 1e
         });
         continue;
       }
@@ -1090,6 +1231,7 @@
         address: m.from,
         attachments: m.attachments,
         expires_at: m.expires_at || null, // Phase 3a: disappearing messages
+        ...actionFields(m), // Phase 1e
       });
       if (!m.read) t.unread += 1;
       if (m.autonomy === "review" && m.verb) t.held += 1;
@@ -1106,6 +1248,8 @@
         status: m.status,
         thread_id: m.thread_id,
         attachments: m.attachments,
+        msg_ref: m.msg_ref || null, // Phase 1e: a reply or edit can name it before the poll
+        reply_to: m.reply_to || null,
       });
     }
 
@@ -1651,6 +1795,7 @@
     const signature = JSON.stringify([visible, view.query, found]);
     if (signature !== view.signature) {
       const anchor = view.anchor || readingAnchor(), list = $("messages"), rows = [], cache = new Map();
+      const flagsNow = actionFlags(), flagsKey = JSON.stringify(flagsNow), nowSecs = Date.now() / 1000; // Phase 1e
       let previous = null;
       for (const m of visible) {
         if (!previous || !sameDay(previous.at, m.at)) {
@@ -1673,7 +1818,7 @@
         // `read` flips when a message is displayed and acknowledged, and changes nothing drawn, so
         // it must not rebuild the bubble (and lose a selection in it) a moment after it appears.
         const { read: _read, ...drawn } = m;
-        const fingerprint = JSON.stringify([drawn, view.query, m.id === found]);
+        const fingerprint = JSON.stringify([drawn, view.query, m.id === found, flagsKey, editable(m, nowSecs, flagsNow)]);
         let entry = view.cache.get(m.id);
         if (entry?.fingerprint !== fingerprint) {
           const row = messageNode(m);
@@ -1773,6 +1918,7 @@
     renderStaged();
   }
   function restoreDraft() {
+    if (composeMode) setComposeMode(null); // Phase 1e
     resetComposer();
     const key = composerKey(), draft = drafts.get(key);
     if (draft) { $("compose").value = draft.text; staged.push(...draft.files); renderStaged(); }
@@ -1963,39 +2109,261 @@
       failed.textContent = "not sent";
       meta.append(failed);
     }
-    // Visible rather than hidden behind a selection: an agent's reply is the thing people most
-    // often want out of this app and into somewhere else.
-    const copy = document.createElement("button");
-    copy.type = "button";
-    copy.className = "copy";
-    copy.title = "Copy message";
-    copy.setAttribute("aria-label", "Copy message");
-    copy.textContent = "⧉";
-    copy.addEventListener("click", async () => {
-      try {
-        await navigator.clipboard.writeText(copyTextOf(m));
-        copy.textContent = "✓";
-        copy.classList.add("copied");
-        setTimeout(() => {
-          copy.textContent = "⧉";
-          copy.classList.remove("copied");
-        }, 1400);
-      } catch (e) {
-        // Clipboard access can be refused outright; say nothing rather than throwing a dialog at
-        // somebody for pressing a small button.
-      }
-    });
-    meta.append(copy);
     if (m.kind === "in") meta.append(blockSenderButton(m));
-
+    // Phase 1e: "edited", the time and the ticks sit together at the bubble's bottom right.
+    const spacer = document.createElement("span");
+    spacer.className = "meta-spacer";
+    meta.append(spacer);
+    if (m.edited_at) {
+      const edited = document.createElement("span");
+      edited.className = "edited";
+      edited.textContent = "edited";
+      edited.title = "Edited " + clockTime(m.edited_at);
+      meta.append(edited);
+    }
     const time = document.createElement("span");
+    time.className = "time";
     time.textContent = clockTime(m.at);
     meta.append(time);
+    const ticks = tickNode(tickState(m, actionFlags()), m.receipt && m.receipt.seen_at);
+    if (ticks) {
+      if (m.kind === "out" && m.msg_ref && m.status !== "sending") {
+        ticks.classList.add("ticks-button");
+        ticks.tabIndex = 0;
+        ticks.addEventListener("click", () => openMessageInfo(m));
+        ticks.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); openMessageInfo(m); } });
+      }
+      meta.append(ticks);
+    }
     bubble.append(meta);
+    if (m.reply_to) bubble.prepend(replyQuoteNode(m));
+    bubble.addEventListener("contextmenu", (e) => openMessageMenu(e, m));
 
-    li.append(bubble);
+    // The action row lives under the bubble, outside it — the owner's reference look. Received
+    // mail offers copy and reply, your own offers edit (while it still can be) and copy.
+    const stack = document.createElement("div");
+    stack.className = "msg-stack";
+    const actions = document.createElement("div");
+    actions.className = "msg-actions";
+    const flags = actionFlags();
+    const canReply = flags.reply && isMsgRef(m.msg_ref) && m.status !== "sending" && m.status !== "failed";
+    if (m.kind === "out") {
+      if (editable(m, Date.now() / 1000, flags)) actions.append(actionButton("edit", "Edit message", () => startEdit(m)));
+      actions.append(copyButton(() => copyTextOf(m)));
+    } else {
+      actions.append(copyButton(() => copyTextOf(m)));
+      if (canReply) actions.append(actionButton("reply", "Reply", () => startReply(m)));
+    }
+    stack.append(bubble, actions);
+    li.append(stack);
     return li;
   }
+
+  // The quoted parent above a reply. Clicking it goes to the parent; when the parent is gone the
+  // replying client's own quote is what is left to show.
+  function replyQuoteNode(m) {
+    const r = m.reply_to || {};
+    const quote = document.createElement("button");
+    quote.type = "button";
+    quote.className = "reply-quote";
+    const who = document.createElement("span");
+    who.className = "reply-who";
+    who.textContent = r.direction === "out" ? "You" : (r.from ? displayName(r.from) : $("peer-name")?.textContent || "");
+    const line = document.createElement("span");
+    line.className = "reply-line";
+    line.textContent = r.excerpt || r.quote || "Original message unavailable";
+    quote.append(who, line);
+    quote.setAttribute("aria-label", "Replying to " + who.textContent + ": " + line.textContent + ". Show the original.");
+    quote.addEventListener("click", () => jumpToMessage(r.msg_ref, r.message_id));
+    return quote;
+  }
+
+  // Go to a message by its reference, paging older history in when it is not on screen, and
+  // highlight it for a moment so the eye lands on it.
+  function jumpToMessage(ref, id) {
+    const view = conversationView;
+    if (!view || !view.messages) return;
+    const index = view.messages.findIndex((x) => (ref && x.msg_ref === ref) || (id && x.id === id));
+    if (index < 0) { toast("The original message is no longer here."); return; }
+    const target = view.messages[index];
+    let row = messageRow(target.id);
+    if (!row) {
+      view.endId = view.messages[Math.min(view.messages.length - 1, index + 5)].id;
+      view.limit = PAGE_SIZE;
+      view.follow = false;
+      view.target = target.id;
+      renderThread();
+      row = messageRow(target.id);
+    } else {
+      positionMessages(view, null, target.id);
+    }
+    if (!row) return;
+    row.classList.remove("flash");
+    void row.offsetWidth;
+    row.classList.add("flash");
+    setTimeout(() => row.classList.remove("flash"), 1600);
+  }
+
+  // Replying to or editing one message. One mode at a time, and it belongs to one conversation.
+  let composeMode = null;
+  function setComposeMode(mode) {
+    composeMode = mode;
+    const bar = $("compose-context");
+    if (!mode) {
+      bar.hidden = true;
+      $("composer").classList.remove("editing");
+      return;
+    }
+    bar.hidden = false;
+    bar.dataset.kind = mode.kind;
+    $("composer").classList.toggle("editing", mode.kind === "edit");
+    $("compose-context-icon").innerHTML = mode.kind === "edit" ? ICONS.edit : ICONS.reply;
+    $("compose-context-title").textContent = mode.kind === "edit"
+      ? "Editing message"
+      : "Replying to " + (mode.m.kind === "out" ? "yourself" : (mode.m.alias || $("peer-name").textContent || displayName(mode.m.address || state.openPeer)));
+    $("compose-context-line").textContent = quoteExcerpt(copyTextOf(mode.m), mode.m.attachments);
+    $("compose-context-close").setAttribute("aria-label", mode.kind === "edit" ? "Cancel editing" : "Cancel reply");
+  }
+  function cancelComposeMode() {
+    if (!composeMode) return false;
+    const wasEdit = composeMode.kind === "edit";
+    const draft = composeMode.draft;
+    setComposeMode(null);
+    if (wasEdit) {
+      $("compose").value = draft || "";
+      $("compose").dispatchEvent(new Event("input"));
+    }
+    return true;
+  }
+  function startReply(m) {
+    if (composeMode?.kind === "edit") cancelComposeMode();
+    setComposeMode({ kind: "reply", m, peer: state.openPeer });
+    $("compose").focus({ preventScroll: true });
+  }
+  function startEdit(m) {
+    const draft = composeMode?.kind === "edit" ? composeMode.draft : $("compose").value;
+    setComposeMode({ kind: "edit", m, peer: state.openPeer, draft });
+    $("compose").value = copyTextOf(m);
+    $("compose").dispatchEvent(new Event("input"));
+    $("compose").focus({ preventScroll: true });
+    const end = $("compose").value.length;
+    try { $("compose").setSelectionRange(end, end); } catch (_) { /* not a text field in tests */ }
+  }
+
+  async function sendEdit(text) {
+    const mode = composeMode;
+    const context = mailboxContext();
+    if (!mode || mode.kind !== "edit") return;
+    if (text === copyTextOf(mode.m).trim()) { cancelComposeMode(); return; }
+    try {
+      await api("/v1/send", { method: "POST", body: { to: mode.peer, body: composeBody(text), from: context.address, edit_of: mode.m.msg_ref } });
+      if (!context.current()) return;
+      if (composeMode === mode) {
+        const draft = mode.draft;
+        setComposeMode(null);
+        $("compose").value = draft || "";
+        $("compose").dispatchEvent(new Event("input"));
+      }
+      await loadInbox().catch(() => {});
+      if (context.current()) render();
+    } catch (e) {
+      if (!context.current()) return;
+      const known = {
+        edit_window_closed: "Messages can only be edited for 24 hours.",
+        reference_not_found: "That message is no longer there to edit.",
+        feature_disabled: "Editing is not available on this postbox.",
+      };
+      toast(e instanceof ApiError ? known[e.code] || sendFailure(e) : "Could not reach the postbox.");
+    }
+  }
+
+  // Message info: when it was sent, delivered and seen, what the agent did, and every version.
+  async function openMessageInfo(m) {
+    const body = $("msg-info-body");
+    body.textContent = "";
+    const context = mailboxContext();
+    const row = (label, value) => {
+      const p = document.createElement("p");
+      p.className = "info-row";
+      const k = document.createElement("span"); k.className = "info-key"; k.textContent = label;
+      const v = document.createElement("span"); v.className = "info-value"; v.textContent = value;
+      p.append(k, v);
+      body.append(p);
+    };
+    const when = (unix) => (unix ? dayLabel(unix) + " · " + clockTime(unix) : "—");
+    openSheet("msg-info-sheet");
+    $("msg-info-done").focus();
+    let info = null;
+    try {
+      info = await api(withIdentity("/v1/messages/" + encodeURIComponent(m.id) + "/info", context.address), { signal: context.signal });
+    } catch (_) { /* fall back to what the listing said */ }
+    if (!context.current() || $("msg-info-sheet").hidden) return;
+    body.textContent = "";
+    const receipt = (info && info.receipt) || m.receipt;
+    const agent = (info && info.agent_status) || m.agent_status;
+    row(m.kind === "out" ? "Sent" : "Received", when((info && info.sent_at) || m.at));
+    if (m.kind === "out" && has("receipts")) {
+      row("Delivered", when(receipt && receipt.delivered_at));
+      row("Seen", receipt && receipt.seen_at ? when(receipt.seen_at) : "—");
+    }
+    if (agent && has("agent_status")) {
+      row("Agent", ({ working: "Working on it", done: "Finished", failed: "Run failed" }[agent.state] || agent.state) + " · " + when(agent.at));
+    }
+    const versions = (info && Array.isArray(info.versions)) ? info.versions : [];
+    if (versions.length > 1) {
+      const h = document.createElement("h3");
+      h.className = "info-head";
+      h.textContent = "Edit history";
+      body.append(h);
+      const list = document.createElement("ol");
+      list.className = "info-versions";
+      versions.forEach((v, i) => {
+        const li = document.createElement("li");
+        const t = document.createElement("span"); t.className = "info-key";
+        t.textContent = (i === 0 ? "Original · " : "Edit " + i + " · ") + when(v.at);
+        const text = document.createElement("span"); text.className = "info-version-text";
+        text.textContent = copyTextOf({ body: v.body });
+        li.append(t, text);
+        list.append(li);
+      });
+      body.append(list);
+    }
+    if (!info) {
+      const note = document.createElement("p");
+      note.className = "field-note";
+      note.textContent = "The full history could not be loaded.";
+      body.append(note);
+    }
+  }
+
+  // Right-click (and long-press, where the browser turns it into a context menu): the full list.
+  function openMessageMenu(event, m) {
+    if (window.getSelection && String(window.getSelection()).trim()) return; // copying a selection
+    if (m.kind === "system") return;
+    event.preventDefault();
+    const menu = $("msg-menu");
+    menu.textContent = "";
+    const flags = actionFlags();
+    const item = (label, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.setAttribute("role", "menuitem"); b.textContent = label;
+      b.addEventListener("click", () => { closeMessageMenu(); fn(); });
+      menu.append(b);
+    };
+    const live = isMsgRef(m.msg_ref) && m.status !== "sending" && m.status !== "failed";
+    if (flags.reply && live) item("Reply", () => startReply(m));
+    item("Copy", () => navigator.clipboard?.writeText(copyTextOf(m)).catch(() => {}));
+    if (editable(m, Date.now() / 1000, flags)) item("Edit", () => startEdit(m));
+    if (live && actionsOn()) item("Info", () => openMessageInfo(m));
+    if (m.kind === "in" && state.openPeer) item("Block sender", () => askBlock({ peer: state.openPeer, name: $("peer-name").textContent, origin: "message", messageId: m.id }));
+    menu.hidden = false;
+    const x = Math.min(event.clientX, window.innerWidth - menu.offsetWidth - 8);
+    const y = Math.min(event.clientY, window.innerHeight - menu.offsetHeight - 8);
+    menu.style.left = Math.max(8, x) + "px";
+    menu.style.top = Math.max(8, y) + "px";
+    menu.querySelector("button")?.focus();
+  }
+  function closeMessageMenu() { $("msg-menu").hidden = true; }
 
   // The wire name is a protocol token. Showing it raw made a sentence somebody typed look like an
   // envelope they had not asked for. An unknown verb keeps its wire name: a verb this build does
@@ -2639,7 +3007,9 @@
     for (const m of unread) {
       if (!context.current()) return;
       try {
-        await api(withIdentity("/v1/ack", context.address), { method: "POST", body: { message_id: m.message_id, identity: context.address } });
+        await api(withIdentity("/v1/ack", context.address), { method: "POST", body: actionsOn()
+          ? { message_id: m.message_id, identity: context.address, with_edits: true }
+          : { message_id: m.message_id, identity: context.address } });
       } catch (_) {
         if (context.current()) { acked.delete(m.message_id); m.read = false; }
       }
@@ -2669,7 +3039,7 @@
     });
   }
 
-  async function sendMessage(text) {
+  async function sendMessage(text, reply) {
     const context = mailboxContext();
     const to = state.openPeer;
     const draftKey = composerKey();
@@ -2699,7 +3069,16 @@
       if (!context.current()) return;
     }
     text = composeBody(text);
+    // Phase 1e: the message's own reference, made here so a retry cannot send it twice and a reply
+    // to it works before the next poll. A reply names its parent and carries a short quote.
+    const msgRef = actionsOn() ? newMsgRef() : null;
+    const replyFields = reply && isMsgRef(reply.msg_ref) && has("message_reply")
+      ? { reply_to: reply.msg_ref, quote: quoteExcerpt(copyTextOf(reply), reply.attachments) }
+      : null;
     const record = Pending.add({
+      msg_ref: msgRef,
+      reply_to: replyFields ? { msg_ref: replyFields.reply_to, quote: replyFields.quote, excerpt: replyFields.quote,
+        direction: reply.kind === "out" ? "out" : "in", from: reply.address || null } : null,
       local_id: "local_" + randomString(8),
       mailbox: context.address,
       to,
@@ -2714,9 +3093,12 @@
     try {
       const sent = await api("/v1/send", {
         method: "POST",
-        body: threadId
-          ? { to, body: text, from: context.address, thread_id: threadId, attachments }
-          : { to, body: text, from: context.address, attachments },
+        body: {
+          to, body: text, from: context.address, attachments,
+          ...(threadId ? { thread_id: threadId } : {}),
+          ...(msgRef ? { msg_ref: msgRef } : {}),
+          ...(replyFields || {}),
+        },
       });
       // The id of the server's own copy. Holding it is what lets the optimistic row retire the
       // moment that copy comes back, instead of the message appearing twice for a poll.
@@ -2878,7 +3260,7 @@
     let body;
     try {
       body = await api(
-        withIdentity("/v1/inbox", context.address) + "&include_sent=true&include_read=true",
+        withIdentity("/v1/inbox", context.address) + "&include_sent=true&include_read=true" + actionsQuery(),
         { signal },
       );
     } catch (e) {
@@ -3228,7 +3610,7 @@
         // to add new mail: the first poll after load replaced a full conversation with only its
         // unread part, so messages appeared and then vanished a few seconds later. The two calls
         // must ask the same question, or they answer each other.
-        const path = withIdentity("/v1/inbox") + "&include_sent=true&include_read=true"
+        const path = withIdentity("/v1/inbox") + "&include_sent=true&include_read=true" + actionsQuery()
           + "&wait=" + encodeURIComponent(cfg.waitSeconds || 25);
         const body = await api(path, { signal: pollController.signal });
         if (!polling || gen !== pollGeneration || !context.current()) break;
@@ -3830,6 +4212,13 @@
     $("peer-block-cancel").onclick = () => closeSheet("peer-block-sheet");
     $("peer-block-confirm").onclick = () => confirmBlock();
     wirePhase1b();
+    // Phase 1e: reply/edit bar, message info, the message menu.
+    $("compose-context-close").addEventListener("click", () => { cancelComposeMode(); $("compose").focus({ preventScroll: true }); });
+    wireSheet("msg-info-sheet");
+    $("msg-info-done").addEventListener("click", () => closeSheet("msg-info-sheet"));
+    document.addEventListener("mousedown", (e) => { if (!$("msg-menu").hidden && !$("msg-menu").contains(e.target)) closeMessageMenu(); });
+    document.addEventListener("scroll", () => closeMessageMenu(), true);
+    $("msg-menu").addEventListener("keydown", (e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); closeMessageMenu(); } });
 
     $("search").oninput = (e) => {
       state.filter = e.target.value;
@@ -3848,6 +4237,12 @@
 
     // Enter sends, Shift+Enter breaks the line — but only where there is a keyboard to do it with.
     compose.addEventListener("keydown", (e) => {
+      if (e.key === "Escape" && composeMode) {
+        e.preventDefault();
+        e.stopPropagation();
+        cancelComposeMode();
+        return;
+      }
       if (e.key === "Enter" && !e.shiftKey && !e.isComposing && window.matchMedia("(min-width: 781px)").matches) {
         e.preventDefault();
         $("composer").requestSubmit();
@@ -3861,10 +4256,21 @@
       const text = compose.value.trim();
       const key = composerKey();
       if ((!text && !staged.length) || !state.openPeer || sendingDrafts.has(key)) return;
+      // Phase 1e: an edit replaces a message rather than sending one; a reply sends one that names
+      // its parent. Either mode is dropped if the conversation changed underneath it.
+      if (composeMode && composeMode.peer !== state.openPeer) setComposeMode(null);
+      const mode = composeMode;
+      if (mode?.kind === "edit" && !text) return;
       sendingDrafts.add(key);
       compose.disabled = true;
       autosize();
-      sendMessage(text).finally(() => {
+      let job;
+      if (mode?.kind === "edit") job = sendEdit(text);
+      else {
+        if (mode?.kind === "reply") setComposeMode(null);
+        job = sendMessage(text, mode?.kind === "reply" ? mode.m : null);
+      }
+      job.finally(() => {
         sendingDrafts.delete(key);
         if (composerKey() === key) {
           compose.disabled = false;
@@ -3936,6 +4342,10 @@
 
   let features = new Set();
   const has = (name) => features.has(name);
+  // Phase 1e: a postbox with any message action on lists the raw view with edits folded in.
+  const actionsOn = () => has("message_edit") || has("message_reply") || has("receipts") || has("agent_status");
+  const actionsQuery = () => (actionsOn() ? "&actions=1&fold=1" : "");
+  const actionFlags = () => ({ edit: has("message_edit"), reply: has("message_reply"), receipts: has("receipts"), agentStatus: has("agent_status") });
 
   async function loadCapabilities() {
     const version = sessionVersion;
@@ -3964,6 +4374,7 @@
 
   // Typed events on the account stream. Unknown types are ignored, as the stream's contract says.
   let callReloadTimer = null;
+  let receiptReloadTimer = null;
   function typedEvent(event, raw) {
     let frame = null;
     try { frame = JSON.parse(raw); } catch (_) { return; }
@@ -3986,6 +4397,15 @@
       const ids = new Set(data.ids || []);
       state.inbound = state.inbound.filter((m) => !ids.has(m.message_id));
       render();
+    } else if (event === "message.receipt" || event === "message.edited") {
+      // Phase 1e: ticks moved, or a message changed under somebody's eyes. One listing settles both.
+      const mailbox = frame.mailbox || data.mailbox;
+      if (mailbox && state.me && mailbox !== state.me.address) return;
+      const context = mailboxContext();
+      clearTimeout(receiptReloadTimer);
+      receiptReloadTimer = setTimeout(() => {
+        if (context.current()) loadInbox().then(render).catch(() => {});
+      }, 200);
     } else if (event === "thread.settings") {
       loadThreads().then(render).catch(() => {});
     }
@@ -4116,7 +4536,7 @@
 
   function syncSettingsRows() {
     $("settings-nav-profile").hidden = !has("avatars");
-    $("settings-nav-privacy").hidden = !(has("call_admission") || has("message_filtering") || has("call_history"));
+    $("settings-nav-privacy").hidden = !(has("call_admission") || has("message_filtering") || has("call_history") || has("receipts"));
   }
 
   function openProfilePage() {
@@ -4348,6 +4768,10 @@
     { field: "call_history_days", flag: "call_history", title: "Keep call history",
       note: "Off stops keeping new calls. Entries older than this are deleted.",
       options: [["0", "Off"], ["30", "30 days"], ["180", "180 days"], ["365", "1 year"]] },
+    // Phase 1e. Delivered receipts are always on; this is only about "seen".
+    { field: "read_receipts", flag: "receipts", title: "Send read receipts",
+      note: "When off, people don’t see when you have read their messages, and you don’t see when they have read yours. Delivered ticks still show.",
+      options: [["true", "On"], ["false", "Off"]] },
   ];
   let policyFull = null;
 
@@ -4372,7 +4796,7 @@
         input.name = "policy-" + row.field;
         input.value = value;
         input.disabled = !policyFull;
-        input.checked = Boolean(policyFull) && String(policyFull[row.field]) === value;
+        input.checked = Boolean(policyFull) && String(row.field === "read_receipts" ? policyFull.read_receipts !== false : policyFull[row.field]) === value;
         input.addEventListener("change", () => { if (input.checked) savePolicy(row.field, value); });
         span.textContent = label;
         l.append(input, span);
@@ -4409,7 +4833,7 @@
   async function savePolicy(field, raw) {
     if (!policyFull) return;
     const context = mailboxContext();
-    const value = field === "call_history_days" ? Number(raw) : raw;
+    const value = field === "call_history_days" ? Number(raw) : field === "read_receipts" ? raw === "true" : raw;
     const previous = policyFull[field];
     policyFull = { ...policyFull, [field]: value };
     $("policy-error").hidden = true;

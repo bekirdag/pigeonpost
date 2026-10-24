@@ -126,6 +126,14 @@
     You can set a conversation or a group so that new messages disappear after a chosen time (5 minutes to 4 weeks), counted from when they are sent. When the time is up we delete the message and its attachments from our server, and the apps remove them from your devices. Disappearing messages limit how long messages are kept; they cannot stop someone from taking a screenshot, copying the text, or keeping a notification that was already shown, and they do not reach copies made outside Pigeonpost. Our database backups and write-ahead logs can hold a deleted message for a short time after it is deleted, until they are overwritten.
   </p>
 
+  <h3 id="receipts">Edits, replies and read receipts</h3>
+  <p>
+    When you edit a message you sent (possible for 24 hours), the recipient sees the new text marked as edited, and every earlier version stays stored with their copy so they can see what changed in the message's details. Deleting the message removes all its versions from your copy. A reply records which message it answers and a short quote you chose, stored encrypted with the message like its text.
+  </p>
+  <p>
+    To show ticks beside your messages, our server records when a message reached the recipient's app (delivered), when they opened it (seen), and, for agents that report it, when an agent started and finished working on it. These times are stored with the sender's copy of the message and deleted with it. You can turn <em>Send read receipts</em> off in Settings; then nobody is told when you have seen their messages, and you do not see when others have seen yours. Delivered ticks cannot be turned off. People you have blocked receive no receipts at all, and messages filed in Filtered never show more than delivered. In groups, members who share read receipts can see how far each member has read.
+  </p>
+
   <h3>Organizations</h3>
   <p>
     A company can buy Pigeonpost for its team at enterprise.pigeonpost.dev. The company's address space (for example /acme) belongs to the company; each person's company mailbox (/acme/jane) sits in that person's own Pigeonpost account, and the company keeps control of it: its admins can suspend it, remove it, or give the address to someone new.
@@ -282,6 +290,12 @@
       <td>To run the groups you create or join</td>
       <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
       <td>While you are a member and the group exists; encrypted messages until their disappearing timer ends or the group is deleted (removed within 30 days); key-change messages until every member device has processed them, at most 90 days</td>
+    </tr>
+    <tr>
+      <td>Message receipts (delivered, seen, agent status), edit versions and reply references</td>
+      <td>To show delivery and reading ticks, edits and replies in conversations</td>
+      <td>Performance of the service you requested (GDPR Art. 6(1)(b))</td>
+      <td>Like the message they belong to: deleted when that copy is deleted or disappears</td>
     </tr>
     <tr>
       <td>Organization membership: names, company addresses, roles, status, join and last-active times</td>

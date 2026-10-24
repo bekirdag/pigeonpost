@@ -80,6 +80,7 @@ history, keys or calls. `unread` counts application messages after `read_cursor`
 | POST | `/v1/groups/resolve` | `{group_id, link_token?}` | Preview `{id, name, description, member_count, join_policy, visibility, my_state, can_join, needs}` for a listed public group, a valid link, an invitation or existing membership; otherwise `404 not_found`. The token travels in the body, never a URL. |
 | GET | `/v1/rooms` | `?q=` | Listed public groups (`org_id` rooms join this in Phase 4). |
 | POST | `/v1/groups/{id}/read` | `{seq}` | Forward only. `group.read` to the account's other devices. |
+| GET | `/v1/groups/{id}/receipts` | | Feature `receipts`. Members' `delivered_seq` (advanced when their client lists messages) and `seen_seq` (read cursor, `null` when either side turned read receipts off), for ticks. See `docs/message-actions.md` §5. |
 | PUT | `/v1/groups/{id}/notifications` | `{notify, muted_until}` | `muted_until`: unix seconds, `null` = not muted. |
 
 ### Membership lifecycle

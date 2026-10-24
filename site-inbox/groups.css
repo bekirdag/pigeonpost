@@ -152,3 +152,8 @@
 .gi-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
 .safety-number { font-family: var(--mono); font-size: 14px; letter-spacing: .04em; color: var(--ink); line-height: 1.7; }
 .pill.role-owner, .pill.role-admin { background: var(--mine-chip); color: var(--mine-text); }
+
+/* Phase 1e: group bubbles share the direct-message action row, ticks and quote (app.css). */
+.group-messages .bubble .meta .msg-delete { margin-right: 4px; }
+.msg-info .info-names { list-style: none; margin: 0 0 4px; padding: 0; display: grid; gap: 4px; font-size: 14px; color: var(--ink); }
+.msg-info .info-group + .info-group { margin-top: 4px; }
