@@ -385,7 +385,18 @@ final class IPadLayoutTests: XCTestCase {
                         scene.prepare(app)
                         Thread.sleep(forTimeInterval: 1.2)
                         keep(state)
-                        problems += findProblems().map { "\(state): \($0)" }
+                        let found = findProblems()
+                        if !found.isEmpty || scene.name == "calls-sidebar" {
+                            let hitTests = ["sideCalls", "mailboxSwitcher", "messageComposer", "subthread:General"].map { id in
+                                let element = app.descendants(matching: .any)[id].firstMatch
+                                return "\(id): exists=\(element.exists), hittable=\(element.isHittable)"
+                            }.joined(separator: "\n")
+                            let hierarchy = XCTAttachment(string: "popovers=\(app.popovers.count), sheets=\(app.sheets.count)\n\(hitTests)\n\(app.debugDescription)")
+                            hierarchy.name = state + "-accessibility"
+                            hierarchy.lifetime = .keepAlways
+                            add(hierarchy)
+                        }
+                        problems += found.map { "\(state): \($0)" }
                     }
                 }
             }
