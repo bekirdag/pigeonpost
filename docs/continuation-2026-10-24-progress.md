@@ -4,14 +4,15 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Shared baseline #90 is merged at `26f10b8`; enterprise/device-login #83 is merged at `8db5df3`.
-The enterprise portal, inbox approval page, privacy/terms updates and sales-validation endpoint are
-now deployed and verified on the origin and public URLs. The postbox process still runs source
-`c0d6a4b` (already includes the Phase 4 server); the shared Rust security update and #89 server
-changes await its controlled deployment. #89 is integrated with #83 and its current CI is running.
-#87 passes the newer iPad audit; two iPhone cases are being repaired. Native round two has a
-committed/tested Apple wire foundation, with screens and remaining platforms still pending.
-Native releases remain batched; the owner's Apple pre-submission review hold is preserved.
+Shared baseline #90, enterprise/device-login #83 and message actions #89 are merged. The portal,
+approval page and postbox/reaper now run the reviewed changes; public health and authentication
+checks pass. The web inbox bundle awaits the cache-coupling fix and controlled static rollout.
+#87 is integrated with main at `c3a3f0f`; core/Windows/Mac/group checks pass and its Apple run is
+being qualified. Native round two has committed Apple direct edit/reply/status/privacy screens,
+five passing local UI cases and passing iPhone/Mac builds. Its newer iPad passes; newer iPhone
+keyboard focus and native StoreKit restore assertions need attention. Group actions, calendar,
+enterprise client screens and remaining native platforms are still pending. All native releases
+remain batched, with the owner's Apple pre-submission review hold preserved.
 
 ## Intake evidence
 
@@ -144,3 +145,31 @@ Native releases remain batched; the owner's Apple pre-submission review hold is 
 - Operations PR #91 passes every platform check and merged as `d14f540`. Its progress changes conflicted with #89's separate registry-clock checkpoint. Resolved the document conflict by retaining the current status and both evidence histories (`93e2235`); no application merge conflict or source change. A first merge request supplied an incorrect expected full hash and was correctly refused; the real head was read before retrying.
 - #87's current Windows failure is a different existing Loft regression fixture: its repeated health probe allowed connection pooling against the server's intentional one-second transport deadline, and the Windows probe returned connection-aborted. The test now makes each health probe on a fresh transport; all status and six-second release assertions remain, with no production timeout or behavior changes. This isolates request-admission lifetime from idle connection reuse. Focused case and full Loft library **116/116** pass (one existing ignored case); Windows confirmation is still required.
 - The latest #87 iPad, StoreKit, both Mac crypto jobs, group interop and native Windows call harness pass. The newer iPhone UI job remains in progress. Postbox rollout remains pending a clean integrated merge.
+
+
+## Checkpoint — message-actions merged and postbox deployed
+
+- #89 passed every platform and web check at `e5a2843`, including Windows at 20m32s, then merged as `b2a802512822ef504e29ab16699cea536d4ef5f9`. Candidate image `pigeonpost-postbox:p1e-e5a2843` has id `a2b6418c1352…`; its source tree exactly equals the merge. Built on the postbox host with a two-CPU/four-GiB ceiling. Isolated empty-data health check passes; an attempted --help smoke invocation was unsupported and is retained as failed evidence.
+- Took a live SQLite backup via SQLite's backup API, checked its integrity, and retained compose/env files under root-only `/var/backups/pigeonpost/postbox-20261024T215411Z`. On a separate network-disabled DB copy, the candidate migrates/starts successfully and the old image still starts afterwards. An initial preparation attempt stopped before mutations because the backup parent directory was absent; the corrected preparation passes. No server backup was copied to the Mac.
+- First live attempt used an incorrect anonymous-capabilities 200 assertion, ignoring the baseline's expected 401, and correctly rolled both images back. This was an operator validation error; the live database was retained, including intervening messages. Corrected the probe to assert the existing authenticated boundary and reran. Both postbox and reaper now run the candidate, with zero restarts, and source is at the merged commit. Production KMS/PoW configuration was retained; no ephemeral-key startup warning.
+- Public postbox health200 and capabilities401, enterprise200 and approval page200 pass. Registry/directory/Loft remain running and healthy. No feature gate was manually enabled, no store submission occurred. Private scripts and successful/failed logs stay in the continuation release directory.
+- #87 integrated main plus both native-call/message-action/pair test entries at `c3a3f0f`; full inbox web **197/197** passes, final CI pending. Native2 checkpoint `6d44cf7` has five local direct/status/privacy UI cases passing and both app builds passing. Newer Apple run `40135545110` is in progress; StoreKit reports an empty entitlement snapshot immediately after restore, while the exact native test passes locally (one actual test, not an empty selection). Reproduce/synchronize the native test before changing billing logic.
+- Public cache preflight confirms `integrity.js` and app.js are cacheable for **four hours**, while WASM is no-cache. The #89 web bundle has not yet been deployed. The cache-coupling repair in this branch is a required rollout dependency; keep the pinned byte-integrity failure behavior.
+
+
+## Checkpoint — coherent web crypto requests
+
+- The loader, its glue/manifest imports, WASM fetch and the HTML group-entry reference now use the same full pinned digest. Reproducible generation stamps these references and checks them alongside the binary; later rebuilds cannot silently leave an old entry URL. Changed HTML asset URLs get a fresh rollout version rather than reusing a URL that may already cache the previous app for four hours.
+- Two generator regressions pass, covering digest changes, idempotence, invalid digests and missing/duplicated import markers. Real WASM/MLS suite **10/10** passes, including a browser-style fetch returning stale bytes (refused), then current bytes (accepted), and exact no-cache/same-origin/digest request assertions. Full inbox suite **196/196** passed before the final added HTML-entry assertion; the focused MLS recheck passes **10/10**. WASM bytes remain unchanged at `f185d0bd…`; Linux reproducible rebuild and hosted CI remain required before deployment.
+- Local draft supplied the small checked replacement helper and was reviewed; the Node test draft invented APIs and was rejected. Docdex indexed the edited script/test/group entry. Vendor symbols are excluded/missing and shell AST is unsupported, so actual module imports, workflow callers, parser checks and the real WASM runtime tests provide the additional checks.
+
+
+- PR #92's clean Linux WASM/binding reproduction, multi-language interop, native/AAR builds and audit checks pass. The first web job reached the call-layout harness, but its exact unversioned config.js tag replacement stopped injecting the fake login after the new asset query was added. An audit found the same assumption in the Windows call peer. Both harnesses now preserve the matched config tag (including a query) while prepending their existing fixtures. Parser checks pass; actual layout/native call qualification remains in CI. No production call or authentication code changed for this fixture repair.
+
+
+## Checkpoint — concurrent retry preflight race
+
+- Hosted Linux at `7ccae5a` failed the real concurrent-retry integration case with `409 msg_ref_in_use`. The early validation read the sender, then the recipient in separate snapshots; an identical request could atomically commit between those reads. The final `enqueue_copies` transaction already distinguishes the identical sender/recipient pair from a competing reference claim under its IMMEDIATE writer lock.
+- Removed the redundant recipient preflight read. Sender-side early duplicates/conflicts remain, and recipient-side conflicts remain authoritative in the unchanged atomic transaction. The real-socket test now releases 16 requests together, requires exactly one 201, fifteen duplicate 200s, identical non-null copy ids and one message per mailbox. The competing-sender201/409 test and self-send checks still pass.
+- Full postbox **441/441** plus both worker tests pass (`msg-ref-race-postbox.log`); the16-way case also passes30 repeated runs after the change. It also passed30 runs before the change locally, so only the recorded hosted failure is the reproduction evidence; no claim of a deterministic local reproduction. A local draft review contradicted itself and was rejected.
+- This fix is included in the pending coherent-web rollout because CI exposed a live-server retry defect during qualification. It is not deployed yet. No duplicate delivery or lost-message incident was observed, and the error already leaves the first successful delivery intact.

@@ -30,3 +30,8 @@ Sender-domain verification for calendar/company invitations; iyzico USD activati
 ## Validation strategy
 
 Start with failed CI logs and the smallest meaningful reproductions. Prefer Docdex test runners where feasible; use the repository's exact native/harness commands when the wrapper cannot express the job. Broaden checks after failures, integration changes or unresolved risk. Maintain exact source/version evidence and rollback plans for deployments. A green build alone does not establish live correctness or completion of every SDS requirement.
+
+
+## Web rollout dependency — 2026-10-25
+
+Before publishing #89's web bundle, bind the crypto loader, its JavaScript imports and WASM request to the same pinned digest. Production JS/manifest responses are cacheable for four hours, while WASM revalidates; changing only the WASM can mismatch the cached integrity manifest. Stamp these keys in the reproducible build, verify successful and stale-byte loads with the actual loader, bump changed page asset versions, then stage/deploy tracked static assets with origin/public byte checks. Preserve server-local backups and operator configuration; no credentials or server backups enter the repository.
