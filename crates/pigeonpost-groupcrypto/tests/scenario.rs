@@ -409,6 +409,27 @@ fn rejects_bad_inputs() {
 }
 
 #[test]
+fn unsupported_welcome_suite_is_rejected_without_consuming_the_key_package() {
+    let mut alice = device(1, "a");
+    let mut bob = device(2, "b");
+    let kp = bob.generate_key_packages(1).unwrap();
+    alice.create_group(G).unwrap();
+    let commit = alice.add_members(G, &kp).unwrap();
+    alice.confirm_commit(G).unwrap();
+    let welcome = commit.welcome.unwrap();
+    // TLS MLSMessage header: MLS 1.0, Welcome, ciphersuite 0x0001.
+    assert_eq!(&welcome[..6], &[0, 1, 0, 3, 0, 1]);
+    let mut other_suite = welcome.clone();
+    other_suite[4..6].copy_from_slice(&[0, 2]); // P-256 instead of X25519.
+    assert_eq!(
+        bob.join_from_welcome(&other_suite).unwrap_err(),
+        Error::Unsupported("group ciphersuite")
+    );
+    assert!(bob.groups().is_empty());
+    assert_eq!(bob.join_from_welcome(&welcome).unwrap().group_id, G);
+}
+
+#[test]
 fn tampering_is_detected() {
     let mut alice = device(1, "a");
     let mut bob = device(2, "b");
