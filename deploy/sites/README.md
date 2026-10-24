@@ -164,7 +164,8 @@ ts="$(date -u +%Y%m%dT%H%M%SZ)"
 rsync -a --delete --exclude node_modules --exclude test --exclude package.json \
   --exclude package-lock.json --exclude README.md site-enterprise/ raijin:pp-enterprise-stage/
 printf '%s\n' "$PW" | ssh raijin "sudo -S -p '' sh -c '
-  [ -d /var/www/pigeonpost-enterprise ] && cp -a /var/www/pigeonpost-enterprise /var/www/pigeonpost-enterprise.bak-$ts
+  mkdir -p /var/backups/pigeonpost/enterprise-$ts
+  [ ! -d /var/www/pigeonpost-enterprise ] || cp -a /var/www/pigeonpost-enterprise /var/backups/pigeonpost/enterprise-$ts/site
   mkdir -p /var/www/pigeonpost-enterprise
   rsync -a --delete ~wodo/pp-enterprise-stage/ /var/www/pigeonpost-enterprise/
   chown -R www-data:www-data /var/www/pigeonpost-enterprise'"

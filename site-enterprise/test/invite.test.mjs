@@ -67,3 +67,42 @@ test("acceptance welcomes the member with their address", async (t) => {
   assert.ok([...window.document.querySelectorAll("#invite a")].some((a) => a.href === "https://inbox.pigeonpost.dev/" && /Open your inbox/.test(a.textContent)));
   assert.equal(window.sessionStorage.getItem("ppe_invite_token"), null);
 });
+
+test("a new invitation fragment clears every previous acceptance decision", async (t) => {
+  for (const fragment of ["", "invalid", "B".repeat(43)]) {
+    await t.test(fragment ? "replacement " + fragment.slice(0, 7) : "empty fragment", async (t) => {
+      const valid = fragment.length === 43;
+      const { window, calls, $ } = load(t, "invite.html", {
+        url: `https://enterprise.pigeonpost.dev/invite#${fragment}`,
+        session: jwt(),
+        storage: {
+          ppe_invite_token: TOKEN,
+          ppe_resume: { name: "invite.accept", at: Date.now() },
+        },
+        fetch: (c) => c.url.endsWith("/preview") ? reply(200, preview) : reply(200, { org: { name: "Acme" } }),
+      });
+      await tick();
+      assert.equal(calls.filter((c) => c.url.endsWith("/accept")).length, 0, "a previous decision cannot accept a different link");
+      assert.equal(window.sessionStorage.getItem("ppe_resume"), null);
+      assert.equal(window.sessionStorage.getItem("ppe_invite_token"), valid ? fragment : null);
+      assert.equal(window.location.href, "https://enterprise.pigeonpost.dev/invite");
+      assert.match($("#invite").textContent, valid ? /Acme invites you/ : /isn't valid/);
+      assert.deepEqual(calls.map((c) => c.body), valid ? [{ token: fragment }] : []);
+    });
+  }
+});
+
+test("the fragment-less sign-in return preserves the original acceptance", async (t) => {
+  const { window, calls, $ } = load(t, "invite.html", {
+    url: "https://enterprise.pigeonpost.dev/invite",
+    session: jwt(),
+    storage: { ppe_invite_token: TOKEN, ppe_resume: { name: "invite.accept", at: Date.now() } },
+    fetch: () => reply(200, { org: { name: "Acme" }, mailbox: { handle: "/acme/john" } }),
+  });
+  await tick();
+  assert.equal(calls.length, 1);
+  assert.ok(calls[0].url.endsWith("/accept"));
+  assert.deepEqual(calls[0].body, { token: TOKEN });
+  assert.match($("#invite").textContent, /Welcome to Acme/);
+  assert.equal(window.sessionStorage.getItem("ppe_invite_token"), null);
+});
