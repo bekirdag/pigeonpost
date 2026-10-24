@@ -230,16 +230,11 @@ pub(crate) async fn prepare(
                 }));
                 return Ok(out);
             }
-            // A reference is unique within each mailbox it lands in, so one conversation's
-            // reference can never be borrowed to make a message pass for part of another.
-            let theirs = state
-                .store
-                .rows_by_ref(recipient.to_string(), r.clone())
-                .await
-                .map_err(store_err)?
-                .into_iter()
-                .any(|row| row.msg_ref == *r);
-            if !mine.is_empty() || theirs {
+            // A known sender-side claim is already a conflict. Recipient-side claims are
+            // checked atomically by enqueue_copies, along with the duplicate check: another
+            // identical request can commit both copies after this snapshot. A separate read
+            // of the recipient here would mistake that successful send for a conflict.
+            if !mine.is_empty() {
                 return Err(ApiError::new(
                     StatusCode::CONFLICT,
                     "msg_ref_in_use",

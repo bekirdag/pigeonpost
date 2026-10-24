@@ -165,3 +165,11 @@ remain batched, with the owner's Apple pre-submission review hold preserved.
 
 
 - PR #92's clean Linux WASM/binding reproduction, multi-language interop, native/AAR builds and audit checks pass. The first web job reached the call-layout harness, but its exact unversioned config.js tag replacement stopped injecting the fake login after the new asset query was added. An audit found the same assumption in the Windows call peer. Both harnesses now preserve the matched config tag (including a query) while prepending their existing fixtures. Parser checks pass; actual layout/native call qualification remains in CI. No production call or authentication code changed for this fixture repair.
+
+
+## Checkpoint — concurrent retry preflight race
+
+- Hosted Linux at `7ccae5a` failed the real concurrent-retry integration case with `409 msg_ref_in_use`. The early validation read the sender, then the recipient in separate snapshots; an identical request could atomically commit between those reads. The final `enqueue_copies` transaction already distinguishes the identical sender/recipient pair from a competing reference claim under its IMMEDIATE writer lock.
+- Removed the redundant recipient preflight read. Sender-side early duplicates/conflicts remain, and recipient-side conflicts remain authoritative in the unchanged atomic transaction. The real-socket test now releases 16 requests together, requires exactly one 201, fifteen duplicate 200s, identical non-null copy ids and one message per mailbox. The competing-sender201/409 test and self-send checks still pass.
+- Full postbox **441/441** plus both worker tests pass (`msg-ref-race-postbox.log`); the16-way case also passes30 repeated runs after the change. It also passed30 runs before the change locally, so only the recorded hosted failure is the reproduction evidence; no claim of a deterministic local reproduction. A local draft review contradicted itself and was rejected.
+- This fix is included in the pending coherent-web rollout because CI exposed a live-server retry defect during qualification. It is not deployed yet. No duplicate delivery or lost-message incident was observed, and the error already leaves the first successful delivery intact.

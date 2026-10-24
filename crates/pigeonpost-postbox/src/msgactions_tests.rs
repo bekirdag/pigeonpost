@@ -205,26 +205,55 @@ async fn message_actions_are_refused_while_their_flags_are_off() {
 #[tokio::test]
 async fn concurrent_retries_deliver_one_message_with_one_reference() {
     let state = state();
-    let srv = serve(state.clone()).await;
-    let a = person(&state, "acct_retry_a").await;
-    let b = person(&state, "acct_retry_b").await;
+    let srv = Arc::new(serve(state.clone()).await);
+    let a = Arc::new(person(&state, "acct_retry_a").await);
+    let b = Arc::new(person(&state, "acct_retry_b").await);
     let msg_ref = msgactions::new_msg_ref();
-    let (first, retry) = tokio::join!(
-        srv.send(
-            &a,
-            &b,
-            json!({ "body": "one delivery", "msg_ref": msg_ref })
-        ),
-        srv.send(
-            &a,
-            &b,
-            json!({ "body": "one delivery", "msg_ref": msg_ref })
-        ),
-    );
-    assert!(first.0.is_success(), "{first:?}");
-    assert!(retry.0.is_success(), "{retry:?}");
-    assert_eq!(first.1["message_id"], retry.1["message_id"]);
-    assert_eq!(first.1["sent_copy_id"], retry.1["sent_copy_id"]);
+    let gate = Arc::new(tokio::sync::Barrier::new(17));
+    let mut sends = tokio::task::JoinSet::new();
+    for _ in 0..16 {
+        let (srv, a, b, msg_ref, gate) = (
+            srv.clone(),
+            a.clone(),
+            b.clone(),
+            msg_ref.clone(),
+            gate.clone(),
+        );
+        sends.spawn(async move {
+            gate.wait().await;
+            srv.send(
+                &a,
+                &b,
+                json!({ "body": "one delivery", "msg_ref": msg_ref }),
+            )
+            .await
+        });
+    }
+    gate.wait().await;
+    let mut deliveries = std::collections::HashSet::new();
+    let mut created = 0;
+    while let Some(result) = sends.join_next().await {
+        let (status, body) = result.unwrap();
+        assert!(status.is_success(), "{status}: {body}");
+        if status == StatusCode::CREATED {
+            created += 1;
+        } else {
+            assert_eq!(status, StatusCode::OK);
+            assert_eq!(body["duplicate"], true);
+        }
+        deliveries.insert((
+            body["message_id"]
+                .as_str()
+                .expect("received copy id")
+                .to_owned(),
+            body["sent_copy_id"]
+                .as_str()
+                .expect("sent copy id")
+                .to_owned(),
+        ));
+    }
+    assert_eq!(created, 1);
+    assert_eq!(deliveries.len(), 1);
     assert_eq!(srv.listing(&b, "&actions=1").await.len(), 1);
     assert_eq!(srv.listing(&a, "&actions=1").await.len(), 1);
 }
