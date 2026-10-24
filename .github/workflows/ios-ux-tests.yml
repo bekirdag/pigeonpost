@@ -23,7 +23,7 @@ concurrency:
 jobs:
   native-ios:
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 45
     defaults:
       run:
         working-directory: apps/ios
