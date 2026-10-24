@@ -301,12 +301,18 @@ async fn proof_of_work_is_enforced_at_the_recipients_floor() {
     let policy = RecipientPolicy::new(&bob, 8, false, vec![], 1);
     client.set_policy(&policy).await.unwrap();
 
-    let unstamped = envelope::wrap(&alice, &bob.verifying_key(), "unstamped", NOW).unwrap();
+    let mut unstamped = envelope::wrap(&alice, &bob.verifying_key(), "unstamped", NOW).unwrap();
+    // A random wrap with nonce zero already meets this low floor 1 in 256 times.
+    // Choose a known-invalid nonce so this checks refusal, not random luck.
+    let nonce = (0..1024)
+        .find(|&nonce| pigeonpost_core::pow::work(&unstamped.id(), nonce) < 8)
+        .expect("find a nonce below the required work floor");
+    unstamped.pow_nonce = nonce;
     let refused = client.publish(&unstamped, None).await;
-    assert!(matches!(
-        refused,
-        Err(ClientError::Refused { status: 403, .. })
-    ));
+    assert!(
+        matches!(refused, Err(ClientError::Refused { status: 403, .. })),
+        "{refused:?}"
+    );
 
     let mut stamped = envelope::wrap(&alice, &bob.verifying_key(), "stamped", NOW).unwrap();
     stamped.stamp(8, 5_000_000).unwrap();
@@ -683,13 +689,32 @@ async fn compressed_and_oversized_requests_are_rejected_before_json_work() {
         reqwest::StatusCode::UNSUPPORTED_MEDIA_TYPE
     );
 
-    let oversized = http
-        .post(format!("{}/v1/publish", client.base_url()))
-        .body("x".repeat(loft_config().max_request_bytes + 1))
-        .send()
+    // Send only the headers: the server must reject an oversized declaration
+    // before waiting for or parsing a body. Uploading that body races an early
+    // response against a connection reset on some platforms.
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt};
+    let authority = client.base_url().strip_prefix("http://").unwrap();
+    let mut stream = tokio::net::TcpStream::connect(authority).await.unwrap();
+    stream
+        .write_all(
+            format!(
+                "POST /v1/publish HTTP/1.1\r\nHost: {authority}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                loft_config().max_request_bytes + 1
+            )
+            .as_bytes(),
+        )
         .await
         .unwrap();
-    assert_eq!(oversized.status(), reqwest::StatusCode::PAYLOAD_TOO_LARGE);
+    let mut reader = tokio::io::BufReader::new(stream);
+    let mut status_line = String::new();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        reader.read_line(&mut status_line),
+    )
+    .await
+    .expect("oversized headers must be rejected without sending a body")
+    .unwrap();
+    assert_eq!(status_line.split_whitespace().nth(1), Some("413"));
     assert_eq!(client.info().await.unwrap().event_count, 0);
 }
 

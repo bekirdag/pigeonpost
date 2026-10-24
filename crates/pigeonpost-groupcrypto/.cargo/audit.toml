@@ -6,4 +6,9 @@
 # it, so libcrux-kem is never compiled into any target (the CI job asserts this with
 # `cargo tree -i libcrux-kem`). The pin is hpke-rs-libcrux =0.7.0 -> libcrux-kem =0.0.9; it
 # lifts when OpenMLS moves to hpke-rs 0.8. Remove these entries then.
-ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331"]
+# RUSTSEC-2026-0387 (crypto-bigint 0.5.5): current group secrets use only suite 0x0001
+# (X25519/AES-GCM/Ed25519). Other Welcome suites are refused before provider/key-store access,
+# and state imports require Ed25519. The affected P-curve secret operations are not reached.
+# Keep this exception tied to that invariant; see repository-root docs/security-advisory-2026-10-24.md.
+# Remove after OpenMLS's RustCrypto provider supports the patched crypto-bigint line.
+ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331", "RUSTSEC-2026-0387"]

@@ -23,7 +23,9 @@ if [ "$have_bindgen" != "$want_bindgen" ]; then
   exit 1
 fi
 cargo_home="${CARGO_HOME:-$HOME/.cargo}"
-export RUSTFLAGS="--remap-path-prefix=$cargo_home/registry/src=/cargo/registry/src --remap-path-prefix=$here=/groupcrypto --remap-path-prefix=$repo=/pigeonpost"
+# rustc uses the last matching rule. Keep nested paths after their ancestors,
+# including when a disposable build puts CARGO_HOME inside the checkout.
+export RUSTFLAGS="--remap-path-prefix=$repo=/pigeonpost --remap-path-prefix=$here=/groupcrypto --remap-path-prefix=$cargo_home/registry/src=/cargo/registry/src"
 export CARGO_TARGET_DIR="$here/target/wasm-reproducible"
 cd "$here"
 cargo build --locked --release -p pigeonpost-groupcrypto-wasm --target wasm32-unknown-unknown

@@ -4,4 +4,9 @@
 # postbox and CLI link pigeonpost-groupcrypto (Phase 3a), only as an optional dependency of
 # hpke-rs-libcrux that no build enables: `cargo tree -i libcrux-kem` finds nothing. Same reasoning
 # and removal condition as crates/pigeonpost-groupcrypto/.cargo/audit.toml.
-ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331"]
+# RUSTSEC-2026-0387 (crypto-bigint 0.5.5): reviewed as non-applicable to current secret paths.
+# MLS accepts only X25519/AES-GCM/Ed25519, rejects other Welcome suites before provider access,
+# and rejects non-Ed25519 state imports. The direct P-256 use verifies public calendar proofs;
+# P-256 signing occurs only in tests. No affected secret arithmetic is used by these paths.
+# See docs/security-advisory-2026-10-24.md for evidence, limits and the upstream removal condition.
+ignore = ["RUSTSEC-2026-0330", "RUSTSEC-2026-0331", "RUSTSEC-2026-0387"]

@@ -958,6 +958,11 @@ impl Device {
             MlsMessageBodyIn::Welcome(w) => w,
             _ => return Err(Error::Unsupported("expected a welcome")),
         };
+        // Enforce the application's sole suite before the provider sees any
+        // attacker-chosen algorithm selection or accesses key-package secrets.
+        if welcome.ciphersuite() != CIPHERSUITE {
+            return Err(Error::Unsupported("group ciphersuite"));
+        }
         let staged = StagedWelcome::new_from_welcome(&self.provider, &join_config(), welcome, None)
             .map_err(Error::mls)?;
         let group_id = group_id_string(staged.group_context().group_id())?;
