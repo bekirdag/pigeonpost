@@ -9,8 +9,8 @@
 //   const gc = await loadGroupCrypto();
 //   const device = gc.GroupDevice.newWithIdentitySeed(seed, 'web-1');
 
-import init, * as bindings from './pigeonpost_groupcrypto.js';
-import { WASM_SHA256 } from './integrity.js';
+import init, * as bindings from './pigeonpost_groupcrypto.js?v=f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16';
+import { WASM_SHA256 } from './integrity.js?v=f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16';
 
 let ready = null;
 
@@ -20,6 +20,7 @@ function hex(buffer) {
 
 async function fetchBytes() {
   const url = new URL('./pigeonpost_groupcrypto_bg.wasm', import.meta.url);
+  url.searchParams.set('v', WASM_SHA256);
   const response = await fetch(url, { credentials: 'same-origin', cache: 'no-cache' });
   if (!response.ok) throw new Error(`groupcrypto: wasm fetch failed (${response.status})`);
   return new Uint8Array(await response.arrayBuffer());
