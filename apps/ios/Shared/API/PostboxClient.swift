@@ -70,6 +70,8 @@ struct PostboxClient {
             URLQueryItem(name: "identity", value: identity),
             URLQueryItem(name: "include_sent", value: "true"),
             URLQueryItem(name: "include_read", value: "true"),
+            URLQueryItem(name: "actions", value: "1"),
+            URLQueryItem(name: "fold", value: "1"),
         ]
         // `include_sent=1` is a 400 before the request is even authenticated: axum deserialises a
         // bool from `true`/`false` only.
@@ -97,18 +99,33 @@ struct PostboxClient {
         to peer: String,
         body text: String,
         threadId: String?,
-        attachments: [String] = []
+        attachments: [String] = [],
+        msgRef: String = MessageReference.make(),
+        replyTo: String? = nil,
+        quote: String? = nil,
+        editOf: String? = nil
     ) async throws -> SendResponse {
-        var payload: [String: Any] = ["to": peer, "body": text, "from": identity]
+        var payload: [String: Any] = ["to": peer, "body": text, "from": identity, "msg_ref": msgRef]
         if let threadId { payload["thread_id"] = threadId }
         if !attachments.isEmpty { payload["attachments"] = attachments }
+        if let replyTo { payload["reply_to"] = replyTo }
+        if let quote { payload["quote"] = MessageReplyReference.boundedQuote(quote) }
+        if let editOf { payload["edit_of"] = editOf }
         return try await send("/v1/send", method: "POST", json: payload, as: SendResponse.self)
     }
 
     /// Opening a conversation is reading it, and `ack` is not only a read receipt: it is also how an
     /// agent sharing this mailbox learns a message has been dealt with.
     func ack(identity: String, messageId: String) async throws {
-        _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity])
+        _ = try await sendRaw("/v1/ack", method: "POST", json: ["message_id": messageId, "identity": identity, "with_edits": true])
+    }
+
+    func messageInformation(identity: String, messageId: String) async throws -> MessageInformation {
+        let safe = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_"))
+        guard let id = messageId.addingPercentEncoding(withAllowedCharacters: safe), !id.isEmpty else {
+            throw APIError(status: 400, code: "invalid_message", detail: "Choose a message first.")
+        }
+        return try await send("/v1/messages/\(id)/info", query: [.init(name: "identity", value: identity)], as: MessageInformation.self)
     }
 
     /// Store a file, and get back the id a send names it by.

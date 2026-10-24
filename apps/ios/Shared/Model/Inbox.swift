@@ -844,30 +844,8 @@ private extension Message {
     /// `read` arrives from the server and is the one field the app changes on its own, the moment a
     /// conversation is opened.
     func markedRead() -> Message {
-        Message(
-            messageId: messageId,
-            from: from,
-            to: to,
-            body: body,
-            direction: direction,
-            peer: peer,
-            peerHandle: peerHandle,
-            senderHandle: senderHandle,
-            threadId: threadId,
-            receivedAt: receivedAt,
-            sentAt: sentAt,
-            read: true,
-            autonomy: autonomy,
-            verb: verb,
-            heldBecause: heldBecause,
-            alias: alias,
-            matchedContact: matchedContact,
-            senderStanding: senderStanding,
-            senderTier: senderTier,
-            senderKnown: senderKnown,
-            untrusted: untrusted,
-            attachments: attachments,
-            expiresAt: expiresAt
-        )
+        var copy = self
+        copy.read = true
+        return copy
     }
 }

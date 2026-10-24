@@ -142,6 +142,7 @@ final class ControlledURLProtocol: URLProtocol {
 
     static func main() async {
         URLProtocol.registerClass(ControlledURLProtocol.self)
+        await messageActionWireAndAcknowledgement()
         await initialLoadAndSwitch()
         await oldLoadCannotFinishNewSpinner()
         await rapidReturnToSameMailbox()
@@ -154,6 +155,81 @@ final class ControlledURLProtocol: URLProtocol {
         #endif
         print("Inbox loading: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
+    }
+
+    static func requestBody(_ request: URLRequest) -> [String: Any] {
+        var bytes = request.httpBody ?? Data()
+        if bytes.isEmpty, let stream = request.httpBodyStream {
+            stream.open()
+            defer { stream.close() }
+            var buffer = [UInt8](repeating: 0, count: 1024)
+            while true {
+                let count = stream.read(&buffer, maxLength: buffer.count)
+                if count <= 0 { break }
+                bytes.append(contentsOf: buffer.prefix(count))
+            }
+        }
+        return (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:]
+    }
+
+    static func messageActionWireAndAcknowledgement() async {
+        let (account, inbox) = make()
+        let loading = Task { await inbox.loadAll() }
+        await pending(a.address, count: 5)
+        let request = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/inbox" }!
+        let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)!.queryItems!
+        check(query.contains { $0.name == "actions" && $0.value == "1" }
+              && query.contains { $0.name == "fold" && $0.value == "1" },
+              "native history requests folded action metadata")
+        let reference = "mref_" + String(repeating: "a", count: 26)
+        let wire = """
+        {"messages":[
+          {"message_id":"root","peer":"/test/peer","body":"edited words","direction":"in","read":false,"received_at":1,
+           "msg_ref":"\(reference)","edited_at":2,"edit_count":1,"reply_to":{"msg_ref":"parent","message_id":"parent-copy","quote":"remember this"}},
+          {"message_id":"sent","peer":"/test/peer","body":"my words","direction":"out","sent_at":3,
+           "receipt":{"state":"seen","delivered_at":4,"seen_at":5},"agent_status":{"state":"working","at":6}}
+        ]}
+        """
+        finish(a.address, marker: "actions", inboxBody: wire)
+        await loading.value
+        check(inbox.messages.first?.msgRef == reference && inbox.messages.first?.editCount == 1,
+              "folded original retains its identity and edit count")
+        let sent = inbox.conversation(with: "/test/peer")?.messages.first { $0.id == "sent" }
+        check(sent?.receipt?.state == "seen" && sent?.agentStatus?.state == "working",
+              "conversation assembly preserves sent receipts and agent progress")
+        await inbox.acknowledge(peer: "/test/peer", subthread: nil)
+        await wait("acknowledgement") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/ack" } }
+        let ack = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/ack" }!
+        let ackBody = requestBody(ack)
+        check(ackBody["with_edits"] as? Bool == true && ackBody["identity"] as? String == a.address,
+              "reading the folded message acknowledges its versions in the captured mailbox")
+        check(ControlledURLProtocol.complete("/v1/ack", identity: nil, body: "{}"), "answered folded acknowledgement")
+        await wait("ack transport drained") { ControlledURLProtocol.requests().isEmpty }
+        let root = inbox.messages.first { $0.messageId == "root" }
+        check(root?.isRead == true && root?.replyTo?.text == "remember this" && root?.editedAt == 2,
+              "local read marking preserves reply and edit metadata")
+
+        let sending = Task { try await account.client.sendMessage(
+            from: a.address, to: "/test/peer", body: "answer", threadId: "subject",
+            msgRef: reference, replyTo: "parent", quote: String(repeating: "ş", count: 240)) }
+        await wait("outgoing reply") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/send" } }
+        let outgoing = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/send" }!
+        let body = requestBody(outgoing)
+        check(body["from"] as? String == a.address && body["msg_ref"] as? String == reference
+              && body["reply_to"] as? String == "parent", "reply carries stable reference and mailbox scope")
+        check((body["quote"] as? String)?.count == 200, "reply quote is bounded by characters, including Turkish")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil, body: "{}", status: 401), "reply requires token renewal")
+        await wait("reply retry after renewal") { ControlledURLProtocol.requests().contains { $0.url?.path == "/v1/send" } }
+        let retry = ControlledURLProtocol.requests().first { $0.url?.path == "/v1/send" }!
+        let retried = requestBody(retry)
+        check(retried["msg_ref"] as? String == reference && retried["reply_to"] as? String == "parent"
+              && retried["body"] as? String == "answer", "authentication retry keeps the exact message action")
+        check(ControlledURLProtocol.complete("/v1/send", identity: nil,
+              body: "{\"message_id\":\"delivered\",\"sent_copy_id\":\"own\",\"msg_ref\":\"\(reference)\"}"), "answered reply retry")
+        do {
+            let response = try await sending.value
+            check(response.sentCopyId == "own" && response.msgRef == reference, "send response exposes shared reference")
+        } catch { check(false, "reply should complete after renewal") }
     }
 
     static func initialLoadAndSwitch() async {

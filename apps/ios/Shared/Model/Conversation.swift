@@ -42,6 +42,20 @@ struct ThreadMessage: Identifiable, Equatable {
     var address: String?
     var standing: String?
     var tier: String?
+    var expiresAt: Int? = nil
+    var msgRef: String? = nil
+    var replyTo: MessageReplyReference? = nil
+    var editedAt: Int? = nil
+    var editCount: Int? = nil
+    var receipt: MessageReceipt? = nil
+    var agentStatus: MessageAgentStatus? = nil
+
+    var reference: String { msgRef ?? id }
+    var isEdited: Bool { (editCount ?? 0) > 0 || editedAt != nil }
+    func isEditable(at now: Int = Int(Date().timeIntervalSince1970)) -> Bool {
+        kind == .outgoing && status == .sent && at > 0 && now >= at && now - at < 86_400
+            && (expiresAt.map { $0 > now } ?? true)
+    }
 
     var isRequest: Bool { verb != nil }
     /// Both directions. A request you sent is still a request, and showing it as raw JSON in your
@@ -159,7 +173,14 @@ enum ConversationBuilder {
                     threadId: message.threadId,
                     // The sender's own copy carries its own rows, so a sent file is visible in the
                     // thread that sent it rather than only in the one that received it.
-                    attachments: message.attachments ?? []
+                    attachments: message.attachments ?? [],
+                    expiresAt: message.expiresAt,
+                    msgRef: message.msgRef,
+                    replyTo: message.replyTo,
+                    editedAt: message.editedAt,
+                    editCount: message.editCount,
+                    receipt: message.receipt,
+                    agentStatus: message.agentStatus
                 ))
                 continue
             }
@@ -176,7 +197,12 @@ enum ConversationBuilder {
                 heldBecause: message.heldBecause,
                 address: message.from,
                 standing: message.senderStanding,
-                tier: message.senderTier
+                tier: message.senderTier,
+                expiresAt: message.expiresAt,
+                msgRef: message.msgRef,
+                replyTo: message.replyTo,
+                editedAt: message.editedAt,
+                editCount: message.editCount
             ))
             if !message.isRead { byPeer[peer]?.unread += 1 }
             if message.autonomy == "review", message.verb != nil { byPeer[peer]?.held += 1 }

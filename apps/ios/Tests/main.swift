@@ -327,6 +327,35 @@ equal(ThreadMessage(id: "1", kind: .incoming, at: 0,
 equal(RequestEnvelope(body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{},\"note\":\"x\"}")?.title,
       "Full permissions", "the verb reads as what it asks for")
 
+print("\nmessage action compatibility")
+equal(MessageReference.encode([UInt8](repeating: 0, count: 16)),
+      "mref_" + String(repeating: "a", count: 26), "zero reference uses the wire's lowercase base32 alphabet")
+equal(MessageReference.encode([UInt8](repeating: 255, count: 16)),
+      "mref_" + String(repeating: "7", count: 25) + "4", "reference padding leaves the last two bits zero")
+let references = (0..<100).map { _ in MessageReference.make() }
+check(Set(references).count == 100 && references.allSatisfy {
+    $0.range(of: "^mref_[a-z2-7]{25}[aeimquy4]$", options: .regularExpression) != nil
+}, "generated references have the required length, alphabet and padding")
+equal(MessageReplyReference.boundedQuote(String(repeating: "ş", count: 240)).count,
+      200, "Turkish quote text fits the server budget")
+let emojiQuote = MessageReplyReference.boundedQuote(String(repeating: "👩🏽‍💻", count: 100))
+check(emojiQuote.unicodeScalars.count <= 200 && emojiQuote == String(repeating: "👩🏽‍💻", count: 50),
+      "quote truncation keeps whole emoji sequences within the scalar budget")
+let original = ThreadMessage(id: "editable", kind: .outgoing, at: 1_000, body: "words", threadId: nil)
+check(original.isEditable(at: 1_001) && original.isEditable(at: 87_399), "a sent original is editable for 24 hours")
+check(!original.isEditable(at: 999) && !original.isEditable(at: 87_400), "future dates and the exact deadline do not offer editing")
+var expiredOriginal = original
+expiredOriginal.expiresAt = 1_010
+check(!expiredOriginal.isEditable(at: 1_010), "a disappearing original cannot be edited after expiry")
+var unsentOriginal = original
+unsentOriginal.status = .sending
+check(!unsentOriginal.isEditable(at: 1_001), "an optimistic message cannot be edited before delivery")
+let legacyMessage = try decoder.decode(Message.self, from: Data("{\"message_id\":\"legacy\",\"body\":\"old server\"}".utf8))
+check(legacyMessage.msgRef == nil && legacyMessage.replyTo == nil && legacyMessage.receipt == nil,
+      "older server messages still decode without action fields")
+let futureReceipt = try decoder.decode(MessageReceipt.self, from: Data("{\"state\":\"future-state\",\"new_field\":1}".utf8))
+equal(futureReceipt.state, "future-state", "a future receipt state does not make the inbox undecodable")
+
 print("")
 if failures == 0 {
     print("all good")

@@ -25,7 +25,7 @@ struct Message: Decodable, Identifiable, Equatable {
     let threadId: String?
     let receivedAt: Int?
     let sentAt: Int?
-    let read: Bool?
+    var read: Bool?
     /// `auto` or `review` on received mail. Always absent on a sent copy: your own words were never
     /// subject to an admission decision, and a plausible-looking `review` on them would be a lie.
     let autonomy: String?
@@ -42,6 +42,13 @@ struct Message: Decodable, Identifiable, Equatable {
     /// When a disappearing conversation's message goes (SDS §17). Dropped locally at that moment
     /// whether or not the postbox has said so yet.
     var expiresAt: Int? = nil
+    /// Shared message identity and action metadata (SDS §14C). Missing on older servers.
+    var msgRef: String? = nil
+    var replyTo: MessageReplyReference? = nil
+    var editedAt: Int? = nil
+    var editCount: Int? = nil
+    var receipt: MessageReceipt? = nil
+    var agentStatus: MessageAgentStatus? = nil
 
     var id: String { messageId }
     var isOutgoing: Bool { direction == "out" }
@@ -147,6 +154,87 @@ struct SendResponse: Decodable {
     /// optimistic row retire the moment that copy comes back, instead of the message appearing
     /// twice for one poll.
     let sentCopyId: String?
+    var msgRef: String? = nil
+}
+
+struct MessageReceipt: Decodable, Equatable {
+    let state: String?
+    let deliveredAt: Int?
+    let seenAt: Int?
+}
+
+struct MessageAgentStatus: Decodable, Equatable {
+    let state: String?
+    let at: Int?
+}
+
+struct MessageReplyReference: Decodable, Equatable {
+    let msgRef: String?
+    let messageId: String?
+    let from: String?
+    let direction: String?
+    let excerpt: String?
+    let quote: String?
+
+    var text: String { excerpt ?? quote ?? "Message unavailable" }
+
+    /// Rust's quote budget counts Unicode scalars. Keep whole user-visible characters too,
+    /// so an emoji sequence is neither split nor accidentally over the server's 200-scalar limit.
+    static func boundedQuote(_ text: String) -> String {
+        var out = ""
+        var scalars = 0
+        for character in text {
+            let size = String(character).unicodeScalars.count
+            guard scalars + size <= 200 else { break }
+            out.append(character)
+            scalars += size
+        }
+        return out
+    }
+}
+
+struct MessageVersion: Decodable, Identifiable, Equatable {
+    let messageId: String
+    let body: String
+    let at: Int
+    var id: String { messageId }
+}
+
+struct MessageInformation: Decodable {
+    let messageId: String
+    let msgRef: String?
+    let direction: String?
+    let sentAt: Int?
+    let versions: [MessageVersion]
+    let replyTo: MessageReplyReference?
+    let receipt: MessageReceipt?
+    let agentStatus: MessageAgentStatus?
+}
+
+/// A full 128 random bits in the wire's lowercase base32 format, with two final padding bits.
+enum MessageReference {
+    static func make() -> String {
+        var random = SystemRandomNumberGenerator()
+        return encode((0..<16).map { _ in UInt8.random(in: .min ... .max, using: &random) })
+    }
+
+    static func encode(_ bytes: [UInt8]) -> String {
+        precondition(bytes.count == 16)
+        let alphabet = Array("abcdefghijklmnopqrstuvwxyz234567")
+        var out = "mref_"
+        var buffer: UInt32 = 0
+        var bits = 0
+        for byte in bytes {
+            buffer = (buffer << 8) | UInt32(byte)
+            bits += 8
+            while bits >= 5 {
+                bits -= 5
+                out.append(alphabet[Int((buffer >> bits) & 31)])
+            }
+        }
+        if bits > 0 { out.append(alphabet[Int((buffer << (5 - bits)) & 31)]) }
+        return out
+    }
 }
 
 struct OpenedThread: Decodable {
