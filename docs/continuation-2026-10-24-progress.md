@@ -4,7 +4,7 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Active implementation continuation. PR #83's PKCE test race is fixed and pushed; PR #89 is synchronized with current main, formatted and pushed. Apple failure diagnosis and shared dependency hardening are underway. No PR merged or production change made by this continuation yet. Native releases remain batched and the existing Apple pre-submission review requirement is preserved.
+Active implementation continuation. PR #83's pairing decisions and tests are repaired; CLI credential custody is under validation. PR #89's message delivery/edit/expiry races are repaired and tested. PR #87's newer-runtime iPad audit passes; iPhone purchase visibility and explicit Rust setup fixes are pushed. Shared dependency hardening is in draft PR #90. No PR merged or production deployment made by this continuation yet. Native releases remain batched and the existing Apple pre-submission review requirement is preserved.
 
 ## Intake evidence
 
@@ -19,10 +19,10 @@ Active implementation continuation. PR #83's PKCE test race is fixed and pushed;
 
 | Area | State | Next evidence |
 |---|---|---|
-| Shared baseline / CI | Security updates and fixed-suite boundary under validation | Rebuild reference WASM; both audits pass with the documented non-applicability exception, not a patched crypto-bigint version |
-| #83 enterprise/device login | Fix pushed at `fb7f396`; CI running | Final source review and checks; deploy the missing approval page and verify portal readiness |
-| #89 edit/reply/receipts | Fix pushed at `c7648de`; CI running | §14C source cross-check and fresh hosted-runner/privacy checks |
-| #87 Apple block/filter/groups | Current main merged locally; diagnostics running | Inspect intentional portrait sidebar overlay versus actual overlap; resolve purchase navigation failures |
+| Shared baseline / CI | #90 compatible patches, suite guard and documented advisory assessment | Canonical path rebuild fixed; verify fresh reproducibility and Windows call checks |
+| #83 enterprise/device login | Pairing fixes pushed at `cde5d01`; CLI custody tests pass | Complete CLI validation, integrate baseline, deploy approval page and portal |
+| #89 edit/reply/receipts | Atomic delivery, inherited expiry and fail-closed privacy pushed at `ca2fa1e` | Integrate patched baseline and verify fresh checks |
+| #87 Apple block/filter/groups | iPad newer-runtime audit passes; `33d0a74` bootstraps pinned Rust | Verify newer iPhone purchase tests and all native jobs |
 | Native round two | Pending | Verified server contracts and platform test plans |
 | Store batch | Held until parity and review | Current store state, final signed artifacts, Apple review decision |
 | Phases 5–8 | Pending | Source/SDS gap analysis after open PRs |
@@ -93,3 +93,12 @@ Active implementation continuation. PR #83's PKCE test race is fixed and pushed;
 - Verified live Pigeonpost web step-up through read-only Keycloak configuration: `mfa -> level 2`, a dedicated client browser-flow binding, required OTP at level 2, and a 600-second level-2 maximum age. The public enterprise and pairing callbacks are accepted. Native mobile currently lacks this mapping/binding; add it alongside native step-up support in round two. No auth configuration was changed and no credentials were printed.
 - #87 at `1f92a3b`: **iPad passes on the newer runtime**, real StoreKit passes, Mac tests pass. iPhone now reaches the UI suite (loading-model race fixed) and fails only the two existing purchase tests. Both inspect the payment button after scrolling to the name field; newer Form laziness can leave the button uninstantiated. Fixes scroll/wait for the actual button while retaining price/product assertions; local targeted tests are underway. A local Swift draft invented nonexistent controls and was rejected.
 - Cloudflare DNS console session has expired to SSO sign-in. Asked the owner asynchronously to sign in; keep DNS-dependent writes pending. Coturn is active on the existing relay with port 3478 and external IP 193.164.5.36. Continue independent source/release work; a login timeout is not permission or authentication.
+
+
+## Checkpoint — clean-build path diagnosis and credential preflight
+
+- #90 CI caught a real WASM byte mismatch. The disposable reference build placed `CARGO_HOME` inside the checkout; rustc applies the **last** matching remap rule, so the broad repository rule overrode the dependency-source rule. Embedded strings confirmed `/pigeonpost/.wasm-cargo/registry/src` versus CI’s `/cargo/registry/src`. Reordered rules broad-to-specific. Two independent clean Linux x86_64 builds with nested and external Cargo-cache paths now match each other **and the previously failing CI rebuild**: SHA-256 `f185d0bd6f783430db1edd81aba0a90570a0b93c9bac486a81f9bc90c816de16`, 1,723,957 bytes. Retrieved generated files and verified checksums; fresh CI remains required. The earlier cached self-check did not qualify cross-layout reproducibility.
+- #90’s Windows call failure is at the **headless browser peer launch**, before the Pigeonpost process is started (`drive.mjs:70`). Windows application-error events in the collected log are not sufficient to attribute this failure to app startup. Keep the original evidence; inspect native artifacts and require a fresh complete call-harness pass.
+- #87’s next iPhone run stopped before UI tests because the hosted image lacked Cargo in the Xcode build environment. Added the repository’s existing pinned Rust-toolchain action to all three iOS jobs, parsed workflow YAML, ran staged validation, and pushed `33d0a74`. The scroll-to-payment-button fix at `3a0dfeb` passed both targeted tests locally; newer-runtime confirmation remains pending.
+- #83 review found device keys used an unsafe predictable temporary filename and relied on inherited Windows permissions. The new flow now preflights a private home and both existing credential files before any request, uses the existing SDK’s bounded private-file custody and atomic writes for device keys and newly enrolled mailbox capabilities, and zeroizes key buffers. Existing shared/permissive homes are refused without changing their permissions. Focused tests cover corrupt/oversized files, linked leaves, unsafe homes and planted old temporary symlinks; the parser never echoes credential contents. Full CLI and Clippy validation are underway.
+- Small local drafts for the remap reorder and negative test used incorrect ordering/invalid Rust and were rejected. No generated draft was applied. Docdex graphs for scripts/workflows have no edges; workflow callers and build-script paths were inspected directly.
