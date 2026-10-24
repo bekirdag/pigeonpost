@@ -101,9 +101,24 @@ struct GroupsE2E {
                 check(opened == photo && file.name == "plan.bin", "the sealed attachment opens to the original bytes")
             } else { check(false, "the message carries its attachment reference") }
 
-            try await b.send(gid, text: "hi Alice", files: [], replyTo: nil, editOf: nil, mentions: [])
+            try await b.send(gid, text: "hi Alice", files: [], replyTo: seenByBob?.seq, editOf: nil, mentions: [])
             try await a.sync(gid)
-            check(await a.history(gid).contains { $0.sender == bob && $0.text == "hi Alice" }, "Alice decrypts Bob's reply")
+            check(await a.history(gid).contains {
+                $0.sender == bob && $0.text == "hi Alice" && $0.replyTo == seenByBob?.seq.map(String.init) && $0.actionsVerified == true
+            }, "Alice decrypts Bob's reply with its authenticated parent")
+            let originalEdit = try await a.send(gid, text: "before editing", files: [], replyTo: nil, editOf: nil, mentions: [])
+            try await b.sync(gid)
+            let changed = try await a.send(gid, text: "after editing", files: [], replyTo: nil, editOf: originalEdit.seq, mentions: [])
+            try await b.sync(gid)
+            let editHistory = await b.history(gid)
+            if let current = editHistory.first(where: { $0.seq == changed.seq }) {
+                check(current.actionsVerified == true && current.editOf == String(originalEdit.seq), "an actual MLS edit verifies its inner and outer reference")
+                check(GroupActions.versions(of: current, in: editHistory).compactMap(\.text) == ["before editing", "after editing"],
+                      "the recipient retains its original and decrypted edit")
+                let visible = GroupActions.visible(editHistory, now: Int(Date().timeIntervalSince1970))
+                check(!visible.contains { $0.seq == originalEdit.seq } && visible.contains { $0.seq == changed.seq },
+                      "the recipient shows the latest edit once")
+            } else { check(false, "the recipient receives the encrypted edit") }
             let sa = await a.safetyNumber(gid), sb = await b.safetyNumber(gid), sc = await c.safetyNumber(gid)
             check(sa != nil && sa == sb && sb == sc, "all three see the same safety number")
 

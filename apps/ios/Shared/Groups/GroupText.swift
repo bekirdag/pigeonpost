@@ -78,6 +78,7 @@ enum GroupText {
             return "Security warning: a membership change did not match the postbox's record. Compare safety numbers in group info."
         case "commit_rejected": return "Security warning: this device refused an invalid group change."
         case "sender_mismatch": return "Security warning: a message's sender did not match its device."
+        case "action_mismatch": return "Security warning: a message's action did not match its encrypted contents."
         case "resynced": return "This device lost the group's keys and is being added again. Earlier messages stay unreadable here."
         default: return "Security warning."
         }
@@ -122,7 +123,7 @@ enum GroupText {
     /// messages, with expired items dropped by this device's clock before anything is drawn.
     static func lines(_ history: [GroupItem], me: String, myDevice: String?, now: Int,
                       names: (String) -> String, digits: (String) -> String) -> [GroupLine] {
-        let list = history.filter { !(($0.expiresAt ?? .max) <= now) }
+        let list = GroupActions.visible(history, now: now)
         var out: [GroupLine] = []
         var lastDay: String?
         var lastSender: String?
@@ -156,7 +157,6 @@ enum GroupText {
                 out.append(GroupLine(id: item.id, kind: .warning, text: warning(item.warning), item: item))
                 lastSender = nil
             case .message:
-                if item.replacedBy != nil { continue }
                 let mine = item.sender == me
                 out.append(GroupLine(id: item.id, kind: .message, item: item,
                                      showSender: !mine && item.sender != lastSender))
@@ -167,8 +167,10 @@ enum GroupText {
     }
 
     /// The list row's second line: the newest readable message, said the web's way.
-    static func preview(_ history: [GroupItem], me: String, names: (String) -> String) -> String? {
-        for item in history.reversed() where item.kind == .message && item.replacedBy == nil {
+    static func preview(_ history: [GroupItem], me: String, now: Int = Int(Date().timeIntervalSince1970),
+                        names: (String) -> String) -> String? {
+        let visible = GroupActions.visible(history, now: now)
+        for item in visible.reversed() where item.kind == .message {
             if item.deleted == true { return "Message deleted" }
             if item.undecryptable == true { return "Encrypted message" }
             let who = item.sender == me ? "You" : (names(item.sender ?? "").split(whereSeparator: { $0 == " " || $0 == "/" }).first.map(String.init) ?? "Someone")

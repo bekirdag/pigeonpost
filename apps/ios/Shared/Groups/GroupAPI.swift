@@ -181,6 +181,10 @@ extension PostboxClient {
         try await sendRaw(Self.path(id, "/read"), method: "POST", json: ["seq": seq], headers: caller.headers())
     }
 
+    func groupReceipts(_ caller: GroupCaller, id: String) async throws -> GroupReceipts {
+        try await send(Self.path(id, "/receipts"), headers: caller.headers(), as: GroupReceipts.self)
+    }
+
     func setGroupNotifications(_ caller: GroupCaller, id: String, notify: String, mutedUntil: Int?) async throws {
         try await sendRaw(Self.path(id, "/notifications"), method: "PUT",
                           json: ["notify": notify, "muted_until": mutedUntil.map { $0 as Any } ?? NSNull()],

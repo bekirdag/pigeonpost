@@ -66,8 +66,62 @@ let messages = lines.filter { $0.kind == .message }
 check(messages.count == 2 && !messages.contains { $0.item?.text == "gone" }, "expired messages are dropped by the local clock")
 check(messages[0].showSender && !messages[1].showSender, "a sender's name heads a run, once")
 check(lines.contains { $0.kind == .warning && $0.text.hasPrefix("Security warning: a membership change") }, "a mismatch is drawn as a warning")
-check(GroupText.preview(history, me: me, names: names) == "Özgür: gone", "the preview is the newest message")
+check(GroupText.preview(history, me: me, now: now, names: names) == "Alp: two", "the preview also drops expired messages")
 check(GroupText.preview([GroupItem(kind: .message, seq: 1, sender: me, text: "mine")], me: me, names: names) == "You: mine", "own messages preview as You")
+
+// ---- authenticated edits and group receipts -------------------------------------------------------
+let original = GroupItem(kind: .message, seq: 10, createdAt: now - 100, sender: me, text: "first")
+let edited = GroupItem(kind: .message, seq: 11, createdAt: now - 50, sender: me, text: "second", editOf: "10", actionsVerified: true)
+let finalEdit = GroupItem(kind: .message, seq: 12, createdAt: now - 10, sender: me, text: "third", editOf: "11", actionsVerified: true)
+let chain = [original, edited, finalEdit]
+check(GroupActions.visible(chain, now: now).map(\.text) == ["third"], "a verified edit chain shows only its latest text")
+check(GroupActions.versions(of: finalEdit, in: chain).map(\.text) == ["first", "second", "third"], "the local version history keeps every text in order")
+var unverified = edited
+unverified.actionsVerified = nil
+check(GroupActions.visible([original, unverified], now: now).count == 2, "an older vault's unverified action never hides another message")
+var mismatchedAuthor = edited
+mismatchedAuthor.sender = alp
+check(GroupActions.visible([original, mismatchedAuthor], now: now).count == 2, "one member cannot edit another member's message")
+var outerClaim = original
+outerClaim.replacedBy = 999
+check(GroupActions.visible([outerClaim], now: now).count == 1, "a server replacement claim alone never hides authenticated plaintext")
+for ref in ["0", "-1", "+10", "010", "10 ", "١٠", "9223372036854775808"] {
+    check(GroupActions.sequence(ref) == nil, "invalid group reference is refused: \(ref)")
+}
+check(GroupActions.sequence("10") == 10, "canonical positive group references resolve")
+var futureParent = edited
+futureParent.editOf = "12"
+check(GroupActions.parent(of: futureParent, in: chain) == nil, "an edit cannot point forward or form a cycle")
+check(GroupActions.parent(of: edited, in: [edited]) == nil, "a missing original is not invented")
+var pendingEdit = edited
+pendingEdit.pending = true
+check(GroupActions.visible([original, pendingEdit], now: now).count == 2, "a pending edit does not hide the delivered original")
+var disappearing = original
+disappearing.expiresAt = now - 1
+check(GroupActions.visible([disappearing, edited, finalEdit], now: now).isEmpty, "later versions cannot outlive a known expired original")
+check(GroupActions.editable(finalEdit, in: chain, me: me, now: now), "a recent own latest version can be edited")
+check(!GroupActions.editable(original, in: chain, me: me, now: now), "a superseded version is not edited again")
+check(!GroupActions.editable(finalEdit, in: chain, me: alp, now: now), "another member has no edit control")
+check(!GroupActions.editable(finalEdit, in: chain, me: me, now: now + 86_300), "the window is measured from the original, including its exact boundary")
+check(!GroupActions.editable(edited, in: [disappearing, edited], me: me, now: now), "an expired original is not editable")
+let longChain = (1...2_000).map { seq in
+    GroupItem(kind: .message, seq: seq, createdAt: now - 1, sender: me, text: "v\(seq)",
+              editOf: seq > 1 ? String(seq - 1) : nil, actionsVerified: true)
+}
+check(GroupActions.visible(longChain.reversed(), now: now).map(\.seq) == [2_000], "a long out-of-order history folds iteratively")
+let receiptsDecoder = JSONDecoder()
+receiptsDecoder.keyDecodingStrategy = .convertFromSnakeCase
+var receipt = try! receiptsDecoder.decode(GroupReceipts.self, from: Data(#"{"members":[{"address":"/k/a","delivered_seq":20,"seen_seq":15},{"address":"/k/b","delivered_seq":20,"seen_seq":null}],"read_receipts":true}"#.utf8))
+check(receipt.state(at: 10) == .seen, "all members sharing a read cursor must have seen it")
+check(receipt.state(at: 16) == .delivered, "one visible reader behind the message keeps it at delivered")
+check(receipt.state(at: 21) == .sent, "all members must receive it before delivered is shown")
+receipt.readReceipts = false
+check(receipt.state(at: 10) == .delivered, "the caller's read-receipt opt-out masks seen")
+receipt.readReceipts = true
+receipt.members?[0].seenSeq = nil
+check(receipt.state(at: 10) == .delivered, "all members opting out cannot produce a green tick")
+receipt.members = []
+check(receipt.state(at: 10) == .sent, "an empty group receipt list makes no delivery claim")
 
 // ---- timers, faces, links ----------------------------------------------------------------------------
 check(GroupTimers.all.count == 7 && GroupTimers.label(nil) == "Off" && GroupTimers.label(2419200) == "4 weeks", "the seven timers and their names")

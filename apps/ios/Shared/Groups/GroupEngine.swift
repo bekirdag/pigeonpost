@@ -381,15 +381,20 @@ actor GroupEngine: GroupCrypting {
                 return .skipped
             }
             let body = GroupBody.decode(received.body)
+            let editMatches = body.editOf == item.editOf.map(String.init)
+            let replyMatches = body.replyTo == item.replyTo.map(String.init)
+            if !editMatches || !replyMatches {
+                remember(group, GroupItem(kind: .warning, seq: item.seq, order: 0.5, createdAt: item.createdAt,
+                                          warning: "action_mismatch"))
+            }
             let files = (body.files ?? []).enumerated().map { index, file in
                 GroupFile(id: file.id, name: file.name, mime: file.mime, size: file.size,
                           ref: index < received.attachments.count ? Self.key(received.attachments[index]) : nil)
             }
             remember(group, GroupItem(kind: .message, seq: item.seq, createdAt: item.createdAt, expiresAt: item.expiresAt,
-                                      sender: item.sender, senderDevice: item.senderDevice, cmid: item.clientMessageId,
-                                      text: body.text ?? "", files: files, replyTo: body.replyTo,
-                                      editOf: body.editOf ?? item.editOf.map(String.init)))
-            if let target = item.editOf { markReplaced(group, seq: target, by: item.seq) }
+                                      sender: received.sender.mailbox, senderDevice: received.sender.deviceId, cmid: item.clientMessageId,
+                                      text: body.text ?? "", files: files, replyTo: replyMatches ? body.replyTo : nil,
+                                      editOf: editMatches ? body.editOf : nil, actionsVerified: editMatches && replyMatches))
             return .message
 
         default:
@@ -602,7 +607,8 @@ actor GroupEngine: GroupCrypting {
             // On screen at once as "Sending…", and the record the server's copy is matched against.
             remember(group, GroupItem(kind: .message, seq: nil, createdAt: Self.now(), sender: mailbox,
                                       senderDevice: record?.deviceId, cmid: cmid, text: text, files: localFiles,
-                                      replyTo: replyTo.map(String.init), editOf: editOf.map(String.init), pending: true))
+                                      replyTo: replyTo.map(String.init), editOf: editOf.map(String.init), pending: true,
+                                      actionsVerified: true))
             emit(.history(group))
             do {
                 for attempt in 0..<Self.maxRetries {

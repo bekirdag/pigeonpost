@@ -35,6 +35,7 @@ final class GroupStore {
     private(set) var inGroup: Set<String> = []
     private(set) var identity: GroupDeviceIdentity?
     private(set) var calls: [String: GroupCallState] = [:]
+    private(set) var receipts: [String: GroupReceipts] = [:]
     /// Address → handle, learned from member lists, so names read as names.
     private(set) var handles: [String: String] = [:]
     /// The group on screen; its history is polled faster and its arrivals are not announced.
@@ -70,6 +71,7 @@ final class GroupStore {
     /// Called whenever the mailbox or the capabilities may have changed, and on every return to the
     /// foreground. Cheap when nothing did.
     func attach() async {
+        if !account.features.receipts { receipts = [:] }
         #if DEBUG
         if Fixtures.enabled {
             if account.features.groups { installFixtures() } else { status = .off }
@@ -147,6 +149,7 @@ final class GroupStore {
         inGroup = []
         identity = nil
         calls = [:]
+        receipts = [:]
         open = nil
         mailbox = nil
         generation = UUID()
@@ -184,10 +187,16 @@ final class GroupStore {
 
     private func reloadHistory(_ group: String) async {
         guard let engine else { return }
-        histories[group] = await engine.history(group)
-        if await engine.inGroup(group) { inGroup.insert(group) } else { inGroup.remove(group) }
-        safetyNumbers[group] = await engine.safetyNumber(group)
-        memberDevices[group] = await engine.members(group)
+        let visit = generation
+        let history = await engine.history(group)
+        let joined = await engine.inGroup(group)
+        let number = await engine.safetyNumber(group)
+        let devices = await engine.members(group)
+        guard visit == generation else { return }
+        histories[group] = history
+        if joined { inGroup.insert(group) } else { inGroup.remove(group) }
+        safetyNumbers[group] = number
+        memberDevices[group] = devices
     }
 
     private func reloadHistories() async {
@@ -233,6 +242,7 @@ final class GroupStore {
 
     func syncGroup(_ group: String, pending: Bool = false) async {
         guard let engine, !syncing.contains(group) else { return }
+        let visit = generation
         syncing.insert(group)
         defer { syncing.remove(group) }
         if await engine.inGroup(group) {
@@ -243,8 +253,10 @@ final class GroupStore {
             }
             if pending { _ = try? await engine.processPending(group, noJitter: false) }
         }
+        guard visit == generation else { return }
         await reloadHistory(group)
         if group == open { markRead(group) }
+        if group == open { await loadReceipts(group) }
     }
 
     /// The postbox no longer knows this device — revoked from another device, or a database reset.
@@ -343,7 +355,9 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller, let list = try? await client.groupMembers(caller, id: group) else { return }
+        guard let caller else { return }
+        let visit = generation
+        guard let list = try? await client.groupMembers(caller, id: group), visit == generation else { return }
         for member in list { if let handle = member.handle { handles[member.address] = handle } }
         members[group] = list
     }
@@ -352,8 +366,22 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller, let list = try? await client.groupDevices(caller, of: mailbox) else { return }
+        guard let caller else { return }
+        let visit = generation
+        guard let list = try? await client.groupDevices(caller, of: mailbox), visit == generation else { return }
         devices[mailbox] = list
+    }
+
+    func loadReceipts(_ group: String) async {
+        guard account.features.receipts, let caller else { receipts[group] = nil; return }
+        #if DEBUG
+        if Fixtures.enabled { return }
+        #endif
+        let visit = generation
+        let result = try? await client.groupReceipts(caller, id: group)
+        guard visit == generation, account.features.receipts else { return }
+        // Older servers and failures make no delivery/read claim.
+        receipts[group] = result
     }
 
     // ---- sending ------------------------------------------------------------------------------------

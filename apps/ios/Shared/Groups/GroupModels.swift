@@ -96,6 +96,29 @@ struct GroupMember: Decodable, Identifiable, Equatable, Hashable {
 
 struct MembersResponse: Decodable { let members: [GroupMember]? }
 
+struct GroupMemberReceipt: Decodable, Equatable, Identifiable {
+    let address: String
+    var handle: String?
+    var deliveredSeq: Int?
+    var seenSeq: Int?
+    var id: String { address }
+}
+
+struct GroupReceipts: Decodable, Equatable {
+    var members: [GroupMemberReceipt]?
+    var readReceipts: Bool?
+
+    enum State: String { case sent, delivered, seen }
+
+    func state(at seq: Int) -> State {
+        guard seq > 0, let members, !members.isEmpty else { return .sent }
+        let visible = members.filter { $0.seenSeq != nil }
+        if readReceipts != false, !visible.isEmpty, visible.allSatisfy({ ($0.seenSeq ?? 0) >= seq }) { return .seen }
+        if members.allSatisfy({ ($0.deliveredSeq ?? 0) >= seq }) { return .delivered }
+        return .sent
+    }
+}
+
 struct GroupLink: Decodable {
     let linkToken: String?
     let url: String?
@@ -298,6 +321,9 @@ struct GroupItem: Codable, Equatable, Identifiable {
     var undecryptable: Bool?
     var pending: Bool?
     var code: String?
+    /// This device checked the encrypted action fields against the sequenced envelope.
+    /// Older vault records have no such proof and cannot hide another message as an edit.
+    var actionsVerified: Bool?
 
     // notice
     var notice: String?
@@ -325,6 +351,78 @@ struct GroupItem: Codable, Equatable, Identifiable {
     }
 
     var sortKey: Double { Double(seq ?? Int.max / 2) + order }
+}
+
+/// Presentation uses authenticated action references, never `replaced_by` alone. Group edits
+/// name the preceding version's seq (unlike direct-message root refs); retain that chain locally.
+enum GroupActions {
+    static func sequence(_ reference: String?) -> Int? {
+        guard let reference, let seq = Int(reference), seq > 0, String(seq) == reference else { return nil }
+        return seq
+    }
+
+    static func parent(of item: GroupItem, in history: [GroupItem]) -> GroupItem? {
+        parent(of: item, in: indexed(history))
+    }
+
+    private static func indexed(_ history: [GroupItem]) -> [Int: GroupItem] {
+        var out: [Int: GroupItem] = [:]
+        for item in history where item.kind == .message {
+            if let seq = item.seq, out[seq] == nil { out[seq] = item }
+        }
+        return out
+    }
+
+    private static func parent(of item: GroupItem, in bySeq: [Int: GroupItem]) -> GroupItem? {
+        guard item.kind == .message, item.actionsVerified == true, item.pending != true,
+              let seq = item.seq, let parentSeq = sequence(item.editOf), parentSeq < seq,
+              let sender = item.sender, let parent = bySeq[parentSeq], parent.sender == sender,
+              parent.deleted != true, parent.undecryptable != true, parent.text != nil else { return nil }
+        return parent
+    }
+
+    static func versions(of item: GroupItem, in history: [GroupItem]) -> [GroupItem] {
+        var versions = [item]
+        var current = item
+        let bySeq = indexed(history)
+        while let parent = parent(of: current, in: bySeq) {
+            versions.append(parent)
+            current = parent
+        }
+        return versions.reversed()
+    }
+
+    static func visible(_ history: [GroupItem], now: Int) -> [GroupItem] {
+        let bySeq = indexed(history)
+        var replaced: Set<Int> = []
+        var deadlines: [Int: Int] = [:]
+        // One pass in sequence order: parents must have a smaller seq, so even a long edit
+        // chain cannot cause recursive or quadratic work on every history refresh.
+        for item in history.sorted(by: { $0.sortKey < $1.sortKey }) where item.kind == .message {
+            guard let seq = item.seq else { continue }
+            var deadline = item.expiresAt ?? .max
+            if let parent = parent(of: item, in: bySeq), let parentSeq = parent.seq {
+                replaced.insert(parentSeq)
+                deadline = min(deadline, deadlines[parentSeq] ?? parent.expiresAt ?? .max)
+            }
+            deadlines[seq] = deadline
+        }
+        return history.filter { item in
+            if let seq = item.seq, item.kind == .message, replaced.contains(seq) { return false }
+            // An edit cannot extend a locally known disappearing message's life.
+            let deadline = item.kind == .message ? item.seq.flatMap { deadlines[$0] } : nil
+            return (deadline ?? item.expiresAt ?? .max) > now
+        }
+    }
+
+    static func editable(_ item: GroupItem, in history: [GroupItem], me: String, now: Int) -> Bool {
+        guard item.kind == .message, item.sender == me, item.seq != nil, item.pending != true,
+              item.deleted != true, item.undecryptable != true, item.text != nil,
+              visible(history, now: now).contains(where: { $0.id == item.id }) else { return false }
+        let chain = versions(of: item, in: history)
+        guard let at = chain.first?.createdAt, now >= at else { return false }
+        return now - at < 86_400
+    }
 }
 
 /// What travels inside the encryption: the web client's `encodeBody`/`decodeBody`, byte for byte
