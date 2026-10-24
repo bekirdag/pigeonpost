@@ -31,6 +31,8 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
     private var account: Account?
     private var inbox: Inbox?
     private var actionScope: MessageActionScope?
+    private var highlightedMessage: String?
+    private var highlightOperation = UUID()
     private var loadingOlder = false
     private var dragStartOffset: CGFloat = 0
     private var userScrolling = false
@@ -135,7 +137,7 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
             cell.contentConfiguration = UIHostingConfiguration {
                 VStack(spacing: 2) {
                     if showDay { HistoryDayBreak(label: Time.dayLabel(message.at)) }
-                    MessageBubble(message: message, showsMenu: false, actionScope: actionScope,
+                    MessageBubble(message: message, isFound: highlightedMessage == message.id, showsMenu: false, actionScope: actionScope,
                                   jumpToMessage: { [weak self] id in self?.jump(to: id) },
                                   onCardFrame: { [weak self] frame in self?.cardFrames[message.id] = frame })
                     #if DEBUG
@@ -354,6 +356,9 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
     private func jump(to id: String) {
         guard sourceIDs.contains(id) else { inbox?.toast = "The original message is no longer in this thread."; return }
         table.followingLatest = false
+        highlightedMessage = id
+        let operation = UUID()
+        highlightOperation = operation
         while !window.ids.contains(id), window.hasOlder(in: sourceIDs) { window.loadOlder(sourceIDs) }
         rebuildRows()
         guard let row = rows.firstIndex(where: { $0.id == id }) else { return }
@@ -361,6 +366,14 @@ final class HistoryController: UIViewController, UITableViewDataSource, UITableV
         table.layoutIfNeeded()
         table.scrollToRow(at: IndexPath(row: row, section: 0), at: .middle, animated: true)
         updateLatestButton()
+        Task { @MainActor [weak self] in
+            try? await Task.sleep(nanoseconds: 2_000_000_000)
+            guard let self, self.highlightOperation == operation else { return }
+            self.highlightedMessage = nil
+            if let row = self.rows.firstIndex(where: { $0.id == id }) {
+                self.table.reloadRows(at: [IndexPath(row: row, section: 0)], with: .none)
+            }
+        }
     }
 
     @objc private func endEditing() { view.window?.endEditing(true) }

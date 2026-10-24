@@ -5,10 +5,11 @@ import XCTest
 /// thread-model suite, which cannot press keys.
 final class ComposerTests: XCTestCase {
 
-    private func actionApp(features: String? = nil) -> XCUIApplication {
+    private func actionApp(features: String? = nil, statusFixtures: Bool = false) -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
         app.launchArguments = ["-fixtures", "-open=/bekir/agent1", "-appearance=light"]
         if let features { app.launchArguments.append("-features=" + features) }
+        if statusFixtures { app.launchArguments.append("-message-actions") }
         app.launch()
         XCTAssertTrue(app.textViews["messageComposer"].waitForExistence(timeout: 15))
         return app
@@ -87,6 +88,24 @@ final class ComposerTests: XCTestCase {
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "message-reply:")).firstMatch.exists)
         XCTAssertFalse(app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@", "message-info:")).firstMatch.exists)
         XCTAssertTrue(app.buttons["Copy message"].firstMatch.exists)
+    }
+
+    func testReceiptAndAgentStatusesAreAccessible() {
+        let app = actionApp(features: "receipts,agent_status", statusFixtures: true)
+        let seen = app.descendants(matching: .any)["message-receipt:action-seen"]
+        let working = app.descendants(matching: .any)["agent-status:action-working"]
+        let failed = app.descendants(matching: .any)["agent-status:action-failed"]
+        XCTAssertTrue(seen.waitForExistence(timeout: 5))
+        XCTAssertTrue(seen.label.hasPrefix("Seen "))
+        XCTAssertTrue(working.exists)
+        XCTAssertEqual(working.label, "Agent working on this")
+        XCTAssertTrue(failed.exists)
+        XCTAssertEqual(failed.label, "Agent run failed")
+        XCTAssertFalse(app.descendants(matching: .any)["message-receipt:action-working"].exists)
+        let shot = XCTAttachment(screenshot: app.screenshot())
+        shot.name = "native-receipt-and-agent-status"
+        shot.lifetime = .keepAlways
+        add(shot)
     }
 
     private func openThread() -> XCUIApplication {

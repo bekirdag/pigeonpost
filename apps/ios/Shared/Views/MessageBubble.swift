@@ -244,9 +244,6 @@ struct MessageBubble: View {
             if account.features.messageEdit && message.isEdited {
                 Text("Edited").font(.geist(11)).foregroundStyle(metaColor)
             }
-            if account.features.agentStatus, let state = message.agentStatus?.state {
-                Text(state.capitalized).font(.geist(11)).foregroundStyle(metaColor)
-            }
             Spacer(minLength: 0)
             if message.status == .failed {
                 Text("not sent")
@@ -254,15 +251,21 @@ struct MessageBubble: View {
                     .foregroundStyle(Theme.Pill.blockedText)
             }
             if message.status == .sending {
-                Text("sending…")
+                Image(systemName: "clock")
                     .font(.geist(12))
                     .foregroundStyle(metaColor)
+                    .accessibilityLabel("Sending")
             }
             Text(Time.clockTime(message.at))
                 .font(.geist(12))
                 .foregroundStyle(metaColor)
-            if account.features.receipts && isMine && message.status == .sent, let receipt = message.receipt {
-                MessageReceiptMark(receipt: receipt)
+            if isMine && message.status == .sent {
+                if account.features.agentStatus, let state = message.agentStatus?.state, ["working", "failed"].contains(state) {
+                    MessageAgentMark(state: state).accessibilityIdentifier("agent-status:" + message.id)
+                } else if account.features.receipts {
+                    MessageReceiptMark(receipt: message.receipt ?? MessageReceipt(state: "sent", deliveredAt: nil, seenAt: nil))
+                        .accessibilityIdentifier("message-receipt:" + message.id)
+                }
             }
         }
     }

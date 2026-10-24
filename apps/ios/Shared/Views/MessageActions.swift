@@ -14,6 +14,30 @@ struct MessageActionButtonStyle: ButtonStyle {
     }
 }
 
+struct MessageAgentMark: View {
+    let state: String
+    @Environment(\.accessibilityReduceMotion) private var reducedMotion
+    @State private var turning = false
+
+    var body: some View {
+        HStack(spacing: 4) {
+            if state == "working" {
+                Image(systemName: "gearshape")
+                    .rotationEffect(.degrees(turning && !reducedMotion ? 360 : 0))
+                    .animation(reducedMotion ? nil : .linear(duration: 4).repeatForever(autoreverses: false), value: turning)
+                    .onAppear { turning = true }
+                if reducedMotion { Text("Working…") }
+            } else if state == "failed" {
+                Image(systemName: "exclamationmark.triangle")
+            }
+        }
+        .font(.geist(11, .semibold))
+        .foregroundStyle(state == "working" ? Theme.green : Theme.Pill.blockedText)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(state == "working" ? "Agent working on this" : "Agent run failed")
+    }
+}
+
 /// Receipt marks describe server-confirmed state; an absent/unknown state makes no claim.
 struct MessageReceiptMark: View {
     let receipt: MessageReceipt
@@ -25,9 +49,9 @@ struct MessageReceiptMark: View {
                 if state != "sent" { Image(systemName: "checkmark") }
             }
             .font(.geist(11, .semibold))
-            .foregroundStyle(state == "seen" ? Theme.accent : Theme.secondary)
+            .foregroundStyle(state == "seen" ? Theme.green : Theme.secondary)
             .accessibilityElement(children: .ignore)
-            .accessibilityLabel(state.capitalized)
+            .accessibilityLabel(state == "seen" ? receipt.seenAt.map { "Seen " + Time.clockTime($0) } ?? "Seen" : state.capitalized)
         }
     }
 }
@@ -50,6 +74,7 @@ struct MessageActionBanner: View {
                 .accessibilityLabel(action.kind == .edit ? "Cancel edit" : "Cancel reply")
                 .accessibilityIdentifier("cancel-message-action")
                 .disabled(busy)
+                .keyboardShortcut(.cancelAction)
         }
         .foregroundStyle(Theme.secondary)
         .padding(.leading, 12)

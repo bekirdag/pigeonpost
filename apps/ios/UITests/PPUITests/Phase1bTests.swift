@@ -146,6 +146,18 @@ final class Phase1bTests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Saved."].waitForExistence(timeout: 3))
     }
 
+    func testReadReceiptsCanBeDisabledWhenOtherPrivacyFeaturesAreOff() {
+        launch(["-sheet=privacy", "-features=receipts"])
+        let receipts = app.segmentedControls["policy-read_receipts"]
+        XCTAssertTrue(receipts.waitForExistence(timeout: 10))
+        XCTAssertTrue(receipts.buttons["On"].isSelected)
+        receipts.buttons["Off"].tap()
+        XCTAssertTrue(receipts.buttons["Off"].isSelected)
+        XCTAssertTrue(app.staticTexts["Saved."].waitForExistence(timeout: 3))
+        XCTAssertFalse(app.segmentedControls["policy-unknown_calls"].exists)
+        XCTAssertFalse(app.segmentedControls["policy-call_history_days"].exists)
+    }
+
     func testBlockedPageListsAddsAndUnblocks() {
         launch(["-sheet=blocked"])
         XCTAssertTrue(app.buttons["unblock:/spamco/*"].waitForExistence(timeout: 10))

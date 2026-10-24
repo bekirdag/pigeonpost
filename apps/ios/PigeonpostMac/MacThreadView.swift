@@ -44,6 +44,8 @@ struct MacThreadView: View {
     @State private var find = ""
     /// Which hit is being shown, as an index into `matches`.
     @State private var matchIndex = 0
+    @State private var quoteHighlight: String?
+    @State private var highlightOperation = UUID()
 
     private var conversation: Conversation? { inbox.conversation(with: peer) }
     private var subthreads: [Subthread] { inbox.subthreads(of: peer) }
@@ -104,10 +106,19 @@ struct MacThreadView: View {
                                 MessageBubble(
                                     message: message,
                                     highlight: find,
-                                    isFound: message.id == foundMessage,
+                                    isFound: message.id == foundMessage || message.id == quoteHighlight,
                                     actionScope: actionScope,
                                     jumpToMessage: { id in
-                                        if messages.contains(where: { $0.id == id }) { scroller.scrollTo(id, anchor: .center) }
+                                        if messages.contains(where: { $0.id == id }) {
+                                            quoteHighlight = id
+                                            let operation = UUID()
+                                            highlightOperation = operation
+                                            scroller.scrollTo(id, anchor: .center)
+                                            Task { @MainActor in
+                                                try? await Task.sleep(nanoseconds: 2_000_000_000)
+                                                if highlightOperation == operation { quoteHighlight = nil }
+                                            }
+                                        }
                                         else { inbox.toast = "The original message is no longer in this thread." }
                                     }
                                 )

@@ -40,7 +40,7 @@ final class Features {
     var receipts: Bool { has(Self.receipts) }
     var agentStatus: Bool { has(Self.agentStatus) }
     /// Settings → Privacy & filtering is worth a row when any of its controls would be shown.
-    var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) }
+    var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) || receipts }
 
     private struct Answer: Decodable {
         let features: [String]?

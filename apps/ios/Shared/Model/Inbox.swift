@@ -336,6 +336,22 @@ final class Inbox {
     #if DEBUG
     func installFixtures(messages: [Message], contacts: [Contact], vocabulary: Vocabulary?, threads: [ServerThread]) {
         self.messages = messages
+        if CommandLine.arguments.contains("-message-actions"), !messages.contains(where: { $0.messageId == "action-seen" }) {
+            let now = Int(Date().timeIntervalSince1970)
+            let rows: [[String: Any]] = ["seen", "working", "failed"].enumerated().map { index, state in
+                var row: [String: Any] = ["message_id": "action-" + state, "direction": "out", "peer": "/bekir/agent1",
+                    "thread_id": "t-agent1", "body": state.capitalized + " fixture", "sent_at": now - 3 + index,
+                    "receipt": ["state": state == "seen" ? "seen" : "delivered", "delivered_at": now - 2, "seen_at": now - 1]]
+                if state != "seen" { row["agent_status"] = ["state": state, "at": now - 1] }
+                return row
+            }
+            let decoder = JSONDecoder()
+            decoder.keyDecodingStrategy = .convertFromSnakeCase
+            if let data = try? JSONSerialization.data(withJSONObject: rows), let extra = try? decoder.decode([Message].self, from: data) {
+                self.messages += extra
+                self.messages.sort { $0.at < $1.at }
+            }
+        }
         self.contacts = contacts
         self.vocabulary = vocabulary
         self.serverThreads = threads

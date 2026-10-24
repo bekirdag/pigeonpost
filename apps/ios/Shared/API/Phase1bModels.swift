@@ -75,7 +75,7 @@ struct CallLogPage: Decodable {
 }
 
 
-/// `GET /v1/policy`: the stranger defaults and the Phase 1b filters. Only the six fields Settings
+/// `GET /v1/policy`: the stranger defaults, filters and read receipts. Only the fields Settings
 /// shows are read; the rest of the object is the server's and is never written back.
 struct InboxFilters: Decodable, Equatable {
     var unknownCalls: String?
@@ -84,6 +84,7 @@ struct InboxFilters: Decodable, Equatable {
     var unknownMessages: String?
     var lowReputation: String?
     var callHistoryDays: Int?
+    var readReceipts: Bool? = nil
 
     subscript(field: String) -> String? {
         switch field {
@@ -93,6 +94,7 @@ struct InboxFilters: Decodable, Equatable {
         case "unknown_messages": return unknownMessages
         case "low_reputation": return lowReputation
         case "call_history_days": return callHistoryDays.map(String.init)
+        case "read_receipts": return (readReceipts ?? true) ? "true" : "false"
         default: return nil
         }
     }
@@ -105,8 +107,18 @@ struct InboxFilters: Decodable, Equatable {
         case "unknown_messages": unknownMessages = value
         case "low_reputation": lowReputation = value
         case "call_history_days": callHistoryDays = Int(value)
+        case "read_receipts": readReceipts = value == "true"
         default: break
         }
+    }
+
+    static func wireValue(field: String, value: String) -> Any? {
+        if field == "read_receipts" {
+            guard value == "true" || value == "false" else { return nil }
+            return value == "true"
+        }
+        if field == "call_history_days" { return Int(value) }
+        return value
     }
 }
 
