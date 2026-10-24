@@ -231,7 +231,16 @@ final class ComposerTests: XCTestCase {
 
         func round(_ what: String, _ text: String, doubleTap: Bool = false) {
             let field = app.textViews["messageComposer"]
-            field.tap()
+            // A newer XCTest dispatch snapshot reported this text view at one third of its
+            // actual AX frame and tapped the history. Use window coordinates and require the
+            // keyboard before sending keys, without retrying any typed text or send.
+            for _ in 0..<3 where !app.keyboards.firstMatch.exists {
+                let frame = field.frame
+                app.coordinate(withNormalizedOffset: .zero)
+                    .withOffset(CGVector(dx: frame.midX, dy: frame.midY)).tap()
+                if app.keyboards.firstMatch.waitForExistence(timeout: 2) { break }
+            }
+            XCTAssertTrue(app.keyboards.firstMatch.exists, "composer never accepted keyboard focus")
             field.typeText(text)
             Thread.sleep(forTimeInterval: 0.5)
             for _ in 0..<3 {

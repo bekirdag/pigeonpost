@@ -4,8 +4,8 @@ Plan: [implementation plan](native-round2-2026-10-24-plan.md).
 
 ## Current state
 
-Shared Apple message-action DTOs, API wire calls and conversation metadata are implemented and
-tested locally. The composer/actions UI, privacy controls and other platforms are still pending.
+Shared Apple direct-message actions, scoped retries, receipt privacy and status UI are implemented
+and locally tested. Group actions, calendar, enterprise screens and other platforms remain pending.
 Isolated worktree `pigeonpost-native-round2-20261024`, branch `codex/native-round2-20261024`, based
 on PR #87 at `b7a7eff` (including merged #90). No native release or production deployment has been
 made in this phase. Existing PR checks are being finalized in their original worktrees.
@@ -66,3 +66,10 @@ made in this phase. Existing PR checks are being finalized in their original wor
 - Full standalone Swift suites pass in `native2-privacy-models.log` (inbox128, group31, Phase1b38). Both iPhone and Mac builds pass after the privacy/status changes. All **five** targeted native UI cases pass together in `native2-direct-status-privacy.xcresult`: reply/send, edit/history, feature-off controls, receipt/agent accessible status and the read-receipt opt-out while other privacy features are off. This is local iOS18.3 evidence; the newer runtime still requires CI. Added Phase1bTests to that workflow and parsed its YAML.
 - Docdex indexed the policy model/view after an initial missing-index result. Its built-in debug-directory exclusion refuses AST indexing of Debug/Fixtures.swift; the exclusion was preserved. The status cases instead use the already indexed DEBUG-only inbox fixture installer; a release build cannot enable them.
 - Group actions/receipts, calendar, enterprise screens and the other native platforms remain pending. Native release/store submission stays held.
+
+
+## Checkpoint — current-runtime UI qualification and composer focus
+
+- Hosted iPad qualification passed at `6d44cf7`. On iPhone every new message-action, receipt/privacy and Phase 1b case passed; the remaining legacy every-draft-shape case failed before typing because XCTest dispatched a tap at one third of the actual accessibility frame. Its failure hierarchy locates the composer correctly and does not establish a production first-responder defect.
+- That single test now taps the composer's actual window coordinates, bounds attempts to three, and requires a keyboard before typing. It never retries typed text or a send. All clearing assertions remain. The local focused run executed **one actual test**, passing in `native2-focus-window.xcresult` (29.286 seconds); a fresh hosted iPhone run is still required. Production focus code is unchanged.
+- The separate StoreKit restore test failed with an empty post-sync transaction snapshot. PR #87 now waits up to five seconds for the exact expected entitlement set; no additional purchase/sync or cached receipt fallback. The native StoreKit test passes locally; hosted requalification remains pending.
