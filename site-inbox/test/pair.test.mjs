@@ -18,17 +18,28 @@ const PAIRING = {
   ip_country: "TR", expires_at: Math.floor(Date.now() / 1000) + 500, can_approve: true,
 };
 
-function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = "" } = {}) {
+function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = "", digestReady = Promise.resolve() } = {}) {
   const dom = new JSDOM(html, { url: `https://inbox.pigeonpost.dev/pair.html${search}${hash}`, runScripts: "outside-only", virtualConsole: new VirtualConsole() });
   t.after(() => dom.window.close());
   const { window } = dom;
-  Object.defineProperty(window, "crypto", { value: webcrypto });
+  Object.defineProperty(window, "crypto", { value: {
+    getRandomValues: (values) => webcrypto.getRandomValues(values),
+    subtle: { digest: async (...args) => {
+      await digestReady;
+      return webcrypto.subtle.digest(...args);
+    } },
+  } });
   window.TextEncoder = TextEncoder;
   window.PIGEONPOST_INBOX = { postbox: "https://postbox.test", oidc: { issuer: "https://auth.test/realms/r", clientId: "pigeonpost-web", scope: "openid profile" } };
   if (token) window.localStorage.setItem("ppi_token", token);
   const calls = [];
   const assigned = [];
-  window.PigeonpostPairNavigate = (u) => assigned.push(u);
+  let resolveNavigation;
+  const navigation = new Promise((resolve) => { resolveNavigation = resolve; });
+  window.PigeonpostPairNavigate = (u) => {
+    assigned.push(u);
+    resolveNavigation(u);
+  };
   window.fetch = async (url, init = {}) => {
     const path = new URL(url).pathname;
     calls.push({ path, body: init.body ? JSON.parse(init.body) : null });
@@ -36,7 +47,7 @@ function page(t, { hash = "#abcd-efgh", token = "tok", responses = {}, search = 
     const out = typeof r === "function" ? r() : r;
     return { ok: out.status < 400, status: out.status, headers: { get: (h) => (out.headers || {})[h] || null }, json: async () => out.body };
   };
-  return { window, calls, assigned, start: async () => { window.eval(source); await settle(); } };
+  return { window, calls, assigned, navigation, start: async () => { window.eval(source); await settle(); } };
 }
 
 test("the code leaves the address bar, is kept for this tab, and the request is rendered", async (t) => {
@@ -53,16 +64,26 @@ test("the code leaves the address bar, is kept for this tab, and the request is 
   assert.match(d.getElementById("pair-expires").textContent, /^\d+:\d\d$/);
 });
 
-test("no token: asks to sign in, and the sign-in carries PKCE, state and nonce", async (t) => {
-  const p = page(t, { token: null });
+test("no token: asks to sign in, and the sign-in carries PKCE, state and nonce", { timeout: 5000 }, async (t) => {
+  let releaseDigest;
+  const digestReady = new Promise((resolve) => { releaseDigest = resolve; });
+  t.after(() => releaseDigest());
+  const p = page(t, { token: null, digestReady });
   await p.start();
   assert.equal(p.window.document.getElementById("pair-signin").hidden, false);
   p.window.document.getElementById("pair-signin-btn").click();
   await settle();
-  const url = new URL(p.assigned[0]);
+  assert.equal(p.assigned.length, 0, "navigation waits for the asynchronous PKCE digest");
+  releaseDigest();
+  const url = new URL(await p.navigation);
   assert.equal(url.searchParams.get("redirect_uri"), "https://inbox.pigeonpost.dev/pair.html");
   assert.equal(url.searchParams.get("code_challenge_method"), "S256");
   assert.ok(url.searchParams.get("state") && url.searchParams.get("nonce"));
+  const verifier = p.window.localStorage.getItem("ppp_pkce");
+  const expectedChallenge = Buffer.from(await webcrypto.subtle.digest("SHA-256", new TextEncoder().encode(verifier))).toString("base64url");
+  assert.equal(url.searchParams.get("code_challenge"), expectedChallenge);
+  assert.equal(url.searchParams.get("state"), p.window.localStorage.getItem("ppp_state"));
+  assert.equal(url.searchParams.get("nonce"), p.window.localStorage.getItem("ppp_nonce"));
   assert.equal(url.searchParams.get("acr_values"), null);
 });
 
@@ -92,7 +113,7 @@ test("a short press does not approve; a full hold does", async (t) => {
   assert.equal(p.window.sessionStorage.getItem("ppp_code"), null);
 });
 
-test("step-up: approval redirects for a strong sign-in with the named acr_values and max_age", async (t) => {
+test("step-up: approval redirects for a strong sign-in with the named acr_values and max_age", { timeout: 5000 }, async (t) => {
   const p = page(t, { responses: {
     "/v1/device-pairings/resolve": { status: 200, body: PAIRING },
     "/v1/device-pairings/pair_1/approve": { status: 401, body: { error: "step_up_required" },
@@ -101,8 +122,7 @@ test("step-up: approval redirects for a strong sign-in with the named acr_values
   await p.start();
   p.window.document.getElementById("pair-approve").dispatchEvent(new p.window.Event("pointerdown"));
   await sleep(p.window.PigeonpostPair.HOLD_MS + 200);
-  await settle();
-  const url = new URL(p.assigned[0]);
+  const url = new URL(await p.navigation);
   assert.equal(url.searchParams.get("acr_values"), "mfa");
   assert.equal(url.searchParams.get("max_age"), "600");
   assert.equal(p.window.sessionStorage.getItem("ppp_code"), "ABCD-EFGH", "code kept for the return");
