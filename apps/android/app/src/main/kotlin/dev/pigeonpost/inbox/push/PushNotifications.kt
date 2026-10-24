@@ -52,6 +52,8 @@ class PushNotifications(private val context: Context) {
         const val CHANNEL = "messages"
         const val WORK = "pigeonpost-push-registration"
         @Volatile var foreground = false
+        /** While the app is in front, a group push only asks the open app to look now. */
+        @Volatile var groupPoke: (() -> Unit)? = null
 
         fun channel(context: Context) {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(

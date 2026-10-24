@@ -33,9 +33,11 @@ build() {
 build aarch64-linux-android arm64-v8a "aarch64-linux-android${api}-clang"
 build armv7-linux-androideabi armeabi-v7a "armv7a-linux-androideabi${api}-clang"
 build x86_64-linux-android x86_64 "x86_64-linux-android${api}-clang"
-"${KOTLINC_HOME:?set KOTLINC_HOME}/bin/kotlinc" -nowarn -jvm-target 11 -cp "${JNA_JAR:?set JNA_JAR}" \
+# A module name of its own: Kotlin consumers need META-INF/<module>.kotlin_module to see the binding's
+# top-level functions (sealAttachment, generateStateKey, …), and "main" would clash with the app's.
+"${KOTLINC_HOME:?set KOTLINC_HOME}/bin/kotlinc" -nowarn -jvm-target 11 -module-name pigeonpost_groupcrypto -cp "${JNA_JAR:?set JNA_JAR}" \
   bindings/kotlin/dev/pigeonpost/groupcrypto/pigeonpost_groupcrypto.kt -d "$out/classes"
-(cd "$out/classes" && rm -rf META-INF/main.kotlin_module && jar cf ../aar/classes.jar .)
+(cd "$out/classes" && jar cf ../aar/classes.jar .)
 cat > "$out/aar/AndroidManifest.xml" <<XML
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android" package="dev.pigeonpost.groupcrypto">

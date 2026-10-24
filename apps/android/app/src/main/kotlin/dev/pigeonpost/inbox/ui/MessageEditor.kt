@@ -21,7 +21,7 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 
 @Composable
 fun MessageEditor(text: String, changed: (String) -> Unit, enabled: Boolean, modifier: Modifier,
-    attach: (List<Uri>, Any) -> Unit, focus: FocusRequester = remember { FocusRequester() }) {
+    attach: (List<Uri>, Any) -> Unit, focus: FocusRequester = remember { FocusRequester() }, placeholder: String = "Message") {
     val field = rememberTextFieldState(text)
     val currentChanged by rememberUpdatedState(changed)
     val currentAttach by rememberUpdatedState(attach)
@@ -45,7 +45,7 @@ fun MessageEditor(text: String, changed: (String) -> Unit, enabled: Boolean, mod
     // keyboard, and the next message should be typed straight after Send.
     val p = Pp.colors
     TextField(state = field, modifier = modifier.focusRequester(focus).contentReceiver(receiver),
-        placeholder = { Text("Message", style = geist(15.sp), color = p.muted) },
+        placeholder = { Text(placeholder, style = geist(15.sp), color = p.muted) },
         readOnly = !enabled, textStyle = geist(15.sp, color = p.ink), lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 6),
         colors = TextFieldDefaults.colors(focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
             disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,

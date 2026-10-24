@@ -8,6 +8,9 @@ import dev.pigeonpost.inbox.auth.SessionState
 import dev.pigeonpost.inbox.auth.UserSession
 import dev.pigeonpost.inbox.calls.CallsOverride
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.io.File
 import java.io.IOException
@@ -19,8 +22,15 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store")) return null
-        return AppGraph(FixtureSession(mode != "signin", mode != "policy" && mode != "signin"), FixturePostbox(mode), fixtures = true)
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups")) return null
+        val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin")
+        if (mode == "groups") {
+            // Real group encryption (the AAR) against the in-memory groups postbox, with two other people.
+            val world = FixtureGroups()
+            return AppGraph(session, FixturePostbox(mode, world.me), fixtures = true, groupTransport = world.fake.transport,
+                groupCrypto = { world.crypto }, groupStorage = { dev.pigeonpost.core.groups.MemoryGroupStorage() }, start = world::run, groupPollSeconds = 1)
+        }
+        return AppGraph(session, FixturePostbox(mode), fixtures = true)
     }
 
     /**
@@ -79,7 +89,7 @@ private class FixtureSession(signedIn: Boolean, accepted: Boolean) : UserSession
     override suspend fun token(rejected: String?) = "fixture-only"
 }
 
-private class FixturePostbox(private val mode: String) : PostboxApi, AccountHandleApi {
+private class FixturePostbox(private val mode: String, groupsMailbox: String? = null) : PostboxApi, AccountHandleApi {
     private var created = mode != "empty"
     private val now = System.currentTimeMillis() / 1000
     private val boxes = mutableListOf(IdentityRow("/k/demo-main", "Main"), IdentityRow("/k/demo-agent", "Build agent"))
@@ -129,7 +139,67 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
         people.clear(); people += Contact("/bekir/*", "my fleet", "allow", "review", emptyList())
         archived.clear()
     }
+    init { groupsMailbox?.let { boxes[0] = IdentityRow(it, "Main") } }
     override suspend fun identities() = if (created) boxes else emptyList()
+
+    // ---- Phase 1b fixtures (mode "safety") and groups (mode "groups") ---------------------------
+    private val safety = mode == "safety"
+    override suspend fun capabilities() = Capabilities(when (mode) {
+        "safety" -> listOf("call_history", "call_admission", "message_filtering", "avatars", "disappearing")
+        "groups" -> listOf("groups", "disappearing")
+        else -> emptyList()
+    })
+    private var calls = listOf(
+        CallLogEntry("call_missed", "incoming", "missed", "video", "/k/demo-agent", "/demo/builder", startedAt = now - 120),
+        CallLogEntry("call_out", "outgoing", "answered", "audio", "/k/reviewer", "/demo/reviewer", startedAt = now - 7200, answeredAt = now - 7190, endedAt = now - 7065),
+    )
+    private var unseen = 1
+    private val filteredCalls = listOf(CallLogEntry("call_filtered", "incoming", "filtered", "audio", "/k/stranger7ab3c9d0e1f2a3b4c5", startedAt = now - 300))
+    private var filtered = listOf(
+        Message("f_1", "Hi! Are you hiring agents?", from = "/k/stranger7ab3c9d0e1f2a3b4c5", peer = "/k/stranger7ab3c9d0e1f2a3b4c5", receivedAt = now - 900, filtered = true),
+        Message("f_2", "Following up on my earlier message.", from = "/k/stranger7ab3c9d0e1f2a3b4c5", peer = "/k/stranger7ab3c9d0e1f2a3b4c5", receivedAt = now - 600, filtered = true),
+    )
+    private var policy = FilterPolicy("ring", "silence", "show", "filter", "filter", 180)
+    private var own: AvatarInfo? = null
+    val reports = mutableListOf<String>()
+    override suspend fun callLog(identity: String, filter: String, before: Long?, limit: Int): CallLogPage {
+        if (!safety) throw ApiException(404, "feature_disabled")
+        return CallLogPage(when (filter) { "filtered" -> filteredCalls; "missed" -> calls.filter { it.missed }; else -> calls }, unseen)
+    }
+    override suspend fun markCallsSeen(identity: String, upTo: Long): Int { unseen = 0; return 0 }
+    override suspend fun deleteCall(identity: String, id: String) { calls = calls.filterNot { it.id == id } }
+    override suspend fun clearCalls(identity: String) { calls = emptyList() }
+    override suspend fun reportCall(identity: String, callId: String) { reports += "call:$callId" }
+    override suspend fun filteredInbox(identity: String) = if (safety) filtered else emptyList()
+    override suspend fun acceptFiltered(identity: String, peer: String) {
+        messages += filtered.map { it.copy(filtered = false, read = true) }; filtered = emptyList()
+        people += Contact(peer)
+    }
+    override suspend fun policy(identity: String) = policy
+    override suspend fun setPolicy(identity: String, field: String, value: String) = policy.with(field, value).also { policy = it }
+    override suspend fun blockedContacts(identity: String) = people.filter { it.admission == "block" }
+    override suspend fun unblock(identity: String, peer: String) { people.removeAll { it.peer == peer } }
+    override suspend fun avatars(keys: List<String>): Map<String, AvatarInfo?> = if (!safety) emptyMap() else keys.associateWith { key ->
+        when (key) {
+            "/demo/builder" -> AvatarInfo("av_builder", 1, "h_builder", "everyone", AvatarUrls(medium = "/v1/avatar-blobs/av_builder/1/128.png"))
+            boxes.first().address, "/demo/main" -> own
+            else -> null
+        }
+    }
+    override suspend fun avatarBytes(path: String): ByteArray = fixturePicture(if (path.contains("builder")) 0xFF2F6FEB.toInt() else 0xFF1AA179.toInt())
+    override suspend fun ownAvatar(identity: String) = own
+    override suspend fun setAvatar(identity: String, image: ByteArray, mediaType: String, crop: CropRect, visibility: String, all: Boolean): AvatarInfo? {
+        check(image.size > 100 && mediaType == "image/jpeg")
+        own = AvatarInfo("av_own", (own?.version ?: 0) + 1, "h_own_${(own?.version ?: 0) + 1}", visibility, AvatarUrls(medium = "/v1/avatar-blobs/av_own/1/128.png"))
+        return own
+    }
+    override suspend fun setAvatarVisibility(identity: String, visibility: String) = own?.copy(visibility = visibility).also { own = it }
+    override suspend fun removeAvatar(identity: String) { own = null }
+    override suspend fun reportAvatar(identity: String, address: String) { reports += "avatar:$address" }
+    override suspend fun setThreadTimer(identity: String, threadId: String, seconds: Long?) {
+        val i = subjects.indexOfFirst { it.id == threadId }
+        if (i >= 0) subjects[i] = subjects[i].copy(ephemeralSecs = seconds)
+    }
     override suspend fun accountHandles() = listOf(
         AccountHandle("demo", "apple", now + 86400, true),
         AccountHandle("studio", "google", now + 86400, true),
@@ -176,4 +246,66 @@ private class FixturePostbox(private val mode: String) : PostboxApi, AccountHand
     override suspend fun removeContact(identity: String, peer: String) { people.removeAll { it.peer == peer } }
     override suspend fun upload(identity: String, file: File, filename: String, mediaType: String): Attachment { val id = "a_" + UUID.randomUUID(); attachments[id] = file.readBytes(); return Attachment(id, filename, mediaType, file.length()).also { attachmentMetadata[id] = it } }
     override suspend fun download(identity: String, id: String, output: OutputStream, maximumBytes: Long) { output.write(attachments[id] ?: error("Attachment not found")) }
+}
+
+/** A solid square PNG, standing in for a profile picture. */
+private fun fixturePicture(color: Int): ByteArray {
+    val bitmap = android.graphics.Bitmap.createBitmap(64, 64, android.graphics.Bitmap.Config.ARGB_8888).apply { eraseColor(color) }
+    return java.io.ByteArrayOutputStream().also { bitmap.compress(android.graphics.Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+}
+
+/**
+ * Groups fixture: the app's mailbox plus Bob and Carol, each a real group-crypto device, on the
+ * in-memory groups postbox (core/src/groupcrypto-fake). Bob owns "Garden club" (Carol is in it and the
+ * app's mailbox is accepted, waiting to be added); Carol has invited the app's mailbox to "Book club".
+ * While the app runs, Bob and Carol add pending devices, accept invitations and answer messages.
+ */
+class FixtureGroups {
+    val fake = dev.pigeonpost.core.groups.FakeGroupPostbox().apply { serialize = true }
+    val crypto = dev.pigeonpost.core.groups.UniffiGroupCrypto()
+    val me = fake.mailbox()
+    private val bob = fake.mailbox()
+    private val carol = fake.mailbox()
+    private val people = mutableListOf<dev.pigeonpost.core.groups.GroupClient>()
+    private val answered = mutableSetOf<Long>()
+    init { fake.handles[me] = "/demo/main"; fake.handles[bob] = "/bob/main"; fake.handles[carol] = "/carol/main" }
+
+    fun run(scope: kotlinx.coroutines.CoroutineScope) {
+        scope.launch(kotlinx.coroutines.Dispatchers.Default) {
+            val b = dev.pigeonpost.core.groups.GroupClient(crypto, fake.transport, dev.pigeonpost.core.groups.MemoryGroupStorage(), bob, "bob", jitter = { 0 })
+            val c = dev.pigeonpost.core.groups.GroupClient(crypto, fake.transport, dev.pigeonpost.core.groups.MemoryGroupStorage(), carol, "carol", jitter = { 0 })
+            for (x in listOf(b, c)) { x.init(); x.topUpKeyPackages() }
+            people += b; people += c
+            val garden = b.createGroup(kotlinx.serialization.json.buildJsonObject { put("name", "Garden club"); put("description", "Seeds, soil and harvests") }).group.id
+            fake.invite(garden, carol); fake.accept(garden, carol)
+            b.processPending(garden, noJitter = true); c.processWelcomes()
+            b.send(garden, dev.pigeonpost.core.groups.OutgoingDocument("Tomatoes are in!"))
+            fake.invite(garden, me); fake.accept(garden, me)
+            val book = c.createGroup(kotlinx.serialization.json.buildJsonObject { put("name", "Book club"); put("post_policy", "admins") }).group.id
+            fake.invite(book, me)
+            while (isActive) {
+                for (x in people) try {
+                    x.processWelcomes()
+                    for ((gid, g) in fake.groups) {
+                        val member = g.members[x.mailbox] ?: continue
+                        if (member.state == "invited") fake.accept(gid, x.mailbox)
+                        if (!x.inGroup(gid)) continue
+                        x.sync(gid)
+                        x.processPending(gid, noJitter = true)
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) {}
+                // Bob answers the app's messages in the groups he is in.
+                try {
+                    for (gid in fake.groups.keys) for (item in b.history(gid)) {
+                        val seq = item.seq ?: continue
+                        if (item.kind == "message" && item.sender == me && !item.deleted && seq !in answered) {
+                            answered += seq
+                            b.send(gid, dev.pigeonpost.core.groups.OutgoingDocument("Got it: " + item.text.orEmpty()))
+                        }
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) {}
+                delay(700)
+            }
+        }
+    }
 }

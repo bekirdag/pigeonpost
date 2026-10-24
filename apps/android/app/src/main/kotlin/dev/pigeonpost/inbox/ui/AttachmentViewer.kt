@@ -65,12 +65,12 @@ private sealed interface Loaded {
  * other markup never reach this viewer (AttachmentKinds.viewer), and text is shown as text.
  */
 @Composable
-fun AttachmentViewer(identity: String, attachment: Attachment, files: PlatformFiles, download: () -> Unit, dismiss: () -> Unit) {
+fun AttachmentViewer(identity: String, attachment: Attachment, load: suspend () -> File, download: () -> Unit, dismiss: () -> Unit) {
     val kind = AttachmentKinds.viewer(attachment.filename, attachment.mediaType)
     if (kind == null) { LaunchedEffect(Unit) { dismiss() }; return }
     val p = Pp.colors
     val loaded by produceState<Loaded>(Loaded.Waiting, identity, attachment.id) {
-        val file = try { files.download(identity, attachment) }
+        val file = try { load() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { value = Loaded.Failed(failure.message ?: "Could not open the attachment."); return@produceState }
         value = Loaded.Ready(file)

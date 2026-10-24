@@ -46,6 +46,27 @@ class MainActivity : ComponentActivity() {
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration(); offerFullScreenCalls() }
     private val documents = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { model.attach(it) }
     private val photos = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { model.attach(it) }
+    // Profile pictures: one photo from the picker, or a new one from the camera (written to a private cache file).
+    private val picture = registerForActivityResult(ActivityResultContracts.PickVisualMedia()) { model.pictureChosen(it) }
+    private var cameraFile: java.io.File? = null
+    private val camera = registerForActivityResult(ActivityResultContracts.TakePicture()) { taken ->
+        val file = cameraFile; cameraFile = null
+        if (taken && file != null) model.pictureChosen(Uri.fromFile(file)) else file?.delete()
+    }
+    private val cameraPermission = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) startCamera() else model.inbox.showError("Allow the camera in Android settings to take a picture.")
+    }
+    private fun takePicture() {
+        if (checkSelfPermission(Manifest.permission.CAMERA) == android.content.pm.PackageManager.PERMISSION_GRANTED) startCamera()
+        else cameraPermission.launch(Manifest.permission.CAMERA)
+    }
+    private fun startCamera() {
+        val dir = java.io.File(cacheDir, "camera").apply { deleteRecursively(); mkdirs() }
+        val file = java.io.File(dir, "picture.jpg")
+        cameraFile = file
+        try { camera.launch(FileProvider.getUriForFile(this, "$packageName.files", file)) }
+        catch (_: ActivityNotFoundException) { model.inbox.showError("No camera app is available.") }
+    }
     private val save = registerForActivityResult(ActivityResultContracts.CreateDocument("application/octet-stream")) { uri ->
         val file = model.pendingSave; model.pendingSave = null
         if (uri != null && file != null) lifecycleScope.launch { try { model.files.save(file, uri) } catch (failure: Exception) { report(failure) } }
@@ -75,8 +96,11 @@ class MainActivity : ComponentActivity() {
             scan = { scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan a Pigeonpost sign-in code").setBeepEnabled(false).setOrientationLocked(false)) },
             attachment = ::attachment,
             openLink = ::openLink, notificationSettings = ::notificationSettings,
-            fullScreenCalls = { if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this)) null else ::fullScreenCallSettings }) }
+            fullScreenCalls = { if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this)) null else ::fullScreenCallSettings },
+            choosePicture = { picture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
+            takePicture = ::takePicture) }
         model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        if (savedInstanceState == null) model.openGroupLink(intent.data)
         Development.started()
         model.calls?.let { host ->
             host.window = object : CallWindow {
@@ -117,12 +141,12 @@ class MainActivity : ComponentActivity() {
         answerCall(intent)
     }
     override fun onStart() {
-        super.onStart(); PushNotifications.foreground = true; model.inbox.setActive(true); model.billing?.attach(this)
+        super.onStart(); PushNotifications.foreground = true; model.setActive(true); model.billing?.attach(this)
         model.calls?.setVisible(true); IncomingCalls.foreground(this)
     }
     override fun onResume() { super.onResume(); model.refreshPushRegistration(); if (model.session.state.value.signedIn) model.paidHandles?.restore() }
     override fun onStop() {
-        PushNotifications.foreground = false; model.billing?.detach(this); model.inbox.setActive(false)
+        PushNotifications.foreground = false; model.billing?.detach(this); model.setActive(false)
         model.calls?.setVisible(false); IncomingCalls.background(this)
         super.onStop()
     }
@@ -157,7 +181,7 @@ class MainActivity : ComponentActivity() {
         val identity = model.inbox.state.value.acting?.address ?: return
         lifecycleScope.launch {
             try {
-                val file = model.files.download(identity, value)
+                val file = model.fetch(identity, value)
                 if (identity != model.inbox.state.value.acting?.address || !model.session.state.value.signedIn) return@launch
                 if (action == "download" && AttachmentKinds.savesToGallery(value.filename, value.mediaType) && Build.VERSION.SDK_INT >= 29) {
                     // Photos and videos go to the gallery; nothing else is written there.

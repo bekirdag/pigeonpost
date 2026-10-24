@@ -7,6 +7,10 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.SerializationException
+import dev.pigeonpost.core.groups.GroupCallState
+import dev.pigeonpost.core.groups.GroupTransport
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -40,7 +44,7 @@ interface TokenProvider {
 
 class SessionExpired : IOException("Your session expired. Sign in again.")
 class PostboxConnectionInterrupted(cause: IOException) : IOException("The connection was interrupted. Please try again.", cause)
-class ApiException(val status: Int, val code: String?, detail: String? = null) : IOException(detail ?: when (code) {
+class ApiException(val status: Int, val code: String?, detail: String? = null, val problem: JsonObject? = null) : IOException(detail ?: when (code) {
     "not_admitted" -> "They are not accepting messages from this inbox."
     "recipient_unresolved" -> "No inbox at that address."
     "recipient_inbox_full" -> "Their inbox is full."
@@ -71,6 +75,28 @@ interface PostboxApi {
     suspend fun handleOffer(): HandleOffer
     suspend fun checkHandle(name: String): HandleAvailability
     suspend fun claimHandle(name: String): HandleOffer
+
+    // Phase 1b and 3a. An older postbox answers 404 for each; the defaults say "off".
+    suspend fun capabilities(): Capabilities = Capabilities()
+    suspend fun policy(identity: String): FilterPolicy = throw ApiException(404, "feature_disabled")
+    suspend fun setPolicy(identity: String, field: String, value: String): FilterPolicy = throw ApiException(404, "feature_disabled")
+    suspend fun filteredInbox(identity: String): List<Message> = emptyList()
+    suspend fun acceptFiltered(identity: String, peer: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun blockedContacts(identity: String): List<Contact> = contacts(identity).contacts.orEmpty().filter { it.admission == "block" }
+    suspend fun unblock(identity: String, peer: String) = removeContact(identity, peer)
+    suspend fun callLog(identity: String, filter: String = "all", before: Long? = null, limit: Int = 50): CallLogPage = throw ApiException(404, "feature_disabled")
+    suspend fun markCallsSeen(identity: String, upTo: Long): Int = 0
+    suspend fun deleteCall(identity: String, id: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun clearCalls(identity: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun reportCall(identity: String, callId: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun avatars(keys: List<String>): Map<String, AvatarInfo?> = emptyMap()
+    suspend fun avatarBytes(path: String): ByteArray = throw ApiException(404, "not_found")
+    suspend fun ownAvatar(identity: String): AvatarInfo? = null
+    suspend fun setAvatar(identity: String, image: ByteArray, mediaType: String, crop: CropRect, visibility: String, all: Boolean): AvatarInfo? = throw ApiException(404, "feature_disabled")
+    suspend fun setAvatarVisibility(identity: String, visibility: String): AvatarInfo? = throw ApiException(404, "feature_disabled")
+    suspend fun removeAvatar(identity: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun reportAvatar(identity: String, address: String) { throw ApiException(404, "feature_disabled") }
+    suspend fun setThreadTimer(identity: String, threadId: String, seconds: Long?) { throw ApiException(404, "feature_disabled") }
 }
 
 const val MAX_ATTACHMENT_BYTES = 20L * 1024 * 1024
@@ -85,9 +111,11 @@ class PostboxClient(
     private val tokens: TokenProvider,
     private val base: HttpUrl = "https://postbox.pigeonpost.dev/".toHttpUrl(),
     allowLoopbackForTests: Boolean = false,
-) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi {
+    /** The inbox origin, where the calls service lives (`/calls/v1`). */
+    private val inbox: HttpUrl = "https://inbox.pigeonpost.dev/".toHttpUrl(),
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport {
     init {
-        require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1")) { "The postbox must use HTTPS." }
+        require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
     }
     private val http = OkHttpClient.Builder()
@@ -200,6 +228,128 @@ class PostboxClient(
         }
     }
 
+    override suspend fun capabilities(): Capabilities = try { decode(request("capabilities")) }
+        catch (failure: ApiException) { if (failure.status in setOf(400, 404, 501)) Capabilities() else throw failure }
+    override suspend fun policy(identity: String) = decode<FilterPolicy>(request("policy", identity = identity))
+    override suspend fun setPolicy(identity: String, field: String, value: String): FilterPolicy {
+        require(POLICY_ROWS.any { row -> row.field == field && row.options.any { it.first == value } }) { "Unknown setting." }
+        return decode(request("policy", "PUT", json = buildJsonObject {
+            put("identity", identity)
+            if (field == "call_history_days") put(field, value.toInt()) else put(field, value)
+        }))
+    }
+    override suspend fun filteredInbox(identity: String) = decode<InboxResponse>(request("inbox", identity = identity,
+        query = mapOf("filtered" to "1", "include_read" to "true"))).messages.orEmpty().filter { !it.outgoing }
+    override suspend fun acceptFiltered(identity: String, peer: String) {
+        require(validAddress(peer))
+        request("filtered/accept", "POST", json = buildJsonObject { put("identity", identity); put("peer", peer) })
+    }
+    override suspend fun blockedContacts(identity: String) = decode<ContactsResponse>(request("contacts", identity = identity,
+        query = mapOf("admission" to "block"))).contacts.orEmpty().filter { it.admission == "block" }
+    override suspend fun unblock(identity: String, peer: String) {
+        require(validAddress(peer, wildcard = true))
+        request("contacts", "DELETE", identity = identity, query = mapOf("peer" to peer))
+    }
+    override suspend fun callLog(identity: String, filter: String, before: Long?, limit: Int): CallLogPage {
+        require(filter in setOf("all", "missed", "filtered") && limit in 1..200)
+        return decode(request("calls/log", identity = identity, query = buildMap {
+            put("filter", filter); put("limit", limit.toString()); before?.let { put("before", it.toString()) }
+        }))
+    }
+    override suspend fun markCallsSeen(identity: String, upTo: Long) = decode<CallsSeen>(request("calls/log/seen", "POST", json = buildJsonObject {
+        put("identity", identity); put("up_to", upTo)
+    })).unseenMissed
+    override suspend fun deleteCall(identity: String, id: String) { request("calls/log", "DELETE", identity = identity, id = safeId(id)) }
+    override suspend fun clearCalls(identity: String) { request("calls/log", "DELETE", identity = identity) }
+    override suspend fun reportCall(identity: String, callId: String) {
+        request("report-spam", "POST", json = buildJsonObject { put("identity", identity); put("call_id", safeId(callId)) })
+    }
+    override suspend fun avatars(keys: List<String>): Map<String, AvatarInfo?> {
+        val wanted = keys.filter { it.startsWith('/') && !it.endsWith("/*") && it.length <= 300 && !it.contains(',') }.distinct().take(100)
+        if (wanted.isEmpty()) return emptyMap()
+        return decode<AvatarsResponse>(request("avatars", query = mapOf("addresses" to wanted.joinToString(",")))).avatars.orEmpty()
+    }
+    override suspend fun avatarBytes(path: String): ByteArray = withContext(Dispatchers.IO) {
+        require(path.startsWith("/v1/avatar-blobs/") && !path.contains("..") && !path.contains('?') && path.length < 300) { "Unexpected picture address." }
+        val url = base.newBuilder().addPathSegments(path.removePrefix("/")).build()
+        authenticated(Request.Builder().url(url).build()).use { response -> limitedBytes(response, 2L * 1024 * 1024) }
+    }
+    override suspend fun ownAvatar(identity: String) = decode<OwnAvatarResponse>(request("profile/avatar", identity = identity)).avatar
+    override suspend fun setAvatar(identity: String, image: ByteArray, mediaType: String, crop: CropRect, visibility: String, all: Boolean): AvatarInfo? = withContext(Dispatchers.IO) {
+        require(image.isNotEmpty() && image.size <= 10 * 1024 * 1024) { "That picture is too large. Choose one under 10 MB." }
+        require(mediaType in setOf("image/jpeg", "image/png", "image/webp") && visibility in setOf("everyone", "known", "nobody"))
+        val url = url("profile/avatar", identity, buildMap {
+            put("crop", "${crop.x},${crop.y},${crop.size},${crop.size}"); put("visibility", visibility); if (all) put("all", "1")
+        })
+        val request = Request.Builder().url(url).put(image.toRequestBody(mediaType.toMediaType())).build()
+        val reply = decode<OwnAvatarResponse>(authenticated(request).use { readJson(it) })
+        reply.avatar ?: reply.avatars?.firstOrNull { it.address == null || it.address == identity }?.avatar ?: reply.avatars?.firstOrNull()?.avatar
+    }
+    override suspend fun setAvatarVisibility(identity: String, visibility: String): AvatarInfo? {
+        require(visibility in setOf("everyone", "known", "nobody"))
+        return decode<OwnAvatarResponse>(request("profile/avatar", "PATCH", json = buildJsonObject { put("identity", identity); put("visibility", visibility) })).avatar
+    }
+    override suspend fun removeAvatar(identity: String) { request("profile/avatar", "DELETE", identity = identity) }
+    override suspend fun reportAvatar(identity: String, address: String) {
+        require(validAddress(address))
+        request("report-avatar", "POST", json = buildJsonObject { put("identity", identity); put("address", address) })
+    }
+    override suspend fun setThreadTimer(identity: String, threadId: String, seconds: Long?) {
+        require(seconds in DISAPPEARING_TIMERS) { "Choose one of the offered timers." }
+        request("threads", "PATCH", identity = identity, id = safeId(threadId), json = buildJsonObject {
+            put("identity", identity); put("ephemeral_secs", seconds?.let { JsonPrimitive(it) } ?: JsonNull)
+        })
+    }
+
+    // ---- groups (docs/groups.md) ----------------------------------------------------------------
+
+    private fun groupUrl(path: String): HttpUrl {
+        require(path.startsWith("/v1/") && !path.contains("..") && !path.contains('#') && path.length < 2048) { "Unexpected group route." }
+        return (base.toString().trimEnd('/') + path).toHttpUrl()
+    }
+    private fun Request.Builder.acting(mailbox: String, device: String?) = apply {
+        require(validAddress(mailbox)) { "Unexpected mailbox." }
+        header("x-pigeonpost-identity", mailbox)
+        device?.let { require(Regex("[A-Za-z0-9._-]{1,64}").matches(it)); header("x-pigeonpost-device", it) }
+    }
+    override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String = withContext(Dispatchers.IO) {
+        val payload = body?.toString()?.toRequestBody("application/json".toMediaType())
+            ?: if (method == "POST" || method == "PUT" || method == "PATCH") "{}".toRequestBody("application/json".toMediaType()) else null
+        val request = Request.Builder().url(groupUrl(path)).acting(mailbox, device).method(method, payload).build()
+        try { authenticated(request).use { readJson(it) } }
+        catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            // Reads are safe to repeat; every mutating group route carries an idempotency key or is naturally idempotent.
+            if (method != "GET" || failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
+            delay(200)
+            authenticated(request, recoveryHttp).use { readJson(it) }
+        }
+    }
+    override suspend fun groupUpload(mailbox: String, path: String, bytes: ByteArray, device: String): String = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(groupUrl(path)).acting(mailbox, device)
+            .post(bytes.toRequestBody("application/octet-stream".toMediaType())).build()
+        authenticated(request).use { readJson(it) }
+    }
+    override suspend fun groupDownload(mailbox: String, path: String, device: String?, maximumBytes: Long): ByteArray = withContext(Dispatchers.IO) {
+        val request = Request.Builder().url(groupUrl(path)).acting(mailbox, device).build()
+        authenticated(request).use { limitedBytes(it, maximumBytes) }
+    }
+    override suspend fun groupCall(groupId: String, from: String): GroupCallState? = withContext(Dispatchers.IO) {
+        require(Regex("grp_[a-z2-7]{26}").matches(groupId) && validAddress(from))
+        val url = inbox.newBuilder().addPathSegments("calls/v1/groups").addPathSegment(groupId).addPathSegment("call").addQueryParameter("from", from).build()
+        try { decode<GroupCallState>(authenticated(Request.Builder().url(url).build()).use { readJson(it) }) }
+        catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
+        catch (_: IOException) { null }
+    }
+
+    private fun limitedBytes(response: Response, max: Long): ByteArray {
+        val body = response.body ?: return ByteArray(0)
+        if (body.contentLength() > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
+        val source = body.source()
+        if (source.request(max + 1) && source.buffer.size > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
+        return source.readByteArray()
+    }
+
     private fun messageBody(identity: String, id: String) = buildJsonObject { put("identity", identity); put("message_id", id) }
     private fun url(path: String, identity: String? = null, query: Map<String, String> = emptyMap(), id: String? = null) = base.newBuilder().addPathSegment("v1").addPathSegments(path).apply {
         id?.let { addPathSegment(it) }; identity?.let { addQueryParameter("identity", it) }
@@ -236,7 +386,8 @@ class PostboxClient(
         }
         if (!response.isSuccessful) response.use {
             val problem = runCatching { WireJson.parseToJsonElement(readJson(it)) as? JsonObject }.getOrNull()
-            throw ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull, (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500))
+            throw ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull,
+                (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500), problem)
         }
         return response
     }

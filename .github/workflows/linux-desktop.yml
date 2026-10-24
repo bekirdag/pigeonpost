@@ -16,6 +16,9 @@ concurrency:
   group: linux-desktop-${{ github.ref }}
   cancel-in-progress: true
 
+# Linux jobs use GitHub-hosted runners unless the repository variable PIGEONPOST_SELF_HOSTED_CI is
+# 'true' (docs/ci-runners.md: the wodo-ci pool is opt-in until it can carry this load). Fork PRs
+# never select the self-hosted pool, whatever the variable says.
 jobs:
   native:
     # The group encryption library (UniFFI Python binding + shared library) for both processors.
@@ -28,7 +31,7 @@ jobs:
             arch: x86_64
           - runner: ubuntu-22.04-arm
             arch: aarch64
-    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -57,7 +60,7 @@ jobs:
     # The Linux client's group code against a real postbox, with the web inbox's client as the
     # other member, plus the Phase 1b routes as the window calls them.
     needs: native
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     timeout-minutes: 45
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
@@ -87,7 +90,7 @@ jobs:
             arch: x86_64
           - runner: ubuntu-24.04-arm
             arch: aarch64
-    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
+    runs-on: ${{ startsWith(matrix.runner, 'ubuntu-') && !endsWith(matrix.runner, '-arm') && vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || matrix.runner }}
     timeout-minutes: 35
     defaults:
       run:
@@ -155,7 +158,7 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/linux-desktop-')
     needs: build
-    runs-on: ${{ (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ vars.PIGEONPOST_SELF_HOSTED_CI == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) && fromJSON('["self-hosted","Linux","X64","wodo-ci"]') || 'ubuntu-24.04' }}
     permissions:
       contents: write
       id-token: write
