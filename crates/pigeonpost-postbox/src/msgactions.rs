@@ -150,6 +150,10 @@ pub(crate) struct Prepared {
     pub edit_of: Option<String>,
     /// For an edit: the original's thread on the sender's side.
     pub edit_thread: Option<String>,
+    /// An edit inherits the original's disappearance deadline, including no timer.
+    pub edit_expires_at: Option<u64>,
+    /// Rechecked under the store's writer lock in case the window closes in flight.
+    pub edit_deadline: Option<u64>,
     /// For an edit: the original was filed in the recipient's Filtered list.
     pub force_filtered: bool,
     /// A retry of a send that already happened: its original answer.
@@ -291,6 +295,8 @@ pub(crate) async fn prepare(
             ));
         }
         out.edit_thread = Some(root.thread_id.clone());
+        out.edit_expires_at = root.expires_at;
+        out.edit_deadline = Some(root.created_at.saturating_add(EDIT_WINDOW_SECS));
         out.force_filtered = state
             .store
             .rows_by_ref(recipient.to_string(), root_ref.clone())
@@ -332,7 +338,7 @@ pub(crate) async fn prepare(
     Ok(out)
 }
 
-/// Store the metadata of both copies of a sent message, and announce an edit to the recipient.
+/// Commit both copies with their metadata, then announce an edit to the recipient.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn record_copies(
     state: &AppState,
@@ -342,10 +348,11 @@ pub(crate) async fn record_copies(
     recipient: &store::StoredIdentity,
     recipient_vk: &VerifyingKey,
     prepared: &Prepared,
-    message_id: &str,
-    sent_copy_id: Option<&str>,
+    received: store::Message,
+    sent: store::Message,
+    expires_at: Option<u64>,
     now: u64,
-) {
+) -> Result<store::DeliveryWrite, ApiError> {
     let sealed = json!({
         "v": 1,
         "msg_ref": prepared.msg_ref,
@@ -354,10 +361,10 @@ pub(crate) async fn record_copies(
         "quote": prepared.quote,
     })
     .to_string();
-    let seal = |vk: &VerifyingKey| {
-        envelope::wrap(sender_identity, vk, &sealed, now)
-            .ok()
-            .and_then(|w| serde_json::to_vec(&w).ok())
+    let seal = |vk: &VerifyingKey| -> Result<Vec<u8>, ApiError> {
+        let wrap = envelope::wrap(sender_identity, vk, &sealed, now)
+            .map_err(|_| ApiError::server("seal_error"))?;
+        serde_json::to_vec(&wrap).map_err(|_| ApiError::server("encode_error"))
     };
     let row = |id: &str, owner: &str, blob: Option<Vec<u8>>| MessageMeta {
         id: id.to_string(),
@@ -368,13 +375,21 @@ pub(crate) async fn record_copies(
         meta_blob: blob,
         ..Default::default()
     };
-    let mut rows = vec![row(message_id, &recipient.address, seal(recipient_vk))];
-    if let Some(copy) = sent_copy_id {
-        rows.push(row(copy, &sender.address, seal(sender_vk)));
-    }
-    if let Err(e) = state.store.put_message_meta(rows).await {
-        tracing::error!(error = %e, "message metadata not stored");
-        return;
+    let message_id = received.id.clone();
+    let rows = [
+        row(&received.id, &recipient.address, Some(seal(recipient_vk)?)),
+        row(&sent.id, &sender.address, Some(seal(sender_vk)?)),
+    ];
+    let result = state
+        .store
+        .enqueue_copies(received, sent, rows, expires_at, prepared.edit_deadline)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "sealed message copies not committed");
+            ApiError::server("store_error")
+        })?;
+    if !matches!(result, store::DeliveryWrite::Stored) {
+        return Ok(result);
     }
     if let (Some(root), Some(account)) = (&prepared.edit_of, recipient.account_id.as_deref()) {
         let original = state
@@ -409,6 +424,7 @@ pub(crate) async fn record_copies(
             state.event_hub.wake(account);
         }
     }
+    Ok(result)
 }
 
 // ---- reading -----------------------------------------------------------------------------------
@@ -452,7 +468,7 @@ impl ReceiptView {
                 .store
                 .read_receipts(me.address.clone())
                 .await
-                .unwrap_or(true),
+                .unwrap_or(false),
         }
     }
 
@@ -554,7 +570,7 @@ async fn sender_facts(
                     .store
                     .read_receipts(sender.to_string())
                     .await
-                    .unwrap_or(true),
+                    .unwrap_or(false),
                 account,
                 blocked,
             })
@@ -617,7 +633,7 @@ pub(crate) async fn receipt_for_rows(
             .store
             .read_receipts(me.address.clone())
             .await
-            .unwrap_or(true)
+            .unwrap_or(false)
     {
         return 0;
     }

@@ -28,6 +28,8 @@ have different `message_id`s). A **`msg_ref`** names the message itself and is s
 - References resolve only within the same pair of mailboxes. Anything else is `404 reference_not_found`.
 - A retry with a `msg_ref` this sender already used for the same recipient returns `200` with the
   original ids and `"duplicate": true` instead of sending twice.
+- Both sealed copies, reference metadata and expiry commit atomically. Concurrent retries return
+  the same ids; competing senders cannot claim a reference already used in the recipient's mailbox.
 
 ## 2. Sending
 
@@ -47,6 +49,9 @@ have different `message_id`s). A **`msg_ref`** names the message itself and is s
 - Only the original sender, only their own sent message, within **24 hours** of the original, and
   not once the original has expired (disappearing timer). Errors: `404 reference_not_found`,
   `403 edit_window_closed`, `400 edit_has_attachments` (edits are text only).
+- Every edit inherits the original's expiry. Changing or disabling the conversation timer cannot
+  retain a version after its original disappears. The original and edit window are rechecked when
+  committing, so deleting or expiring the original during a send cannot create an orphan edit.
 - An edit of an edit is an edit of the root: `edit_of` always names the original.
 - The edit is delivered as its own row in the same thread as the original, carrying `edit_of`.
   `thread_id`/`thread` in the request are ignored for an edit.

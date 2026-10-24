@@ -3308,7 +3308,11 @@ pub(crate) async fn do_send_with(
     // before sealing because a failure here must not leave a delivered message in no thread.
     let thread_id = resolve_thread(state, sender, &recipient.address, thread, now).await?;
     // Disappearing messages (SDS §17): the clock starts at send, from the thread's timer.
-    let expires_at = ephemeral::expiry_for(state, sender, &thread_id.sender_side, now).await;
+    let expires_at = if prepared.edit_of.is_some() {
+        prepared.edit_expires_at
+    } else {
+        ephemeral::expiry_for(state, sender, &thread_id.sender_side, now).await
+    };
 
     let wrap = envelope::wrap(&sender_identity, &recipient_vk, body, now).map_err(|e| {
         tracing::error!(error = %e, "seal failed");
@@ -3317,93 +3321,38 @@ pub(crate) async fn do_send_with(
     let message_id = hex_str(&wrap.id());
     let blob = serde_json::to_vec(&wrap).map_err(|_| ApiError::server("encode_error"))?;
 
-    state
-        .store
-        .enqueue(store::Message {
-            id: message_id.clone(),
-            recipient: recipient.address.clone(),
-            sender: sender.address.clone(),
-            wrap_blob: blob,
-            created_at: now,
-            read: false,
-            owner: recipient.address.clone(),
-            outgoing: false,
-            thread_id: thread_id.recipient_side.clone(),
-            filtered,
-        })
-        .await
-        .map_err(|e| {
-            tracing::error!(error = %e, "enqueue failed");
-            ApiError::server("store_error")
-        })?;
-    tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, filtered, "message sealed + enqueued");
-    if let Some(at) = expires_at {
-        if let Err(e) = state
-            .store
-            .set_message_expiry(vec![message_id.clone()], at)
-            .await
-        {
-            tracing::error!(error = %e, "could not stamp message expiry");
-        }
-    }
-
-    // The sender's own copy, sealed to the sender's key. Without it a conversation is only ever
-    // half visible: the delivered copy is sealed to the recipient, so nobody — including this
-    // server — can show the sender what they wrote.
-    //
-    // Sealed separately rather than by storing the plaintext: the postbox's promise is that mail at
-    // rest is ciphertext, and a sent copy is mail. Stored read, because its owner is the one who
-    // wrote it, which also keeps it from waking their own long poll.
-    //
-    // Best-effort: the message is already delivered by this point, and failing the call now would
-    // tell the caller their send failed when it did not. A missing sent copy costs the sender their
-    // own history, not the recipient their mail.
-    let sent_copy_id = match envelope::wrap(&sender_identity, &sender_vk, body, now) {
-        Ok(copy) => {
-            let copy_id = hex_str(&copy.id());
-            match serde_json::to_vec(&copy) {
-                Ok(copy_blob) => {
-                    let stored = state
-                        .store
-                        .enqueue(store::Message {
-                            id: copy_id.clone(),
-                            recipient: recipient.address.clone(),
-                            sender: sender.address.clone(),
-                            wrap_blob: copy_blob,
-                            created_at: now,
-                            read: true,
-                            owner: sender.address.clone(),
-                            outgoing: true,
-                            thread_id: thread_id.sender_side.clone(),
-                            filtered: false,
-                        })
-                        .await;
-                    match stored {
-                        Ok(()) => {
-                            if let Some(at) = expires_at {
-                                let _ = state
-                                    .store
-                                    .set_message_expiry(vec![copy_id.clone()], at)
-                                    .await;
-                            }
-                            Some(copy_id)
-                        }
-                        Err(e) => {
-                            tracing::warn!(error = %e, from = %sender.address, "sent copy not stored");
-                            None
-                        }
-                    }
-                }
-                Err(_) => None,
-            }
-        }
-        Err(e) => {
-            tracing::warn!(error = %e, from = %sender.address, "sent copy not sealed");
-            None
-        }
+    // Seal both copies before committing. Delivery, action metadata and expiry
+    // are one transaction: a reader cannot observe an edit without its hold/fold
+    // metadata, and simultaneous retries cannot enqueue multiple deliveries.
+    let copy = envelope::wrap(&sender_identity, &sender_vk, body, now)
+        .map_err(|_| ApiError::server("seal_error"))?;
+    let sent_copy_id = hex_str(&copy.id());
+    let copy_blob = serde_json::to_vec(&copy).map_err(|_| ApiError::server("encode_error"))?;
+    let received = store::Message {
+        id: message_id.clone(),
+        recipient: recipient.address.clone(),
+        sender: sender.address.clone(),
+        wrap_blob: blob,
+        created_at: now,
+        read: false,
+        owner: recipient.address.clone(),
+        outgoing: false,
+        thread_id: thread_id.recipient_side.clone(),
+        filtered,
     };
-
-    msgactions::record_copies(
+    let sent = store::Message {
+        id: sent_copy_id.clone(),
+        recipient: recipient.address.clone(),
+        sender: sender.address.clone(),
+        wrap_blob: copy_blob,
+        created_at: now,
+        read: true,
+        owner: sender.address.clone(),
+        outgoing: true,
+        thread_id: thread_id.sender_side.clone(),
+        filtered: false,
+    };
+    match msgactions::record_copies(
         state,
         &sender_identity,
         sender,
@@ -3411,11 +3360,49 @@ pub(crate) async fn do_send_with(
         &recipient,
         &recipient_vk,
         &prepared,
-        &message_id,
-        sent_copy_id.as_deref(),
+        received,
+        sent,
+        expires_at,
         now,
     )
-    .await;
+    .await?
+    {
+        store::DeliveryWrite::Stored => {}
+        store::DeliveryWrite::Duplicate {
+            message_id,
+            sent_copy_id,
+        } => {
+            return Ok(json!({
+                "message_id": message_id,
+                "sent_copy_id": sent_copy_id,
+                "recipient": recipient.address,
+                "msg_ref": prepared.msg_ref,
+                "duplicate": true,
+            }));
+        }
+        store::DeliveryWrite::ReferenceConflict => {
+            return Err(ApiError::new(
+                StatusCode::CONFLICT,
+                "msg_ref_in_use",
+                "this msg_ref already names a different message",
+            ));
+        }
+        store::DeliveryWrite::ReferenceNotFound => {
+            return Err(ApiError::new(
+                StatusCode::NOT_FOUND,
+                "reference_not_found",
+                "no such message in this conversation",
+            ));
+        }
+        store::DeliveryWrite::EditWindowClosed => {
+            return Err(ApiError::new(
+                StatusCode::FORBIDDEN,
+                "edit_window_closed",
+                "a message can be edited for 24 hours after it was sent",
+            ));
+        }
+    }
+    tracing::info!(from = %sender.address, to = %recipient.address, message_id = %message_id, filtered, "message sealed + enqueued");
 
     // Release anyone long-polling. Only after the enqueue commits, so a woken waiter that
     // immediately re-reads the store is guaranteed to see this message.

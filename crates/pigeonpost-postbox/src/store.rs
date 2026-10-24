@@ -43,7 +43,7 @@ pub use googleplay::GoogleBinding;
 pub(crate) use groups::append_event;
 #[cfg(test)]
 use lifecycle::AppleRefresh;
-pub use msgactions::{MessageMeta, ReceiptKind, RefRow};
+pub use msgactions::{DeliveryWrite, MessageMeta, ReceiptKind, RefRow};
 pub use orgs::{ActivateOutcome, DraftOutcome, Org, OrgDraft};
 
 const SCHEMA: &str = "
@@ -3272,6 +3272,7 @@ impl Store {
         .map_err(|_| StoreError::Join)?
     }
 
+    #[cfg(test)]
     pub async fn enqueue(&self, m: Message) -> Result<(), StoreError> {
         let conn = self.conn.clone();
         tokio::task::spawn_blocking(move || -> Result<(), StoreError> {

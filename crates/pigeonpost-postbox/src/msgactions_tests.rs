@@ -203,6 +203,128 @@ async fn message_actions_are_refused_while_their_flags_are_off() {
 }
 
 #[tokio::test]
+async fn concurrent_retries_deliver_one_message_with_one_reference() {
+    let state = state();
+    let srv = serve(state.clone()).await;
+    let a = person(&state, "acct_retry_a").await;
+    let b = person(&state, "acct_retry_b").await;
+    let msg_ref = msgactions::new_msg_ref();
+    let (first, retry) = tokio::join!(
+        srv.send(
+            &a,
+            &b,
+            json!({ "body": "one delivery", "msg_ref": msg_ref })
+        ),
+        srv.send(
+            &a,
+            &b,
+            json!({ "body": "one delivery", "msg_ref": msg_ref })
+        ),
+    );
+    assert!(first.0.is_success(), "{first:?}");
+    assert!(retry.0.is_success(), "{retry:?}");
+    assert_eq!(first.1["message_id"], retry.1["message_id"]);
+    assert_eq!(first.1["sent_copy_id"], retry.1["sent_copy_id"]);
+    assert_eq!(srv.listing(&b, "&actions=1").await.len(), 1);
+    assert_eq!(srv.listing(&a, "&actions=1").await.len(), 1);
+}
+
+#[tokio::test]
+async fn simultaneous_senders_cannot_claim_the_same_recipient_reference() {
+    let state = state();
+    let srv = serve(state.clone()).await;
+    let a = person(&state, "acct_ref_a").await;
+    let b = person(&state, "acct_ref_b").await;
+    let c = person(&state, "acct_ref_c").await;
+    let msg_ref = msgactions::new_msg_ref();
+    let (first, second) = tokio::join!(
+        srv.send(&a, &b, json!({ "body": "one", "msg_ref": msg_ref })),
+        srv.send(&c, &b, json!({ "body": "two", "msg_ref": msg_ref })),
+    );
+    let mut statuses = [first.0.as_u16(), second.0.as_u16()];
+    statuses.sort();
+    assert_eq!(statuses, [201, 409], "{first:?}, {second:?}");
+    assert_eq!(srv.listing(&b, "&actions=1").await.len(), 1);
+    assert_eq!(
+        srv.listing(&a, "&actions=1").await.len() + srv.listing(&c, "&actions=1").await.len(),
+        1
+    );
+}
+
+#[tokio::test]
+async fn editing_after_disabling_a_timer_does_not_extend_the_original_expiry() {
+    let state = state();
+    let srv = serve(state.clone()).await;
+    let a = person(&state, "acct_expiry_a").await;
+    let b = person(&state, "acct_expiry_b").await;
+    srv.all_flags(&a.account).await;
+    srv.flag("disappearing", &a.account).await;
+    let (_, bootstrap) = srv.send(&a, &b, json!({ "body": "bootstrap" })).await;
+    let thread = srv
+        .listing(&a, "&actions=1")
+        .await
+        .into_iter()
+        .find(|m| m["message_id"] == bootstrap["sent_copy_id"])
+        .unwrap()["thread_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let timer_path = format!("/v1/threads/{thread}");
+    let (status, _) = srv
+        .call(
+            reqwest::Method::PATCH,
+            &timer_path,
+            Some(&a.token),
+            Some(json!({ "ephemeral_secs": 300 })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, original) = srv
+        .send(&a, &b, json!({ "body": "temporary secret" }))
+        .await;
+    let original_id = original["message_id"].as_str().unwrap().to_string();
+    let expires_at = state
+        .store
+        .message_expiries(vec![original_id.clone()])
+        .await
+        .unwrap()[&original_id];
+    let (status, _) = srv
+        .call(
+            reqwest::Method::PATCH,
+            &timer_path,
+            Some(&a.token),
+            Some(json!({ "ephemeral_secs": null })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, edited) = srv
+        .send(
+            &a,
+            &b,
+            json!({ "body": "revised secret", "edit_of": original["msg_ref"] }),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{edited}");
+    let ids = vec![
+        edited["message_id"].as_str().unwrap().to_string(),
+        edited["sent_copy_id"].as_str().unwrap().to_string(),
+    ];
+    let deadlines = state.store.message_expiries(ids.clone()).await.unwrap();
+    assert_eq!(deadlines.len(), 2);
+    for id in ids {
+        assert_eq!(deadlines[&id], expires_at);
+    }
+    state
+        .store
+        .expire_direct_messages(expires_at, 100)
+        .await
+        .unwrap();
+    let remaining = srv.listing(&b, "&actions=1").await;
+    assert_eq!(remaining.len(), 1);
+    assert_eq!(remaining[0]["body"], "bootstrap");
+}
+
+#[tokio::test]
 async fn only_the_sender_may_edit_and_only_within_a_day() {
     let state = state();
     let srv = serve(state.clone()).await;

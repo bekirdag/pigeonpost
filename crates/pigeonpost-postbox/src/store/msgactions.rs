@@ -58,6 +58,18 @@ pub struct MessageMeta {
     pub agent_status_at: Option<u64>,
 }
 
+/// Result of committing both sealed copies and their reference in one transaction.
+pub enum DeliveryWrite {
+    Stored,
+    Duplicate {
+        message_id: Option<String>,
+        sent_copy_id: String,
+    },
+    ReferenceConflict,
+    ReferenceNotFound,
+    EditWindowClosed,
+}
+
 /// A copy found by reference, with what the reference rules need to know about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RefRow {
@@ -132,21 +144,102 @@ const REF_SELECT: &str = "SELECT m.id, mm.msg_ref, m.direction, m.sender, m.reci
                              AND (m.expires_at IS NULL OR m.expires_at > CAST(strftime('%s','now') AS INTEGER))";
 
 impl Store {
-    /// Record metadata for freshly stored copies. Ignored for a row that already has some.
-    pub async fn put_message_meta(&self, rows: Vec<MessageMeta>) -> Result<(), StoreError> {
+    /// Recheck reference ownership under the writer lock, then atomically persist
+    /// both copies, their action metadata and expiry. A polling reader must never
+    /// observe an edit as an ordinary message because its metadata is not stored yet.
+    pub async fn enqueue_copies(
+        &self,
+        received: super::Message,
+        sent: super::Message,
+        metadata: [MessageMeta; 2],
+        expires_at: Option<u64>,
+        edit_deadline: Option<u64>,
+    ) -> Result<DeliveryWrite, StoreError> {
         let conn = self.conn.clone();
-        tokio::task::spawn_blocking(move || -> Result<(), StoreError> {
+        tokio::task::spawn_blocking(move || -> Result<DeliveryWrite, StoreError> {
             let mut c = conn.lock().expect("store lock");
-            let tx = c.transaction()?;
-            for m in rows {
+            let tx = c.transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)?;
+            let msg_ref = &metadata[0].msg_ref;
+            let previous: Option<(String, String)> = tx
+                .query_row(
+                    "SELECT m.id, m.recipient FROM messages m
+                     JOIN message_meta mm ON mm.id = m.id
+                     WHERE mm.owner = ?1 AND mm.msg_ref = ?2 AND m.direction = 'out'
+                       AND (m.expires_at IS NULL OR m.expires_at > CAST(strftime('%s','now') AS INTEGER))
+                     LIMIT 1",
+                    params![sent.owner, msg_ref],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                )
+                .optional()?;
+            if let Some((sent_copy_id, recipient)) = previous {
+                if recipient != received.recipient {
+                    return Ok(DeliveryWrite::ReferenceConflict);
+                }
+                let message_id = tx
+                    .query_row(
+                        "SELECT m.id FROM messages m JOIN message_meta mm ON mm.id = m.id
+                         WHERE mm.owner = ?1 AND mm.msg_ref = ?2 AND m.direction = 'in'
+                           AND m.sender = ?3
+                           AND (m.expires_at IS NULL OR m.expires_at > CAST(strftime('%s','now') AS INTEGER))
+                         LIMIT 1",
+                        params![received.owner, msg_ref, received.sender],
+                        |r| r.get::<_, String>(0),
+                    )
+                    .optional()?;
+                return Ok(DeliveryWrite::Duplicate { message_id, sent_copy_id });
+            }
+            let in_use: bool = tx.query_row(
+                "SELECT EXISTS(SELECT 1 FROM message_meta mm JOIN messages m ON m.id = mm.id
+                 WHERE mm.owner IN (?1, ?2) AND mm.msg_ref = ?3
+                   AND (m.expires_at IS NULL OR m.expires_at > CAST(strftime('%s','now') AS INTEGER)))",
+                params![received.owner, sent.owner, msg_ref],
+                |r| r.get(0),
+            )?;
+            if in_use {
+                return Ok(DeliveryWrite::ReferenceConflict);
+            }
+            if let Some(root_ref) = &metadata[0].edit_of {
+                let root_exists: bool = tx.query_row(
+                    "SELECT EXISTS(SELECT 1 FROM message_meta mm JOIN messages m ON m.id = mm.id
+                     WHERE mm.owner = ?1 AND mm.msg_ref = ?2 AND mm.edit_of IS NULL
+                       AND m.direction = 'out' AND m.recipient = ?3
+                       AND (m.expires_at IS NULL OR m.expires_at > CAST(strftime('%s','now') AS INTEGER)))",
+                    params![sent.owner, root_ref, received.recipient],
+                    |r| r.get(0),
+                )?;
+                if !root_exists {
+                    return Ok(DeliveryWrite::ReferenceNotFound);
+                }
+                let now: i64 = tx.query_row("SELECT CAST(strftime('%s','now') AS INTEGER)", [], |r| r.get(0))?;
+                let deadline = edit_deadline.ok_or(StoreError::Corrupt("edit without deadline"))?;
+                if now.max(0) as u64 > deadline {
+                    return Ok(DeliveryWrite::EditWindowClosed);
+                }
+            }
+            for (m, meta) in [received, sent].into_iter().zip(metadata) {
+                if m.id != meta.id || m.owner != meta.owner {
+                    return Err(StoreError::Corrupt("message copy metadata mismatch"));
+                }
                 tx.execute(
-                    "INSERT OR IGNORE INTO message_meta (id, owner, msg_ref, reply_to, edit_of, meta_blob)
+                    "INSERT INTO messages
+                     (id, recipient, sender, wrap_blob, created_at, read, owner, direction, thread_id, filtered, expires_at)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+                    params![m.id, m.recipient, m.sender, m.wrap_blob, m.created_at as i64,
+                        m.read as i64, m.owner, if m.outgoing { "out" } else { "in" },
+                        m.thread_id, (m.filtered && !m.outgoing) as i64, expires_at.map(|t| t as i64)],
+                )?;
+                tx.execute(
+                    "INSERT INTO message_meta (id, owner, msg_ref, reply_to, edit_of, meta_blob)
                      VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-                    params![m.id, m.owner, m.msg_ref, m.reply_to, m.edit_of, m.meta_blob],
+                    params![meta.id, meta.owner, meta.msg_ref, meta.reply_to, meta.edit_of, meta.meta_blob],
+                )?;
+                tx.execute(
+                    "UPDATE threads SET last_at = ?2 WHERE id = ?1 AND last_at < ?2",
+                    params![m.thread_id, m.created_at as i64],
                 )?;
             }
             tx.commit()?;
-            Ok(())
+            Ok(DeliveryWrite::Stored)
         })
         .await
         .map_err(|_| StoreError::Join)?
@@ -608,13 +701,17 @@ mod tests {
     #[tokio::test]
     async fn receipts_only_move_forward_and_metadata_follows_its_row() {
         let store = Store::open(":memory:").unwrap();
-        store.enqueue(message("in1", "/k/b", false)).await.unwrap();
-        store.enqueue(message("out1", "/k/a", true)).await.unwrap();
         store
-            .put_message_meta(vec![
-                meta("in1", "/k/b", "mref_x"),
-                meta("out1", "/k/a", "mref_x"),
-            ])
+            .enqueue_copies(
+                message("in1", "/k/b", false),
+                message("out1", "/k/a", true),
+                [
+                    meta("in1", "/k/b", "mref_x"),
+                    meta("out1", "/k/a", "mref_x"),
+                ],
+                None,
+                None,
+            )
             .await
             .unwrap();
 
@@ -661,6 +758,137 @@ mod tests {
             .await
             .unwrap()
             .is_empty());
+    }
+
+    #[tokio::test]
+    async fn metadata_failure_rolls_back_both_copies_and_expiry_is_atomic() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch(
+                "CREATE TRIGGER reject_test_metadata BEFORE INSERT ON message_meta
+             WHEN NEW.id = 'out1' BEGIN SELECT RAISE(ABORT, 'test metadata failure'); END;",
+            )
+            .unwrap();
+        let write = || {
+            store.enqueue_copies(
+                message("in1", "/k/b", false),
+                message("out1", "/k/a", true),
+                [
+                    meta("in1", "/k/b", "mref_x"),
+                    meta("out1", "/k/a", "mref_x"),
+                ],
+                Some(u64::MAX / 4),
+                None,
+            )
+        };
+        assert!(write().await.is_err());
+        assert!(store.list_for("/k/a".into()).await.unwrap().is_empty());
+        assert!(store.list_for("/k/b".into()).await.unwrap().is_empty());
+        assert!(store
+            .meta_for("/k/b".into(), vec!["in1".into()])
+            .await
+            .unwrap()
+            .is_empty());
+        store
+            .conn
+            .lock()
+            .unwrap()
+            .execute_batch("DROP TRIGGER reject_test_metadata")
+            .unwrap();
+        assert!(matches!(write().await.unwrap(), DeliveryWrite::Stored));
+        let expiry = store
+            .message_expiries(vec!["in1".into(), "out1".into()])
+            .await
+            .unwrap();
+        assert_eq!(expiry.len(), 2);
+        assert_eq!(expiry["in1"], u64::MAX / 4);
+        assert_eq!(expiry["out1"], expiry["in1"]);
+    }
+
+    #[tokio::test]
+    async fn sending_to_self_keeps_both_directions_and_retries_return_the_originals() {
+        let store = Store::open(":memory:").unwrap();
+        let write = |incoming: &str, outgoing: &str| {
+            let mut received = message(incoming, "/k/a", false);
+            received.recipient = "/k/a".into();
+            let mut sent = message(outgoing, "/k/a", true);
+            sent.recipient = "/k/a".into();
+            store.enqueue_copies(
+                received,
+                sent,
+                [
+                    meta(incoming, "/k/a", "mref_x"),
+                    meta(outgoing, "/k/a", "mref_x"),
+                ],
+                None,
+                None,
+            )
+        };
+        assert!(matches!(
+            write("in1", "out1").await.unwrap(),
+            DeliveryWrite::Stored
+        ));
+        match write("in2", "out2").await.unwrap() {
+            DeliveryWrite::Duplicate {
+                message_id,
+                sent_copy_id,
+            } => {
+                assert_eq!(message_id.as_deref(), Some("in1"));
+                assert_eq!(sent_copy_id, "out1");
+            }
+            _ => panic!("retry must return the first self-delivery"),
+        }
+        assert_eq!(store.list_for("/k/a".into()).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn an_edit_rechecks_the_root_and_deadline_before_committing() {
+        let store = Store::open(":memory:").unwrap();
+        store
+            .enqueue_copies(
+                message("in1", "/k/b", false),
+                message("out1", "/k/a", true),
+                [
+                    meta("in1", "/k/b", "mref_root"),
+                    meta("out1", "/k/a", "mref_root"),
+                ],
+                None,
+                None,
+            )
+            .await
+            .unwrap();
+        let edit = |deadline| {
+            let mut received = meta("in2", "/k/b", "mref_edit");
+            received.edit_of = Some("mref_root".into());
+            let mut sent = meta("out2", "/k/a", "mref_edit");
+            sent.edit_of = Some("mref_root".into());
+            store.enqueue_copies(
+                message("in2", "/k/b", false),
+                message("out2", "/k/a", true),
+                [received, sent],
+                None,
+                Some(deadline),
+            )
+        };
+        assert!(matches!(
+            edit(0).await.unwrap(),
+            DeliveryWrite::EditWindowClosed
+        ));
+        store
+            .delete_message("/k/a".into(), "out1".into())
+            .await
+            .unwrap();
+        assert!(matches!(
+            edit(u64::MAX).await.unwrap(),
+            DeliveryWrite::ReferenceNotFound
+        ));
+        assert!(store.list_for("/k/a".into()).await.unwrap().is_empty());
+        let recipient = store.list_for("/k/b".into()).await.unwrap();
+        assert_eq!(recipient.len(), 1);
+        assert_eq!(recipient[0].id, "in1");
     }
 
     #[tokio::test]
