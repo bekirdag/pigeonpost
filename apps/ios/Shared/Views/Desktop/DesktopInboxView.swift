@@ -32,6 +32,7 @@ struct DesktopInboxView: View {
     var joinLink: (() -> Void)? = nil
     /// Open the Filtered senders. The caller owns the sheet, as it owns Settings.
     var openFiltered: () -> Void = {}
+    var openCalendar: (() -> Void)? = nil
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
@@ -40,6 +41,7 @@ struct DesktopInboxView: View {
     // Phase 1b. Optional, so a host that does not provide them shows the inbox as it was.
     @Environment(CallLog.self) private var callLog: CallLog?
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    @Environment(CalendarStore.self) private var calendar: CalendarStore?
     /// The sidebar shows the call history instead of the conversations (the web's left view).
     @State private var showingCalls = false
 
@@ -161,6 +163,9 @@ struct DesktopInboxView: View {
         return VStack(spacing: 0) {
             mailboxBar
             if switchingMailbox { mailboxList }
+            if let calendar, account.features.calendar, let openCalendar {
+                CalendarEntry(count: calendar.pendingCount, open: openCalendar).padding(.horizontal, 16)
+            }
             if callLog != nil, account.features.callHistory { sideSwitch }
             if inbox.loading {
                 HStack(spacing: 8) {

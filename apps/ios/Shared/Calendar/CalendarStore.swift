@@ -1,12 +1,6 @@
 import Foundation
 import Observation
 
-struct CalendarEventKey: Hashable, Identifiable {
-    let eventId: String
-    var occurrenceId: String?
-    var id: String { eventId + ":" + (occurrenceId ?? "series") }
-}
-
 /// Calendar state belongs to one acting mailbox. The app supplies identity/capabilities rather
 /// than letting a late response consult whichever mailbox happens to be selected afterwards.
 @MainActor
@@ -35,6 +29,7 @@ final class CalendarStore {
     private var detailReads: [CalendarEventKey: UUID] = [:]
     private var operations: [String: UUID] = [:]
     private var followingToday = true
+    private var preservingMutationError = false
     @ObservationIgnored private let client: PostboxClient
     @ObservationIgnored private let now: () -> Date
     @ObservationIgnored private var attempts: [CreateIntent: CreateAttempt] = [:]
@@ -64,6 +59,7 @@ final class CalendarStore {
         refreshId = UUID()
         folders = []; occurrences = []; invitations = []; filteredInvitations = []
         settings = CalendarSettings(); details = [:]; detailReads = [:]; operations = [:]; attempts = [:]
+        preservingMutationError = false
         selectedFolders = nil; loading = false; lastError = nil; revisionConflict = false; openEvent = nil; followingToday = true
         selectedDay = CalendarDay(date: now(), zone: .current)
     }
@@ -86,7 +82,8 @@ final class CalendarStore {
             if let selected = selectedFolders { selectedFolders = selected.intersection(Set(folders.map(\.id))) }
             if followingToday { selectedDay = CalendarDay(date: now(), zone: zone) }
             if selectedFolders?.isEmpty == true {
-                occurrences = []; lastError = nil
+                occurrences = []
+                if !preservingMutationError { lastError = nil }
                 if let openEvent { _ = await loadEvent(openEvent) }
                 return
             }
@@ -95,7 +92,7 @@ final class CalendarStore {
                 from: Int(range.lowerBound.timeIntervalSince1970), to: Int(range.upperBound.timeIntervalSince1970), calendars: selectedFolders?.sorted() ?? [])
             guard generation == visit, refreshId == request else { return }
             occurrences = entries
-            lastError = nil
+            if !preservingMutationError { lastError = nil }
             if let openEvent { _ = await loadEvent(openEvent) }
         } catch {
             guard generation == visit, refreshId == request else { return }
@@ -174,7 +171,7 @@ final class CalendarStore {
         let visit = generation
         let operation = UUID()
         operations[name] = operation
-        lastError = nil; revisionConflict = false
+        lastError = nil; revisionConflict = false; preservingMutationError = false
         defer { if generation == visit && operations[name] == operation { operations[name] = nil } }
         do {
             let result = try await body(mailbox)
@@ -184,7 +181,7 @@ final class CalendarStore {
             return result
         } catch {
             guard generation == visit else { return nil }
-            report(error)
+            report(error, mutation: true)
             return nil
         }
     }
@@ -219,6 +216,20 @@ final class CalendarStore {
         }
     }
 
+    func updateFolder(id: String, revision: Int, fields: [String: Any]) async -> Bool {
+        await mutation("folder:" + id) { mailbox in
+            _ = try await client.updateCalendar(mailbox: mailbox, id: id, revision: revision, fields: fields)
+            return true
+        } ?? false
+    }
+
+    func deleteFolder(id: String, revision: Int) async -> Bool {
+        await mutation("folder:" + id) { mailbox in
+            try await client.deleteCalendar(mailbox: mailbox, id: id, revision: revision)
+            return true
+        } ?? false
+    }
+
     func updateEvent(id: String, revision: Int, scope: CalendarEventScope, occurrenceId: String?, fields: [String: Any]) async -> CalendarEventResponse? {
         await mutation("event:" + id) { mailbox in
             var body = fields
@@ -249,7 +260,20 @@ final class CalendarStore {
         } ?? false
     }
 
-    func clearError() { lastError = nil; revisionConflict = false }
+    func saveReminders(id: String, minutes: [Int]) async -> Bool {
+        await mutation("reminders:" + id) { mailbox in
+            try await client.calendarReminders(mailbox: mailbox, id: id, reminders: minutes.map { CalendarReminder(minutesBefore: $0, channel: "push") })
+            return true
+        } ?? false
+    }
+
+    func guestLink(id: String, attendee: String) async -> CalendarGuestLink? {
+        await mutation("guest-link:" + attendee) { mailbox in
+            try await client.calendarGuestLink(mailbox: mailbox, id: id, attendee: attendee)
+        }
+    }
+
+    func clearError() { lastError = nil; revisionConflict = false; preservingMutationError = false }
 
     private func discardRejectedAttempt(_ intent: CreateIntent, error: Error) {
         if let status = (error as? APIError)?.status, [400, 401, 403, 404, 413, 422, 429].contains(status) {
@@ -257,12 +281,16 @@ final class CalendarStore {
         }
     }
 
-    private func report(_ error: Error) {
+    private func report(_ error: Error, mutation: Bool = false) {
         let api = error as? APIError
+        // A successful poll is not an acknowledgement of a failed write. Likewise an unrelated
+        // read failure must not replace its actionable conflict/retry state. Access loss wins.
+        if preservingMutationError && !mutation && api?.status != 404 { return }
         revisionConflict = api?.code == "revision_conflict"
         if api?.code == "feature_disabled" {
             configure(mailbox: mailbox, enabled: false, emailEnabled: false)
         }
+        preservingMutationError = mutation
         lastError = CalendarProblems.message(error)
     }
 }

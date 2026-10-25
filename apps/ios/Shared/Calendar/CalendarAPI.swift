@@ -13,10 +13,6 @@ struct CalendarWritePayload: Equatable {
     }
 }
 
-enum CalendarEventScope: String, CaseIterable { case all, this, following }
-enum CalendarAnswerScope: String, CaseIterable { case all, this }
-enum CalendarAnswer: String, CaseIterable { case accepted, tentative, declined }
-
 extension PostboxClient {
     private static func calendarHeaders(_ mailbox: String) -> [String: String] { ["x-pigeonpost-identity": mailbox] }
 
@@ -145,11 +141,11 @@ extension PostboxClient {
     }
 
     func calendarFeed(mailbox: String, id: String) async throws -> CalendarFeed {
-        try await send("/v1/calendars/" + Self.calendarSegment(id) + "/feed", headers: Self.calendarHeaders(mailbox), as: CalendarFeed.self)
+        try await send("/v1/calendar/feeds/" + Self.calendarSegment(id), headers: Self.calendarHeaders(mailbox), as: CalendarFeed.self)
     }
 
     func setCalendarFeed(mailbox: String, id: String, enabled: Bool, projection: String) async throws -> CalendarFeed {
-        let data = try await calendarWrite("/v1/calendars/" + Self.calendarSegment(id) + "/feed", method: "POST", mailbox: mailbox,
+        let data = try await calendarWrite("/v1/calendar/feeds/" + Self.calendarSegment(id), method: "POST", mailbox: mailbox,
                                            payload: CalendarWritePayload(["enabled": enabled, "projection": projection]))
         return try Self.decode(CalendarFeed.self, from: data)
     }

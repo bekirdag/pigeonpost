@@ -5,16 +5,17 @@ Plan: [implementation plan](native-calendar-2026-10-25-plan.md).
 ## Current state
 
 Isolated worktree `pigeonpost-native-calendar-20261025`, branch `codex/native-calendar-20261025`,
-based on `9011334` / PR95. Response/time models and the API layer are implemented with 40 model
-and 18 transport checks passing. The mailbox store passes22 optimized state checks. Screen work is
-next; no calendar navigation or store submission.
+based on `9011334` / PR95, with its final repair merged via9dfb7f9. Current local qualification:
+40 time/model +36 draft +20 transport +24 store +34 real-postbox checks,8 iPhone and8 iPad
+interaction cases, and both app builds pass. The Mac calendar window is visually checked. Remaining
+calendar controls and hosted CI follow; no calendar release or store submission.
 
 | Area | State | Required evidence |
 |---|---|---|
-| Models/time/API | 40 model and 18 transport checks pass | Server integration with the store/editor |
-| Store | 22 state checks pass | Real server and screen integration |
-| Agenda/event screens | Pending | CRUD, recurrence/scopes, layout/accessibility |
-| Invitations/settings/import/export | Pending | Admission, redaction, capability custody |
+| Models/time/API | 40 model,36 draft and20 transport checks pass | Real server integration with store/editor |
+| Store | 24 state checks and real server checks pass | Final screen/CI qualification |
+| Agenda/event screens | 8 cases pass on each device | Hosted newer-runtime qualification |
+| Invitations/settings/import/export | Invitations/settings implemented; import/export/feed screens pending | Capability custody and remaining UI |
 | Scheduled meetings/routing | Contract read | Native bridge, lobby/host/occurrence cases |
 | Other native platforms | Pending | Android/Windows/Linux parity checks |
 | Release | Held | CI, artifacts, owner/Claude review and real devices |
@@ -73,3 +74,99 @@ next; no calendar navigation or store submission.
   let an optimized build release the client's weakly held token provider; retaining it in the
   fixture host fixed the harness. No product workaround was needed. Registered the suite in the
   existing standalone runner. Calendar screens and real-server meeting tests remain pending.
+
+## Editor and initial screen qualification
+
+- Added a frozen-revision editor: whole-series and effective occurrence values stay distinct;
+  unchanged known fields are absent from PATCH. Attendees, exceptions, meeting policy and locale
+  survive unrelated edits. Repeated times require an offset choice; all-day last dates are shown
+  inclusively and sent with an exclusive end.36 draft checks pass (`native-calendar-draft.log`),
+  including malformed reminder input never turning into an unintended “remove all”.
+- Connected capability-gated Calendar entries on phone and desktop/iPad, a shared scoped lifecycle,
+  month/day agenda, event create/edit/cancel, RSVP, separate filtered invitations, personal reminders,
+  calendar management, and privacy/timezone/working-hours forms. Cancellation confirmations capture
+  the reviewed revision rather than adopting a poll's newer revision. Remaining attendee management,
+  import/export/feeds, scheduled-call bridge, deep links and real server cases are still pending.
+- Inspection found and corrected a foundation API defect: subscription routes are
+  `/v1/calendar/feeds/{id}`, not `/v1/calendars/{id}/feed`. Added read/revoke transport cases; their
+  rerun is pending. Do not treat the earlier18 cases as proof of those corrected routes.
+- Both initial iPhone and Mac screen builds pass. First simulator launch nevertheless caught a
+  UIKit self-sizing loop in the lazy month grid (row height295↔357); replaced it with six eager,
+  measured week rows. Runtime repair verification and interaction tests are pending. Evidence:
+  `native-calendar-launch-system.log` and the local app crash report; do not count the first build
+  as a successful launch. Test-only calendar transport handles a reserved `.invalid` origin and
+  uses synthetic mailboxes; no real invitations or production writes are used for these UI checks.
+- Upstream PR95 merged as `845a02a1022982f134d34f8425a2b89fab1b072a` after all current CI jobs
+  passed at63b60b5: iPhone59 cases/3 existing skips/0 failures, iPad/StoreKit, Mac14/26, core Windows/
+  Linux/Mac, MLS and audits. The local calendar branch includes its repair via9dfb7f9. The matching
+  core image is building separately; it has not yet been deployed at this checkpoint.
+
+## Runtime interaction follow-up
+
+- The eager month rows fix the launch crash. The first actual navigation check then caught List's
+  automatic button style invoking Previous/Next/Today together; explicit plain buttons fix that.
+  Launch,44-point selected day, month navigation, Today and agenda/detail pass in
+  `native-calendar-launch-buttons.xcresult`.
+- The full Swift runner passes40 calendar models +36 drafts +20 transport +22 store checks,
+  alongside inbox128/group84/Phase1b38 (`native-calendar-full-editor.log`). The corrected feed routes
+  are now covered by the passing transport cases, still awaiting real-postbox integration.
+- First8-case iPhone suite:4 pass,4 fail (`native-calendar-iphone-first.xcresult`). Inspection
+  distinguishes harness mistakes (an enabled toolbar wrapper instead of its disabled Button;
+  Done in an underlying sheet) from product gaps (a secondary toolbar submenu losing its explicit
+  entry, and a reminder validation error scrolling offscreen). The conflict itself correctly
+  retains the unsent draft and disables Save. Added pinned feedback and explicit toolbar placement;
+  focused rerun and iPad checks are in progress. No assertions of completed calendar qualification.
+- PR95's matching core image is now deployed after source-tree equality, SQLite backup/quick_check,
+  isolated candidate and rollback-image canaries. Source845a02a; both services use
+  `pigeonpost-postbox:apple-actions-63b60b5`, id
+  `sha256:417d07d199cb28f03b557946bf733e44993e283655fea401d97348b6d0831642`.
+  Backup `/var/backups/pigeonpost/postbox-20261025T043832Z` stays on the server. Both services run
+  with0 restarts; runtime env files match the pre-deploy copies, source is clean, public health200
+  and unauthenticated capabilities401. The original live database is retained. No native store submission.
+
+## Scoped screen and real-server checkpoint
+
+- The iPad's slower conflict flow exposed a real store defect: polling cleared a write error but
+  retained its conflict flag, hiding recovery while Save stayed disabled. Successful reads now keep
+  unacknowledged write errors, and failed incidental reads cannot replace them.24 optimized store
+  checks pass, including unconfirmed-create and stale-edit messages surviving a successful poll.
+- The current iPhone app passes all8 calendar cases (`native-calendar-iphone-sticky-qualified.xcresult`).
+  The full iPad run passes7/8; the remaining occurrence edit case hit a menu before it became
+  hittable. Popup actions now wait for existence/hittability instead of swiping, which can dismiss
+  iPad popups. That focused case passes (`native-calendar-ipad-popup.xcresult`); a coherent full8-case
+  rerun is in progress. Both actual app builds pass. No simulator assertion has been removed.
+- **34 real postbox checks pass** (`native-calendar-e2e.log`), through the native client/store and
+  a throwaway loopback issuer/database: explicit stranger filtering, agenda exclusion, response
+  without contact creation, co-host/organizer authority, redacted guest contacts, personal links
+  with email disabled, stale revisions, stable moved ids, cache erasure after removal, reminders,
+  partial privacy settings, feeds/read-once links/revocation, ICS export/import and a response lost
+  after commit. The retry retains exact body hashes/request key and creates one event. Fixtures
+  initially assumed second-suffixed response times and a pending invitation without admitting its
+  sender; corrected them against actual server canonical formatting/admission, preserving the
+  semantic identity/authorization assertions.
+- The shared postbox fixture has an optional calendar mode with synthetic verified addresses;
+  original group mode remains compatible. The existing65-case Swift/browser real-MLS suite passes
+  after this change (`native-calendar-fixture-groups-regression.log`). No real invitation emails,
+  candidate data or production mailboxes are used. CI now includes calendar UI on both devices and
+  the real calendar suite beside the existing group suite; hosted execution is pending.
+- Remaining server correction before release: `calendar/time.rs::fmt_local` drops nonzero seconds
+  as well as formatting zero seconds without a suffix. Imported/authored nonzero-second times must
+  round-trip before the native store batch. This is a discovered server defect, not fixed here yet.
+- New UI work is still a checkpoint: scheduled-call joining/routing, attendee editing/placement,
+  linked group management, import/export/feed screens, broader Mac runtime checks and the other
+  native platforms remain pending. Native stores remain held. Temporary build-cache link removed;
+  the shared cache is retained.
+
+## Calendar screen checkpoint ready for hosted CI
+
+- Coherent final iPad run passes all8 cases (`native-calendar-ipad-final.xcresult`), alongside the
+  passing8-case iPhone run. A local popup helper now waits before tapping; it does not swipe away
+  an iPad menu while trying to locate its command. Current Mac/iPhone builds pass, workflow YAML
+  parses with Ruby's standard parser, and staged whitespace validation and Docdex hook pass.
+- A real Mac fixture launch exposed an omitted second toolbar menu despite a successful build.
+  The Mac Calendar options menu now lives in the month header; the iOS toolbar keeps its tested
+  layout. Visually checked the actual Mac window (`native-calendar-mac-final.png`), then stopped
+  only the task-owned fixture process. This is a runtime/layout check, not a full Mac interaction
+  suite. No real account data or other applications were captured.
+- No release claim: CI and the remaining calendar controls are still required. Native store
+  submissions remain held for the combined batch and the owner's pre-App-Review Claude review.

@@ -13,6 +13,7 @@ struct PigeonpostApp: App {
     @State private var callLog: CallLog
     @State private var filtered: FilteredMail
     @State private var avatars: AvatarStore
+    @State private var calendar: CalendarStore
 
     init() {
         let session = Session()
@@ -30,6 +31,11 @@ struct PigeonpostApp: App {
         _callLog = State(initialValue: callLog)
         _filtered = State(initialValue: filtered)
         _avatars = State(initialValue: AvatarStore(account: account))
+        #if DEBUG
+        _calendar = State(initialValue: CalendarStore(client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
+        #else
+        _calendar = State(initialValue: CalendarStore(client: account.client))
+        #endif
         // The bars UIKit draws for SwiftUI's navigation titles, in the app's own type.
         let bar = UINavigationBar.appearance()
         bar.titleTextAttributes = [.font: Typeface.platform(16, .semibold)]
@@ -56,6 +62,7 @@ struct PigeonpostApp: App {
     var body: some Scene {
         WindowGroup {
             RootView()
+                .calendarLifecycle()
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
@@ -65,6 +72,7 @@ struct PigeonpostApp: App {
                 .environment(callLog)
                 .environment(filtered)
                 .environment(avatars)
+                .environment(calendar)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
                 // Group join links (https://inbox.pigeonpost.dev/g/<id>#<token>), when universal

@@ -1,5 +1,15 @@
 import Foundation
 
+enum CalendarEventScope: String, CaseIterable { case all, this, following }
+enum CalendarAnswerScope: String, CaseIterable { case all, this }
+enum CalendarAnswer: String, CaseIterable { case accepted, tentative, declined }
+
+struct CalendarEventKey: Hashable, Identifiable {
+    let eventId: String
+    var occurrenceId: String?
+    var id: String { eventId + ":" + (occurrenceId ?? "series") }
+}
+
 // Calendar details are sealed at rest by the service, not end-to-end encrypted. These DTOs
 // follow docs/calendar.md and use the shared decoder's convertFromSnakeCase strategy.
 struct CalendarFolder: Codable, Equatable, Identifiable {

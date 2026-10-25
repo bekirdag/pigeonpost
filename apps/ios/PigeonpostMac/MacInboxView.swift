@@ -13,6 +13,7 @@ struct MacInboxView: View {
     @Environment(GroupStore.self) private var groups
     @Environment(CallLog.self) private var callLog: CallLog?
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    @Environment(CalendarStore.self) private var calendar: CalendarStore?
     @Environment(CallHost.self) private var calls
 
     /// The conversation being read. The sidebar's selection.
@@ -27,7 +28,7 @@ struct MacInboxView: View {
         case settings
         case filtered
         case peer(Conversation)
-        case newGroup, joinLink
+        case newGroup, joinLink, calendar
         case join(GroupStore.JoinLink)
 
         var id: String {
@@ -37,6 +38,7 @@ struct MacInboxView: View {
             case .joinLink: return "join-link"
             case .join(let link): return "join:" + link.id
             case .filtered: return "filtered"
+            case .calendar: return "calendar"
             case .peer(let conversation): return "peer:\(conversation.peer)"
             }
         }
@@ -54,7 +56,8 @@ struct MacInboxView: View {
             visit: visit,
             newGroup: { sheet = .newGroup },
             joinLink: { sheet = .joinLink },
-            openFiltered: { sheet = .filtered }
+            openFiltered: { sheet = .filtered },
+            openCalendar: { sheet = .calendar }
         )
         // Groups keep their own cadence: the app holds no event stream (see GroupStore).
         .task(id: "\(account.me?.address ?? "")|\(account.features.groups)") {
@@ -80,6 +83,7 @@ struct MacInboxView: View {
             case "filtered": sheet = .filtered
             case "new": showingNew = true
             case "new-group": sheet = .newGroup
+            case "calendar": sheet = .calendar
             default: break
             }
             guard !Fixtures.enabled else { return }
@@ -169,6 +173,8 @@ struct MacInboxView: View {
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
+            case .calendar:
+                if let calendar { CalendarDashboard(store: calendar).id(calendar.scopeId) }
             case .newGroup:
                 NewGroupSheet { id in peer = id; subthread = nil }
                     .frame(width: 480, height: 600)

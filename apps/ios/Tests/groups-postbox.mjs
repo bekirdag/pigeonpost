@@ -13,8 +13,9 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
-const [bin, out] = process.argv.slice(2);
-if (!bin || !out) { console.error("usage: groups-postbox.mjs <postbox-binary> <out.json>"); process.exit(2); }
+const [bin, out, mode] = process.argv.slice(2);
+if (!bin || !out || (mode && mode !== "calendar")) { console.error("usage: groups-postbox.mjs <postbox-binary> <out.json> [calendar]"); process.exit(2); }
+const calendarMode = mode === "calendar";
 const work = mkdtempSync(path.join(tmpdir(), "pp-apple-groups-"));
 const OPS = "svc_ops_" + crypto.randomBytes(20).toString("hex");
 const children = [], servers = [];
@@ -42,7 +43,8 @@ const b64u = (b) => Buffer.from(b).toString("base64url");
 function jwt(sub, name) {
   const now = Math.floor(Date.now() / 1000);
   const head = b64u(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "k1" }));
-  const body = b64u(JSON.stringify({ iss: ISSUER, sub, exp: now + 6 * 3600, iat: now, auth_time: now, azp: "pigeonpost-mobile", typ: "Bearer", preferred_username: name, aud: ["account"] }));
+  const body = b64u(JSON.stringify({ iss: ISSUER, sub, exp: now + 6 * 3600, iat: now, auth_time: now, azp: "pigeonpost-mobile", typ: "Bearer", preferred_username: name, aud: ["account"],
+    ...(calendarMode ? { email: `${sub}@calendar.test`, email_verified: true } : {}) }));
   return head + "." + body + "." + b64u(crypto.sign("RSA-SHA256", Buffer.from(head + "." + body), privateKey));
 }
 
@@ -66,7 +68,7 @@ for (let i = 0; ; i++) {
   if (i > 120) throw new Error("postbox did not start");
   await sleep(250);
 }
-for (const name of ["groups", "disappearing", "account_events"]) {
+for (const name of calendarMode ? ["calendar", "message_filtering", "account_events"] : ["groups", "disappearing", "account_events"]) {
   const r = await fetch(`${INT}/internal/v1/features/${name}`, { method: "PUT", headers: { authorization: "Bearer " + OPS, "content-type": "application/json" }, body: JSON.stringify({ scope: "global", enabled: true }) });
   if (!r.ok) throw new Error(`flag ${name}: ${r.status}`);
 }
@@ -98,10 +100,12 @@ const lossProxy = http.createServer(async (req, res) => {
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ attempts })); return;
     }
     const message = req.method === "POST" && /^\/v1\/groups\/[^/]+\/messages$/.test(req.url);
+    const calendarCreate = calendarMode && req.method === "POST" && req.url === "/v1/calendar/events";
     let evidence;
-    if (message) {
+    if (message || calendarCreate) {
       const body = JSON.parse(bytes.toString());
-      evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"), cmid: body.client_message_id, status: null };
+      evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"),
+        ...(calendarCreate ? { requestKey: body.request_key } : { cmid: body.client_message_id }), status: null };
       attempts.push(evidence);
       if (lossMode === "before") { req.socket.destroy(); return; }
     }
@@ -110,11 +114,11 @@ const lossProxy = http.createServer(async (req, res) => {
       ...(["GET", "HEAD"].includes(req.method) ? {} : { body: bytes }) });
     const response = Buffer.from(await upstream.arrayBuffer());
     if (evidence) evidence.status = upstream.status;
-    if (message && lossMode === "after") { req.socket.destroy(); return; }
+    if ((message || calendarCreate) && lossMode === "after") { req.socket.destroy(); return; }
     res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/octet-stream" });
     res.end(response);
   } catch (_) { if (!res.destroyed) { res.writeHead(502); res.end(); } }
 });
 const LOSS = `http://127.0.0.1:${await listen(lossProxy)}`;
 writeFileSync(out, JSON.stringify({ postbox: PB, lossProxy: LOSS, people }));
-console.log("groups postbox ready on", PB);
+console.log(calendarMode ? "calendar postbox ready on" : "groups postbox ready on", PB);

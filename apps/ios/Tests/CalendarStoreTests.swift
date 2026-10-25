@@ -169,6 +169,9 @@ struct CalendarStoreTests {
         CalendarGate.flags(failCreateOnce: true)
         let lost = await store.createEvent(fields: fields)
         check(lost == nil && !store.busy("create-event"), "a failed create leaves the caller's draft and permits an explicit retry")
+        let failedCreateMessage = store.lastError
+        await store.refresh()
+        check(failedCreateMessage != nil && store.lastError == failedCreateMessage, "a background refresh cannot hide an unconfirmed create's error")
         let retried = await store.createEvent(fields: fields)
         let creates = CalendarGate.history().filter { $0.method == "POST" && $0.path == "/v1/calendar/events" }
         check(retried?.event.id == "evt_shared" && creates.count == 2 && creates[0].body == creates[1].body,
@@ -193,6 +196,10 @@ struct CalendarStoreTests {
         CalendarGate.flags(conflict: true)
         let changed = await store.updateEvent(id: "evt_shared", revision: 1, scope: .this, occurrenceId: "occ_old", fields: ["title": "Unsent edit"])
         check(changed == nil && store.revisionConflict, "a stale revision is a conflict, never a silent overwrite")
+        let conflictMessage = store.lastError
+        await store.refresh()
+        check(conflictMessage != nil && store.lastError == conflictMessage && store.revisionConflict,
+              "a background refresh keeps the conflict's recovery action available")
         check(CalendarGate.history().filter { $0.method == "PATCH" }.count == 1, "a conflict is never automatically retried with another revision")
         CalendarGate.flags(rejectCreates: true)
         for index in 0..<17 { _ = await store.createEvent(fields: ["title": "Rejected \(index)"]) }

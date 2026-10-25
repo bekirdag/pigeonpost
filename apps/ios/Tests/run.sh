@@ -38,6 +38,9 @@ swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/API
 swiftc -O -parse-as-library -o "$out/calendar" Tests/CalendarTests.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift
 "$out/calendar"
+swiftc -O -parse-as-library -o "$out/calendar-draft" Tests/CalendarDraftTests.swift Shared/API/APIError.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift Shared/Calendar/CalendarDraft.swift
+"$out/calendar-draft"
 swiftc -O -parse-as-library -o "$out/calendar-api" Tests/CalendarAPITests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarAPI.swift

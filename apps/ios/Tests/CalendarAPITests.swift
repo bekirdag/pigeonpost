@@ -41,6 +41,7 @@ final class CalendarTransport: URLProtocol {
         else if path == "/v1/calendar/import/preview" { data = Data(#"{"draft_id":"imp_fixture","events":[]}"#.utf8) }
         else if path.hasSuffix(".ics") { data = Data("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nEND:VCALENDAR\r\n".utf8) }
         else if path == "/v1/calendar/settings" { data = Data(#"{"previews":false,"timezone":null,"week_start":1}"#.utf8) }
+        else if path.hasPrefix("/v1/calendar/feeds/") { data = Data(#"{"enabled":false,"projection":"busy"}"#.utf8) }
         else { data = Data(#"{"event":{"id":"evt_fixture","revision":8}}"#.utf8) }
         let response = HTTPURLResponse(url: request.url!, statusCode: unauthorized ? 401 : 200,
                                        httpVersion: nil, headerFields: ["Content-Type": path.hasSuffix(".ics") ? "text/calendar" : "application/json"])!
@@ -112,6 +113,13 @@ struct CalendarAPITests {
         check(settings.previews == false && settingsBody["previews"] as? Bool == false, "preview opt-out is a JSON boolean")
         check(settingsBody.count == 1 && settingsBody["timezone"] == nil && settingsBody["working_hours"] == nil,
               "a privacy-only change does not overwrite unrelated calendar settings")
+        _ = try await client.calendarFeed(mailbox: "/k/mailbox_a", id: "cal_a")
+        check(CalendarTransport.snapshot().0.last?.url?.path == "/v1/calendar/feeds/cal_a", "feed reads use the public postbox route")
+        _ = try await client.setCalendarFeed(mailbox: "/k/mailbox_a", id: "cal_a", enabled: false, projection: "busy")
+        let feedCall = CalendarTransport.snapshot()
+        let feedBody = try JSONSerialization.jsonObject(with: feedCall.1.last!) as! [String: Any]
+        check(feedCall.0.last?.url?.path == "/v1/calendar/feeds/cal_a" && feedCall.0.last?.httpMethod == "POST" && feedBody["enabled"] as? Bool == false,
+              "revoking a subscription POSTs enabled false to the public feed route")
         print("Calendar API: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }
