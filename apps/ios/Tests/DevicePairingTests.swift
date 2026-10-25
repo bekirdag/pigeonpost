@@ -32,7 +32,7 @@ enum DevicePairingTests {
         let now = Date(timeIntervalSince1970: 1_800_000_000)
         let base: [String: Any] = ["pairing_id": "pair_fixture", "org": ["id": "org_fixture", "name": "Example"],
             "handle": "/fixture/build", "address": "/k/fixture", "label": "Build machine", "confirmation": "123 456",
-            "capabilities": ["read_inbox", "enroll"], "ip_country": "TR", "requested_at": 1_800_000_000,
+            "capabilities": ["mailbox"], "creates_agent": false, "state": "pending", "ip_country": "TR", "requested_at": 1_800_000_000,
             "expires_at": 1_800_000_600, "can_approve": true]
         func decode(_ updates: [String: Any] = [:]) throws -> DevicePairingPreview {
             let decoder = JSONDecoder(); decoder.keyDecodingStrategy = .convertFromSnakeCase
@@ -45,6 +45,10 @@ enum DevicePairingTests {
         check(!preview.allowsApproval(at: now.addingTimeInterval(600)), "expiry is exclusive")
         check(try !decode(["can_approve": false, "reason": "delegation_required"]).allowsApproval(at: now), "permission denied")
         check(try !decode(["requested_at": 1_800_000_061]).allowsApproval(at: now), "future request blocked")
+        check(try decode(["address": NSNull(), "creates_agent": true]).allowsApproval(at: now), "explicit new-agent request")
+        check(try !decode(["address": NSNull()]).isValid, "existing agent needs an address")
+        check(try !decode(["state": "approved"]).allowsApproval(at: now), "decided request cannot approve twice")
+        check(try !decode(["state": "unknown"]).isValid, "unknown request state is not actionable")
         for updates: [String: Any] in [
             ["pairing_id": "../different"], ["confirmation": "12 3456"], ["confirmation": "12345x"],
             ["confirmation": "１２３４５６"], ["capabilities": ["enroll", "enroll"]], ["capabilities": []],

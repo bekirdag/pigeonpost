@@ -10,6 +10,10 @@ swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
 swiftc -O -parse-as-library -o "$out/device-pairing" Tests/DevicePairingTests.swift Shared/Enterprise/DevicePairingModels.swift
 "$out/device-pairing"
+swiftc -O -parse-as-library -o "$out/postbox-auth" Tests/PostboxAuthenticationTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Enterprise/DevicePairingModels.swift Shared/Enterprise/DevicePairingAPI.swift
+"$out/postbox-auth"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \

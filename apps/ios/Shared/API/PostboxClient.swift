@@ -403,6 +403,11 @@ struct PostboxClient {
 
         var (data, response) = try await attempt(await tokens.token())
         if response.statusCode == 401 {
+            let refusal = APIError(status: 401, body: data,
+                                   authenticationChallenge: response.value(forHTTPHeaderField: "www-authenticate"))
+            // Strong sign-in needs a new browser authorization and another deliberate decision.
+            // An ordinary refresh must not replay a sensitive action in response to that challenge.
+            if refusal.needsStrongSignIn { throw refusal }
             // The token was live by its own `exp` and the realm disagreed. Spend the refresh token
             // once and try again; a second 401 is a real one.
             let renewed = try await tokens.renew()
@@ -410,7 +415,8 @@ struct PostboxClient {
         }
         guard (200..<300).contains(response.statusCode) else {
             throw APIError(status: response.statusCode, body: data,
-                           retryAfter: response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init))
+                           retryAfter: response.value(forHTTPHeaderField: "retry-after").flatMap(Int.init),
+                           authenticationChallenge: response.value(forHTTPHeaderField: "www-authenticate"))
         }
         return data
     }

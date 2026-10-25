@@ -37,7 +37,8 @@ struct DevicePairingPreview: Decodable, Equatable {
     let pairingId: String
     let org: Organization
     let handle: String
-    let address: String
+    let address: String?
+    let createsAgent: Bool?
     let label: String?
     let confirmation: String
     let capabilities: [String]
@@ -46,6 +47,7 @@ struct DevicePairingPreview: Decodable, Equatable {
     let expiresAt: Int
     let canApprove: Bool
     let reason: String?
+    let state: String?
 
     var confirmationDigits: String { confirmation.replacingOccurrences(of: " ", with: "") }
     var displayConfirmation: String {
@@ -63,7 +65,7 @@ struct DevicePairingPreview: Decodable, Equatable {
         }
         return safeIdentifier(pairingId) && safeIdentifier(org.id) && safeText(org.name, 320)
             && handle.hasPrefix("/") && safeText(handle, 160)
-            && address.hasPrefix("/k/") && safeText(address, 160)
+            && (address.map { $0.hasPrefix("/k/") && safeText($0, 160) } ?? (createsAgent == true))
             && (label == nil || safeText(label!, 320))
             && [6, 7].contains(confirmation.utf8.count) && confirmationDigits.utf8.count == 6
             && confirmationDigits.utf8.allSatisfy { (48...57).contains($0) }
@@ -72,9 +74,10 @@ struct DevicePairingPreview: Decodable, Equatable {
             && capabilities.allSatisfy(safeIdentifier)
             && (ipCountry == nil || safeText(ipCountry!, 80)) && (reason == nil || safeText(reason!, 160))
             && requestedAt >= 0 && expiresAt > requestedAt && expiresAt <= 253_402_300_799
+            && (state == nil || ["pending", "approved", "denied"].contains(state!))
     }
     func allowsApproval(at now: Date) -> Bool {
-        isValid && canApprove && Double(expiresAt) > now.timeIntervalSince1970
+        isValid && canApprove && (state == nil || state == "pending") && Double(expiresAt) > now.timeIntervalSince1970
             && Double(requestedAt) <= now.timeIntervalSince1970 + 60
     }
 }
