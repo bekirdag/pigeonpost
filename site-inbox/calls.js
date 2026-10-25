@@ -176,6 +176,8 @@
   // `rawMic` is the microphone as captured (with the browser's echo cancellation); `mic` is what is
   // sent — the same track, or the same track after noise removal.
   const local = { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false };
+  // Captured tracks waiting for asynchronous noise processing must stop immediately on hang-up.
+  const pendingCaptureTracks = new Set();
   const prefs = {
     get mic() { return store.get("ppi_call_mic"); }, set mic(v) { store.set("ppi_call_mic", v); },
     get cam() { return store.get("ppi_call_cam"); }, set cam(v) { store.set("ppi_call_cam", v); },
@@ -208,13 +210,19 @@
   }
 
   async function request(method, path, body, renewed) {
+    const generation = streamGen;
     const auth = authHeader();
     const res = await fetch(BASE + path, {
       method,
       headers: Object.assign(auth ? { authorization: auth } : {}, body ? { "content-type": "application/json" } : {}),
       body: body ? JSON.stringify(body) : undefined,
     });
-    if (res.status === 401 && !renewed && host() && (await host().renew())) return request(method, path, body, true);
+    if (res.status === 401 && !renewed && host()) {
+      if (generation !== streamGen) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
+      const fresh = await host().renew();
+      if (generation !== streamGen) throw Object.assign(new Error("cancelled"), { code: "cancelled" });
+      if (fresh) return request(method, path, body, true);
+    }
     const value = await res.json().catch(() => ({}));
     if (!res.ok) throw Object.assign(new Error(value.error || "http_" + res.status), { status: res.status, code: value.error, body: value }); // Phase 3B: body
     return value;
@@ -234,9 +242,10 @@
     streamGen += 1;
     if (streamAbort) streamAbort.abort();
     streamAbort = null;
-    session = null;
     dismissRing();
     if (room) endRoom(null, { notify: true });
+    session = null;
+    while (readyWaiters.length) readyWaiters.shift()(null);
     renderHead();
   }
 
@@ -248,6 +257,7 @@
         const auth = authHeader();
         if (!auth) { streamWanted = false; return; }
         const res = await fetch(BASE + "/events", { headers: { authorization: auth, accept: "text/event-stream" }, signal: streamAbort.signal });
+        if (!streamWanted || gen !== streamGen) return;
         if (res.status === 401) {
           if (!renewed && host() && (await host().renew())) { renewed = true; continue; }
           // A stale member token on the meeting page: carry on as a guest instead.
@@ -266,6 +276,7 @@
         let buffer = "";
         for (;;) {
           const { value, done } = await reader.read();
+          if (!streamWanted || gen !== streamGen) return;
           if (done) break;
           buffer += decoder.decode(value, { stream: true });
           let cut;
@@ -281,6 +292,7 @@
       } catch (_) {
         if (!streamWanted || gen !== streamGen) return;
       }
+      if (!streamWanted || gen !== streamGen) return;
       session = null;
       renderHead();
       if (!streamWanted || gen !== streamGen) return;
@@ -407,7 +419,7 @@
     room = newRoom({ kind, title: displayName(peer), peerKey: peer });
     tellHost("callState", { state: "connecting", room: null, kind, outgoing: true, peer });
     try {
-      await startLocalMedia(kind === "video");
+      if (!await startLocalMedia(kind === "video")) return;
     } catch (err) {
       endRoom(mediaMessage(err, kind), { notify: false });
       return;
@@ -438,7 +450,7 @@
     openRoomUI({ title: group.name, sub: join ? "Joining group call" : "Group call", face: group.name, status: (join ? "Joining " : "Starting ") + kindWord(kind) + "…" });
     room = newRoom({ kind, title: group.name, peerKey: group.id, groupId: group.id });
     try {
-      await startLocalMedia(kind === "video");
+      if (!await startLocalMedia(kind === "video")) return;
     } catch (err) {
       endRoom(mediaMessage(err, kind), { notify: false });
       return;
@@ -515,7 +527,7 @@
     openRoomUI({ title: callName(peerKey), sub: peerKey, face: peerKey, status: "Connecting…" });
     room = newRoom({ kind: r.kind, title: displayName(peerKey), peerKey, id: r.room, code: r.code });
     try {
-      await startLocalMedia(r.kind === "video");
+      if (!await startLocalMedia(r.kind === "video")) return;
     } catch (err) {
       post(`/rooms/${r.room}/decline`, { session }).catch(() => {});
       endRoom(mediaMessage(err, r.kind), { notify: false });
@@ -646,26 +658,36 @@
   const NOISE_BASE = "/vendor/web-noise-suppressor/";
   const noise = { mode: store.get("ppi_call_noise") || "strong", ctx: null, node: null, src: null, wasm: null, active: false };
 
-  async function processMic(raw) {
+  async function processMic(raw, isCurrent = () => true) {
+    if (!isCurrent()) return raw;
     teardownNoise();
     if (noise.mode !== "strong" || !canStrongNoise) return raw;
+    let ctx, src, node;
+    const dispose = () => {
+      try { src?.disconnect(); node?.disconnect(); node?.destroy?.(); ctx?.close().catch(() => {}); } catch (_) { /* closed */ }
+    };
     try {
       const lib = await import(NOISE_BASE + "index.js");
-      const ctx = new AudioContext({ sampleRate: 48_000 });
+      if (!isCurrent()) return raw;
+      ctx = new AudioContext({ sampleRate: 48_000 });
       noise.wasm ||= await lib.loadRnnoise({ url: NOISE_BASE + "rnnoise.wasm", simdUrl: NOISE_BASE + "rnnoise_simd.wasm" });
+      if (!isCurrent()) { dispose(); return raw; }
       await ctx.audioWorklet.addModule(NOISE_BASE + "rnnoise/workletProcessor.js");
-      const src = ctx.createMediaStreamSource(new MediaStream([raw]));
-      const node = new lib.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: noise.wasm });
+      if (!isCurrent()) { dispose(); return raw; }
+      src = ctx.createMediaStreamSource(new MediaStream([raw]));
+      node = new lib.RnnoiseWorkletNode(ctx, { maxChannels: 1, wasmBinary: noise.wasm });
       const dest = ctx.createMediaStreamDestination();
       src.connect(node).connect(dest);
       await ctx.resume().catch(() => {});
+      if (!isCurrent()) { dispose(); return raw; }
       Object.assign(noise, { ctx, node, src, active: true });
       const out = dest.stream.getAudioTracks()[0];
       out.contentHint = "speech";
       return out;
     } catch (err) {
+      dispose();
       console.warn("calls: strong noise removal unavailable", err && err.name);
-      teardownNoise();
+      if (isCurrent()) teardownNoise();
       return raw;
     }
   }
@@ -677,10 +699,11 @@
 
   // Put a (new) microphone into the call: process it, swap it in on every connection, release the
   // old one.
-  async function setMicTrack(raw) {
+  async function setMicTrack(raw, isCurrent = () => true) {
     const oldRaw = local.rawMic, oldSent = local.mic;
     if (raw) raw.contentHint = "speech";
-    const sent = raw ? await processMic(raw) : null;
+    const sent = raw ? await processMic(raw, isCurrent) : null;
+    if (!isCurrent()) { raw?.stop(); if (sent !== raw) sent?.stop(); return false; }
     if (sent) sent.enabled = !local.muted;
     local.rawMic = raw;
     local.mic = sent;
@@ -691,6 +714,7 @@
     updateSlot("audio");
     if (oldSent && oldSent !== sent && oldSent !== raw) oldSent.stop();
     if (oldRaw && oldRaw !== raw) oldRaw.stop();
+    return true;
   }
 
   async function setNoiseMode(mode) {
@@ -710,25 +734,39 @@
   }
 
   async function startLocalMedia(withVideo) {
+    const owner = room;
+    const isCurrent = () => owner !== null && room === owner;
     let media;
     try {
       media = await capture({ audio: true, video: withVideo });
     } catch (err) {
+      if (!isCurrent()) return false;
       // No camera, or the camera refused: still a call, just a voice one. A refused microphone ends
       // it — nobody can hear you.
       if (!withVideo) throw err;
       media = await capture({ audio: true, video: false });
       toast("No camera available — joining with audio only.");
     }
-    local.stream = new MediaStream();
-    local.muted = false;
-    local.cameraOff = false;
-    await setMicTrack(media.getAudioTracks()[0] || null);
-    local.cam = media.getVideoTracks()[0] || null;
-    if (local.cam) local.stream.addTrack(local.cam);
-    warnIfNoEchoCancellation();
-    showSelf();
-    renderControls();
+    if (!isCurrent()) { media.getTracks().forEach((track) => track.stop()); return false; }
+    const captured = media.getTracks();
+    captured.forEach((track) => pendingCaptureTracks.add(track));
+    try {
+      local.stream = new MediaStream();
+      local.muted = false;
+      local.cameraOff = false;
+      if (!await setMicTrack(media.getAudioTracks()[0] || null, isCurrent) || !isCurrent()) {
+        captured.forEach((track) => track.stop());
+        return false;
+      }
+      local.cam = media.getVideoTracks()[0] || null;
+      if (local.cam) local.stream.addTrack(local.cam);
+      warnIfNoEchoCancellation();
+      showSelf();
+      renderControls();
+      return true;
+    } finally {
+      captured.forEach((track) => pendingCaptureTracks.delete(track));
+    }
   }
 
   function echoCancelling() {
@@ -741,6 +779,8 @@
   }
 
   function stopLocalMedia() {
+    for (const track of pendingCaptureTracks) track.stop();
+    pendingCaptureTracks.clear();
     for (const t of [local.rawMic, local.mic, local.cam, local.screen]) t?.stop();
     teardownNoise();
     Object.assign(local, { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false });
@@ -3039,24 +3079,29 @@
     const title = o.title || "Meeting " + (code.length === 10 ? code.slice(0, 5) + "-" + code.slice(5) : code);
     openRoomUI({ title, sub: "", face: title, status: "Joining…" });
     room = newRoom({ kind: o.kind === "audio" ? "audio" : "video", title, code, scheduledCode: code });
+    const joining = room, generation = streamGen;
+    const isCurrent = () => room === joining && generation === streamGen;
     try {
-      await startLocalMedia(room.kind === "video");
+      if (!await startLocalMedia(room.kind === "video")) return { state: "cancelled" };
     } catch (err) {
-      endRoom(mediaMessage(err, room ? room.kind : "audio"), { notify: false });
+      if (!isCurrent()) return { state: "cancelled" };
+      endRoom(mediaMessage(err, joining.kind), { notify: false });
       return { state: "error", code: "media" };
     }
-    if (!room) return { state: "cancelled" };
-    await whenReady();
-    if (!room) return { state: "cancelled" };
+    if (!isCurrent()) return { state: "cancelled" };
+    const joinSession = await whenReady();
+    if (!isCurrent() || !joinSession) return { state: "cancelled" };
+    const joinAuth = authHeader();
     let res;
     try {
-      const body = { session, e2ee: canEncryptFrames };
+      const body = { session: joinSession, e2ee: canEncryptFrames };
       if (o.as) body.as = o.as;
       if (o.occurrenceId) body.occurrence_id = o.occurrenceId;
       if (o.ticket) body.ticket = o.ticket;
       if (o.name) body.name = o.name;
       res = await post(`/meetings/scheduled/${encodeURIComponent(code)}/join`, body);
     } catch (err) {
+      if (!isCurrent()) return { state: "cancelled" };
       if (err.code === "choose_occurrence") {
         endRoom(null, { notify: false });
         return { state: "choose_occurrence", occurrences: (err.body && err.body.occurrences) || [] };
@@ -3065,7 +3110,14 @@
       endRoom(message, { notify: false });
       return { state: "error", code: err.code, message };
     }
-    if (!room) { if (res && res.room && res.state === "joined") post(`/rooms/${res.room}/leave`, { session }).catch(() => {}); return { state: "cancelled" }; }
+    if (!isCurrent()) {
+      // Release an accepted old join using its original session, never the next account's token.
+      const id = typeof res?.room === "string" ? res.room : res?.room?.room;
+      if (res?.state === "joined" && ROOM_ID.test(id || "")) fetch(BASE + `/rooms/${encodeURIComponent(id)}/leave`, {
+        method: "POST", headers: { authorization: joinAuth, "content-type": "application/json" }, body: JSON.stringify({ session: joinSession }),
+      }).catch(() => {});
+      return { state: "cancelled" };
+    }
     if (res.scheduled) room.scheduled = res.scheduled;
     if (res.state === "waiting") {
       Object.assign(room, { id: res.room && typeof res.room === "object" ? res.room.room : res.room, state: "waiting", knock: res.knock && typeof res.knock === "object" ? res.knock.knock : res.knock });

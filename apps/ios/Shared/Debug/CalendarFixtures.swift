@@ -75,6 +75,9 @@ private final class CalendarFixtureTransport: URLProtocol {
              "reminders": [["minutes_before": 10, "channel": "push"]], "_invited": invited, "_filtered": filtered]
         }
         box.events["evt_review"] = make("evt_review", "Design review")
+        if CommandLine.arguments.contains("-calendar-meeting-fixture") {
+            box.events["evt_review"]?["meeting"] = ["enabled": true, "code": "ABCDEFGHJK", "transport": "mesh"]
+        }
         box.events["evt_invited"] = make("evt_invited", "Team invitation", invited: true)
         box.events["evt_filtered"] = make("evt_filtered", "Filtered invitation", invited: true, filtered: true)
         return box

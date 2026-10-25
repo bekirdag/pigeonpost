@@ -21,6 +21,22 @@
 
   let token = null, me = null, peer = null, names = {}, nativeRing = false, faces = {};
   let renewing = null, settle = null;
+  let scheduled = null;
+
+  function cancelRenewal() {
+    const done = settle;
+    renewing = null; settle = null;
+    if (done) done(false);
+  }
+  function finishScheduled(attempt, result) {
+    if (scheduled !== attempt) return;
+    scheduled = null;
+    clearTimeout(attempt.timer);
+    attempt.resolve(result);
+  }
+  function cancelScheduled() {
+    if (scheduled) finishScheduled(scheduled, { state: "cancelled" });
+  }
 
   window.PigeonpostCallsHost = {
     signedIn: () => Boolean(token && me),
@@ -64,15 +80,18 @@
   window.PigeonpostNative = {
     // Signed in as `mailbox` ({address, handle}); `known` maps peer keys to display names.
     configure(options) {
+      const next = options.mailbox || null;
+      const changed = !me || !next || me.address !== next.address;
+      if (changed) {
+        cancelRenewal(); cancelScheduled();
+        if (calls()) calls().stop();
+      }
       token = options.token || null;
       names = options.known || {};
       nativeRing = options.nativeRing === true;
       faces = options.avatars && typeof options.avatars === "object" ? options.avatars : {};
-      const next = options.mailbox || null;
-      const changed = !me || !next || me.address !== next.address;
       me = next;
       if (!calls()) return;
-      if (changed) calls().stop();
       if (token && me) calls().start();
     },
     renewed(fresh) {
@@ -86,15 +105,52 @@
       const button = document.getElementById(kind === "video" ? "call-video-btn" : "call-audio-btn");
       if (button) button.click();
     },
+    // A calendar join is always a member join as the mailbox the app is currently showing.
+    // Lobby/host roles and occurrence windows are decided by the call service, never this bridge.
+    joinScheduled(code, options) {
+      const o = options || {};
+      if (!token || !me || o.as !== me.address) return Promise.resolve({ state: "error", code: "identity_changed" });
+      if (!/^[ABCDEFGHJKMNPQRSTUVWXYZ23456789]{10}$/.test(code)
+          || typeof o.occurrenceId !== "string" || !o.occurrenceId.length || o.occurrenceId.length > 256
+          || /[\u0000-\u001f\u007f]/.test(o.occurrenceId)) return Promise.resolve({ state: "error", code: "invalid_meeting" });
+      if (!calls() || typeof calls().joinScheduled !== "function") return Promise.resolve({ state: "error", code: "bridge_unavailable" });
+      if (scheduled) return Promise.resolve({ state: "error", code: "busy" });
+      const address = me.address;
+      return new Promise((resolve) => {
+        const attempt = { resolve, timer: null };
+        scheduled = attempt;
+        attempt.timer = setTimeout(() => {
+          if (scheduled !== attempt) return;
+          finishScheduled(attempt, { state: "error", code: "timeout" });
+          calls()?.hangUp?.();
+        }, 25_000);
+        // Copy only the supported member inputs; a role, guest ticket or other authority cannot
+        // accidentally pass through from a native caller.
+        Promise.resolve().then(() => scheduled !== attempt ? { state: "cancelled" } : calls().joinScheduled(code, {
+          as: address, occurrenceId: o.occurrenceId, kind: o.kind === "audio" ? "audio" : "video",
+          title: typeof o.title === "string" ? o.title.slice(0, 200) : "Meeting",
+        })).then((result) => {
+          const state = result && result.state;
+          if (state === "joined" || state === "waiting" || state === "cancelled" || state === "choose_occurrence") {
+            finishScheduled(attempt, { state });
+          } else {
+            const code = result && /^[a-z0-9_]{1,64}$/.test(result.code) ? result.code : "unavailable";
+            finishScheduled(attempt, { state: "error", code,
+              message: typeof result?.message === "string" ? result.message.slice(0, 400) : "Couldn’t join the meeting." });
+          }
+        }, () => finishScheduled(attempt, { state: "error", code: "network" }));
+      });
+    },
     // Phase 1c: act on a ring the app showed itself. `ringToken` comes from the push, or is null for
     // a ring the page reported.
     answer(room, ringToken) { if (calls()) calls().answer(room, ringToken || null); },
     decline(room, ringToken) { if (calls()) calls().decline(room, ringToken || null); },
     setMuted(muted) { if (calls()) calls().setMuted(Boolean(muted)); },
-    hangUp() { if (calls()) calls().hangUp(); },
+    hangUp() { cancelScheduled(); if (calls()) calls().hangUp(); },
     signOut() {
-      token = null; me = null; peer = null;
+      cancelRenewal(); cancelScheduled();
       if (calls()) calls().stop();
+      token = null; me = null; peer = null;
     },
   };
 

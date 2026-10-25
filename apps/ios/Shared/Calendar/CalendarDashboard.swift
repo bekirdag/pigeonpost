@@ -4,6 +4,7 @@ struct CalendarDashboard: View {
     @Environment(Account.self) private var account
     @Environment(\.dismiss) private var dismiss
     let store: CalendarStore
+    var joinMeeting: ((CallHost.ScheduledJoin) -> Void)?
     @State private var panel: Panel?
 
     private enum Panel: Identifiable {
@@ -50,8 +51,8 @@ struct CalendarDashboard: View {
                 switch which {
                 case .new:
                     CalendarEditor(store: store, draft: CalendarEventDraft(day: store.selectedDay, zone: store.zone)) { _ in panel = nil }
-                case .event(let key): CalendarDetail(store: store, key: key)
-                case .invitations: CalendarInvitationsScreen(store: store)
+                case .event(let key): CalendarDetail(store: store, key: key, joinMeeting: joinMeeting)
+                case .invitations: CalendarInvitationsScreen(store: store, joinMeeting: joinMeeting)
                 case .settings: CalendarSettingsScreen(store: store)
                 case .calendars: CalendarFoldersScreen(store: store)
                 }

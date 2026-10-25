@@ -3,6 +3,7 @@ import SwiftUI
 struct CalendarInvitationsScreen: View {
     @Environment(\.dismiss) private var dismiss
     let store: CalendarStore
+    var joinMeeting: ((CallHost.ScheduledJoin) -> Void)?
     @State private var filtered = false
     @State private var selected: CalendarEventKey?
 
@@ -33,7 +34,7 @@ struct CalendarInvitationsScreen: View {
         }
         .font(.geist(14)).tint(Theme.navy)
         .sheet(item: $selected) { key in
-            CalendarDetail(store: store, key: key)
+            CalendarDetail(store: store, key: key, joinMeeting: joinMeeting)
                 #if os(macOS)
                 .frame(width: 620, height: 660)
                 #endif

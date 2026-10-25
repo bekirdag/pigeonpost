@@ -3,6 +3,7 @@ import SwiftUI
 struct CalendarDetail: View {
     @Environment(\.dismiss) private var dismiss
     let store: CalendarStore
+    var joinMeeting: ((CallHost.ScheduledJoin) -> Void)?
     @State private var key: CalendarEventKey
     @State private var edit: CalendarEditTarget?
     @State private var cancellation: Cancellation?
@@ -19,8 +20,8 @@ struct CalendarDetail: View {
         let scope: CalendarEventScope
     }
 
-    init(store: CalendarStore, key: CalendarEventKey) {
-        self.store = store; visit = store.scopeId; _key = State(initialValue: key)
+    init(store: CalendarStore, key: CalendarEventKey, joinMeeting: ((CallHost.ScheduledJoin) -> Void)? = nil) {
+        self.store = store; self.joinMeeting = joinMeeting; visit = store.scopeId; _key = State(initialValue: key)
     }
 
     private var response: CalendarEventResponse? { store.scopeId == visit ? store.details[key] : nil }
@@ -130,11 +131,23 @@ struct CalendarDetail: View {
                     Text("Responding does not add the organizer as a contact.").font(.geist(12)).foregroundStyle(Theme.secondary)
                 }
             }
-            if let meeting = event.meeting, let code = meeting.code {
+            if let meeting = event.meeting, meeting.enabled != false, let code = meeting.code {
                 Section("Scheduled call") {
                     Text(code.count == 10 ? String(code.prefix(5)) + "-" + String(code.suffix(5)) : code).font(.geistMono(17, .semibold))
                     Text(meeting.transport == "sfu" ? "Up to 30 people" : "Up to 6 people")
                     Text("Hosts and lobby admission follow the event's permissions.").font(.geist(12)).foregroundStyle(Theme.secondary)
+                    if event.status != "cancelled", occurrence?.status != "cancelled", let joinMeeting {
+                        if let mailbox = store.mailbox, let occurrenceId = key.occurrenceId ?? occurrence?.occurrenceId,
+                           let voice = CallHost.ScheduledJoin(mailbox: mailbox, code: code, occurrenceId: occurrenceId, title: occurrence?.title ?? event.title ?? "Meeting", video: false),
+                           let video = CallHost.ScheduledJoin(mailbox: mailbox, code: code, occurrenceId: occurrenceId, title: voice.title, video: true) {
+                            HStack {
+                                Button { joinMeeting(voice) } label: { Label("Join voice", systemImage: "phone").frame(minHeight: 44) }
+                                    .accessibilityIdentifier("calendar-join-voice")
+                                Button { joinMeeting(video) } label: { Label("Join video", systemImage: "video").frame(minHeight: 44) }
+                                    .accessibilityIdentifier("calendar-join-video")
+                            }.buttonStyle(.bordered).disabled(store.scopeId != visit || busy || (occurrence?.myRsvp ?? event.my?.rsvp) == "declined")
+                        } else { Text("Choose an occurrence from the calendar to join this meeting.").font(.geist(12)).foregroundStyle(Theme.secondary) }
+                    }
                 }
             }
             Section("People") {
