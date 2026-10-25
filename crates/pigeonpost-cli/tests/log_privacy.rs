@@ -14,7 +14,7 @@ use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener};
 use std::path::Path;
 use std::process::{Child, Command, Output, Stdio};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use axum::body::Bytes;
@@ -115,12 +115,83 @@ struct LoopbackReservation {
     address: SocketAddr,
 }
 
+static EPHEMERAL_PORT_RANGE: OnceLock<(u16, u16)> = OnceLock::new();
+static ISSUED_SERVICE_PORTS: Mutex<Vec<u16>> = Mutex::new(Vec::new());
+
+fn ephemeral_port_range() -> (u16, u16) {
+    *EPHEMERAL_PORT_RANGE.get_or_init(|| {
+        #[cfg(target_os = "linux")]
+        let text = fs::read_to_string("/proc/sys/net/ipv4/ip_local_port_range")
+            .expect("read kernel automatic client port range");
+        #[cfg(target_os = "macos")]
+        let text = {
+            let output = Command::new("/usr/sbin/sysctl")
+                .args([
+                    "-n",
+                    "net.inet.ip.portrange.first",
+                    "net.inet.ip.portrange.last",
+                ])
+                .output()
+                .expect("read kernel automatic client port range");
+            assert!(
+                output.status.success(),
+                "read kernel automatic client port range"
+            );
+            String::from_utf8(output.stdout).expect("kernel port range is text")
+        };
+        let values: Vec<u16> = text
+            .split_whitespace()
+            .map(|value| value.parse().expect("kernel port range is numeric"))
+            .collect();
+        assert!(
+            values.len() == 2 && values[0] > 0 && values[0] <= values[1],
+            "kernel automatic client port range must have ordered bounds"
+        );
+        (values[0], values[1])
+    })
+}
+
 impl LoopbackReservation {
     fn new() -> Self {
-        let listener =
-            TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).expect("reserve loopback service address");
-        let address = listener.local_addr().expect("reserved loopback address");
-        Self { listener, address }
+        use rand_core::RngCore;
+
+        // Port 0 chooses from the same range as our source-bound HTTP clients. A readiness
+        // probe could take a released listener port before its child binds, or a later server
+        // could reuse an earlier client address and trip the privacy scanner. Keep these two
+        // address spaces disjoint using the running kernel's range, not platform defaults.
+        let (first, last) = ephemeral_port_range();
+        let candidates: Vec<u16> = (1024..=u16::MAX)
+            .filter(|port| !(first..=last).contains(port))
+            .collect();
+        assert!(
+            !candidates.is_empty(),
+            "no non-ephemeral test service ports available"
+        );
+        let mut issued = ISSUED_SERVICE_PORTS
+            .lock()
+            .expect("service port allocation lock");
+        let mut random = rand_core::OsRng;
+        let start = random.next_u32() as usize % candidates.len();
+        for port in candidates.iter().cycle().skip(start).take(candidates.len()) {
+            if issued.contains(port) {
+                continue;
+            }
+            match TcpListener::bind((Ipv4Addr::LOCALHOST, *port)) {
+                Ok(listener) => {
+                    let address = listener.local_addr().expect("reserved loopback address");
+                    // Do not reissue a released service port to another test in this process.
+                    issued.push(*port);
+                    return Self { listener, address };
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::AddrInUse | io::ErrorKind::PermissionDenied
+                    ) => {}
+                Err(error) => panic!("reserve loopback service address: {error}"),
+            }
+        }
+        panic!("no available non-ephemeral test service ports");
     }
 
     fn address(&self) -> SocketAddr {
@@ -502,6 +573,46 @@ fn simultaneous_loopback_reservations_are_distinct_and_exclusive() {
         let error = TcpListener::bind(address).expect_err("held reservation must remain exclusive");
         assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
     }
+}
+
+#[tokio::test]
+async fn readiness_clients_cannot_take_a_released_service_port() {
+    let reservation = LoopbackReservation::new();
+    let address = reservation.address();
+    let (first, last) = ephemeral_port_range();
+    assert!(!(first..=last).contains(&address.port()));
+    reservation.release();
+
+    // Reproduce the startup gap with real bound client sockets kept alive until the server
+    // binds. None may claim the pending server port, even though no listener owns it yet.
+    let mut clients = Vec::new();
+    for _ in 0..64 {
+        let socket = TcpSocket::new_v4().unwrap();
+        socket.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+        assert_ne!(socket.local_addr().unwrap().port(), address.port());
+        clients.push(socket);
+    }
+    let listener = tokio::net::TcpListener::bind(address).await.unwrap();
+    let connect = clients.pop().unwrap().connect(address);
+    let (client, accepted) = tokio::join!(connect, listener.accept());
+    let client = client.unwrap();
+    let (_server, peer) = accepted.unwrap();
+    assert_eq!(peer, client.local_addr().unwrap());
+    assert_ne!(peer.port(), address.port());
+}
+
+#[test]
+fn later_service_ports_cannot_reuse_prior_client_addresses() {
+    let client = TcpSocket::new_v4().unwrap();
+    client.bind((Ipv4Addr::LOCALHOST, 0).into()).unwrap();
+    let client_address = client.local_addr().unwrap();
+    drop(client);
+
+    let service = LoopbackReservation::new();
+    assert_ne!(service.address(), client_address);
+    let (first, last) = ephemeral_port_range();
+    assert!((first..=last).contains(&client_address.port()));
+    assert!(!(first..=last).contains(&service.address().port()));
 }
 
 #[test]

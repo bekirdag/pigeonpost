@@ -49,6 +49,16 @@ record their state at the time, rather than the current release status.
   All three targeted tests pass on each local device. Hosted qualification of the update follows.
 - Native machine confirmation is isolated in `codex/native-device-ui-20261025`, with fresh
   sign-in proof and store/UI tests still being qualified. No native app has been submitted.
+- A later hosted iPad import reached the fixture file but did not open it. The grid cell's
+  activation point falls in its filename area; the test now touches the thumbnail on both
+  devices and rechecks an explicit Open action after selection. Selection/preview and export
+  cancellation pass locally on each device. Native machine confirmation is now draft #106:
+  eight UI cases pass per device, Session/proof/store checks and both builds pass, and the
+  serial Mac inbox stress passes 197 checks. Genuine OTP and signed-device evidence stay open.
+- Linux privacy CI found a listener-bind collision, then a new server address matching an
+  earlier client address. Independent #107 keeps fixture listener ports outside the kernel's
+  automatic client range; its complete local privacy gate, concurrent runs and deliberate
+  leak rejection pass. Integration candidates include that test-only fix for hosted validation.
 
 ### Call bridge rollout — 25 October
 
