@@ -4,7 +4,10 @@
       {
         "appIDs": ["AH277897AV.dev.pigeonpost.inbox"],
         "components": [
-          { "/": "/g/grp_*", "comment": "Group join links: open in the app when it is installed." }
+          { "/": "/g/grp_*", "comment": "Group join links: open in the app when it is installed." },
+          { "/": "/m/*", "#": "t=*", "exclude": true, "comment": "Personal guest invitations keep their browser verification flow." },
+          { "/": "/m/??????????", "comment": "Scheduled member meeting codes; the app validates the alphabet and asks before joining." },
+          { "/": "/m/?????-?????", "comment": "Scheduled member meeting codes in display form." }
         ]
       }
     ]

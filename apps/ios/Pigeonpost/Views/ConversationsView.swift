@@ -19,6 +19,7 @@ struct ConversationsView: View {
     @Environment(CallLog.self) private var callLog: CallLog?
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
     @Environment(CalendarStore.self) private var calendar: CalendarStore?
+    @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -43,6 +44,7 @@ struct ConversationsView: View {
         case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar
         case peer(Conversation)
         case join(GroupStore.JoinLink)
+        case meetingLink(CalendarLinkRequest)
 
         init?(staged: String) {
             switch staged {
@@ -71,6 +73,7 @@ struct ConversationsView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .peer(let conversation): return "peer:" + conversation.peer
+            case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             }
         }
     }
@@ -140,6 +143,7 @@ struct ConversationsView: View {
             push.pendingPeer = nil
         }
         .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
+        .calendarMeetingLinks(canPresent: sheet == nil) { sheet = .meetingLink($0) }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
             case .identities:
@@ -152,6 +156,12 @@ struct ConversationsView: View {
                         pendingMeeting = (request, calendar.scopeId)
                         sheet = nil
                     }).id(calendar.scopeId)
+                }
+            case .meetingLink(let link):
+                CalendarLinkEntry(request: link, visit: visit) { request in
+                    guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                    pendingMeeting = (request, calendar.scopeId)
+                    sheet = nil
                 }
             case .scanner: ScanView()
             case .calls:
@@ -232,6 +242,7 @@ struct ConversationsView: View {
             Task { await calls.joinScheduled(meeting.request) }
             return
         }
+        if calendarLinks?.finishScanner() == true { pendingMailbox = nil; return }
         guard let mailbox = pendingMailbox else { return }
         pendingMailbox = nil
         guard account.mailboxes.contains(where: { $0.address == mailbox.address }) else { return }

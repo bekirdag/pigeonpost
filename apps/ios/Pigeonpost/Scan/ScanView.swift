@@ -13,6 +13,7 @@ import SwiftUI
 
 struct ScanView: View {
     @Environment(\.dismiss) private var dismiss
+    @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
     @State private var failure: String?
     @State private var handled = false
 
@@ -20,20 +21,12 @@ struct ScanView: View {
         NavigationStack {
             ZStack {
                 Color.black.ignoresSafeArea()
-                CameraPreview { scanned in
-                    guard !handled else { return }
-                    guard let url = Self.acceptable(scanned) else {
-                        failure = "That code is not a Pigeonpost sign-in."
-                        return
-                    }
-                    handled = true
-                    open(url)
-                }
+                CameraPreview(onScan: scanned)
                 .ignoresSafeArea()
 
                 VStack {
                     Spacer()
-                    Text(failure ?? "Point this at the code the terminal printed.")
+                    Text(failure ?? "Scan a Pigeonpost sign-in or meeting code.")
                         .font(.geist(14))
                         .foregroundStyle(.white)
                         .multilineTextAlignment(.center)
@@ -43,10 +36,27 @@ struct ScanView: View {
                         .padding(.bottom, 40)
                 }
             }
-            .navigationTitle("Sign in a machine")
+            .navigationTitle("Scan code")
             .navigationBarTitleDisplayMode(.inline)
-            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } } }
+            .toolbar { ToolbarItem(placement: .topBarLeading) { Button("Cancel") { handled = true; dismiss() } } }
         }
+        .onDisappear { handled = true }
+    }
+
+    private func scanned(_ text: String) {
+        guard !handled else { return }
+        if let url = URL(string: text), let link = CalendarLink(url: url), let calendarLinks {
+            handled = true
+            calendarLinks.scanned = CalendarLinkRequest(link: link)
+            dismiss()
+            return
+        }
+        guard let url = Self.acceptable(text) else {
+            failure = "That is not a Pigeonpost sign-in or meeting code."
+            return
+        }
+        handled = true
+        open(url)
     }
 
     /// Only the realm's own sign-in pages, and only over TLS.
@@ -105,6 +115,7 @@ private struct CameraPreview: UIViewControllerRepresentable {
 final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsDelegate {
     var onScan: ((String) -> Void)?
     private let session = AVCaptureSession()
+    private let captureQueue = DispatchQueue(label: "dev.pigeonpost.scanner.capture")
     private var preview: AVCaptureVideoPreviewLayer?
 
     override func viewDidLoad() {
@@ -132,15 +143,20 @@ final class ScannerController: UIViewController, AVCaptureMetadataOutputObjectsD
 
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
-        guard !session.isRunning else { return }
+        #if DEBUG
+        if Fixtures.enabled && CommandLine.arguments.contains("-meeting-scan-fixture") {
+            onScan?("https://inbox.pigeonpost.dev/m/ABCDEFGHJK")
+            return
+        }
+        #endif
         // Off the main thread: starting a capture session blocks, and blocking here is a visible
         // stutter on the way into the screen.
-        Task.detached(priority: .userInitiated) { [session] in session.startRunning() }
+        captureQueue.async { [session] in if !session.isRunning { session.startRunning() } }
     }
 
     override func viewWillDisappear(_ animated: Bool) {
         super.viewWillDisappear(animated)
-        if session.isRunning { session.stopRunning() }
+        captureQueue.async { [session] in if session.isRunning { session.stopRunning() } }
     }
 
     override func viewDidLayoutSubviews() {

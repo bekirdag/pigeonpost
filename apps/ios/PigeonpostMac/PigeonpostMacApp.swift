@@ -19,6 +19,7 @@ struct PigeonpostMacApp: App {
     @State private var filtered: FilteredMail
     @State private var avatars: AvatarStore
     @State private var calendar: CalendarStore
+    @State private var calendarLinks = CalendarLinkRouter()
 
     init() {
         let session = Session()
@@ -58,6 +59,7 @@ struct PigeonpostMacApp: App {
         WindowGroup {
             MacRootView()
                 .calendarLifecycle()
+                .signedOutCalendarGuests()
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
@@ -68,10 +70,17 @@ struct PigeonpostMacApp: App {
                 .environment(filtered)
                 .environment(avatars)
                 .environment(calendar)
+                .environment(calendarLinks)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
+                .environment(\.openURL, OpenURLAction { url in
+                    guard let link = CalendarLink(url: url) else { return .systemAction }
+                    calendarLinks.receive(link, signedIn: session.status == .signedIn)
+                    return .handled
+                })
                 .onOpenURL { url in
                     if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+                    else if let link = CalendarLink(url: url) { calendarLinks.receive(link, signedIn: session.status == .signedIn) }
                 }
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
@@ -80,6 +89,7 @@ struct PigeonpostMacApp: App {
                 .task {
                     StoreShotWindow.apply()
                     CalendarFixtures.stageNotice(push: MacPushDelegate.service, account: account)
+                    CalendarFixtures.stageMeetingLink(router: calendarLinks)
                 }
                 #endif
         }

@@ -31,6 +31,7 @@ struct MacInboxView: View {
         case peer(Conversation)
         case newGroup, joinLink, calendar
         case join(GroupStore.JoinLink)
+        case meetingLink(CalendarLinkRequest)
 
         var id: String {
             switch self {
@@ -41,6 +42,7 @@ struct MacInboxView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .peer(let conversation): return "peer:\(conversation.peer)"
+            case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             }
         }
     }
@@ -148,6 +150,10 @@ struct MacInboxView: View {
             sheet = .calendar
             NSApplication.shared.activate(ignoringOtherApps: true)
         }, visit: visit)
+        .calendarMeetingLinks(canPresent: sheet == nil) { request in
+            sheet = .meetingLink(request)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .refreshInbox)) { _ in
             Task {
                 await inbox.loadAll()
@@ -185,6 +191,12 @@ struct MacInboxView: View {
                         pendingMeeting = (request, calendar.scopeId)
                         sheet = nil
                     }).id(calendar.scopeId)
+                }
+            case .meetingLink(let link):
+                CalendarLinkEntry(request: link, visit: visit) { request in
+                    guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                    pendingMeeting = (request, calendar.scopeId)
+                    sheet = nil
                 }
             case .newGroup:
                 NewGroupSheet { id in peer = id; subthread = nil }

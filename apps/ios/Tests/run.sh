@@ -41,6 +41,13 @@ swiftc -O -parse-as-library -o "$out/calendar" Tests/CalendarTests.swift \
 swiftc -O -parse-as-library -o "$out/calendar-notices" Tests/CalendarNoticeTests.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarNotice.swift
 "$out/calendar-notices"
+swiftc -O -parse-as-library -o "$out/calendar-links" Tests/CalendarLinkTests.swift \
+  Shared/Calendar/CalendarLink.swift Shared/Calendar/CalendarMeetingModels.swift
+"$out/calendar-links"
+swiftc -O -parse-as-library -o "$out/calendar-meeting-lookup" Tests/CalendarMeetingLookupTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Calendar/CalendarLink.swift Shared/Calendar/CalendarMeetingModels.swift Shared/Calendar/CalendarMeetingLookup.swift
+"$out/calendar-meeting-lookup"
 swiftc -O -parse-as-library -o "$out/calendar-draft" Tests/CalendarDraftTests.swift Shared/API/APIError.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift Shared/Calendar/CalendarDraft.swift
 "$out/calendar-draft"

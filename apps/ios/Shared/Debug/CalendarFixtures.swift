@@ -14,6 +14,17 @@ enum CalendarFixtures {
     static func now() -> Date {
         Fixtures.enabled ? ISO8601DateFormatter().date(from: "2026-10-25T12:00:00Z")! : Date()
     }
+    static func meetingLookup() -> CalendarMeetingLookup {
+        Fixtures.enabled ? CalendarMeetingLookup(base: URL(string: "https://calendar-fixture.invalid/calls")!) : CalendarMeetingLookup()
+    }
+    static func meetingTokens(session: Session) -> TokenProviding {
+        if Fixtures.enabled { return tokens }
+        return session
+    }
+    static func stageMeetingLink(router: CalendarLinkRouter) {
+        guard Fixtures.enabled, CommandLine.arguments.contains("-meeting-link-fixture") else { return }
+        router.receive(.member("ABCDEFGHJK"), signedIn: true)
+    }
     static func stageNotice(push: PushService, account: Account) {
         guard Fixtures.enabled,
               let kind = CommandLine.arguments.first(where: { $0.hasPrefix("-calendar-notice=") })?.dropFirst("-calendar-notice=".count),
@@ -134,6 +145,17 @@ private final class CalendarFixtureTransport: URLProtocol {
         let body = (try? JSONSerialization.jsonObject(with: bytes)) as? [String: Any] ?? [:]
         let query = URLComponents(url: request.url!, resolvingAgainstBaseURL: false)?.queryItems ?? []
         func q(_ name: String) -> String? { query.first { $0.name == name }?.value }
+        if path == "/calls/v1/meetings/scheduled/ABCDEFGHJK", method == "GET" {
+            if CommandLine.arguments.contains("-meeting-link-unavailable") { return (200, ["state": "unavailable"]) }
+            let start = Int(ISO8601DateFormatter().date(from: "2026-10-25T12:00:00Z")!.timeIntervalSince1970)
+            func occurrence(_ id: String, _ offset: Int) -> [String: Any] {
+                ["occurrence_id": id, "starts_at": start + offset, "ends_at": start + offset + 3600,
+                 "opens_at": start + offset - 600, "closes_at": start + offset + 5400]
+            }
+            var rows = [occurrence("occ_link_first", 0)]
+            if CommandLine.arguments.contains("-meeting-link-overlap") { rows.append(occurrence("occ_link_second", 1800)) }
+            return (200, ["state": "open", "occurrences": rows])
+        }
         if path == "/v1/calendars", method == "GET" { return (200, ["calendars": box.folders]) }
         if path == "/v1/calendars", method == "POST" {
             let folder: [String: Any] = ["id": "cal_new_\(box.next)", "name": body["name"] ?? "Calendar", "color": body["color"] ?? "blue", "is_default": false, "revision": 1]

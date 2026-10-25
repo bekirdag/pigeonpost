@@ -102,6 +102,55 @@ final class CalendarUITests: XCTestCase {
         XCTAssertTrue(app.staticTexts["Design review"].firstMatch.exists)
         XCTAssertFalse(app.textViews["messageComposer"].exists)
     }
+    func testMeetingLinkShowsAnExplicitCallChoice() {
+        launch(["-meeting-link-fixture"], open: false)
+        XCTAssertTrue(app.navigationBars["Scheduled meeting"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["meeting-link-occurrence:occ_link_first"].waitForExistence(timeout: 5))
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: app.buttons["meeting-link-voice"])
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        XCTAssertTrue(app.buttons["meeting-link-video"].isEnabled)
+        XCTAssertFalse(element("scheduled-call-preparing").exists, "opening a link must not start a call")
+    }
+    func testMeetingLinkOverlapRequiresOccurrenceSelection() {
+        launch(["-meeting-link-fixture", "-meeting-link-overlap"], open: false)
+        XCTAssertTrue(app.navigationBars["Scheduled meeting"].waitForExistence(timeout: 10))
+        let second = app.buttons["meeting-link-occurrence:occ_link_second"]
+        XCTAssertTrue(second.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meeting-link-voice"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-link-video"].isEnabled)
+        tap(second)
+        XCTAssertTrue(app.buttons["meeting-link-voice"].isEnabled)
+        XCTAssertTrue(app.buttons["meeting-link-video"].isEnabled)
+        XCTAssertFalse(element("scheduled-call-preparing").exists)
+    }
+    func testUnavailableMeetingLinkKeepsCallButtonsDisabled() {
+        launch(["-meeting-link-fixture", "-meeting-link-unavailable"], open: false)
+        XCTAssertTrue(app.navigationBars["Scheduled meeting"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["This meeting is not open for this inbox."].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["meeting-link-voice"].isEnabled)
+        XCTAssertFalse(app.buttons["meeting-link-video"].isEnabled)
+    }
+    func testMeetingLinkRespectsCalendarCapability() {
+        launch(["-meeting-link-fixture"], calendar: false, open: false)
+        XCTAssertTrue(app.staticTexts["Calendar is unavailable for this account."].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Scheduled meeting"].exists)
+    }
+    func testScannedMeetingOpensAfterScannerDismisses() {
+        launch(["-sheet=scanner", "-meeting-scan-fixture"], open: false)
+        XCTAssertTrue(app.navigationBars["Scheduled meeting"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["meeting-link-occurrence:occ_link_first"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Scan code"].exists)
+        XCTAssertFalse(element("scheduled-call-preparing").exists)
+    }
+    func testSettingsScannerClosesBothSheetsBeforeOpeningMeeting() {
+        launch(["-sheet=settings", "-meeting-scan-fixture"], open: false)
+        let scan = app.buttons["scan-code"]
+        XCTAssertTrue(scan.waitForExistence(timeout: 10))
+        scan.tap()
+        XCTAssertTrue(app.navigationBars["Scheduled meeting"].waitForExistence(timeout: 15))
+        XCTAssertTrue(app.buttons["meeting-link-occurrence:occ_link_first"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.navigationBars["Scan code"].exists)
+    }
     func testReminderSelectsOnlyAnOwnedMailbox() {
         launch(["-calendar-notice=other"], open: false)
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))

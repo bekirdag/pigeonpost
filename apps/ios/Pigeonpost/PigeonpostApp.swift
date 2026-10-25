@@ -14,6 +14,7 @@ struct PigeonpostApp: App {
     @State private var filtered: FilteredMail
     @State private var avatars: AvatarStore
     @State private var calendar: CalendarStore
+    @State private var calendarLinks = CalendarLinkRouter()
 
     init() {
         let session = Session()
@@ -57,12 +58,14 @@ struct PigeonpostApp: App {
 
     private func openJoinLink(_ url: URL) {
         if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+        else if let link = CalendarLink(url: url) { calendarLinks.receive(link, signedIn: session.status == .signedIn) }
     }
 
     var body: some Scene {
         WindowGroup {
             RootView()
                 .calendarLifecycle()
+                .signedOutCalendarGuests()
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
@@ -73,8 +76,14 @@ struct PigeonpostApp: App {
                 .environment(filtered)
                 .environment(avatars)
                 .environment(calendar)
+                .environment(calendarLinks)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
+                .environment(\.openURL, OpenURLAction { url in
+                    guard let link = CalendarLink(url: url) else { return .systemAction }
+                    calendarLinks.receive(link, signedIn: session.status == .signedIn)
+                    return .handled
+                })
                 // Group join links (https://inbox.pigeonpost.dev/g/<id>#<token>), when universal
                 // links reach the app, and the app's own scheme.
                 .onOpenURL { url in openJoinLink(url) }
@@ -90,6 +99,7 @@ struct PigeonpostApp: App {
                     push.onGroupPush = { [weak groups] group in groups?.wake(group) }
                     #if DEBUG
                     CalendarFixtures.stageNotice(push: push, account: account)
+                    CalendarFixtures.stageMeetingLink(router: calendarLinks)
                     #endif
                 }
         }

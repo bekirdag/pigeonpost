@@ -9,6 +9,10 @@
 	<!-- The postbox and the realm. Nothing here listens. -->
 	<key>com.apple.security.network.client</key>
 	<true/>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:inbox.pigeonpost.dev</string>
+	</array>
 	<!-- Attachments: chosen by the person through the system picker, and written where they say. -->
 	<key>com.apple.security.files.user-selected.read-write</key>
 	<true/>
