@@ -4,15 +4,26 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Shared baseline #90, enterprise/device-login #83 and message actions #89 are merged. The portal,
-approval page and postbox/reaper now run the reviewed changes; public health and authentication
-checks pass. The web inbox bundle awaits the cache-coupling fix and controlled static rollout.
-#87 is integrated with main at `c3a3f0f`; core/Windows/Mac/group checks pass and its Apple run is
-being qualified. Native round two has committed Apple direct edit/reply/status/privacy screens,
-five passing local UI cases and passing iPhone/Mac builds. Its newer iPad passes; newer iPhone
-keyboard focus and native StoreKit restore assertions need attention. Group actions, calendar,
-enterprise client screens and remaining native platforms are still pending. All native releases
-remain batched, with the owner's Apple pre-submission review hold preserved.
+Inherited #83, #89 and #87 and shared security/operations/web/group fixes are merged. The web
+inbox, enterprise portal and approval page run the controlled coherent asset rollout (source
+`1132ad76`, tree `1fe9961b…`). Postbox/reaper run production source `58459ad`, image
+`pigeonpost-postbox:calendar-import-af1f329`; public health and anonymous authorization checks pass.
+
+Apple direct/group edit/reply/status/privacy work is merged in #95. Calendar foundation #96,
+scheduled native calls #98 and calendar participants/placement/import/export/feed controls #100
+are stacked and undergoing full CI. A CI-discovered edit/ordinary-draft input leak is fixed and
+passes local iPhone/iPad keyboard regressions; all three branches include it. Independent #101
+adds calendar push destinations and separates calendar notices from ordinary message badges;
+its production image is being prepared, with deployment held for CI. Native notice routing has
+40 parser/ownership checks, four passing navigation cases on each device, strengthened actual
+recipient tests and passing iOS/universal Mac builds; hosted qualification follows.
+
+Calendar guest/meeting URL entry, enterprise native screens, remaining native platforms and
+later SDS phases remain open. All native releases remain batched. The owner's Claude review
+before Apple App Review and mainland-China removal before a CallKit release remain mandatory.
+Postmark, payment/seller setup, DNS, exposed-secret rotation and owner real-device checks remain
+external prerequisites; none is represented as completed here. Historical checkpoints below
+record their state at the time, rather than the current release status.
 
 ## Intake evidence
 

@@ -96,6 +96,29 @@ final class CalendarUITests: XCTestCase {
         tap(element("calendarButton"))
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 5))
     }
+    func testReminderOpensAuthorizedEvent() {
+        launch(["-calendar-notice=current"], open: false)
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Design review"].firstMatch.exists)
+        XCTAssertFalse(app.textViews["messageComposer"].exists)
+    }
+    func testReminderSelectsOnlyAnOwnedMailbox() {
+        launch(["-calendar-notice=other"], open: false)
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["Calendar for /k/zz1111v2h90vnwefj7g7ezvbh9"].firstMatch.exists)
+        XCTAssertFalse(app.textViews["messageComposer"].exists)
+    }
+    func testLegacyReminderOpensCalendarWithoutInferringAnEvent() {
+        launch(["-calendar-notice=legacy"], open: false)
+        XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Event"].exists)
+    }
+    func testNoticeFromAnotherAccountDoesNotOpenCalendar() {
+        launch(["-calendar-notice=unowned"], open: false)
+        XCTAssertTrue(app.staticTexts["This calendar notice belongs to another account."].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(app.navigationBars["Calendar"].exists)
+        XCTAssertFalse(app.navigationBars["Event"].exists)
+    }
     func testMonthLaunchNavigationAndAgenda() {
         launch()
         let day = element("calendar-day:2026-10-25")

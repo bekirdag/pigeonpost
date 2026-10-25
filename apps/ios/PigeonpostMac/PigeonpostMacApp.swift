@@ -77,7 +77,10 @@ struct PigeonpostMacApp: App {
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)
                 #if DEBUG
-                .task { StoreShotWindow.apply() }
+                .task {
+                    StoreShotWindow.apply()
+                    CalendarFixtures.stageNotice(push: MacPushDelegate.service, account: account)
+                }
                 #endif
         }
         .defaultSize(width: 1100, height: 720)

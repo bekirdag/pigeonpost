@@ -144,6 +144,10 @@ struct MacInboxView: View {
             push.pendingPeer = nil
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
+        .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: {
+            sheet = .calendar
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }, visit: visit)
         .onReceive(NotificationCenter.default.publisher(for: .refreshInbox)) { _ in
             Task {
                 await inbox.loadAll()

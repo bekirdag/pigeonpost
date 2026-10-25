@@ -45,9 +45,10 @@ struct CalendarDashboard: View {
         .font(.geist(14))
         .tint(Theme.navy)
         .onAppear { store.isOpen = true }
-        .onDisappear { store.isOpen = false; store.openEvent = nil }
+        .onDisappear { store.isOpen = false; store.openEvent = nil; store.pendingNavigation = nil }
         .onChange(of: store.scopeId) { _, _ in panel = nil }
-        .sheet(item: $panel) { which in
+        .onChange(of: store.pendingNavigation, initial: true) { _, _ in openPendingNotice() }
+        .sheet(item: $panel, onDismiss: openPendingNotice) { which in
             Group {
                 switch which {
                 case .new:
@@ -67,6 +68,14 @@ struct CalendarDashboard: View {
         #if os(macOS)
         .frame(width: 760, height: 700)
         #endif
+    }
+
+    private func openPendingNotice() {
+        // An open editor/detail owns its presentation. Queue the notice until it closes.
+        guard panel == nil, store.enabled, store.mailbox == account.me?.address,
+              let key = store.pendingNavigation else { return }
+        store.pendingNavigation = nil
+        panel = .event(key)
     }
 
     private var optionsMenu: some View {

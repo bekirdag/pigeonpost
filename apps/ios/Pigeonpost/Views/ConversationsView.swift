@@ -139,6 +139,7 @@ struct ConversationsView: View {
             selection = peer
             push.pendingPeer = nil
         }
+        .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
             case .identities:

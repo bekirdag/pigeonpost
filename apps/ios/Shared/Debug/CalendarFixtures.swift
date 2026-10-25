@@ -14,6 +14,17 @@ enum CalendarFixtures {
     static func now() -> Date {
         Fixtures.enabled ? ISO8601DateFormatter().date(from: "2026-10-25T12:00:00Z")! : Date()
     }
+    static func stageNotice(push: PushService, account: Account) {
+        guard Fixtures.enabled,
+              let kind = CommandLine.arguments.first(where: { $0.hasPrefix("-calendar-notice=") })?.dropFirst("-calendar-notice=".count),
+              let current = account.me?.address else { return }
+        let target = kind == "other" ? account.mailboxes.first(where: { $0.address != current })?.address : current
+        let mailbox = kind == "unowned" ? "/k/unowned" : target ?? current
+        var payload: [AnyHashable: Any] = ["type": "calendar", "mailbox": mailbox,
+            "calendar_event_id": "evt_review", "calendar_occurrence_id": "occ_evt_review_original"]
+        if kind == "legacy" { payload = ["mailbox": mailbox, "message_id": "cal:opaque:reminder"] }
+        push.pendingCalendar = CalendarNotice(payload: payload)
+    }
 }
 
 @MainActor
@@ -80,6 +91,9 @@ private final class CalendarFixtureTransport: URLProtocol {
              "reminders": [["minutes_before": 10, "channel": "push"]], "_invited": invited, "_filtered": filtered]
         }
         box.events["evt_review"] = make("evt_review", "Design review")
+        if CommandLine.arguments.contains("-calendar-notice=other") {
+            box.events["evt_review"]?["title"] = "Calendar for " + mailbox
+        }
         if CommandLine.arguments.contains("-calendar-people-fixture") {
             box.events["evt_review"]?["attendees"] = [["attendee_id": "att_existing", "kind": "handle", "handle": "/fixture/colleague",
                 "name": "Existing participant", "invited": true, "rsvp": "accepted"]]

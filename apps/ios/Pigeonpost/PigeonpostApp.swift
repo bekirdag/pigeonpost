@@ -88,6 +88,9 @@ struct PigeonpostApp: App {
                     push.attach(to: inbox)
                     account.push = push
                     push.onGroupPush = { [weak groups] group in groups?.wake(group) }
+                    #if DEBUG
+                    CalendarFixtures.stageNotice(push: push, account: account)
+                    #endif
                 }
         }
     }

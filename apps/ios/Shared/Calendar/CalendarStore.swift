@@ -23,6 +23,7 @@ final class CalendarStore {
     private(set) var revisionConflict = false
     var isOpen = false
     var openEvent: CalendarEventKey?
+    var pendingNavigation: CalendarEventKey?
 
     private var generation = UUID()
     private var refreshId = UUID()
@@ -60,7 +61,7 @@ final class CalendarStore {
         folders = []; occurrences = []; invitations = []; filteredInvitations = []
         settings = CalendarSettings(); details = [:]; detailReads = [:]; operations = [:]; attempts = [:]
         preservingMutationError = false
-        selectedFolders = nil; loading = false; lastError = nil; revisionConflict = false; openEvent = nil; followingToday = true
+        selectedFolders = nil; loading = false; lastError = nil; revisionConflict = false; openEvent = nil; pendingNavigation = nil; followingToday = true
         selectedDay = CalendarDay(date: now(), zone: .current)
     }
 

@@ -8,6 +8,7 @@ import WebKit
 
 @MainActor @Observable final class PushService {
     var pendingPeer: String?
+    var pendingCalendar: CalendarNotice?
     var onGroupPush: ((String) -> Void)?
     func attach(to account: Account) {}
     func attach(to inbox: Inbox) {}
