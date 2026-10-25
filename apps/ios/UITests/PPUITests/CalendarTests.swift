@@ -192,7 +192,7 @@ final class CalendarUITests: XCTestCase {
         tap(app.staticTexts["Filtered invitation"].firstMatch)
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
         XCTAssertFalse(element("calendar-edit").exists)
-        tap(app.buttons["Maybe"].firstMatch)
+        tapRow(app.buttons["Maybe"].firstMatch, in: "calendar-event-details")
         XCTAssertTrue(app.staticTexts["Maybe"].firstMatch.waitForExistence(timeout: 10))
         tap(app.navigationBars["Event"].buttons["Done"].firstMatch)
         XCTAssertTrue(app.staticTexts["No filtered invitations."].waitForExistence(timeout: 10))
@@ -344,21 +344,36 @@ final class CalendarUITests: XCTestCase {
         folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         let file = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost import fixture")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 5))
-        file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+        let thumbnail = file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
+        thumbnail.tap()
         let open = app.buttons["Open"].firstMatch
         if open.waitForExistence(timeout: 2), open.isHittable { open.tap() }
-        XCTAssertTrue(app.staticTexts["Local picker interview"].firstMatch.waitForExistence(timeout: 10))
+        let imported = app.staticTexts["Local picker interview"].firstMatch
+        // Files may still be finishing its folder transition at the first tap. A second tap
+        // is safe only while that same document remains in the picker; it cannot confirm an import.
+        if !imported.waitForExistence(timeout: 3), file.exists { thumbnail.tap() }
+        XCTAssertTrue(imported.waitForExistence(timeout: 10))
         XCTAssertFalse(element("calendar-import-error").exists)
     }
     func testEventExportChooserCanBeCancelled() {
         launch(); openReview()
         tapRow(app.buttons["calendar-export-event"], in: "calendar-event-details")
         let cancel = app.buttons["Cancel"].firstMatch
+        let readyToSave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Save", "Move"]))
+        let pickerReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            readyToSave.allElementsBoundByIndex.contains { $0.isHittable }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [pickerReady], timeout: 10), .completed)
         // The phone picker can restore a nested folder, where Back replaces Cancel. Return to
         // locations; a tablet already keeps Cancel in its outer toolbar.
-        for _ in 0..<4 where !cancel.waitForExistence(timeout: 1) {
-            let candidates = app.navigationBars.buttons.matching(NSPredicate(format: "label IN %@", ["On My iPhone", "On My iPad", "Browse"]))
-            guard let back = candidates.allElementsBoundByIndex.first(where: { $0.isHittable }) else { break }
+        for _ in 0..<4 where !cancel.exists {
+            let candidates = app.navigationBars.buttons.matching(NSPredicate(format: "identifier == %@ OR label IN %@", "BackButton", ["On My iPhone", "On My iPad", "Browse"]))
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+                cancel.exists || candidates.allElementsBoundByIndex.contains { $0.isHittable }
+            }, object: nil)
+            XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+            if cancel.exists { break }
+            guard let back = candidates.allElementsBoundByIndex.first(where: { $0.isHittable }) else { return XCTFail("The document picker must offer Cancel or Back") }
             back.tap()
         }
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
@@ -369,9 +384,8 @@ final class CalendarUITests: XCTestCase {
     private func checkJoinDismissal(_ id: String) {
         launch(["-calendar-meeting-fixture"]); openReview()
         let button = app.buttons[id]
-        // The navigation header can appear while event details and their controls are loading.
-        XCTAssertTrue(button.waitForExistence(timeout: 5))
-        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+        // The lazy list does not create offscreen controls until the event form is scrolled.
+        revealRow(button, in: "calendar-event-details")
         XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         button.tap()
         // The UI fixture deliberately does not attach any call page or use a real token. This
