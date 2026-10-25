@@ -6,15 +6,17 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 Inherited #83, #89 and #87 and shared security/operations/web/group fixes are merged. The web
 inbox, enterprise portal and approval page run the controlled coherent asset rollout (source
-`1132ad76`, tree `1fe9961b…`). Postbox/reaper run production source `58459ad`, image
-`pigeonpost-postbox:calendar-import-af1f329`; public health and anonymous authorization checks pass.
+`1132ad76`, tree `1fe9961b…`). Postbox/reaper run production source `6950c29`, image
+`pigeonpost-postbox:calendar-notice-e5cea04`; public health and anonymous authorization checks pass.
 
 Apple direct/group edit/reply/status/privacy work is merged in #95. Calendar foundation #96,
 scheduled native calls #98 and calendar participants/placement/import/export/feed controls #100
 are stacked and undergoing full CI. A CI-discovered edit/ordinary-draft input leak is fixed and
-passes local iPhone/iPad keyboard regressions; all three branches include it. Independent #101
-adds calendar push destinations and separates calendar notices from ordinary message badges;
-its production image is being prepared, with deployment held for CI. Native notice routing has
+passes local iPhone/iPad keyboard regressions; all three branches include it. A later hosted
+version-history assertion exposed a test replacing text from the beginning without selecting it;
+native Select All passes locally and is carried through the stack for hosted confirmation.
+Independent #101 is merged and deployed with calendar push destinations and separate calendar
+notice/message badge handling. Native notice routing has
 40 parser/ownership checks, four passing navigation cases on each device, strengthened actual
 recipient tests and passing iOS/universal Mac builds; hosted qualification follows.
 
