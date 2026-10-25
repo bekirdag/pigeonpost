@@ -33,6 +33,23 @@ Postmark, payment/seller setup, DNS, exposed-secret rotation and owner real-devi
 external prerequisites; none is represented as completed here. Historical checkpoints below
 record their state at the time, rather than the current release status.
 
+### Apple integration qualification — 25 October
+
+- Calendar management, notice/meeting routing, pairing foundation and Session lifetime fixes are
+  consolidated in #105. At `e445231`, the complete hosted phone suite, StoreKit and both Mac
+  jobs pass; the iPad failed only an AX activation-point query for already-visible response text.
+- A separate fixture-only diagnostic branch preserves the Files picker evidence. Its iPad import
+  and cancellation pass. The phone trace reaches picker presentation but no import callback;
+  its screenshot remains on Recents because the cold service appeared after the three-second
+  navigation wait. Export is visibly open while a Save hittability predicate times out. Neither
+  trace shows a parent lifecycle change, so no picker lifecycle guard has been weakened.
+- The test now waits for Files navigation, checks exporter presence independently of Save
+  activation, and verifies invitation response text without querying its activation point. The
+  actual selection/preview, cancellation/return and moved-invitation assertions remain required.
+  All three targeted tests pass on each local device. Hosted qualification of the update follows.
+- Native machine confirmation is isolated in `codex/native-device-ui-20261025`, with fresh
+  sign-in proof and store/UI tests still being qualified. No native app has been submitted.
+
 ### Call bridge rollout — 25 October
 
 - Deployed exactly `calls.js`, `native-call.js`, and `index.html`, `join.html`, `m.html`,
