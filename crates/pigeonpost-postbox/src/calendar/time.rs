@@ -20,7 +20,7 @@
 
 use chrono::{
     DateTime, Datelike, Duration, LocalResult, NaiveDate, NaiveDateTime, NaiveTime, Offset,
-    TimeZone, Utc,
+    TimeZone, Timelike, Utc,
 };
 use chrono_tz::Tz;
 use std::collections::HashSet;
@@ -106,7 +106,14 @@ pub(crate) fn parse_date(s: &str) -> Result<NaiveDate, TimeError> {
 }
 
 pub(crate) fn fmt_local(dt: NaiveDateTime) -> String {
-    dt.format("%Y-%m-%dT%H:%M").to_string()
+    // This representation is also persisted. Keep subminute input intact while retaining the
+    // established minute-only form for the common zero-second case.
+    let format = if dt.second() == 0 {
+        "%Y-%m-%dT%H:%M"
+    } else {
+        "%Y-%m-%dT%H:%M:%S"
+    };
+    dt.format(format).to_string()
 }
 
 pub(crate) fn fmt_date(d: NaiveDate) -> String {
