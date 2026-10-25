@@ -85,5 +85,16 @@ check(senders.map(\.peer) == ["/olga", "/k/s"], "newest sender first, blocked an
 check(senders.last?.messages.map(\.messageId) == ["1", "3"], "a sender's mail in time order")
 check(senders.first?.from == "/k/o", "accept names the address it came from")
 
+var receiptPolicy = try decoder.decode(InboxFilters.self, from: Data("{\"read_receipts\":false,\"unknown_calls\":\"ring\"}".utf8))
+check(receiptPolicy["read_receipts"] == "false", "read-receipt opt-out decodes without becoming the default")
+receiptPolicy.set("read_receipts", "true")
+check(receiptPolicy.readReceipts == true && receiptPolicy.unknownCalls == "ring", "receipt changes preserve other policy fields")
+let legacyReceiptPolicy = try decoder.decode(InboxFilters.self, from: Data("{}".utf8))
+check(legacyReceiptPolicy["read_receipts"] == "true", "legacy policy retains the server's enabled default")
+let receiptPatch = ["read_receipts": InboxFilters.wireValue(field: "read_receipts", value: "false")!]
+let receiptWire = try JSONSerialization.jsonObject(with: JSONSerialization.data(withJSONObject: receiptPatch)) as! [String: Any]
+check(receiptWire["read_receipts"] as? Bool == false && receiptWire.count == 1, "opt-out is sent as a JSON boolean and no other policy field")
+check(InboxFilters.wireValue(field: "read_receipts", value: "invalid") == nil, "invalid receipt selections cannot produce a save")
+
 print("Phase 1b: \(checks) checks, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

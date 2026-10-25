@@ -32,6 +32,9 @@ struct PolicyRow: Identifiable {
         PolicyRow(field: "call_history_days", flag: Features.callHistory, title: "Keep call history",
                   note: "Off stops keeping new calls. Entries older than this are deleted.",
                   options: [("0", "Off"), ("30", "30 days"), ("180", "180 days"), ("365", "1 year")]),
+        PolicyRow(field: "read_receipts", flag: Features.receipts, title: "Read receipts",
+                  note: "Share when you have seen a message. Turning this off also hides other people's seen state from you.",
+                  options: [("false", "Off"), ("true", "On")]),
     ]
 }
 
@@ -40,6 +43,8 @@ struct PrivacyPage: View {
     @State private var policy: InboxFilters?
     @State private var error: String?
     @State private var saved: String?
+    @State private var generation = UUID()
+    @State private var saving = false
 
     var body: some View {
         List {
@@ -52,7 +57,7 @@ struct PrivacyPage: View {
                     }
                     .pickerStyle(.segmented)
                     .labelsHidden()
-                    .disabled(policy == nil)
+                    .disabled(policy == nil || saving)
                     .accessibilityIdentifier("policy-" + row.field)
                 } header: {
                     Text(row.title)
@@ -81,6 +86,10 @@ struct PrivacyPage: View {
     }
 
     private func load() async {
+        let request = UUID()
+        generation = request
+        policy = nil
+        saving = false
         guard let address = account.me?.address else { return }
         error = nil
         #if DEBUG
@@ -91,29 +100,35 @@ struct PrivacyPage: View {
         }
         #endif
         do {
-            policy = try await account.client.policy(identity: address)
+            let answer = try await account.client.policy(identity: address)
+            guard !Task.isCancelled, request == generation, address == account.me?.address else { return }
+            policy = answer
         } catch {
+            guard !Task.isCancelled, request == generation, address == account.me?.address else { return }
             self.error = "Could not load these settings. Close and try again."
         }
     }
 
     /// Optimistic, then the server's answer; the old value comes back if the save fails.
     private func save(_ field: String, _ value: String) {
-        guard var next = policy, let address = account.me?.address else { return }
+        guard !saving, var next = policy, let address = account.me?.address,
+              let wire = InboxFilters.wireValue(field: field, value: value) else { return }
         let previous = next[field]
         next.set(field, value)
         policy = next
         error = nil
         guard !Fixtures.enabled else { saved = "Saved."; return }
+        let request = generation
+        saving = true
         Task {
+            defer { if request == generation { saving = false } }
             do {
-                let wire: Any = field == "call_history_days" ? (Int(value) ?? 0) : value
                 let answer = try await account.client.setPolicy(identity: address, field: field, value: wire)
-                guard address == account.me?.address else { return }
+                guard request == generation, address == account.me?.address else { return }
                 policy = answer
                 saved = "Saved."
             } catch {
-                guard address == account.me?.address else { return }
+                guard request == generation, address == account.me?.address else { return }
                 if var back = policy, let previous { back.set(field, previous); policy = back }
                 self.error = "Could not save that setting. Please try again."
             }

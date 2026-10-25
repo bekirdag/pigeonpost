@@ -28,11 +28,14 @@ protocol GroupCrypting: Actor {
     func topUpKeyPackages() async throws -> Int
     func processWelcomes() async throws -> [String]
     @discardableResult func sync(_ group: String) async throws -> Int
+    func reconcileDeletions(_ group: String) async throws
     @discardableResult func processPending(_ group: String, noJitter: Bool) async throws -> Bool
     func selfUpdate(_ group: String) async throws
     func createGroup(settings: [String: Any]) async throws -> CreatedGroup
     func activate(_ group: String) async throws
     @discardableResult func send(_ group: String, text: String, files: [OutgoingGroupFile], replyTo: Int?, editOf: Int?, mentions: [String]) async throws -> PostedGroupMessage
+    func retryPending(_ group: String, cmid: String) async throws -> PostedGroupMessage
+    func discardPending(_ group: String, cmid: String) async throws
     func openFile(_ group: String, file: GroupFile) async throws -> Data
     @discardableResult func pruneExpired() async -> Int
     func dropSeqs(_ group: String, seqs: [Int]) async
@@ -48,12 +51,6 @@ struct GroupDeviceIdentity: Sendable, Equatable {
     let deviceId: String
     /// The digits a person compares (`fingerprint_digits`).
     let fingerprint: String
-}
-
-struct OutgoingGroupFile: Sendable {
-    let name: String
-    let mime: String
-    let data: Data
 }
 
 enum GroupEngines {
@@ -87,6 +84,8 @@ actor GroupEngine: GroupCrypting {
     private static let keyPackageFloor = 10
     private static let historyLimit = 1000
     private static let maxRetries = 6
+    private static let maxPending = 16
+    private static let maxPendingBytes = 8 * 1024 * 1024
 
     let mailbox: String
     private let client: PostboxClient
@@ -94,6 +93,7 @@ actor GroupEngine: GroupCrypting {
     private let emit: @Sendable (GroupEngineEvent) -> Void
     private var device: GroupDevice?
     private var record: GroupRecord?
+    private var reconciliationCursors: [String: Int] = [:]
 
     init(mailbox: String, client: PostboxClient, vault: GroupVault, events: @escaping @Sendable (GroupEngineEvent) -> Void) {
         self.mailbox = mailbox
@@ -129,6 +129,17 @@ actor GroupEngine: GroupCrypting {
                let restored = try? GroupDevice.importState(blob: blob, key: saved.stateKey) {
                 record = saved
                 device = restored
+                for pending in (saved.pendingSends ?? [:]).values {
+                    markPendingFailed(pending.group, cmid: pending.cmid, code: "send_interrupted")
+                }
+                for (group, history) in saved.history {
+                    for item in history where item.pending == true && item.seq == nil {
+                        if let cmid = item.cmid, saved.pendingSends?[cmid] == nil {
+                            markPendingFailed(group, cmid: cmid, code: "send_unavailable")
+                        }
+                    }
+                }
+                if saved.pendingSends?.isEmpty == false { try persist() }
             }
             if device == nil { try await enrol() }
             return identityLocked()
@@ -349,18 +360,35 @@ actor GroupEngine: GroupCrypting {
 
         case "application":
             if item.deletedAt != nil || item.ciphertext == nil {
+                if item.deletedAt != nil {
+                    applyDeletionsLocked(group, items: [item])
+                } else if item.replacedBy != nil,
+                          record?.history[group]?.contains(where: { $0.kind == .message && $0.seq == item.seq && $0.text != nil }) == true {
+                    // A metadata refresh of a superseded message must retain its locally
+                    // decrypted version. This is different from an explicit deletion.
+                    return .skipped
+                }
                 remember(group, GroupItem(kind: .message, seq: item.seq, createdAt: item.createdAt, expiresAt: item.expiresAt,
                                           sender: item.sender, replacedBy: item.replacedBy, deleted: true))
                 return .message
             }
             if isOwn(item) {
                 // Recorded when it was sent; the server's copy only confirms its seq.
+                if let cmid = item.clientMessageId, let pending = record?.pendingSends?[cmid] {
+                    let request = pending.request.flatMap { try? JSONSerialization.jsonObject(with: $0) as? [String: Any] }
+                    guard request?["ciphertext"] as? String == item.ciphertext else {
+                        remember(group, GroupItem(kind: .warning, seq: item.seq, createdAt: item.createdAt, warning: "own_message_mismatch"))
+                        return .skipped
+                    }
+                }
                 if var list = record?.history[group],
                    let at = list.firstIndex(where: { $0.kind == .message && $0.cmid == item.clientMessageId }) {
                     list[at].seq = item.seq
                     list[at].createdAt = item.createdAt
                     list[at].expiresAt = item.expiresAt
                     list[at].pending = false
+                    list[at].sendFailed = nil
+                    list[at].code = nil
                     record?.history[group] = Self.sorted(list)
                 }
                 return .skipped
@@ -381,15 +409,20 @@ actor GroupEngine: GroupCrypting {
                 return .skipped
             }
             let body = GroupBody.decode(received.body)
+            let editMatches = body.editOf == item.editOf.map(String.init)
+            let replyMatches = body.replyTo == item.replyTo.map(String.init)
+            if !editMatches || !replyMatches {
+                remember(group, GroupItem(kind: .warning, seq: item.seq, order: 0.5, createdAt: item.createdAt,
+                                          warning: "action_mismatch"))
+            }
             let files = (body.files ?? []).enumerated().map { index, file in
                 GroupFile(id: file.id, name: file.name, mime: file.mime, size: file.size,
                           ref: index < received.attachments.count ? Self.key(received.attachments[index]) : nil)
             }
             remember(group, GroupItem(kind: .message, seq: item.seq, createdAt: item.createdAt, expiresAt: item.expiresAt,
-                                      sender: item.sender, senderDevice: item.senderDevice, cmid: item.clientMessageId,
-                                      text: body.text ?? "", files: files, replyTo: body.replyTo,
-                                      editOf: body.editOf ?? item.editOf.map(String.init)))
-            if let target = item.editOf { markReplaced(group, seq: target, by: item.seq) }
+                                      sender: received.sender.mailbox, senderDevice: received.sender.deviceId, cmid: item.clientMessageId,
+                                      text: body.text ?? "", files: files, replyTo: replyMatches ? body.replyTo : nil,
+                                      editOf: editMatches ? body.editOf : nil, actionsVerified: editMatches && replyMatches))
             return .message
 
         default:
@@ -581,11 +614,31 @@ actor GroupEngine: GroupCrypting {
     func send(_ group: String, text: String, files: [OutgoingGroupFile], replyTo: Int?, editOf: Int?,
               mentions: [String]) async throws -> PostedGroupMessage {
         _ = try ready()
+        let fingerprint = try GroupSendIntent.fingerprint(group, text: text, files: files, replyTo: replyTo, editOf: editOf, mentions: mentions)
+        let retryId: String? = try await serial {
+            if let existing = pendingSend(group, fingerprint: fingerprint) { return existing.cmid }
+            try cleanConfirmedPendingLocked()
+            guard (record?.pendingSends?.count ?? 0) < Self.maxPending else {
+                throw APIError(status: 0, code: "outbox_full", detail: nil)
+            }
+            return nil
+        }
+        if let retryId { return try await retryPending(group, cmid: retryId) }
         let cmid = GroupIDs.clientMessage()
         // Sealed and uploaded before the lock: the bytes are encrypted under a fresh key each, and
         // only the reference to that key travels inside the MLS message.
         var wire: [GroupBody.WireFile] = []
         var refs: [AttachmentRef] = []
+        if let editOf {
+            guard files.isEmpty else { throw APIError(status: 400, code: "edit_has_attachments", detail: nil) }
+            for file in record?.history[group]?.first(where: { $0.kind == .message && $0.seq == editOf })?.files ?? [] {
+                guard let ref = file.ref, let key = Data(base64Encoded: ref.key), let sha = Data(base64Encoded: ref.sha) else {
+                    throw APIError(status: 0, code: "no_key", detail: "This message's files cannot be retained on this device.")
+                }
+                wire.append(.init(id: file.id, name: file.name, mime: file.mime, size: file.size))
+                refs.append(AttachmentRef(key: key, sealedSha256: sha, plaintextLen: ref.len))
+            }
+        }
         for file in files {
             let sealed = try sealAttachment(plaintext: file.data)
             let uploaded = try await client.uploadGroupAttachment(caller, id: group, sealed: sealed.sealed)
@@ -598,18 +651,107 @@ actor GroupEngine: GroupCrypting {
             GroupFile(id: file.id, name: file.name, mime: file.mime, size: file.size, ref: Self.key(ref))
         }
         return try await serial {
-            let device = try ready()
+            // Two calls may have uploaded concurrently. A failed identical attempt still owns
+            // its original id and ciphertext; any redundant unclaimed upload expires normally.
+            if let existing = pendingSend(group, fingerprint: fingerprint) {
+                return try await deliverPendingLocked(group, cmid: existing.cmid)
+            }
+            try cleanConfirmedPendingLocked()
+            guard (record?.pendingSends?.count ?? 0) < Self.maxPending else {
+                throw APIError(status: 0, code: "outbox_full", detail: nil)
+            }
+            let pending = GroupPendingSend(group: group, cmid: cmid, fingerprint: fingerprint, createdAt: Self.now(),
+                                           request: nil, body: body, files: localFiles, mentions: mentions.sorted())
+            setPending(cmid, pending)
             // On screen at once as "Sending…", and the record the server's copy is matched against.
-            remember(group, GroupItem(kind: .message, seq: nil, createdAt: Self.now(), sender: mailbox,
+            remember(group, GroupItem(kind: .message, seq: nil, createdAt: pending.createdAt, sender: mailbox,
                                       senderDevice: record?.deviceId, cmid: cmid, text: text, files: localFiles,
-                                      replyTo: replyTo.map(String.init), editOf: editOf.map(String.init), pending: true))
+                                      replyTo: replyTo.map(String.init), editOf: editOf.map(String.init), pending: true,
+                                      sendFingerprint: fingerprint, actionsVerified: true))
+            do { try persist() } catch {
+                markPendingFailed(group, cmid: cmid, code: "storage_error")
+                emit(.history(group))
+                throw error
+            }
             emit(.history(group))
-            do {
-                for attempt in 0..<Self.maxRetries {
+            return try await deliverPendingLocked(group, cmid: cmid)
+        }
+    }
+
+    func retryPending(_ group: String, cmid: String) async throws -> PostedGroupMessage {
+        try await serial { try await deliverPendingLocked(group, cmid: cmid) }
+    }
+
+    /// Explicitly dismisses a local attempt; it never deletes a message that reached the server.
+    func discardPending(_ group: String, cmid: String) async throws {
+        try await serial {
+            guard record?.pendingSends?[cmid]?.group == group
+                || record?.history[group]?.contains(where: { $0.cmid == cmid && $0.pending == true && $0.seq == nil }) == true else { return }
+            let before = record
+            setPending(cmid, nil)
+            record?.history[group]?.removeAll { $0.cmid == cmid && $0.pending == true && $0.seq == nil }
+            do { try persist() } catch { record = before; throw error }
+            emit(.history(group))
+        }
+    }
+
+    private func pendingSend(_ group: String, fingerprint: String) -> GroupPendingSend? {
+        record?.pendingSends?.values.filter { $0.group == group && $0.fingerprint == fingerprint }
+            .min { $0.createdAt < $1.createdAt }
+    }
+
+    private func setPending(_ cmid: String, _ pending: GroupPendingSend?) {
+        if record?.pendingSends == nil { record?.pendingSends = [:] }
+        record?.pendingSends?[cmid] = pending
+    }
+
+    private func cleanConfirmedPendingLocked() throws {
+        let saved = record?.pendingSends
+        var changed = false
+        for pending in (saved ?? [:]).values {
+            if record?.history[pending.group]?.contains(where: { $0.cmid == pending.cmid && $0.seq != nil && $0.pending != true }) == true {
+                setPending(pending.cmid, nil)
+                changed = true
+            }
+        }
+        guard changed else { return }
+        do { try persist() } catch { record?.pendingSends = saved; throw error }
+    }
+
+    private func deliverPendingLocked(_ group: String, cmid: String) async throws -> PostedGroupMessage {
+        guard let initial = record?.pendingSends?[cmid], initial.group == group else {
+            if let sent = record?.history[group]?.first(where: { $0.kind == .message && $0.cmid == cmid && $0.pending != true }),
+               let seq = sent.seq {
+                return PostedGroupMessage(seq: seq, id: nil, expiresAt: sent.expiresAt)
+            }
+            throw APIError(status: 0, code: "send_unavailable", detail: nil)
+        }
+        do {
+            for attempt in 0..<Self.maxRetries {
+                guard var pending = record?.pendingSends?[cmid], pending.group == group else {
+                    throw APIError(status: 0, code: "send_unavailable", detail: nil)
+                }
+                if let sent = record?.history[group]?.first(where: { $0.kind == .message && $0.cmid == cmid && $0.pending != true }),
+                   let seq = sent.seq {
+                    return try finishPendingLocked(pending, posted: PostedGroupMessage(seq: seq, id: nil, expiresAt: sent.expiresAt))
+                }
+                let now = Self.now()
+                guard now >= pending.createdAt, now - pending.createdAt < 86_400 else {
+                    throw APIError(status: 0, code: "send_retry_expired", detail: nil)
+                }
+                if pending.request == nil {
                     try await syncLocked(group, upTo: nil)
+                    guard record?.pendingSends?[cmid] != nil else { throw APIError(status: 0, code: "send_unavailable", detail: nil) }
                     guard record?.groups[group]?.inGroup == true else { throw APIError(status: 403, code: "not_member", detail: nil) }
-                    let out = try device.encryptMessage(groupId: group, clientMessageId: cmid, body: body, attachments: refs)
-                    try persist()
+                    let device = try ready()
+                    let refs = try pending.files.map { file -> AttachmentRef in
+                        guard let ref = file.ref, let key = Data(base64Encoded: ref.key), let sha = Data(base64Encoded: ref.sha) else {
+                            throw APIError(status: 0, code: "no_key", detail: nil)
+                        }
+                        return AttachmentRef(key: key, sealedSha256: sha, plaintextLen: ref.len)
+                    }
+                    let out = try device.encryptMessage(groupId: group, clientMessageId: cmid, body: pending.body, attachments: refs)
+                    let body = GroupBody.decode(pending.body)
                     var request: [String: Any] = [
                         "request_key": "rk_" + cmid,
                         "client_message_id": cmid,
@@ -617,41 +759,72 @@ actor GroupEngine: GroupCrypting {
                         "enc_scheme": Self.encScheme,
                         "ciphertext": out.ciphertext.base64EncodedString(),
                         "envelope_signature": out.envelopeSignature.base64EncodedString(),
-                        "attachments": wire.map(\.id),
+                        "attachments": pending.files.map(\.id),
                     ]
-                    if let replyTo { request["reply_to"] = replyTo }
-                    if let editOf { request["edit_of"] = editOf }
-                    if !mentions.isEmpty { request["mentions"] = mentions }
-                    do {
-                        let posted = try await client.postGroupMessage(caller, id: group, body: request)
-                        if var list = record?.history[group], let at = list.firstIndex(where: { $0.cmid == cmid && $0.kind == .message }) {
-                            list[at].seq = posted.seq
-                            list[at].pending = false
-                            list[at].expiresAt = posted.expiresAt
-                            record?.history[group] = Self.sorted(list)
-                        }
-                        if let editOf { markReplaced(group, seq: editOf, by: posted.seq) }
-                        try persist()
-                        emit(.history(group))
-                        return posted
-                    } catch let error as APIError where error.status == 409 && error.code == "epoch_conflict" {
-                        // Catch up and re-encrypt under the same client message id.
-                        try? await Task.sleep(nanoseconds: UInt64(50 * (attempt + 1)) * 1_000_000)
-                        continue
-                    } catch let error as APIError where error.status == 409 && error.code == "key_activation_pending" {
-                        // A removal is waiting for a commit. Any member device may make it; this one does.
-                        try await commitLocked(group) { try await self.pendingPlan(group, adds: false) }
-                        continue
+                    if let replyTo = GroupActions.sequence(body.replyTo) { request["reply_to"] = replyTo }
+                    if let editOf = GroupActions.sequence(body.editOf) { request["edit_of"] = editOf }
+                    if !pending.mentions.isEmpty { request["mentions"] = pending.mentions }
+                    let bytes = try JSONSerialization.data(withJSONObject: request, options: [.sortedKeys, .withoutEscapingSlashes])
+                    let otherBytes = record?.pendingSends?.values.filter { $0.cmid != cmid }.reduce(0) { $0 + ($1.request?.count ?? 0) + $1.body.count } ?? 0
+                    guard bytes.count + pending.body.count + otherBytes <= Self.maxPendingBytes else {
+                        throw APIError(status: 0, code: "outbox_full", detail: nil)
                     }
+                    pending.request = bytes
+                    setPending(cmid, pending)
+                    // The exact request and the advanced MLS sender state commit together
+                    // before the first HTTP attempt. A crash cannot require encrypting twice.
+                    try persist()
                 }
-                throw APIError(status: 409, code: "epoch_conflict", detail: nil)
-            } catch {
-                record?.history[group]?.removeAll { $0.cmid == cmid && $0.seq == nil }
-                try? persist()
-                emit(.history(group))
-                throw error
+                guard let bytes = pending.request else { throw APIError(status: 0, code: "send_unavailable", detail: nil) }
+                do {
+                    let posted = try await client.postEncodedGroupMessage(caller, id: group, body: bytes)
+                    return try finishPendingLocked(pending, posted: posted)
+                } catch let error as APIError where error.status == 409 && error.code == "epoch_conflict" {
+                    pending.request = nil
+                    setPending(cmid, pending)
+                    try persist()
+                    try? await Task.sleep(nanoseconds: UInt64(50 * (attempt + 1)) * 1_000_000)
+                } catch let error as APIError where error.status == 409 && error.code == "key_activation_pending" {
+                    pending.request = nil
+                    setPending(cmid, pending)
+                    try persist()
+                    try await commitLocked(group) { try await self.pendingPlan(group, adds: false) }
+                }
             }
+            throw APIError(status: 409, code: "epoch_conflict", detail: nil)
+        } catch {
+            markPendingFailed(group, cmid: cmid, code: Self.code(of: error) ?? "send_failed")
+            try? persist()
+            emit(.history(group))
+            throw error
         }
+    }
+
+    private func finishPendingLocked(_ pending: GroupPendingSend, posted: PostedGroupMessage) throws -> PostedGroupMessage {
+        let group = pending.group
+        if var list = record?.history[group], let at = list.firstIndex(where: { $0.cmid == pending.cmid && $0.kind == .message }) {
+            list[at].seq = posted.seq
+            list[at].pending = false
+            list[at].sendFailed = nil
+            list[at].code = nil
+            list[at].expiresAt = posted.expiresAt
+            record?.history[group] = Self.sorted(list)
+        }
+        setPending(pending.cmid, nil)
+        do { try persist() } catch {
+            // Keep the retry identity in memory too if the acknowledgement could not be saved.
+            setPending(pending.cmid, pending)
+            throw error
+        }
+        emit(.history(group))
+        return posted
+    }
+
+    private func markPendingFailed(_ group: String, cmid: String, code: String) {
+        guard var list = record?.history[group], let at = list.firstIndex(where: { $0.cmid == cmid && $0.seq == nil }) else { return }
+        list[at].sendFailed = true
+        list[at].code = code
+        record?.history[group] = list
     }
 
     func openFile(_ group: String, file: GroupFile) async throws -> Data {
@@ -664,6 +837,38 @@ actor GroupEngine: GroupCrypting {
 
     // ---- housekeeping -------------------------------------------------------------------------------
 
+    /// The native app polls rather than retaining the SSE connection. Recheck only metadata
+    /// within its retained history, so deletions made elsewhere cannot remain as plaintext
+    /// indefinitely. Existing ciphertext is never fed through MLS a second time.
+    func reconcileDeletions(_ group: String) async throws {
+        try await serial {
+            guard record?.groups[group]?.inGroup == true,
+                  let first = record?.history[group]?.filter({ $0.kind == .message && $0.deleted != true }).compactMap(\.seq).min(),
+                  let through = record?.groups[group]?.cursor, through < Int.max else { return }
+            var after = max(first - 1, reconciliationCursors[group] ?? 0)
+            if after > through { after = first - 1 }
+            for _ in 0..<20 {
+                let page = try await client.groupMessages(caller, id: group, after: after,
+                                                         before: through + 1, metadataOnly: true)
+                let items = (page.items ?? []).filter { $0.seq > after && $0.seq <= through }
+                let deleted = items.filter { $0.type == "application" && $0.deletedAt != nil }
+                if !deleted.isEmpty {
+                    applyDeletionsLocked(group, items: deleted)
+                    try persist()
+                    emit(.history(group))
+                }
+                guard let next = items.map(\.seq).max(), next > after, page.more == true else {
+                    reconciliationCursors[group] = nil
+                    return
+                }
+                after = next
+                reconciliationCursors[group] = next
+            }
+            // Very sparse/large windows continue at the next cadence, rather than issuing an
+            // unbounded number of requests or repeatedly scanning only the first twenty pages.
+        }
+    }
+
     /// Drop expired items by this device's own clock, whether or not the postbox's event arrived.
     func pruneExpired() async -> Int {
         await serial {
@@ -671,9 +876,14 @@ actor GroupEngine: GroupCrypting {
             let now = Self.now()
             var dropped = 0
             for (group, list) in current.history {
-                let kept = list.filter { !(($0.expiresAt ?? .max) <= now) }
+                let kept = GroupActions.pruning(list, now: now)
                 dropped += list.count - kept.count
                 current.history[group] = kept
+                let expired = GroupActions.linkedSequences(list, seeds: Set(list.filter { ($0.expiresAt ?? .max) <= now }.compactMap(\.seq)))
+                let cmids = Set(list.filter { $0.seq.map(expired.contains) == true }.compactMap(\.cmid))
+                for pending in (current.pendingSends ?? [:]).values where pending.group == group && pending.depends(on: expired, cmids: cmids) {
+                    current.pendingSends?[pending.cmid] = nil
+                }
             }
             if dropped > 0 {
                 record = current
@@ -685,9 +895,9 @@ actor GroupEngine: GroupCrypting {
 
     func dropSeqs(_ group: String, seqs: [Int]) async {
         await serial {
-            let set = Set(seqs)
-            record?.history[group]?.removeAll { $0.kind == .message && $0.seq.map(set.contains) == true }
+            eraseLocked(group, seqs: Set(seqs))
             try? persist()
+            emit(.history(group))
         }
     }
 
@@ -696,6 +906,9 @@ actor GroupEngine: GroupCrypting {
             try? device?.forgetGroup(groupId: group)
             record?.groups[group] = nil
             record?.history[group] = nil
+            reconciliationCursors[group] = nil
+            let pendingIds = (record?.pendingSends ?? [:]).values.filter { $0.group == group }.map(\.cmid)
+            for cmid in pendingIds { setPending(cmid, nil) }
             try? persist()
         }
     }
@@ -710,6 +923,28 @@ actor GroupEngine: GroupCrypting {
     func safetyNumber(_ group: String) -> String? { try? device?.safetyNumber(groupId: group) }
 
     // ---- helpers ------------------------------------------------------------------------------------
+
+    private func applyDeletionsLocked(_ group: String, items: [GroupWireItem]) {
+        var history = record?.history[group] ?? []
+        for item in items where isOwn(item) {
+            if let cmid = item.clientMessageId,
+               let at = history.firstIndex(where: { $0.kind == .message && $0.cmid == cmid }) {
+                history[at].seq = item.seq
+            }
+        }
+        record?.history[group] = history
+        eraseLocked(group, seqs: Set(items.map(\.seq)))
+    }
+
+    private func eraseLocked(_ group: String, seqs: Set<Int>) {
+        let history = record?.history[group] ?? []
+        let linked = GroupActions.linkedSequences(history, seeds: seqs)
+        let cmids = Set(history.filter { $0.seq.map(linked.contains) == true }.compactMap(\.cmid))
+        let pendingIds = (record?.pendingSends ?? [:]).values
+            .filter { $0.group == group && $0.depends(on: linked, cmids: cmids) }.map(\.cmid)
+        for cmid in pendingIds { setPending(cmid, nil) }
+        record?.history[group] = GroupActions.erasing(history, seqs: seqs)
+    }
 
     private func remember(_ group: String, _ item: GroupItem) {
         var list = record?.history[group] ?? []

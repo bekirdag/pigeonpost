@@ -327,6 +327,58 @@ equal(ThreadMessage(id: "1", kind: .incoming, at: 0,
 equal(RequestEnvelope(body: "{\"v\":1,\"verb\":\"full_access\",\"args\":{},\"note\":\"x\"}")?.title,
       "Full permissions", "the verb reads as what it asks for")
 
+print("\nmessage action compatibility")
+equal(MessageReference.encode([UInt8](repeating: 0, count: 16)),
+      "mref_" + String(repeating: "a", count: 26), "zero reference uses the wire's lowercase base32 alphabet")
+equal(MessageReference.encode([UInt8](repeating: 255, count: 16)),
+      "mref_" + String(repeating: "7", count: 25) + "4", "reference padding leaves the last two bits zero")
+let references = (0..<100).map { _ in MessageReference.make() }
+check(Set(references).count == 100 && references.allSatisfy {
+    $0.range(of: "^mref_[a-z2-7]{25}[aeimquy4]$", options: .regularExpression) != nil
+}, "generated references have the required length, alphabet and padding")
+equal(MessageReplyReference.boundedQuote(String(repeating: "ş", count: 240)).count,
+      200, "Turkish quote text fits the server budget")
+let emojiQuote = MessageReplyReference.boundedQuote(String(repeating: "👩🏽‍💻", count: 100))
+check(emojiQuote.unicodeScalars.count <= 200 && emojiQuote == String(repeating: "👩🏽‍💻", count: 50),
+      "quote truncation keeps whole emoji sequences within the scalar budget")
+let original = ThreadMessage(id: "editable", kind: .outgoing, at: 1_000, body: "words", threadId: nil)
+check(original.isEditable(at: 1_001) && original.isEditable(at: 87_399), "a sent original is editable for 24 hours")
+check(!original.isEditable(at: 999) && !original.isEditable(at: 87_400), "future dates and the exact deadline do not offer editing")
+var expiredOriginal = original
+expiredOriginal.expiresAt = 1_010
+check(!expiredOriginal.isEditable(at: 1_010), "a disappearing original cannot be edited after expiry")
+var unsentOriginal = original
+unsentOriginal.status = .sending
+check(!unsentOriginal.isEditable(at: 1_001), "an optimistic message cannot be edited before delivery")
+let legacyMessage = try decoder.decode(Message.self, from: Data("{\"message_id\":\"legacy\",\"body\":\"old server\"}".utf8))
+check(legacyMessage.msgRef == nil && legacyMessage.replyTo == nil && legacyMessage.receipt == nil,
+      "older server messages still decode without action fields")
+let futureReceipt = try decoder.decode(MessageReceipt.self, from: Data("{\"state\":\"future-state\",\"new_field\":1}".utf8))
+equal(futureReceipt.state, "future-state", "a future receipt state does not make the inbox undecodable")
+
+let fileID = UUID(uuidString: "01234567-89ab-cdef-0123-456789abcdef")!
+let attempt = MessageSendAttempt(text: "Hello", fileIDs: [fileID], replyTo: "parent", editOf: "root")
+check(attempt.matches(text: "Hello", fileIDs: [fileID], replyTo: "parent", editOf: "root"), "identical send payload can reuse its attempt")
+check(!attempt.matches(text: "Changed", fileIDs: [fileID], replyTo: "parent", editOf: "root"), "changed text cannot reuse an attempt")
+check(!attempt.matches(text: "Hello", fileIDs: [], replyTo: "parent", editOf: "root"), "changed attachments cannot reuse an attempt")
+check(!attempt.matches(text: "Hello", fileIDs: [fileID], replyTo: nil, editOf: "root"), "removing a reply is a different payload")
+check(!attempt.matches(text: "Hello", fileIDs: [fileID], replyTo: "parent", editOf: nil), "removing an edit is a different payload")
+check(attempt.reference != MessageSendAttempt(text: "Hello", fileIDs: [fileID]).reference, "separate send attempts have independent references")
+let editSource = ThreadMessage(id: "structured", kind: .outgoing, at: now, body: """
+{"v":1,"verb":"review","args":{"question":"Original","nested":{"keep":true}},"note":"Context","extra":[1,2]}
+""", threadId: nil)
+equal(editSource.editingText, "Original", "structured edit starts from the visible question")
+let editedObject = try JSONSerialization.jsonObject(with: Data(editSource.bodyForEdit("Revised").utf8)) as! [String: Any]
+let editedArgs = editedObject["args"] as! [String: Any]
+check(editedObject["verb"] as? String == "review" && editedArgs["question"] as? String == "Revised"
+      && (editedArgs["nested"] as? [String: Bool])?["keep"] == true && editedObject["note"] as? String == "Context"
+      && editedObject["extra"] as? [Int] == [1, 2], "structured edits preserve independent context and unknown fields")
+let workSource = ThreadMessage(id: "work", kind: .outgoing, at: now, body: RequestEnvelope.work("Original"), threadId: nil)
+let editedWork = try JSONSerialization.jsonObject(with: Data(workSource.bodyForEdit("Revised").utf8)) as! [String: Any]
+check(editedWork["note"] as? String == "Revised" && (editedWork["args"] as? [String: Any])?["task"] as? String == "Revised", "native work edits update the duplicated note with the task")
+let localSent = ThreadMessage(id: "local_pending", kind: .outgoing, at: now, body: "pending", threadId: nil)
+check(!localSent.isEditable(), "optimistic rows wait for a server copy before editing")
+
 print("")
 if failures == 0 {
     print("all good")

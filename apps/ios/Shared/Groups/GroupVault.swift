@@ -23,6 +23,8 @@ struct GroupRecord: Codable, Equatable {
     var stateBlob: Data?
     var groups: [String: Cursor] = [:]
     var history: [String: [GroupItem]] = [:]
+    /// Optional for compatibility: a vault written before durable sends must retain its identity.
+    var pendingSends: [String: GroupPendingSend]?
 
     struct Cursor: Codable, Equatable {
         var cursor: Int = 0

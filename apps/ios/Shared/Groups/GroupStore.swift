@@ -35,6 +35,7 @@ final class GroupStore {
     private(set) var inGroup: Set<String> = []
     private(set) var identity: GroupDeviceIdentity?
     private(set) var calls: [String: GroupCallState] = [:]
+    private(set) var receipts: [String: GroupReceipts] = [:]
     /// Address → handle, learned from member lists, so names read as names.
     private(set) var handles: [String: String] = [:]
     /// The group on screen; its history is polled faster and its arrivals are not announced.
@@ -70,6 +71,7 @@ final class GroupStore {
     /// Called whenever the mailbox or the capabilities may have changed, and on every return to the
     /// foreground. Cheap when nothing did.
     func attach() async {
+        if !account.features.receipts { receipts = [:] }
         #if DEBUG
         if Fixtures.enabled {
             if account.features.groups { installFixtures() } else { status = .off }
@@ -123,6 +125,14 @@ final class GroupStore {
                 if let open { await pollCall(open) }
                 _ = try? await engine?.processWelcomes()
                 await refresh()
+                let visit = generation
+                let currentEngine = engine
+                for group in groups where group.isActive {
+                    guard visit == generation else { break }
+                    try? await currentEngine?.reconcileDeletions(group.id)
+                    guard visit == generation else { break }
+                    await reloadHistory(group.id)
+                }
                 if (await engine?.pruneExpired() ?? 0) > 0 { await reloadHistories() }
             }
         }
@@ -147,6 +157,7 @@ final class GroupStore {
         inGroup = []
         identity = nil
         calls = [:]
+        receipts = [:]
         open = nil
         mailbox = nil
         generation = UUID()
@@ -184,10 +195,16 @@ final class GroupStore {
 
     private func reloadHistory(_ group: String) async {
         guard let engine else { return }
-        histories[group] = await engine.history(group)
-        if await engine.inGroup(group) { inGroup.insert(group) } else { inGroup.remove(group) }
-        safetyNumbers[group] = await engine.safetyNumber(group)
-        memberDevices[group] = await engine.members(group)
+        let visit = generation
+        let history = await engine.history(group)
+        let joined = await engine.inGroup(group)
+        let number = await engine.safetyNumber(group)
+        let devices = await engine.members(group)
+        guard visit == generation else { return }
+        histories[group] = history
+        if joined { inGroup.insert(group) } else { inGroup.remove(group) }
+        safetyNumbers[group] = number
+        memberDevices[group] = devices
     }
 
     private func reloadHistories() async {
@@ -233,6 +250,7 @@ final class GroupStore {
 
     func syncGroup(_ group: String, pending: Bool = false) async {
         guard let engine, !syncing.contains(group) else { return }
+        let visit = generation
         syncing.insert(group)
         defer { syncing.remove(group) }
         if await engine.inGroup(group) {
@@ -243,8 +261,10 @@ final class GroupStore {
             }
             if pending { _ = try? await engine.processPending(group, noJitter: false) }
         }
+        guard visit == generation else { return }
         await reloadHistory(group)
         if group == open { markRead(group) }
+        if group == open { await loadReceipts(group) }
     }
 
     /// The postbox no longer knows this device — revoked from another device, or a database reset.
@@ -317,9 +337,16 @@ final class GroupStore {
 
     func show(_ group: String) {
         open = group
+        let visit = generation
+        let currentEngine = engine
         Task {
             await loadMembers(group)
+            guard visit == generation else { return }
             await syncGroup(group, pending: true)
+            guard visit == generation else { return }
+            try? await currentEngine?.reconcileDeletions(group)
+            guard visit == generation else { return }
+            await reloadHistory(group)
             await pollCall(group)
         }
     }
@@ -343,7 +370,9 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller, let list = try? await client.groupMembers(caller, id: group) else { return }
+        guard let caller else { return }
+        let visit = generation
+        guard let list = try? await client.groupMembers(caller, id: group), visit == generation else { return }
         for member in list { if let handle = member.handle { handles[member.address] = handle } }
         members[group] = list
     }
@@ -352,28 +381,48 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller, let list = try? await client.groupDevices(caller, of: mailbox) else { return }
+        guard let caller else { return }
+        let visit = generation
+        guard let list = try? await client.groupDevices(caller, of: mailbox), visit == generation else { return }
         devices[mailbox] = list
+    }
+
+    func loadReceipts(_ group: String) async {
+        guard account.features.receipts, let caller else { receipts[group] = nil; return }
+        #if DEBUG
+        if Fixtures.enabled { return }
+        #endif
+        let visit = generation
+        let result = try? await client.groupReceipts(caller, id: group)
+        guard visit == generation, account.features.receipts else { return }
+        // Older servers and failures make no delivery/read claim.
+        receipts[group] = result
     }
 
     // ---- sending ------------------------------------------------------------------------------------
 
     /// Returns whether it went. On failure the words stay with the caller to put back.
     @discardableResult
-    func send(_ group: String, text: String, files: [StagedFile]) async -> Bool {
+    func send(_ group: String, text: String, files: [StagedFile], replyTo: Int? = nil, editOf: Int? = nil) async -> Bool {
+        let visit = generation
         #if DEBUG
         if Fixtures.enabled {
-            installFixtureMessage(group, text: text)
+            let seq = (histories[group] ?? []).compactMap(\.seq).max().map { $0 + 1 } ?? 1
+            let retained = editOf.flatMap { target in histories[group]?.first { $0.seq == target }?.files }
+            histories[group, default: []].append(GroupItem(kind: .message, seq: seq, createdAt: Int(Date().timeIntervalSince1970),
+                sender: me, text: text, files: retained, replyTo: replyTo.map(String.init), editOf: editOf.map(String.init), actionsVerified: true))
             return true
         }
         #endif
         guard let engine else { return false }
         let outgoing = files.map { OutgoingGroupFile(name: $0.name, mime: $0.mediaType, data: $0.data) }
         do {
-            try await engine.send(group, text: text, files: outgoing, replyTo: nil, editOf: nil, mentions: [])
+            try await engine.send(group, text: text, files: outgoing, replyTo: replyTo, editOf: editOf, mentions: [])
+            guard visit == generation else { return true }
             await reloadHistory(group)
             return true
         } catch {
+            guard visit == generation else { return false }
             await reloadHistory(group)
             say("Not sent: " + GroupText.explain(error))
             return false
@@ -381,20 +430,82 @@ final class GroupStore {
     }
 
     func deleteMessage(_ group: String, seq: Int) async {
-        guard let caller else { return }
+        #if DEBUG
+        if Fixtures.enabled {
+            histories[group] = GroupActions.erasing(histories[group] ?? [], seqs: [seq])
+            return
+        }
+        #endif
+        guard let caller, let engine else { return }
+        let visit = generation
         do {
-            try await client.deleteGroupMessage(caller, id: group, seq: seq)
+            let result = try await client.deleteGroupMessage(caller, id: group, seq: seq)
+            guard visit == generation else { return }
+            await engine.dropSeqs(group, seqs: result.seqs ?? [seq])
+            guard visit == generation else { return }
+            await reloadHistory(group)
             await syncGroup(group)
         } catch {
+            guard visit == generation else { return }
             say(GroupText.explain(error))
         }
     }
 
+    @discardableResult
+    func retryMessage(_ group: String, cmid: String) async -> Bool {
+        let visit = generation
+        #if DEBUG
+        if Fixtures.enabled, let index = histories[group]?.firstIndex(where: { $0.cmid == cmid }) {
+            let seq = ((histories[group] ?? []).compactMap(\.seq).max() ?? 0) + 1
+            histories[group]?[index].seq = seq
+            histories[group]?[index].pending = false
+            histories[group]?[index].sendFailed = nil
+            return true
+        }
+        #endif
+        guard let engine else { return false }
+        do {
+            _ = try await engine.retryPending(group, cmid: cmid)
+            guard visit == generation else { return true }
+            await reloadHistory(group)
+            return true
+        } catch {
+            guard visit == generation else { return false }
+            await reloadHistory(group)
+            say(GroupText.explain(error))
+            return false
+        }
+    }
+
+    func discardMessage(_ group: String, cmid: String) async {
+        let visit = generation
+        #if DEBUG
+        if Fixtures.enabled { histories[group]?.removeAll { $0.cmid == cmid && $0.pending == true }; return }
+        #endif
+        guard let engine else { return }
+        do { try await engine.discardPending(group, cmid: cmid) }
+        catch { if visit == generation { say(GroupText.explain(error)) } }
+        guard visit == generation else { return }
+        await reloadHistory(group)
+    }
+
     func openFile(_ group: String, file: GroupFile) async -> Data? {
-        guard let engine else { return nil }
-        do { return try await engine.openFile(group, file: file) } catch {
+        guard let engine, hasFile(group, file: file) else { return nil }
+        let visit = generation
+        do {
+            let data = try await engine.openFile(group, file: file)
+            guard visit == generation, hasFile(group, file: file) else { return nil }
+            return data
+        } catch {
+            guard visit == generation else { return nil }
             say("Could not open the file: " + GroupText.explain(error))
             return nil
+        }
+    }
+
+    func hasFile(_ group: String, file: GroupFile) -> Bool {
+        GroupActions.visible(histories[group] ?? [], now: Int(Date().timeIntervalSince1970)).contains {
+            $0.kind == .message && $0.deleted != true && $0.undecryptable != true && ($0.files ?? []).contains(file)
         }
     }
 
@@ -681,6 +792,24 @@ final class GroupStore {
             GroupMember(address: ozgur, handle: "/ozgur/main", role: "member", state: "active", revision: 1),
             GroupMember(address: "/k/qq9999v2h90vnwefj7g7ezvbh1", role: "member", state: "invited", revision: 1),
         ]
+        if CommandLine.arguments.contains("-group-actions") {
+            histories[garden, default: []].append(contentsOf: [
+                GroupItem(kind: .message, seq: 9, createdAt: now - 200, expiresAt: now + 80000,
+                          sender: me, text: "Original group message", actionsVerified: true),
+                GroupItem(kind: .message, seq: 10, createdAt: now - 100, expiresAt: now + 80000,
+                          sender: me, text: "Edited group message", replyTo: "7", editOf: "9", actionsVerified: true)
+            ])
+            receipts[garden] = GroupReceipts(members: [
+                GroupMemberReceipt(address: alp, handle: "/alp/main", deliveredSeq: 10, seenSeq: 10),
+                GroupMemberReceipt(address: ozgur, handle: "/ozgur/main", deliveredSeq: 10, seenSeq: nil)
+            ], readReceipts: true)
+        }
+        if CommandLine.arguments.contains("-group-failed-send") {
+            let fingerprint = try? GroupSendIntent.fingerprint(garden, text: "Waiting for retry", files: [], replyTo: nil, editOf: nil, mentions: [])
+            histories[garden, default: []].append(GroupItem(kind: .message, seq: nil, createdAt: now - 5,
+                sender: me, cmid: "cmid_fixture_retry", text: "Waiting for retry", pending: true,
+                sendFailed: true, sendFingerprint: fingerprint, actionsVerified: true))
+        }
         devices[alp] = [MailboxDevices.Device(deviceId: "ios-alp", fingerprint: nil, fingerprintDigits: "11402 88301 54390 22817", createdAt: now - 89000),
                         MailboxDevices.Device(deviceId: "web-alp2", fingerprint: nil, fingerprintDigits: "90213 44871 03392 77105", createdAt: now - 3000)]
         memberDevices[garden] = [mine, alpPhone, alpLaptop]

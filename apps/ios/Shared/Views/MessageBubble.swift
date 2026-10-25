@@ -16,14 +16,23 @@ struct MessageBubble: View {
     /// The phone's history (ConversationHistoryView) presents the long-press menu itself, from the
     /// table, and so turns this one off; see `HistoryController`.
     var showsMenu: Bool = true
+    var actionScope: MessageActionScope? = nil
+    var jumpToMessage: ((String) -> Void)? = nil
     /// Where the card sits in the `history-row` coordinate space, for that menu's preview.
     var onCardFrame: ((CGRect) -> Void)? = nil
 
     @Environment(Inbox.self) private var inbox
+    @Environment(Account.self) private var account
     @State private var confirmingReport = false
     @State private var confirmingDelete = false
     @State private var copied = false
-    @State private var blocking: BlockTarget?
+    private enum Sheet: Identifiable {
+        case block(BlockTarget), info
+        var id: String {
+            switch self { case .block(let target): return "block:" + target.id; case .info: return "info" }
+        }
+    }
+    @State private var sheet: Sheet?
 
     private var isMine: Bool { message.kind == .outgoing }
 
@@ -50,7 +59,8 @@ struct MessageBubble: View {
     private var bubble: some View {
         HStack(spacing: 0) {
             if isMine { Spacer(minLength: 36) }
-            card
+            VStack(alignment: isMine ? .trailing : .leading, spacing: 2) {
+                card
                 .background {
                     if let onCardFrame {
                         GeometryReader { g in
@@ -63,7 +73,9 @@ struct MessageBubble: View {
                 }
                 // The menu belongs to the card, not the row: the row's spacers are not the message.
                 .contextMenu(showsMenu ? ContextMenu { menu } : nil)
-                .frame(maxWidth: 620, alignment: isMine ? .trailing : .leading)
+                actions
+            }
+            .frame(maxWidth: 620, alignment: isMine ? .trailing : .leading)
             if !isMine { Spacer(minLength: 36) }
         }
         .padding(.vertical, 2)
@@ -91,12 +103,29 @@ struct MessageBubble: View {
         } message: {
             Text("Deleted from this mailbox and gone for good — this is not archiving, and there is no undo. The other side keeps their copy and is not told. The room it took is freed.")
         }
-        .sheet(item: $blocking) { target in BlockSheet(target: target) }
+        .sheet(item: $sheet) { which in
+            switch which {
+            case .block(let target): BlockSheet(target: target)
+            case .info:
+                if let actionScope { MessageInfoSheet(message: message, scope: actionScope) }
+            }
+        }
     }
 
     /// Copy, report and delete: the long-press menu.
     @ViewBuilder
     private var menu: some View {
+        if let actionScope {
+            if canReply {
+                Button { inbox.beginMessageAction(.reply, message: message, in: actionScope) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+            }
+            if canEdit {
+                Button { inbox.beginMessageAction(.edit, message: message, in: actionScope) } label: { Label("Edit", systemImage: "pencil") }
+            }
+            if canShowInfo {
+                Button { sheet = .info } label: { Label("Message info", systemImage: "info.circle") }
+            }
+        }
         Button {
             Clipboard.copy(message.body)
         } label: {
@@ -114,8 +143,8 @@ struct MessageBubble: View {
         // Blocking the sender, from the message that prompted it (SDS §15.2).
         if !isMine, let peer = inbox.reading, !(inbox.conversation(with: peer)?.isBlocked ?? false) {
             Button(role: .destructive) {
-                blocking = BlockTarget(peer: peer, name: inbox.conversation(with: peer)?.name ?? PeerFace.displayName(peer),
-                                       origin: .message, messageId: message.id)
+                sheet = .block(BlockTarget(peer: peer, name: inbox.conversation(with: peer)?.name ?? PeerFace.displayName(peer),
+                                       origin: .message, messageId: message.id))
             } label: {
                 Label("Block sender", systemImage: "hand.raised")
             }
@@ -141,6 +170,26 @@ struct MessageBubble: View {
                     .overlay(alignment: .bottom) { Rectangle().fill(divider).frame(height: 1) }
             }
             VStack(alignment: .leading, spacing: 10) {
+                if account.features.messageReply, let reply = message.replyTo {
+                    Button {
+                        if let id = reply.messageId { jumpToMessage?(id) }
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            RoundedRectangle(cornerRadius: 2).fill(Theme.accent).frame(width: 3)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(reply.from.map(PeerFace.displayName) ?? "Reply").font(.geist(12, .semibold))
+                                Text(reply.text).font(.geist(13)).lineLimit(3)
+                            }
+                            Spacer(minLength: 0)
+                        }
+                        .foregroundStyle(isMine ? Theme.Mine.meta : Theme.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(reply.messageId == nil || jumpToMessage == nil)
+                    .accessibilityLabel("Reply to: " + reply.text)
+                    .accessibilityIdentifier("reply-quote:" + message.id)
+                }
                 if let envelope = message.envelope {
                     RequestCard(
                         envelope: envelope,
@@ -192,28 +241,9 @@ struct MessageBubble: View {
 
     private var meta: some View {
         HStack(spacing: 6) {
-            // Copy sits at the start of the meta row, before the spacer, so it lands under the
-            // message it belongs to rather than drifting to the far edge of a wide bubble.
-            //
-            // Visible rather than only in the long-press menu: agent replies are the thing people
-            // most often want out of this app and into somewhere else, and an affordance nobody
-            // can see is one most people never find.
-            Button {
-                Clipboard.copy(message.copyText)
-                copied = true
-                Task {
-                    try? await Task.sleep(nanoseconds: 1_400_000_000)
-                    copied = false
-                }
-            } label: {
-                Image(systemName: copied ? "checkmark" : "doc.on.doc")
-                    .font(.geist(12.5, .medium))
-                    .foregroundStyle(metaColor)
-                    .frame(width: 26, height: 26)
-                    .contentShape(Rectangle())
+            if account.features.messageEdit && message.isEdited {
+                Text("Edited").font(.geist(11)).foregroundStyle(metaColor)
             }
-            .buttonStyle(.plain)
-            .accessibilityLabel(copied ? "Copied" : "Copy message")
             Spacer(minLength: 0)
             if message.status == .failed {
                 Text("not sent")
@@ -221,14 +251,58 @@ struct MessageBubble: View {
                     .foregroundStyle(Theme.Pill.blockedText)
             }
             if message.status == .sending {
-                Text("sending…")
+                Image(systemName: "clock")
                     .font(.geist(12))
                     .foregroundStyle(metaColor)
+                    .accessibilityLabel("Sending")
             }
             Text(Time.clockTime(message.at))
                 .font(.geist(12))
                 .foregroundStyle(metaColor)
+            if isMine && message.status == .sent {
+                if account.features.agentStatus, let state = message.agentStatus?.state, ["working", "failed"].contains(state) {
+                    MessageAgentMark(state: state).accessibilityIdentifier("agent-status:" + message.id)
+                } else if account.features.receipts {
+                    MessageReceiptMark(receipt: message.receipt ?? MessageReceipt(state: "sent", deliveredAt: nil, seenAt: nil))
+                        .accessibilityIdentifier("message-receipt:" + message.id)
+                }
+            }
         }
+    }
+
+    private var canReply: Bool {
+        actionScope != nil && account.features.messageReply && message.status == .sent && !message.id.hasPrefix("local_")
+    }
+    private var canEdit: Bool { actionScope != nil && account.features.messageEdit && message.isEditable() }
+    private var canShowInfo: Bool {
+        actionScope != nil && !message.id.hasPrefix("local_") && (account.features.messageEdit || account.features.receipts)
+    }
+
+    private var actions: some View {
+        HStack(spacing: 14) {
+            if !isMine, canReply, let actionScope {
+                Button { inbox.beginMessageAction(.reply, message: message, in: actionScope) } label: { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+                    .accessibilityIdentifier("message-reply:" + message.id)
+            }
+            if canEdit, let actionScope {
+                Button { inbox.beginMessageAction(.edit, message: message, in: actionScope) } label: { Label("Edit", systemImage: "pencil") }
+                    .accessibilityIdentifier("message-edit:" + message.id)
+            }
+            Button {
+                Clipboard.copy(message.copyText)
+                copied = true
+                Task { try? await Task.sleep(nanoseconds: 1_400_000_000); copied = false }
+            } label: { Label(copied ? "Copied" : "Copy", systemImage: copied ? "checkmark" : "doc.on.doc") }
+                .accessibilityLabel(copied ? "Copied" : "Copy message")
+            if canShowInfo {
+                Button { sheet = .info } label: { Label("Info", systemImage: "info.circle") }
+                    .accessibilityIdentifier("message-info:" + message.id)
+            }
+        }
+        .font(.geist(12.5, .medium))
+        .foregroundStyle(Theme.secondary)
+        .buttonStyle(MessageActionButtonStyle())
+        .padding(.horizontal, 8)
     }
 }
 

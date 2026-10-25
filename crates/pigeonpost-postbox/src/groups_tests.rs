@@ -636,6 +636,149 @@ async fn create_invite_activate_chat_round_trip() {
 }
 
 #[tokio::test]
+async fn group_metadata_pages_redact_payloads_without_delivery_receipts() {
+    let srv = serve().await;
+    let (mut alice, bob, carol, gid) = three(&srv).await;
+    srv.flag("receipts", "acct_alice").await;
+    let (status, posted) = alice.send(&srv, &gid, "metadata is not a delivery").await;
+    assert_eq!(status, 201, "{posted}");
+    let seq = posted["seq"].as_i64().unwrap();
+    assert_eq!(
+        alice.send(&srv, &gid, "second metadata page item").await.0,
+        201
+    );
+    let delivered = |rows: Vec<(String, Option<String>, i64, i64, bool)>| {
+        rows.into_iter().find(|r| r.0 == bob.address).unwrap().2
+    };
+    let before = delivered(
+        srv.state
+            .store
+            .group_receipt_rows(gid.clone(), alice.address.clone())
+            .await
+            .unwrap(),
+    );
+    let path = format!("/v1/groups/{gid}/messages?metadata_only=true&limit=100");
+    let (status, metadata) = bob.req(&srv, reqwest::Method::GET, &path, None).await;
+    assert_eq!(status, 200, "{metadata}");
+    let items = metadata["items"].as_array().unwrap();
+    assert!(items.iter().any(|i| i["seq"] == seq));
+    assert!(items
+        .iter()
+        .all(|i| i["ciphertext"].is_null() && i["commit"].is_null()));
+    let (status, owner_metadata) = alice.req(&srv, reqwest::Method::GET, &path, None).await;
+    assert_eq!(status, 200, "{owner_metadata}");
+    assert!(owner_metadata["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["type"] == "commit"));
+    assert!(owner_metadata["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|i| i["ciphertext"].is_null() && i["commit"].is_null()));
+    assert_eq!(
+        delivered(
+            srv.state
+                .store
+                .group_receipt_rows(gid.clone(), alice.address.clone())
+                .await
+                .unwrap()
+        ),
+        before,
+        "metadata reconciliation must not manufacture delivery"
+    );
+    let (status, page) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("{path}&after_seq={}&before_seq={}", seq - 1, seq + 1),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{page}");
+    assert_eq!(page["items"].as_array().unwrap().len(), 1);
+    assert_eq!(page["items"][0]["seq"], seq);
+    let (status, limited) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?metadata_only=true&limit=1"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{limited}");
+    assert_eq!(limited["items"].as_array().unwrap().len(), 1);
+    assert_eq!(limited["more"], true);
+    let (status, _) = carol.req(&srv, reqwest::Method::GET, &path, None).await;
+    let normal_denial = carol
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages"),
+            None,
+        )
+        .await
+        .0;
+    assert_eq!(
+        status, normal_denial,
+        "metadata access requires the same active membership"
+    );
+    assert_eq!(status, 403);
+    let (status, normal) = bob
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?limit=100"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{normal}");
+    assert!(normal["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["seq"] == seq && i["ciphertext"].is_string()));
+    let (_, owner_normal) = alice
+        .req(
+            &srv,
+            reqwest::Method::GET,
+            &format!("/v1/groups/{gid}/messages?limit=100"),
+            None,
+        )
+        .await;
+    assert!(owner_normal["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["type"] == "commit" && i["commit"].is_string()));
+    assert!(
+        delivered(
+            srv.state
+                .store
+                .group_receipt_rows(gid.clone(), alice.address.clone())
+                .await
+                .unwrap()
+        ) >= seq
+    );
+    let (status, deleted) = alice
+        .req(
+            &srv,
+            reqwest::Method::DELETE,
+            &format!("/v1/groups/{gid}/messages/{seq}"),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{deleted}");
+    let (_, refreshed) = bob.req(&srv, reqwest::Method::GET, &path, None).await;
+    assert!(refreshed["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|i| i["seq"] == seq && i["deleted_at"].is_number()));
+}
+
+#[tokio::test]
 async fn authorization_matrix() {
     let srv = serve().await;
     let (mut alice, mut bob, carol, gid) = three(&srv).await;
@@ -1405,7 +1548,7 @@ async fn group_edit_racing_deletion_cannot_resurrect_a_version() {
 #[tokio::test]
 async fn group_edit_deletion_releases_all_versions_attachments_without_other_groups() {
     let srv = serve().await;
-    let (mut alice, _bob, _carol, first) = three(&srv).await;
+    let (mut alice, mut bob, _carol, first) = three(&srv).await;
     let second = alice.create(&srv, "Other files", json!({})).await;
     let sealed = pigeonpost_groupcrypto::seal_attachment(b"versioned secret file").unwrap();
     let mut posted = Vec::new();
@@ -1442,18 +1585,73 @@ async fn group_edit_deletion_releases_all_versions_attachments_without_other_gro
         assert_eq!(status, 201, "{body}");
         posted.push((id, body["seq"].as_i64().unwrap()));
     }
-    let (status, edit) = alice
-        .send_edit(&srv, &first, "new caption", posted[0].1)
+    // Claiming an existing file is allowed only as a text edit of its current version.
+    let (_, unrelated) = alice.send(&srv, &first, "unrelated message").await;
+    let (_, bobs) = bob.send(&srv, &first, "Bob's message").await;
+    for (who, gid, target) in [
+        (&mut bob, &first, bobs["seq"].as_i64().unwrap()),
+        (&mut alice, &second, posted[1].1),
+    ] {
+        let mut request = who.edit_request(gid, "cannot take another file", target);
+        request["attachments"] = json!([posted[0].0]);
+        let (status, body) = who
+            .req(
+                &srv,
+                reqwest::Method::POST,
+                &format!("/v1/groups/{gid}/messages"),
+                Some(request),
+            )
+            .await;
+        assert_eq!(status, 400, "{body}");
+        assert_eq!(body["error"], "bad_attachment");
+    }
+    let mut wrong_target = alice.edit_request(
+        &first,
+        "cannot take another message's file",
+        unrelated["seq"].as_i64().unwrap(),
+    );
+    wrong_target["attachments"] = json!([posted[0].0]);
+    let (status, body) = alice
+        .req(
+            &srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{first}/messages"),
+            Some(wrong_target),
+        )
         .await;
-    assert_eq!(status, 201);
+    assert_eq!(status, 400, "{body}");
+    assert_eq!(body["error"], "bad_attachment");
+    let mut latest = posted[0].1;
+    for caption in ["new caption", "newest caption"] {
+        let mut request = alice.edit_request(&first, caption, latest);
+        request["attachments"] = json!([posted[0].0]);
+        let (status, body) = alice
+            .req(
+                &srv,
+                reqwest::Method::POST,
+                &format!("/v1/groups/{first}/messages"),
+                Some(request),
+            )
+            .await;
+        assert_eq!(status, 201, "{body}");
+        latest = body["seq"].as_i64().unwrap();
+    }
+    let group = first.clone();
+    let attachment = posted[0].0.clone();
+    let (count, at): (i64, i64) = srv.state.store.group_read(move |c: &rusqlite::Connection| -> groups::GResult<_> {
+        Ok(c.query_row("SELECT COUNT(*), MAX(message_seq) FROM group_attachments WHERE group_id=?1 AND id=?2",
+                       params![group, attachment], |r| Ok((r.get(0)?, r.get(1)?)))?)
+    }).await.unwrap();
+    assert_eq!(
+        (count, at),
+        (1, latest),
+        "caption edits move one existing attachment rather than duplicating uploads"
+    );
     let (status, body) = alice
         .req(
             &srv,
             reqwest::Method::DELETE,
-            &format!(
-                "/v1/groups/{first}/messages/{}",
-                edit["seq"].as_i64().unwrap()
-            ),
+            &format!("/v1/groups/{first}/messages/{}", latest),
             None,
         )
         .await;
