@@ -79,8 +79,16 @@ struct CalendarDetail: View {
                 reminderText = (loaded.event.reminders ?? []).map { String($0.minutesBefore) }.joined(separator: ", ")
             }
         }
-        .onAppear { visible = true }
+        .onAppear {
+            visible = true
+            #if DEBUG
+            CalendarPickerTrace.record("detail.appear", choosing: exporting, visible: visible, current: store.scopeId == visit)
+            #endif
+        }
         .onDisappear {
+            #if DEBUG
+            CalendarPickerTrace.record("detail.disappear", choosing: exporting, visible: visible, current: store.scopeId == visit)
+            #endif
             visible = false; presentation = UUID(); exportDocument = nil; exporting = false
             if store.openEvent == key { store.openEvent = nil }
         }
@@ -115,6 +123,9 @@ struct CalendarDetail: View {
             #endif
         }
         .fileExporter(isPresented: $exporting, document: exportDocument, contentType: CalendarFileDocument.contentType, defaultFilename: "Pigeonpost-event.ics") { saved in
+            #if DEBUG
+            CalendarPickerTrace.record("detail.export.callback", choosing: exporting, visible: visible, current: store.scopeId == visit)
+            #endif
             exportDocument = nil
             if case .failure(let error) = saved, (error as? CocoaError)?.code != .userCancelled, store.scopeId == visit {
                 problem = "Could not save the calendar file."
@@ -285,10 +296,16 @@ struct CalendarDetail: View {
         Clipboard.copy(link.url); notice = "Personal invitation link copied. Share it only with this guest."
     }
     private func export() async {
+        #if DEBUG
+        CalendarPickerTrace.record("detail.export.start", choosing: exporting, visible: visible, current: store.scopeId == visit)
+        #endif
         guard store.scopeId == visit, visible else { return }
         let screen = presentation
         guard let data = await store.exportEvent(id: key.eventId), store.scopeId == visit, visible,
               screen == presentation, !Task.isCancelled else { return }
         exportDocument = CalendarFileDocument(data: data); exporting = true
+        #if DEBUG
+        CalendarPickerTrace.record("detail.export.ready", choosing: exporting, visible: visible, current: store.scopeId == visit)
+        #endif
     }
 }

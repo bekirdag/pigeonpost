@@ -90,12 +90,33 @@ jobs:
             -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-tests" \
             -resultBundlePath "$RUNNER_TEMP/ios-ux.xcresult" \
             "${selected_tests[@]}"
+      - name: Collect fixture-only calendar lifecycle markers
+        if: always()
+        env:
+          TRACE_SIM: ${{ env.IOS_SIM }}
+        run: |
+          python3 - <<'PYTRACE'
+          import json, os, pathlib, plistlib, re, subprocess
+          result = subprocess.run(['xcrun','simctl','get_app_container',os.environ['TRACE_SIM'],'dev.pigeonpost.inbox','data'],capture_output=True,text=True)
+          rows = []
+          if result.returncode == 0:
+              path = pathlib.Path(result.stdout.strip())/'Library/Preferences/dev.pigeonpost.inbox.plist'
+              if path.is_file():
+                  with path.open('rb') as stream: rows = plistlib.load(stream).get('pp_calendar_picker_trace', [])
+          assert isinstance(rows,list) and len(rows) <= 96
+          assert all(isinstance(row,str) and len(row) < 200 and re.fullmatch(r'[A-Za-z0-9_. =-]+',row) for row in rows)
+          target = pathlib.Path(os.environ['RUNNER_TEMP'])/"calendar-picker-trace-ios.json"
+          target.write_text(json.dumps(rows,indent=2)+'\n')
+          print(json.dumps(rows))
+          PYTRACE
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ios-native-ux-results
-          path: ${{ runner.temp }}/ios-ux.xcresult
+          path: |
+            ${{ runner.temp }}/ios-ux.xcresult
+            ${{ runner.temp }}/calendar-picker-trace-ios.json
           retention-days: 14
 
   native-ipad:
@@ -158,12 +179,33 @@ jobs:
             -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-tests" \
             -resultBundlePath "$RUNNER_TEMP/ipad-layout.xcresult" \
             "${selected_tests[@]}"
+      - name: Collect fixture-only calendar lifecycle markers
+        if: always()
+        env:
+          TRACE_SIM: ${{ env.IPAD_SIM }}
+        run: |
+          python3 - <<'PYTRACE'
+          import json, os, pathlib, plistlib, re, subprocess
+          result = subprocess.run(['xcrun','simctl','get_app_container',os.environ['TRACE_SIM'],'dev.pigeonpost.inbox','data'],capture_output=True,text=True)
+          rows = []
+          if result.returncode == 0:
+              path = pathlib.Path(result.stdout.strip())/'Library/Preferences/dev.pigeonpost.inbox.plist'
+              if path.is_file():
+                  with path.open('rb') as stream: rows = plistlib.load(stream).get('pp_calendar_picker_trace', [])
+          assert isinstance(rows,list) and len(rows) <= 96
+          assert all(isinstance(row,str) and len(row) < 200 and re.fullmatch(r'[A-Za-z0-9_. =-]+',row) for row in rows)
+          target = pathlib.Path(os.environ['RUNNER_TEMP'])/"calendar-picker-trace-ipad.json"
+          target.write_text(json.dumps(rows,indent=2)+'\n')
+          print(json.dumps(rows))
+          PYTRACE
       - name: Preserve iPad layout evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ipad-layout-results
-          path: ${{ runner.temp }}/ipad-layout.xcresult
+          path: |
+            ${{ runner.temp }}/ipad-layout.xcresult
+            ${{ runner.temp }}/calendar-picker-trace-ipad.json
           retention-days: 14
 
   native-storekit:

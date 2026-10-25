@@ -17,7 +17,7 @@ final class CalendarUITests: XCTestCase {
     }
     private func launch(_ extra: [String] = [], calendar: Bool = true, open: Bool = true) {
         app.terminate()
-        app.launchArguments = ["-fixtures", "-appearance=light", calendar ? "-features=calendar" : "-features="]
+        app.launchArguments = ["-fixtures", "-calendar-picker-trace", "-appearance=light", calendar ? "-features=calendar" : "-features="]
             + (calendar ? ["-calendar-fixtures"] + (open ? ["-sheet=calendar"] : []) : []) + extra
         app.launch()
     }

@@ -91,7 +91,12 @@ struct CalendarImportScreen: View {
                         }
                         Text("Choose an .ics file, up to 512 KB. Review its events before importing anything.")
                             .font(.geist(12)).foregroundStyle(Theme.secondary)
-                        Button(busy ? "Reading calendar…" : "Choose calendar file") { choosing = true }.disabled(busy)
+                        Button(busy ? "Reading calendar…" : "Choose calendar file") {
+                            choosing = true
+                            #if DEBUG
+                            CalendarPickerTrace.record("import.choose", choosing: choosing, visible: visible, current: store.scopeId == visit)
+                            #endif
+                        }.disabled(busy)
                             .accessibilityIdentifier("calendar-import-choose-file")
                     }
                 }
@@ -118,18 +123,40 @@ struct CalendarImportScreen: View {
             }
         }
         #endif
-        .onAppear { visible = true }
+        .onAppear {
+            visible = true
+            #if DEBUG
+            CalendarPickerTrace.record("import.appear", choosing: choosing, visible: visible, current: store.scopeId == visit)
+            #endif
+        }
         .onChange(of: store.scopeId) { _, _ in presentation = UUID(); reset(); dismiss() }
-        .onDisappear { visible = false; presentation = UUID(); reset() }
+        .onDisappear {
+            #if DEBUG
+            CalendarPickerTrace.record("import.disappear", choosing: choosing, visible: visible, current: store.scopeId == visit)
+            #endif
+            visible = false; presentation = UUID(); reset()
+        }
         .fileImporter(isPresented: $choosing, allowedContentTypes: [CalendarFileDocument.contentType], allowsMultipleSelection: false) { choice in
+            #if DEBUG
+            CalendarPickerTrace.record("import.callback", choosing: choosing, visible: visible, current: store.scopeId == visit)
+            #endif
             Task {
+                #if DEBUG
+                CalendarPickerTrace.record("import.task", choosing: choosing, visible: visible, current: store.scopeId == visit)
+                #endif
                 guard store.scopeId == visit, visible else { return }
                 let screen = presentation
                 do {
                     guard let url = try choice.get().first else { return }
                     let data = try CalendarImportFile.read(url)
+                    #if DEBUG
+                    CalendarPickerTrace.record("import.read", choosing: choosing, visible: visible, current: store.scopeId == visit)
+                    #endif
                     problem = nil; store.clearError()
                     let loaded = await store.previewImport(data: data, calendar: destination.isEmpty ? nil : destination)
+                    #if DEBUG
+                    CalendarPickerTrace.record("import.response", choosing: choosing, visible: visible, current: store.scopeId == visit)
+                    #endif
                     guard store.scopeId == visit, visible, screen == presentation, !Task.isCancelled else { return }
                     preview = loaded
                     selected = Set((loaded?.events ?? []).filter { $0.importable == true }.map(\.index))
@@ -156,6 +183,19 @@ struct CalendarImportScreen: View {
         } catch { problem = error.localizedDescription }
     }
 }
+
+#if DEBUG
+@MainActor enum CalendarPickerTrace {
+    static func record(_ stage: String, choosing: Bool = false, visible: Bool = true, current: Bool = true) {
+        guard Fixtures.enabled, CommandLine.arguments.contains("-calendar-picker-trace") else { return }
+        let key = "pp_calendar_picker_trace"
+        var rows = UserDefaults.standard.stringArray(forKey: key) ?? []
+        rows.append(stage + " choosing=" + String(choosing) + " visible=" + String(visible) + " current=" + String(current))
+        UserDefaults.standard.set(Array(rows.suffix(96)), forKey: key)
+        UserDefaults.standard.synchronize()
+    }
+}
+#endif
 
 struct CalendarFeedScreen: View {
     @Environment(\.dismiss) private var dismiss
