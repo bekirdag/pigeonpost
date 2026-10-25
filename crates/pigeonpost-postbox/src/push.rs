@@ -70,6 +70,41 @@ pub struct Notification {
     pub message_id: String,
     pub peer: String,
     pub unread: i64,
+    pub calendar: Option<CalendarTarget>,
+}
+
+/// Locators only. Opening one still requires the recipient mailbox's calendar authorization.
+pub struct CalendarTarget {
+    pub event_id: String,
+    pub occurrence_id: Option<String>,
+}
+
+fn alert_payload(note: &Notification, preview: bool) -> serde_json::Value {
+    let generic = if note.calendar.is_some() {
+        "Calendar update"
+    } else {
+        "New message"
+    };
+    let mut payload = json!({
+        "aps": {
+            "alert": { "title": note.title, "subtitle": note.subtitle,
+                "body": if preview { &note.body } else { generic } },
+            "sound": "default", "thread-id": note.peer, "interruption-level": "active"
+        },
+        "peer": note.peer, "mailbox": note.subtitle, "message_id": note.message_id
+    });
+    if let Some(calendar) = &note.calendar {
+        payload["type"] = json!("calendar");
+        payload["calendar_event_id"] = json!(calendar.event_id);
+        if let Some(occurrence) = &calendar.occurrence_id {
+            payload["calendar_occurrence_id"] = json!(occurrence);
+        }
+        payload["aps"]["thread-id"] =
+            json!(format!("calendar:{}:{}", note.subtitle, calendar.event_id));
+    } else {
+        payload["aps"]["badge"] = json!(note.unread);
+    }
+    payload
 }
 
 impl Apns {
@@ -171,27 +206,7 @@ impl Apns {
     }
 
     fn payload(&self, note: &Notification) -> serde_json::Value {
-        let alert = if self.preview {
-            json!({ "title": note.title, "subtitle": note.subtitle, "body": note.body })
-        } else {
-            // Metadata only. Says who, not what.
-            json!({ "title": note.title, "subtitle": note.subtitle, "body": "New message" })
-        };
-        json!({
-            "aps": {
-                "alert": alert,
-                "sound": "default",
-                "badge": note.unread,
-                // Groups a peer's notifications together on the lock screen the way a conversation
-                // is grouped in the app.
-                "thread-id": note.peer,
-                "interruption-level": "active",
-            },
-            // What the app needs to open the right conversation when the notification is tapped.
-            "peer": note.peer,
-            "mailbox": note.subtitle,
-            "message_id": note.message_id,
-        })
+        alert_payload(note, self.preview)
     }
 
     /// Deliver to one device. Returns `true` when the token is dead and its row should go.
@@ -469,6 +484,48 @@ fn non_empty(key: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_alerts_keep_mail_badges_and_private_previews_separate() {
+        let mut note = Notification {
+            title: "Calendar".into(),
+            subtitle: "/k/receiver".into(),
+            body: "Private event title".into(),
+            message_id: "cal:opaque:reminder".into(),
+            peer: "/k/organizer".into(),
+            unread: 0,
+            calendar: Some(CalendarTarget {
+                event_id: "evt_one".into(),
+                occurrence_id: Some("occ_one".into()),
+            }),
+        };
+        let hidden = alert_payload(&note, false);
+        assert_eq!(hidden["type"], "calendar");
+        assert_eq!(hidden["calendar_event_id"], "evt_one");
+        assert_eq!(hidden["calendar_occurrence_id"], "occ_one");
+        assert_eq!(hidden["mailbox"], "/k/receiver");
+        assert_eq!(hidden["aps"]["thread-id"], "calendar:/k/receiver:evt_one");
+        assert!(hidden["aps"].get("badge").is_none());
+        assert!(!hidden.to_string().contains("Private event title"));
+        assert_eq!(
+            alert_payload(&note, true)["aps"]["alert"]["body"],
+            "Private event title"
+        );
+
+        note.calendar.as_mut().unwrap().occurrence_id = None;
+        let invite = alert_payload(&note, false);
+        assert_eq!(invite["calendar_event_id"], "evt_one");
+        assert!(invite.get("calendar_occurrence_id").is_none());
+
+        note.calendar = None;
+        note.unread = 7;
+        let message = alert_payload(&note, false);
+        assert_eq!(message["aps"]["badge"], 7);
+        assert_eq!(message["aps"]["thread-id"], "/k/organizer");
+        assert_eq!(message["aps"]["alert"]["body"], "New message");
+        assert!(message.get("type").is_none());
+        assert!(message.get("calendar_event_id").is_none());
+    }
 
     #[test]
     fn device_tokens_follow_their_provider_format() {
