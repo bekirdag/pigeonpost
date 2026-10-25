@@ -41,6 +41,20 @@ struct ThreadView: View {
     private var actionScope: MessageActionScope { MessageActionScope(mailbox: account.me?.address, peer: peer, subject: subthread) }
     private var action: MessageComposerAction? { inbox.action(in: actionScope) }
     private var editing: Bool { action?.kind == .edit }
+    private struct InputContext: Hashable { let key: HistoryKey; let edit: UUID? }
+    private var inputContext: InputContext { InputContext(key: composerKey, edit: editing ? action?.id : nil) }
+    private func inputText(_ context: InputContext) -> Binding<String> {
+        Binding(get: { inputContext == context ? draft : "" }, set: { value in
+            guard inputContext == context, !sendPending else { return }
+            if let edit = context.edit { inbox.updateMessageAction(edit, text: value) }
+            else { drafts[context.key, default: ComposerDraft()].text = value }
+        })
+    }
+    private func inputFocus(_ context: InputContext) -> Binding<Bool> {
+        Binding(get: { inputContext == context && composing }, set: { value in
+            if inputContext == context { composing = value }
+        })
+    }
     private var draft: String {
         get { editing ? action?.text ?? "" : drafts[composerKey]?.text ?? "" }
         nonmutating set {
@@ -320,15 +334,18 @@ struct ThreadView: View {
             .accessibilityLabel("Attach")
             .disabled(sendPending || editing)
 
-            MessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), focused: $composing,
-                          enabled: !sendPending, pasteImages: pasteImages)
+            let context = inputContext
+            MessageEditor(text: inputText(context), focused: inputFocus(context),
+                          enabled: !sendPending, pasteImages: { providers in
+                              if inputContext == context && !editing { pasteImages(providers) }
+                          })
                 .overlay(alignment: .topLeading) {
                     if draft.isEmpty {
                         Text("Write a message").font(.geist(15)).foregroundStyle(Theme.muted)
                             .padding(.horizontal, 8).padding(.vertical, 8).allowsHitTesting(false)
                     }
                 }
-                .id(composerKey)
+                .id(context)
 
             Button(action: send) {
                 Image(systemName: "arrow.up")

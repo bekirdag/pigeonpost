@@ -25,6 +25,15 @@ struct MacThreadView: View {
     private var actionScope: MessageActionScope { MessageActionScope(mailbox: account.me?.address, peer: peer, subject: subthread) }
     private var action: MessageComposerAction? { inbox.action(in: actionScope) }
     private var editing: Bool { action?.kind == .edit }
+    private struct InputContext: Hashable { let key: ScrollContext; let edit: UUID? }
+    private var inputContext: InputContext { InputContext(key: composerKey, edit: editing ? action?.id : nil) }
+    private func inputText(_ context: InputContext) -> Binding<String> {
+        Binding(get: { inputContext == context ? draft : "" }, set: { value in
+            guard inputContext == context, !sendPending else { return }
+            if let edit = context.edit { inbox.updateMessageAction(edit, text: value) }
+            else { drafts[context.key, default: ComposerDraft()].text = value }
+        })
+    }
     private var sendPending: Bool { sending.contains(composerKey) || (editing && inbox.actionSending) }
     private var draft: String {
         get { editing ? action?.text ?? "" : drafts[composerKey]?.text ?? "" }
@@ -328,8 +337,12 @@ struct MacThreadView: View {
                 .help("Attach a file")
                 .disabled(editing)
 
-                MacMessageEditor(text: Binding(get: { draft }, set: { draft = $0 }), attach: { if !sendPending && !editing { staged.append(contentsOf: $0) } },
-                                 reportError: { inbox.toast = $0 }, send: send, refocus: sent)
+                let context = inputContext
+                MacMessageEditor(text: inputText(context), attach: {
+                    if inputContext == context && !sendPending && !editing { staged.append(contentsOf: $0) }
+                }, reportError: { if inputContext == context { inbox.toast = $0 } },
+                                 send: { if inputContext == context { send() } }, refocus: sent)
+                    .id(context)
                     .overlay(alignment: .topLeading) {
                         if draft.isEmpty {
                             Text("Write a message")
