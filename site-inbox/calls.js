@@ -176,6 +176,8 @@
   // `rawMic` is the microphone as captured (with the browser's echo cancellation); `mic` is what is
   // sent — the same track, or the same track after noise removal.
   const local = { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false };
+  // Captured tracks waiting for asynchronous noise processing must stop immediately on hang-up.
+  const pendingCaptureTracks = new Set();
   const prefs = {
     get mic() { return store.get("ppi_call_mic"); }, set mic(v) { store.set("ppi_call_mic", v); },
     get cam() { return store.get("ppi_call_cam"); }, set cam(v) { store.set("ppi_call_cam", v); },
@@ -417,7 +419,7 @@
     room = newRoom({ kind, title: displayName(peer), peerKey: peer });
     tellHost("callState", { state: "connecting", room: null, kind, outgoing: true, peer });
     try {
-      await startLocalMedia(kind === "video");
+      if (!await startLocalMedia(kind === "video")) return;
     } catch (err) {
       endRoom(mediaMessage(err, kind), { notify: false });
       return;
@@ -448,7 +450,7 @@
     openRoomUI({ title: group.name, sub: join ? "Joining group call" : "Group call", face: group.name, status: (join ? "Joining " : "Starting ") + kindWord(kind) + "…" });
     room = newRoom({ kind, title: group.name, peerKey: group.id, groupId: group.id });
     try {
-      await startLocalMedia(kind === "video");
+      if (!await startLocalMedia(kind === "video")) return;
     } catch (err) {
       endRoom(mediaMessage(err, kind), { notify: false });
       return;
@@ -525,7 +527,7 @@
     openRoomUI({ title: callName(peerKey), sub: peerKey, face: peerKey, status: "Connecting…" });
     room = newRoom({ kind: r.kind, title: displayName(peerKey), peerKey, id: r.room, code: r.code });
     try {
-      await startLocalMedia(r.kind === "video");
+      if (!await startLocalMedia(r.kind === "video")) return;
     } catch (err) {
       post(`/rooms/${r.room}/decline`, { session }).catch(() => {});
       endRoom(mediaMessage(err, r.kind), { notify: false });
@@ -746,19 +748,25 @@
       toast("No camera available — joining with audio only.");
     }
     if (!isCurrent()) { media.getTracks().forEach((track) => track.stop()); return false; }
-    local.stream = new MediaStream();
-    local.muted = false;
-    local.cameraOff = false;
-    if (!await setMicTrack(media.getAudioTracks()[0] || null, isCurrent) || !isCurrent()) {
-      media.getTracks().forEach((track) => track.stop());
-      return false;
+    const captured = media.getTracks();
+    captured.forEach((track) => pendingCaptureTracks.add(track));
+    try {
+      local.stream = new MediaStream();
+      local.muted = false;
+      local.cameraOff = false;
+      if (!await setMicTrack(media.getAudioTracks()[0] || null, isCurrent) || !isCurrent()) {
+        captured.forEach((track) => track.stop());
+        return false;
+      }
+      local.cam = media.getVideoTracks()[0] || null;
+      if (local.cam) local.stream.addTrack(local.cam);
+      warnIfNoEchoCancellation();
+      showSelf();
+      renderControls();
+      return true;
+    } finally {
+      captured.forEach((track) => pendingCaptureTracks.delete(track));
     }
-    local.cam = media.getVideoTracks()[0] || null;
-    if (local.cam) local.stream.addTrack(local.cam);
-    warnIfNoEchoCancellation();
-    showSelf();
-    renderControls();
-    return true;
   }
 
   function echoCancelling() {
@@ -771,6 +779,8 @@
   }
 
   function stopLocalMedia() {
+    for (const track of pendingCaptureTracks) track.stop();
+    pendingCaptureTracks.clear();
     for (const t of [local.rawMic, local.mic, local.cam, local.screen]) t?.stop();
     teardownNoise();
     Object.assign(local, { stream: null, rawMic: null, mic: null, cam: null, screen: null, screenStream: null, muted: false, cameraOff: false });

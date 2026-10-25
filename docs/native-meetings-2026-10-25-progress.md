@@ -43,3 +43,17 @@ Plan: [meeting integration plan](native-meetings-2026-10-25-plan.md).
   `/var/backups/pigeonpost/postbox-20261025T062402Z` passed quick_check and candidate/rollback startup.
   Both containers are running with0 restarts, environment files match the backup byte-for-byte,
   public health returns200 and anonymous capabilities still return401. No native store submission.
+
+## Final cancellation review
+
+- Direct/group placement and ring answering now stop when capture reports cancellation. Captured
+  tracks waiting for noise setup are registered immediately, so hang-up releases the microphone
+  without waiting for a module/network operation. Two additional real-client regressions fail at
+  d32d92e and pass with the correction; no real media device is used.
+- All16 focused bridge/alerting/cancellation checks and the complete209-case inbox suite pass
+  (`scheduled-races-final.log`, `pending-capture-before.log`, `native-meetings-web-final.log`).
+  Updated each call page's script version so cached clients receive the correction at web rollout.
+- Merged PR96's5f89bbb accessibility correction into this branch, preserving the new join cases.
+  Full10-case local device runs and the final Mac build are in progress. All native stores remain
+  held. Non-scheduled HTTP completion ownership and device-switch processing remain on the phase9
+  review scope; these checks are specific to the verified paths, not a complete call security audit.
