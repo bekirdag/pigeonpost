@@ -112,3 +112,22 @@ are deployed as recorded below. No native store submission has been made; Apple'
 - The queue has a 16-attempt/eight-MiB body/request budget and a 24-hour retry window. Deletion/expiry erases dependent queued edits as well as history. A resumed own-message confirmation must match the cached ciphertext. Draft fingerprints prevent a history retry from clearing a different composer draft.
 - Full standalone Swift suites pass (`native2-group-outbox-models-final.log`): group **84 checks**, inbox **128**, Phase 1b **38**, plus existing auth/thread/navigation/handle/call suites. Real MLS/server/browser **65/65** pass (`native2-group-outbox-bounds-e2e.log`): a loopback fault proxy drops replies both before and after commit, the device restarts, epochs advance, recipient counts remain one, exact JSON hashes agree, files decrypt, explicit rejection re-encrypts under the same id, deleted pending edits cannot retry, capacity is bounded and acknowledgement/dismissal frees slots. Proxy evidence contains hashes/ids only, never headers or plaintext.
 - Final iPhone and Mac builds pass (`native2-group-final-build.log`, `native2-group-final-mac-build.log`). Complete group screens and the existing direct/privacy cases are being checked together on iPhone; group screens are being checked on iPad. The first combined invocation failed to compile a new test's element-count assertion; corrected it to use the element query. That invocation executed no tests and is excluded from qualification. Hosted newer-runtime qualification and native release remain pending.
+
+## Newer-runtime group action access
+
+- PR95 at `9011334` passes every CI job except one iPhone UI case. That full suite executes58 cases:
+  54 pass, three existing platform/screenshot cases skip, and the group-delete menu-opening case
+  fails before invoking any deletion. iPad and StoreKit pass, as do Mac, Windows/core and real MLS.
+- The captured iOS26 screenshot and hierarchy show Copy/Share text selection rather than the
+  bubble's context menu. Added an explicit More message actions menu outside selectable text,
+  preserving the same deletion/blocking permission checks and the existing context menu.
+  The delete regression now uses that visible route; added a member/no-admin-deletion case.
+- A small local draft invented SwiftUI Menu APIs and omitted destructive roles; rejected it.
+  Correct platform APIs and the existing role predicates are used. Local and hosted requalification
+  are pending for this repair. No native release, store review or production deployment.
+
+- The repair's iPhone/Mac builds pass. Four actual targeted UI cases pass on each device
+  (`pr95-group-menu-iphone.xcresult`, `pr95-group-menu-ipad.xcresult`): deletion removes every
+  version, a regular member cannot delete another member's post, capability-off controls stay
+  hidden and edit/cancel/save/version information remains functional. Full hosted requalification
+  is required at the repaired head. No deletion or permission assertion was removed.
