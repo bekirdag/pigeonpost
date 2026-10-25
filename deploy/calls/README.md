@@ -29,11 +29,44 @@ before RTP/UDP/IP (and TURN) overhead. Video adapts down on weaker links; 1080p 
 1. `apt-get install coturn ufw`.
 2. `openssl rand -hex 32 > /etc/pigeonpost-turn/secret` (0600), then write `/etc/turnserver.conf`
    from `turnserver.conf.example`, substituting the relay IP and that secret on the host.
-3. Firewall: SSH, 3478/udp+tcp, 5349/tcp, 49160–59999/udp. Allow SSH before enabling ufw.
+3. Firewall: SSH, 3478/udp+tcp, 5349/tcp, 443/tcp, 49160–59999/udp, and 80/tcp for certificate renewal. Allow SSH before enabling ufw.
 4. Check: an allocation with a fresh HMAC credential succeeds; a wrong or expired one fails
    (`turnutils_uclient -t -u <expiry>:probe -w <hmac> <ip>`).
-5. TURN over TLS (5349, or 443) needs a DNS-only hostname and a certificate; add `cert`, `pkey` and
-   `tls-listening-port` once that record exists.
+5. TURN over TLS uses a DNS-only hostname and a public certificate; follow the setup below before
+   offering `turns:` URLs to clients.
+
+### TLS and renewal
+
+Production uses the DNS-only A record `turn.pigeonpost.dev` on the media host. Cloudflare's HTTP
+proxy cannot carry this TURN traffic. Coturn serves TLS on 5349 and on an auxiliary TCP listener
+on 443. `alt-tls-listening-port` is insufficient on this single-public-IP host: Coturn disables
+RFC5780 and its alternate listeners. The existing 3478 transports and LiveKit backhaul stay in place.
+
+Install the free Certbot package. With port 80 available, issue an ECDSA certificate using
+`certbot certonly --standalone --cert-name turn.pigeonpost.dev --key-type ecdsa -d turn.pigeonpost.dev`.
+Keep port 80 available for unattended HTTP-01 renewal and enable `certbot.timer`.
+
+Before enabling TLS, create `/etc/turnserver-tls` and an initial certificate generation directory,
+both mode 0750 root:turnserver. Copy the issued full chain and matching private key there, mode
+0640 root:turnserver, and point the `current` symlink at that generation. Do not loosen the
+permissions on `/etc/letsencrypt`. Enable the commented TLS settings in `turnserver.conf.example`,
+substituting the host address. Install `coturn-tls.conf` as
+`/etc/systemd/system/coturn.service.d/pigeonpost-tls.conf`, then daemon-reload and restart Coturn
+once the relay is idle. Preserve a restricted server-side configuration/firewall backup first.
+
+Install `renew-turn-certificate.py` as the root-owned executable
+`/etc/letsencrypt/renewal-hooks/deploy/50-pigeonpost-turn`. The hook checks public trust, hostname
+and matching key before atomically replacing the certificate symlink. It sends SIGUSR2 to reload
+SSL contexts, verifies the served certificate and unchanged service PID, and restores the previous
+generation if publication, signaling or probing fails. SIGHUP only resets Coturn's log; do not use
+it to reload certificates. See [the Coturn maintainer's confirmation](https://github.com/coturn/coturn/issues/878).
+
+Qualify both public ports with trusted hostname verification and authenticated, bidirectional relay
+traffic. Check invalid credentials are rejected and existing allocations survive running the hook.
+Then run `certbot renew --cert-name turn.pigeonpost.dev --dry-run --run-deploy-hooks` and check the
+timer. Keep preceding certificate generations for recovery. Add the TLS URLs from `calls.env.example`
+only after these checks pass; restart the calls service while no rooms or pending history events
+exist. Its shutdown closes event streams so clients can reconnect promptly.
 
 ## Service
 

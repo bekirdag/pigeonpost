@@ -38,3 +38,12 @@ simple-log
 log-file=/var/log/turnserver/turn.log
 proc-user=turnserver
 proc-group=turnserver
+
+# Enable after issuing the certificate and installing restricted copies with the renewal hook.
+# An auxiliary TCP listener supports TLS on 443 even when RFC5780 is disabled on a single-IP host.
+# Binding 443 requires the pigeonpost-tls.conf systemd drop-in described in README.md.
+# tls-listening-port=5349
+# aux-server=RELAY_IP:443
+# cert=/etc/turnserver-tls/current/fullchain.pem
+# pkey=/etc/turnserver-tls/current/privkey.pem
+# no-dtls

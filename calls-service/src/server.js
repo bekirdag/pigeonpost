@@ -1099,8 +1099,24 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const server = http.createServer((req, res) => service.handle(req, res));
   server.headersTimeout = 15_000;
   server.requestTimeout = 0; // event streams stay open
-  server.listen(cfg.port, cfg.host, () => console.log(`calls: listening on ${cfg.host}:${cfg.port}`));
-  const stop = () => server.close(() => process.exit(0));
+  server.listen(cfg.port, cfg.host, () => console.log(`calls: listening on ${cfg.host}:${server.address().port}`));
+  let stopping = false;
+  const stop = () => {
+    if (stopping) return;
+    stopping = true;
+    const deadline = setTimeout(() => {
+      server.closeAllConnections();
+      process.exit(1);
+    }, 5_000);
+    deadline.unref();
+    server.close(() => { clearTimeout(deadline); process.exit(0); });
+    // HTTP close waits for active responses. Event streams intentionally never finish by
+    // themselves, so let clients reconnect rather than waiting for systemd's kill timeout.
+    for (const session of service.state.sessions.values()) {
+      const socket = session.res.socket;
+      session.res.end(() => socket?.end());
+    }
+  };
   process.on("SIGTERM", stop);
   process.on("SIGINT", stop);
 }
