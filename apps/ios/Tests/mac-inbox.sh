@@ -29,7 +29,8 @@ swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-in
   Shared/Model/CallLog.swift Shared/Model/FilteredMail.swift Shared/Model/AvatarStore.swift \
   Shared/Model/Blocking.swift Shared/Model/Blocking+Actions.swift Shared/Design/ImageTools.swift \
   Shared/Views/Phase1b/BlockSheet.swift Shared/Views/Phase1b/CallsView.swift Shared/Views/Phase1b/FilteredViews.swift \
-  Shared/Model/PickedImage.swift Shared/Groups/*.swift Shared/Groups/Views/*.swift
+  Shared/Model/PickedImage.swift Shared/Groups/*.swift Shared/Groups/Views/*.swift \
+  Shared/Calendar/*.swift
 # Run as a normal macOS app and keep its output. `open` does not propagate the app's exit
 # status, so require its explicit successful-completion line after it terminates.
 open -n -W --stdout "$out/stdout" --stderr "$out/stderr" \

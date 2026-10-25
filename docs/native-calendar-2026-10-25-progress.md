@@ -181,3 +181,15 @@ calendar controls and hosted CI follow; no calendar release or store submission.
   (`native-calendar-terms-build.log`, `native-calendar-terms-mac-build.log`). This changes wording
   and an internal property name; the qualified API payloads, UI controls and permission checks
   retain their behavior. Hosted qualification must use the new commit.
+
+## Mac integration harness follow-up
+
+- Hosted Mac jobs on both OS versions exposed an omitted dependency in the standalone inbox
+  integration harness: its fixed swiftc source list did not include the new calendar sources.
+  Added the real calendar files and made the existing Session test double observable with its
+  signed-in state. The application targets already compile these shared files automatically.
+- A local delegated draft omitted required methods/observation; rejected it and applied the
+  minimal correction directly. The complete harness compiles after the correction. Runtime exits69
+  at its existing unlocked-desktop prerequisite on this Mac; no runtime pass is claimed. Hosted
+  desktop regressions remain required. All128 non-UI inbox checks pass with the shared stub change
+  (`native-calendar-harness-inbox.log`).

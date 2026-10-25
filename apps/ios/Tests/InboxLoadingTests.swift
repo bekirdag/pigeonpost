@@ -2,7 +2,9 @@
 import Foundation
 import Observation
 
-@MainActor final class Session {
+@MainActor @Observable final class Session {
+    enum Status { case signedIn }
+    var status = Status.signedIn
     func token() async throws -> String { "test-only" }
     func renew() async throws -> String { "test-only-renewed" }
 }
