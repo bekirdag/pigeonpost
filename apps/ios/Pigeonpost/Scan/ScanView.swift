@@ -14,6 +14,7 @@ import SwiftUI
 struct ScanView: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
+    @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
     @State private var failure: String?
     @State private var handled = false
 
@@ -45,6 +46,12 @@ struct ScanView: View {
 
     private func scanned(_ text: String) {
         guard !handled else { return }
+        if let url = URL(string: text), let code = DevicePairingLink.code(in: url), let deviceApprovals {
+            handled = true
+            deviceApprovals.scanned = DeviceApprovalRequest(code: code)
+            dismiss()
+            return
+        }
         if let url = URL(string: text), let link = CalendarLink(url: url), let calendarLinks {
             handled = true
             calendarLinks.scanned = CalendarLinkRequest(link: link)

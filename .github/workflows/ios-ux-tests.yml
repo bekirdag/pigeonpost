@@ -81,7 +81,7 @@ jobs:
         run: |
           selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests
             -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests
-            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests)
+            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testEventExportChooserCanBeCancelled)
@@ -149,7 +149,7 @@ jobs:
         run: python3 Tests/prepare-calendar-picker.py --simulator "$IPAD_SIM"
       - name: iPad layout and calendar regressions
         run: |
-          selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests)
+          selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests -only-testing:PPUITests/DeviceApprovalUITests)
           if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
             selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
               -only-testing:PPUITests/CalendarUITests/testEventExportChooserCanBeCancelled)

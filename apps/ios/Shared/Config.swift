@@ -56,7 +56,8 @@ enum Config {
 
         /// Select a provider through Keycloak while preserving the app's PKCE flow and issuer.
         static func authorizationURL(challenge: String, state: String, otherAccount: Bool = false,
-                                     provider: IdentityProvider? = nil) -> URL {
+                                     provider: IdentityProvider? = nil, nonce: String? = nil,
+                                     acrValues: String? = nil, maxAge: Int? = nil, forceLogin: Bool = false) -> URL {
             var components = URLComponents(url: endpoint("auth"), resolvingAgainstBaseURL: false)!
             components.queryItems = [
                 URLQueryItem(name: "client_id", value: clientId),
@@ -70,8 +71,11 @@ enum Config {
             if let provider {
                 components.queryItems?.append(URLQueryItem(name: "kc_idp_hint", value: provider.rawValue))
             }
+            if let nonce { components.queryItems?.append(URLQueryItem(name: "nonce", value: nonce)) }
+            if let acrValues { components.queryItems?.append(URLQueryItem(name: "acr_values", value: acrValues)) }
+            if let maxAge { components.queryItems?.append(URLQueryItem(name: "max_age", value: String(maxAge))) }
             // An explicit Apple choice must not silently reuse a different provider's realm session.
-            if otherAccount || provider != nil {
+            if otherAccount || provider != nil || forceLogin {
                 components.queryItems?.append(URLQueryItem(name: "prompt", value: "login"))
             }
             return components.url!

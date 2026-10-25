@@ -127,8 +127,8 @@ final class Session {
         if provider == .apple, !otherAccount, await signInWithAppleNatively(context: context) { return }
         guard isCurrent(context) else { return }
         do {
-            let verifier = Self.randomToken(64)
-            let expectedState = Self.randomToken(16)
+            let verifier = try Self.randomToken(64)
+            let expectedState = try Self.randomToken(16)
             let callback = try await authorize(verifier: verifier, state: expectedState,
                                                otherAccount: otherAccount, provider: provider)
             guard isCurrent(context) else { return }
@@ -152,6 +152,32 @@ final class Session {
         } catch {
             if isCurrent(context) { lastError = error.localizedDescription }
         }
+    }
+
+    /// Refresh authentication for this exact person; the caller must obtain another approval.
+    @discardableResult
+    func verifyStrongSignIn(_ requirement: StrongSignInRequirement) async throws -> UUID {
+        guard status == .signedIn else { throw AuthError.sessionExpired }
+        let original = authorizationId
+        _ = try await token()
+        guard authorizationId == original, status == .signedIn, let subject, !subject.isEmpty else { throw CancellationError() }
+        let context = beginAuthorization()
+        defer {
+            if authorizationAttempt == context.attempt { authorizationAttempt = nil; webSession = nil }
+        }
+        let startedAt = Date()
+        let verifier = try Self.randomToken(64), state = try Self.randomToken(16), nonce = try Self.randomToken(32)
+        let callback = try await authorize(verifier: verifier, state: state, otherAccount: false, provider: nil,
+                                           nonce: nonce, requirement: requirement)
+        guard isCurrent(context) else { throw CancellationError() }
+        let code = try StrongSignInProof.authorizationCode(from: callback, expectedState: state)
+        let tokens = try await exchange(["grant_type": "authorization_code", "client_id": Config.OIDC.clientId,
+            "code": code, "redirect_uri": Config.OIDC.redirectURI, "code_verifier": verifier])
+        guard isCurrent(context), let access = tokens.accessToken else { throw CancellationError() }
+        try StrongSignInProof.validate(idToken: tokens.idToken, accessToken: access, subject: subject, nonce: nonce,
+                                       requirement: requirement, startedAt: startedAt)
+        accept(tokens, for: context)
+        return authorizationId
     }
 
     /// Sign in with Apple through the system sheet, then trade Apple's identity token for realm
@@ -224,7 +250,7 @@ final class Session {
             ]).utf8)
             // Best effort, and deliberately not surfaced. A failure here means the realm session
             // outlives this device — worth fixing, never worth trapping somebody inside the app.
-            _ = try? await network.data(for: request)
+            _ = try? await network.data(for: request, delegate: TokenEndpointRedirectPolicy())
         }
     }
 
@@ -358,6 +384,7 @@ final class Session {
     private struct TokenResponse: Decodable {
         let accessToken: String?
         let refreshToken: String?
+        let idToken: String?
         let expiresIn: Int?
         let error: String?
         let errorDescription: String?
@@ -365,6 +392,7 @@ final class Session {
         enum CodingKeys: String, CodingKey {
             case accessToken = "access_token"
             case refreshToken = "refresh_token"
+            case idToken = "id_token"
             case expiresIn = "expires_in"
             case error
             case errorDescription = "error_description"
@@ -377,7 +405,8 @@ final class Session {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
         request.httpBody = Data(Self.formEncode(form).utf8)
 
-        let (data, response) = try await network.data(for: request)
+        let (data, response) = try await network.data(for: request, delegate: TokenEndpointRedirectPolicy())
+        guard response.url == request.url else { throw AuthError.stateMismatch }
         let body = try? JSONDecoder().decode(TokenResponse.self, from: data)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
@@ -391,9 +420,12 @@ final class Session {
     }
 
     private func authorize(verifier: String, state: String, otherAccount: Bool,
-                           provider: Config.OIDC.IdentityProvider?) async throws -> URL {
+                           provider: Config.OIDC.IdentityProvider?, nonce: String? = nil,
+                           requirement: StrongSignInRequirement? = nil) async throws -> URL {
         let url = Config.OIDC.authorizationURL(challenge: Self.challenge(for: verifier), state: state,
-                                               otherAccount: otherAccount, provider: provider)
+                                               otherAccount: otherAccount, provider: provider, nonce: nonce,
+                                               acrValues: requirement?.requestedACR, maxAge: requirement?.maxAge,
+                                               forceLogin: requirement != nil)
         if let browserAuthorization { return try await browserAuthorization(url) }
 
         return try await withCheckedThrowingContinuation { continuation in
@@ -425,9 +457,9 @@ final class Session {
 
     // ---- small things ------------------------------------------------------------------------
 
-    private static func randomToken(_ bytes: Int) -> String {
+    private static func randomToken(_ bytes: Int) throws -> String {
         var buffer = [UInt8](repeating: 0, count: bytes)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes, &buffer)
+        guard SecRandomCopyBytes(kSecRandomDefault, bytes, &buffer) == errSecSuccess else { throw AuthError.stateMismatch }
         return Data(buffer).base64URLEncoded
     }
 
