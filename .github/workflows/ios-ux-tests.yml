@@ -67,6 +67,8 @@ jobs:
           xcodebuild -project Pigeonpost.xcodeproj -scheme Pigeonpost -configuration Debug \
             -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-app" CODE_SIGNING_ALLOWED=NO build
           xcrun simctl install "$IOS_SIM" "$RUNNER_TEMP/ios-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
+      - name: Prepare a synthetic local calendar file
+        run: python3 Tests/prepare-calendar-picker.py --simulator "$IOS_SIM"
       - name: Native history, mailbox, purchase and composer regressions
         run: |
           xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
@@ -130,6 +132,8 @@ jobs:
           xcodebuild -project Pigeonpost.xcodeproj -scheme Pigeonpost -configuration Debug \
             -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-app" CODE_SIGNING_ALLOWED=NO build
           xcrun simctl install "$IPAD_SIM" "$RUNNER_TEMP/ipad-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
+      - name: Prepare a synthetic local calendar file
+        run: python3 Tests/prepare-calendar-picker.py --simulator "$IPAD_SIM"
       - name: iPad layout and calendar regressions
         run: |
           xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \

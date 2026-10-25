@@ -8,7 +8,7 @@ struct CalendarDashboard: View {
     @State private var panel: Panel?
 
     private enum Panel: Identifiable {
-        case event(CalendarEventKey), new, invitations, settings, calendars
+        case event(CalendarEventKey), new, invitations, settings, calendars, importing
         var id: String {
             switch self {
             case .event(let key): return "event:" + key.id
@@ -16,6 +16,7 @@ struct CalendarDashboard: View {
             case .invitations: return "invitations"
             case .settings: return "settings"
             case .calendars: return "calendars"
+            case .importing: return "import"
             }
         }
     }
@@ -55,6 +56,7 @@ struct CalendarDashboard: View {
                 case .invitations: CalendarInvitationsScreen(store: store, joinMeeting: joinMeeting)
                 case .settings: CalendarSettingsScreen(store: store)
                 case .calendars: CalendarFoldersScreen(store: store)
+                case .importing: CalendarImportScreen(store: store)
                 }
             }
             .id(store.scopeId)
@@ -71,6 +73,7 @@ struct CalendarDashboard: View {
         Menu {
             Button("Invitations") { panel = .invitations }
             Button("Manage calendars") { panel = .calendars }
+            Button("Import calendar file") { panel = .importing }.accessibilityIdentifier("calendar-import-file")
             Button("Calendar settings") { panel = .settings }
             Button("Refresh") { Task { await store.refresh() } }
         } label: { Label("Calendar options", systemImage: "ellipsis.circle") }

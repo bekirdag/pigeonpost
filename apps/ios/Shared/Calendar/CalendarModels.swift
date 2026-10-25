@@ -90,6 +90,7 @@ struct CalendarAttendee: Decodable, Equatable, Identifiable {
     var rsvpAt: Int?
     var proof: String?
     var delivery: String?
+    var invited: Bool?
     var id: String { attendeeId }
 }
 
@@ -210,6 +211,7 @@ struct CalendarFeed: Decodable {
 
 struct CalendarImportPreview: Decodable {
     let draftId: String
+    var calendarId: String?
     var events: [CalendarImportEvent]?
     var warnings: [String]?
     var expiresAt: Int?
@@ -217,6 +219,7 @@ struct CalendarImportPreview: Decodable {
 
 struct CalendarImportEvent: Decodable, Identifiable {
     let index: Int
+    var importable: Bool?
     var title: String?
     var allDay: Bool?
     var start: String?

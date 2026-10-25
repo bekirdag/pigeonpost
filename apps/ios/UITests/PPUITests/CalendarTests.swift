@@ -5,7 +5,10 @@ import XCTest
 final class CalendarUITests: XCTestCase {
     private let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
     private let review = "calendar-event:occ_evt_review_original"
-    override func setUpWithError() throws { continueAfterFailure = false }
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        XCUIDevice.shared.orientation = .portrait
+    }
     override func tearDownWithError() throws {
         if let run = testRun, run.failureCount > 0 {
             let shot = XCTAttachment(screenshot: app.screenshot()); shot.lifetime = .keepAlways; add(shot)
@@ -35,6 +38,28 @@ final class CalendarUITests: XCTestCase {
         XCTAssertTrue(app.keyboards.firstMatch.exists)
         field.typeText(text)
     }
+    private func revealRow(_ item: XCUIElement, in formID: String) {
+        let collection = app.collectionViews[formID].firstMatch
+        let form = collection.exists ? collection : element(formID)
+        XCTAssertTrue(form.waitForExistence(timeout: 5), "Expected calendar form " + formID)
+        var visible = false
+        for _ in 0..<14 {
+            let bounds = form.frame.intersection(app.frame)
+            let top = max(bounds.minY, app.navigationBars.allElementsBoundByIndex.last { $0.isHittable }?.frame.maxY ?? bounds.minY) + 8
+            var bottom = min(bounds.maxY, app.frame.maxY - 34) - 12
+            if app.keyboards.firstMatch.exists { bottom = min(bottom, app.keyboards.firstMatch.frame.minY - 8) }
+            let rect = item.exists ? item.frame : .zero
+            if item.exists && item.isHittable && rect.minY >= top && rect.maxY <= bottom { visible = true; break }
+            let start = app.coordinate(withNormalizedOffset: .zero).withOffset(CGVector(dx: bounds.midX, dy: (top + bottom) / 2))
+            let distance = min(120, (bottom - top) / 4)
+            let direction: CGFloat = item.exists && rect.midY < top ? 1 : -1
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: distance * direction)))
+        }
+        XCTAssertTrue(visible, "The calendar control must be inside " + formID)
+    }
+    private func tapRow(_ item: XCUIElement, in formID: String) { revealRow(item, in: formID); item.tap() }
+    private func typeRow(_ text: String, into field: XCUIElement, in formID: String) { revealRow(field, in: formID); type(text, into: field) }
+
     private func tapPopup(_ item: XCUIElement) {
         XCTAssertTrue(item.waitForExistence(timeout: 5))
         let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: item)
@@ -149,7 +174,7 @@ final class CalendarUITests: XCTestCase {
     func testInvalidRemindersKeepExistingDraftVisible() {
         launch(); openReview()
         let reminders = element("calendar-reminders")
-        type("abc", into: reminders)
+        typeRow("abc", into: reminders, in: "calendar-event-details")
         tap(app.buttons["Save reminders"].firstMatch)
         XCTAssertTrue(element("calendar-detail-error").waitForExistence(timeout: 5))
         XCTAssertEqual(reminders.value as? String, "10abc")
@@ -175,6 +200,145 @@ final class CalendarUITests: XCTestCase {
     }
     func testVideoJoinDismissesCalendarBeforeReportingUnavailableFixtureCalls() {
         checkJoinDismissal("calendar-join-video")
+    }
+    func testParticipantsCanBeAddedAndRemovedExplicitly() {
+        launch(["-calendar-people-fixture"]); openReview()
+        tapRow(app.buttons["calendar-manage-participants"], in: "calendar-event-details")
+        tapRow(app.buttons["calendar-add-person"], in: "calendar-people-form")
+        typeRow("/fixture/new", into: app.textFields["calendar-new-attendee-address"].firstMatch, in: "calendar-people-form")
+        tap(app.buttons["calendar-save-people"])
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["/fixture/new"].firstMatch.waitForExistence(timeout: 5))
+        tapRow(app.buttons["calendar-manage-participants"], in: "calendar-event-details")
+        tapRow(app.buttons["calendar-remove-attendee:att_existing"], in: "calendar-people-form")
+        tap(app.buttons["calendar-save-people"])
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["/fixture/new"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["Existing participant"].exists)
+    }
+    func testParticipantConflictKeepsChangesUntilExplicitReload() {
+        launch(["-calendar-people-fixture", "-calendar-conflict-once"]); openReview()
+        tapRow(app.buttons["calendar-manage-participants"], in: "calendar-event-details")
+        tapRow(app.buttons["calendar-add-person"], in: "calendar-people-form")
+        typeRow("/fixture/unsent", into: app.textFields["calendar-new-attendee-address"].firstMatch, in: "calendar-people-form")
+        tap(app.buttons["calendar-save-people"])
+        XCTAssertTrue(app.buttons["calendar-people-reload"].waitForExistence(timeout: 5))
+        XCTAssertEqual(app.textFields["calendar-new-attendee-address"].firstMatch.value as? String, "/fixture/unsent")
+        XCTAssertFalse(app.buttons["calendar-save-people"].isEnabled)
+        tapRow(app.buttons["calendar-people-reload"], in: "calendar-people-form")
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.buttons.matching(identifier: "calendar-confirm-people-reload").allElementsBoundByIndex.contains { $0.isHittable }
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        app.buttons.matching(identifier: "calendar-confirm-people-reload").allElementsBoundByIndex.first { $0.isHittable }?.tap()
+        let cleared = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            !self.app.textFields["calendar-new-attendee-address"].firstMatch.exists && self.app.buttons["calendar-add-person"].isEnabled
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [cleared], timeout: 10), .completed)
+        XCTAssertTrue(app.staticTexts["Existing participant"].exists)
+    }
+    func testRemovingFocusedInviteeKeepsTheNewEventUsable() {
+        launch()
+        tap(element("calendar-new-event"))
+        tapRow(app.buttons["Add a person"], in: "calendar-event-editor")
+        typeRow("/fixture/removed", into: app.textFields["calendar-create-attendee-address"].firstMatch, in: "calendar-event-editor")
+        tapRow(app.buttons["Remove"].firstMatch, in: "calendar-event-editor")
+        XCTAssertFalse(app.textFields["calendar-create-attendee-address"].firstMatch.exists)
+        tapRow(app.buttons["Add a person"], in: "calendar-event-editor")
+        XCTAssertTrue(app.textFields["calendar-create-attendee-address"].firstMatch.waitForExistence(timeout: 5))
+        let value = app.textFields["calendar-create-attendee-address"].firstMatch.value as? String
+        XCTAssertTrue(value == "" || value == "Pigeonpost handle or contact address")
+    }
+    func testPreviouslyLinkedGroupCanBeExplicitlyCleared() {
+        launch(["-calendar-people-fixture"]); openReview()
+        tapRow(app.buttons["calendar-manage-linked-group"], in: "calendar-event-details")
+        tap(app.buttons["calendar-linked-group-picker"])
+        tapPopup(app.buttons["No linked group"].firstMatch)
+        tap(app.buttons["calendar-save-linked-group"])
+        XCTAssertTrue(app.staticTexts["No group linked."].firstMatch.waitForExistence(timeout: 10))
+    }
+    func testInvitationPlacementDoesNotChangeItsResponse() {
+        launch()
+        tap(app.staticTexts["Team invitation"].firstMatch)
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
+        tapRow(app.buttons["calendar-move-invitation"], in: "calendar-event-details")
+        tap(element("calendar-placement-picker"))
+        tapPopup(app.buttons["Personal"].firstMatch)
+        tap(app.buttons["calendar-save-placement"])
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["In Personal"].waitForExistence(timeout: 5))
+        for _ in 0..<6 where !app.staticTexts["Needs a response"].firstMatch.isHittable { app.swipeDown() }
+        XCTAssertTrue(app.staticTexts["Needs a response"].firstMatch.exists)
+    }
+    func testSubscriptionLinkIsShownOnlyOnCreationAndCanBeRevoked() {
+        launch()
+        tap(element("calendar-options")); tapPopup(app.buttons["Manage calendars"].firstMatch)
+        tap(element("calendar-folder:cal_work")); tap(element("calendar-subscription"))
+        XCTAssertTrue(app.navigationBars["Calendar subscription"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("calendar-feed-issued-link").exists)
+        let create = app.buttons["calendar-feed-create"]
+        let enabled = XCTNSPredicateExpectation(predicate: NSPredicate(format: "enabled == true"), object: create)
+        XCTAssertEqual(XCTWaiter.wait(for: [enabled], timeout: 5), .completed)
+        tapRow(create, in: "calendar-feed-form")
+        XCTAssertTrue(element("calendar-feed-issued-link").waitForExistence(timeout: 5))
+        tap(app.navigationBars["Calendar subscription"].buttons["Done"])
+        tap(element("calendar-subscription"))
+        XCTAssertTrue(app.buttons["calendar-feed-disable"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("calendar-feed-issued-link").exists, "status reads cannot recover a subscription capability")
+        tapRow(app.buttons["calendar-feed-disable"], in: "calendar-feed-form")
+        let disable = app.buttons.matching(NSPredicate(format: "label == %@", "Disable subscription"))
+        tapPopup(disable.allElementsBoundByIndex.first { $0.isHittable } ?? disable.firstMatch)
+        XCTAssertTrue(app.staticTexts["Subscription off"].waitForExistence(timeout: 5))
+    }
+    func testImportConfirmationKeepsSelectionAfterLostResponse() {
+        launch(["-calendar-import-preview-fixture", "-calendar-import-loss-once"])
+        tap(element("calendar-options")); tapPopup(app.buttons["Import calendar file"].firstMatch)
+        XCTAssertTrue(app.staticTexts["Imported planning"].waitForExistence(timeout: 5))
+        XCTAssertFalse(app.switches["calendar-import-entry:2"].firstMatch.isEnabled)
+        tapRow(app.buttons["calendar-import-confirm"], in: "calendar-import-form")
+        XCTAssertTrue(element("calendar-import-error").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("calendar-import-unconfirmed").exists)
+        XCTAssertFalse(app.switches["calendar-import-entry:0"].firstMatch.isEnabled)
+        XCTAssertFalse(app.switches["calendar-import-entry:1"].firstMatch.isEnabled)
+        tapRow(app.buttons["calendar-import-confirm"], in: "calendar-import-form")
+        XCTAssertTrue(app.staticTexts["Imported 2 events"].waitForExistence(timeout: 10))
+        tap(app.navigationBars["Import calendar"].buttons["Done"])
+        XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 5))
+    }
+    func testLocalCalendarFileCanBeSelectedAndPreviewed() {
+        launch(["-calendar-picker-fixture"])
+        tap(element("calendar-options")); tapPopup(app.buttons["Import calendar file"].firstMatch)
+        tap(app.buttons["calendar-import-choose-file"])
+        let browse = app.buttons["Browse"].firstMatch
+        if browse.waitForExistence(timeout: 3) { browse.tap() }
+        let local = app.staticTexts.matching(NSPredicate(format: "label == %@ OR label == %@", "On My iPhone", "On My iPad")).firstMatch
+        if local.waitForExistence(timeout: 3) { local.tap() }
+        let folder = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost calendar tests,")).firstMatch
+        XCTAssertTrue(folder.waitForExistence(timeout: 10))
+        folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+        let file = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost import fixture")).firstMatch
+        XCTAssertTrue(file.waitForExistence(timeout: 5))
+        file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
+        let open = app.buttons["Open"].firstMatch
+        if open.waitForExistence(timeout: 2), open.isHittable { open.tap() }
+        XCTAssertTrue(app.staticTexts["Local picker interview"].firstMatch.waitForExistence(timeout: 10))
+        XCTAssertFalse(element("calendar-import-error").exists)
+    }
+    func testEventExportChooserCanBeCancelled() {
+        launch(); openReview()
+        tapRow(app.buttons["calendar-export-event"], in: "calendar-event-details")
+        let cancel = app.buttons["Cancel"].firstMatch
+        // The phone picker can restore a nested folder, where Back replaces Cancel. Return to
+        // locations; a tablet already keeps Cancel in its outer toolbar.
+        for _ in 0..<4 where !cancel.waitForExistence(timeout: 1) {
+            let candidates = app.navigationBars.buttons.matching(NSPredicate(format: "label IN %@", ["On My iPhone", "On My iPad", "Browse"]))
+            guard let back = candidates.allElementsBoundByIndex.first(where: { $0.isHittable }) else { break }
+            back.tap()
+        }
+        XCTAssertTrue(cancel.waitForExistence(timeout: 10))
+        cancel.tap()
+        XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.buttons["calendar-export-event"].isEnabled)
     }
     private func checkJoinDismissal(_ id: String) {
         launch(["-calendar-meeting-fixture"]); openReview()

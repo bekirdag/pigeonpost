@@ -85,12 +85,23 @@ final class CalendarGate: URLProtocol {
         else if e.path == "/v1/calendars" { data = ["calendars": [["id": "cal_" + suffix, "name": e.mailbox, "revision": 1]]] }
         else if e.path == "/v1/calendar/settings" { data = ["previews": false, "timezone": "UTC", "week_start": 1] }
         else if e.path == "/v1/calendar/invitations" { data = ["invitations": [["event_id": "evt_inv_" + suffix, "title": e.mailbox]]] }
+        else if e.path == "/v1/calendar/feeds/cal_shared" {
+            // Deliberately include a URL even on GET: the store must discard it on a status read.
+            data = ["enabled": true, "projection": "busy", "url": "https://calendar.test/v1/calendar/feed/synthetic-" + suffix + ".ics"]
+        }
+        else if e.path == "/v1/calendar/import/preview" {
+            data = ["draft_id": "draft_shared", "calendar_id": "cal_" + suffix,
+                    "events": [["index": 0, "title": "Private copy", "importable": true], ["index": 1, "importable": false]]]
+        }
+        else if e.path == "/v1/calendar/import/draft_shared/confirm" { data = ["created": [["id": "evt_imported", "title": "Private copy"]]] }
         else if e.method == "GET" && e.path == "/v1/calendar/events" {
             data = ["occurrences": [["occurrence_id": "occ_" + suffix, "event_id": "evt_shared", "title": e.mailbox]]]
         } else { data = ["event": ["id": "evt_shared", "title": e.mailbox, "revision": 3, "can_edit": true]] }
-        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: ["Content-Type": "application/json"])!
+        let isICS = status == 200 && e.path.hasSuffix(".ics")
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
+                                       headerFields: ["Content-Type": isICS ? "text/calendar" : "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
-        client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: data))
+        client?.urlProtocol(self, didLoad: isICS ? Data("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".utf8) : try! JSONSerialization.data(withJSONObject: data))
         client?.urlProtocolDidFinishLoading(self)
     }
 }
@@ -201,6 +212,81 @@ struct CalendarStoreTests {
         check(conflictMessage != nil && store.lastError == conflictMessage && store.revisionConflict,
               "a background refresh keeps the conflict's recovery action available")
         check(CalendarGate.history().filter { $0.method == "PATCH" }.count == 1, "a conflict is never automatically retried with another revision")
+        CalendarGate.flags()
+        let feedStatus = await store.feedStatus(id: "cal_shared")
+        check(feedStatus?.enabled == true && feedStatus?.url == nil, "feed status cannot expose a subscription capability, even if a server includes one")
+        check(store.lastError == conflictMessage && store.revisionConflict, "a successful independent read cannot acknowledge a pending write conflict")
+
+        let feedA = CalendarGate.key(a, "GET", "/v1/calendar/feeds/cal_shared")
+        let feedB = CalendarGate.key(b, "GET", "/v1/calendar/feeds/cal_shared")
+        CalendarGate.hold(feedA); CalendarGate.hold(feedB)
+        store.configure(mailbox: a, enabled: true, emailEnabled: false)
+        let oldFeed = Task { await store.feedStatus(id: "cal_shared") }
+        check(await until { CalendarGate.waitingFor(feedA) }, "the old mailbox's subscription read is held")
+        store.configure(mailbox: b, enabled: true, emailEnabled: false)
+        let nextFeed = Task { await store.feedStatus(id: "cal_shared") }
+        check(await until { CalendarGate.waitingFor(feedB) }, "the new mailbox starts its own subscription read")
+        CalendarGate.release(feedA)
+        let staleFeed = await oldFeed.value
+        check(staleFeed == nil && store.busy("feed:cal_shared"), "a late feed read cannot escape its mailbox or clear the new operation")
+        CalendarGate.release(feedB)
+        check(await nextFeed.value != nil && !store.busy("feed:cal_shared"), "the current subscription read completes independently")
+
+        let rotateA = CalendarGate.key(a, "POST", "/v1/calendar/feeds/cal_shared")
+        CalendarGate.hold(rotateA)
+        store.configure(mailbox: a, enabled: true, emailEnabled: false)
+        let oldRotation = Task { await store.changeFeed(id: "cal_shared", enabled: true, projection: "busy") }
+        check(await until { CalendarGate.waitingFor(rotateA) }, "a subscription rotation is held across a mailbox change")
+        store.configure(mailbox: b, enabled: true, emailEnabled: false)
+        CalendarGate.release(rotateA)
+        check(await oldRotation.value == nil, "an old mailbox's newly minted feed capability is discarded")
+        let currentFeed = await store.changeFeed(id: "cal_shared", enabled: true, projection: "busy")
+        check(currentFeed?.url?.hasSuffix("synthetic-b.ics") == true, "only the current mailbox receives its newly created subscription URL")
+
+        let attendeePath = "/v1/calendar/events/evt_shared/attendees"
+        let attendeeGate = CalendarGate.key(b, "POST", attendeePath)
+        CalendarGate.hold(attendeeGate)
+        let attendeeChange = Task { await store.changeAttendees(key: occurrence, revision: 13, scope: .this,
+            adding: [["handle": "/guest"]], removing: ["att_opaque"]) }
+        check(await until { CalendarGate.waitingFor(attendeeGate) }, "an attendee change holds the event revision lock")
+        let patches = CalendarGate.history().filter { $0.method == "PATCH" }.count
+        let overlapping = await store.updateEvent(id: "evt_shared", revision: 13, scope: .all, occurrenceId: nil, fields: ["title": "Overlapping change"])
+        check(overlapping == nil && CalendarGate.history().filter { $0.method == "PATCH" }.count == patches,
+              "another revision write cannot race an in-flight attendee change")
+        CalendarGate.release(attendeeGate)
+        check(await attendeeChange.value, "the current attendee change completes")
+        let attendeeBody = try JSONSerialization.jsonObject(with: CalendarGate.history().last { $0.path == attendeePath }!.body) as! [String: Any]
+        check(attendeeBody["expected_revision"] as? Int == 13 && attendeeBody["scope"] as? String == "this"
+              && attendeeBody["occurrence_id"] as? String == "occ_old" && attendeeBody["remove"] as? [String] == ["att_opaque"],
+              "attendee changes retain the chosen revision, occurrence and opaque attendee identifier")
+
+        check(await store.placeInvitation(id: "evt_shared", calendar: "cal_b"), "an attendee can place an invitation in their own calendar")
+        let placed = CalendarGate.history().last { $0.path.hasSuffix("/placement") }!
+        let placementBody = try JSONSerialization.jsonObject(with: placed.body) as! [String: Any]
+        check(placed.mailbox == b && placed.method == "PUT" && placementBody["calendar_id"] as? String == "cal_b",
+              "invitation placement uses the acting mailbox and selected destination")
+        check(await store.linkGroup(id: "evt_shared", revision: 14, group: nil), "a linked chat can be explicitly removed")
+        let linked = try JSONSerialization.jsonObject(with: CalendarGate.history().last { $0.path.hasSuffix("/linked-group") }!.body) as! [String: Any]
+        check(linked["expected_revision"] as? Int == 14 && linked["group_id"] is NSNull, "unlinking retains its revision and sends an explicit null")
+
+        let imported = await store.previewImport(data: Data("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".utf8), calendar: nil)
+        check(imported?.calendarId == "cal_b" && imported?.events?.last?.importable == false, "import preview retains its resolved destination and unimportable entries")
+        let confirmed = await store.confirmImport(draft: "draft_shared", selected: [1, 0, 1, 0], calendar: "cal_b")
+        let confirmedAgain = await store.confirmImport(draft: "draft_shared", selected: [0, 1], calendar: "cal_b")
+        let confirmations = CalendarGate.history().filter { $0.path.hasSuffix("/draft_shared/confirm") }
+        let selection = try JSONSerialization.jsonObject(with: confirmations[0].body) as! [String: Any]
+        check(confirmed?.created?.count == 1 && confirmedAgain?.created?.count == 1 && selection["select"] as? [Int] == [0, 1]
+              && confirmations[0].body == confirmations[1].body, "confirmation retries keep one canonical selection and destination")
+        let exported = await store.exportEvent(id: "evt_shared")
+        check(exported == Data("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".utf8), "native export preserves the server's exact iCalendar bytes")
+
+        let exportGate = CalendarGate.key(b, "GET", "/v1/calendar/events/evt_shared.ics")
+        CalendarGate.hold(exportGate)
+        let cancelledExport = Task { await store.exportEvent(id: "evt_shared") }
+        check(await until { CalendarGate.waitingFor(exportGate) }, "an export is held until its view cancels")
+        cancelledExport.cancel()
+        CalendarGate.release(exportGate)
+        check(await cancelledExport.value == nil, "a cancelled export cannot deliver a file after the requesting view is gone")
         CalendarGate.flags(rejectCreates: true)
         for index in 0..<17 { _ = await store.createEvent(fields: ["title": "Rejected \(index)"]) }
         CalendarGate.flags()

@@ -17,7 +17,11 @@ Plan: [retry correction plan](calendar-import-retry-2026-10-25-plan.md).
   Private before/after logs are in the continuation release's validation directory.
 - API reference and OpenAPI now describe the selection bound and replay contract. Scoped graph
   analysis identifies the calendar module/event code and the OpenAPI route-drift test as consumers.
-- No production rollout yet. Qualification, PR and pinned candidate/rollback startup remain next.
+- PR99 passes all 13 CI checks and is merged at main 58459ad. Production postbox and reaper now
+  run pinned image `calendar-import-af1f329`, built from the qualified PR tree. Server-local SQLite
+  backup/quick_check and network-isolated candidate/rollback startup pass before rollout. Both
+  services run with zero restarts, environment files match their pre-rollout copies, public health
+  returns 200 and anonymous capabilities remain 401. Private rollout evidence stays outside Git.
   Old binaries ignore the new action and retain their earlier consumed-draft 404 behavior.
 - Separate pre-store hardening finding: the existing generic create idempotency helper stores full
   response JSON in plaintext for seven days. This correction does not change that older cache;
