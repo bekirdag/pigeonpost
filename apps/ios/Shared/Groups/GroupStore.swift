@@ -735,6 +735,15 @@ final class GroupStore {
     #if DEBUG
     // ---- fixtures ---------------------------------------------------------------------------------------
 
+    func stageOrganizationRoomFixture(_ group: GroupSummary) {
+        guard Fixtures.enabled, account.features.groups, account.features.orgs,
+              group.id.hasPrefix("grp_room_"), group.orgId == "org_room_fixture",
+              group.my?.state == "active" || group.my?.state == "keying" else { return }
+        groups.removeAll { $0.id == group.id }
+        groups.append(group)
+        histories[group.id] = []
+    }
+
     /// `-fixtures`: groups in every state the screens draw, with a history that exercises notices, a
     /// verified join, a new-device security line, a warning and a disappearing message. No library,
     /// no network.

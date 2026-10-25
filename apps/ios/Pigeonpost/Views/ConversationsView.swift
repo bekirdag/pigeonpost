@@ -42,7 +42,7 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar
+        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar, organizationRooms
         case peer(Conversation)
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
@@ -58,6 +58,7 @@ struct ConversationsView: View {
             case "scanner": self = .scanner
             case "new-group": self = .newGroup
             case "calendar": self = .calendar
+            case "org-rooms": self = .organizationRooms
             case "device-approval": self = .deviceApproval(DeviceApprovalRequest(code: nil))
             default: return nil
             }
@@ -75,6 +76,7 @@ struct ConversationsView: View {
             case .calls: return "calls"
             case .filtered: return "filtered"
             case .calendar: return "calendar"
+            case .organizationRooms: return "org-rooms"
             case .peer(let conversation): return "peer:" + conversation.peer
             case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
@@ -182,6 +184,10 @@ struct ConversationsView: View {
                 if let filtered { FilteredSheet(filtered: filtered) }
             case .new: NewConversationSheet { peer in selection = peer }
             case .newGroup: NewGroupSheet { id in selection = id }
+            case .organizationRooms:
+                if account.features.orgs && account.features.groups {
+                    OrganizationRoomsScreen(account: account, visit: visit) { id in selection = id; subthread = nil }
+                }
             case .joinLink: JoinLinkSheet { link in sheet = .join(link) }
             case .join(let link): JoinGroupSheet(link: link) { id in selection = id }
             case .peer(let conversation):
@@ -207,7 +213,8 @@ struct ConversationsView: View {
                 newGroup: { sheet = .newGroup },
                 joinLink: { sheet = .joinLink },
                 openFiltered: { sheet = .filtered },
-                openCalendar: { sheet = .calendar }
+                openCalendar: { sheet = .calendar },
+                openRooms: { sheet = .organizationRooms }
             )
         } else {
             phone
@@ -437,6 +444,10 @@ struct ConversationsView: View {
                     if groups.enabled {
                         Button { sheet = .newGroup } label: { Label("New group", systemImage: "person.3") }
                         Button { sheet = .joinLink } label: { Label("Join with a link", systemImage: "link") }
+                        if account.features.orgs {
+                            Button { sheet = .organizationRooms } label: { Label("Organization rooms", systemImage: "building.2") }
+                                .accessibilityIdentifier("org-rooms-open")
+                        }
                     }
                     if account.features.orgs {
                         Button { sheet = .deviceApproval(DeviceApprovalRequest(code: nil)) } label: { Label("Sign in a machine", systemImage: "desktopcomputer") }

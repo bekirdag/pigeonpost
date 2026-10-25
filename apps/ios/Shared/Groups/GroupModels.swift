@@ -24,6 +24,7 @@ struct GroupSummary: Decodable, Identifiable, Equatable, Hashable {
     var revision: Int?
     var epoch: Int?
     var activationState: String?
+    var orgId: String?
     var memberCount: Int?
     var maxMembers: Int?
     var createdBy: String?

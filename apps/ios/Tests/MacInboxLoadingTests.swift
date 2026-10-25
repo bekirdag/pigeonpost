@@ -24,6 +24,12 @@ enum DockBadge { static func show(_ count: Int) {} }
     func show(unread: Int) {}
 }
 struct SettingsSheet: View { var body: some View { Text("Settings") } }
+struct OrganizationRoomsScreen: View {
+    let account: Account
+    let visit: (Mailbox) -> Void
+    let opened: (String) -> Void
+    var body: some View { Text("Organization rooms") }
+}
 struct DeviceApprovalScreen: View {
     let session: Session
     let code: DevicePairingCode?

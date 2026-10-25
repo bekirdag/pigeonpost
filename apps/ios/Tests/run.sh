@@ -23,6 +23,16 @@ swiftc -O -parse-as-library -o "$out/device-approval" Tests/DeviceApprovalStoreT
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Enterprise/DevicePairingModels.swift Shared/Enterprise/DevicePairingAPI.swift Shared/Enterprise/DeviceApprovalStore.swift
 "$out/device-approval"
+swiftc -O -parse-as-library -o "$out/organization-rooms" Tests/OrganizationRoomTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
+  Shared/Enterprise/OrganizationRoomModels.swift Shared/Enterprise/OrganizationRoomAPI.swift
+"$out/organization-rooms"
+swiftc -O -parse-as-library -o "$out/organization-room-store" Tests/OrganizationRoomStoreTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
+  Shared/Enterprise/OrganizationRoomModels.swift Shared/Enterprise/OrganizationRoomAPI.swift Shared/Enterprise/OrganizationRoomStore.swift
+"$out/organization-room-store"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \
