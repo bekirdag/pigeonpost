@@ -23,6 +23,7 @@ struct MacInboxView: View {
     @State private var showingNew = false
     @State private var sheet: Sheet?
     @State private var pendingMailbox: Mailbox?
+    @State private var pendingMeeting: (request: CallHost.ScheduledJoin, scope: UUID)?
 
     private enum Sheet: Identifiable {
         case settings
@@ -174,7 +175,13 @@ struct MacInboxView: View {
                 SettingsSheet()
                     .frame(width: 520, height: 620)
             case .calendar:
-                if let calendar { CalendarDashboard(store: calendar).id(calendar.scopeId) }
+                if let calendar {
+                    CalendarDashboard(store: calendar, joinMeeting: { request in
+                        guard calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                        pendingMeeting = (request, calendar.scopeId)
+                        sheet = nil
+                    }).id(calendar.scopeId)
+                }
             case .newGroup:
                 NewGroupSheet { id in peer = id; subthread = nil }
                     .frame(width: 480, height: 600)
@@ -202,6 +209,14 @@ struct MacInboxView: View {
     }
 
     private func finishMailboxVisit() {
+        if let meeting = pendingMeeting {
+            pendingMeeting = nil
+            guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,
+                  account.features.calendar else { return }
+            guard calls.isAttached else { inbox.toast = "Calling isn’t ready. Reopen your inbox and try again."; return }
+            Task { await calls.joinScheduled(meeting.request) }
+            return
+        }
         guard let mailbox = pendingMailbox else { return }
         pendingMailbox = nil
         // Wait for AppKit to remove the modal sheet before replacing its underlying inbox.

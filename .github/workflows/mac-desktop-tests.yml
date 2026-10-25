@@ -39,6 +39,8 @@ jobs:
         run: sudo xcode-select -s /Applications/Xcode_16.2.app/Contents/Developer
       - name: Shared model regressions
         run: sh apps/ios/Tests/run.sh
+      - name: Call identity isolation and scheduled bridge regressions
+        run: sh apps/ios/Tests/call-host.sh
       - name: Native mailbox and conversation regressions
         env:
           PIGEONPOST_UI_TEST_OUTPUT: ${{ runner.temp }}/mac-inbox-ui

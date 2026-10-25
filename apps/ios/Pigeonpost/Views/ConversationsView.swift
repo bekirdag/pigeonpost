@@ -28,6 +28,7 @@ struct ConversationsView: View {
     @State private var subthread: String?
     /// A mailbox chosen from a sender's panel, switched to once that panel has gone.
     @State private var pendingMailbox: Mailbox?
+    @State private var pendingMeeting: (request: CallHost.ScheduledJoin, scope: UUID)?
     /// One sheet at a time, named.
     ///
     /// This was four separate `.sheet(isPresented:)` modifiers stacked on the same view, and SwiftUI
@@ -144,7 +145,13 @@ struct ConversationsView: View {
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
             case .calendar:
-                if let calendar { CalendarDashboard(store: calendar).id(calendar.scopeId) }
+                if let calendar {
+                    CalendarDashboard(store: calendar, joinMeeting: { request in
+                        guard calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                        pendingMeeting = (request, calendar.scopeId)
+                        sheet = nil
+                    }).id(calendar.scopeId)
+                }
             case .scanner: ScanView()
             case .calls:
                 if let callLog {
@@ -216,6 +223,14 @@ struct ConversationsView: View {
     }
 
     private func finishMailboxVisit() {
+        if let meeting = pendingMeeting {
+            pendingMeeting = nil
+            guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,
+                  account.features.calendar else { return }
+            guard calls.isAttached else { inbox.toast = "Calling isn’t ready. Reopen your inbox and try again."; return }
+            Task { await calls.joinScheduled(meeting.request) }
+            return
+        }
         guard let mailbox = pendingMailbox else { return }
         pendingMailbox = nil
         guard account.mailboxes.contains(where: { $0.address == mailbox.address }) else { return }

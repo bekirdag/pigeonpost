@@ -35,6 +35,21 @@ import AppKit
 @Observable
 final class CallHost: NSObject {
     enum Mode: String { case hidden, mini, full }
+    struct ScheduledJoin {
+        let mailbox: String
+        let code: String
+        let occurrenceId: String
+        let title: String
+        let video: Bool
+        init?(mailbox: String, code: String, occurrenceId: String, title: String, video: Bool) {
+            let alphabet = Set("ABCDEFGHJKMNPQRSTUVWXYZ23456789")
+            guard code.count == 10, code.allSatisfy(alphabet.contains), !mailbox.isEmpty,
+                  !occurrenceId.isEmpty, occurrenceId.utf8.count <= 256,
+                  !occurrenceId.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else { return nil }
+            self.mailbox = mailbox; self.code = code; self.occurrenceId = occurrenceId
+            self.title = String(title.prefix(200)); self.video = video
+        }
+    }
 
     /// The one call page. One, because a ring answered from a lock screen or a notification has to
     /// reach the same page the window shows once it opens — the app may have been launched in the
@@ -42,6 +57,8 @@ final class CallHost: NSObject {
     static let shared = CallHost()
 
     private(set) var mode: Mode = .hidden
+    private(set) var preparingScheduled = false
+    @ObservationIgnored private var scheduledOperation: UUID?
 
     @ObservationIgnored private weak var session: Session?
     @ObservationIgnored private weak var account: Account?
@@ -52,6 +69,10 @@ final class CallHost: NSObject {
     @ObservationIgnored private var pending: (peer: String, kind: String)?
     /// Signed in on the page, so it has (or is opening) a session that can accept a ring.
     @ObservationIgnored private var configured = false
+    @ObservationIgnored private var mailbox: String?
+    @ObservationIgnored private var binding = UUID()
+    @ObservationIgnored private var pageGeneration = UUID()
+    @ObservationIgnored private var configurationRun = UUID()
     /// Bridge calls made before the page was ready and signed in, run in order once it is.
     @ObservationIgnored private var queued: [String] = []
 
@@ -70,7 +91,7 @@ final class CallHost: NSObject {
 
     // The version names the bridge this build expects (Phase 1c: answer, decline, setMuted, hangUp,
     // nativeRing; Phase 1b: avatars); a new value keeps a cached older page from being used.
-    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261021-ring-faces")!
+    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261025-scheduled1")!
 
     #if DEBUG
     /// Local call tests only: `-calls-page URL -calls-token T -calls-mailbox ADDRESS [-calls-handle H]
@@ -115,17 +136,42 @@ final class CallHost: NSObject {
 
     /// Load the page (once) and tell it who is signed in. Called whenever the mailbox changes.
     func attach(session: Session, account: Account, inbox: Inbox) {
+        guard session.status == .signedIn, let address = account.me?.address else { detach(); return }
+        let changed = self.session !== session || self.account !== account || mailbox != address
+        if changed {
+            binding = UUID()
+            configurationRun = UUID()
+            configured = false
+            scheduledOperation = nil
+            preparingScheduled = false
+            if self.session != nil {
+                evaluate("window.PigeonpostNative && PigeonpostNative.signOut()")
+                queued = []
+                pending = nil
+                mode = .hidden
+            }
+        }
         self.session = session
         self.account = account
         self.inbox = inbox
+        mailbox = address
         if webView.url == nil { webView.load(URLRequest(url: Self.page)) }
         Task { await configure() }
     }
 
     func detach() {
+        binding = UUID()
+        configurationRun = UUID()
         evaluate("window.PigeonpostNative && PigeonpostNative.signOut()")
         configured = false
         queued = []
+        pending = nil
+        scheduledOperation = nil
+        preparingScheduled = false
+        mailbox = nil
+        session = nil
+        account = nil
+        inbox = nil
         mode = .hidden
     }
 
@@ -158,20 +204,22 @@ final class CallHost: NSObject {
     private func run(_ script: String) {
         let name = script.prefix { $0 != "(" }
         let guarded = "window.PigeonpostNative && typeof \(name) === 'function' && \(script)"
-        if ready && configured { evaluate(guarded) } else { queued.append(guarded) }
+        if ready && configured && identityIsCurrent { evaluate(guarded) }
+        else if session == nil || identityIsCurrent { queued.append(guarded) }
     }
 
     /// Call whoever `peer` is, by voice or with video.
     func call(_ peer: String, video: Bool) {
         let kind = video ? "video" : "audio"
-        guard ready else { pending = (peer, kind); return }
+        guard identityIsCurrent else { return }
+        guard ready, configured else { pending = (peer, kind); return }
         evaluate("PigeonpostNative.call(\(Self.json(peer)), \(Self.json(kind)))")
     }
 
     /// Start or join a group's call (docs/groups.md §6) through the call page's own group client.
     /// The calls service rechecks membership; this only asks.
     func callGroup(_ id: String, name: String, video: Bool, join: Bool) {
-        guard ready else {
+        guard ready, configured, identityIsCurrent else {
             inbox?.toast = "Calling isn't available right now. Try again in a moment."
             return
         }
@@ -180,8 +228,72 @@ final class CallHost: NSObject {
         evaluate("window.PigeonpostCalls && PigeonpostCalls.\(method) && PigeonpostCalls.\(method)(\(Self.json(kind)), {id: \(Self.json(id)), name: \(Self.json(name))})")
     }
 
+    /// Called after the calendar's sheets are dismissed. Keep the reviewed mailbox and opaque
+    /// occurrence id even when an instance was moved; the server decides whether it is open.
+    func joinScheduled(_ request: ScheduledJoin) async {
+        guard identityIsCurrent, mailbox == request.mailbox else {
+            inbox?.toast = "Calling isn’t ready. Reopen your inbox and try again."
+            return
+        }
+        guard scheduledOperation == nil, mode == .hidden else {
+            inbox?.toast = "Finish the current call first."
+            return
+        }
+        let operation = UUID(), currentBinding = binding
+        scheduledOperation = operation
+        preparingScheduled = true
+        defer {
+            if scheduledOperation == operation { scheduledOperation = nil; preparingScheduled = false }
+        }
+        let deadline = Date().addingTimeInterval(15)
+        while !ready || !configured {
+            guard !Task.isCancelled, scheduledOperation == operation, binding == currentBinding,
+                  identityIsCurrent, mailbox == request.mailbox else { return }
+            guard Date() < deadline else { inbox?.toast = "Calling isn’t ready yet. Try again in a moment."; return }
+            try? await Task.sleep(for: .milliseconds(50))
+        }
+        guard !Task.isCancelled, scheduledOperation == operation, binding == currentBinding,
+              identityIsCurrent, mailbox == request.mailbox else { return }
+        let currentPage = pageGeneration
+        do {
+            let result = try await webView.callAsyncJavaScript("""
+                if (!window.PigeonpostNative || typeof PigeonpostNative.joinScheduled !== 'function')
+                    return {state:'error',code:'bridge_unavailable'};
+                return await PigeonpostNative.joinScheduled(code, options);
+                """, arguments: ["code": request.code, "options": ["as": request.mailbox,
+                    "occurrenceId": request.occurrenceId, "title": request.title,
+                    "kind": request.video ? "video" : "audio"]], in: nil, contentWorld: .page)
+            guard scheduledOperation == operation, current(currentBinding, page: currentPage, address: request.mailbox),
+                  let response = result as? [String: Any] else { return }
+            switch response["state"] as? String {
+            case "joined", "waiting", "cancelled": break
+            case "choose_occurrence": inbox?.toast = "Choose a specific occurrence from your calendar to join."
+            default:
+                switch response["code"] as? String {
+                case "bridge_unavailable": inbox?.toast = "Calling needs an updated call page. Close and reopen the app, then try again."
+                case "timeout", "network": inbox?.toast = "Couldn’t reach the meeting. Check your connection and try again."
+                case "identity_changed": inbox?.toast = "Your inbox changed. Open the event again to join."
+                default: inbox?.toast = (response["message"] as? String).map { String($0.prefix(400)) } ?? "Couldn’t join the meeting. Try again from the event."
+                }
+            }
+        } catch {
+            guard scheduledOperation == operation, current(currentBinding, page: currentPage, address: request.mailbox) else { return }
+            inbox?.toast = "Couldn’t open the meeting. Try again in a moment."
+        }
+    }
+
+    func cancelScheduledJoin() {
+        guard scheduledOperation != nil else { return }
+        scheduledOperation = nil
+        preparingScheduled = false
+        evaluate("window.PigeonpostNative && PigeonpostNative.hangUp()")
+    }
+
     private func configure() async {
-        guard ready, let session, let account, var me = account.me else { return }
+        guard ready, identityIsCurrent, let session, let account, var me = account.me else { return }
+        let currentBinding = binding, currentPage = pageGeneration, address = me.address
+        let run = UUID()
+        configurationRun = run
         var token: String?
         #if DEBUG
         if let debugToken = Self.debug.string(forKey: "calls-token"), let address = Self.debug.string(forKey: "calls-mailbox") {
@@ -193,6 +305,7 @@ final class CallHost: NSObject {
         #else
         token = try? await session.token()
         #endif
+        guard current(currentBinding, page: currentPage, address: address), configurationRun == run else { return }
         var known: [String: String] = [:]
         for conversation in inbox?.conversations ?? [] { known[conversation.peer] = conversation.name }
         let options: [String: Any] = [
@@ -204,27 +317,44 @@ final class CallHost: NSObject {
             // that knows how (native-call.js `decorateAvatar`); an older page ignores the field.
             "avatars": avatars?.dataURLs(for: Array(known.keys) + [me.handle ?? me.address]) ?? [:],
         ]
-        guard let data = try? JSONSerialization.data(withJSONObject: options),
-              let json = String(data: data, encoding: .utf8) else { return }
-        // The page may have reloaded while a token was being fetched.
-        guard ready else { return }
-        evaluate("PigeonpostNative.configure(\(json))")
+        let applied = try? await webView.callAsyncJavaScript("""
+            if (!window.PigeonpostNative || typeof PigeonpostNative.configure !== 'function') return false;
+            PigeonpostNative.configure(options);
+            return true;
+            """, arguments: ["options": options], in: nil, contentWorld: .page)
+        guard current(currentBinding, page: currentPage, address: address), configurationRun == run,
+              applied as? Bool == true else { return }
         configured = token != nil
         if configured, !queued.isEmpty {
             let waiting = queued
             queued = []
             waiting.forEach(evaluate)
         }
+        if configured, let pending {
+            self.pending = nil
+            call(pending.peer, video: pending.kind == "video")
+        }
+    }
+
+    private var identityIsCurrent: Bool {
+        session?.status == .signedIn && mailbox != nil && account?.me?.address == mailbox
+    }
+
+    private func current(_ binding: UUID, page: UUID, address: String) -> Bool {
+        ready && identityIsCurrent && self.binding == binding && pageGeneration == page && mailbox == address
     }
 
     private func renew() async {
+        guard ready, identityIsCurrent, let session, let address = mailbox else { return }
+        let currentBinding = binding, currentPage = pageGeneration
         #if DEBUG
         if let debugToken = Self.debug.string(forKey: "calls-token") {
             evaluate("PigeonpostNative.renewed(\(Self.json(debugToken)))")
             return
         }
         #endif
-        let fresh = try? await session?.renew()
+        let fresh = try? await session.renew()
+        guard current(currentBinding, page: currentPage, address: address) else { return }
         evaluate("PigeonpostNative.renewed(\(fresh.map(Self.json) ?? "null"))")
     }
 
@@ -235,10 +365,6 @@ final class CallHost: NSObject {
             ready = true
             Task {
                 await configure()
-                if let pending {
-                    self.pending = nil
-                    call(pending.peer, video: pending.kind == "video")
-                }
                 #if DEBUG
                 // `-calls-report YES`: the call client's own `inspect()` on standard output every few
                 // seconds, so a local test can see this side's connection and what it receives.
@@ -332,11 +458,13 @@ extension CallHost: WKNavigationDelegate, WKUIDelegate {
 
     /// A reload (the web view's process was reclaimed) starts again from a page that knows nothing.
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
+        pageGeneration = UUID()
         ready = false
         configured = false
     }
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
+        pageGeneration = UUID()
         ready = false
         configured = false
         mode = .hidden
@@ -375,7 +503,10 @@ private final class WeakHandler: NSObject, WKScriptMessageHandler {
 
     func userContentController(_ controller: WKUserContentController, didReceive message: WKScriptMessage) {
         let body = message.body
-        MainActor.assumeIsolated { host?.received(body) }
+        MainActor.assumeIsolated {
+            guard message.frameInfo.isMainFrame, CallHost.trusted(message.frameInfo.securityOrigin) else { return }
+            host?.received(body)
+        }
     }
 }
 
@@ -388,9 +519,19 @@ struct CallOverlay: View {
         CallWebView(webView: calls.webView)
             .frame(maxWidth: .infinity, maxHeight: mini ? 64 : .infinity)
             .opacity(calls.mode == .hidden ? 0.01 : 1)
-            .allowsHitTesting(calls.mode != .hidden)
-            .accessibilityHidden(calls.mode == .hidden)
+            .allowsHitTesting(calls.mode != .hidden || calls.preparingScheduled)
+            .accessibilityHidden(calls.mode == .hidden && !calls.preparingScheduled)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .overlay {
+                if calls.preparingScheduled, calls.mode == .hidden {
+                    VStack(spacing: 16) {
+                        ProgressView("Preparing call…")
+                        Button("Cancel") { calls.cancelScheduledJoin() }.buttonStyle(.bordered)
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity).background(Theme.ground)
+                    .accessibilityIdentifier("scheduled-call-preparing")
+                }
+            }
             #if os(iOS)
             // The call itself runs edge to edge and keeps clear of the notch and the home indicator
             // in its own stylesheet; the minimised strip sits under the status bar.

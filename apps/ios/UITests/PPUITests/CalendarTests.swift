@@ -159,4 +159,24 @@ final class CalendarUITests: XCTestCase {
         XCTAssertEqual(element("calendar-notification-previews").value as? String, "1")
         XCTAssertTrue(app.textFields.matching(NSPredicate(format: "value == %@", "Europe/Istanbul")).firstMatch.exists)
     }
+    func testVoiceJoinDismissesCalendarBeforeReportingUnavailableFixtureCalls() {
+        checkJoinDismissal("calendar-join-voice")
+    }
+    func testVideoJoinDismissesCalendarBeforeReportingUnavailableFixtureCalls() {
+        checkJoinDismissal("calendar-join-video")
+    }
+    private func checkJoinDismissal(_ id: String) {
+        launch(["-calendar-meeting-fixture"]); openReview()
+        let button = app.buttons[id]
+        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+        XCTAssertTrue(button.waitForExistence(timeout: 5))
+        XCTAssertGreaterThanOrEqual(button.frame.height, 44)
+        button.tap()
+        // The UI fixture deliberately does not attach any call page or use a real token. This
+        // checks routing and sheet dismissal; CallHostTests exercises the actual WebKit bridge.
+        XCTAssertTrue(app.staticTexts["Calling isn’t ready. Reopen your inbox and try again."].waitForExistence(timeout: 8))
+        XCTAssertFalse(app.navigationBars["Event"].exists)
+        XCTAssertFalse(app.navigationBars["Calendar"].exists)
+        XCTAssertTrue(element("calendarButton").exists)
+    }
 }
