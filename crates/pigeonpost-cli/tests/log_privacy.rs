@@ -461,6 +461,34 @@ fn privacy_scanner_rejects_every_protected_value_class() {
 }
 
 #[test]
+fn privacy_scanner_distinguishes_decimal_ports_from_message_ids() {
+    let forbidden = base_forbidden_values();
+    let port = FORWARDED_CLIENT_PORT.to_string();
+    for text in [
+        format!("port={port}"),
+        format!("127.0.0.1:{port}"),
+        format!(r#"{{"client_port":{port}}}"#),
+        format!(r#"{{"client_port":"{port}"}}"#),
+        format!("[2001:db8::1]:{port}"),
+        port.clone(),
+    ] {
+        assert!(
+            !privacy_violations(&[("actual decimal port".into(), text)], &forbidden).is_empty()
+        );
+    }
+    let digest = format!("a{}{}b", port, "e".repeat(62 - port.len()));
+    assert_eq!(digest.len(), 64);
+    let surfaces = [
+        (
+            "message hash".into(),
+            format!(r#"{{"id":"{digest}","stored":true}}"#),
+        ),
+        ("larger timestamp".into(), format!("at=179{port}123")),
+    ];
+    assert!(privacy_violations(&surfaces, &forbidden).is_empty());
+}
+
+#[test]
 fn simultaneous_loopback_reservations_are_distinct_and_exclusive() {
     let first = LoopbackReservation::new();
     let second = LoopbackReservation::new();
@@ -1295,14 +1323,33 @@ fn remember_source(forbidden: &mut Vec<ForbiddenValue>, service: &str, source: S
     });
 }
 
+fn contains_private_value(content: &str, value: &str) -> bool {
+    if value.is_empty() {
+        return false;
+    }
+    if !value.bytes().all(|b| b.is_ascii_digit()) {
+        return content.contains(value);
+    }
+    // A decimal port is a whole token. Chance digits inside a hash or timestamp are not a
+    // client port; endpoint punctuation and JSON/log separators still delimit actual ports.
+    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
+    content.match_indices(value).any(|(start, _)| {
+        !content[..start].bytes().next_back().is_some_and(word)
+            && !content[start + value.len()..]
+                .bytes()
+                .next()
+                .is_some_and(word)
+    })
+}
+
 fn privacy_violations(surfaces: &[(String, String)], forbidden: &[ForbiddenValue]) -> Vec<String> {
     let mut violations = Vec::new();
     for (surface, content) in surfaces {
         for item in forbidden {
-            if !item.value.is_empty() && content.contains(&item.value) {
+            if contains_private_value(content, &item.value) {
                 let line = content
                     .lines()
-                    .find(|line| line.contains(&item.value))
+                    .find(|line| contains_private_value(line, &item.value))
                     .unwrap_or("<matching output was not line-oriented>");
                 let redacted = forbidden.iter().fold(line.to_string(), |line, protected| {
                     line.replace(&protected.value, "<redacted>")

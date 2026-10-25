@@ -54,7 +54,8 @@ jobs:
       - name: Group encryption library (Android AAR and the host build for JVM tests)
         working-directory: crates/pigeonpost-groupcrypto
         run: |
-          eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          kotlin_tools_env="$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          eval "$kotlin_tools_env"
           ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.2.12479018" scripts/build-android.sh
           cargo build --release --locked -p pigeonpost-groupcrypto-ffi
       - name: Unit tests, lint, APK and release bundle
