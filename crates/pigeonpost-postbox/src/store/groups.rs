@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS group_messages (
     UNIQUE (group_id, sender, client_message_id)
 );
 CREATE INDEX IF NOT EXISTS group_messages_expiry ON group_messages(expires_at) WHERE expires_at IS NOT NULL;
+CREATE INDEX IF NOT EXISTS group_message_versions ON group_messages(group_id, edit_of) WHERE edit_of IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS group_notices (
     group_id   TEXT NOT NULL REFERENCES groups(id),

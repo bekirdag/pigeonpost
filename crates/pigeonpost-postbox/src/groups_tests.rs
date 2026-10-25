@@ -4,6 +4,7 @@
 use crate::*;
 use pigeonpost_groupcrypto::{Device, DeviceRef, Incoming};
 use reqwest::Client;
+use rusqlite::params;
 use serde_json::{json, Value};
 
 const OPS: &str = "svc_ops_0123456789abcdef0123456789abcdef";
@@ -394,6 +395,53 @@ impl Member {
             &out.envelope_signature,
         )
         .await
+    }
+
+    async fn send_edit(
+        &mut self,
+        srv: &Server,
+        gid: &str,
+        text: &str,
+        edit_of: i64,
+    ) -> (u16, Value) {
+        let body = self.edit_request(gid, text, edit_of);
+        self.req(
+            srv,
+            reqwest::Method::POST,
+            &format!("/v1/groups/{gid}/messages"),
+            Some(body),
+        )
+        .await
+    }
+
+    fn edit_request(&mut self, gid: &str, text: &str, edit_of: i64) -> Value {
+        let cmid = rand_hex(8);
+        let plaintext =
+            json!({ "v": 1, "type": "text", "text": text, "edit_of": edit_of.to_string() })
+                .to_string();
+        let out = self
+            .device
+            .encrypt_message(gid, &cmid, plaintext.as_bytes(), &[])
+            .unwrap();
+        json!({
+            "request_key": format!("rk-{cmid}"), "client_message_id": cmid,
+            "epoch": out.epoch as i64, "enc_scheme": pigeonpost_groupcrypto::ENC_SCHEME,
+            "ciphertext": b64_encode(&out.ciphertext), "envelope_signature": b64_encode(&out.envelope_signature),
+            "edit_of": edit_of,
+        })
+    }
+
+    async fn set_timer(&self, srv: &Server, gid: &str, seconds: Option<i64>) {
+        let revision = self.group(srv, gid).await["revision"].clone();
+        let (status, body) = self
+            .req(
+                srv,
+                reqwest::Method::PATCH,
+                &format!("/v1/groups/{gid}"),
+                Some(json!({ "expected_revision": revision, "ephemeral_secs": seconds })),
+            )
+            .await;
+        assert_eq!(status, 200, "{body}");
     }
 
     async fn post_raw(
@@ -1158,6 +1206,308 @@ async fn disappearing_messages_expire_for_groups_and_threads() {
         .iter()
         .any(|m| m["body"] == "dm two"));
     let _ = &mut alice;
+}
+
+#[tokio::test]
+async fn group_edit_keeps_expiry_after_disabling_the_timer() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    alice.set_timer(&srv, &gid, Some(300)).await;
+    let (status, original) = alice.send(&srv, &gid, "original").await;
+    assert_eq!(status, 201);
+    assert!(original["expires_at"].is_number());
+    alice.set_timer(&srv, &gid, None).await;
+    let (status, edit) = alice
+        .send_edit(&srv, &gid, "changed", original["seq"].as_i64().unwrap())
+        .await;
+    assert_eq!(status, 201, "{edit}");
+    assert_eq!(
+        edit["expires_at"], original["expires_at"],
+        "editing must not retain disappearing content"
+    );
+    alice.set_timer(&srv, &gid, Some(3600)).await;
+    let (status, later) = alice
+        .send_edit(&srv, &gid, "changed again", edit["seq"].as_i64().unwrap())
+        .await;
+    assert_eq!(status, 201, "{later}");
+    assert_eq!(
+        later["expires_at"], original["expires_at"],
+        "a longer timer cannot extend a chain"
+    );
+}
+
+#[tokio::test]
+async fn group_edit_keeps_no_expiry_after_enabling_the_timer() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    let (_, original) = alice.send(&srv, &gid, "original").await;
+    assert!(original["expires_at"].is_null());
+    alice.set_timer(&srv, &gid, Some(300)).await;
+    let (status, edit) = alice
+        .send_edit(&srv, &gid, "changed", original["seq"].as_i64().unwrap())
+        .await;
+    assert_eq!(status, 201, "{edit}");
+    assert!(
+        edit["expires_at"].is_null(),
+        "a timer change affects new messages, not versions"
+    );
+}
+
+#[tokio::test]
+async fn group_edit_chain_cannot_restart_the_original_window() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    let (_, original) = alice.send(&srv, &gid, "original").await;
+    let root = original["seq"].as_i64().unwrap();
+    let (status, edit) = alice.send_edit(&srv, &gid, "changed once", root).await;
+    assert_eq!(status, 201);
+    let group = gid.clone();
+    let at = now_unix().saturating_sub(86_400) as i64;
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> {
+            tx.execute(
+                "UPDATE group_messages SET created_at = ?3 WHERE group_id = ?1 AND seq = ?2",
+                params![group, root, at],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (status, body) = alice
+        .send_edit(&srv, &gid, "too late", edit["seq"].as_i64().unwrap())
+        .await;
+    assert_eq!(status, 403, "{body}");
+    assert_eq!(body["error"], "not_editable");
+}
+
+#[tokio::test]
+async fn group_edit_refuses_an_expired_or_missing_original() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    let (_, original) = alice.send(&srv, &gid, "original").await;
+    let root = original["seq"].as_i64().unwrap();
+    let (status, edit) = alice.send_edit(&srv, &gid, "changed", root).await;
+    assert_eq!(status, 201);
+    let group = gid.clone();
+    let expired = now_unix() as i64 - 1;
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> {
+            tx.execute(
+                "UPDATE group_messages SET expires_at = ?3 WHERE group_id = ?1 AND seq = ?2",
+                params![group, root, expired],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let target = edit["seq"].as_i64().unwrap();
+    let (status, body) = alice.send_edit(&srv, &gid, "after expiry", target).await;
+    assert_eq!(status, 403, "{body}");
+    let group = gid.clone();
+    srv.state
+        .store
+        .group_tx(move |tx| -> groups::GResult<()> {
+            tx.execute(
+                "DELETE FROM group_messages WHERE group_id = ?1 AND seq = ?2",
+                params![group, root],
+            )?;
+            Ok(())
+        })
+        .await
+        .unwrap();
+    let (status, body) = alice.send_edit(&srv, &gid, "after pruning", target).await;
+    assert_eq!(status, 403, "{body}");
+}
+
+#[tokio::test]
+async fn group_edit_deleting_any_version_erases_the_whole_chain_only() {
+    let srv = serve().await;
+    let (mut alice, bob, _carol, gid) = three(&srv).await;
+    let (_, original) = alice.send(&srv, &gid, "original").await;
+    let root = original["seq"].as_i64().unwrap();
+    let (status, edit) = alice.send_edit(&srv, &gid, "changed once", root).await;
+    assert_eq!(status, 201);
+    let middle = edit["seq"].as_i64().unwrap();
+    let (status, final_edit) = alice.send_edit(&srv, &gid, "changed twice", middle).await;
+    assert_eq!(status, 201);
+    let leaf = final_edit["seq"].as_i64().unwrap();
+    let (_, unrelated) = alice.send(&srv, &gid, "unrelated").await;
+    let other_group = alice.create(&srv, "Other group", json!({})).await;
+    // Use the same sequence number in another group to verify the recursive delete's scope.
+    loop {
+        let (_, other) = alice.send(&srv, &other_group, "different group").await;
+        if other["seq"].as_i64().unwrap() >= root {
+            break;
+        }
+    }
+    let path = format!("/v1/groups/{gid}/messages/{middle}");
+    assert_eq!(
+        bob.req(&srv, reqwest::Method::DELETE, &path, None).await.0,
+        403
+    );
+    let (status, body) = alice.req(&srv, reqwest::Method::DELETE, &path, None).await;
+    assert_eq!(status, 200, "{body}");
+    let group = gid.clone();
+    let rows = srv.state.store.group_tx(move |tx| -> groups::GResult<Vec<(i64, bool, bool)>> {
+        let mut stmt = tx.prepare("SELECT seq, body_blob IS NULL, deleted_at IS NOT NULL FROM group_messages WHERE group_id = ?1 ORDER BY seq")?;
+        let rows = stmt.query_map(params![group], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }).await.unwrap();
+    for seq in [root, middle, leaf] {
+        assert!(
+            rows.contains(&(seq, true, true)),
+            "version {seq} was not erased: {rows:?}"
+        );
+    }
+    assert!(rows.contains(&(unrelated["seq"].as_i64().unwrap(), false, false)));
+    assert_eq!(body["seqs"], json!([root, middle, leaf]));
+    let other = other_group.clone();
+    let untouched: bool = srv.state.store.group_tx(move |tx| -> groups::GResult<bool> {
+        Ok(tx.query_row("SELECT body_blob IS NOT NULL AND deleted_at IS NULL FROM group_messages WHERE group_id = ?1 AND seq = ?2", params![other, root], |r| r.get(0))?)
+    }).await.unwrap();
+    assert!(untouched, "another group's matching sequence stays intact");
+    assert_eq!(
+        alice
+            .req(&srv, reqwest::Method::DELETE, &path, None)
+            .await
+            .0,
+        200,
+        "deletion remains idempotent"
+    );
+}
+
+#[tokio::test]
+async fn group_edit_racing_deletion_cannot_resurrect_a_version() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, gid) = three(&srv).await;
+    let (_, original) = alice.send(&srv, &gid, "original").await;
+    let root = original["seq"].as_i64().unwrap();
+    let request = alice.edit_request(&gid, "concurrent edit", root);
+    let post_path = format!("/v1/groups/{gid}/messages");
+    let delete_path = format!("/v1/groups/{gid}/messages/{root}");
+    let (edit, deleted) = tokio::join!(
+        alice.req(&srv, reqwest::Method::POST, &post_path, Some(request)),
+        alice.req(&srv, reqwest::Method::DELETE, &delete_path, None),
+    );
+    assert_eq!(deleted.0, 200, "{deleted:?}");
+    assert!([201, 403].contains(&edit.0), "{edit:?}");
+    if edit.0 == 403 {
+        assert_eq!(edit.1["error"], "not_editable");
+    }
+    let live: i64 = srv.state.store.group_tx(move |tx| -> groups::GResult<i64> {
+        Ok(tx.query_row("SELECT COUNT(*) FROM group_messages WHERE group_id = ?1 AND (body_blob IS NOT NULL OR deleted_at IS NULL)", params![gid], |r| r.get(0))?)
+    }).await.unwrap();
+    assert_eq!(live, 0, "either transaction order must erase every version");
+}
+
+#[tokio::test]
+async fn group_edit_deletion_releases_all_versions_attachments_without_other_groups() {
+    let srv = serve().await;
+    let (mut alice, _bob, _carol, first) = three(&srv).await;
+    let second = alice.create(&srv, "Other files", json!({})).await;
+    let sealed = pigeonpost_groupcrypto::seal_attachment(b"versioned secret file").unwrap();
+    let mut posted = Vec::new();
+    for gid in [&first, &second] {
+        // Deliberately share the same sealed bytes to exercise global blob reference counts.
+        let response = srv
+            .http
+            .post(format!("{}/v1/groups/{gid}/attachments", srv.public))
+            .bearer_auth(&alice.token)
+            .header("x-pigeonpost-identity", &alice.address)
+            .header("x-pigeonpost-device", &alice.device_id)
+            .body(sealed.sealed.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status().as_u16(), 201);
+        let upload: Value = response.json().await.unwrap();
+        let id = upload["id"].as_str().unwrap().to_owned();
+        let cmid = rand_hex(8);
+        let encrypted = alice
+            .device
+            .encrypt_message(
+                gid,
+                &cmid,
+                b"see file",
+                std::slice::from_ref(&sealed.reference),
+            )
+            .unwrap();
+        let (status, body) = alice.req(&srv, reqwest::Method::POST, &format!("/v1/groups/{gid}/messages"), Some(json!({
+            "request_key": format!("rk-{cmid}"), "client_message_id": cmid, "epoch": encrypted.epoch,
+            "enc_scheme": pigeonpost_groupcrypto::ENC_SCHEME, "ciphertext": b64_encode(&encrypted.ciphertext),
+            "envelope_signature": b64_encode(&encrypted.envelope_signature), "attachments": [id],
+        }))).await;
+        assert_eq!(status, 201, "{body}");
+        posted.push((id, body["seq"].as_i64().unwrap()));
+    }
+    let (status, edit) = alice
+        .send_edit(&srv, &first, "new caption", posted[0].1)
+        .await;
+    assert_eq!(status, 201);
+    let (status, body) = alice
+        .req(
+            &srv,
+            reqwest::Method::DELETE,
+            &format!(
+                "/v1/groups/{first}/messages/{}",
+                edit["seq"].as_i64().unwrap()
+            ),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(
+        alice
+            .req(
+                &srv,
+                reqwest::Method::GET,
+                &format!("/v1/groups/{first}/attachments/{}", posted[0].0),
+                None
+            )
+            .await
+            .0,
+        404
+    );
+    let response = srv
+        .http
+        .get(format!(
+            "{}/v1/groups/{second}/attachments/{}",
+            srv.public, posted[1].0
+        ))
+        .bearer_auth(&alice.token)
+        .header("x-pigeonpost-identity", &alice.address)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        response.status().as_u16(),
+        200,
+        "another group's blob must survive"
+    );
+    let bytes = response.bytes().await.unwrap();
+    assert_eq!(
+        pigeonpost_groupcrypto::open_attachment(&bytes, &sealed.reference).unwrap(),
+        b"versioned secret file"
+    );
+    let first_id = first.clone();
+    let refs: i64 = srv
+        .state
+        .store
+        .group_tx(move |tx| -> groups::GResult<i64> {
+            Ok(tx.query_row(
+                "SELECT COUNT(*) FROM group_attachments WHERE group_id = ?1",
+                params![first_id],
+                |r| r.get(0),
+            )?)
+        })
+        .await
+        .unwrap();
+    assert_eq!(
+        refs, 0,
+        "no attachment metadata from an earlier version remains"
+    );
 }
 
 #[tokio::test]
