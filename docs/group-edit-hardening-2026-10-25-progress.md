@@ -1,0 +1,15 @@
+# Group edit hardening progress
+
+- Isolated branch `codex/group-edit-hardening-20261025`, based on `e741b0f` (web-rollout PR #92; not merged yet).
+- Read group `post_in`, deletion, expiry and attachment paths plus real MLS test helpers. New scoped Docdex index is busy and returned backoff for graph/symbols; the same unchanged source was also queried in the existing rollout index. No index exclusions were changed. Exact call sites and transaction scope are checked directly while indexing completes.
+- Confirmed gaps in source: edits use the immediate parent's creation time, then `g.ephemeral_secs` at the edit's send; deletion clears only the named seq. These are source findings, not evidence of a production exploit or data loss. Regression cases and fixes pending.
+
+
+## Regression and implementation checkpoint
+
+- Targeted Docdex indexing recovered; AST and impact checks cover group routes, the store schema and test helper. Dependencies run from store/groups through the store and routes; the new partial index on `(group_id, edit_of)` supports recursive descendant traversal. No graph or index exclusions changed.
+- Five real-MLS/socket cases fail on the prior source, proving expiry reset after timer disable/enable, renewed24-hour window, edits of expired originals and incomplete version deletion. The initial test compile lacked the params macro; imported it and retained both logs. A local helper draft omitted its encryption result and request field and was rejected.
+- Resolve same-group/same-author ancestors within the existing write transaction, require a complete live chain/current target, check the original24-hour boundary and retain the earliest expiry. Deletion resolves the whole component, authorizes against its root, clears all ciphertext/tombstones and attachment references atomically, and emits additive `seqs` with the existing event fields. JSON1 is already used in the org/calendar store; parameters stay bound.
+- Added cross-member refusal, matching seqs in a different group, unrelated messages, idempotent deletion, actual edit/delete concurrency and encrypted attachment reference-counting across two groups. The test initially used temporary formatted paths across a join; bound them before the await. Full final postbox **448/448**, both worker tests and warnings-as-errors clippy pass (`group-edit-server-final.log`, `group-edit-server-clippy.log`). The five baseline failures are in `group-edit-server-before-compiled.log`; focused repair passes5/5 before the extra cases.
+- Read-only production aggregate audit on25Oct found4 group message rows, **zero edits**, zero timed/deleted rows. No existing production chain needs repair at that observation. Recheck before deployment. This patch governs new transactions; legacy self-hosted installations with pre-existing extended/orphan chains need a separate normalization migration in the hardening phase. No production data was inspected beyond aggregate counts or modified.
+- PR qualification and deployment pending. Native clients still need their deletion/expiry wake-up and UI integration before release. No store submission or feature flag change.

@@ -153,7 +153,12 @@ An edit emits `message.edited` to the recipient's account:
 ## 5. Groups
 
 Groups keep their E2EE model (`docs/groups.md`): edits and replies are `edit_of`/`reply_to` seqs on
-`POST /v1/groups/{id}/messages`. For ticks:
+`POST /v1/groups/{id}/messages`. Unlike direct root refs, a group edit names the preceding version;
+the server checks the original's window and inherits its chain's earliest expiry. Delete any
+version to erase the entire chain; apply all `seqs` from the response/event to the local cache.
+Only fold references verified inside the encrypted body and belonging to the same sender. Local
+message info shows versions that this device actually received, with missing history made explicit.
+For ticks:
 
 - `GET /v1/groups/{id}/receipts` → `{members: [{address, handle, delivered_seq, seen_seq}],
   read_receipts}` for active members other than the caller. `delivered_seq` advances when that

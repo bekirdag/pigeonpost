@@ -1,5 +1,6 @@
 """Bind web module requests to the exact generated WASM digest."""
 from pathlib import Path
+import hashlib
 import re
 import sys
 
@@ -21,8 +22,9 @@ def stamp(repo, output, digest):
             rf"\g<1>?v={digest}\g<2>")
     groups = replace_once((repo / "site-inbox/groups.js").read_text(),
         r"(vendor/groupcrypto/loader\.js\?v=)[^'\"]+", rf"\g<1>{digest}")
+    group_digest = hashlib.sha256(groups.encode("utf-8")).hexdigest()
     index = replace_once((repo / "site-inbox/index.html").read_text(),
-        r'(src="groups\.js)(?:\?v=[^"]+)?(")', rf'\g<1>?v={digest}\g<2>')
+        r'(src="groups\.js)(?:\?v=[^"]+)?(")', rf'\g<1>?v={group_digest}\g<2>')
     output.mkdir(parents=True, exist_ok=True)
     (output / "loader.js").write_text(loader)
     (output / "groups.js").write_text(groups)

@@ -125,6 +125,18 @@ A deleted or edited item keeps its `seq` with `ciphertext: null` and `deleted_at
 `replaced_by: seq`). Clients render notices from the **verified commit outcome** where one exists
 (P-2 §9) and treat server notices as a cross-check: a disagreement is shown as a warning.
 
+An edit names its preceding version's `seq`. The complete same-author chain is resolved in the
+writer transaction: only its current unreplaced version is editable, within 24 hours of the
+original, with no expired/deleted/missing ancestor. Every edit retains the chain's earliest existing
+expiry, including no expiry for an untimed chain; a group timer change cannot extend a version.
+Decrypted version history is kept on devices that received those versions. A later device cannot
+recover an older version whose ciphertext the postbox already cleared.
+
+Deleting any version deletes the whole same-author chain in that group and releases its
+attachments. The response retains `deleted: true` and adds `seqs: [...]`; `group.message` retains
+its original `seq`/`deleted` fields and adds the affected `seqs`. Clients erase all those local
+versions, including cached files, rather than only hiding the visible bubble.
+
 Notice kinds: `group_created`, `member_invited`, `member_joined`, `member_left`, `member_removed`,
 `member_banned`, `role_changed`, `settings_changed`, `ownership_transferred`, `device_added`,
 `device_removed`, `timer_changed`, `call_started`, `call_ended`, `link_reset`.

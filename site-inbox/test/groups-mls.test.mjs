@@ -24,7 +24,8 @@ test("the web loader binds its module and WASM requests to one digest and refuse
   assert.ok(loaderSource.includes(`./integrity.js?v=${WASM_SHA256}`), "manifest cache key follows the pinned digest");
   assert.ok(loaderSource.includes(`./pigeonpost_groupcrypto.js?v=${WASM_SHA256}`), "glue cache key follows the same digest");
   assert.ok(groupsSource.includes(`vendor/groupcrypto/loader.js?v=${WASM_SHA256}`), "the inbox requests that loader version");
-  assert.ok(indexSource.includes(`groups.js?v=${WASM_SHA256}`), "the page requests the matching group entry module");
+  const groupDigest = Buffer.from(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(groupsSource))).toString("hex");
+  assert.ok(indexSource.includes(`groups.js?v=${groupDigest}`), "UI-only changes also refresh the group entry module");
   const bytes = new Uint8Array(await readFile(here("vendor/groupcrypto/pigeonpost_groupcrypto_bg.wasm")));
   const stale = bytes.slice();
   stale[0] ^= 1;

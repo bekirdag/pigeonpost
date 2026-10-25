@@ -1,0 +1,11 @@
+# Web crypto rollout and cached-client compatibility
+
+Deploy qualified web92 plus the postbox retry fix without replacing resources beneath an already cached loader. Raijin origin sends no-cache; the public edge gives JavaScript a four-hour browser max-age. Current unversioned loader/manifest expect WASM82e8257b, while the candidate expects f185d0bd. Native releases remain held.
+
+1. Fix the HTML group-entry cache key to cover groups.js content as well as the WASM request it imports. A UI-only group change must get a new entry URL even when the binary is unchanged. Keep loader/glue/manifest/WASM requests digest-coupled and the byte integrity check mandatory.
+2. Stage tracked public assets and a manifest. Preserve operator config.js when different, all untracked assets and the current unversioned vendor bundle. Install the new vendor resources under bundles/<WASM_SHA256>/ and refuse to overwrite an existing digest directory with different bytes.
+3. Add a bounded nginx map/location for the four vendor entry files. Empty v serves legacy files; a valid digest resolves only its installed bundle; invalid/unknown versions fail404. Preserve security/MIME headers and every unrelated vhost. Test on an isolated loopback nginx instance using the same routing snippets before touching the live master.
+4. Take a root-only backup outside web roots, stage modules before HTML, validate the complete configuration and signal only the exact webapps nginx master. Verify both legacy and new hashes, public content types/status/headers, same-origin real-WASM initialization and old/new loading from the shared browser. Rollback static files/configuration on any guarded failure.
+5. Roll out the qualified postbox image with a fresh server-local SQLite backup/canary and live-DB-preserving rollback. Recheck message-action/group prerequisites and record exact commits/artifact hashes. Do not enable paid sales or submit any native store build.
+
+Progress: [deployment ledger](web-crypto-rollout-2026-10-25-progress.md). Source basis: #92 merged e017ba3; the group-hardening follow-up is separate PR93. The nginx map and try_files variable rules were checked against official nginx.org documentation after Docdex web discovery returned unrelated pages.
