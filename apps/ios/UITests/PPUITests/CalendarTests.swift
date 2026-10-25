@@ -125,9 +125,11 @@ final class CalendarUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
         guard let confirm = visibleReloadButton() else { return XCTFail("The reload action must be hittable") }
         confirm.tap()
-        let updated = NSPredicate(format: "value == %@", "Updated on another device")
-        expectation(for: updated, evaluatedWith: element("calendar-title"))
-        waitForExpectations(timeout: 5)
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.textFields["calendar-title"].firstMatch.value as? String == "Updated on another device"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 10), .completed)
+        XCTAssertEqual(app.textFields["calendar-title"].firstMatch.value as? String, "Updated on another device")
         XCTAssertTrue(app.buttons["calendar-save"].isEnabled)
     }
     func testFilteredInvitationHasItsOwnViewAndCanBeAnswered() {
