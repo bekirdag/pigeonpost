@@ -19,7 +19,7 @@
     } catch (_) { /* app gone */ }
   }
 
-  let token = null, me = null, peer = null, names = {}, nativeRing = false;
+  let token = null, me = null, peer = null, names = {}, nativeRing = false, faces = {};
   let renewing = null, settle = null;
 
   window.PigeonpostCallsHost = {
@@ -37,6 +37,19 @@
     knownPeer: (key) => Boolean(key && Object.prototype.hasOwnProperty.call(names, key)),
     // The app's name for a peer (a contact alias or its own derived name), else the shared rule.
     displayName: (key) => (key && names[key]) || (window.PigeonpostNames ? window.PigeonpostNames.displayName(key) : key),
+    // Phase 1b: a profile picture the app already holds, laid over the initials (which stay
+    // underneath as the fallback), as the inbox's own Avatars.paint does.
+    decorateAvatar: (node, key) => {
+      if (!node) return;
+      const url = key && Object.prototype.hasOwnProperty.call(faces, key) ? faces[key] : null;
+      if (typeof url === "string" && url.startsWith("data:image/")) {
+        node.classList.add("has-photo");
+        node.style.backgroundImage = 'url("' + url + '")';
+      } else {
+        node.classList.remove("has-photo");
+        node.style.backgroundImage = "";
+      }
+    },
     toast: (text) => tell({ type: "toast", text: String(text || "") }),
     // Phase 1c (docs/call-alerting.md). With `nativeRing`, the app shows incoming calls itself
     // (CallKit, a system notification) and the page shows no ring screen of its own.
@@ -54,6 +67,7 @@
       token = options.token || null;
       names = options.known || {};
       nativeRing = options.nativeRing === true;
+      faces = options.avatars && typeof options.avatars === "object" ? options.avatars : {};
       const next = options.mailbox || null;
       const changed = !me || !next || me.address !== next.address;
       me = next;

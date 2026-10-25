@@ -7,6 +7,16 @@ final class HandlePurchaseTests: XCTestCase {
         continueAfterFailure = false
     }
 
+    override func tearDownWithError() throws {
+        if let run = testRun, run.failureCount > 0 {
+            screenshot("purchase-failure")
+            let hierarchy = XCTAttachment(string: app.debugDescription)
+            hierarchy.name = "purchase-failure-hierarchy"
+            hierarchy.lifetime = .keepAlways
+            add(hierarchy)
+        }
+    }
+
     private func open(_ state: String) {
         app.launchArguments = ["-fixtures", "-sheet=settings", "-handle=\(state)"]
         app.launch()
@@ -21,6 +31,21 @@ final class HandlePurchaseTests: XCTestCase {
     private func scrollTo(_ element: XCUIElement) {
         for _ in 0..<8 where !element.isHittable { app.swipeUp() }
         if !element.isHittable { for _ in 0..<12 where !element.isHittable { app.swipeDown() } }
+        // iOS 26 can call a row hittable while its tappable area sits under the
+        // translucent navigation bar. Reveal the complete control before tapping it.
+        for _ in 0..<6 {
+            guard element.exists && element.isHittable else { break }
+            let bar = app.navigationBars["Pigeonpost Cloud"]
+            let top = bar.exists ? bar.frame.maxY + 8 : app.frame.minY + 80
+            let bottom = app.frame.maxY - 40
+            let frame = element.frame
+            let offset: CGFloat
+            if frame.minY < top { offset = 110 }
+            else if frame.maxY > bottom { offset = -110 }
+            else { break }
+            let start = app.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.6))
+            start.press(forDuration: 0.05, thenDragTo: start.withOffset(CGVector(dx: 0, dy: offset)))
+        }
     }
 
     private func screenshot(_ name: String) {
@@ -54,7 +79,10 @@ final class HandlePurchaseTests: XCTestCase {
         purchasePage.tap()
         scrollTo(app.textFields["yourname"])
         XCTAssertTrue(app.textFields["yourname"].waitForExistence(timeout: 8))
-        XCTAssertTrue(app.buttons["handle-register"].exists)
+        // Newer Form layouts instantiate only visible rows. The name field can
+        // be visible while the purchase action below it has not been built yet.
+        scrollTo(buy)
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
         XCTAssertTrue(app.buttons["handle-register"].label.contains("$8.00"))
         screenshot("direct-handle-purchase")
     }
@@ -74,7 +102,13 @@ final class HandlePurchaseTests: XCTestCase {
     }
 
     private func expectPastedAddress(_ address: String) {
-        app.buttons["New conversation"].tap()
+        // With groups on, the compose button is a menu: New conversation / New group / Join.
+        if app.buttons["composeMenu"].exists {
+            app.buttons["composeMenu"].coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            app.buttons["New conversation"].firstMatch.tap()
+        } else {
+            app.buttons["New conversation"].tap()
+        }
         let field = app.textFields["/bekir/agent1 or /k/…"]
         XCTAssertTrue(field.waitForExistence(timeout: 5))
         field.tap()
@@ -144,6 +178,8 @@ final class HandlePurchaseTests: XCTestCase {
         app.buttons["settings-contacts"].tap()
         XCTAssertTrue(app.buttons["Add a sender"].waitForExistence(timeout: 8))
         app.navigationBars["Contacts and permissions"].buttons.element(boundBy: 0).tap()
+        // Profile, Privacy & filtering and Blocked (Phase 1b) push Help below the fold.
+        for _ in 0..<4 where !app.buttons["settings-help"].isHittable { app.swipeUp() }
         app.buttons["settings-help"].tap()
         screenshot("settings-help")
         app.buttons["Done"].tap()
@@ -235,8 +271,12 @@ final class HandlePurchaseTests: XCTestCase {
             XCTAssertTrue(row.isHittable, "\(id) must be visible on the purchase screen")
         }
         scrollTo(app.buttons["handle-product-" + ids[4]])
-        app.buttons["handle-product-" + ids[4]].tap()
-        scrollTo(app.textFields["yourname"])
+        let selected = app.buttons["handle-product-" + ids[4]]
+        selected.tap()
+        expectation(for: NSPredicate(format: "value == %@", "Selected"), evaluatedWith: selected)
+        waitForExpectations(timeout: 5)
+        scrollTo(buy)
+        XCTAssertTrue(buy.waitForExistence(timeout: 8))
         XCTAssertTrue(buy.label.contains("$40.00"))
         enter("fifth")
         waitForEnabledBuy()

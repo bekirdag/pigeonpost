@@ -46,6 +46,8 @@ final class CallHost: NSObject {
     @ObservationIgnored private weak var session: Session?
     @ObservationIgnored private weak var account: Account?
     @ObservationIgnored private weak var inbox: Inbox?
+    /// Faces for the call tiles (Phase 1b), when the app has them. Set by the root view.
+    @ObservationIgnored weak var avatars: AvatarStore?
     @ObservationIgnored private var ready = false
     @ObservationIgnored private var pending: (peer: String, kind: String)?
     /// Signed in on the page, so it has (or is opening) a session that can accept a ring.
@@ -67,8 +69,8 @@ final class CallHost: NSObject {
     #endif
 
     // The version names the bridge this build expects (Phase 1c: answer, decline, setMuted, hangUp,
-    // nativeRing); a new value keeps a cached older page from being used.
-    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261020-ring")!
+    // nativeRing; Phase 1b: avatars); a new value keeps a cached older page from being used.
+    static let production = URL(string: "https://inbox.pigeonpost.dev/native-call.html?v=20261021-ring-faces")!
 
     #if DEBUG
     /// Local call tests only: `-calls-page URL -calls-token T -calls-mailbox ADDRESS [-calls-handle H]
@@ -166,6 +168,18 @@ final class CallHost: NSObject {
         evaluate("PigeonpostNative.call(\(Self.json(peer)), \(Self.json(kind)))")
     }
 
+    /// Start or join a group's call (docs/groups.md §6) through the call page's own group client.
+    /// The calls service rechecks membership; this only asks.
+    func callGroup(_ id: String, name: String, video: Bool, join: Bool) {
+        guard ready else {
+            inbox?.toast = "Calling isn't available right now. Try again in a moment."
+            return
+        }
+        let kind = video ? "video" : "audio"
+        let method = join ? "joinGroup" : "placeGroup"
+        evaluate("window.PigeonpostCalls && PigeonpostCalls.\(method) && PigeonpostCalls.\(method)(\(Self.json(kind)), {id: \(Self.json(id)), name: \(Self.json(name))})")
+    }
+
     private func configure() async {
         guard ready, let session, let account, var me = account.me else { return }
         var token: String?
@@ -186,6 +200,9 @@ final class CallHost: NSObject {
             "mailbox": ["address": me.address, "handle": me.handle as Any? ?? NSNull()] as [String: Any],
             "known": known,
             "nativeRing": nativeRing,
+            // `data:` URLs of the faces already fetched, painted over the tiles' initials by a page
+            // that knows how (native-call.js `decorateAvatar`); an older page ignores the field.
+            "avatars": avatars?.dataURLs(for: Array(known.keys) + [me.handle ?? me.address]) ?? [:],
         ]
         guard let data = try? JSONSerialization.data(withJSONObject: options),
               let json = String(data: data, encoding: .utf8) else { return }

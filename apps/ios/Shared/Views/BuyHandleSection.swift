@@ -117,6 +117,7 @@ struct BuyHandleSection: View {
             }.contentShape(Rectangle())
         }
         .buttonStyle(.plain).disabled(store.busy)
+        .accessibilityValue(store.nextProduct?.id == product.id ? "Selected" : "Not selected")
         .accessibilityIdentifier("handle-product-" + product.id)
     }
 

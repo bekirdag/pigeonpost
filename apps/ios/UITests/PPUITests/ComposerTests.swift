@@ -7,11 +7,9 @@ final class ComposerTests: XCTestCase {
 
     private func openThread() -> XCUIApplication {
         let app = XCUIApplication(bundleIdentifier: "dev.pigeonpost.inbox")
-        app.launchArguments = ["-fixtures"]
+        app.launchArguments = ["-fixtures", "-open=/bekir/agent1"]
         app.launch()
-        let cell = app.cells.element(boundBy: 1)
-        XCTAssertTrue(cell.waitForExistence(timeout: 15), "inbox never drew")
-        cell.tap()
+        XCTAssertTrue(app.textViews["messageComposer"].waitForExistence(timeout: 15), "fixture thread never drew")
         return app
     }
 

@@ -202,7 +202,8 @@ final class Inbox {
         // from before it — so adopting it verbatim resurrects the unread mark on a message that was
         // just read. Holding the ids this device has acked, until the server's own listing agrees,
         // is what stops the badge coming back a second after it cleared.
-        let incoming = (body.messages ?? []).map { message -> Message in
+        let now = Int(Date().timeIntervalSince1970)
+        let incoming = (body.messages ?? []).filter { ($0.expiresAt ?? .max) > now }.map { message -> Message in
             guard acked.contains(message.messageId), !message.isRead else { return message }
             return message.markedRead()
         }
@@ -759,6 +760,25 @@ final class Inbox {
         await loadAll()
     }
 
+    /// Drop disappearing messages whose time has come, by this device's clock (SDS §17): what the
+    /// postbox deletes every 30 s must not stay on this screen until the next listing.
+    func pruneExpired() {
+        let now = Int(Date().timeIntervalSince1970)
+        guard messages.contains(where: { ($0.expiresAt ?? .max) <= now }) else { return }
+        messages.removeAll { ($0.expiresAt ?? .max) <= now }
+        rebuild()
+    }
+
+    /// The thread a peer's messages go to by default, for its settings (the timer).
+    func defaultThread(with peer: String) -> ServerThread? {
+        serverThreads.first { $0.peer == peer && $0.isDefault == true } ?? serverThreads.first { $0.peer == peer }
+    }
+
+    func reloadThreads() async {
+        await loadThreads()
+        rebuild()
+    }
+
     func openThread(with peer: String, title: String) async throws -> String {
         guard let me else { throw AuthError.sessionExpired }
         let id = try await client.openThread(identity: me.address, peer: peer, title: title)
@@ -784,7 +804,15 @@ final class Inbox {
 
     func saveContact(peer: String, alias: String?, admission: String, autonomy: String, allowedVerbs: [String]) async throws {
         guard let me else { throw AuthError.sessionExpired }
-        guard !Fixtures.enabled else { return }
+        guard !Fixtures.enabled else {
+            // The fixture mailbox keeps its decisions in memory, so a block or a trust change can
+            // still be seen to take effect.
+            contacts.removeAll { $0.peer == peer }
+            contacts.append(Contact(peer: peer, alias: alias, admission: admission, autonomy: autonomy,
+                                    allowedVerbs: allowedVerbs))
+            rebuild()
+            return
+        }
         try await client.putContact(
             identity: me.address,
             peer: peer,
@@ -794,6 +822,13 @@ final class Inbox {
             allowedVerbs: allowedVerbs
         )
         await loadContacts()
+        rebuild()
+    }
+
+    /// The fixture mailbox's way of forgetting a contact, which never reaches a server.
+    func forgetFixtureContact(_ peer: String) {
+        guard Fixtures.enabled else { return }
+        contacts.removeAll { $0.peer == peer }
         rebuild()
     }
 
@@ -831,7 +866,8 @@ private extension Message {
             senderTier: senderTier,
             senderKnown: senderKnown,
             untrusted: untrusted,
-            attachments: attachments
+            attachments: attachments,
+            expiresAt: expiresAt
         )
     }
 }

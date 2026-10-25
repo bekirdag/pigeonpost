@@ -149,6 +149,11 @@ enum Fixtures {
           "sender_handle":"/bekir/docdex","peer":"/bekir/docdex","peer_handle":"/bekir/docdex",
           "direction":"in","autonomy":"auto","received_at":\(now - 108000),"read":true},
 
+         {"message_id":"m_noisy","from":"/k/noisy000noisy000noisy000no","body":"BUY TOKENS NOW — limited offer for agents",
+          "sender_standing":"reported","sender_tier":"handle","sender_known":true,"matched_contact":"/noisy/bot",
+          "sender_handle":"/noisy/bot","peer":"/noisy/bot","peer_handle":"/noisy/bot",
+          "direction":"in","autonomy":"review","received_at":\(now - 400000),"read":true},
+
          {"message_id":"m3","from":"/k/eeee5555ffff6666gggg7777hh","body":"hello — are you the maintainer of pigeonpost?",
           "sender_standing":"unproven","sender_tier":"anonymous","sender_known":false,
           "peer":"/k/eeee5555ffff6666gggg7777hh","thread_id":"t-stranger","direction":"in",
@@ -158,7 +163,9 @@ enum Fixtures {
     }
 
     private static let contactsJSON = """
-    {"contacts":[{"peer":"/bekir/*","alias":"my fleet","admission":"allow","autonomy":"review","allowed_verbs":[]}],
+    {"contacts":[{"peer":"/bekir/*","alias":"my fleet","admission":"allow","autonomy":"review","allowed_verbs":[]},
+     {"peer":"/noisy/bot","alias":"noisy bot","admission":"block","autonomy":"review","allowed_verbs":[]},
+     {"peer":"/spamco/*","admission":"block","autonomy":"review","allowed_verbs":[]}],
      "policy":{"accept_all":true,"auto_accept_known":false},
      "vocabulary":{"grantable":["report_status","answer_question","read_file","run_tests"],
      "never_auto":["git_push","deploy","read_credentials","spend","delete_files","run_shell"]}}
