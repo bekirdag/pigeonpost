@@ -6,6 +6,7 @@
 //  decrypted history — is `GroupItem`, which is the web client's history record
 //  (site-inbox/groups-core.js `remember`) in Swift.
 
+import CryptoKit
 import Foundation
 
 // ---- the postbox's groups -----------------------------------------------------------------------
@@ -203,6 +204,11 @@ struct PostedGroupMessage: Decodable {
     let expiresAt: Int?
 }
 
+struct DeletedGroupMessage: Decodable, Equatable {
+    var deleted: Bool?
+    var seqs: [Int]?
+}
+
 struct PostedCommit: Decodable {
     let seq: Int
     let epoch: Int?
@@ -320,6 +326,8 @@ struct GroupItem: Codable, Equatable, Identifiable {
     var deleted: Bool?
     var undecryptable: Bool?
     var pending: Bool?
+    var sendFailed: Bool?
+    var sendFingerprint: String?
     var code: String?
     /// This device checked the encrypted action fields against the sequenced envelope.
     /// Older vault records have no such proof and cannot hide another message as an edit.
@@ -351,6 +359,39 @@ struct GroupItem: Codable, Equatable, Identifiable {
     }
 
     var sortKey: Double { Double(seq ?? Int.max / 2) + order }
+}
+
+/// A prepared send is sealed in the same vault as its MLS state. `request` is the exact JSON
+/// sent on the wire, retained across an ambiguous response loss instead of encrypting again.
+struct GroupPendingSend: Codable, Equatable {
+    let group: String
+    let cmid: String
+    let fingerprint: String
+    let createdAt: Int
+    var request: Data?
+    let body: Data
+    let files: [GroupFile]
+    let mentions: [String]
+
+    func depends(on seqs: Set<Int>, cmids: Set<String>) -> Bool {
+        cmids.contains(cmid) || GroupActions.sequence(GroupBody.decode(body).editOf).map(seqs.contains) == true
+    }
+}
+
+struct OutgoingGroupFile: Sendable {
+    let name: String
+    let mime: String
+    let data: Data
+}
+
+enum GroupSendIntent {
+    static func fingerprint(_ group: String, text: String, files: [OutgoingGroupFile], replyTo: Int?, editOf: Int?, mentions: [String]) throws -> String {
+        func digest(_ data: Data) -> String { SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined() }
+        let payload: [String: Any] = ["group": group, "text": text, "reply": replyTo.map { $0 as Any } ?? NSNull(),
+            "edit": editOf.map { $0 as Any } ?? NSNull(), "mentions": mentions.sorted(),
+            "files": files.map { ["name": $0.name, "mime": $0.mime, "sha": digest($0.data)] }]
+        return digest(try JSONSerialization.data(withJSONObject: payload, options: [.sortedKeys]))
+    }
 }
 
 /// Presentation uses authenticated action references, never `replaced_by` alone. Group edits
@@ -420,8 +461,62 @@ enum GroupActions {
               item.deleted != true, item.undecryptable != true, item.text != nil,
               visible(history, now: now).contains(where: { $0.id == item.id }) else { return false }
         let chain = versions(of: item, in: history)
-        guard let at = chain.first?.createdAt, now >= at else { return false }
+        // A device joining later may have only the last edit. Its timestamp cannot stand in
+        // for the original's deadline, and an unverified legacy edit cannot acquire that right.
+        guard chain.first?.editOf == nil, let at = chain.first?.createdAt, now >= at else { return false }
         return now - at < 86_400
+    }
+
+    /// Connected versions on this device. Only authenticated same-author, backward links may
+    /// extend a deletion/expiry beyond the seq the server named. Server-only `replacedBy` is
+    /// deliberately ignored, just as it is when folding the visible conversation.
+    static func linkedSequences(_ history: [GroupItem], seeds: Set<Int>) -> Set<Int> {
+        let bySeq = indexed(history)
+        var edges: [Int: [Int]] = [:]
+        for item in history where item.kind == .message && item.actionsVerified == true {
+            guard let seq = item.seq, let parentSeq = sequence(item.editOf), parentSeq < seq,
+                  let sender = item.sender, bySeq[parentSeq]?.sender == sender else { continue }
+            edges[seq, default: []].append(parentSeq)
+            edges[parentSeq, default: []].append(seq)
+        }
+        var found = Set(seeds.filter { $0 > 0 })
+        var queue = Array(found)
+        var at = 0
+        while at < queue.count {
+            let seq = queue[at]
+            at += 1
+            for next in edges[seq] ?? [] where found.insert(next).inserted { queue.append(next) }
+        }
+        return found
+    }
+
+    static func erasing(_ history: [GroupItem], seqs: Set<Int>, tombstones: Bool = true) -> [GroupItem] {
+        let erased = linkedSequences(history, seeds: seqs)
+        return history.compactMap { item in
+            let affected = item.seq.map(erased.contains) == true
+                || (item.pending == true && sequence(item.editOf).map(erased.contains) == true)
+            guard affected else { return item }
+            guard tombstones, item.kind == .message, let seq = item.seq else { return nil }
+            // Rebuild rather than clearing selected properties: no text, attachment key, quote,
+            // pending send or future optional plaintext field survives as a deleted record.
+            return GroupItem(kind: .message, seq: seq, createdAt: item.createdAt,
+                             expiresAt: item.expiresAt, sender: item.sender, deleted: true)
+        }
+    }
+
+    static func pruning(_ history: [GroupItem], now: Int) -> [GroupItem] {
+        let expired = Set(history.filter { ($0.expiresAt ?? .max) <= now }.compactMap(\.seq))
+        return erasing(history, seqs: expired, tombstones: false)
+            .filter { ($0.expiresAt ?? .max) > now }
+    }
+
+    static func replyTarget(of item: GroupItem, in history: [GroupItem], now: Int) -> GroupItem? {
+        guard item.actionsVerified == true, let seq = sequence(item.replyTo) else { return nil }
+        let linked = linkedSequences(history, seeds: [seq])
+        return visible(history, now: now).last {
+            $0.kind == .message && $0.deleted != true && $0.undecryptable != true
+                && $0.pending != true && $0.seq.map(linked.contains) == true
+        }
     }
 }
 

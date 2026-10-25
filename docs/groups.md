@@ -132,10 +132,29 @@ expiry, including no expiry for an untimed chain; a group timer change cannot ex
 Decrypted version history is kept on devices that received those versions. A later device cannot
 recover an older version whose ciphertext the postbox already cleared.
 
+A text edit may retain attachment ids already attached to its **current target version**, uploaded
+by the same mailbox. The transaction moves those references to the new version with the inherited
+expiry; no duplicate upload or storage charge. Another message, author or group cannot claim them.
+The editing client retains their encryption references in the new encrypted body.
+
 Deleting any version deletes the whole same-author chain in that group and releases its
 attachments. The response retains `deleted: true` and adds `seqs: [...]`; `group.message` retains
 its original `seq`/`deleted` fields and adds the affected `seqs`. Clients erase all those local
 versions, including cached files, rather than only hiding the visible bubble.
+
+Polling clients can request `GET …/messages?metadata_only=true` with the same bounds and pagination.
+This omits application ciphertext and commit bytes without weakening membership/device checks or
+the membership interval. It does **not** advance delivered receipts. Use it to reconcile retained
+seqs for remote deletion, never as input to MLS decryption; a superseded version's missing ciphertext
+does not by itself erase an already decrypted local version.
+
+The Apple client seals prepared sends with its MLS state before posting. An ambiguous failure
+retains the exact encoded request, client id and attachment references; a retry or restart first
+reuses those bytes. Only an explicit epoch/key-activation rejection permits re-encryption under the
+same id. The queue is bounded to 16 requests/eight MiB of body/request bytes, with retry limited
+to 24 hours; the UI offers
+retry or local dismissal without deleting a delivered server copy. Delete/expiry also erases queued
+edits of the affected versions.
 
 Notice kinds: `group_created`, `member_invited`, `member_joined`, `member_left`, `member_removed`,
 `member_banned`, `role_changed`, `settings_changed`, `ownership_transferred`, `device_added`,

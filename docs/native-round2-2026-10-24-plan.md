@@ -7,6 +7,7 @@ Progress and validation: [work ledger](native-round2-2026-10-24-progress.md).
 
 1. Finish and integrate the shared baseline and PRs #83, #89 and #87 before deploying or releasing dependent changes.
 2. Add edit, reply, message information and receipt/privacy support to the shared Apple app, then Android, Windows and Linux. Preserve legacy server behavior when flags are off; use the contracts in `docs/message-actions.md` and `docs/groups.md`.
+   Group controls depend on complete version erasure, periodic metadata reconciliation, retaining sealed files across caption edits, and exact-request recovery after response loss/restart. Keep these contracts qualified with real MLS/server transport tests before native release.
 3. Add calendar, scheduled meetings and invitation handling on every client against `docs/calendar.md`, preserving timezone, revision, idempotency and privacy rules.
 4. Add organization rooms/directory/operated-agent access and native device-approval screens against `docs/orgs.md` and `docs/device-pairing-native.md`. Configure native MFA with the verified web level-2 flow, PKCE/state/nonce and a fresh approval decision after step-up.
 5. Build and qualify one native release batch. Keep the owner's Apple review hold; remove mainland China before submitting the CallKit release. Do not announce web sales before seller/payment prerequisites are settled.

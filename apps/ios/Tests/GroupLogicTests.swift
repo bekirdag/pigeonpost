@@ -104,6 +104,56 @@ check(!GroupActions.editable(original, in: chain, me: me, now: now), "a supersed
 check(!GroupActions.editable(finalEdit, in: chain, me: alp, now: now), "another member has no edit control")
 check(!GroupActions.editable(finalEdit, in: chain, me: me, now: now + 86_300), "the window is measured from the original, including its exact boundary")
 check(!GroupActions.editable(edited, in: [disappearing, edited], me: me, now: now), "an expired original is not editable")
+check(!GroupActions.editable(finalEdit, in: [finalEdit], me: me, now: now), "a later device cannot replace the unknown original's edit deadline")
+let unrelated = GroupItem(kind: .message, seq: 13, createdAt: now - 5, sender: me, text: "keep me")
+for seq in [10, 11, 12] {
+    let erased = GroupActions.erasing(chain + [unrelated], seqs: [seq])
+    check(erased.filter { $0.seq != 13 }.allSatisfy { $0.deleted == true && $0.text == nil && $0.files == nil && $0.editOf == nil },
+          "deleting version \(seq) erases all versions and their plaintext fields")
+    check(erased.last == unrelated, "deleting version \(seq) leaves an unrelated message intact")
+}
+let removedFiles = GroupFile(id: "gat_old", name: "private.txt", mime: "text/plain", size: 3,
+                             ref: .init(key: "secret", sha: "hash", len: 3))
+var withFile = original
+withFile.files = [removedFiles]
+check(GroupActions.erasing([withFile, edited, finalEdit], seqs: [12]).allSatisfy { $0.files == nil },
+      "deleting the latest version forgets an earlier attachment's key")
+check(GroupActions.pruning([disappearing, edited, finalEdit, unrelated], now: now) == [unrelated],
+      "pruning an expired original also forgets versions with a later or missing expiry")
+check(GroupActions.pruning(GroupActions.pruning([disappearing, edited, finalEdit], now: now), now: now).isEmpty,
+      "expiry cannot reveal an older version on the next projection")
+var foreignEdit = edited
+foreignEdit.sender = alp
+check(GroupActions.erasing([original, foreignEdit], seqs: [11]).first == original,
+      "another sender's claimed edit cannot extend local erasure")
+var unverifiedEdit = edited
+unverifiedEdit.actionsVerified = nil
+check(GroupActions.erasing([original, unverifiedEdit], seqs: [11]).first == original,
+      "an unverified outer edit reference cannot erase another record")
+var reply = unrelated
+reply.replyTo = "10"
+reply.actionsVerified = true
+check(GroupActions.replyTarget(of: reply, in: chain + [reply], now: now)?.seq == 12,
+      "a quote jumps to the latest locally verified version")
+check(GroupActions.replyTarget(of: reply, in: GroupActions.erasing(chain, seqs: [12]) + [reply], now: now) == nil,
+      "a deleted parent cannot remain as a quote excerpt")
+reply.actionsVerified = nil
+check(GroupActions.replyTarget(of: reply, in: chain + [reply], now: now) == nil,
+      "a legacy outer reply claim does not become an authenticated quote")
+let legacyDelete = try! JSONDecoder().decode(DeletedGroupMessage.self, from: Data(#"{"deleted":true}"#.utf8))
+check(legacyDelete.deleted == true && legacyDelete.seqs == nil, "legacy deletion responses still decode")
+let outgoing = OutgoingGroupFile(name: "plan.txt", mime: "text/plain", data: Data("one".utf8))
+let intent = try! GroupSendIntent.fingerprint("grp_1", text: "draft", files: [outgoing], replyTo: 10, editOf: nil, mentions: [alp, oz])
+check(intent == (try! GroupSendIntent.fingerprint("grp_1", text: "draft", files: [outgoing], replyTo: 10, editOf: nil, mentions: [oz, alp])),
+      "the same intent and files have a stable fingerprint, independent of mention order")
+check(intent != (try! GroupSendIntent.fingerprint("grp_2", text: "draft", files: [outgoing], replyTo: 10, editOf: nil, mentions: [alp, oz])),
+      "an intent belongs to exactly one group")
+check(intent != (try! GroupSendIntent.fingerprint("grp_1", text: "changed", files: [outgoing], replyTo: 10, editOf: nil, mentions: [alp, oz])),
+      "changing text creates a different send intent")
+check(intent != (try! GroupSendIntent.fingerprint("grp_1", text: "draft", files: [outgoing], replyTo: nil, editOf: 10, mentions: [alp, oz])),
+      "changing a reply into an edit is a different intent")
+check(intent != (try! GroupSendIntent.fingerprint("grp_1", text: "draft", files: [.init(name: "plan.txt", mime: "text/plain", data: Data("two".utf8))],
+                                                replyTo: 10, editOf: nil, mentions: [alp, oz])), "changing file bytes cannot reuse a saved request")
 let longChain = (1...2_000).map { seq in
     GroupItem(kind: .message, seq: seq, createdAt: now - 1, sender: me, text: "v\(seq)",
               editOf: seq > 1 ? String(seq - 1) : nil, actionsVerified: true)
@@ -140,10 +190,21 @@ let key = SymmetricKey(size: .bits256)
 let vault = GroupVault(directory: dir, key: { key })
 var record = GroupRecord(deviceId: "ios-1", stateKey: Data(repeating: 7, count: 32))
 record.history["grp_1"] = [GroupItem(kind: .message, seq: 1, sender: alp, text: "a secret sentence")]
+let legacyRecord = try! JSONEncoder().encode(record)
+check((try! JSONDecoder().decode(GroupRecord.self, from: legacyRecord)) == record,
+      "a vault without pendingSends restores its existing identity and keys")
+let pending = GroupPendingSend(group: "grp_1", cmid: "cmid_saved", fingerprint: intent, createdAt: now,
+                               request: Data(#"{"ciphertext":"encrypted","client_message_id":"cmid_saved"}"#.utf8),
+                               body: GroupBody(text: "private unsent words", editOf: "10").encoded(), files: [removedFiles], mentions: [])
+record.pendingSends = [pending.cmid: pending]
+check(pending.depends(on: [10], cmids: []) && !pending.depends(on: [11], cmids: []),
+      "erasing a base can identify and forget a queued edit")
 try? vault.save(record, for: me)
 let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
 let raw = files.first.flatMap { try? Data(contentsOf: $0) } ?? Data()
 check(files.count == 1 && raw.range(of: Data("a secret sentence".utf8)) == nil, "the sealed file holds no plaintext")
+check(raw.range(of: Data("private unsent words".utf8)) == nil && raw.range(of: Data("cmid_saved".utf8)) == nil,
+      "pending plaintext, file keys and exact request bytes stay inside the sealed vault")
 check(vault.load(me) == record, "it opens again with the same key")
 check(GroupVault(directory: dir, key: { SymmetricKey(size: .bits256) }).load(me) == nil, "and not with another key")
 if let file = files.first { try? FileManager.default.copyItem(at: file, to: dir.appendingPathComponent("copy")) }

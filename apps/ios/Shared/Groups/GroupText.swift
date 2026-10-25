@@ -79,6 +79,7 @@ enum GroupText {
         case "commit_rejected": return "Security warning: this device refused an invalid group change."
         case "sender_mismatch": return "Security warning: a message's sender did not match its device."
         case "action_mismatch": return "Security warning: a message's action did not match its encrypted contents."
+        case "own_message_mismatch": return "Security warning: the postbox's copy did not match the encrypted message saved on this device."
         case "resynced": return "This device lost the group's keys and is being added again. Earlier messages stay unreadable here."
         default: return "Security warning."
         }
@@ -225,6 +226,9 @@ enum GroupText {
         case "not_member": return "You are not a member of this group."
         case "rate_limited": return "Too many requests. Wait a moment and try again."
         case "quota_exceeded": return "This group is out of storage."
+        case "outbox_full": return "Retry or dismiss an unconfirmed send before sending more messages."
+        case "send_retry_expired": return "This retry is over 24 hours old. Check whether it arrived before copying it into a new message."
+        case "send_unavailable": return "This send cannot be retried on this device. Check whether it arrived before copying it into a new message."
         case "feature_disabled": return "Groups are not enabled for this account."
         case "not_found": return "Not found."
         default: return api.detail ?? "Something went wrong."

@@ -4,15 +4,18 @@ Plan: [implementation plan](native-round2-2026-10-24-plan.md).
 
 ## Current state
 
-Shared Apple direct-message actions, scoped retries, receipt privacy and status UI are implemented
-and locally tested. Group actions, calendar, enterprise screens and other platforms remain pending.
-Isolated worktree `pigeonpost-native-round2-20261024`, branch `codex/native-round2-20261024`, based
-on PR #87 at `b7a7eff` (including merged #90). No native release or production deployment has been
-made in this phase. Existing PR checks are being finalized in their original worktrees.
+Shared Apple direct-message actions, scoped retries, receipt privacy and status UI pass local and
+hosted iPhone/iPad/StoreKit qualification. Authenticated group projection and receipt models are
+implemented. Group controls have passed a local interaction run; durable retry recovery is being
+qualified in the real transport suite. Combined screen qualification is running. Calendar,
+enterprise screens and other platforms remain pending.
+Isolated worktree `pigeonpost-native-round2-20261024`, branch `codex/native-round2-20261024`, now
+includes main through `1132ad7`. Inherited PRs #83, #89 and #87 are merged. Core and web changes
+are deployed as recorded below. No native store submission has been made; Apple's review hold remains.
 
 | Area | Status | Required evidence |
 |---|---|---|
-| Apple actions/receipts | API/metadata implemented; local model/wire suites pass | Composer, privacy, group actions and native UI qualification |
+| Apple actions/receipts | Direct actions/privacy qualified; group UI and durable retries locally pass | Combined UI and hosted qualification |
 | Android actions/receipts | Pending | Core and Compose/emulator tests |
 | Windows actions/receipts | Pending | Core, native UI and call/notification regression checks |
 | Linux actions/receipts | Pending | Python, GTK and sandbox checks |
@@ -87,3 +90,25 @@ made in this phase. Existing PR checks are being finalized in their original wor
 
 - At `0db2d3a`, hosted iPad and StoreKit pass. iPhone logs record 50 passing tests, 3 platform/screenshot skips and 0 failed tests, including the exact legacy draft matrix and every new direct action/privacy case. The35-minute whole-job deadline cancelled report finalization immediately after the last Phase1b case. The cancelled run is **not** counted as a successful suite.
 - Increased only that job's total budget to45 minutes; no test/assertion/retry/selection changed. Merged Apple `a00c259` (its cache resolution retains all native-call face changes), and will re-run the complete newer-runtime suite. Local core/real-MLS and both app-build evidence remains as above; native group UI, calendar and enterprise screens still pending.
+
+## Checkpoint — hosted Apple qualification and production baseline
+
+- Hosted run `40144248685` succeeds at `3ca3fc3`: full iPhone, iPad and StoreKit jobs complete, including report preservation. This supersedes the cancelled whole-job result above. No test selection or assertion was weakened.
+- Main through `1132ad7` is merged into this worktree. Core group lifetime/version-deletion repair is live from `67fa27e`, image `pigeonpost-postbox:groups-276fb28` (`1725df4c…`), with postbox and reaper running and zero restarts. Candidate and old-image DB canaries pass; the live DB was retained.
+- Web tree `1fe9961…` is live. Public13 entry assets and12 crypto runtime resources match expected digests; old and new WASM initialize; all196 preserved PDF/call runtime files match source. A private53-file rollback rehearsal passes. Root-only backup `/var/backups/pigeonpost/web-20261025T005415Z` is marked complete. No mailbox messages or tokens were used for these public checks.
+- Group UI implementation follows the repaired lifetime/delete contract. Historical server chains on self-hosted installations still need normalization in hardening; production had no edit rows to repair. Native stores remain held for one qualified batch and the owner's Apple/Claude review step.
+
+## Checkpoint — group controls, remote erasure and retained files
+
+- Added group reply/edit controls, quoted-parent navigation/highlighting, scoped composer cancellation/restoration, device-local version information and masked per-member receipt status. Sheet state is unified; mailbox/group identity remounts the composer. Explicit delete/expiry erases every authenticated local version, keys and queued dependent edits. Temporary previews use owned private directories and reject late results after deletion/navigation.
+- The native poll now rechecks retained metadata, because polling only newer seqs cannot see a deletion of an older message. The additive metadata-only server query omits application/commit bytes, preserves pagination/member/device/interval checks and never advances delivered receipts. Caption edits can retain only their own current target's attachment ids; references move transactionally, preserving lifetime without an extra upload. Another author, message or group cannot claim them.
+- Server full suite **449/449 +2 workers**, clippy with warnings denied and the native postbox build pass. Pure group logic **76/76** and real Swift/MLS/postbox/browser **45/45** pass (`native2-group-postbox-full.log`, `native2-groups-erasure-files-e2e-fixed.log`). Initial runtime qualification caught a Swift exclusivity crash from reading the optional vault while modifying it; staged the read before the write. The corrected real run covers deletion, restart, retained files and later-device access.
+- iPhone/Mac builds pass for these controls. Five actual local UI cases pass together in `native2-group-controls-fixed.xcresult`: reply/cancel/send/quote, edit/cancel/save/versions/receipt privacy, chain deletion, capabilities off and existing group send/security lines. The initial UI run exposed a confirmation selection lost during dismissal and controls hidden under the keyboard. Captured confirmation values and scroll after keyboard layout; receipt rows now expose individual accessible status values. All behavior assertions remain.
+- Durable pending-send/restart handling is now being qualified separately. These changes have not been submitted to any native store or deployed to production. Docdex's test runner rejected the nested Swift script/Cargo target mapping; repository test scripts and a package-specific Cargo run supplied the real test evidence instead.
+
+## Checkpoint — exact encrypted retry and bounded recovery
+
+- Prepared requests and the advanced MLS sender state are sealed atomically before posting. Ambiguous failures retain the exact JSON, stable client id and original attachment references. Identical failed intents reuse that request; only explicit epoch/key-activation rejections permit re-encryption. Acknowledgement removes the request, and a later deliberate identical send gets a new id. Old vaults retain their original device identity; a restarted in-flight attempt offers Retry/Dismiss instead of an endless spinner. Local dismissal preserves any confirmed server copy and rolls back its local removal if persistence fails.
+- The queue has a 16-attempt/eight-MiB body/request budget and a 24-hour retry window. Deletion/expiry erases dependent queued edits as well as history. A resumed own-message confirmation must match the cached ciphertext. Draft fingerprints prevent a history retry from clearing a different composer draft.
+- Full standalone Swift suites pass (`native2-group-outbox-models-final.log`): group **84 checks**, inbox **128**, Phase 1b **38**, plus existing auth/thread/navigation/handle/call suites. Real MLS/server/browser **65/65** pass (`native2-group-outbox-bounds-e2e.log`): a loopback fault proxy drops replies both before and after commit, the device restarts, epochs advance, recipient counts remain one, exact JSON hashes agree, files decrypt, explicit rejection re-encrypts under the same id, deleted pending edits cannot retry, capacity is bounded and acknowledgement/dismissal frees slots. Proxy evidence contains hashes/ids only, never headers or plaintext.
+- Final iPhone and Mac builds pass (`native2-group-final-build.log`, `native2-group-final-mac-build.log`). Complete group screens and the existing direct/privacy cases are being checked together on iPhone; group screens are being checked on iPad. The first combined invocation failed to compile a new test's element-count assertion; corrected it to use the element query. That invocation executed no tests and is excluded from qualification. Hosted newer-runtime qualification and native release remain pending.

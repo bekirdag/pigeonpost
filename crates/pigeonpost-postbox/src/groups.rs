@@ -2732,6 +2732,8 @@ pub(crate) struct PageQuery {
     before_seq: Option<i64>,
     #[serde(default)]
     limit: Option<usize>,
+    #[serde(default)]
+    metadata_only: bool,
 }
 
 /// The items one member may see, in sequence order (inside a read).
@@ -2745,6 +2747,7 @@ pub(crate) fn page(
     before: Option<i64>,
     limit: usize,
     now: u64,
+    metadata_only: bool,
 ) -> GResult<Value> {
     let start = interval_start(c, &g.id, me)?;
     // A device is desynced only when it still needs a commit that was pruned: normal pruning
@@ -2779,14 +2782,15 @@ pub(crate) fn page(
     let mut items: Vec<(i64, Value)> = Vec::new();
     {
         let mut stmt = c.prepare(
-            "SELECT seq, id, epoch, sender, sender_device, client_message_id, body_blob, attachments,
+            "SELECT seq, id, epoch, sender, sender_device, client_message_id,
+                    CASE WHEN ?6 THEN NULL ELSE body_blob END, attachments,
                     reply_to, edit_of, replaced_by, created_at, expires_at, deleted_at, edited_at
                FROM group_messages
               WHERE group_id = ?1 AND seq > ?2 AND seq < ?3
                 AND (expires_at IS NULL OR expires_at > ?4)
               ORDER BY seq ASC LIMIT ?5",
         )?;
-        let rows = stmt.query_map(params![g.id, low, high, now as i64, fetch], |r| {
+        let rows = stmt.query_map(params![g.id, low, high, now as i64, fetch, metadata_only], |r| {
             let body: Option<Vec<u8>> = r.get(6)?;
             let atts: Option<String> = r.get(7)?;
             Ok((
@@ -2817,11 +2821,12 @@ pub(crate) fn page(
     }
     {
         let mut stmt = c.prepare(
-            "SELECT seq, epoch, commit_id, sender, sender_device, commit_blob, adds, removes, created_at
+            "SELECT seq, epoch, commit_id, sender, sender_device,
+                    CASE WHEN ?5 THEN NULL ELSE commit_blob END, adds, removes, created_at
                FROM group_handshakes WHERE group_id = ?1 AND seq > ?2 AND seq < ?3
               ORDER BY seq ASC LIMIT ?4",
         )?;
-        let rows = stmt.query_map(params![g.id, low, high, fetch], |r| {
+        let rows = stmt.query_map(params![g.id, low, high, fetch, metadata_only], |r| {
             Ok((
                 r.get::<_, i64>(0)?,
                 json!({
@@ -2831,7 +2836,7 @@ pub(crate) fn page(
                     "commit_id": r.get::<_, String>(2)?,
                     "sender": r.get::<_, String>(3)?,
                     "sender_device": r.get::<_, String>(4)?,
-                    "commit": b64(&r.get::<_, Vec<u8>>(5)?),
+                    "commit": r.get::<_, Option<Vec<u8>>>(5)?.map(|bytes| b64(&bytes)),
                     "adds": serde_json::from_str::<Value>(&r.get::<_, String>(6)?).unwrap_or(json!([])),
                     "removes": serde_json::from_str::<Value>(&r.get::<_, String>(7)?).unwrap_or(json!([])),
                     "created_at": r.get::<_, i64>(8)?,
@@ -2890,6 +2895,7 @@ pub(crate) async fn messages(
         let me = ctx.address();
         let now = now_unix();
         let (gid, who) = (id.clone(), me.clone());
+        let metadata_only = q.metadata_only;
         let out = state
             .store
             .group_read(move |c: &Connection| -> GResult<Outcome> {
@@ -2904,11 +2910,12 @@ pub(crate) async fn messages(
                     q.before_seq,
                     q.limit.unwrap_or(50),
                     now,
+                    metadata_only,
                 )?))
             })
             .await;
         // Listing a page is delivering it to this member (SDS §14C, group ticks).
-        if let Ok(o) = &out {
+        if let (false, Ok(o)) = (metadata_only, &out) {
             crate::msgactions::note_group_page(&state, &gid, &who, &o.body).await;
         }
         out
@@ -3132,6 +3139,18 @@ pub(crate) fn post_in(
             .optional()?;
         match row {
             Some((bytes, None, uploader)) if uploader == me => {
+                tx.execute(
+                    "UPDATE group_attachments SET message_seq = ?3, expires_at = ?4 WHERE id = ?1 AND group_id = ?2",
+                    params![att, gid, seq, expires_at],
+                )?;
+                atts.push(json!({ "id": att, "bytes": bytes }));
+            }
+            // A text edit retains its current version's sealed files without downloading,
+            // re-encrypting or charging for an identical upload. Moving the reference also
+            // gives the edited version's membership interval to the existing file.
+            Some((bytes, Some(previous), uploader))
+                if uploader == me && Some(previous) == req.edit_of =>
+            {
                 tx.execute(
                     "UPDATE group_attachments SET message_seq = ?3, expires_at = ?4 WHERE id = ?1 AND group_id = ?2",
                     params![att, gid, seq, expires_at],
@@ -3798,7 +3817,7 @@ pub(crate) async fn mcp_tool(
                     .group_read(move |c: &Connection| -> GResult<Value> {
                         let g = live_group(c, &gid)?;
                         let m = active_member(c, &gid, &me)?;
-                        let mut page = page(c, &g, &me, None, after, None, 50, now)?;
+                        let mut page = page(c, &g, &me, None, after, None, 50, now, false)?;
                         page["group"] = group_view(c, &g, &m, now)?;
                         page["note"] = json!(MCP_E2EE_NOTE);
                         Ok(page)

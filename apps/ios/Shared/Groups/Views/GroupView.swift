@@ -11,6 +11,18 @@ import UniformTypeIdentifiers
 
 struct GroupView: View {
     let groupId: String
+    @Environment(Account.self) private var account
+
+    var body: some View {
+        GroupConversation(groupId: groupId)
+            .id((account.me?.address ?? "") + ":" + groupId)
+    }
+}
+
+/// State belongs to one mailbox and group. An old send completing after navigation cannot
+/// replace another mailbox's composer, quote or attachment selection.
+private struct GroupConversation: View {
+    let groupId: String
 
     @Environment(GroupStore.self) private var groups
     @Environment(Account.self) private var account
@@ -19,15 +31,47 @@ struct GroupView: View {
     @State private var draft = ""
     @State private var staged: [StagedFile] = []
     @State private var sending = false
-    @State private var showingInfo = false
+    @State private var sheet: GroupSheet?
     @State private var picking = false
     @State private var pickingPhotos = false
     @State private var photos: [PhotosPickerItem] = []
-    @State private var deleting: Int?
-    @State private var blocking: BlockTarget?
+    @State private var confirmation: Confirmation?
+    @State private var action: ComposeAction?
+    @State private var ordinaryDraft: String?
+    @State private var ordinaryFiles: [StagedFile] = []
+    @State private var jump: Jump?
+    @State private var highlighted: Int?
     @FocusState private var composing: Bool
 
     private var group: GroupSummary? { groups.group(groupId) }
+    private var items: [GroupItem] { groups.histories[groupId] ?? [] }
+    private var now: Int { Int(Date().timeIntervalSince1970) }
+    private var editing: Bool { if case .edit = action { return true }; return false }
+
+    private enum ComposeAction: Equatable {
+        case reply(Int), edit(Int)
+        var seq: Int { switch self { case let .reply(seq), let .edit(seq): return seq } }
+    }
+
+    private struct Jump: Equatable { let id = UUID(); let seq: Int }
+    private enum GroupSheet: Identifiable {
+        case group, block(BlockTarget), message(Int)
+        var id: String {
+            switch self { case .group: return "group"; case .block: return "block"; case let .message(seq): return "message:\(seq)" }
+        }
+    }
+    private enum Confirmation {
+        case delete(Int), discard(String)
+        var title: String {
+            switch self { case .delete: return "Delete this message for everyone?"; case .discard: return "Dismiss this unconfirmed send?" }
+        }
+        var detail: String {
+            switch self {
+            case .delete: return "Every version is removed from the postbox and this device. Other devices remove their local copies when they reconnect. Files someone already saved elsewhere remain with them."
+            case .discard: return "It is removed from this device's pending sends. It may already have arrived. Retry reuses the saved message without sending it twice."
+            }
+        }
+    }
 
     var body: some View {
         if let group {
@@ -56,23 +100,32 @@ struct GroupView: View {
         .toolbarBackground(Theme.wash, for: .navigationBar)
         .toolbarBackground(.visible, for: .navigationBar)
         #endif
-        .sheet(isPresented: $showingInfo) {
-            GroupInfoSheet(groupId: group.id)
-                .environment(groups)
-        }
-        .confirmationDialog("Delete this message for everyone?",
-                            isPresented: Binding(get: { deleting != nil }, set: { if !$0 { deleting = nil } }),
-                            titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                if let seq = deleting { Task { await groups.deleteMessage(group.id, seq: seq) } }
-                deleting = nil
+        .sheet(item: $sheet) { selected in
+            switch selected {
+            case .group: GroupInfoSheet(groupId: group.id).environment(groups)
+            case let .block(target): BlockSheet(target: target)
+            case let .message(seq): GroupMessageInfo(groupId: group.id, seq: seq).environment(groups)
             }
-            Button("Cancel", role: .cancel) { deleting = nil }
-        } message: {
-            Text("It is removed from the postbox. Copies people already saw on their screens stay where they are.")
         }
-        .sheet(item: $blocking) { target in BlockSheet(target: target) }
-        .onAppear { if Fixtures.sheet == "group-info" { showingInfo = true } }
+        .confirmationDialog(confirmation?.title ?? "",
+                            isPresented: Binding(get: { confirmation != nil }, set: { if !$0 { confirmation = nil } }),
+                            titleVisibility: .visible, presenting: confirmation) { selected in
+            switch selected {
+            case let .delete(seq):
+                Button("Delete", role: .destructive) { Task { await groups.deleteMessage(group.id, seq: seq) }; confirmation = nil }
+            case let .discard(cmid):
+                Button("Dismiss failed send", role: .destructive) { Task { await groups.discardMessage(group.id, cmid: cmid) }; confirmation = nil }
+            }
+            Button("Cancel", role: .cancel) { confirmation = nil }
+        } message: { selected in Text(selected.detail) }
+        .onAppear { if Fixtures.sheet == "group-info" { sheet = .group } }
+        .onChange(of: items) { _, _ in
+            guard !sending, let action else { return }
+            if !actionAvailable(action) { cancelAction() }
+        }
+        .onChange(of: sending) { _, busy in
+            if !busy, let action, !actionAvailable(action) { cancelAction() }
+        }
     }
 
     // ---- the bar ------------------------------------------------------------------------------------
@@ -89,7 +142,7 @@ struct GroupView: View {
     }
 
     private func title(_ group: GroupSummary) -> some View {
-        Button { showingInfo = true } label: {
+        Button { sheet = .group } label: {
             HStack(spacing: 9) {
                 GroupFace(id: group.id, name: group.name, size: 28)
                 VStack(alignment: .leading, spacing: 0) {
@@ -133,7 +186,7 @@ struct GroupView: View {
                 .accessibilityIdentifier("groupVideoCall")
                 .disabled(calls.mode != .hidden)
         }
-        Button { showingInfo = true } label: { Image(systemName: "info.circle") }
+        Button { sheet = .group } label: { Image(systemName: "info.circle") }
             .accessibilityLabel("Group info")
             .accessibilityIdentifier("groupInfo")
     }
@@ -174,6 +227,25 @@ struct GroupView: View {
             .onChange(of: lines.count) { _, _ in
                 withAnimation(.easeOut(duration: 0.15)) { reader.scrollTo("bottom", anchor: .bottom) }
             }
+            .onChange(of: jump) { _, destination in
+                guard let destination else { return }
+                withAnimation(.easeInOut(duration: 0.2)) { reader.scrollTo("m:\(destination.seq)", anchor: .center) }
+                highlighted = destination.seq
+                Task { @MainActor in
+                    try? await Task.sleep(for: .seconds(1.8))
+                    if jump?.id == destination.id { highlighted = nil }
+                }
+            }
+            .onChange(of: composing) { _, focused in
+                guard focused else { return }
+                Task { @MainActor in
+                    // The keyboard first changes the viewport, then the scroll anchor. Waiting
+                    // for that layout keeps the latest message's controls above the composer.
+                    try? await Task.sleep(for: .milliseconds(250))
+                    guard composing else { return }
+                    withAnimation(.easeOut(duration: 0.15)) { reader.scrollTo("bottom", anchor: .bottom) }
+                }
+            }
         }
         .background { DoodleBackground() }
     }
@@ -203,9 +275,17 @@ struct GroupView: View {
         case .message:
             if let item = line.item {
                 GroupBubble(item: item, group: group, showSender: line.showSender, mine: item.sender == account.me?.address,
-                            onDelete: { deleting = $0 },
+                            editable: account.features.messageEdit && canEdit(item),
+                            replyable: account.features.messageReply && group.canPost && groups.inGroup.contains(group.id) && available(item),
+                            busy: sending, highlighted: item.seq == highlighted,
+                            onReply: { beginReply(item) }, onEdit: { beginEdit(item) },
+                            onInfo: { if let seq = item.seq { sheet = .message(seq) } },
+                            onJump: { jump = Jump(seq: $0) },
+                            onRetry: { retry(item) },
+                            onDiscard: { if let cmid = item.cmid { confirmation = .discard(cmid) } },
+                            onDelete: { confirmation = .delete($0) },
                             onBlock: { sender in
-                                blocking = BlockTarget(peer: groups.key(sender), name: groups.name(sender), origin: .group)
+                                sheet = .block(BlockTarget(peer: groups.key(sender), name: groups.name(sender), origin: .group))
                             })
             }
         }
@@ -264,6 +344,7 @@ struct GroupView: View {
 
     private func composer(_ group: GroupSummary) -> some View {
         VStack(spacing: 6) {
+            if let action { actionBanner(action) }
             if !staged.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
                     HStack(spacing: 6) {
@@ -277,7 +358,7 @@ struct GroupView: View {
             }
             HStack(alignment: .bottom, spacing: 8) {
                 attachMenu
-                TextField("Write to the group", text: $draft, axis: .vertical)
+                TextField(editing ? "Edit message" : "Write to the group", text: $draft, axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.geist(15))
                     .lineLimit(1...6)
@@ -285,11 +366,12 @@ struct GroupView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
                     .accessibilityIdentifier("groupComposer")
+                    .disabled(sending)
                     #if os(macOS)
                     .onSubmit(send)
                     #endif
                 Button(action: send) {
-                    Image(systemName: "arrow.up")
+                    Image(systemName: editing ? "checkmark" : "arrow.up")
                         .font(.geist(15, .bold))
                         .foregroundStyle(sendable ? Theme.onAccent : Theme.muted)
                         .frame(width: 34, height: 34)
@@ -297,7 +379,7 @@ struct GroupView: View {
                 }
                 .buttonStyle(.plain)
                 .disabled(!sendable)
-                .accessibilityLabel("Send")
+                .accessibilityLabel(editing ? "Save edit" : "Send")
                 .accessibilityIdentifier("groupSend")
             }
             .padding(6)
@@ -338,7 +420,7 @@ struct GroupView: View {
                 .contentShape(Rectangle())
         }
         .accessibilityLabel("Attach")
-        .disabled(sending)
+        .disabled(sending || editing)
         #else
         Button { picking = true } label: {
             Image(systemName: "paperclip")
@@ -349,12 +431,17 @@ struct GroupView: View {
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Attach")
-        .disabled(sending)
+        .disabled(sending || editing)
         #endif
     }
 
     private var sendable: Bool {
-        !sending && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty)
+        guard !sending else { return false }
+        if case let .edit(seq) = action {
+            guard let item = items.first(where: { $0.seq == seq }), canEdit(item) else { return false }
+            return draft != item.text && (!draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !(item.files ?? []).isEmpty)
+        }
+        return !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || !staged.isEmpty
     }
 
     private func send() {
@@ -362,21 +449,121 @@ struct GroupView: View {
         let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
         let files = staged
         let group = groupId
-        draft = ""
-        staged = []
+        if let action, !actionAvailable(action) { cancelAction(); return }
+        let mode = action
+        let replyTo: Int?
+        let editOf: Int?
+        switch mode {
+        case let .reply(seq): replyTo = seq; editOf = nil
+        case let .edit(seq):
+            editOf = seq
+            replyTo = items.first(where: { $0.seq == seq && $0.actionsVerified == true }).flatMap { GroupActions.sequence($0.replyTo) }
+        case nil: replyTo = nil; editOf = nil
+        }
         sending = true
         Task {
-            if await !groups.send(group, text: text, files: files) {
-                // Put the words back: a message that did not go is not a message to retype.
-                if draft.isEmpty { draft = text }
-                if staged.isEmpty { staged = files }
+            if await groups.send(group, text: text, files: files, replyTo: replyTo, editOf: editOf) {
+                if case .edit = mode { cancelAction() }
+                else { draft = ""; staged = []; action = nil }
             }
             sending = false
             composing = true
         }
     }
 
+    private func available(_ item: GroupItem) -> Bool {
+        item.kind == .message && item.seq != nil && item.pending != true && item.deleted != true
+            && item.undecryptable != true && (item.expiresAt ?? .max) > now
+    }
+
+    private func canEdit(_ item: GroupItem) -> Bool {
+        guard group?.canPost == true, let me = account.me?.address,
+              (item.files ?? []).allSatisfy({ $0.ref != nil }) else { return false }
+        return GroupActions.editable(item, in: items, me: me, now: now)
+    }
+
+    private func actionAvailable(_ action: ComposeAction) -> Bool {
+        guard let target = items.first(where: { $0.seq == action.seq }), available(target) else { return false }
+        switch action {
+        case .reply: return account.features.messageReply
+        case .edit: return account.features.messageEdit && canEdit(target)
+        }
+    }
+
+    private func beginReply(_ item: GroupItem) {
+        guard !sending, available(item), let seq = item.seq else { return }
+        if editing { cancelAction() }
+        action = .reply(seq)
+        composing = true
+    }
+
+    private func retry(_ item: GroupItem) {
+        guard !sending, let cmid = item.cmid else { return }
+        let replyTo: Int?
+        let editOf: Int?
+        switch action {
+        case let .reply(seq): replyTo = seq; editOf = nil
+        case let .edit(seq):
+            replyTo = items.first(where: { $0.seq == seq && $0.actionsVerified == true }).flatMap { GroupActions.sequence($0.replyTo) }
+            editOf = seq
+        case nil: replyTo = nil; editOf = nil
+        }
+        let files = staged.map { OutgoingGroupFile(name: $0.name, mime: $0.mediaType, data: $0.data) }
+        let fingerprint = try? GroupSendIntent.fingerprint(groupId, text: draft.trimmingCharacters(in: .whitespacesAndNewlines),
+                                                         files: files, replyTo: replyTo, editOf: editOf, mentions: [])
+        let matchesDraft = item.sendFingerprint != nil && fingerprint == item.sendFingerprint
+        sending = true
+        Task {
+            let success = await groups.retryMessage(groupId, cmid: cmid)
+            if success, matchesDraft {
+                if editing { cancelAction() } else { draft = ""; staged = []; action = nil }
+            }
+            sending = false
+        }
+    }
+
+    private func beginEdit(_ item: GroupItem) {
+        guard !sending, canEdit(item), let seq = item.seq else { return }
+        if editing { cancelAction() }
+        ordinaryDraft = draft
+        ordinaryFiles = staged
+        draft = item.text ?? ""
+        staged = []
+        action = .edit(seq)
+        composing = true
+    }
+
+    private func cancelAction() {
+        if editing { draft = ordinaryDraft ?? ""; staged = ordinaryFiles }
+        ordinaryDraft = nil
+        ordinaryFiles = []
+        action = nil
+    }
+
+    private func actionBanner(_ action: ComposeAction) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: editing ? "pencil" : "arrowshape.turn.up.left")
+            VStack(alignment: .leading, spacing: 3) {
+                Text(editing ? "Editing message" : "Replying to message").font(.geist(12, .semibold))
+                Text(items.first(where: { $0.seq == action.seq })?.text ?? "Message").font(.geist(12)).lineLimit(2)
+            }
+            Spacer(minLength: 0)
+            Button(action: cancelAction) { Image(systemName: "xmark").frame(width: 44, height: 44) }
+                .buttonStyle(.plain)
+                .keyboardShortcut(.cancelAction)
+                .accessibilityLabel(editing ? "Cancel edit" : "Cancel reply")
+                .accessibilityIdentifier("cancel-group-action")
+                .disabled(sending)
+        }
+        .foregroundStyle(Theme.secondary)
+        .padding(.leading, 12)
+        .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10))
+        .padding(.horizontal, 12)
+        .frame(maxWidth: 884)
+    }
+
     private func stage(_ url: URL) {
+        guard !sending, !editing else { return }
         let scoped = url.startAccessingSecurityScopedResource()
         defer { if scoped { url.stopAccessingSecurityScopedResource() } }
         guard staged.count < 5, let data = try? Data(contentsOf: url), data.count <= AttachmentThumbnails.maxBytes else {
@@ -392,8 +579,10 @@ struct GroupView: View {
     private func stage(_ chosen: [PhotosPickerItem]) async {
         let now = Date()
         for (index, item) in chosen.enumerated() {
+            guard !sending, !editing else { break }
             guard staged.count < 5, let data = try? await item.loadTransferable(type: Data.self),
                   data.count <= AttachmentThumbnails.maxBytes else { continue }
+            guard !sending, !editing else { break }
             let type = item.supportedContentTypes.first
             staged.append(StagedFile(name: PickedImage.filename(for: type, index: index, at: now),
                                      mediaType: PickedImage.mediaType(for: type), data: data))
@@ -409,16 +598,72 @@ struct GroupBubble: View {
     let group: GroupSummary
     let showSender: Bool
     let mine: Bool
+    let editable: Bool
+    let replyable: Bool
+    let busy: Bool
+    let highlighted: Bool
+    let onReply: () -> Void
+    let onEdit: () -> Void
+    let onInfo: () -> Void
+    let onJump: (Int) -> Void
+    let onRetry: () -> Void
+    let onDiscard: () -> Void
     let onDelete: (Int) -> Void
     var onBlock: (String) -> Void = { _ in }
 
     @Environment(GroupStore.self) private var groups
+    @Environment(Account.self) private var account
 
     private var deletable: Bool {
-        item.deleted != true && item.seq != nil && item.pending != true && (mine || group.isAdmin)
+        item.deleted != true && item.seq != nil && item.pending != true
+            && (group.isAdmin || (mine && GroupActions.editable(item, in: groups.histories[group.id] ?? [],
+                me: account.me?.address ?? "", now: Int(Date().timeIntervalSince1970))))
     }
 
     var body: some View {
+        VStack(alignment: mine ? .trailing : .leading, spacing: 0) {
+            bubble
+            if item.pending == true, item.sendFailed == true, let cmid = item.cmid {
+                HStack(spacing: 14) {
+                    if item.code != "send_unavailable" {
+                        Button(action: onRetry) { Label("Retry", systemImage: "arrow.clockwise") }
+                            .accessibilityIdentifier("group-retry:" + cmid)
+                    }
+                    Button(action: onDiscard) { Label("Dismiss", systemImage: "xmark") }
+                        .accessibilityIdentifier("group-discard:" + cmid)
+                }
+                .font(.geist(12))
+                .foregroundStyle(Theme.secondary)
+                .buttonStyle(MessageActionButtonStyle())
+                .disabled(busy)
+                .padding(.horizontal, 8)
+            }
+            if item.deleted != true, item.undecryptable != true, item.pending != true, let seq = item.seq {
+                HStack(spacing: 12) {
+                    if replyable {
+                        Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }
+                            .accessibilityIdentifier("group-reply:\(seq)")
+                    }
+                    if editable {
+                        Button(action: onEdit) { Label("Edit", systemImage: "pencil") }
+                            .accessibilityIdentifier("group-edit:\(seq)")
+                    }
+                    if account.features.messageEdit || account.features.receipts {
+                        Button(action: onInfo) { Label("Info", systemImage: "info.circle") }
+                            .accessibilityLabel("Message info")
+                            .accessibilityIdentifier("group-info:\(seq)")
+                    }
+                }
+                .font(.geist(11.5))
+                .foregroundStyle(Theme.muted)
+                .buttonStyle(MessageActionButtonStyle())
+                .disabled(busy)
+                .padding(mine ? .trailing : .leading, mine ? 8 : 42)
+            }
+        }
+    }
+
+    private var bubble: some View {
         HStack(alignment: .bottom, spacing: 8) {
             if mine { Spacer(minLength: 40) }
             if !mine {
@@ -437,6 +682,7 @@ struct GroupBubble: View {
                     Label("Encrypted message — not readable on this device", systemImage: "lock.slash")
                         .foregroundStyle(Theme.muted)
                 } else {
+                    if item.actionsVerified == true, item.replyTo != nil { quote }
                     if let text = item.text, !text.isEmpty {
                         Text(text)
                             .foregroundStyle(mine ? Theme.Mine.text : Theme.body)
@@ -444,6 +690,7 @@ struct GroupBubble: View {
                     }
                     if let files = item.files, !files.isEmpty {
                         GroupFileList(groupId: group.id, files: files, mine: mine)
+                            .disabled(item.pending == true)
                     }
                 }
                 meta
@@ -452,9 +699,14 @@ struct GroupBubble: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
             .background(mine ? Theme.Mine.fill : Theme.ground, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(mine ? Theme.Mine.stroke : Theme.stroke, lineWidth: 1))
+            .overlay(RoundedRectangle(cornerRadius: 14).stroke(highlighted ? Theme.accent : (mine ? Theme.Mine.stroke : Theme.stroke), lineWidth: highlighted ? 2 : 1))
             .frame(maxWidth: 560, alignment: mine ? .trailing : .leading)
             .contextMenu {
+                if replyable { Button(action: onReply) { Label("Reply", systemImage: "arrowshape.turn.up.left") }.disabled(busy) }
+                if editable { Button(action: onEdit) { Label("Edit", systemImage: "pencil") }.disabled(busy) }
+                if item.seq != nil, item.deleted != true, account.features.messageEdit || account.features.receipts {
+                    Button(action: onInfo) { Label("Message info", systemImage: "info.circle") }
+                }
                 if let text = item.text, !text.isEmpty, item.deleted != true {
                     Button { Clipboard.copy(text) } label: { Label("Copy", systemImage: "doc.on.doc") }
                 }
@@ -468,7 +720,7 @@ struct GroupBubble: View {
             if !mine { Spacer(minLength: 40) }
         }
         .padding(.vertical, 1)
-        .accessibilityElement(children: .combine)
+        .accessibilityElement(children: .contain)
         .accessibilityIdentifier("groupMessage:" + (item.seq.map(String.init) ?? "pending"))
     }
 
@@ -478,11 +730,124 @@ struct GroupBubble: View {
                 Image(systemName: "timer")
                     .accessibilityLabel("Disappears " + Date(timeIntervalSince1970: TimeInterval(expires)).formatted(date: .abbreviated, time: .shortened))
             }
-            Text(item.pending == true ? "Sending…" : (item.createdAt.map(Time.clockTime) ?? ""))
-            if item.editOf != nil { Text("· edited") }
+            Text(item.pending == true ? (item.sendFailed == true ? "Delivery unconfirmed" : "Sending…") : (item.createdAt.map(Time.clockTime) ?? ""))
+            if item.actionsVerified == true, item.editOf != nil { Text("· edited") }
+            if mine, item.deleted != true, item.pending != true, let seq = item.seq, account.features.receipts {
+                let state = groups.receipts[group.id]?.state(at: seq) ?? .sent
+                MessageReceiptMark(receipt: MessageReceipt(state: state.rawValue, deliveredAt: nil, seenAt: nil))
+                    .accessibilityLabel(state == .seen ? "Seen by members sharing read receipts" : state.rawValue.capitalized)
+            }
         }
         .font(.geist(11))
         .foregroundStyle(mine ? Theme.Mine.meta : Theme.muted)
+    }
+
+    private var quote: some View {
+        let parent = GroupActions.replyTarget(of: item, in: groups.histories[group.id] ?? [], now: Int(Date().timeIntervalSince1970))
+        return Button {
+            if let seq = parent?.seq { onJump(seq) }
+        } label: {
+            HStack(spacing: 8) {
+                RoundedRectangle(cornerRadius: 1).fill(Theme.accent).frame(width: 2)
+                VStack(alignment: .leading, spacing: 2) {
+                    if let parent { Text(groups.name(parent.sender ?? "")).font(.geist(11, .semibold)) }
+                    Text(parent.map { ($0.text?.isEmpty == false ? $0.text : $0.files?.first?.name) ?? "Message" }
+                         ?? "Original message unavailable")
+                        .font(.geist(12)).lineLimit(2)
+                }
+                Spacer(minLength: 0)
+            }
+            .foregroundStyle(Theme.secondary)
+            .padding(7)
+            .background(mine ? Theme.Mine.panel : Theme.chip, in: RoundedRectangle(cornerRadius: 7))
+            .fixedSize(horizontal: false, vertical: true)
+        }
+        .buttonStyle(.plain)
+        .disabled(parent == nil)
+        .accessibilityLabel(parent.map { "Go to message from " + groups.name($0.sender ?? "") } ?? "Original message unavailable")
+        .accessibilityIdentifier("group-quote:\(item.seq ?? 0)")
+    }
+}
+
+private struct GroupMessageInfo: View {
+    let groupId: String
+    let seq: Int
+    @Environment(GroupStore.self) private var groups
+    @Environment(Account.self) private var account
+    @Environment(\.dismiss) private var dismiss
+
+    private var history: [GroupItem] { groups.histories[groupId] ?? [] }
+    private var current: GroupItem? {
+        GroupActions.visible(history, now: Int(Date().timeIntervalSince1970))
+            .first { $0.kind == .message && $0.seq == seq && $0.deleted != true }
+    }
+
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    if let current {
+                        let versions = GroupActions.versions(of: current, in: history)
+                        LabeledContent("From", value: groups.name(current.sender ?? ""))
+                        LabeledContent("Sent", value: date(versions.first?.createdAt))
+                        if current.actionsVerified == true, current.editOf != nil {
+                            LabeledContent("Edited", value: date(current.createdAt))
+                        }
+                        if let expires = current.expiresAt { LabeledContent("Disappears", value: date(expires)) }
+                        if current.sender == account.me?.address, account.features.receipts,
+                           let receipts = groups.receipts[groupId], let members = receipts.members {
+                            Text("Delivery").font(.geist(13, .semibold))
+                            ForEach(members) { member in
+                                LabeledContent(groups.name(member.address), value: receipt(member, shares: receipts.readReceipts != false))
+                                    .accessibilityElement(children: .ignore)
+                                    .accessibilityLabel(groups.name(member.address))
+                                    .accessibilityValue(receipt(member, shares: receipts.readReceipts != false))
+                                    .accessibilityIdentifier("group-receipt:" + member.address)
+                            }
+                            Text("Read status is shown only for members who share read receipts.")
+                                .font(.geist(12)).foregroundStyle(Theme.muted)
+                        }
+                        Divider()
+                        Text("Versions on this device").font(.geist(13, .semibold))
+                        Text("Earlier versions are available only if this device received them before they were replaced.")
+                            .font(.geist(12)).foregroundStyle(Theme.muted)
+                        ForEach(versions) { version in
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(date(version.createdAt)).font(.geist(11)).foregroundStyle(Theme.muted)
+                                Text(version.text ?? "Encrypted message unavailable").textSelection(.enabled)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(Theme.chip, in: RoundedRectangle(cornerRadius: 10))
+                            .accessibilityElement(children: .combine)
+                            .accessibilityIdentifier("group-version:\(version.seq ?? 0)")
+                        }
+                    } else {
+                        Text("This message is no longer available.").foregroundStyle(Theme.secondary)
+                    }
+                }
+                .font(.geist(13))
+                .padding(20)
+            }
+            .sheetSurface()
+            .navigationTitle("Message info")
+            .inlineTitle()
+            .toolbar { ToolbarItem(placement: .confirmationAction) { Button("Done") { dismiss() } } }
+        }
+        #if os(macOS)
+        .frame(minWidth: 420, minHeight: 400)
+        #endif
+        .task { await groups.loadMembers(groupId); await groups.loadReceipts(groupId) }
+    }
+
+    private func date(_ timestamp: Int?) -> String {
+        timestamp.map { Date(timeIntervalSince1970: TimeInterval($0)).formatted(date: .abbreviated, time: .shortened) } ?? "Unknown"
+    }
+
+    private func receipt(_ member: GroupMemberReceipt, shares: Bool) -> String {
+        if shares, let seen = member.seenSeq, seen >= seq { return "Seen" }
+        if let delivered = member.deliveredSeq, delivered >= seq { return "Delivered" }
+        return "Sent"
     }
 }
 
@@ -497,6 +862,9 @@ struct GroupFileList: View {
     @State private var opening: String?
     @State private var previewing: URL?
     @State private var handing: URL?
+    @State private var openingVisit = UUID()
+    @State private var temporaryFolder = FileManager.default.temporaryDirectory
+        .appendingPathComponent("group-preview-" + UUID().uuidString, isDirectory: true)
 
     var body: some View {
         VStack(alignment: .leading, spacing: 4) {
@@ -523,6 +891,11 @@ struct GroupFileList: View {
             }
         }
         .quickLookPreview($previewing)
+        .onDisappear { discardPreview() }
+        .onChange(of: files) { _, _ in discardPreview() }
+        .onChange(of: groups.histories[groupId]) { _, _ in
+            if files.contains(where: { !groups.hasFile(groupId, file: $0) }) { discardPreview() }
+        }
         #if canImport(UIKit)
         .sheet(item: $handing) { url in GroupShareSheet(url: url) }
         #else
@@ -536,20 +909,37 @@ struct GroupFileList: View {
 
     private func open(_ file: GroupFile) {
         opening = file.id
+        let visit = UUID()
+        openingVisit = visit
         Task {
-            defer { opening = nil }
-            guard let data = await groups.openFile(groupId, file: file) else { return }
+            defer { if openingVisit == visit { opening = nil } }
+            guard let data = await groups.openFile(groupId, file: file), openingVisit == visit,
+                  groups.hasFile(groupId, file: file) else { return }
             let name = (file.name as NSString).lastPathComponent
-            let folder = FileManager.default.temporaryDirectory.appendingPathComponent("group-files", isDirectory: true)
-            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+            // An owned directory per file view prevents collisions between names/mailboxes;
+            // only this directory is removed when the message is erased or the view goes away.
+            let folder = temporaryFolder
+            try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
             let url = folder.appendingPathComponent(name.isEmpty ? "file" : name)
             do {
+                #if os(iOS)
+                try data.write(to: url, options: [.atomic, .completeFileProtectionUntilFirstUserAuthentication])
+                #else
                 try data.write(to: url, options: [.atomic])
+                #endif
                 if AttachmentList.viewable(url) { previewing = url } else { handing = url }
             } catch {
                 groups.say("Could not open the file.")
             }
         }
+    }
+
+    private func discardPreview() {
+        openingVisit = UUID()
+        opening = nil
+        previewing = nil
+        handing = nil
+        try? FileManager.default.removeItem(at: temporaryFolder)
     }
 }
 

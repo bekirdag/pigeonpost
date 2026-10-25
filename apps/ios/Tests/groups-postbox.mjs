@@ -77,5 +77,44 @@ for (const [key, name] of [["alice", "Alice"], ["bob", "Bob"], ["carol", "Carol"
   if (r.status !== 201) throw new Error(`mailbox for ${name}: ${r.status} ${await r.text()}`);
   people[key] = { token, address: (await r.json()).address };
 }
-writeFileSync(out, JSON.stringify({ postbox: PB, people }));
+// A loopback-only transport fault for exact-request retry tests. It can drop a POST before
+// forwarding or after the real postbox committed it. Recorded evidence contains hashes/ids,
+// never bearer headers or message bodies. This server exists only for this throwaway fixture.
+let lossMode = "off";
+let attempts = [];
+const lossProxy = http.createServer(async (req, res) => {
+  try {
+    const chunks = [];
+    for await (const chunk of req) chunks.push(chunk);
+    const bytes = Buffer.concat(chunks);
+    if (req.url === "/__test/control" && req.method === "POST") {
+      const mode = JSON.parse(bytes.toString()).mode;
+      if (!["off", "before", "after"].includes(mode)) { res.writeHead(400); res.end(); return; }
+      lossMode = mode;
+      if (mode !== "off") attempts = [];
+      res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); return;
+    }
+    if (req.url === "/__test/attempts" && req.method === "GET") {
+      res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ attempts })); return;
+    }
+    const message = req.method === "POST" && /^\/v1\/groups\/[^/]+\/messages$/.test(req.url);
+    let evidence;
+    if (message) {
+      const body = JSON.parse(bytes.toString());
+      evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"), cmid: body.client_message_id, status: null };
+      attempts.push(evidence);
+      if (lossMode === "before") { req.socket.destroy(); return; }
+    }
+    const headers = Object.fromEntries(Object.entries(req.headers).filter(([name]) => !["host", "connection", "content-length"].includes(name)));
+    const upstream = await fetch(PB + req.url, { method: req.method, headers,
+      ...(["GET", "HEAD"].includes(req.method) ? {} : { body: bytes }) });
+    const response = Buffer.from(await upstream.arrayBuffer());
+    if (evidence) evidence.status = upstream.status;
+    if (message && lossMode === "after") { req.socket.destroy(); return; }
+    res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/octet-stream" });
+    res.end(response);
+  } catch (_) { if (!res.destroyed) { res.writeHead(502); res.end(); } }
+});
+const LOSS = `http://127.0.0.1:${await listen(lossProxy)}`;
+writeFileSync(out, JSON.stringify({ postbox: PB, lossProxy: LOSS, people }));
 console.log("groups postbox ready on", PB);

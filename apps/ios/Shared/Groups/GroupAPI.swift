@@ -193,9 +193,12 @@ extension PostboxClient {
 
     // ---- messages and handshakes (§3) -------------------------------------------------------------
 
-    func groupMessages(_ caller: GroupCaller, id: String, after: Int, limit: Int = 100) async throws -> GroupMessagesPage {
-        try await send(Self.path(id, "/messages"),
-                       query: [.init(name: "after_seq", value: String(after)), .init(name: "limit", value: String(limit))],
+    func groupMessages(_ caller: GroupCaller, id: String, after: Int, limit: Int = 100,
+                       before: Int? = nil, metadataOnly: Bool = false) async throws -> GroupMessagesPage {
+        var query: [URLQueryItem] = [.init(name: "after_seq", value: String(after)), .init(name: "limit", value: String(limit))]
+        if let before { query.append(.init(name: "before_seq", value: String(before))) }
+        if metadataOnly { query.append(.init(name: "metadata_only", value: "true")) }
+        return try await send(Self.path(id, "/messages"), query: query,
                        headers: caller.headers(device: true), as: GroupMessagesPage.self)
     }
 
@@ -204,8 +207,15 @@ extension PostboxClient {
                        as: PostedGroupMessage.self)
     }
 
-    func deleteGroupMessage(_ caller: GroupCaller, id: String, seq: Int) async throws {
-        try await sendRaw(Self.path(id, "/messages/\(seq)"), method: "DELETE", headers: caller.headers())
+    func postEncodedGroupMessage(_ caller: GroupCaller, id: String, body: Data) async throws -> PostedGroupMessage {
+        let data = try await sendRaw(Self.path(id, "/messages"), method: "POST", body: body,
+                                     contentType: "application/json", headers: caller.headers(device: true))
+        return try PostboxClient.decode(PostedGroupMessage.self, from: data)
+    }
+
+    @discardableResult
+    func deleteGroupMessage(_ caller: GroupCaller, id: String, seq: Int) async throws -> DeletedGroupMessage {
+        try await send(Self.path(id, "/messages/\(seq)"), method: "DELETE", headers: caller.headers(), as: DeletedGroupMessage.self)
     }
 
     func uploadGroupAttachment(_ caller: GroupCaller, id: String, sealed: Data) async throws -> UploadedGroupAttachment {
