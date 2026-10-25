@@ -1065,6 +1065,10 @@ impl Effects {
                 message_id: format!("cal:{event_id}:invite"),
                 peer: organizer.to_string(),
                 unread: 0,
+                calendar: Some(push::CalendarTarget {
+                    event_id: event_id.to_string(),
+                    occurrence_id: None,
+                }),
             },
         ));
     }

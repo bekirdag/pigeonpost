@@ -265,6 +265,15 @@ event to see details (a removed attendee gets `404`, and must drop what it cache
 Pushes: invitations push "New calendar invitation" (no details). Reminders push "Event starting in
 N minutes" (title only with `previews` on). `message_id` is `cal:<occurrence_id>:<reminder_id>`.
 
+APNs and FCM calendar payloads also carry `type: "calendar"`, `calendar_event_id`, and the
+recipient mailbox in `mailbox` (FCM additionally has `identity`). Reminders include
+`calendar_occurrence_id`; invitations omit it. These identifiers are locators, never credentials.
+Open the event using the recipient mailbox's ordinary calendar authorization; a removed attendee
+still gets `404`. Do not infer an event ID from an opaque occurrence or route the notice to its
+legacy organizer `peer`. Old `cal:` notices without typed locators may open the calendar instead.
+Calendar APNs payloads omit the ordinary message badge and use a calendar-specific notification
+thread. FCM remains data-only with generic text and string-valued fields.
+
 ## 6. Guest routes (no Pigeonpost account; no bearer)
 
 A contact guest's invitation link is `https://inbox.pigeonpost.dev/m/<locator>#t=<token>` (locator =

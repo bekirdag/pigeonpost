@@ -3440,6 +3440,7 @@ pub(crate) async fn do_send_with(
             message_id: message_id.clone(),
             peer: who,
             unread: unread as i64,
+            calendar: None,
         };
         tokio::spawn(push::fan_out(
             state.apns.clone(),
