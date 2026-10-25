@@ -54,6 +54,13 @@ Plan: [meeting integration plan](native-meetings-2026-10-25-plan.md).
   (`scheduled-races-final.log`, `pending-capture-before.log`, `native-meetings-web-final.log`).
   Updated each call page's script version so cached clients receive the correction at web rollout.
 - Merged PR96's5f89bbb accessibility correction into this branch, preserving the new join cases.
-  Full10-case local device runs and the final Mac build are in progress. All native stores remain
+  Full10-case local device runs and the final universal Mac build pass. All native stores remain
   held. Non-scheduled HTTP completion ownership and device-switch processing remain on the phase9
   review scope; these checks are specific to the verified paths, not a complete call security audit.
+
+- Hosted Mac14/26 (including the actual WK harness), real MLS/calendar, inbox and Rust checks pass.
+  Windows x64/ARM64/core pass after one retry: the first call-harness failure occurred in its
+  browser-peer startup, before the native app was launched. Hosted iPhone passes the full suite.
+  One iPad join case queried hittability before the detail control existed; it now waits for that
+  exact button first. Both focused join cases pass locally after this correction
+  (`native-meetings-wait-joins-ipad.xcresult`). Hosted iPad requalification is required.

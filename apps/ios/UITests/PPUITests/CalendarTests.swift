@@ -125,9 +125,11 @@ final class CalendarUITests: XCTestCase {
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
         guard let confirm = visibleReloadButton() else { return XCTFail("The reload action must be hittable") }
         confirm.tap()
-        let updated = NSPredicate(format: "value == %@", "Updated on another device")
-        expectation(for: updated, evaluatedWith: element("calendar-title"))
-        waitForExpectations(timeout: 5)
+        let updated = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
+            self.app.textFields["calendar-title"].firstMatch.value as? String == "Updated on another device"
+        }, object: nil)
+        XCTAssertEqual(XCTWaiter.wait(for: [updated], timeout: 10), .completed)
+        XCTAssertEqual(app.textFields["calendar-title"].firstMatch.value as? String, "Updated on another device")
         XCTAssertTrue(app.buttons["calendar-save"].isEnabled)
     }
     func testFilteredInvitationHasItsOwnViewAndCanBeAnswered() {
@@ -177,8 +179,9 @@ final class CalendarUITests: XCTestCase {
     private func checkJoinDismissal(_ id: String) {
         launch(["-calendar-meeting-fixture"]); openReview()
         let button = app.buttons[id]
-        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+        // The navigation header can appear while event details and their controls are loading.
         XCTAssertTrue(button.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
         XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         button.tap()
         // The UI fixture deliberately does not attach any call page or use a real token. This
