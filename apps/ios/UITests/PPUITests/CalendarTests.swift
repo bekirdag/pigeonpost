@@ -123,7 +123,10 @@ final class CalendarUITests: XCTestCase {
         XCTAssertTrue(app.buttons["calendar-save"].isEnabled)
         tap(element("calendar-save"))
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 10))
-        tap(app.staticTexts["Candidate interview"].firstMatch)
+        let dismissed = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == false"), object: element("calendar-title"))
+        XCTAssertEqual(XCTWaiter.wait(for: [dismissed], timeout: 5), .completed)
+        let created = app.buttons.matching(NSPredicate(format: "identifier BEGINSWITH %@ AND label CONTAINS %@", "calendar-event:", "Candidate interview")).firstMatch
+        tap(created)
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
     }
     func testOccurrenceEditCancelThenSave() {

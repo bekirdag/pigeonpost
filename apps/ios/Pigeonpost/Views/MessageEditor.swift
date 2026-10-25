@@ -37,17 +37,28 @@ struct MessageEditor: UIViewRepresentable {
         if focused && !view.isFirstResponder && enabled { view.becomeFirstResponder() }
         if !focused && view.isFirstResponder { view.resignFirstResponder() }
     }
+    static func dismantleUIView(_ view: PasteTextView, coordinator: Coordinator) {
+        coordinator.retired = true
+        view.delegate = nil
+        view.acceptEdits = false
+        view.pasteImages = nil
+        view.resignFirstResponder()
+    }
     func sizeThatFits(_ proposal: ProposedViewSize, uiView: PasteTextView, context: Context) -> CGSize? {
         guard let width = proposal.width else { return nil }
         return CGSize(width: width, height: min(120, max(34, uiView.sizeThatFits(CGSize(width: width, height: .greatestFiniteMagnitude)).height)))
     }
     final class Coordinator: NSObject, UITextViewDelegate {
         var parent: MessageEditor
+        var retired = false
         init(_ parent: MessageEditor) { self.parent = parent }
-        func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool { parent.enabled }
-        func textViewDidChange(_ view: UITextView) { parent.text = view.text; view.invalidateIntrinsicContentSize() }
-        func textViewDidBeginEditing(_ view: UITextView) { parent.focused = true }
-        func textViewDidEndEditing(_ view: UITextView) { parent.focused = false }
+        func textView(_ view: UITextView, shouldChangeTextIn range: NSRange, replacementText text: String) -> Bool { !retired && parent.enabled }
+        func textViewDidChange(_ view: UITextView) {
+            guard !retired else { return }
+            parent.text = view.text; view.invalidateIntrinsicContentSize()
+        }
+        func textViewDidBeginEditing(_ view: UITextView) { if !retired { parent.focused = true } }
+        func textViewDidEndEditing(_ view: UITextView) { if !retired { parent.focused = false } }
     }
     final class PasteTextView: UITextView {
         var pasteImages: (([NSItemProvider]) -> Void)?

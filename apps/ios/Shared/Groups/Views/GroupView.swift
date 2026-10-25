@@ -41,7 +41,17 @@ private struct GroupConversation: View {
     @State private var ordinaryFiles: [StagedFile] = []
     @State private var jump: Jump?
     @State private var highlighted: Int?
-    @FocusState private var composing: Bool
+    @State private var inputGeneration = UUID()
+    @FocusState private var focusedInput: UUID?
+    private var composing: Bool {
+        get { focusedInput == inputGeneration }
+        nonmutating set { focusedInput = newValue ? inputGeneration : nil }
+    }
+    private func inputText(_ generation: UUID) -> Binding<String> {
+        Binding(get: { inputGeneration == generation ? draft : "" }, set: { value in
+            if inputGeneration == generation && !sending { draft = value }
+        })
+    }
 
     private var group: GroupSummary? { groups.group(groupId) }
     private var items: [GroupItem] { groups.histories[groupId] ?? [] }
@@ -358,11 +368,13 @@ private struct GroupConversation: View {
             }
             HStack(alignment: .bottom, spacing: 8) {
                 attachMenu
-                TextField(editing ? "Edit message" : "Write to the group", text: $draft, axis: .vertical)
+                let generation = inputGeneration
+                TextField(editing ? "Edit message" : "Write to the group", text: inputText(generation), axis: .vertical)
                     .textFieldStyle(.plain)
                     .font(.geist(15))
                     .lineLimit(1...6)
-                    .focused($composing)
+                    .focused($focusedInput, equals: generation)
+                    .id(generation)
                     .padding(.horizontal, 6)
                     .padding(.vertical, 8)
                     .accessibilityIdentifier("groupComposer")
@@ -530,11 +542,16 @@ private struct GroupConversation: View {
         draft = item.text ?? ""
         staged = []
         action = .edit(seq)
+        inputGeneration = UUID()
         composing = true
     }
 
     private func cancelAction() {
-        if editing { draft = ordinaryDraft ?? ""; staged = ordinaryFiles }
+        if editing {
+            draft = ordinaryDraft ?? ""; staged = ordinaryFiles
+            inputGeneration = UUID()
+            composing = true
+        }
         ordinaryDraft = nil
         ordinaryFiles = []
         action = nil
