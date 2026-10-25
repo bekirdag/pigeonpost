@@ -193,3 +193,18 @@ calendar controls and hosted CI follow; no calendar release or store submission.
   at its existing unlocked-desktop prerequisite on this Mac; no runtime pass is claimed. Hosted
   desktop regressions remain required. All128 non-UI inbox checks pass with the shared stub change
   (`native-calendar-harness-inbox.log`).
+
+## Hosted iPadOS26 accessibility follow-up
+
+- At072c581 the Mac14/26 jobs, real MLS/calendar suites, all Rust/web checks and StoreKit pass.
+  Hosted iPad has6/8 calendar cases passing and the existing layout suite has0 failures/1 skip.
+  The two failures are test assumptions, confirmed by the retained screenshot/accessibility tree:
+  iPad starts with conversations collapsed, and the reload action exposes a nested wrapper and
+  button with the same identifier. The actual48pt popover action is present.
+- The capability test now uses the app's Show conversations control before looking for sidebar
+  entries. The conflict test waits for and taps the hittable matching reload action, retaining
+  unsent-draft, disabled-save, explicit-confirmation and reloaded-current-value assertions.
+  No production UI or conflict behavior changes. A delegated draft invented APIs and was rejected.
+- Evidence: `pr96-ipad-ci.log`, artifact12589294393 and exported attachments under the private
+  release directory. Both focused cases pass on local iPhone and iPad after the correction
+  (`native-calendar-ci-followup-{iphone,ipad}.xcresult`). A new hosted run is required before merge.

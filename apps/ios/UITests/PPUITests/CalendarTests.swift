@@ -47,6 +47,14 @@ final class CalendarUITests: XCTestCase {
         tap(element(review))
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 5))
     }
+    private func revealConversations() {
+        let button = app.buttons["showSidebar"].firstMatch
+        if button.waitForExistence(timeout: 2), button.isHittable { button.tap() }
+    }
+    private func visibleReloadButton() -> XCUIElement? {
+        // iPadOS26 exposes the action's wrapper and actual button with the same identifier.
+        app.buttons.matching(identifier: "calendar-confirm-reload").allElementsBoundByIndex.first { $0.isHittable }
+    }
     private func edit(_ choice: String) {
         tap(element("calendar-edit")); tapPopup(app.buttons[choice].firstMatch)
         XCTAssertTrue(element("calendar-title").waitForExistence(timeout: 5))
@@ -54,9 +62,11 @@ final class CalendarUITests: XCTestCase {
 
     func testCalendarEntryRespectsCapabilities() {
         launch(calendar: false)
+        revealConversations()
         XCTAssertTrue(app.buttons["Settings"].waitForExistence(timeout: 10))
         XCTAssertFalse(element("calendarButton").exists)
         launch(open: false)
+        revealConversations()
         XCTAssertTrue(element("calendarButton").waitForExistence(timeout: 10))
         tap(element("calendarButton"))
         XCTAssertTrue(app.navigationBars["Calendar"].waitForExistence(timeout: 5))
@@ -111,10 +121,9 @@ final class CalendarUITests: XCTestCase {
         XCTAssertEqual(element("calendar-title").value as? String, "Design review unsent")
         XCTAssertFalse(app.buttons["calendar-save"].isEnabled)
         tap(element("calendar-review-conflict"))
-        let confirm = app.buttons["calendar-confirm-reload"]
-        XCTAssertTrue(confirm.waitForExistence(timeout: 5))
-        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "hittable == true"), object: confirm)
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in self.visibleReloadButton() != nil }, object: nil)
         XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
+        guard let confirm = visibleReloadButton() else { return XCTFail("The reload action must be hittable") }
         confirm.tap()
         let updated = NSPredicate(format: "value == %@", "Updated on another device")
         expectation(for: updated, evaluatedWith: element("calendar-title"))
