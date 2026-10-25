@@ -25,7 +25,7 @@
   passes a focused follow-up on both devices.
 - The first Mac inbox stress run failed on picker cycle 7 during concurrent simulator UI tests.
   The serial run passes **197 checks**, with the failed run retained as evidence. Hosted CI follows.
-- Live realm audit confirms native S256, default email/email_verified mappers and the web
+- Live realm audit confirms native S256, default contact-address/verified-address mappers and the web
   client's dedicated LoA-2 OTP flow with a 600-second maximum age. Native lacked its mapping
   and binding; these two fields now match the web client, with a restricted server-side backup,
   metadata comparison, and passing normal/strong anonymous redirect preflights. Other native
