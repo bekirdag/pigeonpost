@@ -342,8 +342,16 @@ final class CalendarUITests: XCTestCase {
         tap(app.buttons["calendar-save-placement"])
         XCTAssertTrue(app.navigationBars["Event"].waitForExistence(timeout: 10))
         XCTAssertTrue(app.staticTexts["In Personal"].waitForExistence(timeout: 5))
-        for _ in 0..<6 where !app.staticTexts["Needs a response"].firstMatch.isHittable { app.swipeDown() }
-        XCTAssertTrue(app.staticTexts["Needs a response"].firstMatch.exists)
+        // This is a state assertion, not an interaction. Static text can have no AX activation
+        // point even while visible. Reveal a lazy row using the form's bounds, without asking
+        // UIKit whether the label has an activation point.
+        let response = app.staticTexts["Needs a response"].firstMatch
+        let form = element("calendar-event-details")
+        for _ in 0..<12 where !response.exists {
+            form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.35))
+                .press(forDuration: 0.05, thenDragTo: form.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.7)))
+        }
+        XCTAssertTrue(response.waitForExistence(timeout: 5))
     }
     func testSubscriptionLinkIsShownOnlyOnCreationAndCanBeRevoked() {
         launch()
@@ -385,9 +393,10 @@ final class CalendarUITests: XCTestCase {
         tap(element("calendar-options")); tapPopup(app.buttons["Import calendar file"].firstMatch)
         tap(app.buttons["calendar-import-choose-file"])
         let browse = app.buttons["Browse"].firstMatch
-        if browse.waitForExistence(timeout: 3) { browse.tap() }
+        // A cold document service can appear after the app's sheet is already visible.
+        if browse.waitForExistence(timeout: 10) { browse.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         let local = app.staticTexts.matching(NSPredicate(format: "label == %@ OR label == %@", "On My iPhone", "On My iPad")).firstMatch
-        if local.waitForExistence(timeout: 3) { local.tap() }
+        if local.waitForExistence(timeout: 10) { local.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap() }
         let folder = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost calendar tests,")).firstMatch
         XCTAssertTrue(folder.waitForExistence(timeout: 10))
         folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
@@ -410,8 +419,9 @@ final class CalendarUITests: XCTestCase {
         tapRow(app.buttons["calendar-export-event"], in: "calendar-event-details")
         let cancel = app.buttons["Cancel"].firstMatch
         let readyToSave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Save", "Move"])).firstMatch
-        let pickerReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: readyToSave)
-        XCTAssertEqual(XCTWaiter.wait(for: [pickerReady], timeout: 10), .completed)
+        // Saving need not be enabled to cancel. Remote Files toolbars can also lack an AX
+        // activation point while visibly present; the assertions below require actual dismissal.
+        XCTAssertTrue(readyToSave.waitForExistence(timeout: 10))
         // The phone picker can restore a nested folder, where Back replaces Cancel. Return to
         // locations; a tablet already keeps Cancel in its outer toolbar.
         for _ in 0..<4 where !cancel.exists {
