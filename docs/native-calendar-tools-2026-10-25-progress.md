@@ -27,7 +27,7 @@ Plan: [management plan](native-calendar-tools-2026-10-25-plan.md).
   and corrected results; these do not establish calls or file saving on physical devices.
 - A reproduced iPhone participant-reload crash came from indexed SwiftUI bindings outliving their
   array rows. The shared invitee fields now resolve by stable UUID in both management and event
-  creation. Reload/removal and ordinary-draft regressions pass. The subscription screen uses an
+  creation. Calendar participant reload/removal and draft regressions pass. The subscription screen uses an
   explicit sheet after eager navigation reproduced a main-thread layout loop on both simulators;
   creation, one-time display and revocation now pass on both.
 - DEBUG fixtures use only the reserved .invalid transport and synthetic data. A bounded host helper
@@ -40,3 +40,7 @@ Plan: [management plan](native-calendar-tools-2026-10-25-plan.md).
   PR98's isolated Mac Rust deadline test is being rerun once after recording its late in-flight
   peer-arrival timing assumption for hardening. Production import PR99 remains fully qualified.
 - All stores are held. Nests/Products remain planning only; no hosting implementation is in scope.
+
+## Parent composer qualification
+
+Integrated the conversation/edit-scoped input fix from PR96 through PR98. Both native builds, all 10 iPhone composer cases, focused group edit/reply cases, iPad edit/cancel/save cases and corrected calendar retry selectors pass locally. Hosted full CI is running on the integrated branch; no store submission. See `native-composer-isolation-2026-10-25-progress.md` for exact evidence and superseded selector failures.
