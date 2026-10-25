@@ -7,7 +7,7 @@ Plan: [implementation plan](native-round2-2026-10-24-plan.md).
 Shared Apple direct-message actions, scoped retries, receipt privacy and status UI pass local and
 hosted iPhone/iPad/StoreKit qualification. Authenticated group projection and receipt models are
 implemented. Group controls have passed a local interaction run; durable retry recovery is being
-qualified in the real transport suite. Combined screen qualification is running. Calendar,
+qualified in the real transport suite. Combined local screen qualification passes. Calendar,
 enterprise screens and other platforms remain pending.
 Isolated worktree `pigeonpost-native-round2-20261024`, branch `codex/native-round2-20261024`, now
 includes main through `1132ad7`. Inherited PRs #83, #89 and #87 are merged. Core and web changes
@@ -112,3 +112,5 @@ are deployed as recorded below. No native store submission has been made; Apple'
 - The queue has a 16-attempt/eight-MiB body/request budget and a 24-hour retry window. Deletion/expiry erases dependent queued edits as well as history. A resumed own-message confirmation must match the cached ciphertext. Draft fingerprints prevent a history retry from clearing a different composer draft.
 - Full standalone Swift suites pass (`native2-group-outbox-models-final.log`): group **84 checks**, inbox **128**, Phase 1b **38**, plus existing auth/thread/navigation/handle/call suites. Real MLS/server/browser **65/65** pass (`native2-group-outbox-bounds-e2e.log`): a loopback fault proxy drops replies both before and after commit, the device restarts, epochs advance, recipient counts remain one, exact JSON hashes agree, files decrypt, explicit rejection re-encrypts under the same id, deleted pending edits cannot retry, capacity is bounded and acknowledgement/dismissal frees slots. Proxy evidence contains hashes/ids only, never headers or plaintext.
 - Final iPhone and Mac builds pass (`native2-group-final-build.log`, `native2-group-final-mac-build.log`). Complete group screens and the existing direct/privacy cases are being checked together on iPhone; group screens are being checked on iPad. The first combined invocation failed to compile a new test's element-count assertion; corrected it to use the element query. That invocation executed no tests and is excluded from qualification. Hosted newer-runtime qualification and native release remain pending.
+
+- Checkpoint `9011334` is pushed in draft PR95. All **18** combined iPhone cases and all **13** iPad group cases pass (`native2-actions-groups-verified.xcresult`, `native2-ipad-groups-verified.xcresult`). PR95 is frozen for CI. Calendar work continues in a separate worktree and [plan](native-calendar-2026-10-25-plan.md); no native store submission or additional production core deploy.

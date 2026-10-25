@@ -35,6 +35,13 @@ mkdir -p "$out/group-logic-src" && cp Tests/GroupLogicTests.swift "$out/group-lo
 swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/APIError.swift \
   Shared/Groups/GroupModels.swift Shared/Groups/GroupText.swift Shared/Groups/GroupVault.swift
 "$out/group-logic"
+swiftc -O -parse-as-library -o "$out/calendar" Tests/CalendarTests.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift
+"$out/calendar"
+swiftc -O -parse-as-library -o "$out/calendar-api" Tests/CalendarAPITests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarAPI.swift
+"$out/calendar-api"
 swiftc -O -o "$out/phase1b" Tests/phase1b/main.swift \
   Shared/API/Models.swift Shared/API/Phase1bModels.swift Shared/Model/Blocking.swift Shared/Model/AvatarCrop.swift \
   Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Time.swift \
