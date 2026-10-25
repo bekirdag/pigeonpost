@@ -258,6 +258,7 @@ async fn send_pushes(state: AppState, notes: Vec<PushNote>) {
             message_id: format!("{}:{}", note.group_id, note.seq),
             peer: note.group_id.clone(),
             unread: note.unread,
+            calendar: None,
         };
         push::fan_out(
             state.apns.clone(),

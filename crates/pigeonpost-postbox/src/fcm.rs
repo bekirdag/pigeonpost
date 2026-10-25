@@ -180,12 +180,26 @@ impl Fcm {
 fn payload(device: &Device, note: &Notification) -> Value {
     // Data messages are displayed by the app only after checking the active account/identity.
     // The message text stays in the encrypted inbox instead of travelling through Google.
-    json!({"message": {
+    let mut value = json!({"message": {
         "token": device.token,
         "android": {"priority": "high", "ttl": "86400s"},
         "data": {"title": note.title, "body": "You have a new message.", "peer": note.peer,
             "identity": device.mailbox, "mailbox": note.subtitle, "message_id": note.message_id}
-    }})
+    }});
+    if let Some(calendar) = &note.calendar {
+        let data = &mut value["message"]["data"];
+        data["type"] = json!("calendar");
+        data["calendar_event_id"] = json!(calendar.event_id);
+        if let Some(occurrence) = &calendar.occurrence_id {
+            data["calendar_occurrence_id"] = json!(occurrence);
+        }
+        data["body"] = json!(if calendar.occurrence_id.is_some() {
+            "Calendar reminder"
+        } else {
+            "New calendar invitation"
+        });
+    }
+    value
 }
 
 fn unregistered(value: &Value) -> bool {
@@ -200,6 +214,46 @@ fn unregistered(value: &Value) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn calendar_destinations_are_string_only_and_do_not_expose_event_text() {
+        let device = Device {
+            token: "synthetic:token".into(),
+            mailbox: "/k/receiver".into(),
+            platform: "fcm".into(),
+            environment: "production".into(),
+            kind: "alert".into(),
+            os: None,
+        };
+        let mut note = Notification {
+            title: "Calendar".into(),
+            subtitle: "/k/receiver".into(),
+            body: "Private event title".into(),
+            message_id: "cal:opaque:reminder".into(),
+            peer: "/k/organizer".into(),
+            unread: 0,
+            calendar: Some(crate::push::CalendarTarget {
+                event_id: "evt_one".into(),
+                occurrence_id: Some("occ_one".into()),
+            }),
+        };
+        let value = payload(&device, &note);
+        let data = &value["message"]["data"];
+        assert_eq!(data["type"], "calendar");
+        assert_eq!(data["identity"], "/k/receiver");
+        assert_eq!(data["calendar_event_id"], "evt_one");
+        assert_eq!(data["calendar_occurrence_id"], "occ_one");
+        assert_eq!(data["body"], "Calendar reminder");
+        assert!(data.as_object().unwrap().values().all(Value::is_string));
+        assert!(value["message"].get("notification").is_none());
+        assert!(!value.to_string().contains("Private event title"));
+        note.calendar.as_mut().unwrap().occurrence_id = None;
+        let invite = payload(&device, &note);
+        assert_eq!(invite["message"]["data"]["body"], "New calendar invitation");
+        assert!(invite["message"]["data"]
+            .get("calendar_occurrence_id")
+            .is_none());
+    }
 
     #[test]
     fn background_payload_can_be_checked_before_display_and_has_no_message_text() {
@@ -218,6 +272,7 @@ mod tests {
             message_id: "message-1".into(),
             peer: "/bekir/main".into(),
             unread: 2,
+            calendar: None,
         };
         let value = payload(&device, &note);
         assert_eq!(value["message"]["data"]["identity"], "/k/receiver");
