@@ -50,6 +50,8 @@ jobs:
         with:
           workspaces: crates/pigeonpost-groupcrypto
       - run: cargo fmt --all --check
+      - name: Download retries and verified tool cache
+        run: python3 scripts/test_fetch_kotlin_tools.py
       - run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - run: cargo clippy -p pigeonpost-groupcrypto-wasm --target wasm32-unknown-unknown --locked -- -D warnings
       - run: cargo test --workspace --locked --release
@@ -123,7 +125,8 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Run the cross-client scenario
         run: |
-          eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          kotlin_tools_env="$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          eval "$kotlin_tools_env"
           GROUPCRYPTO_REQUIRE="kotlin csharp" scripts/interop.sh
 
   macos:
@@ -146,7 +149,8 @@ jobs:
           dotnet-version: '8.0.x'
       - name: Run the cross-client scenario with all six runtimes
         run: |
-          eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          kotlin_tools_env="$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          eval "$kotlin_tools_env"
           GROUPCRYPTO_REQUIRE="swift kotlin csharp" scripts/interop.sh
       - name: Build the XCFramework (iOS, iOS simulator, macOS)
         run: scripts/build-apple.sh
@@ -178,7 +182,8 @@ jobs:
           log-accepted-android-sdk-licenses: false
       - name: Build the AAR with the pinned NDK
         run: |
-          eval "$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          kotlin_tools_env="$(scripts/fetch-kotlin-tools.sh "$RUNNER_TEMP/kotlin")"
+          eval "$kotlin_tools_env"
           ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358" scripts/build-android.sh
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

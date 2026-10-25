@@ -42,7 +42,7 @@ must match the candidate manifest before reuse; fail on a mismatch.
 Include `groupcrypto-map.conf` once inside `http {}` and `groupcrypto-location.conf` in the inbox
 server **before other regex locations**. The [map directive](https://nginx.org/en/docs/http/ngx_http_map_module.html)
 selects only a full lowercase digest; [try_files](https://nginx.org/en/docs/http/ngx_http_core_module.html#try_files)
-resolves that installed bundle under the vhost root. Unknown or malformed versions return404,
+resolves that installed bundle under the vhost root. The observed legacy `v=20261020-p3a` alias also keeps its old bundle. Other unknown or malformed versions return404,
 without falling back to another bundle. Existing security headers and MIME types are inherited.
 Fresh static installations can keep the current bundle in both the default and versioned paths.
 
