@@ -202,6 +202,124 @@ fn meeting_body(attendees: Value) -> Value {
 }
 
 #[tokio::test]
+async fn subminute_event_times_survive_save_read_and_edits() {
+    let srv = serve().await;
+    let who = person(&srv, "precise").await;
+    let ev = create(
+        &srv,
+        &who,
+        json!({"request_key":"precision", "title":"Precise",
+            "start":"2026-10-22T09:00:17", "end":"2026-10-22T09:01:47",
+            "tzid":"Europe/Istanbul", "rrule":"FREQ=DAILY;COUNT=2"}),
+    )
+    .await;
+    let id = ev["id"].as_str().unwrap();
+    let start = ev["starts_at"].as_i64().unwrap();
+    let list_path = format!(
+        "/v1/calendar/events?from={}&to={}",
+        start - 1,
+        start + 3 * 86_400
+    );
+    let (status, listed) = srv.call(Method::GET, &list_path, &who, None).await;
+    assert_eq!(status, 200, "{listed}");
+    let instances = listed["occurrences"].as_array().unwrap();
+    assert_eq!(instances.len(), 2);
+    assert_eq!(
+        instances[0]["starts_at"], start,
+        "persisting must not shift the schedule"
+    );
+    assert_eq!(instances[0]["ends_at"].as_i64().unwrap() - start, 90);
+    let occurrence = instances[0]["occurrence_id"].as_str().unwrap();
+    assert!(occurrence.ends_with("T090017"));
+    let detail_path = format!("/v1/calendar/events/{id}?occurrence_id={occurrence}");
+    let (status, body) = srv.call(Method::GET, &detail_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["event"]["start"], "2026-10-22T09:00:17");
+    assert_eq!(body["event"]["end"], "2026-10-22T09:01:47");
+    let (status, changed) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            Some(json!({"expected_revision":body["event"]["revision"], "scope":"all", "title":"Renamed"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{changed}");
+    let (status, after) = srv.call(Method::GET, &list_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(after["occurrences"][0]["starts_at"], start);
+    assert_eq!(after["occurrences"][0]["occurrence_id"], occurrence);
+    let (status, moved) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            Some(json!({"expected_revision":changed["event"]["revision"], "scope":"this",
+                "occurrence_id":occurrence, "start":"2026-10-24T14:30:23", "end":"2026-10-24T14:31:53", "tzid":"Europe/Istanbul"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{moved}");
+    let (status, moved_read) = srv.call(Method::GET, &detail_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(moved_read["occurrence"]["start"], "2026-10-24T14:30:23");
+    assert_eq!(moved_read["occurrence"]["end"], "2026-10-24T14:31:53");
+    assert_eq!(moved_read["occurrence"]["occurrence_id"], occurrence);
+}
+
+#[tokio::test]
+async fn subminute_ics_times_survive_preview_confirm_and_export() {
+    let srv = serve().await;
+    let who = person(&srv, "preciseics").await;
+    let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:precision@example.test\r\nSUMMARY:Precise import\r\nDTSTART;TZID=Europe/Istanbul:20261022T090017\r\nDTEND;TZID=Europe/Istanbul:20261022T090147\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let response = srv
+        .http
+        .post(format!("{}/v1/calendar/import/preview", srv.public))
+        .bearer_auth(&who.token)
+        .header("x-pigeonpost-identity", &who.address)
+        .header("content-type", "text/calendar")
+        .body(ics)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let preview: Value = response.json().await.unwrap();
+    assert_eq!(preview["events"][0]["start"], "2026-10-22T09:00:17");
+    let draft = preview["draft_id"].as_str().unwrap();
+    let (status, confirmed) = srv
+        .call(
+            Method::POST,
+            &format!("/v1/calendar/import/{draft}/confirm"),
+            &who,
+            Some(json!({"select":[0]})),
+        )
+        .await;
+    assert_eq!(status, 200, "{confirmed}");
+    let id = confirmed["created"][0]["id"].as_str().unwrap();
+    let (status, detail) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(detail["event"]["start"], "2026-10-22T09:00:17");
+    assert_eq!(detail["event"]["end"], "2026-10-22T09:01:47");
+    let (status, exported) = srv
+        .raw(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}.ics"),
+            Some(&who.token),
+            Some(&who.address),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert!(exported.contains("20261022T090017") && exported.contains("20261022T090147"));
+}
+
+#[tokio::test]
 async fn invitations_follow_admission_and_projections_hide_contacts() {
     let srv = serve().await;
     let org = person(&srv, "orga").await;
