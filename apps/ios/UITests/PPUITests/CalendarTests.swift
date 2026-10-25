@@ -177,8 +177,9 @@ final class CalendarUITests: XCTestCase {
     private func checkJoinDismissal(_ id: String) {
         launch(["-calendar-meeting-fixture"]); openReview()
         let button = app.buttons[id]
-        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
+        // The navigation header can appear while event details and their controls are loading.
         XCTAssertTrue(button.waitForExistence(timeout: 5))
+        for _ in 0..<6 where !button.isHittable { app.swipeUp() }
         XCTAssertGreaterThanOrEqual(button.frame.height, 44)
         button.tap()
         // The UI fixture deliberately does not attach any call page or use a real token. This
