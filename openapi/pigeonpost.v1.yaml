@@ -8050,7 +8050,13 @@ paths:
       tags: [calendar]
       operationId: confirmCalendarImport
       summary: Create private copies of selected draft events
-      description: See docs/calendar.md. Requires the `calendar` feature flag.
+      description: >-
+        Requires the `calendar` feature flag. Repeated selection indices are imported once.
+        The same selection and destination replay the original result for seven days after
+        confirmation, without creating events or notices again. Omitting calendar_id uses the
+        preview's destination; naming that same destination is equivalent. A changed selection
+        or destination returns 409 idempotency_conflict. Replay requires continuing ownership
+        of the destination calendar. See docs/calendar.md.
       security:
         - capToken: []
         - apiKey: []
@@ -8068,6 +8074,16 @@ paths:
           application/json:
             schema:
               type: object
+              required: [select]
+              properties:
+                select:
+                  type: array
+                  maxItems: 200
+                  items:
+                    type: integer
+                    minimum: 0
+                calendar_id:
+                  type: [string, 'null']
       responses:
         '200':
           description: Success.
@@ -8078,6 +8094,8 @@ paths:
         '400':
           $ref: '#/components/responses/CalendarError'
         '404':
+          $ref: '#/components/responses/CalendarError'
+        '409':
           $ref: '#/components/responses/CalendarError'
   /v1/calendar/guest/preview:
     post:

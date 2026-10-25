@@ -242,6 +242,14 @@ invitations are off or a message was lost. It lets that guest preview, answer, a
 | POST | `/v1/calendar/import/preview?calendar_id=` | raw `text/calendar` body, ≤ 512 KiB | `{draft_id, events: [{index, title, all_day, start, end, start_date, end_date, tzid, rrule, warnings}], warnings, expires_at}`. Nothing is fetched from the network; alarms, attendees and organizers are dropped (and listed in `warnings`). |
 | POST | `/v1/calendar/import/{draft_id}/confirm` | `{select: [index…], calendar_id}` | `{created: [event…]}` — private copies with new UIDs. No invitations are sent. |
 
+Confirmation accepts at most 200 selection entries and treats repeated indices as one selection.
+An identical selection and destination can replay the original result for up to 7 days after a
+successful confirmation, even if its response was lost; no events, reminders or notices repeat.
+Omitting the destination and naming the same default calendar are equivalent. Changing the selection
+or destination returns 409 `idempotency_conflict`. Receipts are sealed at rest, bound to the acting
+mailbox, and require continuing access to the original calendar. Old imports without a receipt
+cannot be recovered this way. An unconfirmed preview still expires after 1 hour.
+
 ## 5. Settings and events on `/v1/events`
 
 `GET`/`PUT /v1/calendar/settings` `{previews: false, timezone: "Europe/Istanbul" | null,
@@ -256,6 +264,15 @@ event to see details (a removed attendee gets `404`, and must drop what it cache
 
 Pushes: invitations push "New calendar invitation" (no details). Reminders push "Event starting in
 N minutes" (title only with `previews` on). `message_id` is `cal:<occurrence_id>:<reminder_id>`.
+
+APNs and FCM calendar payloads also carry `type: "calendar"`, `calendar_event_id`, and the
+recipient mailbox in `mailbox` (FCM additionally has `identity`). Reminders include
+`calendar_occurrence_id`; invitations omit it. These identifiers are locators, never credentials.
+Open the event using the recipient mailbox's ordinary calendar authorization; a removed attendee
+still gets `404`. Do not infer an event ID from an opaque occurrence or route the notice to its
+legacy organizer `peer`. Old `cal:` notices without typed locators may open the calendar instead.
+Calendar APNs payloads omit the ordinary message badge and use a calendar-specific notification
+thread. FCM remains data-only with generic text and string-valued fields.
 
 ## 6. Guest routes (no Pigeonpost account; no bearer)
 

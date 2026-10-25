@@ -152,7 +152,7 @@ enum Plan {
     Hold(i64),
     Push {
         mailbox: String,
-        note: push::Notification,
+        note: Box<push::Notification>,
         wake: Vec<String>,
     },
     Send(Box<Outgoing>),
@@ -221,7 +221,7 @@ async fn dispatch(state: &AppState, id: &str, now: u64) -> GResult<()> {
                         s.fcm.clone(),
                         s.store.clone(),
                         mailbox,
-                        note,
+                        *note,
                     )
                     .await;
                 });
@@ -701,14 +701,18 @@ fn plan_push_reminder(
     Ok(Plan::Push {
         wake: fx.wake,
         mailbox: mailbox.clone(),
-        note: push::Notification {
+        note: Box::new(push::Notification {
             title: "Calendar".into(),
             subtitle: mailbox,
             body,
             message_id: format!("cal:{}:{rem_id}", occ.id),
             peer: ev.organizer.clone(),
             unread: 0,
-        },
+            calendar: Some(push::CalendarTarget {
+                event_id: ev.id.clone(),
+                occurrence_id: Some(occ.id.clone()),
+            }),
+        }),
     })
 }
 
