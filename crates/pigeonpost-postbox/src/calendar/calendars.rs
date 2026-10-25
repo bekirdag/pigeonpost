@@ -899,6 +899,23 @@ pub(crate) struct ConfirmIn {
     calendar_id: Option<String>,
 }
 
+#[derive(serde::Serialize, Deserialize)]
+struct ImportReceipt {
+    calendar_id: String,
+    result: Value,
+}
+
+fn import_confirmation_hash(selected: &[usize], calendar: &str) -> String {
+    format!(
+        "{:x}",
+        Sha256::digest(
+            json!({"select": selected, "calendar_id": calendar})
+                .to_string()
+                .as_bytes()
+        )
+    )
+}
+
 /// `POST /v1/calendar/import/{draft}/confirm`
 pub(crate) async fn import_confirm(
     State(state): State<AppState>,
@@ -909,7 +926,12 @@ pub(crate) async fn import_confirm(
 ) -> Response {
     let r = async {
         let ctx = ctx(&state, &headers, q.identity.as_deref()).await?;
-        let (input, _): (ConfirmIn, String) = parse(body)?;
+        let (mut input, _): (ConfirmIn, String) = parse(body)?;
+        if input.select.len() > 200 {
+            return Err(GErr::bad("bad_request", "select at most 200 import entries"));
+        }
+        input.select.sort_unstable();
+        input.select.dedup();
         let me = ctx.address();
         let account = ctx.account();
         let vault = state.vault.clone();
@@ -918,6 +940,24 @@ pub(crate) async fn import_confirm(
         state
             .store
             .group_tx(move |tx: &Transaction<'_>| -> GResult<(u16, Value, Effects)> {
+                let prior: Option<(String, Vec<u8>)> = tx.query_row(
+                    "SELECT body_hash, response FROM calendar_idempotency
+                      WHERE scope = ?1 AND action = 'import_confirm' AND request_key = ?2 AND created_at > ?3",
+                    params![me, draft, now.saturating_sub(IDEMPOTENCY_SECS) as i64],
+                    |r| Ok((r.get(0)?, r.get(1)?)),
+                ).optional()?;
+                if let Some((prior_hash, sealed)) = prior {
+                    let saved: ImportReceipt = serde_json::from_str(&open(&vault, &format!("{me}:{draft}:{prior_hash}:import-receipt"), &sealed))
+                        .map_err(|_| GErr::new(StatusCode::SERVICE_UNAVAILABLE, "import_receipt_unavailable", "the saved import result is unavailable"))?;
+                    if !own_calendar(tx, &me, &saved.calendar_id)? {
+                        return Err(GErr::new(StatusCode::NOT_FOUND, "calendar_unavailable", "no such calendar"));
+                    }
+                    let calendar = input.calendar_id.as_deref().unwrap_or(&saved.calendar_id);
+                    if prior_hash != import_confirmation_hash(&input.select, calendar) {
+                        return Err(GErr::conflict("idempotency_conflict", "that import draft was confirmed with a different selection or calendar"));
+                    }
+                    return Ok((200, saved.result, Effects::default()));
+                }
                 let row: Option<(String, Vec<u8>)> = tx
                     .query_row(
                         "SELECT calendar_id, payload_sealed FROM calendar_import_drafts
@@ -933,9 +973,10 @@ pub(crate) async fn import_confirm(
                 if !own_calendar(tx, &me, &calendar_id)? {
                     return Err(GErr::new(StatusCode::NOT_FOUND, "calendar_unavailable", "no such calendar"));
                 }
+                let hash = import_confirmation_hash(&input.select, &calendar_id);
                 let mut created = Vec::new();
                 let mut fx = Effects::default();
-                for idx in input.select.iter().take(200) {
+                for idx in &input.select {
                     let Some(imp) = events.iter().find(|e| e.index == *idx && e.importable) else { continue };
                     let ein = super::events::EventIn {
                         title: Some(imp.title.clone()),
@@ -966,9 +1007,18 @@ pub(crate) async fn import_confirm(
                     let view = super::events::event_view(tx, &vault, &ev, &me, &super::events::Access::Organizer, &inbox)?;
                     created.push(view);
                 }
+                let imported = created.len();
+                let result = json!({ "created": created });
+                let receipt = ImportReceipt { calendar_id, result: result.clone() };
+                let sealed = seal_v(&vault, &format!("{me}:{draft}:{hash}:import-receipt"), &serde_json::to_string(&receipt).expect("serializes"))?;
+                tx.execute(
+                    "INSERT INTO calendar_idempotency (scope, action, request_key, body_hash, status, response, created_at)
+                     VALUES (?1, 'import_confirm', ?2, ?3, 200, ?4, ?5)",
+                    params![me, draft, hash, sealed, now as i64],
+                )?;
                 tx.execute("DELETE FROM calendar_import_drafts WHERE id = ?1", params![draft])?;
-                fx.event(tx, &me, "event.updated", json!({ "imported": created.len() }), now)?;
-                Ok((200, json!({ "created": created }), fx))
+                fx.event(tx, &me, "event.updated", json!({ "imported": imported }), now)?;
+                Ok((200, result, fx))
             })
             .await
     }
