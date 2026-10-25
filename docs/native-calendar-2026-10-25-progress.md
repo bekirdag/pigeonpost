@@ -215,3 +215,10 @@ calendar controls and hosted CI follow; no calendar release or store submission.
   TextField afresh while waiting for accessibility, then still requires its exact full value.
   No product draft/revision behavior is changed (`pr96-iphone-5f89-ci.log` and its attachments).
   The focused local iPhone check passes (`native-calendar-fresh-title-iphone.xcresult`).
+
+- Hosted Xcode 26 qualification at head 84cc142 passes all 10 calendar UI cases and the iPad suite.
+  The iPhone job stops at its 45-minute deadline later in the existing suites: 48 completed tests
+  pass, no assertion fails, and the log reports cancellation. The same calendar source plus scheduled
+  joins at PR98 head 3436b93 passes all 22 checks. Increase bounded iPhone/iPad job budgets to 75/60
+  minutes so the expanded native suite can finish; leave tests and runner selection intact.
+  Scoped workflow impact/symbol checks and a reviewed local-model draft precede this CI-only change.
