@@ -3092,28 +3092,35 @@ pub(crate) fn post_in(
     if req.mentions.len() > 50 {
         return Err(GErr::bad("bad_request", "too many mentions"));
     }
-    if let Some(target) = req.edit_of {
-        let row: Option<(String, i64, Option<i64>, Option<i64>)> = tx
-            .query_row(
-                "SELECT sender, created_at, deleted_at, replaced_by FROM group_messages WHERE group_id = ?1 AND seq = ?2",
-                params![gid, target],
-                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
-            )
-            .optional()?;
-        match row {
-            Some((sender, at, None, None))
-                if sender == me && (at as u64) + EDIT_WINDOW_SECS > now => {}
-            _ => {
-                return Err(GErr::forbidden(
-                    "not_editable",
-                    "you can edit only your own messages, within 24 hours",
-                ))
-            }
+    let edit_expiry = if let Some(target) = req.edit_of {
+        let chain = message_ancestors(tx, gid, target)?;
+        let editable = chain
+            .first()
+            .zip(chain.last())
+            .is_some_and(|(root, latest)| {
+                root.edit_of.is_none()
+                    && root.sender == me
+                    && latest.replaced_by.is_none()
+                    && recent_original(root.created_at, now)
+                    && chain.iter().all(|v| {
+                        v.deleted_at.is_none() && v.expires_at.is_none_or(|at| at > now as i64)
+                    })
+            });
+        if !editable {
+            return Err(GErr::forbidden(
+                "not_editable",
+                "you can edit only your own unexpired messages, within 24 hours of the original",
+            ));
         }
-    }
+        // None is meaningful: an originally permanent message stays permanent, even if the
+        // group acquired a timer. For legacy chains retain the earliest existing deadline.
+        Some(chain.iter().filter_map(|v| v.expires_at).min())
+    } else {
+        None
+    };
     let seq = alloc_seq(tx, gid, now)?;
     let id = format!("gm_{}", rand_b32(12));
-    let expires_at = g.ephemeral_secs.map(|s| now as i64 + s);
+    let expires_at = edit_expiry.unwrap_or_else(|| g.ephemeral_secs.map(|s| now as i64 + s));
     let mut atts = Vec::new();
     for att in &req.attachments {
         let row: Option<(i64, Option<i64>, String)> = tx
@@ -3252,6 +3259,49 @@ pub(crate) async fn post(
     finish(&state, result)
 }
 
+struct MessageVersion {
+    seq: i64,
+    sender: String,
+    created_at: i64,
+    expires_at: Option<i64>,
+    deleted_at: Option<i64>,
+    replaced_by: Option<i64>,
+    edit_of: Option<i64>,
+}
+
+/// Follow the preceding-version refs under the existing writer transaction. Decreasing seqs
+/// prevent cycles, and both the group and author remain fixed through the chain.
+fn message_ancestors(c: &Connection, gid: &str, seq: i64) -> GResult<Vec<MessageVersion>> {
+    let mut stmt = c.prepare(
+        "WITH RECURSIVE versions AS (
+           SELECT seq, sender, created_at, expires_at, deleted_at, replaced_by, edit_of
+             FROM group_messages WHERE group_id = ?1 AND seq = ?2
+           UNION ALL
+           SELECT m.seq, m.sender, m.created_at, m.expires_at, m.deleted_at, m.replaced_by, m.edit_of
+             FROM group_messages m JOIN versions v ON m.seq = v.edit_of
+            WHERE m.group_id = ?1 AND m.sender = v.sender AND m.seq < v.seq
+         ) SELECT seq, sender, created_at, expires_at, deleted_at, replaced_by, edit_of FROM versions ORDER BY seq",
+    )?;
+    let rows = stmt.query_map(params![gid, seq], |r| {
+        Ok(MessageVersion {
+            seq: r.get(0)?,
+            sender: r.get(1)?,
+            created_at: r.get(2)?,
+            expires_at: r.get(3)?,
+            deleted_at: r.get(4)?,
+            replaced_by: r.get(5)?,
+            edit_of: r.get(6)?,
+        })
+    })?;
+    Ok(rows.collect::<Result<_, _>>()?)
+}
+
+fn recent_original(at: i64, now: u64) -> bool {
+    u64::try_from(at)
+        .ok()
+        .is_some_and(|at| at <= now && now - at < EDIT_WINDOW_SECS)
+}
+
 /// `DELETE /v1/groups/{id}/messages/{seq}`.
 pub(crate) async fn delete_message(
     State(state): State<AppState>,
@@ -3268,35 +3318,50 @@ pub(crate) async fn delete_message(
             .group_tx(move |tx| -> GResult<Outcome> {
                 live_group(tx, &id)?;
                 let m = active_member(tx, &id, &me)?;
-                let row: Option<(String, i64, Option<i64>)> = tx
-                    .query_row(
-                        "SELECT sender, created_at, deleted_at FROM group_messages WHERE group_id = ?1 AND seq = ?2",
-                        params![id, seq],
-                        |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-                    )
-                    .optional()?;
-                let Some((sender, at, deleted)) = row else {
+                let ancestors = message_ancestors(tx, &id, seq)?;
+                let Some(root) = ancestors.first() else {
                     return Err(GErr::new(StatusCode::NOT_FOUND, "not_found", "no such message"));
                 };
-                if deleted.is_some() {
-                    return Ok(Outcome::ok(json!({ "deleted": true })));
-                }
-                let own = sender == me && (at as u64) + EDIT_WINDOW_SECS > now;
+                let versions: Vec<(i64, Option<i64>)> = {
+                    let mut stmt = tx.prepare(
+                        "WITH RECURSIVE versions AS (
+                           SELECT seq, sender, deleted_at FROM group_messages WHERE group_id = ?1 AND seq = ?2
+                           UNION ALL
+                           SELECT m.seq, m.sender, m.deleted_at FROM group_messages m JOIN versions v ON m.edit_of = v.seq
+                            WHERE m.group_id = ?1 AND m.sender = v.sender AND m.seq > v.seq
+                         ) SELECT seq, deleted_at FROM versions ORDER BY seq",
+                    )?;
+                    let rows = stmt.query_map(params![id, root.seq], |r| Ok((r.get(0)?, r.get(1)?)))?;
+                    rows.collect::<Result<_, _>>()?
+                };
+                let seqs: Vec<i64> = versions.iter().map(|v| v.0).collect();
+                let mut out = Outcome::ok(json!({ "deleted": true, "seqs": seqs }));
+                if versions.iter().all(|v| v.1.is_some()) { return Ok(out); }
+                let own = root.sender == me && root.edit_of.is_none() && recent_original(root.created_at, now);
                 if !(own || is_admin(&m)) {
                     return Err(GErr::forbidden("not_admin", "you can delete only your own recent messages"));
                 }
+                let selected = serde_json::to_string(&seqs).map_err(|_| GErr::server())?;
+                let shas: Vec<String> = {
+                    let mut stmt = tx.prepare("SELECT DISTINCT sha256 FROM group_attachments WHERE group_id = ?1 AND message_seq IN (SELECT value FROM json_each(?2))")?;
+                    let rows = stmt.query_map(params![id, selected], |r| r.get(0))?;
+                    rows.collect::<Result<_, _>>()?
+                };
                 tx.execute(
                     "UPDATE group_messages SET body_blob = NULL, bytes = 0, deleted_at = ?3, revision = revision + 1
-                      WHERE group_id = ?1 AND seq = ?2",
-                    params![id, seq, now as i64],
+                      WHERE group_id = ?1 AND seq IN (SELECT value FROM json_each(?2)) AND deleted_at IS NULL",
+                    params![id, selected, now as i64],
                 )?;
-                let mut out = Outcome::ok(json!({ "deleted": true }));
-                out.blobs = release_attachments(tx, &id, Some(seq))?;
+                tx.execute("DELETE FROM group_attachments WHERE group_id = ?1 AND message_seq IN (SELECT value FROM json_each(?2))", params![id, selected])?;
+                for sha in shas {
+                    let references: i64 = tx.query_row("SELECT COUNT(*) FROM group_attachments WHERE sha256 = ?1", params![sha], |r| r.get(0))?;
+                    if references == 0 { out.blobs.push(sha); }
+                }
                 out.wake = emit_members(
                     tx,
                     &id,
                     "group.message",
-                    &json!({ "group_id": id, "seq": seq, "sender": sender, "deleted": true }),
+                    &json!({ "group_id": id, "seq": seq, "seqs": seqs, "sender": root.sender, "deleted": true }),
                     now,
                 )?;
                 Ok(out)
