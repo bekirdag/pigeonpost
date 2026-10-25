@@ -3,8 +3,9 @@ import Foundation
 import Observation
 
 @MainActor @Observable final class Session {
-    enum Status { case signedIn }
+    enum Status: Equatable { case signedIn, signedOut }
     var status = Status.signedIn
+    var subject: String? = "fixture-subject"
     func token() async throws -> String { "test-only" }
     func renew() async throws -> String { "test-only-renewed" }
 }

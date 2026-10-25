@@ -96,6 +96,7 @@ struct CalendarEditor: View {
                     }
                 }
             }
+            .accessibilityIdentifier("calendar-event-editor")
             .formStyle(.grouped)
             .safeAreaInset(edge: .top, spacing: 0) {
                 if let message = problem ?? store.lastError {
@@ -163,14 +164,9 @@ struct CalendarEditor: View {
 
     private var invitees: some View {
         Section("Invite people") {
-            ForEach($draft.invitees) { $invitee in
-                VStack(alignment: .leading, spacing: 8) {
-                    TextField("Pigeonpost handle or contact address", text: $invitee.destination).autocorrectionDisabled()
-                    TextField("Name (optional)", text: $invitee.name)
-                    Toggle("Optional attendee", isOn: $invitee.optional)
-                    if invitee.destination.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("/") { Toggle("Co-host", isOn: $invitee.cohost) }
-                    Button("Remove", role: .destructive) { draft.invitees.removeAll { $0.id == invitee.id } }
-                        .buttonStyle(.borderless)
+            ForEach(draft.invitees) { invitee in
+                CalendarInviteeFields(invitee, in: $draft.invitees, destinationID: "calendar-create-attendee-address") {
+                    draft.invitees.removeAll { $0.id == invitee.id }
                 }
             }
             Button("Add a person") { draft.invitees.append(CalendarInviteeDraft()) }

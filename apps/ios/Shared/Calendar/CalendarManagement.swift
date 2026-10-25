@@ -67,7 +67,7 @@ struct CalendarFoldersScreen: View {
                                 Text(folder.name ?? "Calendar")
                                 if folder.isDefault == true { Text("Default").font(.geist(12)).foregroundStyle(Theme.secondary) }
                             }
-                        }
+                        }.accessibilityIdentifier("calendar-folder:" + folder.id)
                     }
                 }
                 Section("New calendar") {
@@ -95,6 +95,7 @@ private struct CalendarFolderEditor: View {
     @State private var color: String
     @State private var makeDefault = false
     @State private var confirmDelete = false
+    @State private var subscription = false
     private let visit: UUID
 
     init(store: CalendarStore, folder: CalendarFolder) {
@@ -115,6 +116,10 @@ private struct CalendarFolderEditor: View {
                     if await store.updateFolder(id: folder.id, revision: revision, fields: fields) { dismiss() }
                 }
             }.disabled(store.busy("folder:" + folder.id) || folder.revision == nil || name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || store.revisionConflict)
+            Section("Calendar subscription") {
+                Button("Subscription link") { subscription = true }
+                    .accessibilityIdentifier("calendar-subscription")
+            }
             Section {
                 Button("Delete calendar", role: .destructive) { confirmDelete = true }.disabled(store.busy("folder:" + folder.id) || folder.revision == nil)
             }
@@ -130,6 +135,15 @@ private struct CalendarFolderEditor: View {
             Button("Keep calendar", role: .cancel) {}
         } message: {
             Text("Events you organize in it will be cancelled and attendees notified. Received invitations will move to your default calendar.")
+        }
+        .sheet(isPresented: $subscription) {
+            NavigationStack {
+                CalendarFeedScreen(store: store, folder: folder)
+                    .toolbar { ToolbarItem(placement: .cancellationAction) { Button("Done") { subscription = false } } }
+            }
+            #if os(macOS)
+            .frame(width: 620, height: 660)
+            #endif
         }
         .onAppear { store.clearError() }
     }

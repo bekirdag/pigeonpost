@@ -15,6 +15,7 @@ struct MacInboxView: View {
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
     @Environment(CalendarStore.self) private var calendar: CalendarStore?
     @Environment(CallHost.self) private var calls
+    @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
 
     /// The conversation being read. The sidebar's selection.
     @State private var peer: String?
@@ -31,6 +32,8 @@ struct MacInboxView: View {
         case peer(Conversation)
         case newGroup, joinLink, calendar
         case join(GroupStore.JoinLink)
+        case meetingLink(CalendarLinkRequest)
+        case deviceApproval(DeviceApprovalRequest)
 
         var id: String {
             switch self {
@@ -41,6 +44,8 @@ struct MacInboxView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .peer(let conversation): return "peer:\(conversation.peer)"
+            case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
+            case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
             }
         }
     }
@@ -85,6 +90,7 @@ struct MacInboxView: View {
             case "new": showingNew = true
             case "new-group": sheet = .newGroup
             case "calendar": sheet = .calendar
+            case "device-approval" where account.features.orgs: sheet = .deviceApproval(DeviceApprovalRequest(code: nil))
             default: break
             }
             guard !Fixtures.enabled else { return }
@@ -144,6 +150,18 @@ struct MacInboxView: View {
             push.pendingPeer = nil
             NSApplication.shared.activate(ignoringOtherApps: true)
         }
+        .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: {
+            sheet = .calendar
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }, visit: visit)
+        .calendarMeetingLinks(canPresent: sheet == nil) { request in
+            sheet = .meetingLink(request)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
+        .deviceApprovalLinks(canPresent: sheet == nil && !showingNew) { request in
+            sheet = .deviceApproval(request)
+            NSApplication.shared.activate(ignoringOtherApps: true)
+        }
         .onReceive(NotificationCenter.default.publisher(for: .refreshInbox)) { _ in
             Task {
                 await inbox.loadAll()
@@ -174,6 +192,8 @@ struct MacInboxView: View {
                 // with no width asks for the narrowest one that fits its longest label.
                 SettingsSheet()
                     .frame(width: 520, height: 620)
+            case .deviceApproval(let request):
+                if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
             case .calendar:
                 if let calendar {
                     CalendarDashboard(store: calendar, joinMeeting: { request in
@@ -181,6 +201,12 @@ struct MacInboxView: View {
                         pendingMeeting = (request, calendar.scopeId)
                         sheet = nil
                     }).id(calendar.scopeId)
+                }
+            case .meetingLink(let link):
+                CalendarLinkEntry(request: link, visit: visit) { request in
+                    guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                    pendingMeeting = (request, calendar.scopeId)
+                    sheet = nil
                 }
             case .newGroup:
                 NewGroupSheet { id in peer = id; subthread = nil }
@@ -209,6 +235,7 @@ struct MacInboxView: View {
     }
 
     private func finishMailboxVisit() {
+        if deviceApprovals?.finishScanner() == true { pendingMailbox = nil; return }
         if let meeting = pendingMeeting {
             pendingMeeting = nil
             guard account.me?.address == meeting.request.mailbox, calendar?.scopeId == meeting.scope,

@@ -10,6 +10,9 @@ struct SettingsSheet: View {
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
     @Environment(Session.self) private var session
+    @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
+    @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
+    @Environment(CallHost.self) private var calls: CallHost?
     @Environment(\.dismiss) private var dismiss
 
     /// One sheet at a time, for the same reason `ConversationsView` has one: stacked
@@ -63,11 +66,20 @@ struct SettingsSheet: View {
             List {
                 Section {
                     destination(.account, icon: "person.crop.circle", detail: session.username ?? "Your profile and devices")
+                    if account.features.orgs, let deviceApprovals {
+                        Button {
+                            deviceApprovals.scanned = DeviceApprovalRequest(code: nil)
+                            dismiss()
+                        } label: { Label("Sign in a machine", systemImage: "desktopcomputer") }
+                        .disabled(calls?.mode != .hidden || calls?.preparingScheduled == true)
+                        .accessibilityIdentifier("device-approval-open")
+                    }
                     if account.features.avatars {
                         destination(.profile, icon: "person.crop.square", detail: "Your picture and who can see it")
                     }
                     #if os(iOS)
-                    Button { sheet = .scan } label: { Label("Scan for login", systemImage: "qrcode.viewfinder") }
+                    Button { sheet = .scan } label: { Label("Scan code", systemImage: "qrcode.viewfinder") }
+                        .accessibilityIdentifier("scan-code")
                     #endif
                 }
                 Section {
@@ -117,7 +129,9 @@ struct SettingsSheet: View {
             if handle == nil { handle = account.handles }
             await handle?.refresh()
         }
-        .sheet(item: $sheet) { which in
+        .sheet(item: $sheet, onDismiss: {
+            if calendarLinks?.scanned != nil || deviceApprovals?.scanned != nil { dismiss() }
+        }) { which in
             switch which {
             case .addSender: ContactSheet(existing: nil)
             case let .edit(contact): ContactSheet(existing: contact)

@@ -20,7 +20,7 @@ swiftc -O -parse-as-library -o "$out/calendar-e2e" \
   Tests/CalendarE2ETests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift Shared/Calendar/CalendarAPI.swift \
-  Shared/Calendar/CalendarDraft.swift Shared/Calendar/CalendarStore.swift
+  Shared/Calendar/CalendarDraft.swift Shared/Calendar/CalendarImport.swift Shared/Calendar/CalendarStore.swift
 node Tests/groups-postbox.mjs "$bin" "$out/setup.json" calendar </dev/null &
 pid=$!
 i=0

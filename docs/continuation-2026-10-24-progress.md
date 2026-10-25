@@ -4,15 +4,77 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 
 ## Current state
 
-Shared baseline #90, enterprise/device-login #83 and message actions #89 are merged. The portal,
-approval page and postbox/reaper now run the reviewed changes; public health and authentication
-checks pass. The web inbox bundle awaits the cache-coupling fix and controlled static rollout.
-#87 is integrated with main at `c3a3f0f`; core/Windows/Mac/group checks pass and its Apple run is
-being qualified. Native round two has committed Apple direct edit/reply/status/privacy screens,
-five passing local UI cases and passing iPhone/Mac builds. Its newer iPad passes; newer iPhone
-keyboard focus and native StoreKit restore assertions need attention. Group actions, calendar,
-enterprise client screens and remaining native platforms are still pending. All native releases
-remain batched, with the owner's Apple pre-submission review hold preserved.
+Inherited #83, #89 and #87 and shared security/operations/web/group fixes are merged. The web
+inbox, enterprise portal and approval page run the controlled coherent asset rollout (base source
+`1132ad76`, tree `1fe9961b…`). The six changed call scripts/HTML entry points additionally run
+merged #98 source `1bace09c`; origin and public verification pass. Postbox/reaper run production source `6950c29`, image
+`pigeonpost-postbox:calendar-notice-e5cea04`; public health and anonymous authorization checks pass.
+
+Apple direct/group edit/reply/status/privacy work is merged in #95. Calendar foundation #96 and
+scheduled native calls #98 are merged after all hosted checks passed. Calendar management #100,
+notice routing #102 and meeting/scanner links #103 are stacked and undergoing full CI. A CI-discovered edit/ordinary-draft input leak is fixed and
+passes local iPhone/iPad keyboard regressions; all three branches include it. A later hosted
+version-history assertion exposed a test replacing text from the beginning without selecting it;
+native Select All passes locally and is carried through the stack for hosted confirmation.
+Independent #101 is merged and deployed with calendar push destinations and separate calendar
+notice/message badge handling. Native notice routing has
+40 parser/ownership checks, four passing navigation cases on each device, strengthened actual
+recipient tests and passing iOS/universal Mac builds; hosted qualification follows.
+
+Calendar link distribution/profile qualification, enterprise native screens, remaining native
+platforms and later SDS phases remain open. Device foundation #104 has 54 model and 47 actual
+transport/authentication checks, a passing shared runner and both builds; it enables no approval
+entry point. The reproduced Session lifetime race is fixed locally with 20 actual Session checks,
+the full shared runner and both builds passing. The remaining Apple stack is being consolidated
+for complete integration CI before fresh native authorization UI is enabled.
+All native releases remain batched. The owner's Claude review
+before Apple App Review and mainland-China removal before a CallKit release remain mandatory.
+Postmark, payment/seller setup, DNS, exposed-secret rotation and owner real-device checks remain
+external prerequisites; none is represented as completed here. Historical checkpoints below
+record their state at the time, rather than the current release status.
+
+### Apple integration qualification — 25 October
+
+- Calendar management, notice/meeting routing, pairing foundation and Session lifetime fixes are
+  consolidated in #105. At `e445231`, the complete hosted phone suite, StoreKit and both Mac
+  jobs pass; the iPad failed only an AX activation-point query for already-visible response text.
+- A separate fixture-only diagnostic branch preserves the Files picker evidence. Its iPad import
+  and cancellation pass. The phone trace reaches picker presentation but no import callback;
+  its screenshot remains on Recents because the cold service appeared after the three-second
+  navigation wait. Export is visibly open while a Save hittability predicate times out. Neither
+  trace shows a parent lifecycle change, so no picker lifecycle guard has been weakened.
+- The test now waits for Files navigation, checks exporter presence independently of Save
+  activation, and verifies invitation response text without querying its activation point. The
+  actual selection/preview, cancellation/return and moved-invitation assertions remain required.
+  All three targeted tests pass on each local device. Hosted qualification of the update follows.
+- Native machine confirmation is isolated in `codex/native-device-ui-20261025`, with fresh
+  sign-in proof and store/UI tests still being qualified. No native app has been submitted.
+- A later hosted iPad import reached the fixture file but did not open it. The grid cell's
+  activation point falls in its filename area; the test now touches the thumbnail on both
+  devices and rechecks an explicit Open action after selection. Selection/preview and export
+  cancellation pass locally on each device. Native machine confirmation is now draft #106:
+  eight UI cases pass per device, Session/proof/store checks and both builds pass, and the
+  serial Mac inbox stress passes 197 checks. Genuine OTP and signed-device evidence stay open.
+- Linux privacy CI found a listener-bind collision, then a new server address matching an
+  earlier client address. Independent #107 keeps fixture listener ports outside the kernel's
+  automatic client range; its complete local privacy gate, concurrent runs and deliberate
+  leak rejection pass. Integration candidates include that test-only fix for hosted validation.
+
+### Call bridge rollout — 25 October
+
+- Deployed exactly `calls.js`, `native-call.js`, and `index.html`, `join.html`, `m.html`,
+  `native-call.html` from merged #98. The source-difference inventory excludes only tests/package
+  metadata; all runtime changes are covered by the candidate manifest.
+- Backed up only those files on Raijin at `/var/backups/pigeonpost/web-calls-20261025T154649Z`,
+  rehearsed restoration on synthetic paths, compared the live baseline and published scripts
+  before their HTML entry points. Origin file hashes and content types pass.
+- Public scripts match exact release hashes. Public HTML differs only by the existing Cloudflare
+  analytics script insertion; after removing that one known line, every document matches the
+  candidate hash. Main/inbox health, association JSON and postbox health/anonymous authorization
+  probes pass. Nginx, association bytes and legacy group-encryption assets are unchanged.
+- Private evidence: `validation/web-calls-{prepare,deploy,public-verification-final}.json`,
+  `web-calls-stage.json` and the scoped rollout scripts in the continuation release directory.
+  No new core image, feature flag, real call or native store submission in this rollout.
 
 ## Intake evidence
 

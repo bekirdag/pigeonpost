@@ -19,6 +19,8 @@ struct PigeonpostMacApp: App {
     @State private var filtered: FilteredMail
     @State private var avatars: AvatarStore
     @State private var calendar: CalendarStore
+    @State private var calendarLinks = CalendarLinkRouter()
+    @State private var deviceApprovals = DeviceApprovalRouter()
 
     init() {
         let session = Session()
@@ -58,6 +60,7 @@ struct PigeonpostMacApp: App {
         WindowGroup {
             MacRootView()
                 .calendarLifecycle()
+                .signedOutCalendarGuests()
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
@@ -68,16 +71,35 @@ struct PigeonpostMacApp: App {
                 .environment(filtered)
                 .environment(avatars)
                 .environment(calendar)
+                .environment(calendarLinks)
+                .environment(deviceApprovals)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
+                .environment(\.openURL, OpenURLAction { url in
+                    if let code = DevicePairingLink.code(in: url) { deviceApprovals.receive(code); return .handled }
+                    guard let link = CalendarLink(url: url) else { return .systemAction }
+                    calendarLinks.receive(link, signedIn: session.status == .signedIn)
+                    return .handled
+                })
                 .onOpenURL { url in
-                    if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+                    if let code = DevicePairingLink.code(in: url) { deviceApprovals.receive(code) }
+                    else if let link = GroupStore.JoinLink(url: url) { groups.pendingJoin = link }
+                    else if let link = CalendarLink(url: url) { calendarLinks.receive(link, signedIn: session.status == .signedIn) }
                 }
+                .onContinueUserActivity(NSUserActivityTypeBrowsingWeb) { activity in
+                    if let url = activity.webpageURL, let code = DevicePairingLink.code(in: url) { deviceApprovals.receive(code) }
+                }
+                .onChange(of: session.status) { _, status in if status == .signedOut { deviceApprovals.clear() } }
                 // Wide enough for a sidebar and a thread without either being useless. A window
                 // that opens too narrow to show both is a split view nobody benefits from.
                 .frame(minWidth: 900, minHeight: 560)
                 #if DEBUG
-                .task { StoreShotWindow.apply() }
+                .task {
+                    StoreShotWindow.apply()
+                    CalendarFixtures.stageNotice(push: MacPushDelegate.service, account: account)
+                    CalendarFixtures.stageMeetingLink(router: calendarLinks)
+                    DeviceApprovalFixtures.stage(router: deviceApprovals)
+                }
                 #endif
         }
         .defaultSize(width: 1100, height: 720)

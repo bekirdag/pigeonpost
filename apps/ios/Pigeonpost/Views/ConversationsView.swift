@@ -19,6 +19,8 @@ struct ConversationsView: View {
     @Environment(CallLog.self) private var callLog: CallLog?
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
     @Environment(CalendarStore.self) private var calendar: CalendarStore?
+    @Environment(CalendarLinkRouter.self) private var calendarLinks: CalendarLinkRouter?
+    @Environment(DeviceApprovalRouter.self) private var deviceApprovals: DeviceApprovalRouter?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -43,6 +45,8 @@ struct ConversationsView: View {
         case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar
         case peer(Conversation)
         case join(GroupStore.JoinLink)
+        case meetingLink(CalendarLinkRequest)
+        case deviceApproval(DeviceApprovalRequest)
 
         init?(staged: String) {
             switch staged {
@@ -54,6 +58,7 @@ struct ConversationsView: View {
             case "scanner": self = .scanner
             case "new-group": self = .newGroup
             case "calendar": self = .calendar
+            case "device-approval": self = .deviceApproval(DeviceApprovalRequest(code: nil))
             default: return nil
             }
         }
@@ -71,6 +76,8 @@ struct ConversationsView: View {
             case .filtered: return "filtered"
             case .calendar: return "calendar"
             case .peer(let conversation): return "peer:" + conversation.peer
+            case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
+            case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
             }
         }
     }
@@ -139,11 +146,16 @@ struct ConversationsView: View {
             selection = peer
             push.pendingPeer = nil
         }
+        .calendarNotices(canPresent: sheet == nil || sheet?.id == "calendar", open: { sheet = .calendar }, visit: visit)
+        .calendarMeetingLinks(canPresent: sheet == nil) { sheet = .meetingLink($0) }
+        .deviceApprovalLinks(canPresent: sheet == nil) { sheet = .deviceApproval($0) }
         .sheet(item: $sheet, onDismiss: finishMailboxVisit) { which in
             switch which {
             case .identities:
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
+            case .deviceApproval(let request):
+                if account.features.orgs { DeviceApprovalScreen(session: account.session, code: request.code).id(request.id) }
             case .calendar:
                 if let calendar {
                     CalendarDashboard(store: calendar, joinMeeting: { request in
@@ -151,6 +163,12 @@ struct ConversationsView: View {
                         pendingMeeting = (request, calendar.scopeId)
                         sheet = nil
                     }).id(calendar.scopeId)
+                }
+            case .meetingLink(let link):
+                CalendarLinkEntry(request: link, visit: visit) { request in
+                    guard let calendar, calendar.mailbox == request.mailbox, account.me?.address == request.mailbox else { return }
+                    pendingMeeting = (request, calendar.scopeId)
+                    sheet = nil
                 }
             case .scanner: ScanView()
             case .calls:
@@ -231,6 +249,8 @@ struct ConversationsView: View {
             Task { await calls.joinScheduled(meeting.request) }
             return
         }
+        if calendarLinks?.finishScanner() == true { pendingMailbox = nil; return }
+        if deviceApprovals?.finishScanner() == true { pendingMailbox = nil; return }
         guard let mailbox = pendingMailbox else { return }
         pendingMailbox = nil
         guard account.mailboxes.contains(where: { $0.address == mailbox.address }) else { return }
@@ -411,11 +431,18 @@ struct ConversationsView: View {
             }
         }
         ToolbarItem(placement: .topBarTrailing) {
-            if groups.enabled {
+            if groups.enabled || account.features.orgs {
                 Menu {
                     Button { sheet = .new } label: { Label("New conversation", systemImage: "square.and.pencil") }
-                    Button { sheet = .newGroup } label: { Label("New group", systemImage: "person.3") }
-                    Button { sheet = .joinLink } label: { Label("Join with a link", systemImage: "link") }
+                    if groups.enabled {
+                        Button { sheet = .newGroup } label: { Label("New group", systemImage: "person.3") }
+                        Button { sheet = .joinLink } label: { Label("Join with a link", systemImage: "link") }
+                    }
+                    if account.features.orgs {
+                        Button { sheet = .deviceApproval(DeviceApprovalRequest(code: nil)) } label: { Label("Sign in a machine", systemImage: "desktopcomputer") }
+                            .disabled(calls.mode != .hidden || calls.preparingScheduled)
+                            .accessibilityIdentifier("device-approval-open")
+                    }
                 } label: {
                     Image(systemName: "square.and.pencil").foregroundStyle(Theme.secondary)
                 }

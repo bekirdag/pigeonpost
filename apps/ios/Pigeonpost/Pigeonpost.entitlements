@@ -8,6 +8,10 @@
 	     postbox which one minted the token it is registering. -->
 	<key>aps-environment</key>
 	<string>development</string>
+	<key>com.apple.developer.associated-domains</key>
+	<array>
+		<string>applinks:inbox.pigeonpost.dev</string>
+	</array>
 	<!-- Sign in with Apple through the system sheet. The App ID is the primary one for the
 	     `dev.pigeonpost.signin` Services ID the realm's web flow uses, so both give the same Apple
 	     user id. -->

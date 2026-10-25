@@ -23,6 +23,7 @@ final class CalendarStore {
     private(set) var revisionConflict = false
     var isOpen = false
     var openEvent: CalendarEventKey?
+    var pendingNavigation: CalendarEventKey?
 
     private var generation = UUID()
     private var refreshId = UUID()
@@ -60,7 +61,7 @@ final class CalendarStore {
         folders = []; occurrences = []; invitations = []; filteredInvitations = []
         settings = CalendarSettings(); details = [:]; detailReads = [:]; operations = [:]; attempts = [:]
         preservingMutationError = false
-        selectedFolders = nil; loading = false; lastError = nil; revisionConflict = false; openEvent = nil; followingToday = true
+        selectedFolders = nil; loading = false; lastError = nil; revisionConflict = false; openEvent = nil; pendingNavigation = nil; followingToday = true
         selectedDay = CalendarDay(date: now(), zone: .current)
     }
 
@@ -186,6 +187,25 @@ final class CalendarStore {
         }
     }
 
+    /// A read may finish after a mailbox switch or view cancellation. Never publish it into the
+    /// next identity, or acknowledge an unrelated failed write just because a read succeeded.
+    private func readScoped<T>(_ name: String, eventId: String? = nil, _ body: (String) async throws -> T) async -> T? {
+        guard enabled, let mailbox, operations[name] == nil, !Task.isCancelled else { return nil }
+        let visit = generation, operation = UUID()
+        operations[name] = operation
+        defer { if generation == visit && operations[name] == operation { operations[name] = nil } }
+        do {
+            let result = try await body(mailbox)
+            guard generation == visit, operations[name] == operation, !Task.isCancelled else { return nil }
+            return result
+        } catch {
+            guard generation == visit, operations[name] == operation, !Task.isCancelled else { return nil }
+            if (error as? APIError)?.status == 404, let eventId { forgetEvent(eventId) }
+            report(error)
+            return nil
+        }
+    }
+
     func createEvent(fields: [String: Any]) async -> CalendarEventResponse? {
         await mutation("create-event") { mailbox in
             let (intent, attempt) = try createAttempt(kind: "event", fields: fields)
@@ -270,6 +290,63 @@ final class CalendarStore {
     func guestLink(id: String, attendee: String) async -> CalendarGuestLink? {
         await mutation("guest-link:" + attendee) { mailbox in
             try await client.calendarGuestLink(mailbox: mailbox, id: id, attendee: attendee)
+        }
+    }
+
+    func changeAttendees(key: CalendarEventKey, revision: Int, scope: CalendarAnswerScope,
+                         adding: [[String: Any]], removing: [String]) async -> Bool {
+        await mutation("event:" + key.eventId) { mailbox in
+            try await client.calendarAttendees(mailbox: mailbox, id: key.eventId, revision: revision,
+                scope: scope, occurrenceId: scope == .this ? key.occurrenceId : nil, adding: adding, removing: removing)
+            return true
+        } ?? false
+    }
+
+    func placeInvitation(id: String, calendar: String) async -> Bool {
+        await mutation("placement:" + id) { mailbox in
+            try await client.moveCalendarInvitation(mailbox: mailbox, id: id, calendar: calendar)
+            return true
+        } ?? false
+    }
+
+    func linkGroup(id: String, revision: Int, group: String?) async -> Bool {
+        await mutation("event:" + id) { mailbox in
+            try await client.linkCalendarGroup(mailbox: mailbox, id: id, revision: revision, group: group)
+            return true
+        } ?? false
+    }
+
+    func feedStatus(id: String) async -> CalendarFeed? {
+        await readScoped("feed:" + id) { mailbox in
+            var status = try await client.calendarFeed(mailbox: mailbox, id: id)
+            status.url = nil
+            return status
+        }
+    }
+
+    func changeFeed(id: String, enabled: Bool, projection: String) async -> CalendarFeed? {
+        await mutation("feed:" + id) { mailbox in
+            try await client.setCalendarFeed(mailbox: mailbox, id: id, enabled: enabled, projection: projection)
+        }
+    }
+
+    func exportEvent(id: String) async -> Data? {
+        await readScoped("export:" + id, eventId: id) { mailbox in
+            try await client.calendarICS(mailbox: mailbox, id: id)
+        }
+    }
+
+    func previewImport(data: Data, calendar: String?) async -> CalendarImportPreview? {
+        // Preview may create the default calendar, so refresh the folder list afterwards.
+        await mutation("import-preview") { mailbox in
+            try await client.previewCalendarImport(mailbox: mailbox, data: data, calendar: calendar)
+        }
+    }
+
+    func confirmImport(draft: String, selected: [Int], calendar: String) async -> CalendarImportResult? {
+        await mutation("import-confirm:" + draft) { mailbox in
+            try await client.confirmCalendarImport(mailbox: mailbox, draft: draft,
+                selected: Array(Set(selected)).sorted(), calendar: calendar)
         }
     }
 

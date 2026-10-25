@@ -24,6 +24,8 @@ failures do not consume an enrollment code or start a pairing.
 ## Screens
 
 1. `POST /v1/device-pairings/resolve {user_code}` with the signed-in member token.
+   The response includes `state: pending|approved|denied` and `creates_agent`. `address` is null
+   when approval would create the agent; show that creation explicitly before asking for approval.
 2. Confirmation screen, one primary action:
    - organization name, the agent handle (prominent), the machine label, requested access
      (`capabilities`), approximate location from `ip_country` labelled "from the network; not proof
@@ -37,6 +39,8 @@ failures do not consume an enrollment code or start a pairing.
 3. Approve: `POST /v1/device-pairings/{pairing_id}/approve {user_code}`; Deny: `…/deny`.
 4. End states: approved ("You can close this; the machine is signing in"), denied, expired
    (`pairing_expired`), not found (`pairing_not_found`), rate limited (`429`, honour `Retry-After`).
+   Resolve again after a deny acknowledgment, which by itself does not prove that a concurrent
+   approval did not already win. A decided or unrecognized state must not offer another approval.
 
 ## Step-up
 

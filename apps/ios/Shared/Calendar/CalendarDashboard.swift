@@ -8,7 +8,7 @@ struct CalendarDashboard: View {
     @State private var panel: Panel?
 
     private enum Panel: Identifiable {
-        case event(CalendarEventKey), new, invitations, settings, calendars
+        case event(CalendarEventKey), new, invitations, settings, calendars, importing
         var id: String {
             switch self {
             case .event(let key): return "event:" + key.id
@@ -16,6 +16,7 @@ struct CalendarDashboard: View {
             case .invitations: return "invitations"
             case .settings: return "settings"
             case .calendars: return "calendars"
+            case .importing: return "import"
             }
         }
     }
@@ -44,9 +45,10 @@ struct CalendarDashboard: View {
         .font(.geist(14))
         .tint(Theme.navy)
         .onAppear { store.isOpen = true }
-        .onDisappear { store.isOpen = false; store.openEvent = nil }
+        .onDisappear { store.isOpen = false; store.openEvent = nil; store.pendingNavigation = nil }
         .onChange(of: store.scopeId) { _, _ in panel = nil }
-        .sheet(item: $panel) { which in
+        .onChange(of: store.pendingNavigation, initial: true) { _, _ in openPendingNotice() }
+        .sheet(item: $panel, onDismiss: openPendingNotice) { which in
             Group {
                 switch which {
                 case .new:
@@ -55,6 +57,7 @@ struct CalendarDashboard: View {
                 case .invitations: CalendarInvitationsScreen(store: store, joinMeeting: joinMeeting)
                 case .settings: CalendarSettingsScreen(store: store)
                 case .calendars: CalendarFoldersScreen(store: store)
+                case .importing: CalendarImportScreen(store: store)
                 }
             }
             .id(store.scopeId)
@@ -67,10 +70,19 @@ struct CalendarDashboard: View {
         #endif
     }
 
+    private func openPendingNotice() {
+        // An open editor/detail owns its presentation. Queue the notice until it closes.
+        guard panel == nil, store.enabled, store.mailbox == account.me?.address,
+              let key = store.pendingNavigation else { return }
+        store.pendingNavigation = nil
+        panel = .event(key)
+    }
+
     private var optionsMenu: some View {
         Menu {
             Button("Invitations") { panel = .invitations }
             Button("Manage calendars") { panel = .calendars }
+            Button("Import calendar file") { panel = .importing }.accessibilityIdentifier("calendar-import-file")
             Button("Calendar settings") { panel = .settings }
             Button("Refresh") { Task { await store.refresh() } }
         } label: { Label("Calendar options", systemImage: "ellipsis.circle") }

@@ -8,6 +8,21 @@ out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
+swiftc -O -DDEBUG -parse-as-library -o "$out/session-lifetime" Tests/SessionLifetimeTests.swift Shared/Config.swift \
+  Shared/API/APIError.swift Shared/Auth/StrongSignIn.swift Shared/Auth/Session.swift
+"$out/session-lifetime"
+swiftc -O -parse-as-library -o "$out/strong-signin" Tests/StrongSignInTests.swift Shared/Config.swift Shared/API/APIError.swift Shared/Auth/StrongSignIn.swift
+"$out/strong-signin"
+swiftc -O -parse-as-library -o "$out/device-pairing" Tests/DevicePairingTests.swift Shared/Enterprise/DevicePairingModels.swift
+"$out/device-pairing"
+swiftc -O -parse-as-library -o "$out/postbox-auth" Tests/PostboxAuthenticationTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Enterprise/DevicePairingModels.swift Shared/Enterprise/DevicePairingAPI.swift
+"$out/postbox-auth"
+swiftc -O -parse-as-library -o "$out/device-approval" Tests/DeviceApprovalStoreTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Enterprise/DevicePairingModels.swift Shared/Enterprise/DevicePairingAPI.swift Shared/Enterprise/DeviceApprovalStore.swift
+"$out/device-approval"
 swiftc -O -o "$out/thread-model" \
   Tests/main.swift \
   Shared/API/Models.swift \
@@ -38,9 +53,22 @@ swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/API
 swiftc -O -parse-as-library -o "$out/calendar" Tests/CalendarTests.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift
 "$out/calendar"
+swiftc -O -parse-as-library -o "$out/calendar-notices" Tests/CalendarNoticeTests.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarNotice.swift
+"$out/calendar-notices"
+swiftc -O -parse-as-library -o "$out/calendar-links" Tests/CalendarLinkTests.swift \
+  Shared/Calendar/CalendarLink.swift Shared/Calendar/CalendarMeetingModels.swift
+"$out/calendar-links"
+swiftc -O -parse-as-library -o "$out/calendar-meeting-lookup" Tests/CalendarMeetingLookupTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Calendar/CalendarLink.swift Shared/Calendar/CalendarMeetingModels.swift Shared/Calendar/CalendarMeetingLookup.swift
+"$out/calendar-meeting-lookup"
 swiftc -O -parse-as-library -o "$out/calendar-draft" Tests/CalendarDraftTests.swift Shared/API/APIError.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift Shared/Calendar/CalendarDraft.swift
 "$out/calendar-draft"
+swiftc -O -parse-as-library -o "$out/calendar-import" Tests/CalendarImportTests.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarImport.swift
+"$out/calendar-import"
 swiftc -O -parse-as-library -o "$out/calendar-api" Tests/CalendarAPITests.swift Shared/Config.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarAPI.swift

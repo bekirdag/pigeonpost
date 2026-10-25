@@ -8,6 +8,7 @@ import WebKit
 
 @MainActor @Observable final class PushService {
     var pendingPeer: String?
+    var pendingCalendar: CalendarNotice?
     var onGroupPush: ((String) -> Void)?
     func attach(to account: Account) {}
     func attach(to inbox: Inbox) {}
@@ -23,6 +24,11 @@ enum DockBadge { static func show(_ count: Int) {} }
     func show(unread: Int) {}
 }
 struct SettingsSheet: View { var body: some View { Text("Settings") } }
+struct DeviceApprovalScreen: View {
+    let session: Session
+    let code: DevicePairingCode?
+    var body: some View { Text("Machine approval") }
+}
 struct PeerInfoSheet: View {
     let conversation: Conversation
     let visit: (Mailbox) -> Void

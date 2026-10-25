@@ -17,6 +17,7 @@ import UIKit
 final class PushService: NSObject {
     /// Where a tapped notification wants to go. The conversation list watches this and opens it.
     var pendingPeer: String?
+    var pendingCalendar: CalendarNotice?
     /// A group's push (its `peer` is the group id): the screen syncs that group at once.
     var onGroupPush: ((String) -> Void)?
 
@@ -241,6 +242,14 @@ extension PushService: UNUserNotificationCenterDelegate {
         }
         let peer = info["peer"] as? String
         let messageId = info["message_id"] as? String ?? notification.request.identifier
+        if CalendarNotice.matches(info, messageId: messageId) {
+            return await MainActor.run {
+                guard let notice = CalendarNotice(payload: info, messageId: messageId),
+                      let account = self.account, account.session.status == .signedIn,
+                      notice.belongs(to: account.mailboxes.map(\.address)) else { return [] }
+                return [.banner, .sound]
+            }
+        }
         await MainActor.run {
             if let peer, peer.hasPrefix("grp_") { self.onGroupPush?(peer) }
             guard let peer, let inbox = self.inbox else { return }
@@ -274,6 +283,13 @@ extension PushService: UNUserNotificationCenterDelegate {
                 // app; the window is enough.
                 guard let ring, let calls = self.calls else { return }
                 calls.respond(to: ring, action: action)
+            }
+            return
+        }
+        let messageId = response.notification.request.identifier
+        if CalendarNotice.matches(info, messageId: messageId) {
+            await MainActor.run {
+                self.pendingCalendar = CalendarNotice(payload: info, messageId: messageId)
             }
             return
         }

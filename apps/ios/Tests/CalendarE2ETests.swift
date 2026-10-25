@@ -90,6 +90,14 @@ struct CalendarE2ETests {
             try await bob.calendarRSVP(mailbox: b, id: id, status: .accepted, scope: .this, occurrenceId: first.occurrenceId, note: "I can join")
             let accepted = try await bob.calendarEvent(mailbox: b, id: id, occurrenceId: first.occurrenceId)
             check(accepted.occurrence?.myRsvp == "accepted", "an occurrence-only response reaches the native detail")
+            let bobFolder = try await bob.createCalendar(mailbox: b, name: "Personal", color: "green", requestKey: "native_personal")
+            let bobManagement = CalendarStore(client: bob)
+            bobManagement.configure(mailbox: b, enabled: true, emailEnabled: false)
+            check(await bobManagement.placeInvitation(id: id, calendar: bobFolder.id), "the native store places an invitation in the attendee's own calendar")
+            let placed = try await bob.calendarEvent(mailbox: b, id: id, occurrenceId: first.occurrenceId)
+            let organizerAfterPlacement = try await alice.calendarEvent(mailbox: a, id: id)
+            check(placed.event.my?.calendarId == bobFolder.id && placed.occurrence?.myRsvp == "accepted"
+                  && organizerAfterPlacement.event.calendarId == folder.id, "placement changes only the attendee's calendar, preserving the response and organizer's destination")
             let afterAnswer = try await bob.calendarInvitations(mailbox: b, filtered: true)
             check(!afterAnswer.contains { $0.eventId == id }, "answering a filtered invitation removes it from Filtered")
             let contactsAfter = try await bob.contacts(identity: b).contacts ?? []
@@ -119,34 +127,47 @@ struct CalendarE2ETests {
             removedStore.configure(mailbox: b, enabled: true, emailEnabled: false)
             _ = await removedStore.loadEvent(key)
             check(removedStore.details[key] != nil, "the member's native cache contains the authorized event before removal")
-            try await alice.calendarAttendees(mailbox: a, id: id, revision: moved.event.revision!, scope: .all, occurrenceId: nil, adding: [], removing: [bobView.event.my!.attendeeId!])
+            let management = CalendarStore(client: alice)
+            management.configure(mailbox: a, enabled: true, emailEnabled: false)
+            check(await management.changeAttendees(key: key, revision: moved.event.revision!, scope: .all, adding: [], removing: [bobView.event.my!.attendeeId!]),
+                  "the native store removes an attendee using the captured event revision")
             _ = await removedStore.loadEvent(key)
             check(removedStore.details.isEmpty, "a removed attendee cannot retain a fetched event in the native cache")
             try await alice.calendarReminders(mailbox: a, id: id, reminders: [.init(minutesBefore: 5, channel: "push"), .init(minutesBefore: 60, channel: "push")])
             let reminded = try await alice.calendarEvent(mailbox: a, id: id)
             check(Set((reminded.event.reminders ?? []).map(\.minutesBefore)) == [5, 60], "multiple native reminders survive a real write/read round trip")
+            check(await management.changeAttendees(key: key, revision: reminded.event.revision!, scope: .all, adding: [["handle": b]], removing: []),
+                  "an organizer can explicitly invite the removed attendee again")
+            let restored = try await bob.calendarEvent(mailbox: b, id: id)
+            check(restored.event.my?.attendeeId != nil, "reinvitation restores access without adding a contact")
+            let beforeUnlink = try await alice.calendarEvent(mailbox: a, id: id)
+            check(await management.linkGroup(id: id, revision: beforeUnlink.event.revision!, group: nil), "the native store can explicitly clear a linked group")
             let initialSettings = try await alice.calendarSettings(mailbox: a)
             _ = try await alice.saveCalendarSettings(mailbox: a, fields: ["timezone": zone.identifier])
             let privateSettings = try await alice.saveCalendarSettings(mailbox: a, fields: ["previews": false])
             check(privateSettings.previews == false && privateSettings.timezone == zone.identifier && privateSettings.weekStart == initialSettings.weekStart, "a privacy-only settings save preserves timezone and week start on the server")
-            let feed = try await alice.setCalendarFeed(mailbox: a, id: folder.id, enabled: true, projection: "busy")
-            let feedRead = try await alice.calendarFeed(mailbox: a, id: folder.id)
-            check(feedRead.enabled == true && feedRead.url == nil, "subscription links are shown once and not returned by later native reads")
-            guard let feedText = feed.url, let feedURL = URL(string: feedText), loopback(feedURL, origin: base) else { throw APIError(status: 0, code: "fixture_feed_origin", detail: nil) }
+            let feed = await management.changeFeed(id: folder.id, enabled: true, projection: "busy")
+            let feedRead = await management.feedStatus(id: folder.id)
+            check(feedRead?.enabled == true && feedRead?.url == nil, "subscription links are shown once and not returned by later native store reads")
+            guard let feedText = feed?.url, let feedURL = URL(string: feedText), loopback(feedURL, origin: base) else { throw APIError(status: 0, code: "fixture_feed_origin", detail: nil) }
             let http = URLSession(configuration: .ephemeral)
             let (feedBytes, feedResponse) = try await http.data(from: feedURL)
             let exported = String(decoding: feedBytes, as: UTF8.self)
             check((feedResponse as? HTTPURLResponse)?.statusCode == 200 && exported.contains("SUMMARY:Busy") && !exported.contains("Native review"), "the busy subscription hides titles from a real bearer-link request")
-            _ = try await alice.setCalendarFeed(mailbox: a, id: folder.id, enabled: false, projection: "busy")
+            _ = await management.changeFeed(id: folder.id, enabled: false, projection: "busy")
             let (_, revoked) = try await http.data(from: feedURL)
             check((revoked as? HTTPURLResponse)?.statusCode != 200, "revoking a feed invalidates the previously copied link")
             let rawICS = Data("BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:external-example\r\nDTSTAMP:20261025T000000Z\r\nDTSTART;VALUE=DATE:20261101\r\nDTEND;VALUE=DATE:20261102\r\nSUMMARY:Imported private copy\r\nATTENDEE:mailto:never-send@calendar.test\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n".utf8)
-            let preview = try await alice.previewCalendarImport(mailbox: a, data: rawICS, calendar: folder.id)
-            check(preview.events?.count == 1, "native import previews real ICS without sending invitations")
-            let imported = try await alice.confirmCalendarImport(mailbox: a, draft: preview.draftId, selected: [0], calendar: folder.id)
+            guard let preview = await management.previewImport(data: rawICS, calendar: folder.id) else { throw APIError(status: 0, code: "fixture_import_preview", detail: nil) }
+            check(preview.events?.count == 1 && preview.calendarId == folder.id && preview.events?.first?.importable == true, "native import previews real ICS with its resolved calendar and importability decision")
+            guard let imported = await management.confirmImport(draft: preview.draftId, selected: [0, 0], calendar: folder.id) else { throw APIError(status: 0, code: "fixture_import_confirm", detail: nil) }
             check(imported.created?.count == 1, "import confirms the selected private copy")
             let privateCopy = try await alice.calendarEvent(mailbox: a, id: imported.created!.first!.id)
             check(privateCopy.event.attendees?.isEmpty == true, "a fetched imported event has no imported attendees")
+            let importedReplay = await management.confirmImport(draft: preview.draftId, selected: [0], calendar: folder.id)
+            check(importedReplay?.created?.first?.id == imported.created?.first?.id, "the real native store replays a confirmed import without another private copy")
+            let nativeExport = await management.exportEvent(id: id)
+            check(nativeExport != nil && !String(decoding: nativeExport!, as: UTF8.self).contains("private-guest@calendar.test"), "the native export store preserves the current caller's private projection")
 
             let lossClient = client("alice", at: proxy)
             let lossStore = CalendarStore(client: lossClient)
@@ -168,6 +189,21 @@ struct CalendarE2ETests {
             let attempts = evidence["attempts"] ?? []
             check(attempts.count >= 2 && Set(attempts.compactMap { $0["sha"] as? String }).count == 1 && Set(attempts.compactMap { $0["requestKey"] as? String }).count == 1,
                   "all real loss-proxy attempts retain exact body bytes and request identity")
+            let lossICS = Data(String(decoding: rawICS, as: UTF8.self).replacingOccurrences(of: "Imported private copy", with: "Import response lost").utf8)
+            guard let lossPreview = await management.previewImport(data: lossICS, calendar: folder.id) else { throw APIError(status: 0, code: "fixture_import_preview", detail: nil) }
+            let frozenImport = try CalendarImportConfirmation(preview: lossPreview, selected: [0])
+            control.httpBody = Data(#"{"mode":"after"}"#.utf8); _ = try await http.data(for: control)
+            let lostImport = await lossStore.confirmImport(draft: frozenImport.draft, selected: frozenImport.selected, calendar: frozenImport.calendar)
+            check(lostImport == nil, "a dropped response after real import commit stays unconfirmed")
+            control.httpBody = Data(#"{"mode":"off"}"#.utf8); _ = try await http.data(for: control)
+            let recoveredImport = await lossStore.confirmImport(draft: frozenImport.draft, selected: frozenImport.selected, calendar: frozenImport.calendar)
+            check(recoveredImport?.created?.count == 1, "retrying the frozen import recovers its committed result")
+            listed = try await alice.calendarOccurrences(mailbox: a, from: from, to: to)
+            check(listed.filter { $0.title == "Import response lost" }.count == 1, "a real lost-response import retry creates exactly one private copy")
+            let (importEvidence, _) = try await http.data(from: proxy.appendingPathComponent("__test/attempts"))
+            let importAttempts = (try JSONSerialization.jsonObject(with: importEvidence) as! [String: [[String: Any]]])["attempts"] ?? []
+            check(importAttempts.count >= 2 && Set(importAttempts.compactMap { $0["sha"] as? String }).count == 1
+                  && Set(importAttempts.compactMap { $0["draft"] as? String }) == [frozenImport.draft], "real import retries keep exact confirmation bytes and the original draft")
             http.invalidateAndCancel()
         } catch let error as APIError { check(false, "real postbox error: " + String(error.status) + " " + (error.code ?? "unknown")) }
         catch { check(false, "unexpected real postbox failure: " + String(describing: type(of: error))) }

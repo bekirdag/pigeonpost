@@ -101,11 +101,12 @@ const lossProxy = http.createServer(async (req, res) => {
     }
     const message = req.method === "POST" && /^\/v1\/groups\/[^/]+\/messages$/.test(req.url);
     const calendarCreate = calendarMode && req.method === "POST" && req.url === "/v1/calendar/events";
+    const calendarConfirm = calendarMode && req.method === "POST" && /^\/v1\/calendar\/import\/[^/]+\/confirm$/.test(req.url);
     let evidence;
-    if (message || calendarCreate) {
+    if (message || calendarCreate || calendarConfirm) {
       const body = JSON.parse(bytes.toString());
       evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"),
-        ...(calendarCreate ? { requestKey: body.request_key } : { cmid: body.client_message_id }), status: null };
+        ...(calendarCreate ? { requestKey: body.request_key } : calendarConfirm ? { draft: req.url.split("/")[4] } : { cmid: body.client_message_id }), status: null };
       attempts.push(evidence);
       if (lossMode === "before") { req.socket.destroy(); return; }
     }
@@ -114,7 +115,7 @@ const lossProxy = http.createServer(async (req, res) => {
       ...(["GET", "HEAD"].includes(req.method) ? {} : { body: bytes }) });
     const response = Buffer.from(await upstream.arrayBuffer());
     if (evidence) evidence.status = upstream.status;
-    if ((message || calendarCreate) && lossMode === "after") { req.socket.destroy(); return; }
+    if ((message || calendarCreate || calendarConfirm) && lossMode === "after") { req.socket.destroy(); return; }
     res.writeHead(upstream.status, { "content-type": upstream.headers.get("content-type") || "application/octet-stream" });
     res.end(response);
   } catch (_) { if (!res.destroyed) { res.writeHead(502); res.end(); } }
