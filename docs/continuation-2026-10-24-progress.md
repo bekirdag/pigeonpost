@@ -5,13 +5,14 @@ Plan: [Continuation plan](continuation-2026-10-24-plan.md).
 ## Current state
 
 Inherited #83, #89 and #87 and shared security/operations/web/group fixes are merged. The web
-inbox, enterprise portal and approval page run the controlled coherent asset rollout (source
-`1132ad76`, tree `1fe9961b…`). Postbox/reaper run production source `6950c29`, image
+inbox, enterprise portal and approval page run the controlled coherent asset rollout (base source
+`1132ad76`, tree `1fe9961b…`). The six changed call scripts/HTML entry points additionally run
+merged #98 source `1bace09c`; origin and public verification pass. Postbox/reaper run production source `6950c29`, image
 `pigeonpost-postbox:calendar-notice-e5cea04`; public health and anonymous authorization checks pass.
 
-Apple direct/group edit/reply/status/privacy work is merged in #95. Calendar foundation #96,
-scheduled native calls #98 and calendar participants/placement/import/export/feed controls #100
-are stacked and undergoing full CI. A CI-discovered edit/ordinary-draft input leak is fixed and
+Apple direct/group edit/reply/status/privacy work is merged in #95. Calendar foundation #96 and
+scheduled native calls #98 are merged after all hosted checks passed. Calendar management #100,
+notice routing #102 and meeting/scanner links #103 are stacked and undergoing full CI. A CI-discovered edit/ordinary-draft input leak is fixed and
 passes local iPhone/iPad keyboard regressions; all three branches include it. A later hosted
 version-history assertion exposed a test replacing text from the beginning without selecting it;
 native Select All passes locally and is carried through the stack for hosted confirmation.
@@ -20,12 +21,33 @@ notice/message badge handling. Native notice routing has
 40 parser/ownership checks, four passing navigation cases on each device, strengthened actual
 recipient tests and passing iOS/universal Mac builds; hosted qualification follows.
 
-Calendar guest/meeting URL entry, enterprise native screens, remaining native platforms and
-later SDS phases remain open. All native releases remain batched. The owner's Claude review
+Calendar link distribution/profile qualification, enterprise native screens, remaining native
+platforms and later SDS phases remain open. Device foundation #104 has 54 model and 47 actual
+transport/authentication checks, a passing shared runner and both builds; it enables no approval
+entry point. The reproduced Session lifetime race is fixed locally with 20 actual Session checks,
+the full shared runner and both builds passing. The remaining Apple stack is being consolidated
+for complete integration CI before fresh native authorization UI is enabled.
+All native releases remain batched. The owner's Claude review
 before Apple App Review and mainland-China removal before a CallKit release remain mandatory.
 Postmark, payment/seller setup, DNS, exposed-secret rotation and owner real-device checks remain
 external prerequisites; none is represented as completed here. Historical checkpoints below
 record their state at the time, rather than the current release status.
+
+### Call bridge rollout — 25 October
+
+- Deployed exactly `calls.js`, `native-call.js`, and `index.html`, `join.html`, `m.html`,
+  `native-call.html` from merged #98. The source-difference inventory excludes only tests/package
+  metadata; all runtime changes are covered by the candidate manifest.
+- Backed up only those files on Raijin at `/var/backups/pigeonpost/web-calls-20261025T154649Z`,
+  rehearsed restoration on synthetic paths, compared the live baseline and published scripts
+  before their HTML entry points. Origin file hashes and content types pass.
+- Public scripts match exact release hashes. Public HTML differs only by the existing Cloudflare
+  analytics script insertion; after removing that one known line, every document matches the
+  candidate hash. Main/inbox health, association JSON and postbox health/anonymous authorization
+  probes pass. Nginx, association bytes and legacy group-encryption assets are unchanged.
+- Private evidence: `validation/web-calls-{prepare,deploy,public-verification-final}.json`,
+  `web-calls-stage.json` and the scoped rollout scripts in the continuation release directory.
+  No new core image, feature flag, real call or native store submission in this rollout.
 
 ## Intake evidence
 

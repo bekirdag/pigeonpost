@@ -9,6 +9,7 @@
 import AuthenticationServices
 import CryptoKit
 import Foundation
+import Observation
 #if canImport(UIKit)
 import UIKit
 #elseif canImport(AppKit)
@@ -41,6 +42,8 @@ final class Session {
     enum Status: Equatable { case signedOut, signedIn }
 
     private(set) var status: Status
+    /// Changes on a new authorization or local retirement, including a return to the same person.
+    private(set) var authorizationId = UUID()
     /// Set when a sign-in attempt failed, so the signed-out screen can say why rather than simply
     /// returning to itself — a misconfigured redirect URI is otherwise indistinguishable from a
     /// wrong password.
@@ -53,16 +56,22 @@ final class Session {
     /// twice. The realm rotates them, so the second spender loses and the session dies for no
     /// reason.
     private var refreshTask: Task<String, Error>?
+    private var refreshTaskId: UUID?
+    private var authorizationAttempt: UUID?
 
     private let anchor = PresentationAnchor()
     private var webSession: ASWebAuthenticationSession?
+    private let network: URLSession
+    private let browserAuthorization: (@MainActor (URL) async throws -> URL)?
 
     private enum Key {
         static let access = "access_token"
         static let refresh = "refresh_token"
     }
 
-    init() {
+    init(network: URLSession = .shared, browserAuthorization: (@MainActor (URL) async throws -> URL)? = nil) {
+        self.network = network
+        self.browserAuthorization = browserAuthorization
         // Through locals, and `status` first: @Observable turns these into computed properties over
         // its registrar, so reading one back before every stored property is initialized is
         // touching `self` too early.
@@ -110,13 +119,19 @@ final class Session {
     /// leave, having been shown no choice. `prompt=login` asks the realm not to reuse a session, and
     /// an ephemeral browser guarantees it by carrying no cookie any provider could recognise.
     func signIn(otherAccount: Bool = false, provider: Config.OIDC.IdentityProvider? = nil) async {
+        let context = beginAuthorization()
+        defer {
+            if authorizationAttempt == context.attempt { authorizationAttempt = nil; webSession = nil }
+        }
         lastError = nil
-        if provider == .apple, !otherAccount, await signInWithAppleNatively() { return }
+        if provider == .apple, !otherAccount, await signInWithAppleNatively(context: context) { return }
+        guard isCurrent(context) else { return }
         do {
             let verifier = Self.randomToken(64)
             let expectedState = Self.randomToken(16)
             let callback = try await authorize(verifier: verifier, state: expectedState,
                                                otherAccount: otherAccount, provider: provider)
+            guard isCurrent(context) else { return }
             let items = URLComponents(url: callback, resolvingAgainstBaseURL: false)?.queryItems ?? []
             let value = { (name: String) in items.first { $0.name == name }?.value }
 
@@ -130,13 +145,12 @@ final class Session {
                 "redirect_uri": Config.OIDC.redirectURI,
                 "code_verifier": verifier,
             ])
-            adopt(tokens)
-            status = .signedIn
+            accept(tokens, for: context)
         } catch AuthError.cancelled {
             // Backing out of the sign-in sheet is an answer, not a fault. Saying "sign-in failed"
             // for it reads as an error the person then goes looking for.
         } catch {
-            lastError = error.localizedDescription
+            if isCurrent(context) { lastError = error.localizedDescription }
         }
     }
 
@@ -147,7 +161,7 @@ final class Session {
     /// Returns false when the web flow should take over instead: chiefly an existing account with
     /// the same contact address that has not been linked to Apple yet. Linking needs proof the person owns that
     /// account, and only the realm's own pages can ask for it.
-    private func signInWithAppleNatively() async -> Bool {
+    private func signInWithAppleNatively(context: AuthorizationContext) async -> Bool {
         let credential: ASAuthorizationAppleIDCredential
         do {
             credential = try await appleAuthorization.perform()
@@ -155,8 +169,9 @@ final class Session {
             return true
         } catch {
             // No Apple ID on the device, or the system sheet could not run: the web flow still can.
-            return false
+            return !isCurrent(context)
         }
+        guard isCurrent(context) else { return true }
         guard let tokenData = credential.identityToken, let identityToken = String(data: tokenData, encoding: .utf8) else {
             return false
         }
@@ -176,17 +191,17 @@ final class Session {
             }
         }
         do {
-            adopt(try await exchange(form))
-            status = .signedIn
+            let tokens = try await exchange(form)
+            accept(tokens, for: context)
             return true
         } catch {
-            return false
+            return !isCurrent(context)
         }
     }
 
     private let appleAuthorization = AppleAuthorization()
 
-    /// Sign out for real: end the session at the realm, then forget it here.
+    /// Retire this authorization locally, then end its session at the realm.
     ///
     /// Deleting the tokens alone is not signing out. The realm's own SSO session outlives them, and
     /// the browser still holds its cookie — so the next sign-in was answered silently, without ever
@@ -197,19 +212,20 @@ final class Session {
     /// (and, the first time, an "…wants to sign you in" alert) in the middle of signing *out*, which
     /// reads as a bug. A POST carrying the refresh token identifies the session just as well.
     func signOut() async {
-        if let refreshToken {
+        let refresh = refreshToken
+        forget()
+        if let refresh {
             var request = URLRequest(url: Config.OIDC.endpoint("logout"))
             request.httpMethod = "POST"
             request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
             request.httpBody = Data(Self.formEncode([
                 "client_id": Config.OIDC.clientId,
-                "refresh_token": refreshToken,
+                "refresh_token": refresh,
             ]).utf8)
             // Best effort, and deliberately not surfaced. A failure here means the realm session
             // outlives this device — worth fixing, never worth trapping somebody inside the app.
-            _ = try? await URLSession.shared.data(for: request)
+            _ = try? await network.data(for: request)
         }
-        forget()
     }
 
     /// Drop what this device holds, without talking to anybody.
@@ -218,8 +234,14 @@ final class Session {
     /// token, the session is over and there is nothing left to end. Opening a network call — or
     /// worse, a browser — at that moment would interrupt whatever the person was doing.
     func forget() {
+        authorizationId = UUID()
+        authorizationAttempt = nil
+        webSession?.cancel()
+        webSession = nil
+        appleAuthorization.cancel()
         refreshTask?.cancel()
         refreshTask = nil
+        refreshTaskId = nil
         accessToken = nil
         refreshToken = nil
         // A fixture launch never read these, so it has no business removing them either — on a
@@ -243,30 +265,47 @@ final class Session {
     /// postbox has answered 401 — the token was live by its own `exp` and the realm disagreed.
     @discardableResult
     func renew() async throws -> String {
-        if let refreshTask { return try await refreshTask.value }
+        let generation = authorizationId
+        if let refreshTask {
+            let access = try await refreshTask.value
+            guard authorizationId == generation, status == .signedIn else { throw CancellationError() }
+            return access
+        }
         guard let refreshToken else {
             forget()
             throw AuthError.sessionExpired
         }
+        let expectedSubject = subject
+        let taskId = UUID()
         let task = Task<String, Error> { [weak self] in
             guard let self else { throw AuthError.sessionExpired }
+            guard self.authorizationId == generation, !Task.isCancelled else { throw CancellationError() }
             let tokens = try await self.exchange([
                 "grant_type": "refresh_token",
                 "client_id": Config.OIDC.clientId,
                 "refresh_token": refreshToken,
             ])
+            guard self.authorizationId == generation, self.status == .signedIn, !Task.isCancelled else { throw CancellationError() }
             guard let access = tokens.accessToken else { throw AuthError.sessionExpired }
+            if let expectedSubject, Self.claims(of: access)?["sub"] as? String != expectedSubject {
+                throw AuthError.sessionExpired
+            }
             self.adopt(tokens)
             return access
         }
         refreshTask = task
-        defer { refreshTask = nil }
+        refreshTaskId = taskId
+        defer {
+            if refreshTaskId == taskId { refreshTask = nil; refreshTaskId = nil }
+        }
         do {
-            return try await task.value
+            let access = try await task.value
+            guard authorizationId == generation, status == .signedIn else { throw CancellationError() }
+            return access
         } catch let error as AuthError {
             // The realm said no. A dead refresh token is a dead session, and retrying it only
             // spends the rest of them.
-            if case .sessionExpired = error { forget() }
+            if case .sessionExpired = error, authorizationId == generation { forget() }
             throw error
         } catch {
             // A network blip is not a dead session: keep what we hold and let the caller retry.
@@ -284,6 +323,34 @@ final class Session {
             refreshToken = refresh
             Keychain.write(Key.refresh, refresh)
         }
+    }
+
+    private struct AuthorizationContext {
+        let attempt: UUID
+        let generation: UUID
+    }
+
+    private func beginAuthorization() -> AuthorizationContext {
+        let attempt = UUID()
+        authorizationAttempt = attempt
+        webSession?.cancel()
+        webSession = nil
+        appleAuthorization.cancel()
+        return AuthorizationContext(attempt: attempt, generation: authorizationId)
+    }
+
+    private func isCurrent(_ context: AuthorizationContext) -> Bool {
+        authorizationAttempt == context.attempt && authorizationId == context.generation
+    }
+
+    private func accept(_ tokens: TokenResponse, for context: AuthorizationContext) {
+        guard isCurrent(context) else { return }
+        refreshTask?.cancel()
+        refreshTask = nil
+        refreshTaskId = nil
+        authorizationId = UUID()
+        adopt(tokens)
+        status = .signedIn
     }
 
     // ---- the realm --------------------------------------------------------------------------
@@ -310,7 +377,7 @@ final class Session {
         request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "content-type")
         request.httpBody = Data(Self.formEncode(form).utf8)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (data, response) = try await network.data(for: request)
         let body = try? JSONDecoder().decode(TokenResponse.self, from: data)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
 
@@ -327,6 +394,7 @@ final class Session {
                            provider: Config.OIDC.IdentityProvider?) async throws -> URL {
         let url = Config.OIDC.authorizationURL(challenge: Self.challenge(for: verifier), state: state,
                                                otherAccount: otherAccount, provider: provider)
+        if let browserAuthorization { return try await browserAuthorization(url) }
 
         return try await withCheckedThrowingContinuation { continuation in
             let session = ASWebAuthenticationSession(
@@ -419,28 +487,43 @@ private final class PresentationAnchor: NSObject, ASWebAuthenticationPresentatio
 /// One Sign in with Apple request through the system sheet, as an async call — on the Mac, the sheet
 /// attached to the app's window.
 @MainActor
-private final class AppleAuthorization: NSObject, ASAuthorizationControllerDelegate,
+final class AppleAuthorization: NSObject, ASAuthorizationControllerDelegate,
                                         ASAuthorizationControllerPresentationContextProviding {
     private var continuation: CheckedContinuation<ASAuthorizationAppleIDCredential, Error>?
     private var controller: ASAuthorizationController?
+    private let performRequests: @MainActor (ASAuthorizationController) -> Void
+
+    init(performRequests: @escaping @MainActor (ASAuthorizationController) -> Void = { $0.performRequests() }) {
+        self.performRequests = performRequests
+        super.init()
+    }
+
+    func cancel() {
+        let previous = controller
+        let waiting = continuation
+        controller = nil; continuation = nil
+        previous?.cancel()
+        waiting?.resume(throwing: ASAuthorizationError(.canceled))
+    }
 
     func perform() async throws -> ASAuthorizationAppleIDCredential {
+        cancel()
         let request = ASAuthorizationAppleIDProvider().createRequest()
         request.requestedScopes = [.fullName, .email]
         return try await withCheckedThrowingContinuation { continuation in
-            self.continuation?.resume(throwing: ASAuthorizationError(.canceled))
             self.continuation = continuation
             let controller = ASAuthorizationController(authorizationRequests: [request])
             controller.delegate = self
             controller.presentationContextProvider = self
             self.controller = controller
-            controller.performRequests()
+            performRequests(controller)
         }
     }
 
     nonisolated func authorizationController(controller: ASAuthorizationController,
                                              didCompleteWithAuthorization authorization: ASAuthorization) {
         MainActor.assumeIsolated {
+            guard self.controller === controller else { return }
             if let credential = authorization.credential as? ASAuthorizationAppleIDCredential {
                 finish(.success(credential))
             } else {
@@ -450,7 +533,10 @@ private final class AppleAuthorization: NSObject, ASAuthorizationControllerDeleg
     }
 
     nonisolated func authorizationController(controller: ASAuthorizationController, didCompleteWithError error: Error) {
-        MainActor.assumeIsolated { finish(.failure(error)) }
+        MainActor.assumeIsolated {
+            guard self.controller === controller else { return }
+            finish(.failure(error))
+        }
     }
 
     nonisolated func presentationAnchor(for controller: ASAuthorizationController) -> ASPresentationAnchor {

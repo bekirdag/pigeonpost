@@ -2,6 +2,11 @@ name: iOS native UX regressions
 
 on:
   workflow_dispatch:
+    inputs:
+      calendar_files_only:
+        description: 'Diagnose the two system calendar file-picker cases on the current iOS runtime'
+        type: boolean
+        default: false
   pull_request:
     paths:
       - 'apps/ios/Pigeonpost/**'
@@ -15,6 +20,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  CALENDAR_FILES_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.calendar_files_only }}
 
 concurrency:
   group: ios-ux-${{ github.ref }}
@@ -71,12 +79,17 @@ jobs:
         run: python3 Tests/prepare-calendar-picker.py --simulator "$IOS_SIM"
       - name: Native history, mailbox, purchase and composer regressions
         run: |
+          selected_tests=(-only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests
+            -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests
+            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests)
+          if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
+            selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
+              -only-testing:PPUITests/CalendarUITests/testEventExportChooserCanBeCancelled)
+          fi
           xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
             -destination "id=$IOS_SIM" -derivedDataPath "$RUNNER_TEMP/ios-tests" \
             -resultBundlePath "$RUNNER_TEMP/ios-ux.xcresult" \
-            -only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests \
-            -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests \
-            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests
+            "${selected_tests[@]}"
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -136,10 +149,15 @@ jobs:
         run: python3 Tests/prepare-calendar-picker.py --simulator "$IPAD_SIM"
       - name: iPad layout and calendar regressions
         run: |
+          selected_tests=(-only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests)
+          if [[ "$CALENDAR_FILES_ONLY" == true ]]; then
+            selected_tests=(-only-testing:PPUITests/CalendarUITests/testLocalCalendarFileCanBeSelectedAndPreviewed
+              -only-testing:PPUITests/CalendarUITests/testEventExportChooserCanBeCancelled)
+          fi
           xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
             -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-tests" \
             -resultBundlePath "$RUNNER_TEMP/ipad-layout.xcresult" \
-            -only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests
+            "${selected_tests[@]}"
       - name: Preserve iPad layout evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -149,6 +167,7 @@ jobs:
           retention-days: 14
 
   native-storekit:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.calendar_files_only }}
     # iOS 26.5's CLI StoreKit session cannot save its configuration (FB22237318).
     # Keep the current-runtime UI suite above, and verify real StoreKit transactions
     # on iOS 18 until the hosted image includes a fixed runtime.

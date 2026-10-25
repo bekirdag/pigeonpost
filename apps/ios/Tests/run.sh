@@ -8,6 +8,8 @@ out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
 swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
+swiftc -O -DDEBUG -parse-as-library -o "$out/session-lifetime" Tests/SessionLifetimeTests.swift Shared/Config.swift Shared/Auth/Session.swift
+"$out/session-lifetime"
 swiftc -O -parse-as-library -o "$out/device-pairing" Tests/DevicePairingTests.swift Shared/Enterprise/DevicePairingModels.swift
 "$out/device-pairing"
 swiftc -O -parse-as-library -o "$out/postbox-auth" Tests/PostboxAuthenticationTests.swift Shared/Config.swift \

@@ -393,14 +393,15 @@ final class CalendarUITests: XCTestCase {
         folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         let file = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost import fixture")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 5))
-        let thumbnail = file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25))
-        thumbnail.tap()
+        let fileReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: file)
+        XCTAssertEqual(XCTWaiter.wait(for: [fileReady], timeout: 10), .completed)
+        if UIDevice.current.userInterfaceIdiom == .pad { file.doubleTap() }
+        else { file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap() }
         let open = app.buttons["Open"].firstMatch
         if open.waitForExistence(timeout: 2), open.isHittable { open.tap() }
         let imported = app.staticTexts["Local picker interview"].firstMatch
-        // Files may still be finishing its folder transition at the first tap. A second tap
-        // is safe only while that same document remains in the picker; it cannot confirm an import.
-        if !imported.waitForExistence(timeout: 3), file.exists { thumbnail.tap() }
+        // Resolve a fresh element after a remote Files transition; do not reuse its old coordinate.
+        if !imported.waitForExistence(timeout: 3), file.exists { file.doubleTap() }
         XCTAssertTrue(imported.waitForExistence(timeout: 10))
         XCTAssertFalse(element("calendar-import-error").exists)
     }
@@ -408,21 +409,15 @@ final class CalendarUITests: XCTestCase {
         launch(); openReview()
         tapRow(app.buttons["calendar-export-event"], in: "calendar-event-details")
         let cancel = app.buttons["Cancel"].firstMatch
-        let readyToSave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Save", "Move"]))
-        let pickerReady = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-            readyToSave.allElementsBoundByIndex.contains { $0.isHittable }
-        }, object: nil)
+        let readyToSave = app.buttons.matching(NSPredicate(format: "label IN %@", ["Save", "Move"])).firstMatch
+        let pickerReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: readyToSave)
         XCTAssertEqual(XCTWaiter.wait(for: [pickerReady], timeout: 10), .completed)
         // The phone picker can restore a nested folder, where Back replaces Cancel. Return to
         // locations; a tablet already keeps Cancel in its outer toolbar.
         for _ in 0..<4 where !cancel.exists {
-            let candidates = app.navigationBars.buttons.matching(NSPredicate(format: "identifier == %@ OR label IN %@", "BackButton", ["On My iPhone", "On My iPad", "Browse"]))
-            let ready = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in
-                cancel.exists || candidates.allElementsBoundByIndex.contains { $0.isHittable }
-            }, object: nil)
+            let back = app.navigationBars.buttons.matching(NSPredicate(format: "identifier == %@ OR label IN %@", "BackButton", ["On My iPhone", "On My iPad", "Browse"])).firstMatch
+            let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: back)
             XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed)
-            if cancel.exists { break }
-            guard let back = candidates.allElementsBoundByIndex.first(where: { $0.isHittable }) else { return XCTFail("The document picker must offer Cancel or Back") }
             back.tap()
         }
         XCTAssertTrue(cancel.waitForExistence(timeout: 10))
