@@ -23,7 +23,7 @@ concurrency:
 jobs:
   native-ios:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: apps/ios
@@ -74,7 +74,7 @@ jobs:
             -resultBundlePath "$RUNNER_TEMP/ios-ux.xcresult" \
             -only-testing:PPUITests/IOSUXTests -only-testing:PPUITests/HandlePurchaseTests \
             -only-testing:PPUITests/ComposerTests -only-testing:PPUITests/GroupTests \
-            -only-testing:PPUITests/Phase1bTests
+            -only-testing:PPUITests/Phase1bTests -only-testing:PPUITests/CalendarUITests
       - name: Preserve native test evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -87,7 +87,7 @@ jobs:
     # The iPad layout audit (SDS 19.2): every screen in portrait and landscape, failing on controls
     # drawn over one another or bar titles cut short.
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/ios
@@ -130,12 +130,12 @@ jobs:
           xcodebuild -project Pigeonpost.xcodeproj -scheme Pigeonpost -configuration Debug \
             -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-app" CODE_SIGNING_ALLOWED=NO build
           xcrun simctl install "$IPAD_SIM" "$RUNNER_TEMP/ipad-app/Build/Products/Debug-iphonesimulator/Pigeonpost.app"
-      - name: iPad layout audit
+      - name: iPad layout and calendar regressions
         run: |
           xcodebuild test -project UITests/PPUITests.xcodeproj -scheme PPUITests \
             -destination "id=$IPAD_SIM" -derivedDataPath "$RUNNER_TEMP/ipad-tests" \
             -resultBundlePath "$RUNNER_TEMP/ipad-layout.xcresult" \
-            -only-testing:PPUITests/IPadLayoutTests
+            -only-testing:PPUITests/IPadLayoutTests -only-testing:PPUITests/CalendarUITests
       - name: Preserve iPad layout evidence
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

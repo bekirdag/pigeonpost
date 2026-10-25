@@ -63,11 +63,23 @@ struct MacMessageEditor: NSViewRepresentable {
         (nsView.documentView as? AttachmentTextView)?.fittingSize(width: proposal.width)
     }
 
+    static func dismantleNSView(_ scroll: NSScrollView, coordinator: Coordinator) {
+        coordinator.retired = true
+        guard let editor = scroll.documentView as? AttachmentTextView else { return }
+        editor.delegate = nil
+        editor.isEditable = false
+        editor.attach = { _ in }
+        editor.reportError = { _ in }
+        editor.send = {}
+        if editor.window?.firstResponder === editor { editor.window?.makeFirstResponder(nil) }
+    }
+
     final class Coordinator: NSObject, NSTextViewDelegate {
         var parent: MacMessageEditor
+        var retired = false
         init(_ parent: MacMessageEditor) { self.parent = parent }
         func textDidChange(_ notification: Notification) {
-            guard let editor = notification.object as? NSTextView else { return }
+            guard !retired, let editor = notification.object as? NSTextView else { return }
             parent.text = editor.string
         }
     }
@@ -77,7 +89,7 @@ final class AttachmentTextView: NSTextView {
     var attach: ([StagedFile]) -> Void = { _ in }
     var reportError: (String) -> Void = { _ in }
     var send: () -> Void = {}
-    var refocused = 0
+    var refocused = -1
     private var measuredText = ""
     private var measuredFont: NSFont?
     private var measuredParagraph: NSParagraphStyle?

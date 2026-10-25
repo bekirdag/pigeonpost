@@ -60,12 +60,27 @@ final class ComposerTests: XCTestCase {
         field.typeText("My unsent draft")
         revealAction("message-edit:m_out2", in: app).tap()
         XCTAssertTrue(app.buttons["Cancel edit"].waitForExistence(timeout: 5))
-        XCTAssertEqual(drafted(app), "pin the flaky macOS test and push a fix")
+        let editText = "pin the flaky macOS test and push a fix"
+        let seeded = NSPredicate(format: "value == %@", editText)
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: seeded, object: field)], timeout: 5), .completed)
         app.buttons["Cancel edit"].tap()
         XCTAssertEqual(drafted(app), "My unsent draft", "cancel must restore the ordinary draft")
         revealAction("message-edit:m_out2", in: app).tap()
+        XCTAssertTrue(app.buttons["Cancel edit"].waitForExistence(timeout: 5))
+        XCTAssertEqual(XCTWaiter.wait(for: [XCTNSPredicateExpectation(predicate: seeded, object: field)], timeout: 5), .completed)
         field.tap()
-        field.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: drafted(app).count) + "Revised task")
+        // A recreated editor may place its caret at the beginning. Replace a selection rather
+        // than assuming repeated Backspace erases characters after the caret.
+        field.press(forDuration: 1)
+        let selectAllButton = app.buttons["Select All"].firstMatch
+        let selectAllMenu = app.menuItems["Select All"].firstMatch
+        if selectAllButton.waitForExistence(timeout: 2) { selectAllButton.tap() }
+        else {
+            XCTAssertTrue(selectAllMenu.waitForExistence(timeout: 2))
+            selectAllMenu.tap()
+        }
+        field.typeText("Revised task")
+        XCTAssertEqual(drafted(app), "Revised task", "the edit must replace the selected text before it is saved")
         app.buttons["Save edit"].tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.buttons["Cancel edit"])
         waitForExpectations(timeout: 5)

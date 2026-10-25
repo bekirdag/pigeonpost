@@ -18,6 +18,7 @@ struct PigeonpostMacApp: App {
     @State private var callLog: CallLog
     @State private var filtered: FilteredMail
     @State private var avatars: AvatarStore
+    @State private var calendar: CalendarStore
 
     init() {
         let session = Session()
@@ -36,6 +37,11 @@ struct PigeonpostMacApp: App {
         _filtered = State(initialValue: filtered)
         _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
+        _calendar = State(initialValue: CalendarStore(client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
+        #else
+        _calendar = State(initialValue: CalendarStore(client: account.client))
+        #endif
+        #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
         // Keychain or the network: see `Session.init` and the `Fixtures.enabled` guards on every
         // load and poll.
@@ -51,6 +57,7 @@ struct PigeonpostMacApp: App {
     var body: some Scene {
         WindowGroup {
             MacRootView()
+                .calendarLifecycle()
                 .environment(session)
                 .environment(account)
                 .environment(inbox)
@@ -60,6 +67,7 @@ struct PigeonpostMacApp: App {
                 .environment(callLog)
                 .environment(filtered)
                 .environment(avatars)
+                .environment(calendar)
                 .environment(\.avatarLookup, avatars.lookup)
                 .appliesAppearanceChoice()
                 .onOpenURL { url in

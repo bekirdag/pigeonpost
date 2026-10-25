@@ -23,6 +23,8 @@ final class Features {
     static let messageReply = "message_reply"
     static let receipts = "receipts"
     static let agentStatus = "agent_status"
+    static let calendar = "calendar"
+    static let calendarEmail = "calendar_email"
 
     private(set) var enabled: Set<String> = []
     /// Whether an answer has arrived at all. Nothing is offered before it has.
@@ -39,6 +41,8 @@ final class Features {
     var messageReply: Bool { has(Self.messageReply) }
     var receipts: Bool { has(Self.receipts) }
     var agentStatus: Bool { has(Self.agentStatus) }
+    var calendar: Bool { has(Self.calendar) }
+    var calendarEmail: Bool { has(Self.calendarEmail) }
     /// Settings → Privacy & filtering is worth a row when any of its controls would be shown.
     var privacy: Bool { has(Self.callAdmission) || has(Self.messageFiltering) || has(Self.callHistory) || receipts }
 

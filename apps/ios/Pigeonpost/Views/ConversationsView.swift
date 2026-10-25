@@ -18,6 +18,7 @@ struct ConversationsView: View {
     // Phase 1b. Optional, so a host that does not provide them simply shows none of it.
     @Environment(CallLog.self) private var callLog: CallLog?
     @Environment(FilteredMail.self) private var filtered: FilteredMail?
+    @Environment(CalendarStore.self) private var calendar: CalendarStore?
 
     @Environment(\.horizontalSizeClass) private var sizeClass
 
@@ -38,7 +39,7 @@ struct ConversationsView: View {
     @State private var didStageFixtures = false
 
     private enum Sheet: Identifiable {
-        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered
+        case identities, settings, new, scanner, newGroup, joinLink, calls, filtered, calendar
         case peer(Conversation)
         case join(GroupStore.JoinLink)
 
@@ -51,6 +52,7 @@ struct ConversationsView: View {
             case "new": self = .new
             case "scanner": self = .scanner
             case "new-group": self = .newGroup
+            case "calendar": self = .calendar
             default: return nil
             }
         }
@@ -66,6 +68,7 @@ struct ConversationsView: View {
             case .join(let link): return "join:" + link.id
             case .calls: return "calls"
             case .filtered: return "filtered"
+            case .calendar: return "calendar"
             case .peer(let conversation): return "peer:" + conversation.peer
             }
         }
@@ -140,6 +143,8 @@ struct ConversationsView: View {
             case .identities:
                 IdentityPickerSheet { mailbox in visit(mailbox) }
             case .settings: SettingsSheet()
+            case .calendar:
+                if let calendar { CalendarDashboard(store: calendar).id(calendar.scopeId) }
             case .scanner: ScanView()
             case .calls:
                 if let callLog {
@@ -176,7 +181,8 @@ struct ConversationsView: View {
                 visit: visit,
                 newGroup: { sheet = .newGroup },
                 joinLink: { sheet = .joinLink },
-                openFiltered: { sheet = .filtered }
+                openFiltered: { sheet = .filtered },
+                openCalendar: { sheet = .calendar }
             )
         } else {
             phone
@@ -221,6 +227,12 @@ struct ConversationsView: View {
 
         return NavigationSplitView {
             list
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let calendar, account.features.calendar {
+                        CalendarEntry(count: calendar.pendingCount) { sheet = .calendar }
+                            .padding(.horizontal, 16).background(Theme.sidebar)
+                    }
+                }
                 .navigationTitle(inbox.viewingArchive ? "Archive" : "Inbox")
                 .navigationBarTitleDisplayMode(.inline)
                 .searchable(text: $inbox.filter, placement: .navigationBarDrawer(displayMode: .always), prompt: "Search")

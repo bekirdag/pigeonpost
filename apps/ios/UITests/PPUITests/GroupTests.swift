@@ -38,6 +38,11 @@ final class GroupTests: XCTestCase {
         field.typeText(text)
     }
 
+    private func expectDraft(_ text: String, file: StaticString = #filePath, line: UInt = #line) {
+        let ready = XCTNSPredicateExpectation(predicate: NSPredicate(format: "value == %@", text), object: element("groupComposer"))
+        XCTAssertEqual(XCTWaiter.wait(for: [ready], timeout: 5), .completed, file: file, line: line)
+    }
+
     func testGroupReplyPreservesDraftAndShowsAWorkingQuote() {
         launch(["-open=" + garden, "-group-actions"])
         XCTAssertTrue(element("group-reply:10").waitForExistence(timeout: 10))
@@ -66,10 +71,11 @@ final class GroupTests: XCTestCase {
         app.buttons["Done"].tap()
         typeInComposer("Ordinary draft")
         element("group-edit:10").tap()
-        XCTAssertEqual(element("groupComposer").value as? String, "Edited group message")
+        expectDraft("Edited group message")
         element("cancel-group-action").tap()
-        XCTAssertEqual(element("groupComposer").value as? String, "Ordinary draft")
+        expectDraft("Ordinary draft")
         element("group-edit:10").tap()
+        expectDraft("Edited group message")
         typeInComposer(" revised")
         element("groupSend").tap()
         XCTAssertTrue(app.staticTexts["Edited group message revised"].waitForExistence(timeout: 5))
