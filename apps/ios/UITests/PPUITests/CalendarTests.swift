@@ -402,15 +402,22 @@ final class CalendarUITests: XCTestCase {
         folder.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         let file = app.cells.matching(NSPredicate(format: "identifier BEGINSWITH %@", "Pigeonpost import fixture")).firstMatch
         XCTAssertTrue(file.waitForExistence(timeout: 5))
-        let fileReady = XCTNSPredicateExpectation(predicate: NSPredicate(format: "exists == true AND hittable == true"), object: file)
-        XCTAssertEqual(XCTWaiter.wait(for: [fileReady], timeout: 10), .completed)
-        if UIDevice.current.userInterfaceIdiom == .pad { file.doubleTap() }
-        else { file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap() }
-        let open = app.buttons["Open"].firstMatch
-        if open.waitForExistence(timeout: 2), open.isHittable { open.tap() }
+        // The grid cell's centre is its name, not its document thumbnail. Touch the thumbnail
+        // on both devices; the remote Files activation point can select the name instead.
+        XCTAssertGreaterThan(file.frame.width, 0)
+        XCTAssertGreaterThan(file.frame.height, 0)
+        file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).tap()
         let imported = app.staticTexts["Local picker interview"].firstMatch
-        // Resolve a fresh element after a remote Files transition; do not reuse its old coordinate.
-        if !imported.waitForExistence(timeout: 3), file.exists { file.doubleTap() }
+        let open = app.buttons["Open"].firstMatch
+        if !imported.waitForExistence(timeout: 3), open.waitForExistence(timeout: 3), open.isEnabled {
+            open.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+        }
+        if !imported.waitForExistence(timeout: 3), file.exists {
+            file.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.25)).doubleTap()
+            if open.waitForExistence(timeout: 2), open.isEnabled {
+                open.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+        }
         XCTAssertTrue(imported.waitForExistence(timeout: 10))
         XCTAssertFalse(element("calendar-import-error").exists)
     }
