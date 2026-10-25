@@ -6,12 +6,13 @@ Plan: [implementation plan](native-calendar-2026-10-25-plan.md).
 
 Isolated worktree `pigeonpost-native-calendar-20261025`, branch `codex/native-calendar-20261025`,
 based on `9011334` / PR95. Response/time models and the API layer are implemented with 40 model
-and 18 transport checks passing. Store and screen work is next; no calendar navigation or store submission.
+and 18 transport checks passing. The mailbox store passes22 optimized state checks. Screen work is
+next; no calendar navigation or store submission.
 
 | Area | State | Required evidence |
 |---|---|---|
 | Models/time/API | 40 model and 18 transport checks pass | Server integration with the store/editor |
-| Store | Pending | Scoping, request identity, revisions, removal/privacy |
+| Store | 22 state checks pass | Real server and screen integration |
 | Agenda/event screens | Pending | CRUD, recurrence/scopes, layout/accessibility |
 | Invitations/settings/import/export | Pending | Admission, redaction, capability custody |
 | Scheduled meetings/routing | Contract read | Native bridge, lobby/host/occurrence cases |
@@ -58,3 +59,17 @@ and 18 transport checks passing. Store and screen work is next; no calendar navi
   `native-calendar-foundation-mac-build.log`). A temporary task-owned symlink reused the existing
   build cache and was removed afterwards; cache files were preserved. Calendar screens, scoped
   store behavior, scheduled-call bridge and real server integration remain unqualified/pending.
+
+## Mailbox state checkpoint
+
+- Added an observable shared store whose reads, details and mutations capture the acting mailbox
+  and a generation. An older mailbox's result cannot restore its data or clear a newer operation.
+  A missing event also invalidates sibling in-flight details. No calendars selected is distinct
+  from all calendars; Today adopts the saved timezone after preferences load.
+- Create retries retain the same canonical payload/request key for an ambiguous failure, with an
+  in-memory16-attempt/24-hour budget. This is not crash-persistent retry storage. Definite rejected
+  requests free their slot. Revision conflicts preserve the caller's draft and are not rebased.
+- **22 optimized state checks pass** (`native-calendar-store.log`). The first fixture incorrectly
+  let an optimized build release the client's weakly held token provider; retaining it in the
+  fixture host fixed the harness. No product workaround was needed. Registered the suite in the
+  existing standalone runner. Calendar screens and real-server meeting tests remain pending.

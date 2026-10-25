@@ -42,6 +42,11 @@ swiftc -O -parse-as-library -o "$out/calendar-api" Tests/CalendarAPITests.swift 
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarAPI.swift
 "$out/calendar-api"
+swiftc -O -parse-as-library -o "$out/calendar-store" Tests/CalendarStoreTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift \
+  Shared/Calendar/CalendarAPI.swift Shared/Calendar/CalendarStore.swift
+"$out/calendar-store"
 swiftc -O -o "$out/phase1b" Tests/phase1b/main.swift \
   Shared/API/Models.swift Shared/API/Phase1bModels.swift Shared/Model/Blocking.swift Shared/Model/AvatarCrop.swift \
   Shared/Model/Conversation.swift Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Time.swift \

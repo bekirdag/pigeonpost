@@ -120,6 +120,7 @@ struct ScheduledEvent: Decodable, Equatable, Identifiable {
     var reminders: [CalendarReminder]?
     var linkedGroup: String?
     var canEdit: Bool?
+    var locale: String?
 }
 
 /// A detail projection is intentionally partial; unlike a listing item it need not repeat
@@ -129,6 +130,10 @@ struct EventOccurrenceDetail: Decodable, Equatable {
     var recurrenceKey: String?
     var startsAt: Int?
     var endsAt: Int?
+    var allDay: Bool?
+    var tzid: String?
+    var opensAt: Int?
+    var closesAt: Int?
     var status: String?
     var myRsvp: String?
     var title: String?
