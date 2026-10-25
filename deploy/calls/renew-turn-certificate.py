@@ -113,6 +113,6 @@ def install():
 if __name__ == "__main__":
     if Path(os.environ.get("RENEWED_LINEAGE", "")) == LINEAGE:
         os.umask(0o077)
-        with open("/run/lock/pigeonpost-turn-certificate.lock", "a") as lock:
+        with (DEST / ".renewal.lock").open("a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX)
             install()
