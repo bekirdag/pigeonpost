@@ -315,7 +315,7 @@ enum CalendarProblems {
         case "recurrence_invalid": return "Check the recurrence rule."
         case "window_too_large", "expansion_limit": return "Choose a smaller calendar window."
         case "meeting_capacity": return "There are too many required attendees for this meeting size."
-        case "external_unavailable": return "Email invitations are unavailable. You can copy a guest's personal invitation link."
+        case "external_unavailable": return "Invitations to contact addresses are unavailable. You can copy a guest's personal invitation link."
         case "event_cancelled": return "This event was cancelled."
         case "rate_limited": return "Too many changes. Wait a moment and try again."
         case "calendar_retry_expired", "calendar_attempt_limit": return "Check your calendar for unconfirmed events before creating them again."

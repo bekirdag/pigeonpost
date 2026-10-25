@@ -19,7 +19,7 @@ web implementation as the specification. This worktree starts from native action
    occurrence choice, lobby/host permissions and cancellation/window errors. A locator grants no
    role; joining or accepting an invitation does not add anyone to a linked group.
 5. Add calendar privacy/timezone/working-hours settings, export/subscription/import, contact-guest
-   link copying and reminder/deep-link routing. Respect the email capability and never fetch
+   link copying and reminder/deep-link routing. Respect the contact delivery capability and never fetch
    calendar-import URLs or display guest contacts to attendees.
 6. Qualify Apple on local and newer-runtime iPhone/iPad/Mac checks, then port the same contract to
    Android, Windows and Linux as part of the native release batch.

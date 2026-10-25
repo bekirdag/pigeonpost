@@ -99,7 +99,7 @@ struct CalendarE2ETests {
             }
             let privateGuest = detail.event.attendees!.first { $0.kind == "external" }!
             let personalLink = try await alice.calendarGuestLink(mailbox: a, id: id, attendee: privateGuest.id)
-            check(URL(string: personalLink.url)?.fragment?.isEmpty == false, "email-off still permits the organizer's personal guest link without sending email")
+            check(URL(string: personalLink.url)?.fragment?.isEmpty == false, "automatic delivery being off still permits the organizer's personal guest link")
             await refused("not_found", "a co-host cannot mint or discover another guest's personal link") {
                 _ = try await bob.calendarGuestLink(mailbox: b, id: id, attendee: privateGuest.id)
             }

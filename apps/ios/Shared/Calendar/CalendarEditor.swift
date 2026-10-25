@@ -176,7 +176,7 @@ struct CalendarEditor: View {
             Button("Add a person") { draft.invitees.append(CalendarInviteeDraft()) }
             Picker("Guest invitation language", selection: $draft.locale) { Text("English").tag("en"); Text("Türkçe").tag("tr") }
             if !store.emailEnabled {
-                Text("Email delivery is not enabled. After saving, copy each guest's personal invitation link from the event.")
+                Text("Invitations to contact addresses are not sent automatically. After saving, copy each guest's personal invitation link from the event.")
                     .font(.geist(12)).foregroundStyle(Theme.secondary)
             }
         }

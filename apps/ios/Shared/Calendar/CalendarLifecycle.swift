@@ -9,19 +9,19 @@ private struct CalendarLifecycle: ViewModifier {
     private struct Identity: Equatable {
         let mailbox: String?
         let enabled: Bool
-        let email: Bool
+        let delivery: Bool
     }
     private var identity: Identity {
         .init(mailbox: session.status == .signedIn ? account.me?.address : nil,
-              enabled: account.features.calendar, email: account.features.calendarEmail)
+              enabled: account.features.calendar, delivery: account.features.calendarEmail)
     }
     func body(content: Content) -> some View {
         content
             .onChange(of: identity, initial: true) { _, identity in
-                calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.email)
+                calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.delivery)
             }
-            .task(id: "\(identity.mailbox ?? "")|\(identity.enabled)|\(identity.email)|\(phase)") {
-                calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.email)
+            .task(id: "\(identity.mailbox ?? "")|\(identity.enabled)|\(identity.delivery)|\(phase)") {
+                calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.delivery)
                 guard phase == .active, calendar.enabled else { return }
                 #if DEBUG
                 if Fixtures.enabled && !CommandLine.arguments.contains("-calendar-fixtures") { return }

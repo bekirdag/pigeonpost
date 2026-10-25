@@ -215,6 +215,7 @@ jobs:
           # The private deletion-queue notifier imports Python's standard transport module.
           # Google service-account claims and login-name parser fixtures use external
           # address terminology as well; neither names Pigeonpost message delivery.
+          # The synthetic local OIDC issuer uses the same fixed verified-address claim names.
           # org_notify.rs calls saas_be's internal notification route, whose path segment is the
           # transport's name in saas_be's API; the message it sends is a Pigeonpost invitation.
           # The vendored LiveKit client bundles sdp-transform, whose SDP grammar names the
@@ -236,6 +237,7 @@ jobs:
               ':(exclude)crates/pigeonpost-postbox/src/org_notify.rs' \
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \
+              ':(exclude)apps/ios/Tests/groups-postbox.mjs' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)site-inbox/vendor/livekit-client/livekit-client.umd.js' \

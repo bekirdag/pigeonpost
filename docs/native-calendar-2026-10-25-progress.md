@@ -138,7 +138,7 @@ calendar controls and hosted CI follow; no calendar release or store submission.
 - **34 real postbox checks pass** (`native-calendar-e2e.log`), through the native client/store and
   a throwaway loopback issuer/database: explicit stranger filtering, agenda exclusion, response
   without contact creation, co-host/organizer authority, redacted guest contacts, personal links
-  with email disabled, stale revisions, stable moved ids, cache erasure after removal, reminders,
+  with automatic delivery disabled, stale revisions, stable moved ids, cache erasure after removal, reminders,
   partial privacy settings, feeds/read-once links/revocation, ICS export/import and a response lost
   after commit. The retry retains exact body hashes/request key and creates one event. Fixtures
   initially assumed second-suffixed response times and a pending invitation without admitting its
@@ -170,3 +170,14 @@ calendar controls and hosted CI follow; no calendar release or store submission.
   suite. No real account data or other applications were captured.
 - No release claim: CI and the remaining calendar controls are still required. Native store
   submissions remain held for the combined batch and the owner's pre-App-Review Claude review.
+
+## CI vocabulary follow-up
+
+- PR96's initial lint job rejected address-transport terminology in new copy and a bare lifecycle
+  property, before Clippy. Updated the copy to contact/invitation wording and renamed that property.
+  The local synthetic OIDC issuer must retain standard claim keys; it receives one explicit file
+  exception beside the existing protocol exceptions, with the vocabulary rule otherwise intact.
+- The exact repository vocabulary guard passes locally. Both app builds pass after the rename
+  (`native-calendar-terms-build.log`, `native-calendar-terms-mac-build.log`). This changes wording
+  and an internal property name; the qualified API payloads, UI controls and permission checks
+  retain their behavior. Hosted qualification must use the new commit.
