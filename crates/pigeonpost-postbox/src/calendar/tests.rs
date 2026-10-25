@@ -202,6 +202,124 @@ fn meeting_body(attendees: Value) -> Value {
 }
 
 #[tokio::test]
+async fn subminute_event_times_survive_save_read_and_edits() {
+    let srv = serve().await;
+    let who = person(&srv, "precise").await;
+    let ev = create(
+        &srv,
+        &who,
+        json!({"request_key":"precision", "title":"Precise",
+            "start":"2026-10-22T09:00:17", "end":"2026-10-22T09:01:47",
+            "tzid":"Europe/Istanbul", "rrule":"FREQ=DAILY;COUNT=2"}),
+    )
+    .await;
+    let id = ev["id"].as_str().unwrap();
+    let start = ev["starts_at"].as_i64().unwrap();
+    let list_path = format!(
+        "/v1/calendar/events?from={}&to={}",
+        start - 1,
+        start + 3 * 86_400
+    );
+    let (status, listed) = srv.call(Method::GET, &list_path, &who, None).await;
+    assert_eq!(status, 200, "{listed}");
+    let instances = listed["occurrences"].as_array().unwrap();
+    assert_eq!(instances.len(), 2);
+    assert_eq!(
+        instances[0]["starts_at"], start,
+        "persisting must not shift the schedule"
+    );
+    assert_eq!(instances[0]["ends_at"].as_i64().unwrap() - start, 90);
+    let occurrence = instances[0]["occurrence_id"].as_str().unwrap();
+    assert!(occurrence.ends_with("T090017"));
+    let detail_path = format!("/v1/calendar/events/{id}?occurrence_id={occurrence}");
+    let (status, body) = srv.call(Method::GET, &detail_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(body["event"]["start"], "2026-10-22T09:00:17");
+    assert_eq!(body["event"]["end"], "2026-10-22T09:01:47");
+    let (status, changed) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            Some(json!({"expected_revision":body["event"]["revision"], "scope":"all", "title":"Renamed"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{changed}");
+    let (status, after) = srv.call(Method::GET, &list_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(after["occurrences"][0]["starts_at"], start);
+    assert_eq!(after["occurrences"][0]["occurrence_id"], occurrence);
+    let (status, moved) = srv
+        .call(
+            Method::PATCH,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            Some(json!({"expected_revision":changed["event"]["revision"], "scope":"this",
+                "occurrence_id":occurrence, "start":"2026-10-24T14:30:23", "end":"2026-10-24T14:31:53", "tzid":"Europe/Istanbul"})),
+        )
+        .await;
+    assert_eq!(status, 200, "{moved}");
+    let (status, moved_read) = srv.call(Method::GET, &detail_path, &who, None).await;
+    assert_eq!(status, 200);
+    assert_eq!(moved_read["occurrence"]["start"], "2026-10-24T14:30:23");
+    assert_eq!(moved_read["occurrence"]["end"], "2026-10-24T14:31:53");
+    assert_eq!(moved_read["occurrence"]["occurrence_id"], occurrence);
+}
+
+#[tokio::test]
+async fn subminute_ics_times_survive_preview_confirm_and_export() {
+    let srv = serve().await;
+    let who = person(&srv, "preciseics").await;
+    let ics = "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nBEGIN:VEVENT\r\nUID:precision@example.test\r\nSUMMARY:Precise import\r\nDTSTART;TZID=Europe/Istanbul:20261022T090017\r\nDTEND;TZID=Europe/Istanbul:20261022T090147\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n";
+    let response = srv
+        .http
+        .post(format!("{}/v1/calendar/import/preview", srv.public))
+        .bearer_auth(&who.token)
+        .header("x-pigeonpost-identity", &who.address)
+        .header("content-type", "text/calendar")
+        .body(ics)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    let preview: Value = response.json().await.unwrap();
+    assert_eq!(preview["events"][0]["start"], "2026-10-22T09:00:17");
+    let draft = preview["draft_id"].as_str().unwrap();
+    let (status, confirmed) = srv
+        .call(
+            Method::POST,
+            &format!("/v1/calendar/import/{draft}/confirm"),
+            &who,
+            Some(json!({"select":[0]})),
+        )
+        .await;
+    assert_eq!(status, 200, "{confirmed}");
+    let id = confirmed["created"][0]["id"].as_str().unwrap();
+    let (status, detail) = srv
+        .call(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}"),
+            &who,
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert_eq!(detail["event"]["start"], "2026-10-22T09:00:17");
+    assert_eq!(detail["event"]["end"], "2026-10-22T09:01:47");
+    let (status, exported) = srv
+        .raw(
+            Method::GET,
+            &format!("/v1/calendar/events/{id}.ics"),
+            Some(&who.token),
+            Some(&who.address),
+            None,
+        )
+        .await;
+    assert_eq!(status, 200);
+    assert!(exported.contains("20261022T090017") && exported.contains("20261022T090147"));
+}
+
+#[tokio::test]
 async fn invitations_follow_admission_and_projections_hide_contacts() {
     let srv = serve().await;
     let org = person(&srv, "orga").await;
@@ -1228,6 +1346,203 @@ async fn ics_export_round_trips_through_the_parser() {
     assert_eq!(events[0].description, "line1\nline2");
     assert_eq!(events[0].start.as_deref(), Some("2026-10-22T09:00"));
     assert_eq!(events[0].rrule.as_deref(), Some("FREQ=WEEKLY;COUNT=4"));
+}
+
+const IMPORT_RETRY_ICS: &str = concat!(
+    "BEGIN:VCALENDAR\r\nVERSION:2.0\r\n",
+    "BEGIN:VEVENT\r\nUID:retry-first@example.test\r\nSUMMARY:IMPORT_PRIVATE_TITLE_DO_NOT_STORE_CLEAR\r\n",
+    "DTSTART;TZID=Europe/Istanbul:20261201T100000\r\nDTEND;TZID=Europe/Istanbul:20261201T110000\r\nEND:VEVENT\r\n",
+    "BEGIN:VEVENT\r\nUID:retry-second@example.test\r\nSUMMARY:Second private copy\r\n",
+    "DTSTART;TZID=Europe/Istanbul:20261202T100000\r\nDTEND;TZID=Europe/Istanbul:20261202T110000\r\nEND:VEVENT\r\nEND:VCALENDAR\r\n",
+);
+
+async fn preview_import(srv: &Srv, who: &P, ics: &str) -> Value {
+    let response = srv
+        .http
+        .post(format!("{}/v1/calendar/import/preview", srv.public))
+        .bearer_auth(&who.token)
+        .header("x-pigeonpost-identity", &who.address)
+        .header("content-type", "text/calendar")
+        .body(ics.to_owned())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), 200);
+    response.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn import_confirmation_replays_committed_result() {
+    let srv = serve().await;
+    let who = person(&srv, "importretry").await;
+    let preview = preview_import(&srv, &who, IMPORT_RETRY_ICS).await;
+    let draft = preview["draft_id"].as_str().unwrap();
+    let path = format!("/v1/calendar/import/{draft}/confirm");
+    let body = json!({"select":[0]});
+    let (status, first) = srv
+        .call(Method::POST, &path, &who, Some(body.clone()))
+        .await;
+    assert_eq!(status, 200, "{first}");
+    let notices = srv.events_of(&who.account).await.len();
+    let (status, retry) = srv
+        .call(Method::POST, &path, &who, Some(body.clone()))
+        .await;
+    assert_eq!(status, 200, "a committed import must be retryable: {retry}");
+    assert_eq!(retry, first);
+    let explicit = json!({"select":[0], "calendar_id":first["created"][0]["calendar_id"]});
+    let (status, same_target) = srv.call(Method::POST, &path, &who, Some(explicit)).await;
+    assert_eq!(
+        status, 200,
+        "explicit default calendar is the same destination: {same_target}"
+    );
+    assert_eq!(same_target, first);
+    assert_eq!(srv.events_of(&who.account).await.len(), notices);
+    let mailbox = who.address.clone();
+    let key = draft.to_owned();
+    let (kind, bytes, event_count, reminder_count) = srv.state.store.group_read(
+        move |c: &rusqlite::Connection| -> crate::groups::GResult<(String, Vec<u8>, i64, i64)> {
+            let (kind, bytes) = c.query_row(
+                "SELECT typeof(response), response FROM calendar_idempotency WHERE scope = ?1 AND action = 'import_confirm' AND request_key = ?2",
+                rusqlite::params![mailbox, key], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Vec<u8>>(1)?)),
+            )?;
+            let events = c.query_row("SELECT COUNT(*) FROM events WHERE organizer = ?1", [&mailbox], |r| r.get(0))?;
+            let reminders = c.query_row("SELECT COUNT(*) FROM event_reminders WHERE owner_identity = ?1", [&mailbox], |r| r.get(0))?;
+            Ok((kind, bytes, events, reminders))
+        },
+    ).await.unwrap();
+    assert_eq!(kind, "blob");
+    let private_title = b"IMPORT_PRIVATE_TITLE_DO_NOT_STORE_CLEAR";
+    assert!(!bytes
+        .windows(private_title.len())
+        .any(|part| part == private_title));
+    assert_eq!((event_count, reminder_count), (1, 1));
+    assert!(srv.state.calendar.notifier.sent().is_empty());
+    let other = person(&srv, "importother").await;
+    let (status, denied) = srv.call(Method::POST, &path, &other, Some(body)).await;
+    assert_eq!(status, 404);
+    assert!(denied.get("created").is_none());
+}
+
+#[tokio::test]
+async fn import_confirmation_treats_selected_indices_as_a_set() {
+    let srv = serve().await;
+    let who = person(&srv, "importset").await;
+    let preview = preview_import(&srv, &who, IMPORT_RETRY_ICS).await;
+    let draft = preview["draft_id"].as_str().unwrap();
+    let path = format!("/v1/calendar/import/{draft}/confirm");
+    let (status, first) = srv
+        .call(
+            Method::POST,
+            &path,
+            &who,
+            Some(json!({"select":[1, 0, 1, 0]})),
+        )
+        .await;
+    assert_eq!(status, 200, "{first}");
+    assert_eq!(first["created"].as_array().unwrap().len(), 2);
+    let (status, retry) = srv
+        .call(Method::POST, &path, &who, Some(json!({"select":[0, 1]})))
+        .await;
+    assert_eq!(status, 200, "{retry}");
+    assert_eq!(retry, first);
+    let (status, conflict) = srv
+        .call(Method::POST, &path, &who, Some(json!({"select":[0]})))
+        .await;
+    assert_eq!(status, 409);
+    assert_eq!(conflict["error"], "idempotency_conflict");
+    let (status, _) = srv
+        .call(
+            Method::POST,
+            &path,
+            &who,
+            Some(json!({"select":vec![0;201]})),
+        )
+        .await;
+    assert_eq!(status, 400);
+}
+
+#[tokio::test]
+async fn import_confirmation_replay_expires_without_recreating_events() {
+    let srv = serve().await;
+    let who = person(&srv, "importexpires").await;
+    let preview = preview_import(&srv, &who, IMPORT_RETRY_ICS).await;
+    let draft = preview["draft_id"].as_str().unwrap().to_owned();
+    let path = format!("/v1/calendar/import/{draft}/confirm");
+    let (status, _) = srv
+        .call(Method::POST, &path, &who, Some(json!({"select":[0]})))
+        .await;
+    assert_eq!(status, 200);
+    let mailbox = who.address.clone();
+    srv.state.store.group_tx(move |tx: &rusqlite::Transaction<'_>| -> crate::groups::GResult<()> {
+        tx.execute("UPDATE calendar_idempotency SET created_at = ?3 WHERE scope = ?1 AND action = 'import_confirm' AND request_key = ?2",
+            rusqlite::params![mailbox, draft, now_unix().saturating_sub(super::IDEMPOTENCY_SECS + 1) as i64])?;
+        Ok(())
+    }).await.unwrap();
+    let (status, _) = srv
+        .call(Method::POST, &path, &who, Some(json!({"select":[0]})))
+        .await;
+    assert_eq!(status, 404);
+    let mailbox = who.address.clone();
+    let count = srv
+        .state
+        .store
+        .group_read(
+            move |c: &rusqlite::Connection| -> crate::groups::GResult<i64> {
+                Ok(c.query_row(
+                    "SELECT COUNT(*) FROM events WHERE organizer = ?1",
+                    [mailbox],
+                    |r| r.get(0),
+                )?)
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(count, 1);
+}
+
+#[tokio::test]
+async fn import_confirmation_replay_checks_current_calendar_access() {
+    let srv = serve().await;
+    let who = person(&srv, "importcalendar").await;
+    let preview = preview_import(&srv, &who, IMPORT_RETRY_ICS).await;
+    let draft = preview["draft_id"].as_str().unwrap();
+    let (status, folder) = srv
+        .call(
+            Method::POST,
+            "/v1/calendars",
+            &who,
+            Some(json!({"request_key":"importtarget", "name":"Import target"})),
+        )
+        .await;
+    assert_eq!(status, 201);
+    let calendar = folder["calendar"]["id"].as_str().unwrap();
+    let path = format!("/v1/calendar/import/{draft}/confirm");
+    let body = json!({"select":[0], "calendar_id":calendar});
+    let (status, _) = srv
+        .call(Method::POST, &path, &who, Some(body.clone()))
+        .await;
+    assert_eq!(status, 200);
+    let (status, _) = srv
+        .call(
+            Method::POST,
+            &path,
+            &who,
+            Some(json!({"select":[0], "calendar_id":preview["calendar_id"]})),
+        )
+        .await;
+    assert_eq!(status, 409);
+    let (status, deleted) = srv
+        .call(
+            Method::DELETE,
+            &format!("/v1/calendars/{calendar}"),
+            &who,
+            Some(json!({"expected_revision":folder["calendar"]["revision"]})),
+        )
+        .await;
+    assert_eq!(status, 200, "{deleted}");
+    let (status, unavailable) = srv.call(Method::POST, &path, &who, Some(body)).await;
+    assert_eq!(status, 404);
+    assert_eq!(unavailable["error"], "calendar_unavailable");
 }
 
 #[tokio::test]
