@@ -242,6 +242,14 @@ invitations are off or a message was lost. It lets that guest preview, answer, a
 | POST | `/v1/calendar/import/preview?calendar_id=` | raw `text/calendar` body, ≤ 512 KiB | `{draft_id, events: [{index, title, all_day, start, end, start_date, end_date, tzid, rrule, warnings}], warnings, expires_at}`. Nothing is fetched from the network; alarms, attendees and organizers are dropped (and listed in `warnings`). |
 | POST | `/v1/calendar/import/{draft_id}/confirm` | `{select: [index…], calendar_id}` | `{created: [event…]}` — private copies with new UIDs. No invitations are sent. |
 
+Confirmation accepts at most 200 selection entries and treats repeated indices as one selection.
+An identical selection and destination can replay the original result for up to 7 days after a
+successful confirmation, even if its response was lost; no events, reminders or notices repeat.
+Omitting the destination and naming the same default calendar are equivalent. Changing the selection
+or destination returns 409 `idempotency_conflict`. Receipts are sealed at rest, bound to the acting
+mailbox, and require continuing access to the original calendar. Old imports without a receipt
+cannot be recovered this way. An unconfirmed preview still expires after 1 hour.
+
 ## 5. Settings and events on `/v1/events`
 
 `GET`/`PUT /v1/calendar/settings` `{previews: false, timezone: "Europe/Istanbul" | null,
