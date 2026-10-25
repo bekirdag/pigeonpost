@@ -208,3 +208,10 @@ calendar controls and hosted CI follow; no calendar release or store submission.
 - Evidence: `pr96-ipad-ci.log`, artifact12589294393 and exported attachments under the private
   release directory. Both focused cases pass on local iPhone and iPad after the correction
   (`native-calendar-ci-followup-{iphone,ipad}.xcresult`). A new hosted run is required before merge.
+
+- At5f89bbb all hosted checks except one iPhone calendar assertion pass. The retained failure
+  screenshot shows the correct reloaded title and enabled Save; the exact same conflict case also
+  passes in child PR98's complete iPhone suite. The assertion now queries the current typed
+  TextField afresh while waiting for accessibility, then still requires its exact full value.
+  No product draft/revision behavior is changed (`pr96-iphone-5f89-ci.log` and its attachments).
+  The focused local iPhone check passes (`native-calendar-fresh-title-iphone.xcresult`).
