@@ -114,7 +114,7 @@ struct CalendarDetail: View {
             .frame(width: 620, height: 660)
             #endif
         }
-        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: .calendarEvent, defaultFilename: "Pigeonpost-event") { saved in
+        .fileExporter(isPresented: $exporting, document: exportDocument, contentType: CalendarFileDocument.contentType, defaultFilename: "Pigeonpost-event.ics") { saved in
             exportDocument = nil
             if case .failure(let error) = saved, (error as? CocoaError)?.code != .userCancelled, store.scopeId == visit {
                 problem = "Could not save the calendar file."

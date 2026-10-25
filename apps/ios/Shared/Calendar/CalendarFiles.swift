@@ -2,7 +2,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 
 struct CalendarFileDocument: FileDocument {
-    static var readableContentTypes: [UTType] { [.calendarEvent] }
+    static let contentType = UTType(filenameExtension: "ics") ?? .calendarEvent
+    static var readableContentTypes: [UTType] { [contentType] }
     let data: Data
     init(data: Data) { self.data = data }
     init(configuration: ReadConfiguration) throws {
@@ -120,7 +121,7 @@ struct CalendarImportScreen: View {
         .onAppear { visible = true }
         .onChange(of: store.scopeId) { _, _ in presentation = UUID(); reset(); dismiss() }
         .onDisappear { visible = false; presentation = UUID(); reset() }
-        .fileImporter(isPresented: $choosing, allowedContentTypes: [.calendarEvent], allowsMultipleSelection: false) { choice in
+        .fileImporter(isPresented: $choosing, allowedContentTypes: [CalendarFileDocument.contentType], allowsMultipleSelection: false) { choice in
             Task {
                 guard store.scopeId == visit, visible else { return }
                 let screen = presentation

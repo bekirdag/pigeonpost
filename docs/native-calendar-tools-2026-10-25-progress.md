@@ -44,3 +44,22 @@ Plan: [management plan](native-calendar-tools-2026-10-25-plan.md).
 ## Parent composer qualification
 
 Integrated the conversation/edit-scoped input fix from PR96 through PR98. Both native builds, all 10 iPhone composer cases, focused group edit/reply cases, iPad edit/cancel/save cases and corrected calendar retry selectors pass locally. Hosted full CI is running on the integrated branch; no store submission. See `native-composer-isolation-2026-10-25-progress.md` for exact evidence and superseded selector failures.
+
+## Hosted calendar interaction follow-up
+
+- Inspected the hosted iPhone/iPad logs, failure screenshots and UI hierarchies. The join helper
+  waited for lazy offscreen controls before scrolling; RSVP used an application-wide swipe that
+  could place the button under the event toolbar. Both now use the existing bounded form scroller.
+- Export cancellation now waits for the actual system Save/Move toolbar before looking for Cancel
+  or a visible Back button. An attempted wait on one OS-specific filename identifier was rejected
+  after it failed on both local devices. Import selects the file thumbnail, with at most one extra
+  tap while that exact document remains in Files; it still requires the real file-content preview
+  and never confirms an import automatically.
+- Calendar files now use the concrete system `.ics` content type and an explicit `.ics` default
+  export filename. Apple's `calendarEvent` is an abstract base type; the installed type registry
+  confirms `com.apple.ical.ics` conforms to it and provides the filename extension.
+- Final five-case runs pass on both owned iPhone and iPad simulators: filtered RSVP, actual local
+  document import/preview, export cancellation and both voice/video sheet handoffs. iOS Debug and
+  universal Mac builds pass. Private evidence: `native-calendar-controls-final-{iphone,ipad}.xcresult`
+  and `validation/native-calendar-{controls-final,picker-type}-*`. Superseded exploratory failures
+  remain in separate bundles. Hosted qualification and physical-device qualification remain open.
