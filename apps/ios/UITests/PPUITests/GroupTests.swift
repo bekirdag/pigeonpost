@@ -84,9 +84,9 @@ final class GroupTests: XCTestCase {
 
     func testGroupDeletionDoesNotRevealAnEarlierVersion() {
         launch(["-open=" + garden, "-group-actions"])
-        let text = app.staticTexts["Edited group message"]
-        XCTAssertTrue(text.waitForExistence(timeout: 10))
-        text.press(forDuration: 1)
+        let more = element("group-more:10")
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
         let delete = app.buttons["Delete for everyone"].firstMatch
         XCTAssertTrue(delete.waitForExistence(timeout: 5))
         delete.tap()
@@ -95,6 +95,15 @@ final class GroupTests: XCTestCase {
         XCTAssertFalse(app.staticTexts["Original group message"].exists)
         XCTAssertFalse(app.staticTexts["Edited group message"].exists)
         XCTAssertFalse(element("group-edit:10").exists)
+    }
+
+    func testGroupMemberMenuCannotDeleteAnotherMembersMessage() {
+        launch(["-open=grp_fixtureannounce0000000000"])
+        let more = element("group-more:5")
+        XCTAssertTrue(more.waitForExistence(timeout: 10))
+        more.tap()
+        XCTAssertTrue(app.buttons["Block sender…"].firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.buttons["Delete for everyone"].exists, "a member has no admin deletion control")
     }
 
     func testGroupMessageControlsRespectCapabilities() {

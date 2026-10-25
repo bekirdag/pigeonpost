@@ -653,6 +653,21 @@ struct GroupBubble: View {
                             .accessibilityLabel("Message info")
                             .accessibilityIdentifier("group-info:\(seq)")
                     }
+                    if deletable || (!mine && item.sender != nil) {
+                        Menu {
+                            if deletable, let target = item.seq {
+                                Button(role: .destructive) { onDelete(target) } label: { Label("Delete for everyone", systemImage: "trash") }
+                            }
+                            if !mine, let sender = item.sender {
+                                Button(role: .destructive) { onBlock(sender) } label: { Label("Block sender…", systemImage: "hand.raised") }
+                            }
+                        } label: { Image(systemName: "ellipsis").frame(width: 44, height: 44) }
+                        #if os(macOS)
+                        .menuStyle(.borderlessButton)
+                        #endif
+                        .accessibilityLabel("More message actions")
+                        .accessibilityIdentifier("group-more:\(seq)")
+                    }
                 }
                 .font(.geist(11.5))
                 .foregroundStyle(Theme.muted)
