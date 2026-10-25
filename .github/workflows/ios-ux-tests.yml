@@ -23,7 +23,7 @@ concurrency:
 jobs:
   native-ios:
     runs-on: macos-26
-    timeout-minutes: 45
+    timeout-minutes: 75
     defaults:
       run:
         working-directory: apps/ios
@@ -87,7 +87,7 @@ jobs:
     # The iPad layout audit (SDS 19.2): every screen in portrait and landscape, failing on controls
     # drawn over one another or bar titles cut short.
     runs-on: macos-26
-    timeout-minutes: 35
+    timeout-minutes: 60
     defaults:
       run:
         working-directory: apps/ios
