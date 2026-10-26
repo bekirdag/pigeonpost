@@ -423,6 +423,18 @@ class CallHost(private val app: Application, private val session: UserSession, p
                 pageId = UUID.randomUUID(); configureId = UUID.randomUUID(); ready = false; configured = false
                 if (scheduled?.page != null) cancelScheduledJoin(hangUp = false)
             }
+            override fun onPageFinished(view: WebView, url: String?) {
+                if (view !== this@CallHost.view || ready || !samePage(url?.let(Uri::parse))) return
+                val document = pageId
+                main.post {
+                    if (view === this@CallHost.view && document == pageId && !ready && samePage(view.url?.let(Uri::parse))) {
+                        // A fast local/cached document can announce readiness before queued native
+                        // lifecycle work finishes. Ask the loaded bridge to announce it again;
+                        // normal source/page/actor checks still handle configuration and actions.
+                        view.evaluateJavascript("""if(document.readyState!=='loading'&&window.PigeonpostNative&&typeof PigeonpostNative.configure==='function'){PigeonpostAndroid.postMessage(JSON.stringify({type:'ready'}));}""", null)
+                    }
+                }
+            }
             override fun onRenderProcessGone(view: WebView, detail: RenderProcessGoneDetail): Boolean {
                 // Start again from a page that knows nothing; the activity re-adds the new view.
                 bindingId = UUID.randomUUID(); pageId = UUID.randomUUID(); ready = false; configured = false; pending = null; pendingAnswer = null
