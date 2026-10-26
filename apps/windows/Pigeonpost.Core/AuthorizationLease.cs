@@ -75,5 +75,34 @@ public sealed class AuthorizationContext : IDisposable
             }
         };
     }
+    // Admit only short synchronous private writes; never run UI callbacks, awaits or session
+    // getters inside this barrier. All captured grants share one root, which orders the locks.
+    internal static Action<Action> CaptureWriteBarrier(Func<AuthorizationLease?> currentAuthorization)
+    {
+        var accepted = currentAuthorization() ?? throw new AuthorizationRetiredException();
+        var validate = CaptureValidation(currentAuthorization);
+        validate();
+        var grants = new List<AuthorizationLease>();
+        for (var scope = Slot.Value; scope is not null; scope = scope.Parent)
+        {
+            foreach (var grant in new[] { scope.Lease, scope.LocalConstraint })
+                if (grant is not null && !grants.Contains(grant))
+                {
+                    if (!grant.SharesAuthorization(accepted)) throw new AuthorizationRetiredException();
+                    grants.Add(grant);
+                }
+        }
+        if (!grants.Contains(accepted)) grants.Add(accepted);
+        return work =>
+        {
+            validate(); // The provider may acquire a session lock; keep this outside every grant.
+            void Admit(int index)
+            {
+                if (index == grants.Count) { work(); return; }
+                grants[index].WithActive(() => { Admit(index + 1); return 0; });
+            }
+            Admit(0);
+        };
+    }
     public void Dispose() { if (ReferenceEquals(Slot.Value, frame)) Slot.Value = previous; }
 }
