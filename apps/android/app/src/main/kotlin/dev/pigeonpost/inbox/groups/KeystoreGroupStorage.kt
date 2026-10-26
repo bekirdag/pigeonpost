@@ -5,6 +5,7 @@ import android.security.keystore.KeyGenParameterSpec
 import android.security.keystore.KeyProperties
 import android.util.AtomicFile
 import dev.pigeonpost.core.WireJson
+import dev.pigeonpost.core.AuthorizationLease
 import dev.pigeonpost.core.groups.GroupRecord
 import dev.pigeonpost.core.groups.GroupStorage
 import kotlinx.coroutines.Dispatchers
@@ -48,10 +49,18 @@ class KeystoreGroupStorage(context: Context) : GroupStorage {
         return AtomicFile(File(dir, "$name.enc"))
     }
 
-    override suspend fun load(mailbox: String): GroupRecord? = withContext(Dispatchers.IO) {
+    private suspend fun <T> local(authorization: AuthorizationLease?, work: () -> T): T = withContext(Dispatchers.IO) {
+        authorization?.requireActive()
         lock.withLock {
+            if (authorization == null) work() else authorization.withActive(work)
+        }
+    }
+
+    override suspend fun load(mailbox: String) = read(mailbox, null)
+    override suspend fun load(mailbox: String, authorization: AuthorizationLease) = read(mailbox, authorization)
+    private suspend fun read(mailbox: String, authorization: AuthorizationLease?): GroupRecord? = local(authorization) {
             val file = file(mailbox)
-            if (!file.baseFile.exists()) return@withLock null
+            if (!file.baseFile.exists()) return@local null
             try {
                 val bytes = file.openRead().use { it.readBytes() }
                 require(bytes.size > 29 && bytes[0] == 1.toByte())
@@ -62,11 +71,11 @@ class KeystoreGroupStorage(context: Context) : GroupStorage {
             } catch (_: Exception) {
                 null // a key that no longer opens it: this device is gone, and a new one is enrolled
             }
-        }
     }
 
-    override suspend fun save(mailbox: String, record: GroupRecord) = withContext(Dispatchers.IO) {
-        lock.withLock {
+    override suspend fun save(mailbox: String, record: GroupRecord) = write(mailbox, record, null)
+    override suspend fun save(mailbox: String, record: GroupRecord, authorization: AuthorizationLease) = write(mailbox, record, authorization)
+    private suspend fun write(mailbox: String, record: GroupRecord, authorization: AuthorizationLease?) = local(authorization) {
             val plain = WireJson.encodeToString(GroupRecord.serializer(), record).toByteArray(Charsets.UTF_8)
             val cipher = Cipher.getInstance("AES/GCM/NoPadding")
             cipher.init(Cipher.ENCRYPT_MODE, key())
@@ -77,8 +86,8 @@ class KeystoreGroupStorage(context: Context) : GroupStorage {
             val stream = file.startWrite()
             try { stream.write(sealed); file.finishWrite(stream) }
             catch (failure: Throwable) { file.failWrite(stream); throw failure }
-        }
     }
 
-    override suspend fun remove(mailbox: String) = withContext(Dispatchers.IO) { lock.withLock { file(mailbox).delete() } }
+    override suspend fun remove(mailbox: String) = local(null) { file(mailbox).delete() }
+    override suspend fun remove(mailbox: String, authorization: AuthorizationLease) = local(authorization) { file(mailbox).delete() }
 }

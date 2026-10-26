@@ -1,6 +1,11 @@
 package dev.pigeonpost.core.groups
 
 import dev.pigeonpost.core.ApiException
+import dev.pigeonpost.core.AuthorizationLease
+import dev.pigeonpost.core.AuthorizationContext
+import dev.pigeonpost.core.AuthorizationRetired
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
@@ -66,6 +71,30 @@ class GroupClientMlsTest {
     }
     private suspend fun expectLoss(work: suspend () -> Unit) {
         try { work(); fail("Expected lost transport") } catch (failure: IOException) { assertFalse(failure is ApiException) }
+    }
+
+    @Test fun enrollmentFinishingAfterRetirementCannotOverwriteTheNewDeviceVault() = runBlocking {
+        val w = world(); val mailbox = w.fake.mailbox(); val storage = MemoryGroupStorage()
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        val delayed = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                val result = w.fake.transport.groupJson(mailbox, method, path, body, device)
+                if (method == "POST" && path == "/v1/mls/devices") { entered.complete(Unit); release.await() }
+                return result
+            }
+        }
+        val lease = AuthorizationLease()
+        val old = GroupClient(crypto, delayed, storage, mailbox, authorizationLease = lease)
+        val pending = async { runCatching { old.init() } }
+        entered.await(); old.close()
+        val current = w.client(mailbox, storage)
+        val saved = storage.rows.getValue(mailbox)
+        release.complete(Unit)
+        assertTrue(pending.await().exceptionOrNull() is AuthorizationRetired)
+        assertEquals(saved, storage.rows.getValue(mailbox))
+        assertEquals(current.deviceId, storage.rows.getValue(mailbox).deviceId)
+        try { old.history("grp_unused"); fail("Retired history was readable") } catch (_: AuthorizationRetired) { }
+        assertTrue(current.authorizationLease.isValid)
     }
 
     @Test fun authenticatedEditsAndRepliesKeepTheOriginalAttachmentKeys() = runBlocking {
@@ -382,7 +411,11 @@ class GroupClientMlsTest {
         val t = three()
         var raced = false
         t.w.fake.beforeHandle = { me, method, path ->
-            if (!raced && me == t.a && method == "POST" && path.endsWith("/messages")) { raced = true; t.bob.selfUpdate(t.gid) }
+            if (!raced && me == t.a && method == "POST" && path.endsWith("/messages")) {
+                raced = true
+                // The other device has its own actor; it never borrows Alice's request context.
+                withContext(AuthorizationContext(t.bob.authorizationLease)) { t.bob.selfUpdate(t.gid) }
+            }
         }
         t.alice.send(t.gid, OutgoingDocument("racing"))
         t.w.fake.beforeHandle = null

@@ -7,6 +7,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.work.*
 import com.google.firebase.messaging.FirebaseMessaging
 import dev.pigeonpost.core.DevicePushApi
+import dev.pigeonpost.core.AuthorizationContext
 import dev.pigeonpost.core.SessionExpired
 import dev.pigeonpost.inbox.PigeonpostApplication
 import dev.pigeonpost.inbox.calls.IncomingCalls
@@ -14,6 +15,9 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.tasks.await
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import java.util.concurrent.TimeUnit
 
 class PushNotifications(private val context: Context) {
@@ -36,16 +40,19 @@ class PushNotifications(private val context: Context) {
         return token
     }
 
-    suspend fun unregister(api: DevicePushApi?, token: String?) {
+    suspend fun unregister(api: DevicePushApi?, token: String?, isCurrent: () -> Boolean = { true }) {
         if (token != null && api != null) withTimeoutOrNull(3000) {
             try { api.unregisterPushDevice(token) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { /* The local display gate is already closed. */ }
         }
-        FirebaseMessaging.getInstance().isAutoInitEnabled = false
-        try { withTimeoutOrNull(3000) { FirebaseMessaging.getInstance().deleteToken().await() } }
-        catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: Exception) { /* A stale token cannot display while signed out. */ }
+        tokenLifecycle.withLock {
+            if (!isCurrent()) return@withLock
+            FirebaseMessaging.getInstance().isAutoInitEnabled = false
+            try { withTimeoutOrNull(3000) { FirebaseMessaging.getInstance().deleteToken().await() } }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* A stale token cannot display while signed out. */ }
+        }
     }
 
     companion object {
@@ -54,6 +61,8 @@ class PushNotifications(private val context: Context) {
         @Volatile var foreground = false
         /** While the app is in front, a group push only asks the open app to look now. */
         @Volatile var groupPoke: (() -> Unit)? = null
+        /** A new registration fetches its token after any old deletion has completed. */
+        internal val tokenLifecycle = Mutex()
 
         fun channel(context: Context) {
             context.getSystemService(NotificationManager::class.java).createNotificationChannel(
@@ -87,16 +96,26 @@ class PushRegistrationWorker(context: Context, params: WorkerParameters) : Corou
         val graph = (applicationContext as PigeonpostApplication).graph
         val session = graph.session.state.first { !it.loading }
         if (!session.signedIn || !session.termsAccepted) { PushNotifications(applicationContext).clear(); return Result.success() }
+        val authorization = graph.session.authorizationLease ?: return Result.retry()
+        val lease = authorization.child()
+        fun current() = graph.session.authorizationLease === authorization && lease.isValid &&
+            preferences.getString("identity", null) == identity && graph.session.state.value.termsAccepted
         val api = graph.api as? DevicePushApi ?: return Result.failure()
         return try {
-            val token = FirebaseMessaging.getInstance().token.await()
-            if (preferences.getString("identity", null) != identity) return Result.success()
-            api.registerPushDevice(identity, token)
-            if (preferences.getString("identity", null) == identity && graph.session.state.value.signedIn)
-                preferences.edit().putString("token", token).apply()
-            Result.success()
+            withContext(AuthorizationContext(lease)) {
+                val token = PushNotifications.tokenLifecycle.withLock {
+                    if (!current()) return@withContext Result.success()
+                    FirebaseMessaging.getInstance().isAutoInitEnabled = true
+                    FirebaseMessaging.getInstance().token.await()
+                }
+                if (!current()) return@withContext Result.success()
+                api.registerPushDevice(identity, token)
+                if (current()) preferences.edit().putString("token", token).apply()
+                Result.success()
+            }
         } catch (cancelled: CancellationException) { throw cancelled }
-        catch (_: SessionExpired) { PushNotifications(applicationContext).clear(); Result.success() }
+        catch (_: SessionExpired) { if (graph.session.authorizationLease === authorization || graph.session.authorizationLease == null) PushNotifications(applicationContext).clear(); Result.success() }
         catch (_: Exception) { Result.retry() }
+        finally { lease.retire() }
     }
 }
