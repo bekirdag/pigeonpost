@@ -17,6 +17,15 @@ final class OrganizationRoomUITests: XCTestCase {
         app.launch()
         XCTAssertTrue(app.wait(for: .runningForeground, timeout: 10))
         if staged { XCTAssertTrue(app.navigationBars["Organization rooms"].waitForExistence(timeout: 15)) }
+        else {
+            // iPadOS 26 retains a collapsed conversation sidebar across fixture launches.
+            // Follow its observed navigation control before inspecting the compose commands.
+            let show = app.buttons["showSidebar"].firstMatch
+            if show.waitForExistence(timeout: 2) {
+                XCTAssertTrue(show.isEnabled && show.frame.width > 0 && app.frame.contains(show.frame))
+                show.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
+            }
+        }
     }
     private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
     private func tap(_ item: XCUIElement, form: String = "org-rooms-directory") {
@@ -40,7 +49,7 @@ final class OrganizationRoomUITests: XCTestCase {
         XCTAssertTrue(app.navigationBars["Room"].waitForExistence(timeout: 10))
     }
     private func openComposeMenu() {
-        let menu = app.buttons["composeMenu"].firstMatch
+        let menu = element("composeMenu")
         XCTAssertTrue(menu.waitForExistence(timeout: 10))
         // SwiftUI exposes a Menu wrapper with a false hit flag around its visible button.
         // Tap the observed control's centre and require the actual menu to appear.
@@ -58,7 +67,7 @@ final class OrganizationRoomUITests: XCTestCase {
     func testEntryRequiresBothOrganizationAndGroupCapabilities() {
         for features in ["groups", "orgs"] {
             launch(staged: false, features: features)
-            let menu = app.buttons["composeMenu"].firstMatch
+            let menu = element("composeMenu")
             if menu.waitForExistence(timeout: 5) {
                 openComposeMenu()
                 XCTAssertFalse(element("org-rooms-open").exists)
