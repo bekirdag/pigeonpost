@@ -546,9 +546,9 @@ public sealed partial class MainWindow
     private async Task GroupCallAsync(bool video, bool join)
     {
         if (groupsModel.Info is not { IsActive: true } info) return;
-        if (!callReady) { AccountStatus.Text = "Calling isn't ready yet. Try again in a moment."; return; }
+        if (CaptureCallPage() is not { } page || groupsModel.Mailbox != page.Actor.Mailbox.Address) { AccountStatus.Text = "Calling isn't ready yet. Try again in a moment."; return; }
         DesktopLog.Write($"{(join ? "Joining" : "Starting")} a group {(video ? "video" : "voice")} call");
-        await RunCallScriptAsync(CallBridge.GroupCallScript(info.Id, info.DisplayName, video, join));
+        await RunCallScriptAsync(page, CallBridge.GroupCallScript(info.Id, info.DisplayName, video, join));
     }
 
     private int callStatusVersion;

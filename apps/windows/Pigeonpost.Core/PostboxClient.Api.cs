@@ -50,7 +50,7 @@ public sealed partial class PostboxClient
     // goes there and nowhere else: any other host is refused.
     internal async Task<T> GetCallsJsonAsync<T>(Uri absolute, CancellationToken cancellationToken)
     {
-        if (!(absolute.Scheme == Uri.UriSchemeHttps && absolute.Host == "inbox.pigeonpost.dev" || absolute.IsLoopback))
+        if (!CallBridge.IsCallsService(absolute, endpoint))
             throw new ArgumentException("Not the calls service.", nameof(absolute));
         using var request = new HttpRequestMessage(HttpMethod.Get, absolute);
         var owner = new RequestAuthorization(tokens);

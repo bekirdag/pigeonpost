@@ -28,6 +28,13 @@ public sealed partial class MainWindow
     private IReadOnlyList<InboxMessage> filteredMessages = [];
     private Button? callsNav, groupsNav, chatsNav;
     private int featureVersion;
+    private sealed record SideBinding(InboxViewModel Inbox, AuthorizationLease? Authorization, string Mailbox);
+    private SideBinding? sideBinding;
+    private SideBinding? refreshingSide;
+    private bool SameAccount(InboxViewModel inbox, AuthorizationLease? authorization) => !lifetime.IsCancellationRequested
+        && ReferenceEquals(ViewModel, inbox) && ReferenceEquals(session.AcceptedAuthorization, authorization) && authorization is not { IsActive: false };
+    private bool SideCurrent(SideBinding binding) => ReferenceEquals(sideBinding, binding)
+        && SameAccount(binding.Inbox, binding.Authorization) && ViewModel.SelectedMailbox?.Address == binding.Mailbox;
 
     private void CreateSideModels()
     {
@@ -51,9 +58,18 @@ public sealed partial class MainWindow
     private async Task StartSideViewsAsync()
     {
         var version = ++featureVersion;
-        try { features = await postbox.GetCapabilitiesAsync(lifetime.Token); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Capabilities unavailable", ex); features = ServerFeatures.None; }
-        if (version != featureVersion) return;
+        var inbox = ViewModel;
+        var authorization = session.AcceptedAuthorization;
+        ServerFeatures available;
+        try
+        {
+            using var operation = authorization is null ? null : new AuthorizationContext(authorization);
+            available = await postbox.GetCapabilitiesAsync(lifetime.Token);
+        }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { DesktopLog.Error("Capabilities unavailable", ex); available = ServerFeatures.None; }
+        if (version != featureVersion || !SameAccount(inbox, authorization)) return;
+        features = available;
         DesktopLog.Write("Features: " + string.Join(",", features.Names.Order(StringComparer.Ordinal)));
         avatars.Enabled = features.Has(ServerFeatures.Avatars);
         ProfileMenuItem.Visibility = ToVisibility(features.Has(ServerFeatures.Avatars));
@@ -65,46 +81,61 @@ public sealed partial class MainWindow
 
     private async Task MailboxChangedForSideViewsAsync()
     {
-        if (ViewModel.SelectedMailbox is not { } mailbox) return;
+        sideBinding = null;
+        refreshingSide = null;
+        await groupsModel.ActivateAsync(null, ServerFeatures.None, [], []);
+        avatars.Clear();
+        AvatarFiles.Clear();
+        if (ViewModel.SelectedMailbox is not { } mailbox) { callHistory.Reset(null); return; }
+        var binding = new SideBinding(ViewModel, session.AcceptedAuthorization, mailbox.Address);
+        sideBinding = binding;
         callHistory.Reset(features.Has(ServerFeatures.CallHistory) ? mailbox.Address : null);
         filteredMessages = [];
         filteredSenders.Clear();
         if (sideView != SideView.Chats) ShowSideView(SideView.Chats);
         UpdateFilteredEntry();
         await RefreshSideViewsAsync();
-        await groupsModel.ActivateAsync(mailbox, features, ViewModel.Mailboxes, ViewModel.Contacts);
+        if (!SideCurrent(binding)) return;
+        await groupsModel.ActivateAsync(mailbox, features, binding.Inbox.Mailboxes, binding.Inbox.Contacts);
+        if (!SideCurrent(binding)) return;
         RefreshAvatars();
         UpdateSideNav();
     }
 
     // Each refresh tick: call history (badge and missed lines), the Filtered list, and the groups loop.
-    private bool refreshingSide;
     private async Task RefreshSideViewsAsync()
     {
-        if (refreshingSide || ViewModel.SelectedMailbox is not { } mailbox) return;
-        refreshingSide = true;
+        if (sideBinding is not { } binding || !SideCurrent(binding) || ReferenceEquals(refreshingSide, binding)) return;
+        refreshingSide = binding;
         try
         {
+            using var operation = binding.Authorization is null ? null : new AuthorizationContext(binding.Authorization);
             if (features.Has(ServerFeatures.CallHistory)) await callHistory.LoadAsync();
+            if (!SideCurrent(binding)) return;
             if (features.Has(ServerFeatures.MessageFiltering))
             {
                 try
                 {
-                    var messages = await postbox.GetFilteredAsync(mailbox.Address, lifetime.Token);
-                    if (ViewModel.SelectedMailbox?.Address == mailbox.Address) { filteredMessages = messages; RebuildFiltered(); }
+                    var messages = await postbox.GetFilteredAsync(binding.Mailbox, lifetime.Token);
+                    if (SideCurrent(binding)) { filteredMessages = messages; RebuildFiltered(); }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Filtered list unavailable", ex); }
             }
+            if (!SideCurrent(binding)) return;
             if (groupsModel.Enabled) await groupsModel.RefreshAsync();
+            if (!SideCurrent(binding)) return;
             if (sideView == SideView.Calls) await callHistory.MarkSeenAsync();
-            ViewModel.PruneExpired();
+            if (SideCurrent(binding)) binding.Inbox.PruneExpired();
         }
-        finally { refreshingSide = false; }
+        catch (OperationCanceledException) { }
+        finally { if (ReferenceEquals(refreshingSide, binding)) refreshingSide = null; }
     }
 
     private void ResetSideViews()
     {
         featureVersion++;
+        sideBinding = null;
+        refreshingSide = null;
         features = ServerFeatures.None;
         callHistory.Reset(null);
         _ = groupsModel.ActivateAsync(null, ServerFeatures.None, [], []);
@@ -255,8 +286,9 @@ public sealed partial class MainWindow
         AutomationProperties.SetName(clear, "Clear all calls");
         clear.Click += async (_, _) =>
         {
+            if (sideBinding is not { } binding || !SideCurrent(binding)) return;
             if (!await ConfirmAsync("Clear your call history?", "Every call in this mailbox's history is deleted. This can't be undone.", "Clear all")) return;
-            AccountStatus.Text = await callHistory.ClearAsync();
+            await RunCallHistoryActionAsync(binding, callHistory.ClearAsync);
         };
         actions.Children.Add(clear);
         var stack = new StackPanel { Padding = new Thickness(20, 8, 20, 20), Spacing = 4 };
@@ -293,19 +325,32 @@ public sealed partial class MainWindow
 
     private async void CallBack_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is not FrameworkElement { Tag: CallRow { Key: { } key } row }) return;
+        if (sender is not FrameworkElement { Tag: CallRow { Key: { } key } row } || sideBinding is not { } binding || !SideCurrent(binding)
+            || callSession is not { } actor || !CallCurrent(actor)) return;
         await OpenPeerAsync(key);
-        await PlaceCallAsync(key, row.Entry.IsVideo);
+        if (SideCurrent(binding) && CallCurrent(actor)) await PlaceCallAsync(key, row.Entry.IsVideo);
     }
 
     private async void DeleteCall_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: CallRow row }) AccountStatus.Text = await callHistory.DeleteAsync(row.Entry);
+        if (sender is FrameworkElement { Tag: CallRow row } && sideBinding is { } binding) await RunCallHistoryActionAsync(binding, () => callHistory.DeleteAsync(row.Entry));
     }
 
     private async void ReportCall_Click(object sender, RoutedEventArgs e)
     {
-        if (sender is FrameworkElement { Tag: CallRow row }) AccountStatus.Text = await callHistory.ReportAsync(row.Entry);
+        if (sender is FrameworkElement { Tag: CallRow row } && sideBinding is { } binding) await RunCallHistoryActionAsync(binding, () => callHistory.ReportAsync(row.Entry));
+    }
+
+    private async Task RunCallHistoryActionAsync(SideBinding binding, Func<Task<string>> action)
+    {
+        if (!SideCurrent(binding)) return;
+        try
+        {
+            using var operation = binding.Authorization is null ? null : new AuthorizationContext(binding.Authorization);
+            var result = await action();
+            if (SideCurrent(binding)) AccountStatus.Text = result;
+        }
+        catch (OperationCanceledException) { }
     }
 
     private async void BlockCall_Click(object sender, RoutedEventArgs e)
@@ -317,16 +362,23 @@ public sealed partial class MainWindow
     // Open (or start) the 1:1 conversation with a peer from another page.
     private async Task OpenPeerAsync(string peer)
     {
+        if (sideBinding is not { } binding || !SideCurrent(binding)) return;
         ShowSideView(SideView.Chats);
-        var existing = ViewModel.AllConversations.FirstOrDefault(c => c.Peer == PostAddress.Canonical(peer));
-        if (existing is not null)
+        try
         {
-            ViewModel.SenderSearch = "";
-            ViewModel.ShowArchived = false;
-            ViewModel.SelectConversation(ViewModel.Conversations.FirstOrDefault(c => c.Peer == existing.Peer) ?? existing);
+            using var operation = binding.Authorization is null ? null : new AuthorizationContext(binding.Authorization);
+            var inbox = binding.Inbox;
+            var existing = inbox.AllConversations.FirstOrDefault(c => c.Peer == PostAddress.Canonical(peer));
+            if (existing is not null)
+            {
+                inbox.SenderSearch = "";
+                inbox.ShowArchived = false;
+                inbox.SelectConversation(inbox.Conversations.FirstOrDefault(c => c.Peer == existing.Peer) ?? existing);
+            }
+            else await inbox.StartConversationAsync(peer, "");
+            if (SideCurrent(binding)) ShowConversation();
         }
-        else await ViewModel.StartConversationAsync(peer, "");
-        ShowConversation();
+        catch (OperationCanceledException) { }
     }
 
     // ---- Filtered ------------------------------------------------------------------------------
@@ -690,32 +742,35 @@ public sealed partial class MainWindow
 
     private async Task PaintAvatarAsync(Border border, string key)
     {
-        var bytes = await avatars.ImageAsync(key, lifetime.Token);
-        if (border.Tag is not string tag || AvatarDirectory.Key(tag) != key) return; // recycled for another row
-        if (bytes is null)
-        {
-            border.ClearValue(Border.BackgroundProperty);
-            if (border.Child is UIElement initials) initials.Opacity = 1;
-            return;
-        }
+        var version = avatars.Version;
+        bool Current() => !lifetime.IsCancellationRequested && avatars.IsCurrent(version)
+            && border.Tag is string tag && AvatarDirectory.Key(tag) == key;
         try
         {
+            var bytes = await avatars.ImageAsync(key, lifetime.Token);
+            if (!Current()) return;
+            if (bytes is null)
+            {
+                border.ClearValue(Border.BackgroundProperty);
+                if (border.Child is UIElement fallbackInitials) fallbackInitials.Opacity = 1;
+                return;
+            }
             var image = new BitmapImage { DecodePixelWidth = 96 };
             using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
             await stream.WriteAsync(bytes.AsBuffer());
             stream.Seek(0);
             await image.SetSourceAsync(stream);
-            if (border.Tag is not string again || AvatarDirectory.Key(again) != key) return;
+            if (!Current() || !avatars.TryWithCurrent(version, () => AvatarFiles.Remember(key, bytes))) return;
             border.Background = new ImageBrush { ImageSource = image, Stretch = Stretch.UniformToFill };
             if (border.Child is UIElement initials) initials.Opacity = 0;
-            AvatarFiles.Remember(key, bytes);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex) { DesktopLog.Error("Showing a picture failed", ex); }
     }
 
     private void RefreshAvatars()
     {
-        if (!avatars.Enabled) return;
+        if (!avatars.Enabled || sideBinding is not { } binding || !SideCurrent(binding)) return;
         var keys = ViewModel.AllConversations.Select(c => c.Peer)
             .Concat(callHistory.Entries.Select(e => e.PeerKey).OfType<string>())
             .Concat(filteredSenders.Select(s => s.Peer))

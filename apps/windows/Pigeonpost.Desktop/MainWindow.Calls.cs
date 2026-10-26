@@ -26,12 +26,17 @@ namespace Pigeonpost.Desktop;
 public sealed partial class MainWindow
 {
     private WebView2? callView;
+    private CoreWebView2? callCore;
     private Task? callsStarting;
     private bool callReady;
     private bool callsSignedIn;
     private CallMode callMode = CallMode.Hidden;
     private bool callRinging;
-    private (string Peer, bool Video)? pendingCall;
+    private (NativeCallSession Actor, string Peer, bool Video)? pendingCall;
+    private NativeCallSession? callSession;
+    private InboxViewModel? callInbox;
+    private int callDocument;
+    private sealed record CallPageTicket(WebView2 View, CoreWebView2 Core, NativeCallSession Actor, int Document);
     private int callRestarts;
     private Uri callPage = CallBridge.ProductionPage;
 
@@ -42,7 +47,51 @@ public sealed partial class MainWindow
     // remote debugging for the test driver).
     private static string? CallsDebug(string name) =>
         Environment.GetEnvironmentVariable("PIGEONPOST_CALLS_" + name) is { Length: > 0 } value ? value : null;
+    private sealed class FixtureCallTokens(string token) : IAccessTokenProvider
+    {
+        public Task<string> GetTokenAsync(CancellationToken ct) => Task.FromResult(token);
+        public Task<string> RefreshTokenAsync(CancellationToken ct) => Task.FromResult(token);
+    }
+    private IAccessTokenProvider? fixtureCallTokens;
 #endif
+
+    private Mailbox? CurrentCallMailbox()
+    {
+#if DEBUG || UI_TESTS
+        if (CallsDebug("TOKEN") is not null && CallsDebug("MAILBOX") is { } address) return new Mailbox(address, CallsDebug("HANDLE"));
+#endif
+        return ViewModel.SelectedMailbox;
+    }
+    private IAccessTokenProvider CallTokenProvider()
+    {
+#if DEBUG || UI_TESTS
+        if (CallsDebug("TOKEN") is { } token) return fixtureCallTokens ??= new FixtureCallTokens(token);
+#endif
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) return fixtureCallTokens ??= new FixtureCallTokens("ui-preview-only-call-token");
+#endif
+        return session;
+    }
+    private bool CallCurrent(NativeCallSession actor) => callsSignedIn && !lifetime.IsCancellationRequested
+        && ReferenceEquals(callSession, actor) && ReferenceEquals(callInbox, ViewModel)
+        && CurrentCallMailbox() is { } mailbox && actor.Matches(mailbox);
+    private CallPageTicket? CaptureCallPage(bool requireReady = true)
+    {
+        if (requireReady && !callReady || callSession is not { } actor || !CallCurrent(actor)
+            || callView is not { } view || callCore is not { } core) return null;
+        var ticket = new CallPageTicket(view, core, actor, callDocument);
+        return CallPageCurrent(ticket) ? ticket : null;
+    }
+    private bool CallPageCurrent(CallPageTicket ticket)
+    {
+        try
+        {
+            return CallCurrent(ticket.Actor) && ReferenceEquals(callView, ticket.View)
+                && ReferenceEquals(callCore, ticket.Core) && callDocument == ticket.Document
+                && CallBridge.IsPage(ParseUri(ticket.Core.Source), callPage);
+        }
+        catch (Exception ex) when (ex is COMException or InvalidOperationException) { return false; }
+    }
 
     private static string CallsDataFolder => Path.Combine(
         Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Pigeonpost", "CallsWebView2");
@@ -50,16 +99,40 @@ public sealed partial class MainWindow
     // Called once the inbox is open (and again after each mailbox switch, which only reconfigures).
     private Task StartCallsAsync()
     {
+        if (lifetime.IsCancellationRequested || CurrentCallMailbox() is not { } mailbox) return Task.CompletedTask;
+        if (callSession is { } current && CallCurrent(current))
+        {
+            if (callView is not null) return ConfigureCallsAsync();
+            if (CallsStarting) return callsStarting!;
+        }
+        var replacing = callSession is not null;
+        RemoveCallView();
+        if (replacing) _ = StopCallAlertsAsync();
+        NativeCallSession actor;
+        try
+        {
+            var provider = CallTokenProvider();
+            var fixture = false;
+#if DEBUG || UI_TESTS
+            fixture = provider is FixtureCallTokens;
+            if (CallsDebug("PAGE") is { } supplied
+                && (!fixture || !Uri.TryCreate(supplied, UriKind.Absolute, out var local)
+                    || !local.IsLoopback || local.Scheme != Uri.UriSchemeHttp || !string.IsNullOrEmpty(local.UserInfo))) return Task.CompletedTask;
+#endif
+            actor = new NativeCallSession(provider, mailbox, allowUnboundFixture: fixture);
+        }
+        catch (AuthorizationRetiredException) { return Task.CompletedTask; }
+        callSession = actor;
+        callInbox = ViewModel;
         callsSignedIn = true;
         HookCallAlerts();
         UpdateCallButtons();
-        if (callView is not null) return ConfigureCallsAsync();
-        if (CallsStarting) return callsStarting!;
-        return callsStarting = CreateCallViewAsync();
+        return callsStarting = CreateCallViewAsync(actor);
     }
 
-    private async Task CreateCallViewAsync()
+    private async Task CreateCallViewAsync(NativeCallSession actor)
     {
+        WebView2? created = null;
         try
         {
 #if UI_TESTS
@@ -78,11 +151,13 @@ public sealed partial class MainWindow
             DesktopLog.Write("Call view starting");
             var environment = await CoreWebView2Environment.CreateWithOptionsAsync(null, CallsDataFolder,
                 new CoreWebView2EnvironmentOptions { AdditionalBrowserArguments = arguments });
+            if (!CallCurrent(actor)) return;
             var view = new WebView2
             {
                 HorizontalAlignment = HorizontalAlignment.Left,
                 VerticalAlignment = VerticalAlignment.Top,
             };
+            created = view;
             AutomationProperties.SetName(view, "Call");
             AutomationProperties.SetAutomationId(view, "CallView");
             Grid.SetRow(view, 0);
@@ -91,7 +166,9 @@ public sealed partial class MainWindow
             ApplyCallMode(CallMode.Hidden);
             DesktopLog.Write($"Call view environment ready ({environment.BrowserVersionString})");
             await view.EnsureCoreWebView2Async(environment);
+            if (!CallCurrent(actor) || !ReferenceEquals(callView, view)) { CloseCreatedCallView(view, actor); return; }
             var core = view.CoreWebView2;
+            callCore = core;
             var settings = core.Settings;
             settings.AreDefaultContextMenusEnabled = false;
             settings.AreBrowserAcceleratorKeysEnabled = false;
@@ -105,36 +182,48 @@ public sealed partial class MainWindow
             settings.AreDevToolsEnabled = false;
 #endif
             await core.AddScriptToExecuteOnDocumentCreatedAsync(CallBridge.RingObserverScript);
-            core.NavigationStarting += CallView_NavigationStarting;
+            if (!CallCurrent(actor) || !ReferenceEquals(callView, view)) { CloseCreatedCallView(view, actor); return; }
+            // Retain the owned projection and bind callbacks to it, rather than comparing
+            // repeatedly projected property/event-sender objects by managed identity.
+            core.NavigationStarting += (_, e) => CallView_NavigationStarting(core, e);
             core.FrameNavigationStarting += (_, e) =>
             {
-                if (!CallBridge.SameOrigin(ParseUri(e.Uri), callPage)) e.Cancel = true;
+                if (!CallCurrent(actor) || !ReferenceEquals(callView, view) || !CallBridge.IsPage(ParseUri(e.Uri), callPage)) e.Cancel = true;
             };
             core.NewWindowRequested += (sender, e) =>
             {
                 e.Handled = true;
-                if (CallBridge.IsExternalLink(ParseUri(e.Uri))) _ = Launcher.LaunchUriAsync(new Uri(e.Uri));
+                if (CallCurrent(actor) && ReferenceEquals(callView, view) && CallBridge.IsExternalLink(ParseUri(e.Uri))) _ = Launcher.LaunchUriAsync(new Uri(e.Uri));
             };
-            core.PermissionRequested += CallView_PermissionRequested;
+            core.PermissionRequested += (_, e) => CallView_PermissionRequested(core, e);
             core.ScreenCaptureStarting += (sender, e) =>
             {
                 // Screen sharing is offered by the page itself; Windows' own picker chooses what is shared.
-                var allowed = CallBridge.IsPage(ParseUri(sender.Source), callPage);
+                var allowed = CallCurrent(actor) && ReferenceEquals(callView, view) && ReferenceEquals(callCore, core)
+                    && CallBridge.IsPage(ParseUri(core.Source), callPage);
                 e.Cancel = !allowed;
                 DesktopLog.Write($"Call screen sharing {(allowed ? "started" : "refused")}");
             };
             core.DownloadStarting += (_, e) => { e.Cancel = true; e.Handled = true; };
-            core.WebMessageReceived += CallView_WebMessageReceived;
-            core.ProcessFailed += CallView_ProcessFailed;
+            core.WebMessageReceived += (_, e) => CallView_WebMessageReceived(core, e);
+            core.ProcessFailed += (_, e) => CallView_ProcessFailed(core, e);
             DesktopLog.Write("Call view created");
             core.Navigate(callPage.AbsoluteUri);
         }
         catch (Exception ex)
         {
             // Without WebView2 the inbox still works; the call buttons explain themselves.
-            DesktopLog.Error("Call view unavailable", ex);
-            RemoveCallView();
+            if (CallCurrent(actor)) DesktopLog.Error("Call view unavailable", ex);
+            if (created is not null) CloseCreatedCallView(created, actor);
+            else if (ReferenceEquals(callSession, actor)) RemoveCallView();
         }
+    }
+
+    private void CloseCreatedCallView(WebView2 view, NativeCallSession actor)
+    {
+        if (ReferenceEquals(callSession, actor) && ReferenceEquals(callView, view)) { RemoveCallView(); return; }
+        Root.Children.Remove(view);
+        try { view.Close(); } catch (Exception) { }
     }
 
     private bool CallsStarting => callsStarting is { IsCompleted: false };
@@ -145,10 +234,19 @@ public sealed partial class MainWindow
     // browser rather than replacing the call client.
     private void CallView_NavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs e)
     {
+        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callCore, sender))
+        {
+            e.Cancel = true;
+            DesktopLog.Write("Call navigation refused: retired host");
+            return;
+        }
         var target = ParseUri(e.Uri);
         if (CallBridge.IsPage(target, callPage))
         {
+            if (callDocument > 0) pendingCall = null;
+            callDocument++;
             callReady = false; // A reload starts again from a page that knows nothing.
+            DesktopLog.Write("Call page navigating");
             return;
         }
         e.Cancel = true;
@@ -158,8 +256,10 @@ public sealed partial class MainWindow
     // The microphone and camera are for the call page only. Windows' privacy settings still apply.
     private void CallView_PermissionRequested(CoreWebView2 sender, CoreWebView2PermissionRequestedEventArgs e)
     {
-        var allowed = CallBridge.SameOrigin(ParseUri(e.Uri), callPage) && e.PermissionKind is CoreWebView2PermissionKind.Microphone
-            or CoreWebView2PermissionKind.Camera or CoreWebView2PermissionKind.Autoplay;
+        // e.Uri is the requesting origin, not its document URL (Microsoft WebView2 API).
+        var allowed = CaptureCallPage(requireReady: false) is { } page && ReferenceEquals(page.Core, sender)
+            && CallBridge.SameOrigin(ParseUri(e.Uri), callPage) && e.PermissionKind is (CoreWebView2PermissionKind.Microphone
+            or CoreWebView2PermissionKind.Camera or CoreWebView2PermissionKind.Autoplay);
         e.State = allowed ? CoreWebView2PermissionState.Allow : CoreWebView2PermissionState.Deny;
         e.SavesInProfile = false; // This handler decides every time.
         DesktopLog.Write($"Call permission {e.PermissionKind}: {(allowed ? "allowed" : "denied")}");
@@ -167,7 +267,12 @@ public sealed partial class MainWindow
 
     private async void CallView_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
-        if (!CallBridge.IsPage(ParseUri(e.Source), callPage)) return;
+        if (CaptureCallPage(requireReady: false) is not { } page || !ReferenceEquals(page.Core, sender)
+            || !CallBridge.IsPage(ParseUri(e.Source), callPage))
+        {
+            DesktopLog.Write("Call bridge ignored: host or document changed");
+            return;
+        }
         string? json;
         try { json = e.WebMessageAsJson; } catch (Exception) { return; }
         switch (CallBridge.Parse(json))
@@ -177,12 +282,15 @@ public sealed partial class MainWindow
                 callRestarts = 0;
                 DesktopLog.Write("Call page ready");
                 await ConfigureCallsAsync();
+                if (!CallPageCurrent(page)) return;
                 await AnswerPendingCallAsync();
-                if (pendingCall is { } call) { pendingCall = null; await PlaceCallAsync(call.Peer, call.Video); }
+                if (!CallPageCurrent(page)) return;
+                if (pendingCall is { } call && ReferenceEquals(call.Actor, page.Actor)) { pendingCall = null; await PlaceCallAsync(call.Peer, call.Video); }
 #if DEBUG || UI_TESTS
                 if (CallsDebug("CALL") is { } auto && auto.LastIndexOf(':') is > 0 and var colon)
                 {
                     await Task.Delay(1500);
+                    if (!CallPageCurrent(page)) return;
                     await PlaceCallAsync(auto[..colon], auto[(colon + 1)..] == "video");
                 }
 #endif
@@ -204,7 +312,7 @@ public sealed partial class MainWindow
                 CallPage_Call(state, room);
                 break;
             case { Type: "renew" }:
-                await RenewCallTokenAsync();
+                await RenewCallTokenAsync(page);
                 break;
             case { Type: "toast", Text: { } text }:
                 AccountStatus.Text = text;
@@ -214,6 +322,7 @@ public sealed partial class MainWindow
 
     private void CallView_ProcessFailed(CoreWebView2 sender, CoreWebView2ProcessFailedEventArgs e)
     {
+        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callCore, sender)) return;
         DesktopLog.Write($"Call view process failed: {e.ProcessFailedKind}");
         callReady = false;
         callRinging = false;
@@ -230,58 +339,62 @@ public sealed partial class MainWindow
         }
     }
 
-    private async Task<(string? Token, Mailbox Mailbox)?> CallIdentityAsync()
-    {
-#if DEBUG || UI_TESTS
-        if (CallsDebug("TOKEN") is { } token && CallsDebug("MAILBOX") is { } address) return (token, new Mailbox(address, CallsDebug("HANDLE")));
-#endif
-        if (ViewModel.SelectedMailbox is not { } mailbox) return null;
-        try { return (await session.GetTokenAsync(lifetime.Token), mailbox); }
-        catch (OperationCanceledException) { return null; }
-        catch (Exception ex) { DesktopLog.Error("Call token unavailable", ex); return (null, mailbox); }
-    }
-
     // Tell the page who is signed in, and the names of the people in this mailbox.
     private async Task ConfigureCallsAsync()
     {
-        if (!callReady || !callsSignedIn || await CallIdentityAsync() is not { } identity) return;
+        if (!callsSignedIn) return;
+        if (CurrentCallMailbox() is null) { RemoveCallView(); return; }
+        if (callSession is not { } actor || !CallCurrent(actor)) { await StartCallsAsync(); return; }
+        if (CaptureCallPage() is not { } page) return;
+        var mailbox = CurrentCallMailbox()!;
+        var conversations = ViewModel.AllConversations.ToArray();
         var nativeRing = WantNativeRing;
-        await RunCallScriptAsync(CallBridge.ConfigureScript(identity.Token, identity.Mailbox, ViewModel.AllConversations, nativeRing));
-        configuredNativeRing = nativeRing;
+        string? token = null;
+        try { token = await actor.TokenAsync(false, lifetime.Token); }
+        catch (OperationCanceledException) { return; }
+        catch (Exception ex) { if (CallPageCurrent(page)) DesktopLog.Error("Call token unavailable", ex); }
+        if (!CallPageCurrent(page)) return;
+        if (await RunCallScriptAsync(page, CallBridge.ConfigureScript(token, mailbox, conversations, nativeRing)) && CallPageCurrent(page)) configuredNativeRing = nativeRing;
     }
 
-    private async Task RenewCallTokenAsync()
+    private async Task RenewCallTokenAsync(CallPageTicket page)
     {
         string? fresh = null;
-#if DEBUG || UI_TESTS
-        if (CallsDebug("TOKEN") is { } token) fresh = token;
-        else
-#endif
-        try { fresh = await session.RefreshTokenAsync(lifetime.Token); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Call token renewal failed", ex); }
+        try { fresh = await page.Actor.TokenAsync(true, lifetime.Token); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { if (CallPageCurrent(page)) DesktopLog.Error("Call token renewal failed", ex); }
         catch (OperationCanceledException) { return; }
-        await RunCallScriptAsync(CallBridge.RenewedScript(fresh));
+        if (CallPageCurrent(page)) await RunCallScriptAsync(page, CallBridge.RenewedScript(fresh));
     }
 
-    private async Task RunCallScriptAsync(string script)
+    private async Task<bool> RunCallScriptAsync(CallPageTicket page, string script)
     {
-        if (callView?.CoreWebView2 is not { } core) return;
-        try { await core.ExecuteScriptAsync(script); }
-        catch (Exception ex) { DesktopLog.Error("Call page script failed", ex); }
+        if (!CallPageCurrent(page)) return false;
+        try { await page.Core.ExecuteScriptAsync(script); return CallPageCurrent(page); }
+        catch (Exception ex) { if (CallPageCurrent(page)) DesktopLog.Error("Call page script failed", ex); return false; }
     }
 
     private async Task PlaceCallAsync(string peer, bool video)
     {
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) { AccountStatus.Text = "Calling is not configured in this preview."; return; }
+#endif
+        if (!callsSignedIn) return;
+        if (callSession is not { } actor || !CallCurrent(actor))
+        {
+            await StartCallsAsync();
+            return; // A different login/inbox needs a new explicit call action.
+        }
         if (!callReady)
         {
-            pendingCall = (peer, video);
+            pendingCall = (actor, peer, video);
             AccountStatus.Text = "Connecting the call…";
             if (callView is null && !CallsStarting && callsSignedIn) await StartCallsAsync();
+            if (!CallCurrent(actor)) return;
             if (callView is null && !CallsStarting) { pendingCall = null; AccountStatus.Text = "Calls aren't available right now. Please try again."; }
             return;
         }
         DesktopLog.Write($"Placing a {(video ? "video" : "voice")} call");
-        await RunCallScriptAsync(CallBridge.CallScript(peer, video));
+        if (CaptureCallPage() is { } page) await RunCallScriptAsync(page, CallBridge.CallScript(peer, video));
     }
 
     private async void VoiceCall_Click(object sender, RoutedEventArgs e)
@@ -296,7 +409,7 @@ public sealed partial class MainWindow
 
     private void UpdateCallButtons()
     {
-        var enabled = callsSignedIn && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
+        var enabled = callSession is { } actor && CallCurrent(actor) && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
         VoiceCallButton.IsEnabled = VideoCallButton.IsEnabled = enabled;
     }
 
@@ -337,26 +450,54 @@ public sealed partial class MainWindow
 
     private bool lastRingCard;
 
-    // Sign-out ends any call and forgets the member; the page stays loaded for the next sign-in.
+    // Sign-out retires this host; the next sign-in receives a fresh call page.
+    private static async Task ShutdownCallPageAsync(CoreWebView2 core)
+    {
+        await core.ExecuteScriptAsync(CallBridge.SignOutScript);
+    }
+
     private async Task StopCallsAsync()
     {
-        callsSignedIn = false;
-        pendingCall = null;
-        await StopCallAlertsAsync();
-        await RunCallScriptAsync(CallBridge.SignOutScript);
-        ApplyCallMode(CallMode.Hidden);
+        var page = CaptureCallPage(requireReady: false);
+        var view = DetachCallView();
+        var alerts = StopCallAlertsAsync();
+        try
+        {
+            // Only this retired view receives shutdown; no token or user action is dispatched.
+            if (page is not null && CallBridge.IsPage(ParseUri(page.Core.Source), callPage))
+                await ShutdownCallPageAsync(page.Core).WaitAsync(TimeSpan.FromSeconds(2));
+        }
+        catch (Exception) { }
+        finally { try { view?.Close(); } catch (Exception) { } }
+        await alerts;
+        if (callSession is null) ApplyCallMode(CallMode.Hidden);
     }
 
     private void RemoveCallView()
     {
-        if (callView is not { } view) return;
+        var view = DetachCallView();
+        try { view?.Close(); } catch (Exception) { }
+    }
+
+    private WebView2? DetachCallView()
+    {
+        callSession?.Dispose();
+        callSession = null;
+        callInbox = null;
+        callsSignedIn = false;
+        pendingCall = null;
+        callDocument = 0;
+        var view = callView;
         callView = null;
+        callCore = null;
         callReady = false;
+        callRinging = false;
+        callMode = CallMode.Hidden;
         KeepDisplayAwake(false);
-        Root.Children.Remove(view);
+        if (view is not null) Root.Children.Remove(view);
         CallRow.Height = new GridLength(0);
-        try { view.Close(); } catch (Exception) { }
         UpdateCallButtons();
+        return view;
     }
 
     // A call keeps the display awake, as a phone call does.

@@ -30,7 +30,7 @@ public sealed partial class MainWindow
     private bool callAlertsHooked;
     private bool callWindowActive;
     private bool configuredNativeRing;
-    private (string Room, string? RingToken, DateTimeOffset At)? pendingAnswer;
+    private (string Room, string? RingToken, DateTimeOffset At, AuthorizationLease? Authorization, string? Mailbox)? pendingAnswer;
     private DispatcherTimer? ringTimer;
     private PushNotificationChannel? pushChannel;
     private DispatcherTimer? pushTimer;
@@ -74,11 +74,12 @@ public sealed partial class MainWindow
 
     private async Task UpdateNativeRingAsync()
     {
-        if (!callReady || !callsSignedIn) return;
+        if (CaptureCallPage() is not { } page) return;
         var wanted = WantNativeRing;
         if (wanted != configuredNativeRing)
         {
             await ConfigureCallsAsync();
+            if (!CallPageCurrent(page)) return;
             DesktopLog.Write(wanted ? "Calls ring with Windows alerts" : "Calls ring in the window");
         }
         // A ring sounding in the window when it went to the background now needs a toast.
@@ -168,6 +169,7 @@ public sealed partial class MainWindow
     // Answer, Decline or the toast body, from App (a running app, or a cold start from a toast).
     public async Task HandleCallLaunchAsync(CallLaunch launch)
     {
+        var page = CaptureCallPage();
         var now = DateTimeOffset.UtcNow;
         var token = launch.RingToken ?? rings.Get(launch.Room)?.RingToken;
         DesktopLog.Write($"Call alert: {launch.Action}{(token is null ? "" : " (ring token)")}");
@@ -176,7 +178,7 @@ public sealed partial class MainWindow
             case CallLaunchAction.Answer:
                 rings.Handle(launch.Room, now);
                 _ = RemoveCallToastAsync(launch.Room);
-                pendingAnswer = (launch.Room, token, now);
+                pendingAnswer = (launch.Room, token, now, session.AcceptedAuthorization, CurrentCallMailbox()?.Address);
                 StartRingTimer();
                 ShowInbox(); // Starts the account on a cold start; the answer waits for the page.
                 await AnswerPendingCallAsync();
@@ -191,7 +193,7 @@ public sealed partial class MainWindow
                     catch (Exception ex) when (ex is not OperationCanceledException) { DesktopLog.Error("Declining the call failed", ex); }
                     catch (OperationCanceledException) { }
                 }
-                if (!declined && callReady) await RunCallScriptAsync(CallBridge.DeclineScript(launch.Room, token));
+                if (!declined && page is not null && CallPageCurrent(page)) await RunCallScriptAsync(page, CallBridge.DeclineScript(launch.Room, token));
                 // Cold start from Decline: stay in the notification area rather than open a window.
                 if (started is null) StartInNotificationArea();
                 break;
@@ -207,11 +209,13 @@ public sealed partial class MainWindow
     // Called when the page is ready and configured, and directly when it already is.
     private async Task AnswerPendingCallAsync()
     {
-        if (pendingAnswer is not { } answer || !callReady || !callsSignedIn) return;
+        if (pendingAnswer is not { } answer || CaptureCallPage() is not { } page) return;
         if (DateTimeOffset.UtcNow - answer.At > CallRingState.MaxRing) { pendingAnswer = null; return; }
+        if (answer.Authorization is not null && !ReferenceEquals(answer.Authorization, session.AcceptedAuthorization)
+            || answer.Mailbox is not null && answer.Mailbox != page.Actor.Mailbox.Address) { pendingAnswer = null; return; }
         pendingAnswer = null;
         DesktopLog.Write("Answering the call");
-        await RunCallScriptAsync(CallBridge.AnswerScript(answer.Room, answer.RingToken));
+        await RunCallScriptAsync(page, CallBridge.AnswerScript(answer.Room, answer.RingToken));
     }
 
     private async Task StopCallAlertsAsync()
