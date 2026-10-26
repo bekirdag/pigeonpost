@@ -78,6 +78,10 @@ class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(
 class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
     private val storeScope = AuthorizedStoreScope(viewModelScope)
+    private data class StoreActivation(val authorizationId: String?, val id: String = java.util.UUID.randomUUID().toString())
+    private data class InboxBinding(val scopeId: String, val address: String, val handle: String?, val features: Set<String>)
+    private data class CallBinding(val scopeId: String, val mailbox: Mailbox, val names: Map<String, String>)
+    private val activation = MutableStateFlow<StoreActivation?>(null)
     private var calendarNoticeJob: Job? = null
     private var calendarNoticeId = java.util.UUID.randomUUID()
     private val meetingCode = MutableStateFlow<String?>(null)
@@ -131,13 +135,14 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
-            combine(session.state, inbox.state) { session, state ->
-                if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null) Triple(state.acting!!.address, state.acting!!.handle, state.features) else null
+            combine(session.state, inbox.state, activation) { session, state, active ->
+                if (active != null && active.authorizationId == session.authorizationId && !session.loading && session.signedIn && session.termsAccepted && state.acting != null)
+                    InboxBinding(active.id, state.acting!!.address, state.acting!!.handle, state.features) else null
             }.distinctUntilChanged().collect { target ->
-                avatars.enable(target != null && Features.AVATARS in target.third)
-                groups?.onMailbox(target?.first, target?.second, target?.third.orEmpty())
-                calendar?.onMailbox(target?.first, target?.third.orEmpty())
-                meetingLookup?.onMailbox(target?.first)
+                avatars.enable(target != null && Features.AVATARS in target.features)
+                groups?.onMailbox(target?.address, target?.handle, target?.features.orEmpty())
+                calendar?.onMailbox(target?.address, target?.features.orEmpty())
+                meetingLookup?.onMailbox(target?.address)
             }
         }
         viewModelScope.launch {
@@ -145,11 +150,11 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
         calls?.let { host ->
             viewModelScope.launch {
-                combine(session.state, inbox.state) { session, state ->
-                    if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null)
-                        state.acting to state.conversations.associate { it.peer to it.name } else null
+                combine(session.state, inbox.state, activation) { session, state, active ->
+                    if (active != null && active.authorizationId == session.authorizationId && !session.loading && session.signedIn && session.termsAccepted && state.acting != null)
+                        CallBinding(active.id, state.acting!!, state.conversations.associate { it.peer to it.name }) else null
                 }.distinctUntilChanged().collect { target ->
-                    if (target != null) host.attach(target.first!!, target.second) else host.signOut()
+                    if (target != null) host.attach(target.mailbox, target.names) else host.signOut()
                 }
             }
         }
@@ -163,8 +168,13 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 resetStores()
                 withContext(Dispatchers.IO) { files.clear() }
                 val current = session.state.value
-                if (ready && current.signedIn && current.termsAccepted && current.authorizationId == authorizationId) {
-                    storeScope.activate(session.authorizationLease)
+                val grant = session.authorizationLease
+                if (ready && current.signedIn && current.termsAccepted && current.authorizationId == authorizationId && grant?.id == authorizationId && grant?.isValid != false) {
+                    try { storeScope.activate(grant) } catch (_: AuthorizationRetired) { return@collect }
+                    if (session.authorizationLease !== grant || grant?.isValid == false || session.state.value.authorizationId != authorizationId) {
+                        storeScope.retire(); return@collect
+                    }
+                    activation.value = StoreActivation(authorizationId)
                     inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore()
                 }
             }
@@ -185,6 +195,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     private fun resetStores() {
         storeScope.retire()
+        activation.value = null
         inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); profile.reset(); pictures.clear()
         if (meetingIntentRoot?.isValid == false) closeMeetingLink()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
