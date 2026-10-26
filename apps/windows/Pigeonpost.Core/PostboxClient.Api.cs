@@ -41,7 +41,9 @@ public sealed partial class PostboxClient
         using var response = await RequestAsync(HttpMethod.Get, Scoped(path, identity), null, cancellationToken,
             identity: identity, transfer: true, device: device).ConfigureAwait(false);
         await response.Content.LoadIntoBufferAsync(maxBytes, cancellationToken).ConfigureAwait(false);
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        CheckResponseAuthorization(response, cancellationToken);
+        return bytes;
     }
 
     // The calls service shares the inbox's origin (inbox.pigeonpost.dev/calls/v1). The member token
@@ -51,9 +53,16 @@ public sealed partial class PostboxClient
         if (!(absolute.Scheme == Uri.UriSchemeHttps && absolute.Host == "inbox.pigeonpost.dev" || absolute.IsLoopback))
             throw new ArgumentException("Not the calls service.", nameof(absolute));
         using var request = new HttpRequestMessage(HttpMethod.Get, absolute);
-        request.Headers.Authorization = new("Bearer", await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false));
+        var owner = new RequestAuthorization(tokens);
+        owner.Check(cancellationToken);
+        var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        owner.Check(cancellationToken);
+        request.Options.Set(AuthorizationKey, owner);
+        request.Headers.Authorization = new("Bearer", token);
         request.Headers.Accept.Add(new("application/json"));
         using var response = await http.SendAsync(request, cancellationToken).ConfigureAwait(false);
+        response.RequestMessage = request;
+        owner.Check(cancellationToken);
         if (!response.IsSuccessStatusCode) throw new PostboxException((int)response.StatusCode, "calls_unavailable");
         return await DecodeAsync<T>(response, cancellationToken).ConfigureAwait(false);
     }

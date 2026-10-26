@@ -55,6 +55,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
 
     public async Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken)
     {
+        using var operation = AuthorizationContext.Capture(tokens.AcceptedAuthorization);
+        var owner = new RequestAuthorization(tokens);
         var response = await ReadAsync<IdentitiesResponse>("/v1/identities", cancellationToken).ConfigureAwait(false);
         var result = new List<Mailbox>();
         foreach (var row in response.Identities ?? [])
@@ -64,6 +66,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
             catch (PostboxException ex) when (ex.StatusCode is not 401 and not 403) { }
             result.Add(new Mailbox(row.Address, handle, row.Label));
         }
+        owner.Check(cancellationToken);
         return result;
     }
 
@@ -82,6 +85,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     // the fallback for read-state changes and networks that block long-lived connections.
     public async Task WatchMailAsync(Func<Task> changed, CancellationToken cancellationToken, Action<string>? log = null)
     {
+        using var operation = AuthorizationContext.Capture(tokens.AcceptedAuthorization);
+        var owner = new RequestAuthorization(tokens);
         long? cursor = null;
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -89,11 +94,18 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
             {
                 var path = "/v1/events" + (cursor is { } id ? "?last_event_id=" + id : "");
                 using var request = new HttpRequestMessage(HttpMethod.Get, new Uri(endpoint, path));
-                request.Headers.Authorization = new("Bearer", await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false));
+                owner.Check(cancellationToken);
+                var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+                owner.Check(cancellationToken);
+                request.Headers.Authorization = new("Bearer", token);
                 request.Headers.Accept.Add(new("text/event-stream"));
                 using var response = await http.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+                owner.Check(cancellationToken);
                 if (response.StatusCode == HttpStatusCode.Unauthorized)
+                {
                     await tokens.RefreshTokenAsync(cancellationToken).ConfigureAwait(false);
+                    owner.Check(cancellationToken);
+                }
                 else
                 {
                     response.EnsureSuccessStatusCode();
@@ -108,11 +120,14 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                     {
                         idle.CancelAfter(TimeSpan.FromSeconds(45));
                         var line = await reader.ReadLineAsync(idle.Token).ConfigureAwait(false);
+                        owner.Check(cancellationToken);
                         if (line is null) break;
                         if (line.Length > 16384) throw new IOException("Event exceeds the supported size.");
                         if (line.Length == 0)
                         {
                             if (eventName == "mail") { log?.Invoke("Account event: new mail"); await changed().ConfigureAwait(false); }
+                            if (cancellationToken.IsCancellationRequested) return;
+                            owner.Check(cancellationToken);
                             if (eventId is { } next) cursor = next;
                             eventName = null; eventId = null;
                         }
@@ -121,6 +136,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                     }
                 }
             }
+            catch (AuthorizationRetiredException) { throw; }
             catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
             {
                 // Offline: reconnect with the last processed cursor.
@@ -133,11 +149,14 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
 
     public async Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken)
     {
+        using var operation = AuthorizationContext.Capture(tokens.AcceptedAuthorization);
+        var owner = new RequestAuthorization(tokens);
         var inbox = GetInboxAsync(identity, cancellationToken: cancellationToken);
         var threads = ReadAsync<ThreadsResponse>(WithIdentity("/v1/threads", identity), cancellationToken);
         var contacts = ReadAsync<ContactsResponse>(WithIdentity("/v1/contacts", identity), cancellationToken);
         var archive = ReadAsync<ArchiveResponse>(WithIdentity("/v1/archive", identity), cancellationToken);
         await Task.WhenAll(inbox, threads, contacts, archive).ConfigureAwait(false);
+        owner.Check(cancellationToken);
         return new InboxSnapshot((await inbox).Messages ?? [], (await threads).Threads ?? [],
             (await contacts).Contacts ?? [], new HashSet<string>((await archive).Archived ?? [], StringComparer.Ordinal), (await contacts).Vocabulary);
     }
@@ -191,7 +210,9 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     {
         using var response = await RequestAsync(HttpMethod.Get, "/v1/attachments/" + Uri.EscapeDataString(attachmentId), null, cancellationToken, identity: identity, transfer: true).ConfigureAwait(false);
         await response.Content.LoadIntoBufferAsync(MaxAttachmentBytes, cancellationToken).ConfigureAwait(false);
-        return await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        var bytes = await response.Content.ReadAsByteArrayAsync(cancellationToken).ConfigureAwait(false);
+        CheckResponseAuthorization(response, cancellationToken);
+        return bytes;
     }
 
     public Task<SendReceipt> SendAttachmentAsync(string identity, string peer, string body, string? threadId, string attachmentId, CancellationToken cancellationToken) =>
@@ -220,10 +241,14 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     private async Task<HttpResponseMessage> RequestAsync(HttpMethod method, string path, string? json, CancellationToken cancellationToken,
         byte[]? binary = null, string? identity = null, string? filename = null, bool transfer = false, string? mediaType = null, string? device = null)
     {
+        var owner = new RequestAuthorization(tokens);
+        owner.Check(cancellationToken);
         var token = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+        owner.Check(cancellationToken);
         for (var attempt = 0; ; attempt++)
         {
             using var request = new HttpRequestMessage(method, new Uri(endpoint, path));
+            request.Options.Set(AuthorizationKey, owner);
             request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
             request.Headers.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
             if (identity is not null) request.Headers.Add("x-pigeonpost-identity", identity);
@@ -239,16 +264,23 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                 }
             }
             if (json is not null) request.Content = new StringContent(json, System.Text.Encoding.UTF8, "application/json");
+            owner.Check(cancellationToken);
             var response = await (transfer ? transfers ?? http : http).SendAsync(request,
                 HttpCompletionOption.ResponseHeadersRead, cancellationToken).ConfigureAwait(false);
+            response.RequestMessage = request;
+            try { owner.Check(cancellationToken); }
+            catch { response.Dispose(); throw; }
             if (response.StatusCode == HttpStatusCode.Unauthorized && attempt == 0)
             {
                 response.Dispose();
                 await renewal.WaitAsync(cancellationToken).ConfigureAwait(false);
                 try
                 {
+                    owner.Check(cancellationToken);
                     var current = await tokens.GetTokenAsync(cancellationToken).ConfigureAwait(false);
+                    owner.Check(cancellationToken);
                     token = current == token ? await tokens.RefreshTokenAsync(cancellationToken).ConfigureAwait(false) : current;
+                    owner.Check(cancellationToken);
                 }
                 finally { renewal.Release(); }
                 continue;
@@ -268,6 +300,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
                     }
                 }
                 catch (Exception ex) when (ex is JsonException or NotSupportedException or InvalidOperationException) { }
+                owner.Check(cancellationToken);
                 throw new PostboxException((int)response.StatusCode, code, detail);
             }
         }
@@ -275,12 +308,34 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
 
     private static async Task<T> DecodeAsync<T>(HttpResponseMessage response, CancellationToken cancellationToken)
     {
+        CheckResponseAuthorization(response, cancellationToken);
         try
         {
-            return await response.Content.ReadFromJsonAsync<T>(PostboxJson.Options, cancellationToken).ConfigureAwait(false)
+            var value = await response.Content.ReadFromJsonAsync<T>(PostboxJson.Options, cancellationToken).ConfigureAwait(false)
                 ?? throw new PostboxException((int)response.StatusCode, "bad_response");
+            CheckResponseAuthorization(response, cancellationToken);
+            return value;
         }
-        catch (JsonException) { throw new PostboxException((int)response.StatusCode, "bad_response"); }
+        catch (JsonException) { CheckResponseAuthorization(response, cancellationToken); throw new PostboxException((int)response.StatusCode, "bad_response"); }
+    }
+
+    private static readonly HttpRequestOptionsKey<RequestAuthorization> AuthorizationKey = new("Pigeonpost.LocalAuthorization");
+    private sealed class RequestAuthorization(IAccessTokenProvider provider)
+    {
+        private readonly AuthorizationLease? grant = AuthorizationContext.IsBound ? AuthorizationContext.Current : provider.AcceptedAuthorization;
+        public void Check(CancellationToken cancellationToken)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            grant?.RequireActive();
+            var accepted = provider.AcceptedAuthorization;
+            if (grant is null ? accepted is not null : accepted is null || !grant.SharesAuthorization(accepted))
+                throw new AuthorizationRetiredException();
+        }
+    }
+    private static void CheckResponseAuthorization(HttpResponseMessage response, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (response.RequestMessage?.Options.TryGetValue(AuthorizationKey, out var owner) == true) owner.Check(cancellationToken);
     }
 
     private static string WithIdentity(string path, string identity) => path + "?identity=" + Uri.EscapeDataString(identity);

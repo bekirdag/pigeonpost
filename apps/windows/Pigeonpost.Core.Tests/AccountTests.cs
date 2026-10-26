@@ -74,14 +74,16 @@ internal static class AccountTests
             var started = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             var vault = new Vault();
-            using var http = new HttpClient(new Handler(async (_, _) =>
+            using var http = new HttpClient(new Handler(async (request, _) =>
             {
+                if (request.RequestUri!.AbsolutePath.EndsWith("auth/device")) return Json(Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"));
                 started.SetResult();
                 await release.Task;
                 return Json("{\"access_token\":\"access\",\"refresh_token\":\"refresh\"}");
             }));
             var session = new AccountSession(http, vault);
-            var pending = session.CompleteSignInAsync(new DeviceSignIn("code", "ABCD", new Uri("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"), 60, 1), default);
+            var device = await session.BeginSignInAsync(default);
+            var pending = session.CompleteSignInAsync(device, default);
             await started.Task;
             await session.SignOutAsync(default);
             release.SetResult();
@@ -92,12 +94,14 @@ internal static class AccountTests
         {
             var vault = new Vault { Token = "previous-account" };
             var calls = 0;
-            using var http = new HttpClient(new Handler((_, _) => Task.FromResult(Json(++calls == 1
+            using var http = new HttpClient(new Handler((request, _) => Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("auth/device")
+                ? Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device") : ++calls == 1
                 ? "{\"access_token\":\"previous-access\",\"refresh_token\":\"previous-account\",\"expires_in\":300}"
                 : "{\"access_token\":\"different-account-access\",\"expires_in\":300}"))));
             var session = new AccountSession(http, vault);
             Require(await session.RestoreAsync(default));
-            await Fails<SignInException>(() => session.CompleteSignInAsync(new DeviceSignIn("d", "c", new Uri("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"), 60, 1), default));
+            var device = await session.BeginSignInAsync(default);
+            await Fails<SignInException>(() => session.CompleteSignInAsync(device, default));
             Require(await session.GetTokenAsync(default) == "previous-access" && vault.Token == "previous-account");
         });
         yield return ("Cancelled device sign-in does not persist credentials", async () =>
@@ -116,7 +120,86 @@ internal static class AccountTests
             var ex = await Fails<SignInException>(() => new AccountSession(http, new Vault()).BeginSignInAsync(default));
             Require(!ex.Message.Contains("secret") && !ex.Message.Contains("sensitive"));
         });
+        yield return ("Ordinary renewal preserves the grant and explicit sign-in retires it", async () =>
+        {
+            var calls = 0;
+            using var http = new HttpClient(new Handler((request, _) => Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("auth/device")
+                ? Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device") : Tokens(++calls)))));
+            var session = new AccountSession(http, new Vault { Token = "saved" });
+            Require(await session.RestoreAsync(default)); var original = session.AcceptedAuthorization!;
+            await session.RefreshTokenAsync(default); Require(ReferenceEquals(original, session.AcceptedAuthorization) && original.IsActive);
+            var request = await session.BeginSignInAsync(default); Require(original.IsActive);
+            await session.CompleteSignInAsync(request, default);
+            Require(!original.IsActive && session.AcceptedAuthorization?.IsActive == true && !ReferenceEquals(original, session.AcceptedAuthorization));
+        });
+        yield return ("Only the exact current device sign-in request may complete", async () =>
+        {
+            var polls = 0;
+            using var http = new HttpClient(new Handler((request, _) => Task.FromResult(Json(request.RequestUri!.AbsolutePath.EndsWith("auth/device")
+                ? Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device") : Tokens(++polls)))));
+            var session = new AccountSession(http, new Vault());
+            var old = await session.BeginSignInAsync(default); var current = await session.BeginSignInAsync(default);
+            Require(old == current && !ReferenceEquals(old, current));
+            await Fails<SignInException>(() => session.CompleteSignInAsync(old, default)); Require(polls == 0);
+            await session.CompleteSignInAsync(current, default); Require(polls == 1 && session.AcceptedAuthorization?.IsActive == true);
+        });
+        yield return ("Sign-out prevents an ordinary renewal from saving a late result", async () =>
+        {
+            var started = Signal(); var release = Signal(); var calls = 0; var vault = new Vault { Token = "saved" };
+            using var http = new HttpClient(new Handler(async (_, _) =>
+            {
+                if (++calls == 1) return Json(Tokens(1));
+                started.SetResult(); await release.Task; return Json(Tokens(2));
+            }));
+            var session = new AccountSession(http, vault); Require(await session.RestoreAsync(default)); var original = session.AcceptedAuthorization!;
+            var renewing = session.RefreshTokenAsync(default); await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var leaving = session.SignOutAsync(default); release.SetResult();
+            await Fails<AuthorizationRetiredException>(() => renewing); await leaving.WaitAsync(TimeSpan.FromSeconds(5));
+            Require(vault.Token is null && vault.Saves == 1 && !original.IsActive && session.AcceptedAuthorization is null);
+        });
+        yield return ("A stale invalid-grant response cannot erase a newer sign-in attempt", async () =>
+        {
+            var started = Signal(); var release = Signal(); var calls = 0; var vault = new Vault { Token = "saved" };
+            using var http = new HttpClient(new Handler(async (request, _) =>
+            {
+                if (request.RequestUri!.AbsolutePath.EndsWith("auth/device")) return Json(Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"));
+                if (++calls != 2) return Json(Tokens(calls));
+                started.SetResult(); await release.Task; return Json("{\"error\":\"invalid_grant\"}", HttpStatusCode.BadRequest);
+            }));
+            var session = new AccountSession(http, vault); Require(await session.RestoreAsync(default)); var original = session.AcceptedAuthorization!;
+            var renewing = session.RefreshTokenAsync(default); await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var current = await session.BeginSignInAsync(default); release.SetResult();
+            await Fails<AuthorizationRetiredException>(() => renewing); Require(vault.Token == "refresh-1" && original.IsActive);
+            await session.CompleteSignInAsync(current, default); Require(vault.Token == "refresh-3" && !original.IsActive);
+        });
+        yield return ("A failed vault deletion leaves the accepted session available for retry", async () =>
+        {
+            var vault = new Vault { Token = "saved" };
+            using var http = new HttpClient(new Handler((_, _) => Task.FromResult(Json(Tokens(1)))));
+            var session = new AccountSession(http, vault); Require(await session.RestoreAsync(default)); var original = session.AcceptedAuthorization!;
+            vault.FailClear = true; await Fails<IOException>(() => session.SignOutAsync(default));
+            Require(original.IsActive && ReferenceEquals(original, session.AcceptedAuthorization) && await session.GetTokenAsync(default) == "access-1");
+            vault.FailClear = false; await session.SignOutAsync(default); Require(!original.IsActive && session.AcceptedAuthorization is null);
+        });
+        yield return ("A late device-start response cannot replace the current pending request", async () =>
+        {
+            var started = Signal(); var release = Signal(); var starts = 0;
+            using var http = new HttpClient(new Handler(async (request, _) =>
+            {
+                if (!request.RequestUri!.AbsolutePath.EndsWith("auth/device")) return Json(Tokens(1));
+                if (++starts == 1) { started.SetResult(); await release.Task; }
+                return Json(Device("https://auth.pigeonpost.dev/realms/pigeonpost-prod/device"));
+            }));
+            var session = new AccountSession(http, new Vault());
+            var old = session.BeginSignInAsync(default); await started.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            var current = await session.BeginSignInAsync(default); release.SetResult();
+            await Fails<AuthorizationRetiredException>(() => old); await session.CompleteSignInAsync(current, default);
+            Require(session.AcceptedAuthorization?.IsActive == true);
+        });
     }
+
+    private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
+    private static string Tokens(int version) => System.Text.Json.JsonSerializer.Serialize(new { access_token = "access-" + version, refresh_token = "refresh-" + version, expires_in = 300 });
 
     private static string Device(string uri) => System.Text.Json.JsonSerializer.Serialize(new { device_code = "device", user_code = "ABCD", verification_uri = uri, expires_in = 60, interval = 1 });
     private static HttpResponseMessage Json(string body, HttpStatusCode status = HttpStatusCode.OK) => new(status) { Content = new StringContent(body) };
@@ -131,8 +214,10 @@ internal static class AccountTests
     {
         public string? Token { get; set; }
         public bool FailSave { get; init; }
+        public bool FailClear { get; set; }
+        public int Saves { get; private set; }
         public string? Load() => Token;
-        public void Save(string token) { if (FailSave) throw new IOException("Vault unavailable"); Token = token; }
-        public void Clear() => Token = null;
+        public void Save(string token) { if (FailSave) throw new IOException("Vault unavailable"); Token = token; Saves++; }
+        public void Clear() { if (FailClear) throw new IOException("Vault unavailable"); Token = null; }
     }
 }

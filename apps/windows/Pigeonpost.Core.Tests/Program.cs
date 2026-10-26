@@ -1030,6 +1030,7 @@ Test("Call page messages parse strictly and scripts carry JSON-encoded values on
     Check(CallBridge.IsExternalLink(new Uri("https://pigeonpost.dev/help")) && !CallBridge.IsExternalLink(new Uri("file:///C:/x")), "External links are https/http only.");
 });
 tests.AddRange(AccountTests.All());
+tests.AddRange(AuthorizationTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
