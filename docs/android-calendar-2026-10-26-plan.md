@@ -11,6 +11,8 @@ Continue native round two from Android authorization checkpoint `093a646` while 
 
 Keep native releases batched and Apple held for the owner's Claude review; no store submission or production flag change is implied. Reuse existing FFI build caches through removable task-owned symlinks, preserve other worktrees and make no production database backups on the Mac. No new paid infrastructure or third-party application dependency.
 
+The initial calendar UI checkpoint is qualified and in draft review. Finish the remaining integration in this order: retain a bounded in-memory ICS export capsule tied to the calendar actor and write only after the system file picker returns; parse typed calendar pushes and public/personal meeting links without adopting authority; queue navigation while a person edits; then join a specifically selected occurrence through the existing native call page, with captured mailbox/login/page/permission generations and explicit lobby results. Retest each boundary before the final native batch.
+
 ## Unconfirmed writes
 
 Persist one frozen pending attempt per operation kind (event, calendar, import) and canonical mailbox before sending the first request. Store only its exact encoded payload, stable identity/target and original time, encrypted in no-backup Android Keystore storage with mailbox/domain AAD. Check the authorization inside serialized actual IO; corrupt or unreadable state must block new creation rather than silently discard an unknown accepted write. Restore attempts only after the active login has loaded that canonical mailbox; never automatically send one on launch.

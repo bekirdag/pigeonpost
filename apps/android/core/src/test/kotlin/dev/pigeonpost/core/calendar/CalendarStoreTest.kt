@@ -327,4 +327,15 @@ class CalendarStoreTest {
         assertNull(store.deleteCalendar("cal_one", 7, old))
         assertTrue(transport.calls.none { it.method == "DELETE" })
     } }
+    @Test fun aPreparedExportCannotWriteAfterSwitchingMailboxes() = runBlocking<Unit> { world {
+        transport.hook = { call -> if (call.path.endsWith(".ics")) "BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".toByteArray() else null }
+        var packet: CalendarIcsExport? = null
+        store.prepareIcsExport("evt_one", context) { packet = it }!!.join()
+        assertNotNull(packet)
+        connect("/bob"); ready()
+        var opened = false
+        try { packet!!.write { opened = true; java.io.ByteArrayOutputStream() }; fail("Old mailbox export must be retired") }
+        catch (_: AuthorizationRetired) { }
+        assertFalse(opened); assertTrue(authorization.isValid)
+    } }
 }

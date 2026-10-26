@@ -311,6 +311,8 @@ class CalendarStore(
     fun feed(id: String, expectedContext: String, done: (CalendarFeed) -> Unit) = inspect("feed", expectedContext, { it.feed(id) }, done)
     fun setFeed(id: String, enabled: Boolean, projection: String, expectedContext: String, done: (CalendarFeed) -> Unit) = inspect("feed", expectedContext, { it.setFeed(id, enabled, projection) }, done)
     fun ics(id: String, expectedContext: String, done: (ByteArray) -> Unit) = inspect("export", expectedContext, { it.ics(id) }, done)
+    fun prepareIcsExport(id: String, expectedContext: String, done: (CalendarIcsExport) -> Unit) =
+        inspect("export", expectedContext, { c -> CalendarIcsExport(c.ics(id), c.authorization) }, done)
     fun previewImport(bytes: ByteArray, calendar: String?, expectedContext: String, done: (CalendarImportPreview) -> Unit): Job? {
         val frozen = bytes.copyOf()
         return inspect("import-preview", expectedContext, { it.previewImport(frozen, calendar) }, done)

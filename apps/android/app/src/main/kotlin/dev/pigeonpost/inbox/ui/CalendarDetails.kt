@@ -1,13 +1,21 @@
 package dev.pigeonpost.inbox.ui
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import dev.pigeonpost.core.calendar.*
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import java.io.IOException
 
 @Composable
 internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store: CalendarStore, dismiss: () -> Unit, edit: (CalendarEventDraft) -> Unit) {
@@ -24,6 +32,22 @@ internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store
     var reminderDraft by remember { mutableStateOf<String?>(null) }
     var rsvpScope by remember { mutableStateOf(CalendarAnswerScope.ALL) }
     var localError by remember { mutableStateOf<String?>(null) }
+    var export by remember { mutableStateOf<CalendarIcsExport?>(null) }
+    var exported by remember { mutableStateOf(false) }
+    val resolver = LocalContext.current.contentResolver
+    val jobs = rememberCoroutineScope()
+    DisposableEffect(Unit) { onDispose { export?.close() } }
+    val saveCalendar = rememberLauncherForActivityResult(ActivityResultContracts.CreateDocument("text/calendar")) { uri ->
+        val packet = export; export = null
+        if (packet != null && uri != null && live.get() && store.state.value.contextId == context) jobs.launch {
+            try {
+                withContext(Dispatchers.IO) { packet.write { resolver.openOutputStream(uri, "w") ?: throw IOException("No output stream") } }
+                if (live.get()) exported = true
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { if (live.get()) localError = "The calendar file could not be saved. Export the event again to retry." }
+            finally { packet.close() }
+        } else packet?.close()
+    }
     val busy = s.busy.isNotEmpty()
     PageDialog("Event", dismiss) {
         s.error?.let { CalendarError(it, store::clearError) }
@@ -72,6 +96,14 @@ internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store
                 if (organizer && e.revision != null && e.status != "cancelled") TextButton({ removePerson = response to person }, enabled = !busy) { Text("Remove participant") }
             }
             if (organizer && e.revision != null && e.status != "cancelled") OutlinedButton({ addPerson = response }, enabled = !busy, modifier = Modifier.fillMaxWidth()) { Text("Add participant") }
+            OutlinedButton({ store.prepareIcsExport(e.id, context) { packet ->
+                if (live.get()) {
+                    export?.close(); export = packet
+                    try { saveCalendar.launch("pigeonpost-event.ics") }
+                    catch (_: Exception) { packet.close(); export = null; localError = "No file picker is available. Try exporting again." }
+                } else packet.close()
+            } }, enabled = !busy) { Text("Export .ics file") }
+            if (exported) Text("Calendar file saved.", color = Pp.colors.secondary)
             OutlinedButton({ store.loadDetail(key) }, enabled = !busy) { Text("Reload latest event") }
         }
     }
