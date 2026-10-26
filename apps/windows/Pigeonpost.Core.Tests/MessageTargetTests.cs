@@ -84,6 +84,39 @@ internal static class MessageTargetTests
             await vm.SwitchMailboxAsync(original);
             Require(!target.IsCurrent && target.IsAccountCurrent && vm.OpenReplyParent(target) is null);
         });
+        yield return ("A new UI action outlives its completed render task while a retired render callback remains refused", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var render = f.Root.Child(); var resumed = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            MessageTarget target; MessageViewBinding view; Task<bool> oldCallback;
+            using (new AuthorizationContext(render))
+            {
+                target = vm.CaptureMessageTarget(vm.Messages.Single())!;
+                view = vm.CaptureMessageView(vm.Messages.Single())!;
+                async Task<bool> FromRender() { await resumed.Task; return target.IsCurrent || view.BeginAction() is not null; }
+                oldCallback = FromRender();
+            }
+            render.Retire(); resumed.TrySetResult();
+            Require(!await oldCallback && !target.IsCurrent && view.IsCurrent);
+            Require(view.BeginAction() is { } action && vm.OpenReplyParent(action)?.Id == "parent_copy");
+        });
+        yield return ("Rendered message views cannot create actions for a reauthenticated account or newer selection", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var view = vm.CaptureMessageView(vm.Messages.Single())!;
+            f.Root.Retire(); f.Root = new(); await vm.InitializeAsync();
+            Require(view.BeginAction() is null && !view.IsAccountCurrent);
+            view = vm.CaptureMessageView(vm.Messages.Single())!;
+            vm.SelectSubject(vm.Subjects.Single(s => s.Id == "parent_subject"));
+            vm.SelectSubject(vm.Subjects.Single(s => s.Id == "reply_subject"));
+            Require(view.BeginAction() is null && view.IsAccountCurrent);
+        });
+        yield return ("Unloaded rendered controls refuse new actions without retiring an already admitted action", async () =>
+        {
+            using var f = new Service(); using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            var view = vm.CaptureMessageView(vm.Messages.Single())!; var action = view.BeginAction()!;
+            view.Retire(); Require(view.BeginAction() is null && action.IsCurrent);
+        });
     }
     private const string Own = "/k/target_fixture", Peer = "/bob/main";
     private static void Require(bool value) { if (!value) throw new Exception("Message target assertion failed."); }
