@@ -25,8 +25,11 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
     private int generation;
     private readonly object stateLock = new();
     private AuthorizationLease? authorization;
+    private SessionOwnerHint? ownerHint;
     private DeviceSignIn? pendingSignIn;
     public AuthorizationLease? AcceptedAuthorization => Volatile.Read(ref authorization);
+    // A storage partition hint only; a current server-authorized canonical mailbox is also required.
+    public string? RecoveryOwnerKey { get { lock (stateLock) return authorization?.IsActive == true ? ownerHint?.StorageKey : null; } }
 
     private int Attempt() { lock (stateLock) return generation; }
     private void RequireAttempt(int attempt)
@@ -144,7 +147,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
                 RequireAttempt(attempt);
                 store.Clear();
                 authorization?.Retire(); Volatile.Write(ref authorization, null);
-                accessToken = refreshToken = null; expiresAt = default;
+                accessToken = refreshToken = null; ownerHint = null; expiresAt = default;
             }
         }
         finally { gate.Release(); }
@@ -164,7 +167,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
             {
                 RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
                 store.Clear(); authorization?.Retire(); Volatile.Write(ref authorization, null);
-                accessToken = refreshToken = null; expiresAt = default;
+                accessToken = refreshToken = null; ownerHint = null; expiresAt = default;
             }
         }
         CheckError(result.RootElement);
@@ -174,17 +177,22 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
     private void Accept(JsonElement response, CancellationToken cancellationToken, int attempt, bool newAuthorization = false, bool requireRefresh = false)
     {
         var access = Required(response, "access_token");
+        var nextOwner = SessionOwnerHint.FromTrustedExchange(access, issuer, ClientId);
         var refresh = Text(response, "refresh_token") ?? (requireRefresh ? null : refreshToken);
         if (string.IsNullOrEmpty(refresh)) throw new SignInException("Sign-in did not provide a renewable session. Please try again.");
         lock (stateLock)
         {
             RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
+            if (!newAuthorization && ownerHint is not null && nextOwner?.StorageKey != ownerHint.StorageKey)
+                throw new SignInException("The renewed session could not be matched to your account. Sign in again.");
+            // Learning a principal after an unknown-owner session must retire its old local work.
+            var ownerBecameKnown = authorization is not null && ownerHint is null && nextOwner is not null;
             store.Save(refresh);
-            if (newAuthorization || authorization is null)
+            if (newAuthorization || authorization is null || ownerBecameKnown)
             {
                 authorization?.Retire(); Volatile.Write(ref authorization, new AuthorizationLease());
             }
-            refreshToken = refresh; accessToken = access;
+            refreshToken = refresh; accessToken = access; ownerHint = nextOwner;
             expiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(0, Number(response, "expires_in", 300) - 30));
         }
     }
