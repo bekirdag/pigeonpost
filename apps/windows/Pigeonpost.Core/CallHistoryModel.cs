@@ -14,6 +14,20 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
     private string? error;
     private int version;
     private CancellationTokenSource scope = new();
+    private sealed class Actor(AuthorizationLease? accepted)
+    {
+        internal readonly AuthorizationLease? Accepted = accepted;
+        internal readonly AuthorizationLease Authorization = accepted?.Child() ?? new AuthorizationLease();
+    }
+    private Actor? actor;
+    private Actor? ActiveActor => actor is { } value && value.Authorization.IsActive
+        && ReferenceEquals(value.Accepted, postbox.AcceptedAuthorization) ? value : null;
+    private bool IsCurrent(Actor value, int generation) => generation == version && ReferenceEquals(ActiveActor, value);
+    private IDisposable Bind(Actor value)
+    {
+        if (!ReferenceEquals(ActiveActor, value)) throw new AuthorizationRetiredException();
+        return AuthorizationContext.BindActor(value.Accepted, value.Authorization);
+    }
 
     public ObservableCollection<CallLogEntry> Entries { get; } = [];
     public ObservableCollection<CallLogEntry> FilteredEntries { get; } = [];
@@ -48,12 +62,20 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
     // A new mailbox starts from nothing; the previous mailbox's requests are abandoned.
     public void Reset(string? mailbox)
     {
+        version++;
+        var prior = actor;
+        actor = null;
+        prior?.Authorization.Retire();
         scope.Cancel();
         scope.Dispose();
         scope = new();
-        version++;
         identity = mailbox;
+        if (mailbox is not null && postbox.AcceptedAuthorization is not { IsActive: false })
+        {
+            try { actor = new Actor(postbox.AcceptedAuthorization); } catch (AuthorizationRetiredException) { }
+        }
         next = null;
+        IsLoading = false;
         Loaded = false;
         Error = null;
         Entries.Clear();
@@ -67,15 +89,18 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
 
     public async Task LoadAsync(bool more = false)
     {
-        if (identity is not { } mailbox) return;
+        if (identity is not { } mailbox || ActiveActor is not { } owner) return;
         var generation = ++version;
         var token = scope.Token;
         var wanted = filter;
         IsLoading = true;
         try
         {
+            using var operation = Bind(owner);
+            var validate = postbox.CaptureAuthorizationValidation();
             var page = await postbox.GetCallLogAsync(mailbox, wanted, more ? next : null, token);
-            if (generation != version) return;
+            validate();
+            if (!IsCurrent(owner, generation)) return;
             var rows = (page.Entries ?? []).Where(e => !string.IsNullOrEmpty(e.Id) && !e.IsFiltered).ToList();
             if (more)
             {
@@ -90,16 +115,17 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
             if (!more)
             {
                 var filtered = await postbox.GetCallLogAsync(mailbox, "filtered", null, token);
-                if (generation != version) return;
+                validate();
+                if (!IsCurrent(owner, generation)) return;
                 StableList.Reconcile(FilteredEntries, (filtered.Entries ?? []).Where(e => !string.IsNullOrEmpty(e.Id)).ToArray(), e => e.Id, (a, b) => a == b);
             }
         }
         catch (OperationCanceledException) { }
-        catch (PostboxException ex) when (ex.Code == "feature_disabled") { if (generation == version) { Loaded = true; Error = null; } }
-        catch (Exception) { if (generation == version) Error = "Could not load your calls."; }
+        catch (PostboxException ex) when (ex.Code == "feature_disabled") { if (IsCurrent(owner, generation)) { Loaded = true; Error = null; } }
+        catch (Exception) { if (IsCurrent(owner, generation)) Error = "Could not load your calls."; }
         finally
         {
-            if (generation == version)
+            if (IsCurrent(owner, generation))
             {
                 IsLoading = false;
                 Changed(nameof(EmptyText));
@@ -113,44 +139,68 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
     // Looking at the page is seeing the missed calls on it.
     public async Task MarkSeenAsync()
     {
-        if (identity is not { } mailbox || UnseenMissed == 0 || Entries.Count == 0) return;
+        if (identity is not { } mailbox || ActiveActor is not { } owner || UnseenMissed == 0 || Entries.Count == 0) return;
         var newest = Entries.Max(e => e.StartedAt);
         if (newest <= 0) return;
         var generation = version;
-        UnseenMissed = 0;
+        var token = scope.Token;
         try
         {
-            var left = await postbox.MarkCallsSeenAsync(mailbox, newest, scope.Token);
-            if (generation == version) UnseenMissed = left;
+            using var operation = Bind(owner);
+            var validate = postbox.CaptureAuthorizationValidation();
+            UnseenMissed = 0;
+            var left = await postbox.MarkCallsSeenAsync(mailbox, newest, token);
+            validate();
+            if (IsCurrent(owner, generation)) UnseenMissed = left;
         }
         catch (Exception) { /* The badge returns with the next load. */ }
     }
 
     public async Task<string> DeleteAsync(CallLogEntry entry)
     {
-        if (identity is not { } mailbox) return "";
+        if (identity is not { } mailbox || ActiveActor is not { } owner) return "";
+        var generation = version; var token = scope.Token;
         try
         {
-            await postbox.DeleteCallAsync(mailbox, entry.Id, scope.Token);
+            using var operation = Bind(owner);
+            var validate = postbox.CaptureAuthorizationValidation();
+            await postbox.DeleteCallAsync(mailbox, entry.Id, token);
+            validate();
+            if (!IsCurrent(owner, generation)) return "";
             Remove(entry.Id);
             return "Removed from call history.";
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return "Could not remove that call."; }
+        catch (OperationCanceledException) { return ""; }
+        catch (Exception) { return IsCurrent(owner, generation) ? "Could not remove that call." : ""; }
     }
 
     public async Task<string> ReportAsync(CallLogEntry entry)
     {
-        if (identity is not { } mailbox) return "";
-        try { await postbox.ReportCallAsync(mailbox, entry.Id, scope.Token); return "Reported as spam."; }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return "Could not send the report."; }
+        if (identity is not { } mailbox || ActiveActor is not { } owner) return "";
+        var generation = version; var token = scope.Token;
+        try
+        {
+            using var operation = Bind(owner);
+            var validate = postbox.CaptureAuthorizationValidation();
+            await postbox.ReportCallAsync(mailbox, entry.Id, token);
+            validate();
+            return IsCurrent(owner, generation) ? "Reported as spam." : "";
+        }
+        catch (OperationCanceledException) { return ""; }
+        catch (Exception) { return IsCurrent(owner, generation) ? "Could not send the report." : ""; }
     }
 
     public async Task<string> ClearAsync()
     {
-        if (identity is not { } mailbox) return "";
+        if (identity is not { } mailbox || ActiveActor is not { } owner) return "";
+        var generation = version; var token = scope.Token;
         try
         {
-            await postbox.ClearCallsAsync(mailbox, scope.Token);
+            using var operation = Bind(owner);
+            var validate = postbox.CaptureAuthorizationValidation();
+            await postbox.ClearCallsAsync(mailbox, token);
+            validate();
+            if (!IsCurrent(owner, generation)) return "";
             Entries.Clear();
             FilteredEntries.Clear();
             next = null;
@@ -160,7 +210,8 @@ public sealed class CallHistoryModel(PostboxClient postbox) : ObservableObject
             EntriesChanged?.Invoke(this, EventArgs.Empty);
             return "Call history cleared.";
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return "Could not clear your call history."; }
+        catch (OperationCanceledException) { return ""; }
+        catch (Exception) { return IsCurrent(owner, generation) ? "Could not clear your call history." : ""; }
     }
 
     private void Remove(string id)
