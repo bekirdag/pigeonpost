@@ -164,6 +164,12 @@ public sealed partial class MainWindow : Window
     {
         if (sender is ComboBox { SelectedItem: Mailbox mailbox } && mailbox.Address != ViewModel.SelectedMailbox?.Address)
         {
+            if (callMode != CallMode.Hidden || callRinging || pendingCall is not null)
+            {
+                ((ComboBox)sender).SelectedItem = ViewModel.SelectedMailbox;
+                AccountStatus.Text = "End the call before switching inboxes.";
+                return;
+            }
             await ViewModel.SwitchMailboxAsync(mailbox);
             await AcknowledgeVisibleAsync();
         }

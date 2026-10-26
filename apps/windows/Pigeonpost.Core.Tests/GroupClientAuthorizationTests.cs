@@ -205,6 +205,15 @@ internal static class GroupClientAuthorizationTests
             f.Handler.Release.TrySetResult();
             Require(!await old && model.Draft == "Replacement draft" && !model.IsSending && model.Error is null);
         });
+        yield return ("Group call status never acquires a token for an unrelated service port", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore(); await SeedGroups(f, store, "Current");
+            using var model = new GroupsModel(f.Postbox, _ => store); await Activate(model, f); await model.SelectAsync(model.Groups.Single());
+            var tokens = f.Tokens.Acquisitions; var requests = f.Server.Requests.Count;
+            Require(await model.CallStatusAsync(new Uri("https://inbox.pigeonpost.dev:8443")) is null);
+            Require(await model.CallStatusAsync(new Uri("http://127.0.0.1:8")) is null);
+            Require(f.Tokens.Acquisitions == tokens && f.Server.Requests.Count == requests);
+        });
     }
 
     private static Task Activate(GroupsModel model, Fixture f)

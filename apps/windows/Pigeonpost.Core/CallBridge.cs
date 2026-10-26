@@ -14,7 +14,7 @@ public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidde
 // Everything the app puts into a script is JSON-encoded, never concatenated as raw text.
 public static class CallBridge
 {
-    public static readonly Uri ProductionPage = new("https://inbox.pigeonpost.dev/native-call.html?v=20261020-ring");
+    public static readonly Uri ProductionPage = new("https://inbox.pigeonpost.dev/native-call.html?v=20261025-scheduled1");
 
     public static CallPageMessage? Parse(string? json)
     {
@@ -104,6 +104,7 @@ public static class CallBridge
     // The call page itself, and nothing else, may load in the call view.
     public static bool IsPage(Uri? candidate, Uri page) =>
         candidate is not null && candidate.IsAbsoluteUri && SameOrigin(candidate, page)
+        && string.IsNullOrEmpty(candidate.UserInfo)
         && string.Equals(candidate.AbsolutePath, page.AbsolutePath, StringComparison.Ordinal);
 
     public static bool SameOrigin(Uri? candidate, Uri page) =>
@@ -111,6 +112,12 @@ public static class CallBridge
         && string.Equals(candidate.Scheme, page.Scheme, StringComparison.OrdinalIgnoreCase)
         && string.Equals(candidate.IdnHost, page.IdnHost, StringComparison.OrdinalIgnoreCase)
         && candidate.Port == page.Port;
+
+    public static bool IsCallsService(Uri? candidate, Uri postboxEndpoint) =>
+        candidate is { IsAbsoluteUri: true } && string.IsNullOrEmpty(candidate.UserInfo) && string.IsNullOrEmpty(candidate.Fragment)
+        && candidate.AbsolutePath.StartsWith("/calls/v1/", StringComparison.Ordinal)
+        && (candidate.Scheme == Uri.UriSchemeHttps && candidate.IdnHost == "inbox.pigeonpost.dev" && candidate.Port == 443
+            || candidate.IsLoopback && postboxEndpoint.IsLoopback && SameOrigin(candidate, postboxEndpoint));
 
     // Only ordinary web links leave the call view, and they open in the person's browser.
     public static bool IsExternalLink(Uri? candidate) =>
