@@ -6,6 +6,7 @@ import okhttp3.mockwebserver.Dispatcher
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
 import okhttp3.mockwebserver.RecordedRequest
+import okhttp3.mockwebserver.SocketPolicy
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -13,6 +14,7 @@ import org.junit.Test
 import java.net.InetAddress
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
 
 class PostboxAuthorizationTest {
     private lateinit var server: MockWebServer
@@ -98,5 +100,38 @@ class PostboxAuthorizationTest {
         assertSame(lease, source.grant); assertTrue(lease.isValid)
         assertEquals("Bearer fixture-first", server.takeRequest().getHeader("Authorization"))
         assertEquals("Bearer fixture-renewed", server.takeRequest().getHeader("Authorization"))
+    }
+
+    @Test fun aDownloadStopsWritingAfterItsGrantIsRetired() = runBlocking {
+        server.enqueue(MockResponse().setBody("x".repeat(128 * 1024)))
+        var written = 0
+        val sink = object : java.io.OutputStream() {
+            override fun write(value: Int) { error("Expected buffered writes") }
+            override fun write(bytes: ByteArray, offset: Int, length: Int) {
+                written += length
+                source.grant.retire()
+            }
+        }
+        val result = runCatching { api().download("/alice", "fixture-file", sink) }
+        assertTrue(result.exceptionOrNull() is AuthorizationRetired)
+        assertTrue(written in 1..(32 * 1024))
+        assertEquals(1, server.requestCount)
+    }
+
+    @Test fun anInterruptedReadCannotRetryUnderTheReplacementLogin() = runBlocking {
+        val received = AtomicInteger()
+        server.dispatcher = object : Dispatcher() {
+            override fun dispatch(request: RecordedRequest): MockResponse {
+                if (received.incrementAndGet() == 1) {
+                    source.grant.retire(); source.grant = AuthorizationLease()
+                    return MockResponse().setSocketPolicy(SocketPolicy.DISCONNECT_AFTER_REQUEST)
+                }
+                return response()
+            }
+        }
+        val result = withTimeout(5_000) { runCatching { api().capabilities() } }
+        assertTrue(result.exceptionOrNull() is AuthorizationRetired)
+        assertEquals(1, server.requestCount)
+        assertEquals(1, source.calls)
     }
 }

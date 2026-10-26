@@ -5,6 +5,9 @@ import android.content.Intent
 import android.net.Uri
 import android.util.Base64
 import dev.pigeonpost.core.SessionExpired
+import dev.pigeonpost.core.AuthorizationLease
+import dev.pigeonpost.core.AuthorizationRetired
+import dev.pigeonpost.core.AuthorizationContext
 import dev.pigeonpost.core.TokenProvider
 import dev.pigeonpost.core.await
 import dev.pigeonpost.inbox.AppPolicy
@@ -12,6 +15,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -48,7 +53,7 @@ object AuthConfig {
     const val TOKEN = "$ISSUER/protocol/openid-connect/token"
     const val LOGOUT = "$ISSUER/protocol/openid-connect/logout"
 }
-data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null, val termsAccepted: Boolean = false)
+data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null, val termsAccepted: Boolean = false, val authorizationId: String? = null)
 interface UserSession : TokenProvider {
     val state: StateFlow<SessionState>
     suspend fun begin(provider: String? = null, otherAccount: Boolean = false): Intent?
@@ -56,6 +61,11 @@ interface UserSession : TokenProvider {
     suspend fun cancel()
     suspend fun acceptTerms()
     suspend fun signOut()
+    /** A delayed cleanup may only sign out the grant that initiated it. */
+    suspend fun signOut(expectedAuthorization: AuthorizationLease?) {
+        if (authorizationLease !== expectedAuthorization) throw AuthorizationRetired()
+        signOut()
+    }
 }
 
 class Session(context: Context) : UserSession {
@@ -65,6 +75,8 @@ class Session(context: Context) : UserSession {
     private val generation = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var auth: AuthState? = null
+    @Volatile private var acceptedAuthorization: AuthorizationLease? = null
+    override val authorizationLease: AuthorizationLease? get() = acceptedAuthorization
     private var acceptedTerms: String? = null
     private var pending: AuthorizationRequest? = null
     private var pendingAt = 0L
@@ -81,6 +93,7 @@ class Session(context: Context) : UserSession {
                     pendingAt = saved.optLong("pending_at")
                     auth?.authorizationServiceConfiguration?.let { require(trusted(it)) }
                 }
+                if (auth?.isAuthorized == true) acceptedAuthorization = AuthorizationLease()
                 publish()
             } catch (_: Exception) {
                 auth = null; acceptedTerms = null; pending = null; store.write(null)
@@ -143,7 +156,22 @@ class Session(context: Context) : UserSession {
             mutex.withLock {
                 if (generation.get() != epoch) throw CancellationException()
                 require(candidate.isAuthorized && candidate.accessToken != null) { "Sign-in returned no session." }
-                auth = candidate; acceptedTerms = null; persist(); publish()
+                withContext(NonCancellable) {
+                    val previous = acceptedAuthorization
+                    previous?.retire()
+                    acceptedAuthorization = null; auth = null; acceptedTerms = null; publish()
+                    previous?.awaitQuiescence()
+                    try {
+                        if (generation.get() != epoch) throw CancellationException()
+                        auth = candidate; persist()
+                        if (generation.get() != epoch) throw CancellationException()
+                        acceptedAuthorization = AuthorizationLease(); publish()
+                    } catch (failure: Exception) {
+                        auth = null; acceptedTerms = null; publish()
+                        runCatching { persist() }
+                        throw failure
+                    }
+                }
             }
         } catch (failure: Exception) {
             if (failure is CancellationException) throw failure
@@ -156,7 +184,12 @@ class Session(context: Context) : UserSession {
 
     override suspend fun token(rejected: String?): String {
         initialized.join()
+        return token(rejected, callerAuthorization())
+    }
+    override suspend fun token(rejected: String?, expectedAuthorization: AuthorizationLease?): String {
+        initialized.join()
         return mutex.withLock {
+            requireAuthorization(expectedAuthorization)
             val current = auth ?: throw SessionExpired()
             val epoch = generation.get()
             val access = current.accessToken
@@ -166,6 +199,7 @@ class Session(context: Context) : UserSession {
             try {
                 val tokens = exchange(current.createTokenRefreshRequest())
                 if (epoch != generation.get()) throw CancellationException()
+                requireAuthorization(expectedAuthorization)
                 current.update(tokens, null); persist(); publish()
                 current.accessToken ?: throw SessionExpired()
             } catch (failure: AuthorizationException) {
@@ -175,7 +209,15 @@ class Session(context: Context) : UserSession {
         }
     }
     override suspend fun invalidate(rejected: String) {
-        mutex.withLock { if (auth?.accessToken == rejected) { generation.incrementAndGet(); clearLocked() } }
+        initialized.join()
+        invalidate(rejected, callerAuthorization())
+    }
+    override suspend fun invalidate(rejected: String, expectedAuthorization: AuthorizationLease?) {
+        initialized.join()
+        mutex.withLock {
+            requireAuthorization(expectedAuthorization)
+            if (auth?.accessToken == rejected) { generation.incrementAndGet(); clearLocked() }
+        }
     }
     override suspend fun cancel() {
         generation.incrementAndGet()
@@ -202,9 +244,16 @@ class Session(context: Context) : UserSession {
         }
     }
     override suspend fun signOut() {
-        generation.incrementAndGet()
         initialized.join()
-        val refresh = mutex.withLock { val token = auth?.refreshToken; clearLocked(); token }
+        signOut(callerAuthorization())
+    }
+    override suspend fun signOut(expectedAuthorization: AuthorizationLease?) {
+        initialized.join()
+        val refresh = mutex.withLock {
+            if (acceptedAuthorization !== expectedAuthorization) throw AuthorizationRetired()
+            generation.incrementAndGet()
+            val token = auth?.refreshToken; clearLocked(); token
+        }
         if (refresh != null) withContext(Dispatchers.IO) {
             val http = OkHttpClient.Builder().followRedirects(false).retryOnConnectionFailure(false).callTimeout(15, TimeUnit.SECONDS).build()
             val body = FormBody.Builder().add("client_id", AuthConfig.CLIENT).add("refresh_token", refresh).build()
@@ -225,11 +274,31 @@ class Session(context: Context) : UserSession {
         store.write(if (auth == null && pending == null) null else json.toString())
     }
     private suspend fun clearLocked() {
-        auth = null; acceptedTerms = null; pending = null; pendingAt = 0; persist(); publish()
+        withContext(NonCancellable) {
+            val previous = acceptedAuthorization
+            previous?.retire()
+            acceptedAuthorization = null; auth = null; acceptedTerms = null; pending = null; pendingAt = 0
+            publish()
+            previous?.awaitQuiescence()
+            persist()
+        }
+    }
+    private fun requireAuthorization(expected: AuthorizationLease?) {
+        if (acceptedAuthorization !== expected) throw AuthorizationRetired()
+        expected?.requireActive() ?: throw SessionExpired()
+    }
+    private suspend fun callerAuthorization(): AuthorizationLease? {
+        val accepted = acceptedAuthorization
+        currentCoroutineContext()[AuthorizationContext]?.let { context ->
+            val caller = context.lease ?: throw AuthorizationRetired()
+            caller.requireActive()
+            if (accepted == null || !caller.sharesAuthorization(accepted)) throw AuthorizationRetired()
+        }
+        return accepted
     }
     private fun publish() {
         mutable.value = SessionState(loading = false, signedIn = auth?.isAuthorized == true, username = username(auth?.accessToken),
-            termsAccepted = auth?.isAuthorized == true && acceptedTerms == AppPolicy.TERMS_VERSION)
+            termsAccepted = auth?.isAuthorized == true && acceptedTerms == AppPolicy.TERMS_VERSION, authorizationId = acceptedAuthorization?.id)
     }
     private fun trusted(config: AuthorizationServiceConfiguration) =
         config.authorizationEndpoint.toString() == AuthConfig.AUTH && config.tokenEndpoint.toString() == AuthConfig.TOKEN

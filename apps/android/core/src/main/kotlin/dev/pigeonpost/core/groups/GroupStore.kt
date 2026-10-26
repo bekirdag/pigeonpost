@@ -1,6 +1,9 @@
 package dev.pigeonpost.core.groups
 
 import dev.pigeonpost.core.ApiException
+import dev.pigeonpost.core.AuthorizationLease
+import dev.pigeonpost.core.AuthorizationContext
+import dev.pigeonpost.core.AuthorizationRetired
 import dev.pigeonpost.core.Features
 import dev.pigeonpost.core.SessionExpired
 import dev.pigeonpost.core.WireJson
@@ -111,12 +114,22 @@ class GroupStore(
     private val mutable = MutableStateFlow(GroupsState())
     val state: StateFlow<GroupsState> = mutable.asStateFlow()
     private var client: GroupClient? = null
+    private var actorAuthorization: AuthorizationLease? = null
     private var generation = 0L
     private var pollJob: Job? = null
     private var openJob: Job? = null
     private var active = false
     private val refreshing = Mutex()
     private var lastTopUp = 0L
+
+    /** The mailbox child is frozen before launch, including work queued behind a dispatcher. */
+    private fun launch(work: suspend CoroutineScope.() -> Unit): Job {
+        val authorization = actorAuthorization ?: return Job().apply { complete() }
+        return scope.launch(AuthorizationContext(authorization)) {
+            authorization.requireActive()
+            work()
+        }
+    }
 
     private fun note(text: String) = mutable.update { it.copy(notice = text) }
     fun clearNotice() = mutable.update { it.copy(notice = null) }
@@ -133,13 +146,16 @@ class GroupStore(
         }
         teardown()
         if (!enabled) return
+        val authorization = try { scope.coroutineContext[AuthorizationContext]?.lease?.child() ?: AuthorizationLease() }
+            catch (_: AuthorizationRetired) { return }
+        actorAuthorization = authorization
         val run = ++generation
         mutable.value = GroupsState(mailbox = mailbox, disappearing = "disappearing" in features, features = features,
             handles = if (handle != null) mapOf(mailbox!! to handle) else emptyMap(), join = current.join)
-        scope.launch {
+        launch {
             val library = try { crypto() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) { null }
             if (library == null) { if (run == generation) mutable.update { it.copy(unavailable = true) }; return@launch }
-            val c = GroupClient(library, transport, storage, mailbox!!, devicePrefix, now, onEvent = { event -> if (run == generation) onClientEvent(event) })
+            val c = GroupClient(library, transport, storage, mailbox!!, devicePrefix, now, onEvent = { event -> if (run == generation) onClientEvent(event) }, authorizationLease = authorization)
             try { c.init() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); return@launch }
@@ -164,6 +180,8 @@ class GroupStore(
     }
 
     private fun teardown() {
+        actorAuthorization?.retire(); actorAuthorization = null
+        client?.close()
         generation++
         pollJob?.cancel(); openJob?.cancel()
         client = null
@@ -179,7 +197,7 @@ class GroupStore(
     private fun startPolling() {
         pollJob?.cancel()
         val run = generation
-        pollJob = scope.launch {
+        pollJob = launch {
             while (isActive && run == generation) {
                 delay(pollSeconds * 1000)
                 val c = client ?: break
@@ -199,7 +217,7 @@ class GroupStore(
     private fun onClientEvent(event: GroupEvent) {
         when (event) {
             is GroupEvent.History -> snapshot()
-            is GroupEvent.Removed, is GroupEvent.Resync -> { snapshot(); scope.launch { refresh() } }
+            is GroupEvent.Removed, is GroupEvent.Resync -> { snapshot(); launch { refresh() } }
             is GroupEvent.Enrolled -> mutable.update { it.copy(deviceId = event.deviceId) }
         }
     }
@@ -235,7 +253,7 @@ class GroupStore(
         try {
             val run = generation
             val groups = try {
-                WireJson.decodeFromString<GroupsResponse>(transport.groupJson(c.mailbox, "GET", "/v1/groups?state=active,invited,keying")).groups.orEmpty()
+                WireJson.decodeFromString<GroupsResponse>(c.transport.groupJson(c.mailbox, "GET", "/v1/groups?state=active,invited,keying")).groups.orEmpty()
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { onSessionExpired(); return }
             catch (failure: ApiException) { if (failure.status == 404) mutable.update { it.copy(groups = emptyList()) }; return }
@@ -262,7 +280,7 @@ class GroupStore(
     fun open(gid: String) {
         mutable.update { it.copy(open = gid, call = null) }
         snapshot()
-        scope.launch { loadMembers(gid) }
+        launch { loadMembers(gid) }
         watchOpen(gid)
     }
 
@@ -274,7 +292,7 @@ class GroupStore(
     private fun watchOpen(gid: String) {
         openJob?.cancel()
         val run = generation
-        openJob = scope.launch {
+        openJob = launch {
             var tick = 0
             while (isActive && run == generation && state.value.open == gid) {
                 val c = client
@@ -284,8 +302,8 @@ class GroupStore(
                     quietly { c.reconcileDeletions(gid) }
                     if (tick % 5 == 0) {
                         quietly { c.processPending(gid, noJitter = tick == 0) }
-                        val call = quietly { transport.groupCall(gid, c.mailbox) }
-                        if (state.value.open == gid) mutable.update { it.copy(call = call) }
+                        val call = quietly { c.transport.groupCall(gid, c.mailbox) }
+                        if (run == generation && state.value.open == gid) mutable.update { it.copy(call = call) }
                     }
                     markRead(gid)
                     if (run != generation || state.value.open != gid) return@launch
@@ -306,13 +324,13 @@ class GroupStore(
         val last = maxOf(c.history(gid).mapNotNull { it.seq }.maxOrNull() ?: 0, g.lastSeq)
         if (last <= mine.readCursor) return
         mutable.update { old -> old.copy(groups = old.groups.map { if (it.id == gid) it.copy(my = mine.copy(readCursor = last, unread = 0)) else it }) }
-        quietly { transport.groupJson(c.mailbox, "POST", gpath(gid, "/read"), buildJsonObject { put("seq", last) }) }
+        quietly { c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/read"), buildJsonObject { put("seq", last) }) }
     }
 
     suspend fun loadMembers(gid: String): List<GroupMember> {
         val c = client ?: return emptyList()
         val run = generation
-        val list = quietly { WireJson.decodeFromString<MembersResponse>(transport.groupJson(c.mailbox, "GET", gpath(gid, "/members"))).members.orEmpty() }
+        val list = quietly { WireJson.decodeFromString<MembersResponse>(c.transport.groupJson(c.mailbox, "GET", gpath(gid, "/members"))).members.orEmpty() }
             ?: return state.value.members[gid].orEmpty()
         if (run != generation) return emptyList()
         mutable.update { old -> old.copy(members = old.members + (gid to list), handles = old.handles + list.mapNotNull { m -> m.handle?.let { m.address to it } }) }
@@ -321,9 +339,9 @@ class GroupStore(
 
     fun loadDevices(mailbox: String) {
         val c = client ?: return
-        scope.launch {
-            val rows = quietly { WireJson.decodeFromString<DevicesResponse>(transport.groupJson(c.mailbox, "GET", "/v1/mls/devices?mailbox=" + enc(mailbox))).devices.orEmpty() } ?: return@launch
-            mutable.update { it.copy(devices = it.devices + (mailbox to rows)) }
+        launch {
+            val rows = quietly { WireJson.decodeFromString<DevicesResponse>(c.transport.groupJson(c.mailbox, "GET", "/v1/mls/devices?mailbox=" + enc(mailbox))).devices.orEmpty() } ?: return@launch
+            c.authorizationLease.withActive { mutable.update { it.copy(devices = it.devices + (mailbox to rows)) } }
         }
     }
 
@@ -393,7 +411,7 @@ class GroupStore(
             note("That action is unavailable. Cancel it to keep writing."); return
         }
         mutable.update { it.copy(sending = true) }
-        scope.launch {
+        launch {
             val ok = try {
                 val attachments = if (action?.kind == GroupComposerKind.EDIT) emptyList() else files()
                 if (run != generation) return@launch
@@ -419,7 +437,7 @@ class GroupStore(
         if (current.sending || current.open != gid || current.current?.canPost != true || cmid !in current.pendingIds[gid].orEmpty()) return
         val action = current.composers[gid]
         mutable.update { it.copy(sending = true) }
-        scope.launch {
+        launch {
             val ok = try { c.retry(gid, cmid); if (run == generation) finishComposer(gid, action); true }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); false }
@@ -435,7 +453,7 @@ class GroupStore(
     suspend fun openFile(gid: String, file: GroupFile): ByteArray = (client ?: throw ApiException(403, "not_member")).openFile(gid, file)
 
     fun deleteMessage(gid: String, seq: Long) = act {
-        val response = WireJson.parseToJsonElement(transport.groupJson(it.mailbox, "DELETE", gpath(gid, "/messages/$seq"))) as? JsonObject
+        val response = WireJson.parseToJsonElement(it.transport.groupJson(it.mailbox, "DELETE", gpath(gid, "/messages/$seq"))) as? JsonObject
         val seqs = (response?.get("seqs") as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.toLongOrNull() }
         it.dropSeqs(gid, seqs.ifEmpty { listOf(seq) }, tombstones = true)
     }
@@ -446,7 +464,7 @@ class GroupStore(
         val c = client ?: return
         require(name.isNotBlank() && name.length <= 80) { "Give the group a name." }
         mutable.update { it.copy(busy = true) }
-        scope.launch {
+        launch {
             try {
                 val settings = buildJsonObject {
                     put("name", name.trim()); description?.trim()?.takeIf { it.isNotEmpty() }?.let { put("description", it.take(500)) }
@@ -468,7 +486,7 @@ class GroupStore(
     }
 
     fun answerInvitation(g: Group, accept: Boolean) = act {
-        transport.groupJson(it.mailbox, "POST", gpath(g.id, "/invitation"), buildJsonObject { put("accept", accept) })
+        it.transport.groupJson(it.mailbox, "POST", gpath(g.id, "/invitation"), buildJsonObject { put("accept", accept) })
         note(if (accept) "Joined ${g.name}. A member’s device will add you in a moment." else "Invitation declined.")
         refresh()
     }
@@ -478,9 +496,9 @@ class GroupStore(
         if (!Regex("grp_[a-z2-7]{26}").matches(groupId)) return
         mutable.update { it.copy(join = JoinRequest(groupId, token?.takeIf { t -> t.isNotBlank() && t.length <= 200 })) }
         val c = client ?: return // picked up once groups are ready
-        scope.launch {
+        launch {
             try {
-                val preview = WireJson.decodeFromString<GroupPreview>(transport.groupJson(c.mailbox, "POST", "/v1/groups/resolve", buildJsonObject {
+                val preview = WireJson.decodeFromString<GroupPreview>(c.transport.groupJson(c.mailbox, "POST", "/v1/groups/resolve", buildJsonObject {
                     put("group_id", groupId); token?.let { put("link_token", it) }
                 }))
                 mutable.update { it.copy(join = it.join?.copy(preview = preview)) }
@@ -498,9 +516,9 @@ class GroupStore(
         val c = client ?: return
         val request = state.value.join ?: return
         mutable.update { it.copy(join = request.copy(joining = true, error = null)) }
-        scope.launch {
+        launch {
             try {
-                transport.groupJson(c.mailbox, "POST", gpath(request.groupId, "/join"), buildJsonObject { request.token?.let { put("link_token", it) } })
+                c.transport.groupJson(c.mailbox, "POST", gpath(request.groupId, "/join"), buildJsonObject { request.token?.let { put("link_token", it) } })
                 mutable.update { it.copy(join = null) }
                 note("Joined. A member’s device will add you to the encryption in a moment.")
                 refresh()
@@ -519,8 +537,8 @@ class GroupStore(
     fun patch(gid: String, fields: Map<String, JsonElement>) = act { c ->
         for (attempt in 0 until 2) {
             try {
-                val fresh = WireJson.decodeFromString<Group>(transport.groupJson(c.mailbox, "GET", gpath(gid)))
-                transport.groupJson(c.mailbox, "PATCH", gpath(gid), JsonObject(fields + ("expected_revision" to JsonPrimitive(fresh.revision))))
+                val fresh = WireJson.decodeFromString<Group>(c.transport.groupJson(c.mailbox, "GET", gpath(gid)))
+                c.transport.groupJson(c.mailbox, "PATCH", gpath(gid), JsonObject(fields + ("expected_revision" to JsonPrimitive(fresh.revision))))
                 note("Saved.")
                 break
             } catch (failure: ApiException) {
@@ -534,7 +552,7 @@ class GroupStore(
     fun setTimer(gid: String, seconds: Long?) = patch(gid, mapOf("ephemeral_secs" to (seconds?.let { JsonPrimitive(it) } ?: JsonNull)))
 
     fun changeMember(gid: String, member: GroupMember, role: String? = null, newState: String? = null) = act { c ->
-        transport.groupJson(c.mailbox, "PATCH", gpath(gid, "/members/" + enc(member.address)), buildJsonObject {
+        c.transport.groupJson(c.mailbox, "PATCH", gpath(gid, "/members/" + enc(member.address)), buildJsonObject {
             put("expected_revision", member.revision); role?.let { put("role", it) }; newState?.let { put("state", it) }
         })
         // A removal waits for a commit; make it now rather than at the next post.
@@ -546,7 +564,7 @@ class GroupStore(
     fun invite(gid: String, raw: String) = act { c ->
         val list = raw.split(Regex("[\\s,]+")).filter { it.isNotBlank() }.map { if (it.startsWith('/')) it else "/$it" }.filter { validAddress(it) }
         if (list.isEmpty()) { note("Enter an address such as /alp/main."); return@act }
-        val res = WireJson.decodeFromString<InviteResults>(transport.groupJson(c.mailbox, "POST", gpath(gid, "/members"), buildJsonObject {
+        val res = WireJson.decodeFromString<InviteResults>(c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/members"), buildJsonObject {
             put("request_key", "rk_" + java.util.UUID.randomUUID().toString().replace("-", "").take(20))
             putJsonArray("invite") { list.forEach { add(JsonPrimitive(it)) } }
         }))
@@ -557,27 +575,27 @@ class GroupStore(
 
     /** Returns the link (shown once) or null when it was turned off. */
     fun link(gid: String, enabled: Boolean, done: (String?) -> Unit) = act { c ->
-        val res = WireJson.decodeFromString<LinkResponse>(transport.groupJson(c.mailbox, "POST", gpath(gid, "/link"), buildJsonObject { put("enabled", enabled) }))
+        val res = WireJson.decodeFromString<LinkResponse>(c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/link"), buildJsonObject { put("enabled", enabled) }))
         done(res.url?.takeIf { it.startsWith("https://inbox.pigeonpost.dev/g/") || it.startsWith("http://127.0.0.1") })
         refresh()
     }
 
     fun transfer(gid: String, to: String) = act { c ->
-        val fresh = WireJson.decodeFromString<Group>(transport.groupJson(c.mailbox, "GET", gpath(gid)))
-        transport.groupJson(c.mailbox, "POST", gpath(gid, "/transfer"), buildJsonObject { put("to", to); put("expected_revision", fresh.revision) })
+        val fresh = WireJson.decodeFromString<Group>(c.transport.groupJson(c.mailbox, "GET", gpath(gid)))
+        c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/transfer"), buildJsonObject { put("to", to); put("expected_revision", fresh.revision) })
         note("Ownership transferred.")
         refresh()
     }
 
     fun leave(gid: String) = act { c ->
-        transport.groupJson(c.mailbox, "POST", gpath(gid, "/leave"))
+        c.transport.groupJson(c.mailbox, "POST", gpath(gid, "/leave"))
         c.forget(gid)
         close()
         refresh()
     }
 
     fun delete(gid: String) = act { c ->
-        transport.groupJson(c.mailbox, "DELETE", gpath(gid))
+        c.transport.groupJson(c.mailbox, "DELETE", gpath(gid))
         c.forget(gid)
         close()
         refresh()
@@ -585,7 +603,7 @@ class GroupStore(
 
     fun setNotifications(gid: String, notify: String, muted: Boolean) = act { c ->
         val until = if (muted) 4102444800L else null
-        transport.groupJson(c.mailbox, "PUT", gpath(gid, "/notifications"), buildJsonObject { put("notify", notify); put("muted_until", until?.let { JsonPrimitive(it) } ?: JsonNull) })
+        c.transport.groupJson(c.mailbox, "PUT", gpath(gid, "/notifications"), buildJsonObject { put("notify", notify); put("muted_until", until?.let { JsonPrimitive(it) } ?: JsonNull) })
         mutable.update { old -> old.copy(groups = old.groups.map { g -> if (g.id == gid) g.copy(my = g.my?.copy(notify = notify, mutedUntil = until)) else g }) }
     }
 
@@ -605,7 +623,7 @@ class GroupStore(
     fun onEvent(type: String, data: JsonObject) {
         val c = client ?: return
         val gid = (data["group_id"] as? JsonPrimitive)?.content
-        scope.launch {
+        launch {
             when (type) {
                 "group.message", "group.handshake" -> {
                     if (gid != null && (data["deleted"] as? JsonPrimitive)?.content == "true") {
@@ -631,13 +649,13 @@ class GroupStore(
     }
 
     /** A push for a group arrived while the app is in front: look now. */
-    fun poke() { scope.launch { client?.let { quietly { it.processWelcomes() } }; refresh() } }
+    fun poke() { launch { client?.let { quietly { it.processWelcomes() } }; refresh() } }
 
     private fun act(work: suspend (GroupClient) -> Unit): Job {
         val c = client ?: return Job().apply { complete() }
         val run = generation
         mutable.update { it.copy(busy = true) }
-        return scope.launch {
+        return launch {
             try { work(c) }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (expired: SessionExpired) { if (run == generation) onSessionExpired() }

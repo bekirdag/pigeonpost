@@ -1,5 +1,7 @@
 package dev.pigeonpost.core
 
+import kotlinx.coroutines.CancellationException
+
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
@@ -242,12 +244,14 @@ class PostboxClient(
             .header("x-pigeonpost-filename", headerSafe(filename).ifEmpty { "attachment" })
             .header("x-pigeonpost-media-type", headerSafe(mediaType))
             .post(file.asRequestBody("application/octet-stream".toMediaType())).build()
-        authenticated(request).use { decode(readJson(it)) }
+        authenticated(request).use { decode(readAuthorized(it)) }
     }
     override suspend fun download(identity: String, id: String, output: OutputStream, maximumBytes: Long): Unit = withContext(Dispatchers.IO) {
         require(maximumBytes in 1..MAX_ATTACHMENT_BYTES)
         val request = Request.Builder().url(url("attachments", id = safeId(id))).header("x-pigeonpost-identity", identity).build()
         authenticated(request).use { response ->
+            requireCurrent(response)
+            val authorization = response.request.tag(AuthorizationLease::class.java)
             val body = response.body ?: throw IOException("The attachment is empty.")
             if (body.contentLength() > maximumBytes) throw IOException("This attachment is too large to download here.")
             body.byteStream().use { input ->
@@ -259,8 +263,10 @@ class PostboxClient(
                     if (count < 0) break
                     total += count
                     if (total > maximumBytes) throw IOException("This attachment is too large to download here.")
-                    output.write(buffer, 0, count)
+                    if (authorization == null) output.write(buffer, 0, count)
+                    else authorization.withActive { output.write(buffer, 0, count) }
                 }
+                requireCurrent(response)
             }
         }
     }
@@ -355,7 +361,9 @@ class PostboxClient(
         header("x-pigeonpost-identity", mailbox)
         device?.let { require(Regex("[A-Za-z0-9._-]{1,64}").matches(it)); header("x-pigeonpost-device", it) }
     }
-    override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String = withContext(Dispatchers.IO) {
+    override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
         val payload = body?.toString()?.toRequestBody("application/json".toMediaType())
             ?: if (method == "POST" || method == "PUT" || method == "PATCH") "{}".toRequestBody("application/json".toMediaType()) else null
         val request = Request.Builder().url(groupUrl(path)).acting(mailbox, device).method(method, payload).build()
@@ -380,7 +388,7 @@ class PostboxClient(
     override suspend fun groupCall(groupId: String, from: String): GroupCallState? = withContext(Dispatchers.IO) {
         require(Regex("grp_[a-z2-7]{26}").matches(groupId) && validAddress(from))
         val url = inbox.newBuilder().addPathSegments("calls/v1/groups").addPathSegment(groupId).addPathSegment("call").addQueryParameter("from", from).build()
-        try { decode<GroupCallState>(authenticated(Request.Builder().url(url).build()).use { readJson(it) }) }
+        try { decode<GroupCallState>(authenticated(Request.Builder().url(url).build()).use { readAuthorized(it) }) }
         catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled }
         catch (_: IOException) { null }
     }
@@ -401,17 +409,19 @@ class PostboxClient(
         id?.let { addPathSegment(it) }; identity?.let { addQueryParameter("identity", it) }
         query.forEach { (key, value) -> addQueryParameter(key, value) }
     }.build()
-    private suspend fun request(path: String, method: String = "GET", identity: String? = null, query: Map<String, String> = emptyMap(), json: JsonObject? = null, id: String? = null, retryable: Boolean = method == "GET"): String = withContext(Dispatchers.IO) {
+    private suspend fun request(path: String, method: String = "GET", identity: String? = null, query: Map<String, String> = emptyMap(), json: JsonObject? = null, id: String? = null, retryable: Boolean = method == "GET"): AuthorizedJson = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
         val body: RequestBody? = json?.toString()?.toRequestBody("application/json".toMediaType())
         val request = Request.Builder().url(url(path, identity, query, id)).method(method, body).build()
         try {
-            authenticated(request).use { readJson(it) }
+            authenticated(request).use { readAuthorized(it) }
         } catch (failure: IOException) {
             currentCoroutineContext().ensureActive()
             if (!retryable || failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
             delay(200)
             try {
-                authenticated(request, recoveryHttp).use { readJson(it) }
+                authenticated(request, recoveryHttp).use { readAuthorized(it) }
             } catch (retryFailure: IOException) {
                 currentCoroutineContext().ensureActive()
                 if (retryFailure is ApiException || retryFailure is SessionExpired || retryFailure is SSLException) throw retryFailure
@@ -440,7 +450,9 @@ class PostboxClient(
             }
         }
         if (!response.isSuccessful) response.use {
-            val problem = runCatching { WireJson.parseToJsonElement(readJson(it)) as? JsonObject }.getOrNull()
+            val problem = try { WireJson.parseToJsonElement(readJson(it)) as? JsonObject }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (_: Exception) { null }
             throw ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull,
                 (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500), problem)
         }
@@ -461,8 +473,16 @@ class PostboxClient(
         requireCurrent(response)
         return text
     }
+    private data class AuthorizedJson(val text: String, val authorization: AuthorizationLease?)
+    private fun readAuthorized(response: Response) = AuthorizedJson(readJson(response), response.request.tag(AuthorizationLease::class.java))
+    private suspend inline fun <reified T> decode(value: AuthorizedJson): T = withContext(AuthorizationContext(value.authorization)) {
+        value.authorization?.requireActive()
+        decode<T>(value.text)
+    }
     private suspend inline fun <reified T> decode(text: String): T = withContext(Dispatchers.Default) {
-        try { WireJson.decodeFromString(text) }
+        val authorization = currentCoroutineContext()[AuthorizationContext]?.lease
+        authorization?.requireActive()
+        try { WireJson.decodeFromString<T>(text).also { authorization?.requireActive() } }
         catch (e: SerializationException) { throw ApiException(200, "bad_response", "The postbox returned an unreadable response.") }
     }
     private fun safeId(id: String): String {

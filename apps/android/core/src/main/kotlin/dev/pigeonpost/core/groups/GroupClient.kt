@@ -1,6 +1,7 @@
 package dev.pigeonpost.core.groups
 
 import dev.pigeonpost.core.ApiException
+import dev.pigeonpost.core.AuthorizationLease
 import dev.pigeonpost.core.WireJson
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
@@ -50,23 +51,28 @@ sealed class GroupEvent {
  * `…Locked` functions expect the caller to hold it.
  */
 class GroupClient(
-    private val crypto: GroupCryptoLibrary,
-    private val transport: GroupTransport,
+    crypto: GroupCryptoLibrary,
+    transport: GroupTransport,
     private val storage: GroupStorage,
     val mailbox: String,
     private val devicePrefix: String = "android",
     private val now: () -> Long = { System.currentTimeMillis() / 1000 },
     private val sleep: suspend (Long) -> Unit = { delay(it) },
     private val jitter: () -> Long = { (0..3000L).random() },
-    private val onEvent: (GroupEvent) -> Unit = {},
+    onEvent: (GroupEvent) -> Unit = {},
+    val authorizationLease: AuthorizationLease = AuthorizationLease(),
 ) {
+    private val crypto = AuthorizedGroupCrypto(crypto, authorizationLease)
+    internal val transport: GroupTransport = AuthorizedGroupTransport(transport, mailbox, authorizationLease)
+    private val onEvent: (GroupEvent) -> Unit = { event -> authorizationLease.withActive { onEvent(event) } }
+    fun close() { authorizationLease.retire() }
     private val lock = Mutex()
     private var device: GroupDeviceHandle? = null
     private lateinit var record: GroupRecord
     private val random = SecureRandom()
     private val reconciliationCursors = mutableMapOf<String, Long>()
 
-    val deviceId: String? get() = if (::record.isInitialized) record.deviceId else null
+    val deviceId: String? get() = authorizationLease.withActive { if (::record.isInitialized) record.deviceId else null }
     val persistent get() = storage.persistent
 
     // ---- bytes and ids ------------------------------------------------------------------------
@@ -97,7 +103,7 @@ class GroupClient(
         val d = device ?: return
         record = record.copy(stateBlob = b64(d.exportState(unb64(record.stateKey))))
         // A save that starts must finish: a cancelled write would leave an older blob beside newer cursors.
-        withContext(NonCancellable) { storage.save(mailbox, record) }
+        withContext(NonCancellable) { storage.save(mailbox, record, authorizationLease) }
     }
     private fun cursorOf(gid: String) = record.groups[gid] ?: GroupCursor()
     private fun setCursor(gid: String, change: (GroupCursor) -> GroupCursor) {
@@ -122,7 +128,8 @@ class GroupClient(
 
     /** Open this mailbox's device, or enrol a new one (docs/groups.md §1). Returns its device id. */
     suspend fun init(): String = lock.withLock {
-        val saved = storage.load(mailbox)
+        authorizationLease.requireActive()
+        val saved = storage.load(mailbox, authorizationLease).also { authorizationLease.requireActive() }
         if (saved != null && saved.registered && saved.stateBlob != null) {
             try {
                 device = crypto.importState(unb64(saved.stateBlob), unb64(saved.stateKey))
@@ -154,24 +161,27 @@ class GroupClient(
 
     /** A device the server no longer knows (revoked elsewhere) starts again. */
     suspend fun reEnrol() = lock.withLock {
-        storage.remove(mailbox)
+        authorizationLease.requireActive()
+        storage.remove(mailbox, authorizationLease)
         device = null
         enrol()
     }
 
     /** Remove this device: the server revokes it, and its keys and history leave this phone. */
     suspend fun revoke() = lock.withLock {
+        authorizationLease.requireActive()
         val id = record.deviceId
         try { send("DELETE", "/v1/mls/devices/" + java.net.URLEncoder.encode(id, "UTF-8"), device = true) }
         catch (failure: ApiException) { if (failure.status !in setOf(404, 403, 410) && failure.code != "unknown_device" && failure.code != "device_revoked") throw failure }
-        storage.remove(mailbox)
+        storage.remove(mailbox, authorizationLease)
         device = null
     }
 
-    val fingerprint: String? get() = if (::record.isInitialized) record.fingerprint else null
+    val fingerprint: String? get() = authorizationLease.withActive { if (::record.isInitialized) record.fingerprint else null }
 
     /** Keep at least ten single-use key packages and one last-resort package on the server. */
     suspend fun topUpKeyPackages(): Int = lock.withLock {
+        authorizationLease.requireActive()
         val d = device ?: return@withLock 0
         val count: KeyPackageCount = call("GET", "/v1/mls/key-packages/count", device = true)
         if (count.unclaimed >= KEY_PACKAGE_FLOOR && count.lastResort) return@withLock 0
@@ -191,6 +201,7 @@ class GroupClient(
 
     suspend fun processWelcomes(): List<String> {
         val joined = lock.withLock {
+        authorizationLease.requireActive()
             val d = device ?: return@withLock emptyList()
             val welcomes = call<WelcomesResponse>("GET", "/v1/mls/welcomes", device = true).welcomes.orEmpty()
             val out = mutableListOf<String>()
@@ -223,7 +234,10 @@ class GroupClient(
         // A last-resort package may have been the one used; a self-update replaces that leaf key at
         // once (P-2 §13.6). Only when no single-use packages are left, which is exactly when it was.
         if (joined.isNotEmpty()) {
-            val count = try { lock.withLock { call<KeyPackageCount>("GET", "/v1/mls/key-packages/count", device = true) } }
+            val count = try { lock.withLock {
+                authorizationLease.requireActive()
+                call<KeyPackageCount>("GET", "/v1/mls/key-packages/count", device = true)
+            } }
                 catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null }
             if (count != null && count.unclaimed == 0) for (gid in joined) try { selfUpdate(gid) } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) {}
             joined.forEach { onEvent(GroupEvent.History(it)) }
@@ -245,7 +259,10 @@ class GroupClient(
 
     data class SyncResult(val processed: Int = 0, val removed: Boolean = false, val gap: Boolean = false, val resync: Boolean = false)
 
-    suspend fun sync(gid: String): SyncResult = lock.withLock { syncLocked(gid, null) }
+    suspend fun sync(gid: String): SyncResult = lock.withLock {
+        authorizationLease.requireActive()
+        syncLocked(gid, null)
+    }
 
     /** Fetch and process everything after the cursor, strictly in sequence order; `upTo` stops early. */
     private suspend fun syncLocked(gid: String, upTo: Long?): SyncResult {
@@ -431,16 +448,25 @@ class GroupClient(
 
     /** Commit whatever the server says is pending: adds for keying members and new devices, removals for leavers. */
     suspend fun processPending(gid: String, noJitter: Boolean = false): Posted? {
-        var status = lock.withLock { cryptoStatus(gid) }
+        var status = lock.withLock {
+            authorizationLease.requireActive()
+            cryptoStatus(gid)
+        }
         if (!status.inGroup && status.activationState == "active") return null
         if (status.pending.isNullOrEmpty()) return null
         if (!noJitter) {
             // Several online members see the same pending change; a little jitter lets one of them win cleanly.
             sleep(jitter())
-            status = lock.withLock { cryptoStatus(gid) }
+            status = lock.withLock {
+            authorizationLease.requireActive()
+            cryptoStatus(gid)
+        }
             if (status.pending.isNullOrEmpty()) return null
         }
-        return lock.withLock { commitLocked(gid) { pendingPlan(gid, adds = true) } }
+        return lock.withLock {
+            authorizationLease.requireActive()
+            commitLocked(gid) { pendingPlan(gid, adds = true) }
+        }
     }
 
     private suspend fun pendingPlan(gid: String, adds: Boolean): Plan? {
@@ -464,6 +490,7 @@ class GroupClient(
     }
 
     suspend fun selfUpdate(gid: String): Posted? = lock.withLock {
+        authorizationLease.requireActive()
         commitLocked(gid) {
             val d = device ?: return@commitLocked null
             val fresh = cryptoStatus(gid)
@@ -476,6 +503,7 @@ class GroupClient(
     /** Create the row, the MLS group at epoch 0, and post the first commit, which activates the group. */
     suspend fun createGroup(settings: JsonObject): CreatedGroup {
         val created: CreatedGroup = lock.withLock {
+        authorizationLease.requireActive()
             call("POST", "/v1/groups", JsonObject(settings + ("request_key" to JsonPrimitive(requestKey()))))
         }
         activate(created.group.id)
@@ -483,6 +511,7 @@ class GroupClient(
     }
 
     suspend fun activate(gid: String): Posted? = lock.withLock {
+        authorizationLease.requireActive()
         val d = device ?: return@withLock null
         if (gid !in d.groups()) {
             d.createGroup(gid)
@@ -540,6 +569,7 @@ class GroupClient(
 
     /** Prepare once, persisting the exact encrypted request before its first HTTP attempt. */
     suspend fun send(gid: String, doc: OutgoingDocument): Posted = lock.withLock {
+        authorizationLease.requireActive()
         require(doc.replyTo == null || doc.editOf == null) { "Choose either reply or edit." }
         require(listOfNotNull(doc.replyTo, doc.editOf).all { it > 0 })
         require(doc.files.size <= 8)
@@ -576,12 +606,14 @@ class GroupClient(
     }
 
     suspend fun retry(gid: String, cmid: String): Posted = lock.withLock {
+        authorizationLease.requireActive()
         if (record.pendingSends[cmid] == null) historyOf(gid).firstOrNull { it.kind == "message" && it.cmid == cmid && !it.pending && it.seq != null }?.let {
             return@withLock Posted(it.seq!!, expiresAt = it.expiresAt)
         }
         deliverPendingLocked(gid, cmid)
     }
     suspend fun discardPending(gid: String, cmid: String) = lock.withLock {
+        authorizationLease.requireActive()
         if (record.pendingSends[cmid]?.group?.let { it != gid } == true) return@withLock
         record = record.copy(pendingSends = record.pendingSends - cmid)
         updateHistory(gid) { if (it.kind == "message" && it.cmid == cmid && it.pending) null else it }
@@ -668,6 +700,7 @@ class GroupClient(
 
     /** Drop expired items by this device's own clock, whether or not the event arrived. */
     suspend fun pruneExpired(): Int = lock.withLock {
+        authorizationLease.requireActive()
         if (!::record.isInitialized) return@withLock 0
         val t = now()
         var dropped = 0
@@ -686,12 +719,14 @@ class GroupClient(
     }
 
     suspend fun dropSeqs(gid: String, seqs: Collection<Long>, tombstones: Boolean = false) = lock.withLock {
+        authorizationLease.requireActive()
         eraseLocked(gid, seqs.toSet(), tombstones)
         persist()
     }
 
     /** One bounded metadata page per call; never decrypt or consume an old MLS ciphertext twice. */
     suspend fun reconcileDeletions(gid: String) = lock.withLock {
+        authorizationLease.requireActive()
         val sequences = historyOf(gid).filter { it.kind == "message" }.mapNotNull { it.seq }
         val first = sequences.minOrNull() ?: return@withLock
         val through = sequences.maxOrNull() ?: return@withLock
@@ -707,6 +742,7 @@ class GroupClient(
     suspend fun receipts(gid: String): GroupReceipts = call("GET", gpath(gid, "/receipts"))
 
     suspend fun forget(gid: String) = lock.withLock {
+        authorizationLease.requireActive()
         try { device?.forgetGroup(gid) } catch (_: GroupCryptoError) {}
         record = record.copy(groups = record.groups - gid, history = record.history - gid,
             pendingSends = record.pendingSends.filterValues { it.group != gid })
@@ -714,15 +750,15 @@ class GroupClient(
         persist()
     }
 
-    fun inGroup(gid: String) = ::record.isInitialized && record.groups[gid]?.inGroup == true
-    fun history(gid: String): List<HistoryItem> = if (::record.isInitialized) record.history[gid].orEmpty() else emptyList()
-    fun pendingIds(gid: String): Set<String> = if (::record.isInitialized) record.pendingSends.values.filter { it.group == gid }.map { it.cmid }.toSet() else emptySet()
+    fun inGroup(gid: String) = authorizationLease.withActive { ::record.isInitialized && record.groups[gid]?.inGroup == true }
+    fun history(gid: String): List<HistoryItem> = authorizationLease.withActive { if (::record.isInitialized) record.history[gid].orEmpty() else emptyList() }
+    fun pendingIds(gid: String): Set<String> = authorizationLease.withActive { if (::record.isInitialized) record.pendingSends.values.filter { it.group == gid }.map { it.cmid }.toSet() else emptySet() }
     fun members(gid: String): List<DeviceSummary> = try { device?.members(gid).orEmpty().map(::summary) } catch (_: GroupCryptoError) { emptyList() }
     fun safetyNumber(gid: String): String? = try { device?.safetyNumber(gid) } catch (_: GroupCryptoError) { null }
     fun epoch(gid: String): Long? = try { device?.epoch(gid) } catch (_: GroupCryptoError) { null }
     fun digits(fingerprintHex: String): String = try {
         crypto.fingerprintDigits(fingerprintHex.chunked(2).map { it.toInt(16).toByte() }.toByteArray())
-    } catch (_: Exception) { fingerprintHex }
+    } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { fingerprintHex }
 }
 
 /** The JSON document inside a group message (the web inbox's `encodeBody`/`decodeBody`). */

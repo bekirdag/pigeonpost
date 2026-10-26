@@ -1,5 +1,7 @@
 package dev.pigeonpost.core.groups
 
+import dev.pigeonpost.core.AuthorizationLease
+
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.json.JsonObject
@@ -276,6 +278,10 @@ interface GroupStorage {
     suspend fun load(mailbox: String): GroupRecord?
     suspend fun save(mailbox: String, record: GroupRecord)
     suspend fun remove(mailbox: String)
+    /** Check inside the implementation's serialized local IO boundary, never around a suspend. */
+    suspend fun load(mailbox: String, authorization: AuthorizationLease): GroupRecord?
+    suspend fun save(mailbox: String, record: GroupRecord, authorization: AuthorizationLease)
+    suspend fun remove(mailbox: String, authorization: AuthorizationLease)
 }
 
 class MemoryGroupStorage : GroupStorage {
@@ -284,6 +290,9 @@ class MemoryGroupStorage : GroupStorage {
     override suspend fun load(mailbox: String) = synchronized(rows) { rows[mailbox] }
     override suspend fun save(mailbox: String, record: GroupRecord) { synchronized(rows) { rows[mailbox] = record } }
     override suspend fun remove(mailbox: String) { synchronized(rows) { rows.remove(mailbox) } }
+    override suspend fun load(mailbox: String, authorization: AuthorizationLease) = synchronized(rows) { authorization.withActive { rows[mailbox] } }
+    override suspend fun save(mailbox: String, record: GroupRecord, authorization: AuthorizationLease) { synchronized(rows) { authorization.withActive { rows[mailbox] = record } } }
+    override suspend fun remove(mailbox: String, authorization: AuthorizationLease) { synchronized(rows) { authorization.withActive { rows.remove(mailbox) } } }
 }
 
 /** `https://inbox.pigeonpost.dev/g/<id>#<token>` links, from a web page, a message or an App Link. */

@@ -63,6 +63,7 @@ class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(
 
 class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
+    private val storeScope = AuthorizedStoreScope(viewModelScope)
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
@@ -75,21 +76,21 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         looks.edit().putString("choice", choice.name.lowercase()).apply()
     }
     /** Calls run the web call client in a kept-alive WebView; fixtures have none unless a debug harness is given. */
-    val calls = if (graph.fixtures && callsOverride == null) null else CallHost(app, graph.session, viewModelScope, callsOverride)
-    val inbox = InboxStore(graph.api, viewModelScope,
+    val calls = if (graph.fixtures && callsOverride == null) null else CallHost(app, graph.session, storeScope, callsOverride)
+    val inbox = InboxStore(graph.api, storeScope,
         rememberMailbox = { preferences.edit().putString("mailbox", it).apply() },
         onSessionExpired = { signOut() })
     /** Profile pictures over the initials, once the postbox says `avatars` is on. */
-    val avatars = AvatarStore(graph.api, viewModelScope)
+    val avatars = AvatarStore(graph.api, storeScope)
     val pictures = AvatarPictures(app, avatars)
     /** End-to-end encrypted groups (Phase 3b), once the postbox says `groups` is on. */
-    val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), viewModelScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
-    val handles = HandleStore(graph.api, viewModelScope,
+    val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), storeScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
+    val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
-    val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, viewModelScope, onSessionExpired = { signOut() }) }
+    val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
     val billing = if (graph.fixtures) null else GooglePlayBilling(app)
     val paidHandles = (graph.api as? PaidHandleApi)?.let { api -> billing?.let {
-        PaidHandleStore(api, it, viewModelScope, onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
+        PaidHandleStore(api, it, storeScope, onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     } }
     private val loadingAttachments = MutableStateFlow<Map<DraftKey, Int>>(emptyMap())
     val stagingAttachments = loadingAttachments.asStateFlow()
@@ -100,7 +101,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     // Declared before init: the session collector there can reset these straight away.
     private val stagedForGroups = MutableStateFlow<Map<GroupDraftKey, List<StagedAttachment>>>(emptyMap())
     val groupStaged = stagedForGroups.asStateFlow()
-    val profile = ProfileStore(graph.api, viewModelScope) { keys -> avatars.forget(keys + inbox.state.value.mailboxes.filter { it.address in keys }.mapNotNull { it.handle }) }
+    val profile = ProfileStore(graph.api, storeScope) { keys -> avatars.forget(keys + inbox.state.value.mailboxes.filter { it.address in keys }.mapNotNull { it.handle }) }
     val pictureForAll = MutableStateFlow(false)
     private val cropping = MutableStateFlow<android.graphics.Bitmap?>(null)
     val crop = cropping.asStateFlow()
@@ -131,19 +132,35 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             }.distinctUntilChanged().collect { push?.update(it) }
         }
         viewModelScope.launch {
-            session.state.filter { !it.loading }.map { it.signedIn && it.termsAccepted }.distinctUntilChanged().collect { ready ->
-                if (ready) { inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore() }
-                else { inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); profile.reset(); pictures.clear()
-                    stagedForGroups.value.values.flatten().forEach { it.file.delete() }; stagedForGroups.value = emptyMap(); attachmentTarget = null; pendingSave = null; withContext(Dispatchers.IO) { files.clear() } }
+            session.state.filter { !it.loading }.map { (it.signedIn && it.termsAccepted) to it.authorizationId }.distinctUntilChanged().collect { (ready, authorizationId) ->
+                resetStores()
+                withContext(Dispatchers.IO) { files.clear() }
+                val current = session.state.value
+                if (ready && current.signedIn && current.termsAccepted && current.authorizationId == authorizationId) {
+                    storeScope.activate(session.authorizationLease)
+                    inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore()
+                }
             }
         }
     }
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() {
+        val authorization = session.authorizationLease
         val token = push?.clear()
-        handles.reset(); paidHandles?.reset(); accountHandles?.reset(); inbox.reset(); avatars.reset(); groups?.reset()
-        viewModelScope.launch { push?.unregister(graph.api as? DevicePushApi, token); session.signOut() }
+        resetStores()
+        val cleanup = authorization?.takeIf { it.isValid }?.child()
+        viewModelScope.launch(AuthorizationContext(cleanup)) {
+            try { push?.unregister(graph.api as? DevicePushApi, token) { session.authorizationLease === authorization } }
+            finally { session.signOut(authorization) }
+        }
+    }
+    private fun resetStores() {
+        storeScope.retire()
+        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); profile.reset(); pictures.clear()
+        stagedForGroups.value.values.flatten().forEach { it.file.delete() }
+        stagedForGroups.value = emptyMap(); attachmentTarget = null; groupAttachTarget = null; pendingSave = null
+        loadingAttachments.value = emptyMap(); retainedPastes.clear(); cropping.value = null
     }
     fun refreshPushRegistration() {
         push?.update(inbox.state.value.acting?.address?.takeIf { session.state.value.signedIn && session.state.value.termsAccepted })
@@ -186,6 +203,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     override fun onCleared() {
+        storeScope.retire()
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = null; billing?.close(); calls?.destroy(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey; groupAttachTarget = null }
 
@@ -206,7 +224,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         stagedForGroups.value = stagedForGroups.value + (key to stagedForGroups.value[key].orEmpty().filterNot { it.id == id })
     }
     private fun stageGroup(target: GroupAttachmentTarget, uris: List<Uri>) {
-        viewModelScope.launch {
+        storeScope.launch {
             try {
                 val added = files.stage(uris)
                 val state = groups?.state?.value
@@ -269,8 +287,12 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     // ---- profile picture ------------------------------------------------------------------------
     fun pictureChosen(uri: Uri?) {
         if (uri == null) return
-        viewModelScope.launch {
-            try { cropping.value = dev.pigeonpost.inbox.ui.decodeForCrop(getApplication(), uri) }
+        storeScope.launch {
+            try {
+                val bitmap = dev.pigeonpost.inbox.ui.decodeForCrop(getApplication(), uri)
+                kotlin.coroutines.coroutineContext[AuthorizationContext]?.lease?.requireActive()
+                cropping.value = bitmap
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (_: Exception) { inbox.showError("That picture could not be opened. Try a JPEG or PNG.") }
         }
@@ -278,8 +300,9 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun cancelCrop() { cropping.value = null }
     fun saveCrop(left: Int, top: Int, side: Int) {
         val bitmap = cropping.value ?: return
-        viewModelScope.launch {
+        storeScope.launch {
             val (bytes, size) = withContext(Dispatchers.Default) { dev.pigeonpost.inbox.ui.encodeCrop(bitmap, left, top, side) }
+            kotlin.coroutines.coroutineContext[AuthorizationContext]?.lease?.requireActive()
             profile.upload(bytes, "image/jpeg", size, pictureForAll.value, inbox.state.value.mailboxes.map { it.address }) { cropping.value = null }
         }
     }
@@ -299,8 +322,13 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     private fun stage(target: DraftKey, uris: List<Uri>, finished: () -> Unit = {}) {
         if (uris.isEmpty()) { finished(); return }
         loadingAttachments.value = loadingAttachments.value + (target to (loadingAttachments.value.getOrDefault(target, 0) + 1))
-        viewModelScope.launch {
-            try { inbox.stage(target, files.stage(uris)) }
+        storeScope.launch {
+            try {
+                val added = files.stage(uris)
+                try { kotlin.coroutines.coroutineContext[AuthorizationContext]?.lease?.requireActive() }
+                catch (retired: AuthorizationRetired) { added.forEach { it.file.delete() }; throw retired }
+                inbox.stage(target, added)
+            }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { inbox.showError(failure.message ?: "Could not read the attachment.") }
             finally {
