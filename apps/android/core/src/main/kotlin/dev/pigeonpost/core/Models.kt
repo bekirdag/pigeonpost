@@ -40,6 +40,14 @@ data class Message(
     val attachments: List<Attachment>? = null,
     val filtered: Boolean? = null,
     @SerialName("expires_at") val expiresAt: Long? = null,
+    @SerialName("msg_ref") val msgRef: String? = null,
+    @SerialName("reply_to") val replyTo: MessageReply? = null,
+    @SerialName("edit_of") val editOf: String? = null,
+    @SerialName("edit_of_message_id") val editOfMessageId: String? = null,
+    @SerialName("edited_at") val editedAt: Long? = null,
+    @SerialName("edit_count") val editCount: Int? = null,
+    val receipt: MessageReceipt? = null,
+    @SerialName("agent_status") val agentStatus: MessageAgentStatus? = null,
 ) {
     val outgoing get() = direction == "out"
     val at get() = if (outgoing) sentAt ?: receivedAt ?: 0 else receivedAt ?: sentAt ?: 0
@@ -88,7 +96,12 @@ data class ContactsResponse(val contacts: List<Contact>? = null, val vocabulary:
 @Serializable
 data class ArchiveResponse(val archived: List<String>? = null)
 @Serializable
-data class SendResponse(@SerialName("message_id") val messageId: String? = null, @SerialName("sent_copy_id") val sentCopyId: String? = null)
+data class SendResponse(
+    @SerialName("message_id") val messageId: String? = null,
+    @SerialName("sent_copy_id") val sentCopyId: String? = null,
+    @SerialName("msg_ref") val msgRef: String? = null,
+    val duplicate: Boolean? = null,
+)
 @Serializable
 data class OpenedThread(@SerialName("thread_id") val id: String)
 @Serializable

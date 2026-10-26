@@ -63,6 +63,10 @@ interface PostboxApi {
     suspend fun quota(identity: String): Quota
     suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String> = emptyList()): SendResponse
     suspend fun ack(identity: String, messageId: String)
+    suspend fun inboxWithActions(identity: String, wait: Int? = null): InboxResponse = throw ApiException(404, "feature_disabled")
+    suspend fun sendWithActions(identity: String, to: String, body: String, threadId: String?, action: MessageSendAction, attachments: List<String> = emptyList()): SendResponse = throw ApiException(404, "feature_disabled")
+    suspend fun ackWithEdits(identity: String, messageId: String) = ack(identity, messageId)
+    suspend fun messageInfo(identity: String, messageId: String): MessageInfo = throw ApiException(404, "feature_disabled")
     suspend fun openThread(identity: String, peer: String, title: String): String
     suspend fun deleteThread(identity: String, id: String)
     suspend fun deleteMessage(identity: String, id: String)
@@ -147,9 +151,14 @@ class PostboxClient(
     }))
     override suspend fun whoami(identity: String) = decode<WhoAmI>(request("whoami", identity = identity))
     override suspend fun createIdentity(handle: String?) = decode<CreatedIdentity>(request("identities", "POST", json = buildJsonObject { handle?.let { put("handle", it) } })).address
-    override suspend fun inbox(identity: String, wait: Int?): InboxResponse {
+    override suspend fun inbox(identity: String, wait: Int?) = inboxRequest(identity, wait, actions = false)
+    override suspend fun inboxWithActions(identity: String, wait: Int?) = inboxRequest(identity, wait, actions = true)
+    private suspend fun inboxRequest(identity: String, wait: Int?, actions: Boolean): InboxResponse {
         require(wait == null || wait in 0..25)
-        val query = buildMap { put("include_sent", "true"); put("include_read", "true"); wait?.let { put("wait", it.toString()) } }
+        val query = buildMap {
+            put("include_sent", "true"); put("include_read", "true"); wait?.let { put("wait", it.toString()) }
+            if (actions) { put("actions", "1"); put("fold", "1") }
+        }
         return decode(request("inbox", identity = identity, query = query))
     }
     override suspend fun threads(identity: String) = decode<ThreadsResponse>(request("threads", identity = identity)).threads.orEmpty()
@@ -167,15 +176,32 @@ class PostboxClient(
     }
 
     override suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String>): SendResponse {
+        return sendRequest(identity, to, body, threadId, attachments, null)
+    }
+    override suspend fun sendWithActions(identity: String, to: String, body: String, threadId: String?, action: MessageSendAction, attachments: List<String>): SendResponse {
+        require(action.editOf == null || attachments.isEmpty()) { "Edits are text only." }
+        return sendRequest(identity, to, body, threadId, attachments, action)
+    }
+    private suspend fun sendRequest(identity: String, to: String, body: String, threadId: String?, attachments: List<String>, action: MessageSendAction?): SendResponse {
         require(validAddress(to)) { "Enter an address such as /name/agent." }
         require(attachments.size <= MAX_ATTACHMENTS)
         return decode(request("send", "POST", json = buildJsonObject {
             put("from", identity); put("to", to); put("body", body)
+            action?.let {
+                put("msg_ref", it.msgRef)
+                it.replyTo?.let { ref -> put("reply_to", ref) }
+                it.quote?.let { quote -> put("quote", quote) }
+                it.editOf?.let { ref -> put("edit_of", ref) }
+            }
             threadId?.takeIf { it.isNotEmpty() }?.let { put("thread_id", it) }
             if (attachments.isNotEmpty()) putJsonArray("attachments") { attachments.forEach { add(JsonPrimitive(it)) } }
         }))
     }
     override suspend fun ack(identity: String, messageId: String) { request("ack", "POST", json = messageBody(identity, messageId)) }
+    override suspend fun ackWithEdits(identity: String, messageId: String) {
+        request("ack", "POST", json = buildJsonObject { put("identity", identity); put("message_id", safeId(messageId)); put("with_edits", true) })
+    }
+    override suspend fun messageInfo(identity: String, messageId: String): MessageInfo = decode(request("messages/${safeId(messageId)}/info", identity = identity))
     override suspend fun deleteMessage(identity: String, id: String) { request("messages/delete", "POST", json = messageBody(identity, id)) }
     override suspend fun reportSpam(identity: String, id: String) { request("report-spam", "POST", json = messageBody(identity, id)) }
     override suspend fun openThread(identity: String, peer: String, title: String): String = decode<OpenedThread>(request("threads", "POST", json = buildJsonObject {
@@ -235,7 +261,11 @@ class PostboxClient(
         require(POLICY_ROWS.any { row -> row.field == field && row.options.any { it.first == value } }) { "Unknown setting." }
         return decode(request("policy", "PUT", json = buildJsonObject {
             put("identity", identity)
-            if (field == "call_history_days") put(field, value.toInt()) else put(field, value)
+            when (field) {
+                "call_history_days" -> put(field, value.toInt())
+                "read_receipts" -> put(field, value.toBooleanStrict())
+                else -> put(field, value)
+            }
         }))
     }
     override suspend fun filteredInbox(identity: String) = decode<InboxResponse>(request("inbox", identity = identity,

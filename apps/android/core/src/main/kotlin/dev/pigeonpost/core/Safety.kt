@@ -15,6 +15,11 @@ object Features {
     const val AVATARS = "avatars"
     const val GROUPS = "groups"
     const val DISAPPEARING = "disappearing"
+    const val MESSAGE_EDIT = "message_edit"
+    const val MESSAGE_REPLY = "message_reply"
+    const val RECEIPTS = "receipts"
+    const val AGENT_STATUS = "agent_status"
+    val MESSAGE_ACTIONS = setOf(MESSAGE_EDIT, MESSAGE_REPLY, RECEIPTS, AGENT_STATUS)
 }
 
 @Serializable
@@ -31,6 +36,7 @@ data class FilterPolicy(
     @SerialName("unknown_messages") val unknownMessages: String? = null,
     @SerialName("low_reputation") val lowReputation: String? = null,
     @SerialName("call_history_days") val callHistoryDays: Int? = null,
+    @SerialName("read_receipts") val readReceipts: Boolean? = null,
 ) {
     fun value(field: String): String? = when (field) {
         "unknown_calls" -> unknownCalls
@@ -39,6 +45,7 @@ data class FilterPolicy(
         "unknown_messages" -> unknownMessages
         "low_reputation" -> lowReputation
         "call_history_days" -> callHistoryDays?.toString()
+        "read_receipts" -> readReceipts?.toString()
         else -> null
     }
     fun with(field: String, value: String): FilterPolicy = when (field) {
@@ -48,6 +55,7 @@ data class FilterPolicy(
         "unknown_messages" -> copy(unknownMessages = value)
         "low_reputation" -> copy(lowReputation = value)
         "call_history_days" -> copy(callHistoryDays = value.toInt())
+        "read_receipts" -> copy(readReceipts = value.toBooleanStrict())
         else -> this
     }
 }
@@ -56,6 +64,8 @@ data class FilterPolicy(
 data class PolicyRow(val field: String, val feature: String, val title: String, val note: String?, val options: List<Pair<String, String>>)
 
 val POLICY_ROWS = listOf(
+    PolicyRow("read_receipts", Features.RECEIPTS, "Send read receipts",
+        "Share when you have read a message. Turning this off also hides read receipts on messages you send.", listOf("true" to "On", "false" to "Off")),
     PolicyRow("unknown_calls", Features.CALL_ADMISSION, "Calls from people you don’t know",
         "Silence keeps the call out of your way and lists it under Filtered calls.", listOf("ring" to "Ring", "silence" to "Silence", "block" to "Block")),
     PolicyRow("unnamed_messages", Features.MESSAGE_FILTERING, "Messages from addresses without a name",
