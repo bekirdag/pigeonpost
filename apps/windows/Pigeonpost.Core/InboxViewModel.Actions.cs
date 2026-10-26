@@ -17,8 +17,38 @@ public sealed class MessageTarget
     public override string ToString() => "MessageTarget(redacted)";
 }
 
+// A rendered row belongs to its accepted account, not to the short-lived refresh that painted it.
+// Each explicit UI action still creates a separate MessageTarget retaining all action callers.
+public sealed class MessageViewBinding
+{
+    private int active = 1;
+    private readonly Func<bool> current, accountCurrent;
+    private readonly Func<MessageTarget?> begin;
+    public ThreadMessage Message { get; }
+    internal MessageViewBinding(ThreadMessage message, Func<bool> current, Func<bool> accountCurrent, Func<MessageTarget?> begin)
+    { Message = message; this.current = current; this.accountCurrent = accountCurrent; this.begin = begin; }
+    public bool IsCurrent => Volatile.Read(ref active) != 0 && current();
+    public bool IsAccountCurrent => accountCurrent();
+    public MessageTarget? BeginAction() => IsCurrent ? begin() : null;
+    public void Retire() => Interlocked.Exchange(ref active, 0);
+    public override string ToString() => "MessageViewBinding(redacted)";
+}
+
 public sealed partial class InboxViewModel
 {
+    public MessageViewBinding? CaptureMessageView(ThreadMessage message)
+    {
+        using var admission = BeginOperation();
+        if (admission is null || account is not { } owner || message.IsSystem || message.Status != DeliveryStatus.Sent
+            || !Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message))) return null;
+        var generation = mailboxVersion;
+        var context = ContextVersion;
+        bool Current() => AccountCurrent(owner) && generation == mailboxVersion && context == ContextVersion
+            && !Timers.Expired(message.ExpiresAt, DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            && Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message));
+        return new(message, Current, () => AccountCurrent(owner), () => Current() ? CaptureMessageTarget(message) : null);
+    }
+
     public MessageTarget? CaptureMessageTarget(ThreadMessage message)
     {
         using var operation = BeginOperation();
