@@ -359,4 +359,31 @@ class CalendarStoreTest {
         store.retainEditorDraft(old.id, draft.copy(title = "Late")); store.closeEditor(old.id)
         assertEquals(next, store.state.value.editor!!.id); assertEquals("Replacement", store.state.value.editor!!.draft.title)
     } }
+    @Test fun aScheduledJoinRereadsTheChosenOccurrenceAndIsRetiredByAMailboxChange() = runBlocking<Unit> { world {
+        connect("/k/alice"); ready()
+        transport.hook = { call -> if (call.path == "/v1/calendar/events/evt_one") """{"event":{"id":"evt_one","title":"Reviewed call","meeting":{"enabled":true,"code":"ABCDEFGHJK"},"my":{"role":"attendee"}},"occurrence":{"occurrence_id":"occ_original"}}""".toByteArray() else null }
+        var join: CalendarScheduledJoin? = null
+        store.prepareScheduledJoin(CalendarEventKey("evt_one", "occ_original"), false, context) { join = it }!!.join()
+        assertNotNull(join); join!!.requireCurrent(authorization, "/k/alice")
+        assertEquals("occ_original", transport.calls.last().query["occurrence_id"])
+        assertTrue(transport.calls.none { it.method != "GET" })
+        connect("/k/bob"); ready()
+        try { join!!.requireCurrent(authorization, "/k/alice"); fail("An old calendar cannot start a call") } catch (_: AuthorizationRetired) { }
+        assertTrue(authorization.isValid)
+    } }
+    @Test fun aSeriesLocatorCannotImplicitlyChooseAMeetingOccurrence() = runBlocking<Unit> { world {
+        var joined = false
+        store.prepareScheduledJoin(CalendarEventKey("evt_one"), true, context) { joined = true }!!.join()
+        assertFalse(joined); assertTrue(transport.calls.isEmpty())
+        assertTrue(store.state.value.error.orEmpty().contains("specific occurrence"))
+    } }
+    @Test fun cancelledAndAllDayEventsNeverPrepareACall() = runBlocking<Unit> { world {
+        connect("/k/alice"); ready()
+        for (fields in listOf("\"status\":\"cancelled\"", "\"all_day\":true")) {
+            transport.hook = { call -> if (call.path == "/v1/calendar/events/evt_one") """{"event":{"id":"evt_one",$fields,"meeting":{"enabled":true,"code":"ABCDEFGHJK"}},"occurrence":{"occurrence_id":"occ_original"}}""".toByteArray() else null }
+            var joined = false
+            store.prepareScheduledJoin(CalendarEventKey("evt_one", "occ_original"), true, context) { joined = true }!!.join()
+            assertFalse(joined); assertNotNull(store.state.value.error)
+        }
+    } }
 }

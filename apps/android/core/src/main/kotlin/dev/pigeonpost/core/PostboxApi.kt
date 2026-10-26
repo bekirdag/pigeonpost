@@ -2,6 +2,9 @@ package dev.pigeonpost.core
 
 import kotlinx.coroutines.CancellationException
 import dev.pigeonpost.core.calendar.CalendarTransport
+import dev.pigeonpost.core.calendar.CalendarMeetingApi
+import dev.pigeonpost.core.calendar.CalendarMeetingCode
+import dev.pigeonpost.core.calendar.CalendarMeetingStatus
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -128,10 +131,10 @@ interface DevicePushApi {
 class PostboxClient(
     private val tokens: TokenProvider,
     private val base: HttpUrl = "https://postbox.pigeonpost.dev/".toHttpUrl(),
-    allowLoopbackForTests: Boolean = false,
+    private val allowLoopbackForTests: Boolean = false,
     /** The inbox origin, where the calls service lives (`/calls/v1`). */
     private val inbox: HttpUrl = "https://inbox.pigeonpost.dev/".toHttpUrl(),
-) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport {
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -375,6 +378,29 @@ class PostboxClient(
             if (method != "GET" || failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
             delay(200)
             authenticated(request, recoveryHttp).use { limitedBytes(it, 16L * 1024 * 1024) }
+        }
+    }
+
+    override suspend fun scheduledMeeting(mailbox: String, code: String): CalendarMeetingStatus = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        val normalized = requireNotNull(CalendarMeetingCode.parse(code)) { "This meeting code is invalid." }
+        require(Regex("/k/[A-Za-z0-9_]{1,157}").matches(mailbox)) { "Choose a valid meeting inbox." }
+        require(inbox.isHttps || allowLoopbackForTests && inbox.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The call service must use HTTPS." }
+        require(inbox.username.isEmpty() && inbox.password.isEmpty() && inbox.query == null && inbox.fragment == null && inbox.encodedPath == "/") { "Expected a call-service origin." }
+        val url = inbox.newBuilder().addPathSegments("calls/v1/meetings/scheduled").addPathSegment(normalized).addQueryParameter("as", mailbox).build()
+        val request = Request.Builder().url(url).build()
+        suspend fun read(transport: OkHttpClient): CalendarMeetingStatus {
+            val response = authenticated(request, transport).use { reply ->
+                AuthorizedJson(limitedBytes(reply, 1024L * 1024).toString(Charsets.UTF_8), reply.request.tag(AuthorizationLease::class.java))
+            }
+            return decode(response)
+        }
+        try { read(http) }
+        catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            if (failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
+            delay(200); read(recoveryHttp)
         }
     }
 

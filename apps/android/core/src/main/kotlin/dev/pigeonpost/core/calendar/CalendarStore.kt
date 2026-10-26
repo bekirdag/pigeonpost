@@ -330,6 +330,16 @@ class CalendarStore(
     fun ics(id: String, expectedContext: String, done: (ByteArray) -> Unit) = inspect("export", expectedContext, { it.ics(id) }, done)
     fun prepareIcsExport(id: String, expectedContext: String, done: (CalendarIcsExport) -> Unit) =
         inspect("export", expectedContext, { c -> CalendarIcsExport(c.ics(id), c.authorization) }, done)
+    fun prepareScheduledJoin(key: CalendarEventKey, video: Boolean, expectedContext: String, done: (CalendarScheduledJoin) -> Unit) =
+        inspect("meeting", expectedContext, { c ->
+            require(key.occurrenceId != null) { "Choose a specific occurrence from the agenda to join." }
+            val detail = c.detail(key)
+            check(detail.event.status != "cancelled" && detail.occurrence?.status != "cancelled") { "This event is cancelled." }
+            check((detail.occurrence?.allDay ?: detail.event.allDay) != true) { "All-day events have no scheduled call." }
+            val meeting = detail.event.meeting
+            check(meeting?.enabled != false && meeting?.code != null) { "This event has no scheduled meeting." }
+            CalendarScheduledJoin(c.mailbox, meeting.code, key.occurrenceId, detail.occurrence?.title ?: detail.event.title ?: "Meeting", video, c.authorization)
+        }, done)
     fun previewImport(bytes: ByteArray, calendar: String?, expectedContext: String, done: (CalendarImportPreview) -> Unit): Job? {
         val frozen = bytes.copyOf()
         return inspect("import-preview", expectedContext, { it.previewImport(frozen, calendar) }, done)
