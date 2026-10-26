@@ -12,6 +12,7 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import org.json.JSONArray
 import org.json.JSONObject
@@ -67,7 +68,16 @@ class MeetingLinkWorkflowTest {
                 }
                 visible && result?.length() == 1
             }
-        } catch (failure: Throwable) { throw AssertionError("$lastState; ${windowInputStatus()}", failure) }
+        } catch (failure: Throwable) {
+            // These screens contain only the explicit synthetic fixture. Capture the disposable
+            // emulator's actual failure state before ActivityScenario closes it; never a real device.
+            if (InstrumentationRegistry.getArguments().getString("pigeonpost_test_emulator") == "true") runCatching {
+                android.os.ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation
+                    .executeShellCommand("screencap -p /data/local/tmp/pp-meeting-link-failure.png")).use { it.readBytes() }
+            }
+            val layout = runCatching { ui.onAllNodes(isRoot(), useUnmergedTree = true).printToString().take(16_000) }.getOrDefault("Fixture layout unavailable")
+            throw AssertionError("$lastState; ${windowInputStatus()}; fixtureLayout=$layout", failure)
+        }
         return result!!
     }
     @Test fun openingALinkOnlyLooksUpAndExplicitOccurrenceSelectionEnablesJoining() {

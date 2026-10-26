@@ -29,14 +29,14 @@ import kotlin.coroutines.resume
 /** The actual WebView/Java bridge with a loopback page; no media, public service or real calls. */
 @RunWith(AndroidJUnit4::class)
 class ScheduledCallHostTest {
-    internal class Page(autoReady: Boolean = true) : AutoCloseable {
+    internal class Page(autoReady: Boolean = true, exposeApi: Boolean = autoReady) : AutoCloseable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         private val connections = java.util.Collections.synchronizedSet(mutableSetOf<Socket>())
         val url = "http://127.0.0.1:${socket.localPort}/native-call.html"
         private val html = """<!doctype html><html><body>Local bridge fixture<script>
             window.events=[];window.options=null;window.renewedCount=0;window.documentID=String(Date.now())+String(Math.random());
             const report=x=>PigeonpostAndroid.postMessage(JSON.stringify(x));
-            window.PigeonpostNative={
+            window.fixtureNative={
               configure(o){window.options=o;events.push({type:'configure',mailbox:o.mailbox.address});},
               signOut(){window.options=null;events.push({type:'signout'});report({type:'mode',mode:'hidden'});},
               renewed(t){window.renewedCount++;},
@@ -47,7 +47,9 @@ class ScheduledCallHostTest {
               joinScheduled(code,o){events.push({type:'join',code,options:o});report({type:'mode',mode:'full'});return Promise.resolve({state:'waiting'});}
             };
             window.PigeonpostCalls={placeGroup(k,g){events.push({type:'group',id:g.id});},joinGroup(k,g){events.push({type:'group',id:g.id});}};
-            window.signalReady=()=>report({type:'ready'});
+            if ($exposeApi) window.PigeonpostNative=window.fixtureNative;
+            window.readyMessages=0;
+            window.signalReady=()=>{window.PigeonpostNative=window.fixtureNative;window.readyMessages++;report({type:'ready'});};
             if ($autoReady) window.signalReady();
             </script></body></html>""".toByteArray()
         init {
@@ -126,8 +128,8 @@ class ScheduledCallHostTest {
     private class ReadyProbe(val sent: CountDownLatch = CountDownLatch(1)) {
         @JavascriptInterface fun sent() { sent.countDown() }
     }
-    private fun world(loading: Boolean = false, autoReady: Boolean = true, work: suspend Fixture.() -> Unit) = runBlocking<Unit> {
-        val page = Page(autoReady); val f = Fixture(loading, page)
+    private fun world(loading: Boolean = false, autoReady: Boolean = true, exposeApi: Boolean = autoReady, work: suspend Fixture.() -> Unit) = runBlocking<Unit> {
+        val page = Page(autoReady, exposeApi); val f = Fixture(loading, page)
         try {
             withTimeout(25_000) { withContext(Dispatchers.Main) {
                 f.host.window = f.window; f.host.setVisible(true)
@@ -150,6 +152,12 @@ class ScheduledCallHostTest {
         replace()
         ready()
         assertFalse(previous.isValid)
+        assertEquals(1, events("configure").length())
+        assertEquals("fixture-" + session.grant!!.id, js("window.options.token"))
+    }
+    @Test fun aLoadedCallPageRecoversAMissedReadinessAnnouncement() = world(autoReady = false, exposeApi = true) {
+        ready()
+        assertEquals(0, (js("window.readyMessages") as Number).toInt())
         assertEquals(1, events("configure").length())
         assertEquals("fixture-" + session.grant!!.id, js("window.options.token"))
     }
