@@ -25,6 +25,7 @@ import dev.pigeonpost.core.AttachmentKinds
 import dev.pigeonpost.inbox.calls.CallFrame
 import dev.pigeonpost.inbox.calls.CallWindow
 import dev.pigeonpost.core.verifiedSignInUrl
+import dev.pigeonpost.core.calendar.CalendarLink
 import dev.pigeonpost.inbox.ui.PigeonpostApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -99,8 +100,9 @@ class MainActivity : ComponentActivity() {
             fullScreenCalls = { if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this)) null else ::fullScreenCallSettings },
             choosePicture = { picture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             takePicture = ::takePicture) }
-        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        if (savedInstanceState == null) openNotification(intent)
         if (savedInstanceState == null) model.openGroupLink(intent.data)
+        if (savedInstanceState == null) openMeetingLink(intent.data)
         Development.started()
         model.calls?.let { host ->
             host.window = object : CallWindow {
@@ -137,8 +139,39 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
-        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        openNotification(intent)
+        openMeetingLink(intent.data)
         answerCall(intent)
+    }
+    private fun openMeetingLink(uri: Uri?) {
+        val value = uri?.toString() ?: return
+        when (val link = CalendarLink.parse(value)) {
+            is CalendarLink.Member -> model.showMeetingCode(link.code)
+            is CalendarLink.Guest -> openMeetingBrowser(link.url)
+            null -> CalendarLink.browserOnly(value)?.let(::openMeetingBrowser)
+        }
+    }
+    /** Pin a browser package so a verified /m/ link cannot resolve straight back into this app. */
+    private fun openMeetingBrowser(url: String) {
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.invalid/")).addCategory(Intent.CATEGORY_BROWSABLE)
+        val preferred = probe.resolveActivity(packageManager)?.packageName?.takeIf { it != packageName && it != "android" }
+        val browser = preferred ?: packageManager.queryIntentActivities(probe, 0).firstOrNull {
+            it.activityInfo.packageName != packageName && it.activityInfo.packageName != "android"
+        }?.activityInfo?.packageName
+        if (browser == null) { model.inbox.showError("Install a browser to open this invitation."); return }
+        try { CustomTabsIntent.Builder().setShowTitle(true).build().apply { intent.setPackage(browser) }.launchUrl(this, Uri.parse(url)) }
+        catch (_: ActivityNotFoundException) { model.inbox.showError("No browser is available for this invitation.") }
+    }
+    private fun openNotification(intent: Intent) {
+        val payload = buildMap {
+            intent.getStringExtra("push_identity")?.let { put("identity", it) }
+            intent.getStringExtra("push_type")?.let { put("type", it) }
+            for (key in listOf("calendar_event_id", "calendar_occurrence_id")) intent.getStringExtra(key)?.let { put(key, it) }
+            val legacy = intent.data?.takeIf { it.scheme == "pigeonpost-notification" }?.lastPathSegment
+            (intent.getStringExtra("push_message_id") ?: legacy)?.let { put("message_id", it) }
+        }
+        if (dev.pigeonpost.core.calendar.CalendarNotice.matches(payload)) model.openCalendarNotice(payload)
+        else model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
     }
     override fun onStart() {
         super.onStart(); PushNotifications.foreground = true; model.setActive(true); model.billing?.attach(this)
@@ -157,7 +190,7 @@ class MainActivity : ComponentActivity() {
         setIntent(Intent(intent).setAction(null))
         if (ring == null || ring.expiresAt * 1000 < System.currentTimeMillis() - 5000 || ring.identity != IncomingCalls.identity(this)) return
         IncomingCalls.answered(this, ring)
-        model.calls?.answer(ring.room, ring.ringToken, ring.kind)
+        model.calls?.answer(ring.room, ring.ringToken, ring.kind, ring.identity)
     }
     /** Android 14+: full-screen call screens can be switched off; ask once, then Settings keeps the way back. */
     private fun offerFullScreenCalls() {

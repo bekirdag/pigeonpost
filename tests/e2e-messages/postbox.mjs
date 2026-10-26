@@ -9,8 +9,8 @@ import path from "node:path";
 
 process.umask(0o077);
 const [bin, out, mode] = process.argv.slice(2);
-if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out) || (mode && mode !== "groups")) {
-  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json [groups]");
+if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out) || (mode && !["groups", "calendar"].includes(mode))) {
+  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json [groups|calendar]");
   process.exit(2);
 }
 const work = mkdtempSync(path.join(tmpdir(), "pp-message-actions-"));
@@ -41,7 +41,8 @@ function token(subject, name) {
   const now = Math.floor(Date.now() / 1000);
   const header = Buffer.from(JSON.stringify({ alg: "RS256", typ: "JWT", kid: "fixture" })).toString("base64url");
   const body = Buffer.from(JSON.stringify({ iss: issuer, sub: subject, iat: now, exp: now + 3600,
-    auth_time: now, azp: "pigeonpost-mobile", typ: "Bearer", preferred_username: name, aud: ["account"] })).toString("base64url");
+    auth_time: now, azp: "pigeonpost-mobile", typ: "Bearer", preferred_username: name, aud: ["account"],
+    ...(mode === "calendar" ? { email: `${name}@calendar-fixture.invalid`, email_verified: true } : {}) })).toString("base64url");
   return `${header}.${body}.${crypto.sign("RSA-SHA256", Buffer.from(`${header}.${body}`), privateKey).toString("base64url")}`;
 }
 // Reserve both sockets together so the kernel cannot assign the same port to both listeners.
@@ -71,7 +72,7 @@ for (let attempt = 0; ; attempt++) {
   if (attempt >= 120) throw new Error("Fixture postbox did not start.");
   await sleep(250);
 }
-for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "message_filtering", "account_events", ...(mode === "groups" ? ["groups", "disappearing"] : [])]) {
+for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "message_filtering", "account_events", ...(mode === "groups" ? ["groups", "disappearing"] : []), ...(mode === "calendar" ? ["calendar"] : [])]) {
   const response = await fetch(`${internal}/internal/v1/features/${feature}`, { method: "PUT",
     headers: { authorization: `Bearer ${ops}`, "content-type": "application/json" },
     body: JSON.stringify({ scope: "global", enabled: true }) });
@@ -106,11 +107,13 @@ const lossPort = await listen(http.createServer(async (req, res) => {
     if (req.url === "/__test/attempts" && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ attempts })); return;
     }
-    const targeted = req.method === "POST" && (req.url === "/v1/send" || /^\/v1\/groups\/[^/]+\/messages$/.test(req.url));
+    const targeted = req.method === "POST" && (req.url === "/v1/send" || /^\/v1\/groups\/[^/]+\/messages$/.test(req.url) ||
+      mode === "calendar" && (req.url === "/v1/calendars" || req.url === "/v1/calendar/events" || /^\/v1\/calendar\/import\/[^/]+\/confirm$/.test(req.url)));
     let evidence;
     if (targeted) {
       evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"),
-        msgRef: JSON.parse(bytes.toString()).msg_ref, cmid: JSON.parse(bytes.toString()).client_message_id, status: null };
+        msgRef: JSON.parse(bytes.toString()).msg_ref, cmid: JSON.parse(bytes.toString()).client_message_id,
+        ...(mode === "calendar" ? { requestKey: JSON.parse(bytes.toString()).request_key } : {}), status: null };
       attempts.push(evidence);
       if (loss === "before") { req.socket.destroy(); return; }
     }

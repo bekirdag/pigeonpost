@@ -1,6 +1,10 @@
 package dev.pigeonpost.core
 
 import kotlinx.coroutines.CancellationException
+import dev.pigeonpost.core.calendar.CalendarTransport
+import dev.pigeonpost.core.calendar.CalendarMeetingApi
+import dev.pigeonpost.core.calendar.CalendarMeetingCode
+import dev.pigeonpost.core.calendar.CalendarMeetingStatus
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -127,10 +131,10 @@ interface DevicePushApi {
 class PostboxClient(
     private val tokens: TokenProvider,
     private val base: HttpUrl = "https://postbox.pigeonpost.dev/".toHttpUrl(),
-    allowLoopbackForTests: Boolean = false,
+    private val allowLoopbackForTests: Boolean = false,
     /** The inbox origin, where the calls service lives (`/calls/v1`). */
     private val inbox: HttpUrl = "https://inbox.pigeonpost.dev/".toHttpUrl(),
-) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport {
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -350,6 +354,56 @@ class PostboxClient(
         })
     }
 
+    // ---- calendar (docs/calendar.md) -------------------------------------------------------------
+
+    override suspend fun calendarRequest(mailbox: String, method: String, path: String, query: Map<String, String>, body: ByteArray?, mediaType: String): ByteArray = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unexpected calendar method." }
+        require(mediaType in setOf("application/json", "text/calendar")) { "Unexpected calendar content type." }
+        require(path.length < 2048 && Regex("[A-Za-z0-9_./-]+").matches(path) &&
+            (path == "/v1/calendars" || path.startsWith("/v1/calendars/") || path.startsWith("/v1/calendar/")) &&
+            path.split('/').drop(1).all { it.isNotEmpty() && it != "." && it != ".." }) { "Unexpected calendar route." }
+        require(!path.startsWith("/v1/calendar/guest/") && !path.startsWith("/v1/calendar/feed/")) { "Expected a member calendar route." }
+        require(body == null || body.size <= 512 * 1024) { "Calendar requests must be at most 512 KB." }
+        require(method != "GET" || body == null) { "Calendar reads have no request body." }
+        val target = base.newBuilder().encodedPath(path).apply { query.forEach { (key, value) -> addQueryParameter(key, value) } }.build()
+        require(target.encodedPath == path) { "Unexpected calendar route." }
+        val bytes = body?.copyOf() ?: if (method in setOf("POST", "PUT", "PATCH")) "{}".toByteArray() else null
+        val request = Request.Builder().url(target).acting(mailbox, null).header("Accept", if (path.endsWith(".ics")) "text/calendar" else "application/json")
+            .method(method, bytes?.toRequestBody(mediaType.toMediaType())).build()
+        try { authenticated(request).use { limitedBytes(it, 16L * 1024 * 1024) } }
+        catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            if (method != "GET" || failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
+            delay(200)
+            authenticated(request, recoveryHttp).use { limitedBytes(it, 16L * 1024 * 1024) }
+        }
+    }
+
+    override suspend fun scheduledMeeting(mailbox: String, code: String): CalendarMeetingStatus = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        val normalized = requireNotNull(CalendarMeetingCode.parse(code)) { "This meeting code is invalid." }
+        require(Regex("/k/[A-Za-z0-9_]{1,157}").matches(mailbox)) { "Choose a valid meeting inbox." }
+        require(inbox.isHttps || allowLoopbackForTests && inbox.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The call service must use HTTPS." }
+        require(inbox.username.isEmpty() && inbox.password.isEmpty() && inbox.query == null && inbox.fragment == null && inbox.encodedPath == "/") { "Expected a call-service origin." }
+        val url = inbox.newBuilder().addPathSegments("calls/v1/meetings/scheduled").addPathSegment(normalized).addQueryParameter("as", mailbox).build()
+        val request = Request.Builder().url(url).build()
+        suspend fun read(transport: OkHttpClient): CalendarMeetingStatus {
+            val response = authenticated(request, transport).use { reply ->
+                AuthorizedJson(limitedBytes(reply, 1024L * 1024).toString(Charsets.UTF_8), reply.request.tag(AuthorizationLease::class.java))
+            }
+            return decode(response)
+        }
+        try { read(http) }
+        catch (failure: IOException) {
+            currentCoroutineContext().ensureActive()
+            if (failure is ApiException || failure is SessionExpired || failure is SSLException) throw failure
+            delay(200); read(recoveryHttp)
+        }
+    }
+
     // ---- groups (docs/groups.md) ----------------------------------------------------------------
 
     private fun groupUrl(path: String): HttpUrl {
@@ -436,7 +490,7 @@ class PostboxClient(
         val requestLease = (context?.lease ?: sourceGrant)?.child()
         val provider = if (requestLease == null) tokens else ScopedTokenProvider(tokens, requestLease)
         fun authorized(token: String) = request.newBuilder().tag(AuthorizationLease::class.java, requestLease)
-            .header("Authorization", "Bearer $token").header("Accept", "application/json").build()
+            .header("Authorization", "Bearer $token").header("Accept", request.header("Accept") ?: "application/json").build()
         val first = provider.token()
         var response = transport.newCall(authorized(first)).await()
         requireCurrent(response)

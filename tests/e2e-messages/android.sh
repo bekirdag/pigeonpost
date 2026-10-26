@@ -2,13 +2,13 @@
 # Requires the existing Android AAR and a built pigeonpost-postbox; never touches a real account.
 set -eu
 if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
-  printf '%s\n' 'usage: tests/e2e-messages/android.sh /absolute/pigeonpost-postbox [groups]' >&2
+  printf '%s\n' 'usage: tests/e2e-messages/android.sh /absolute/pigeonpost-postbox [groups|calendar]' >&2
   exit 2
 fi
 case "$1" in /*) ;; *) printf '%s\n' 'Use an absolute binary path.' >&2; exit 2 ;; esac
 test -x "$1"
 task_mode=${2:-}
-case "$task_mode" in ''|groups) ;; *) printf '%s\n' 'Unknown fixture mode.' >&2; exit 2 ;; esac
+case "$task_mode" in ''|groups|calendar) ;; *) printf '%s\n' 'Unknown fixture mode.' >&2; exit 2 ;; esac
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 umask 077
 task_work=$(mktemp -d "${TMPDIR:-/tmp}/pp-android-actions.XXXXXX")
@@ -37,5 +37,9 @@ while [ ! -s "$task_work/setup.json" ]; do
 done
 export PIGEONPOST_TEST_FIXTURE="$task_work/setup.json"
 cd "$task_root/apps/android"
-if [ "$task_mode" = groups ]; then task_check=:core:groupActionsPostbox; else task_check=:core:messageActionsPostbox; fi
+case "$task_mode" in
+  groups) task_check=:core:groupActionsPostbox ;;
+  calendar) task_check=:core:calendarPostbox ;;
+  *) task_check=:core:messageActionsPostbox ;;
+esac
 ./gradlew "$task_check" --no-daemon --max-workers=4

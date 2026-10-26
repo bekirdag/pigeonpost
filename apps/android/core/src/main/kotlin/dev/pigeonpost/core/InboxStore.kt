@@ -19,7 +19,7 @@ import java.util.UUID
 
 data class DraftKey(val mailbox: String, val peer: String, val subject: String?)
 /** What the conversation column shows: conversations, the Calls page, or the Filtered list. */
-enum class LeftView { INBOX, CALLS, FILTERED }
+enum class LeftView { INBOX, CALLS, FILTERED, CALENDAR }
 data class CallsState(
     val entries: List<CallLogEntry> = emptyList(),
     /** Calls silenced by the filtering settings; loaded when that section is first opened. */
@@ -201,7 +201,7 @@ class InboxStore(
     fun showArchive(value: Boolean) { clearMessageInfo(); mutable.update { it.copy(viewingArchive = value, selectedPeer = null, selectedSubject = null, filter = "") } }
     fun selectPeer(peer: String?) { if (peer != state.value.selectedPeer) clearMessageInfo(); mutable.update { it.copy(selectedPeer = peer, selectedSubject = null) } }
     fun showView(view: LeftView) {
-        val allowed = when (view) { LeftView.CALLS -> state.value.has(Features.CALL_HISTORY); LeftView.FILTERED -> state.value.has(Features.MESSAGE_FILTERING); LeftView.INBOX -> true }
+        val allowed = when (view) { LeftView.CALLS -> state.value.has(Features.CALL_HISTORY); LeftView.FILTERED -> state.value.has(Features.MESSAGE_FILTERING); LeftView.CALENDAR -> "calendar" in state.value.features; LeftView.INBOX -> true }
         mutable.update { it.copy(leftView = if (allowed) view else LeftView.INBOX, viewingArchive = if (view != LeftView.INBOX) false else it.viewingArchive) }
         if (allowed && view == LeftView.CALLS) action { if (!state.value.calls.loaded) loadCallsNow(); markCallsSeenNow() }
     }
@@ -251,6 +251,7 @@ class InboxStore(
                 mutable.update { it.copy(features = snapshot.features, leftView = when {
                     it.leftView == LeftView.CALLS && Features.CALL_HISTORY !in snapshot.features -> LeftView.INBOX
                     it.leftView == LeftView.FILTERED && Features.MESSAGE_FILTERING !in snapshot.features -> LeftView.INBOX
+                    it.leftView == LeftView.CALENDAR && "calendar" !in snapshot.features -> LeftView.INBOX
                     else -> it.leftView }) }
                 content { old -> old.copy(messages = readMarks(snapshot.inbox.messages.orEmpty(), identity),
                     contacts = snapshot.contacts.contacts.orEmpty(), vocabulary = snapshot.contacts.vocabulary ?: Vocabulary(),

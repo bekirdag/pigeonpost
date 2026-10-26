@@ -17,6 +17,7 @@ import androidx.core.app.Person
 import androidx.core.graphics.drawable.IconCompat
 import dev.pigeonpost.inbox.R
 import dev.pigeonpost.inbox.calls.IncomingCalls
+import dev.pigeonpost.core.calendar.CalendarNotice
 
 class PigeonpostMessagingService : FirebaseMessagingService() {
     override fun onNewToken(token: String) {
@@ -31,6 +32,7 @@ class PigeonpostMessagingService : FirebaseMessagingService() {
 }
 
 internal fun displayPush(context: Context, data: Map<String, String>) {
+    if (CalendarNotice.matches(data)) { displayCalendarPush(context, data); return }
     val identity = data["identity"] ?: return
     val peer = data["peer"] ?: return
     val id = data["message_id"] ?: return
@@ -61,4 +63,32 @@ internal fun displayPush(context: Context, data: Map<String, String>) {
         .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build()
     try { NotificationManagerCompat.from(context).notify(id, 1, notification) }
     catch (_: SecurityException) { /* Permission may be revoked between the check and posting. */ }
+}
+
+private fun displayCalendarPush(context: Context, data: Map<String, String>) {
+    val notice = CalendarNotice.parse(data) ?: return
+    val id = data["message_id"]?.takeIf { it.isNotBlank() && it.length <= 200 && it.none(Char::isISOControl) } ?: return
+    val preferences = context.getSharedPreferences("push", Context.MODE_PRIVATE)
+    if (preferences.getString("identity", null) != notice.mailbox) return
+    if (PushNotifications.foreground) { PushNotifications.calendarPoke?.invoke(); return }
+    if (!PushNotifications.allowed(context)) return
+    val reference = java.security.MessageDigest.getInstance("SHA-256").digest(id.toByteArray()).joinToString("") { "%02x".format(it) }
+    val intent = Intent(context, MainActivity::class.java)
+        .setData(Uri.Builder().scheme("pigeonpost-notification").authority("calendar").appendPath(reference).build())
+        .putExtra("push_type", "calendar").putExtra("push_identity", notice.mailbox)
+        .putExtra("push_message_id", id).putExtra("calendar_event_id", notice.event?.eventId)
+        .putExtra("calendar_occurrence_id", notice.event?.occurrenceId)
+        .addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP)
+    val pending = PendingIntent.getActivity(context, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+    val public = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
+        .setSmallIcon(R.drawable.ic_notification).setContentTitle("Pigeonpost").setContentText("Calendar update").build()
+    val title = data["title"]?.filter { !it.isISOControl() }?.take(100)?.ifBlank { null } ?: "Calendar"
+    val notification = NotificationCompat.Builder(context, PushNotifications.CHANNEL)
+        .setSmallIcon(R.drawable.ic_notification).setContentTitle(title)
+        .setContentText(if (notice.event?.occurrenceId != null) "Calendar reminder" else "Calendar update")
+        .setCategory(NotificationCompat.CATEGORY_EVENT).setPriority(NotificationCompat.PRIORITY_HIGH)
+        .setVisibility(NotificationCompat.VISIBILITY_PRIVATE).setPublicVersion(public)
+        .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build()
+    try { NotificationManagerCompat.from(context).notify("calendar:$reference", 1, notification) }
+    catch (_: SecurityException) { /* The device owner may revoke permission while this is built. */ }
 }

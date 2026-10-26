@@ -63,13 +63,29 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val handleState by model.handles.state.collectAsStateWithLifecycle()
     val appearance by model.appearance.collectAsStateWithLifecycle()
     val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
+    val joiningMeeting = model.calls?.preparingScheduled?.collectAsStateWithLifecycle()?.value ?: false
     val store = model.inbox
+    val calendarStore = model.calendar
+    val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
+    val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
+    val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
     var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); store.clearError() } }
     LaunchedEffect(groups.notice) { groups.notice?.let { snackbar.showSnackbar(it); groupStore?.clearNotice() } }
+    LaunchedEffect(meetingCode, session.signedIn, session.termsAccepted) {
+        if (meetingCode != null && !session.loading && (!session.signedIn || !session.termsAccepted)) snackbar.showSnackbar("Sign in and accept the terms to open this meeting.")
+    }
+    LaunchedEffect(meetingCode, meetingLookup.contextId, state.acting?.address, session.authorizationId) {
+        val code = meetingCode
+        if (code != null && session.signedIn && session.termsAccepted && state.accountLoaded && meetingLookup.mailbox == state.acting?.address && model.meetingLookup?.state?.value?.code != code)
+            model.meetingLookup?.load(code, meetingLookup.contextId)
+    }
+    LaunchedEffect(meetingCode, calendar.contextId, calendar.enabled) {
+        if (meetingCode != null && calendar.enabled) model.calendar?.refreshFor(calendar.contextId)
+    }
     // Preserve a Settings subpage through rotation, but never carry it to another account/inbox.
     var sheetOwner by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(session.signedIn, session.loading, session.username, state.acting?.address) {
@@ -132,6 +148,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                         !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
                         state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
                         state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
+                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar)
                         wide -> TabletInbox(state, store, model, session.username, callMode,
                             newConversation = { sheet = "new" }, settings = { sheet = "settings" },
                             info = { sheet = "peer" }, newSubject = { sheet = "subject" },
@@ -173,6 +190,11 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
         }
+        if (joiningMeeting && callMode == CallHost.Mode.HIDDEN && session.signedIn && session.termsAccepted) AlertDialog(
+            onDismissRequest = { model.calls?.cancelScheduledJoin() }, title = { Text("Joining meeting") },
+            text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
+            confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
+        meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null
@@ -271,14 +293,21 @@ private fun PhoneHome(state: InboxState, store: InboxStore, model: InboxViewMode
                     callBack = { key, video -> openPeer(key); model.calls?.call(key, video) })
                 LeftView.FILTERED -> FilteredPane(state, Modifier.fillMaxSize(), phone = true, back = { store.showView(LeftView.INBOX) }, open = openFiltered)
                 LeftView.INBOX -> InboxList(state, store, model, groups, Modifier.fillMaxSize(), mailbox, new, newGroup, settings, openPeer)
+                LeftView.CALENDAR -> model.calendar?.let { calendar ->
+                    val s by calendar.state.collectAsStateWithLifecycle()
+                    CalendarPane(calendar, s, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar)
+                }
             }
         }
-        if (state.has(Features.CALL_HISTORY)) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
-            NavigationBarItem(state.leftView != LeftView.CALLS, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
+        val hasCalendar = model.calendar != null && "calendar" in state.features
+        if (state.has(Features.CALL_HISTORY) || hasCalendar) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
+            NavigationBarItem(state.leftView == LeftView.INBOX || state.leftView == LeftView.FILTERED, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
                 label = { Text("Conversations") }, modifier = Modifier.testTag("tab:conversations"))
-            NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
+            if (state.has(Features.CALL_HISTORY)) NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
                 BadgedBox(badge = { if (state.calls.unseen > 0) Badge { Text(if (state.calls.unseen > 99) "99+" else state.calls.unseen.toString()) } }) { Icon(Icons.Outlined.Call, null) }
             }, label = { Text("Calls") }, modifier = Modifier.testTag("tab:calls").semantics { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" })
+            if (hasCalendar) NavigationBarItem(state.leftView == LeftView.CALENDAR, model::openCalendar, { Icon(Icons.Outlined.CalendarMonth, null) },
+                label = { Text("Calendar") }, modifier = Modifier.testTag("tab:calendar"))
         }
     }
 }

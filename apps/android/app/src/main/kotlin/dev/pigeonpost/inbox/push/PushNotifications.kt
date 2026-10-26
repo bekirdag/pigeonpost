@@ -61,6 +61,7 @@ class PushNotifications(private val context: Context) {
         @Volatile var foreground = false
         /** While the app is in front, a group push only asks the open app to look now. */
         @Volatile var groupPoke: (() -> Unit)? = null
+        @Volatile var calendarPoke: (() -> Unit)? = null
         /** A new registration fetches its token after any old deletion has completed. */
         internal val tokenLifecycle = Mutex()
 
