@@ -25,6 +25,8 @@ pub(crate) mod guest;
 pub(crate) mod ics;
 pub(crate) mod mail;
 pub(crate) mod meeting;
+mod receipts;
+pub(crate) use receipts::{idempotent, protect_legacy_receipts};
 pub(crate) mod time;
 pub(crate) mod worker;
 
@@ -1120,67 +1122,6 @@ pub(crate) fn run_effects(state: &AppState, fx: Effects) {
 // ---- idempotency -------------------------------------------------------------------------------
 
 pub(crate) const IDEMPOTENCY_SECS: u64 = 7 * 86_400;
-
-/// Replay a recorded response for `(scope, action, key)`, refuse the same key with another body,
-/// or run `f` and record its response — inside the caller's transaction.
-pub(crate) fn idempotent(
-    c: &Connection,
-    scope: &str,
-    action: &str,
-    key: &str,
-    body_hash: &str,
-    now: u64,
-    f: impl FnOnce() -> GResult<(u16, Value, Effects)>,
-) -> GResult<(u16, Value, Effects)> {
-    if !crate::groups::valid_key(key) {
-        return Err(GErr::bad(
-            "bad_request",
-            "request_key must be 1-64 characters of A-Z a-z 0-9 _ -",
-        ));
-    }
-    let prior: Option<(String, i64, String)> = c
-        .query_row(
-            "SELECT body_hash, status, response FROM calendar_idempotency
-              WHERE scope = ?1 AND action = ?2 AND request_key = ?3 AND created_at > ?4",
-            params![
-                scope,
-                action,
-                key,
-                now.saturating_sub(IDEMPOTENCY_SECS) as i64
-            ],
-            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
-        )
-        .optional()?;
-    if let Some((hash, status, response)) = prior {
-        if hash != body_hash {
-            return Err(GErr::conflict(
-                "idempotency_conflict",
-                "that request_key was used with a different request",
-            ));
-        }
-        return Ok((
-            status as u16,
-            serde_json::from_str(&response).unwrap_or(Value::Null),
-            Effects::default(),
-        ));
-    }
-    let out = f()?;
-    c.execute(
-        "INSERT OR REPLACE INTO calendar_idempotency
-            (scope, action, request_key, body_hash, status, response, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-        params![
-            scope,
-            action,
-            key,
-            body_hash,
-            out.0 as i64,
-            out.1.to_string(),
-            now as i64
-        ],
-    )?;
-    Ok(out)
-}
 
 pub(crate) fn conflict(current: i64) -> GErr {
     GErr::conflict(
