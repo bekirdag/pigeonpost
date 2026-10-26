@@ -2,6 +2,8 @@ package dev.pigeonpost.core
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
@@ -61,6 +63,9 @@ data class InboxState(
     val filter: String = "",
     val viewingArchive: Boolean = false,
     val drafts: Map<DraftKey, String> = emptyMap(),
+    val composerActions: Map<DraftKey, MessageComposerAction> = emptyMap(),
+    val unconfirmedSends: Map<DraftKey, String> = emptyMap(),
+    val messageInfo: MessageInfoState? = null,
     val staged: Map<DraftKey, List<StagedAttachment>> = emptyMap(),
     val sending: Set<DraftKey> = emptySet(),
     val actionBusy: Boolean = false,
@@ -90,9 +95,11 @@ data class InboxState(
     val conversation get() = conversations.firstOrNull { it.peer == selectedPeer }
     val subjects get() = Conversations.subjects(conversation, threads, selectedPeer ?: "", messages, callLines)
     val subject get() = subjects.firstOrNull { it.id == selectedSubject } ?: subjects.firstOrNull()
-    val draftKey get() = acting?.address?.let { mailbox -> selectedPeer?.let { DraftKey(mailbox, it, subject?.id?.takeIf(String::isNotEmpty)) } }
+    val draftKey get() = acting?.address?.let { mailbox -> selectedPeer?.let { DraftKey(mailbox, it, subject?.takeUnless { row -> row.isDefault }?.id?.takeIf(String::isNotEmpty)) } }
     val draft get() = drafts[draftKey].orEmpty()
-    val attachments get() = staged[draftKey].orEmpty()
+    val composerAction get() = composerActions[draftKey]
+    val unconfirmedSend get() = unconfirmedSends[draftKey]
+    val attachments get() = if (composerAction?.editing == true) emptyList() else staged[draftKey].orEmpty()
     val isSending get() = draftKey in sending
     /** The conversation is with someone this mailbox blocked: a banner replaces the composer. */
     val blockedPeer get() = conversation?.blocked == true
@@ -112,6 +119,7 @@ class InboxStore(
     private val mutable = MutableStateFlow(InboxState())
     val state = mutable.asStateFlow()
     private var sessionVersion = 0L
+    private var accountVersion = 0L
     private var mailboxVersion = 0L
     private var active = false
     private var accountJob: Job? = null
@@ -122,12 +130,16 @@ class InboxStore(
     private var expiryFired: Long? = null
     private var lastSideLoad = 0L
     private val actions = mutableSetOf<Job>()
-    private val acknowledged = mutableSetOf<Pair<String, String>>()
+    private val acknowledged = mutableMapOf<Pair<String, String>, ReadVersion>()
+    private val sendRequests = mutableMapOf<String, FrozenSend>()
+    private var infoVersion = 0L
+    private var infoJob: Job? = null
 
     fun loadAccount(remembered: String? = null): Job {
         accountJob?.cancel()
         loadJob?.cancel(); pollJob?.cancel()
-        val epoch = ++sessionVersion
+        val epoch = sessionVersion
+        val request = ++accountVersion
         mutable.update { it.copy(accountLoading = true, error = null) }
         return scope.launch {
             try {
@@ -141,15 +153,15 @@ class InboxStore(
                         Mailbox(row.address, handle, row.label)
                     } }.map { it.await() }
                 }
-                if (epoch != sessionVersion) return@launch
+                if (epoch != sessionVersion || request != accountVersion) return@launch
                 val wanted = remembered ?: state.value.acting?.address
                 val chosen = mailboxes.firstOrNull { it.address == wanted }
                     ?: mailboxes.firstOrNull { it.handle?.endsWith("/main") == true }
                     ?: mailboxes.firstOrNull { it.handle != null } ?: mailboxes.firstOrNull()
                 mutable.update { it.copy(mailboxes = mailboxes, accountLoaded = true, accountLoading = false, creating = false) }
                 if (chosen != null) switchMailbox(chosen) else mutable.update { it.copy(acting = null) }
-            } catch (failure: Exception) { fail(failure, epoch) }
-            finally { if (epoch == sessionVersion) mutable.update { it.copy(accountLoading = false, creating = false) } }
+            } catch (failure: Exception) { if (request == accountVersion) fail(failure, epoch) }
+            finally { if (epoch == sessionVersion && request == accountVersion) mutable.update { it.copy(accountLoading = false, creating = false) } }
         }.also { accountJob = it }
     }
 
@@ -162,20 +174,21 @@ class InboxStore(
 
     fun switchMailbox(mailbox: Mailbox) {
         require(state.value.mailboxes.any { it.address == mailbox.address })
-        ++mailboxVersion; loadJob?.cancel(); pollJob?.cancel()
+        ++mailboxVersion; loadJob?.cancel(); pollJob?.cancel(); clearMessageInfo()
         val old = state.value
         mutable.value = InboxState(accountLoaded = true, mailboxes = old.mailboxes, acting = mailbox,
-            pending = old.pending, drafts = old.drafts, staged = old.staged, sending = old.sending, features = old.features)
+            pending = old.pending, drafts = old.drafts, staged = old.staged, sending = old.sending, features = old.features,
+            composerActions = old.composerActions, unconfirmedSends = old.unconfirmedSends)
         rememberMailbox(mailbox.address)
         refresh()
     }
 
     fun reset() {
-        ++sessionVersion; ++mailboxVersion
+        ++sessionVersion; ++accountVersion; ++mailboxVersion
         accountJob?.cancel(); loadJob?.cancel(); pollJob?.cancel(); expiryJob?.cancel()
         actions.toList().forEach { it.cancel() }; actions.clear()
         state.value.staged.values.flatten().forEach { it.file.delete() }
-        acknowledged.clear(); mutable.value = InboxState(); rememberMailbox(null)
+        acknowledged.clear(); sendRequests.clear(); clearMessageInfo(); mutable.value = InboxState(); rememberMailbox(null)
     }
 
     fun setActive(value: Boolean) {
@@ -185,20 +198,23 @@ class InboxStore(
     fun clearError() { mutable.update { it.copy(error = null) } }
     fun showError(message: String) { mutable.update { it.copy(error = message) } }
     fun filter(value: String) { mutable.update { it.copy(filter = value) } }
-    fun showArchive(value: Boolean) { mutable.update { it.copy(viewingArchive = value, selectedPeer = null, selectedSubject = null, filter = "") } }
-    fun selectPeer(peer: String?) { mutable.update { it.copy(selectedPeer = peer, selectedSubject = null) } }
+    fun showArchive(value: Boolean) { clearMessageInfo(); mutable.update { it.copy(viewingArchive = value, selectedPeer = null, selectedSubject = null, filter = "") } }
+    fun selectPeer(peer: String?) { if (peer != state.value.selectedPeer) clearMessageInfo(); mutable.update { it.copy(selectedPeer = peer, selectedSubject = null) } }
     fun showView(view: LeftView) {
         val allowed = when (view) { LeftView.CALLS -> state.value.has(Features.CALL_HISTORY); LeftView.FILTERED -> state.value.has(Features.MESSAGE_FILTERING); LeftView.INBOX -> true }
         mutable.update { it.copy(leftView = if (allowed) view else LeftView.INBOX, viewingArchive = if (view != LeftView.INBOX) false else it.viewingArchive) }
         if (allowed && view == LeftView.CALLS) action { if (!state.value.calls.loaded) loadCallsNow(); markCallsSeenNow() }
     }
-    fun selectSubject(id: String) { mutable.update { it.copy(selectedSubject = id) } }
+    fun selectSubject(id: String) { if (id != state.value.selectedSubject) clearMessageInfo(); mutable.update { it.copy(selectedSubject = id) } }
     fun draft(value: String) {
         val key = state.value.draftKey ?: return
+        if (key in state.value.sending || key in state.value.unconfirmedSends) return
         mutable.update { it.copy(drafts = it.drafts + (key to value)) }
     }
     fun stage(key: DraftKey, files: List<StagedAttachment>) {
-        if (key in state.value.sending) { files.forEach { it.file.delete() }; showError("Wait for the current message to finish sending before adding attachments."); return }
+        if (key in state.value.sending || key in state.value.unconfirmedSends || state.value.composerActions[key]?.editing == true) {
+            files.forEach { it.file.delete() }; showError("Finish the current message action before adding attachments."); return
+        }
         if (key.mailbox !in state.value.mailboxes.map { it.address }) { files.forEach { it.file.delete() }; return }
         val previous = state.value.staged[key].orEmpty()
         if (previous.size + files.size > MAX_ATTACHMENTS) {
@@ -208,7 +224,7 @@ class InboxStore(
     }
     fun removeAttachment(id: String) {
         val key = state.value.draftKey ?: return
-        if (key in state.value.sending) return
+        if (key in state.value.sending || key in state.value.unconfirmedSends || state.value.composerActions[key]?.editing == true) return
         state.value.staged[key].orEmpty().firstOrNull { it.id == id }?.file?.delete()
         mutable.update { it.copy(staged = it.staged + (key to it.staged[key].orEmpty().filterNot { file -> file.id == id })) }
     }
@@ -222,14 +238,14 @@ class InboxStore(
         return scope.launch {
             try {
                 val snapshot = coroutineScope {
-                    val inbox = async { api.inbox(identity) }
+                    val enabled = async { features() }
+                    val inbox = async { loadInbox(identity, enabled.await()) }
                     val contacts = async { api.contacts(identity) }
                     val threads = async { optional { api.threads(identity) }.orEmpty() }
                     val archive = async { api.archive(identity) }
                     val quota = async { optional { api.quota(identity) } }
                     val offer = async { optional { api.handleOffer() } }
-                    val features = async { features() }
-                    Snapshot(inbox.await(), contacts.await(), threads.await(), archive.await(), quota.await(), offer.await(), features.await())
+                    Snapshot(inbox.await(), contacts.await(), threads.await(), archive.await(), quota.await(), offer.await(), enabled.await())
                 }
                 if (!current(epoch, version, identity)) return@launch
                 mutable.update { it.copy(features = snapshot.features, leftView = when {
@@ -253,13 +269,16 @@ class InboxStore(
         catch (expired: SessionExpired) { throw expired }
         catch (_: Exception) { emptySet() }
 
+    private suspend fun loadInbox(identity: String, enabled: Set<String>, wait: Int? = null): InboxResponse =
+        if (enabled.any { it in Features.MESSAGE_ACTIONS }) api.inboxWithActions(identity, wait) else api.inbox(identity, wait)
+
     /** Filtered mail and the call log: best effort, never blocking the inbox itself. */
     private suspend fun sideLoads(epoch: Long, version: Long, identity: String) {
         lastSideLoad = clock()
         val features = state.value.features
         coroutineScope {
             if (Features.MESSAGE_FILTERING in features) launch {
-                val rows = quietly { api.filteredInbox(identity) }
+                val rows = quietly { if (features.any { it in Features.MESSAGE_ACTIONS }) api.filteredInboxWithActions(identity) else api.filteredInbox(identity) }
                 if (rows != null && current(epoch, version, identity)) content { it.copy(filtered = rows) }
             }
             if (Features.CALL_HISTORY in features) launch { loadCallsNow(identity = identity, epoch = epoch, version = version) }
@@ -280,7 +299,7 @@ class InboxStore(
             var retry = 1000L
             while (isActive && active && current(epoch, version, identity)) {
                 try {
-                    val inbox = api.inbox(identity, wait = 25)
+                    val inbox = loadInbox(identity, state.value.features, wait = 25)
                     val threads = optional { api.threads(identity) }.orEmpty()
                     if (!current(epoch, version, identity)) break
                     content { it.copy(messages = readMarks(inbox.messages.orEmpty(), identity), threads = threads, offline = false, loaded = true) }
@@ -302,50 +321,185 @@ class InboxStore(
     fun acknowledgeVisible(): Job = action {
         val epoch = sessionVersion
         val identity = state.value.acting?.address ?: return@action
-        val ids = state.value.subject?.messages.orEmpty().filter { !it.outgoing && !it.read }.map { it.id }
+        val visible = state.value.subject?.messages.orEmpty().filter { !it.outgoing && !it.read && !it.system }
+        val ids = visible.map { it.id }
         if (ids.isEmpty()) return@action
-        ids.forEach { acknowledged += identity to it }
+        val versions = visible.associate { it.id to ReadVersion(it.editedAt, it.editCount) }
+        ids.forEach { acknowledged[identity to it] = versions.getValue(it) }
+        val withEdits = state.value.features.any { it in Features.MESSAGE_ACTIONS }
         content { it.copy(messages = readMarks(it.messages, identity)) }
         val unconfirmed = ids.toMutableSet()
         try {
             for (id in ids) {
-                api.ack(identity, id)
+                if (withEdits) api.ackWithEdits(identity, id) else api.ack(identity, id)
                 unconfirmed -= id
             }
         } finally {
             if (epoch == sessionVersion && unconfirmed.isNotEmpty()) {
-                unconfirmed.forEach { acknowledged -= identity to it }
+                unconfirmed.forEach { if (acknowledged[identity to it] == versions[it]) acknowledged.remove(identity to it) }
                 if (state.value.acting?.address == identity) content { old -> old.copy(messages = old.messages.map { if (it.id in unconfirmed) it.copy(read = false) else it }) }
             }
         }
     }
 
-    fun send(): Job = action {
-        val snapshot = state.value
-        val key = snapshot.draftKey ?: return@action
-        val text = snapshot.draft.trim()
-        val files = snapshot.attachments
-        if ((text.isEmpty() && files.isEmpty()) || key in snapshot.sending) return@action
-        require(text.toByteArray().size <= 256 * 1024) { "This message is too long." }
-        val epoch = sessionVersion
-        val localId = "local_" + UUID.randomUUID()
-        val wire = workEnvelope(text)
-        content { it.copy(pending = it.pending + PendingMessage(localId, key.mailbox, key.peer, wire, System.currentTimeMillis() / 1000, key.subject), sending = it.sending + key, error = null) }
-        try {
-            val uploaded = files.map { api.upload(key.mailbox, it.file, it.name, it.mediaType) }
-            val sent = api.send(key.mailbox, key.peer, wire, key.subject, uploaded.map { it.id })
-            if (epoch != sessionVersion) return@action
-            content { old -> old.copy(pending = old.pending.map { if (it.id == localId) it.copy(status = Delivery.SENT, sentCopyId = sent.sentCopyId, attachments = uploaded) else it }.filterNot { it.id == localId && sent.sentCopyId == null },
-                drafts = if (old.drafts[key]?.trim() == text) old.drafts - key else old.drafts, staged = old.staged - key) }
-            files.forEach { it.file.delete() }
-            if (state.value.acting?.address == key.mailbox) refresh()
-        } catch (failure: Exception) {
-            if (epoch == sessionVersion) content { old -> old.copy(pending = old.pending.map { if (it.id == localId) it.copy(status = Delivery.FAILED) else it }) }
-            if (failure is IOException && failure !is ApiException && failure !is SessionExpired)
-                throw IOException("Delivery could not be confirmed. Check the conversation before sending again.", failure)
-            throw failure
-        } finally { if (epoch == sessionVersion) mutable.update { it.copy(sending = it.sending - key) } }
+    fun beginReply(messageId: String) = beginMessageAction(messageId, editing = false)
+    fun beginEdit(messageId: String) = beginMessageAction(messageId, editing = true)
+
+    private fun beginMessageAction(messageId: String, editing: Boolean) {
+        val before = state.value
+        val key = before.draftKey ?: return
+        if (key in before.sending || key in before.unconfirmedSends || before.blockedPeer) return
+        val message = before.subject?.messages?.firstOrNull { it.id == messageId } ?: return
+        if (message.system || message.status != Delivery.SENT) return
+        if (editing && !message.canEditMessage(before.features, clock())) return
+        if (!editing && !before.has(Features.MESSAGE_REPLY)) return
+        cancelMessageAction()
+        val original = state.value
+        val mode = MessageComposerAction(if (editing) MessageComposerKind.EDIT else MessageComposerKind.REPLY,
+            message.id, message.msgRef ?: message.id, if (message.outgoing) "You" else original.conversation?.name ?: "Sender",
+            replyQuote(message.display.text), message.body, previousDraft = original.drafts[key])
+        mutable.update { it.copy(composerActions = it.composerActions + (key to mode),
+            drafts = if (editing) it.drafts + (key to message.display.text) else it.drafts,
+            selectedSubject = before.subject?.id, error = null) }
     }
+
+    fun cancelMessageAction() {
+        val key = state.value.draftKey ?: return
+        if (key in state.value.sending || key in state.value.unconfirmedSends) return
+        val mode = state.value.composerActions[key] ?: return
+        mutable.update { it.copy(composerActions = it.composerActions - key,
+            drafts = if (!mode.editing) it.drafts else if (mode.previousDraft == null) it.drafts - key else it.drafts + (key to mode.previousDraft)) }
+    }
+
+    fun messageComposerProblem(): String? {
+        val snapshot = state.value
+        val mode = snapshot.composerAction ?: return null
+        if (mode.editing && !snapshot.has(Features.MESSAGE_EDIT) || !mode.editing && !snapshot.has(Features.MESSAGE_REPLY)) return "This message action is currently unavailable."
+        val message = snapshot.subject?.messages?.firstOrNull { it.id == mode.messageId } ?: return "The original message is no longer available."
+        if (mode.editing && !message.canEditMessage(snapshot.features, clock())) return "This message can no longer be edited."
+        return null
+    }
+
+    fun canSubmitMessage(): Boolean {
+        val snapshot = state.value
+        return snapshot.draftKey != null && !snapshot.isSending && snapshot.unconfirmedSend == null && !snapshot.blockedPeer &&
+            snapshot.quota?.full != true && messageComposerProblem() == null && (snapshot.draft.isNotBlank() || snapshot.attachments.isNotEmpty())
+    }
+
+    fun send(): Job {
+        val snapshot = state.value
+        val key = snapshot.draftKey ?: return action {}
+        val text = snapshot.draft.trim()
+        if (!canSubmitMessage()) return action {}
+        val request = try {
+            require(text.toByteArray().size <= 256 * 1024) { "This message is too long." }
+            val mode = snapshot.composerAction
+            val wire = if (mode?.editing == true) editedMessageBody(mode.originalBody, text) else workEnvelope(text)
+            val options = if (snapshot.features.any { it in Features.MESSAGE_ACTIONS }) MessageSendAction(
+                replyTo = mode?.takeUnless { it.editing }?.reference, quote = mode?.takeUnless { it.editing }?.quote,
+                editOf = mode?.takeIf { it.editing }?.reference) else null
+            FrozenSend("local_" + UUID.randomUUID(), sessionVersion, key, text, wire, clock(), mode, options, snapshot.attachments,
+                snapshot.subject?.messages?.firstOrNull { it.id == mode?.messageId }?.expiresAt.takeIf { mode?.editing == true })
+        } catch (failure: Exception) { fail(failure, sessionVersion); return action {} }
+        sendRequests[request.id] = request
+        return deliver(request)
+    }
+
+    fun canRetrySend(id: String): Boolean {
+        val request = sendRequests[id] ?: return false
+        return request.epoch == sessionVersion && request.key == state.value.draftKey && request.action != null && request.key !in state.value.sending
+    }
+
+    fun retrySend(id: String): Job {
+        val request = sendRequests[id] ?: return action {}
+        if (!canRetrySend(id)) return action {}
+        return deliver(request)
+    }
+
+    private fun deliver(request: FrozenSend): Job {
+        val key = request.key
+        val epoch = request.epoch
+        if (epoch != sessionVersion || key in state.value.sending) return action {}
+        content { it.copy(pending = it.pending.filterNot { row -> row.id == request.id } + request.pending(Delivery.SENDING),
+            sending = it.sending + key, unconfirmedSends = it.unconfirmedSends - key, error = null) }
+        return action {
+            var deliveryAttempted = false
+            try {
+                if (request.uploaded == null) request.uploaded = request.files.map { api.upload(key.mailbox, it.file, it.name, it.mediaType) }
+                currentCoroutineContext().ensureActive()
+                if (epoch != sessionVersion) return@action
+                val uploaded = request.uploaded.orEmpty()
+                deliveryAttempted = true
+                val sent = if (request.action == null) api.send(key.mailbox, key.peer, request.wire, key.subject, uploaded.map { it.id })
+                    else api.sendWithActions(key.mailbox, key.peer, request.wire, key.subject, request.action, uploaded.map { it.id })
+                if (epoch != sessionVersion) return@action
+                if (request.action != null && (sent.msgRef != request.action.msgRef || sent.sentCopyId.isNullOrBlank()))
+                    throw ApiException(200, "bad_response", "Delivery could not be confirmed. Retry the original message.")
+                sendRequests.remove(request.id)
+                content { old ->
+                    val sameMode = old.composerActions[key]?.id == request.mode?.id
+                    val drafts = if (!sameMode) old.drafts else if (request.mode?.editing == true) {
+                        if (request.mode.previousDraft == null) old.drafts - key else old.drafts + (key to request.mode.previousDraft)
+                    } else if (old.drafts[key]?.trim() == request.text) old.drafts - key else old.drafts
+                    old.copy(pending = old.pending.map { if (it.id == request.id) it.copy(status = Delivery.SENT, sentCopyId = sent.sentCopyId, attachments = uploaded) else it }
+                        .filterNot { it.id == request.id && (request.mode?.editing == true || sent.sentCopyId == null) },
+                        drafts = drafts, staged = if (request.mode?.editing == true) old.staged else old.staged - key,
+                        composerActions = if (sameMode) old.composerActions - key else old.composerActions,
+                        unconfirmedSends = old.unconfirmedSends - key)
+                }
+                request.files.forEach { it.file.delete() }
+                if (state.value.acting?.address == key.mailbox) refresh()
+            } catch (failure: Exception) {
+                val uncertain = deliveryAttempted && (failure !is ApiException || failure.status >= 500 || failure.status == 200)
+                if (epoch == sessionVersion) content { old -> old.copy(pending = old.pending.map { if (it.id == request.id) it.copy(status = Delivery.FAILED) else it },
+                    unconfirmedSends = if (uncertain && request.action != null) old.unconfirmedSends + (key to request.id) else old.unconfirmedSends) }
+                if (uncertain && failure !is SessionExpired && failure !is CancellationException)
+                    throw IOException(if (request.action == null) "Delivery could not be confirmed. Check the conversation before sending again." else "Delivery could not be confirmed. Retry the original message safely.", failure)
+                throw failure
+            } finally { if (epoch == sessionVersion) mutable.update { it.copy(sending = it.sending - key) } }
+        }
+    }
+
+    fun clearMessageInfo() {
+        ++infoVersion; infoJob?.cancel(); infoJob = null
+        mutable.update { it.copy(messageInfo = null) }
+    }
+
+    fun showMessageInfo(messageId: String): Job {
+        val snapshot = state.value
+        val identity = snapshot.acting?.address ?: return action {}
+        if (snapshot.subject?.messages.orEmpty().none { it.id == messageId && !it.system } || snapshot.messages.none { it.id == messageId }) return action {}
+        if (snapshot.features.none { it in Features.MESSAGE_ACTIONS }) return action {}
+        clearMessageInfo()
+        val version = infoVersion
+        val epoch = sessionVersion
+        mutable.update { it.copy(messageInfo = MessageInfoState(messageId)) }
+        return action {
+            try {
+                val info = api.messageInfo(identity, messageId)
+                if (info.messageId != messageId) throw ApiException(200, "bad_response", "Message info did not match the requested message.")
+                if (epoch == sessionVersion && version == infoVersion && state.value.acting?.address == identity)
+                    mutable.update { it.copy(messageInfo = MessageInfoState(messageId, info, loading = false)) }
+            } catch (failure: Exception) {
+                if (failure is CancellationException) throw failure
+                if (epoch == sessionVersion && version == infoVersion && state.value.acting?.address == identity)
+                    mutable.update { it.copy(messageInfo = MessageInfoState(messageId, loading = false, error = failure.message ?: "Message info is unavailable.")) }
+                if (failure is SessionExpired) throw failure
+            }
+        }.also { infoJob = it }
+    }
+
+    private data class FrozenSend(
+        val id: String, val epoch: Long, val key: DraftKey, val text: String, val wire: String, val at: Long,
+        val mode: MessageComposerAction?, val action: MessageSendAction?, val files: List<StagedAttachment>, val expiresAt: Long?,
+        var uploaded: List<Attachment>? = null,
+    ) {
+        fun pending(status: Delivery) = PendingMessage(id, key.mailbox, key.peer, wire, at, key.subject, status,
+            attachments = uploaded.orEmpty(), action = action,
+            replyTo = mode?.takeUnless { it.editing }?.let { MessageReply(it.reference, it.messageId, it.author, quote = it.quote) },
+            editOriginalId = mode?.takeIf { it.editing }?.messageId, expiresAt = expiresAt)
+    }
+
 
     fun openThread(title: String, done: () -> Unit = {}): Job = command { epoch ->
         val identity = state.value.acting?.address ?: return@command
@@ -368,7 +522,21 @@ class InboxStore(
         val identity = state.value.acting?.address ?: return@command
         if (state.value.pending.any { it.id == id }) {
             if (state.value.pending.any { it.id == id && it.status == Delivery.SENDING }) return@command
-            content { it.copy(pending = it.pending.filterNot { message -> message.id == id }) }; return@command
+            val request = sendRequests.remove(id)
+            content { old ->
+                val sameMode = request != null && old.composerActions[request.key]?.id == request.mode?.id
+                var drafts = old.drafts
+                var modes = old.composerActions
+                if (request != null && sameMode) {
+                    if (request.mode?.editing == true) {
+                        drafts = if (request.mode.previousDraft == null) drafts - request.key else drafts + (request.key to request.mode.previousDraft)
+                    } else if (drafts[request.key]?.trim() == request.text) drafts = drafts - request.key
+                    modes = modes - request.key
+                }
+                old.copy(pending = old.pending.filterNot { message -> message.id == id }, drafts = drafts, composerActions = modes,
+                    unconfirmedSends = old.unconfirmedSends.filterValues { it != id })
+            }
+            return@command
         }
         api.deleteMessage(identity, id)
         if (epoch == sessionVersion && state.value.acting?.address == identity) { content { it.copy(messages = it.messages.filterNot { message -> message.id == id }) }; refresh() }
@@ -624,7 +792,10 @@ class InboxStore(
         mutable.update { it.copy(error = failure.message ?: "Could not reach the postbox.", offline = failure is IOException && failure !is ApiException) }
     }
     private fun current(epoch: Long, version: Long, identity: String) = epoch == sessionVersion && version == mailboxVersion && state.value.acting?.address == identity
-    private fun readMarks(messages: List<Message>, identity: String) = messages.map { if (identity to it.id in acknowledged) it.copy(read = true) else it }
+    private data class ReadVersion(val editedAt: Long?, val edits: Int?)
+    private fun readMarks(messages: List<Message>, identity: String) = messages.map {
+        if (acknowledged[identity to it.id] == ReadVersion(it.editedAt, it.editCount)) it.copy(read = true) else it
+    }
     private fun normalizeArchive(peers: Set<String>, messages: List<Message>): Set<String> { val aliases = Conversations.aliases(messages); return peers.map { aliases[it] ?: it }.toSet() }
     private fun content(change: (InboxState) -> InboxState) {
         val now = clock()

@@ -22,6 +22,9 @@ class AvatarStore(private val api: PostboxApi, private val scope: CoroutineScope
     /** Address or handle → picture, or null when there is none this account may see. Absent = not asked yet. */
     private val mutable = MutableStateFlow<Map<String, AvatarInfo?>>(emptyMap())
     val pictures: StateFlow<Map<String, AvatarInfo?>> = mutable.asStateFlow()
+    private val mutableEnabled = MutableStateFlow(false)
+    /** Already-visible faces retry their lookup when capability discovery enables pictures. */
+    val availability: StateFlow<Boolean> = mutableEnabled.asStateFlow()
     private val queue = linkedSetOf<String>()
     private var flushJob: Job? = null
     private var generation = 0L
@@ -36,11 +39,13 @@ class AvatarStore(private val api: PostboxApi, private val scope: CoroutineScope
         if (on == enabled) return
         reset()
         enabled = on
+        mutableEnabled.value = on
     }
 
     fun reset() {
         generation++
         enabled = false
+        mutableEnabled.value = false
         flushJob?.cancel(); flushJob = null
         synchronized(queue) { queue.clear() }
         synchronized(bytes) { bytes.clear() }

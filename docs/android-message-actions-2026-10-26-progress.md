@@ -1,0 +1,4 @@
+
+## CI emulator focus follow-up
+
+PR #113 passed all 13 core/platform checks, but Android run 40285559923 failed 16 of 73 UI cases. The downloaded XML proves every failure occurred at the explicit Activity window-focus wait (AppFlowTest, ParityUiTest and AddressCopyTest), before the feature assertions. No timeouts or assertions were weakened. The CI emulator script now enables stay-awake, wakes the display and dismisses keyguard before Gradle; the new hosted run must confirm this suspected emulator lifecycle cause. Local account/group integration regression separately passed 42/42 cases. Workflow AST is unsupported and Kotlin graph edges remain unavailable. Local delegation supplied the three commands with malformed YAML; corrected to an actual script block and parsed locally. Evidence is in the private continuation validation directory.

@@ -21,7 +21,7 @@ not change. The operation is repeatable; a failure aborts startup with a content
 If legacy rows exist, startup requires the exact Vault key to have come from a readable, nonempty
 `POSTBOX_KMS=sealed-file:...` file. An ephemeral development fallback cannot convert persistent rows.
 
-`confirm_import` receipts already use a separate encrypted BLOB format. `cancel_note` records use
+`import_confirm` receipts already use a separate encrypted BLOB format. `cancel_note` records use
 base64-encoded sealed TEXT. Neither is converted by this transition.
 
 ## Deployment checks

@@ -143,8 +143,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }
                 SettingsRow("Contacts and permissions", "Senders you know and trust", Icons.Outlined.PeopleOutline, contacts)
-                if (state.has(Features.CALL_ADMISSION) || state.has(Features.MESSAGE_FILTERING) || state.has(Features.CALL_HISTORY))
-                    SettingsRow("Privacy & filtering", "Strangers, calls, call history and blocking", Icons.Outlined.Shield) { navigate(SettingsPage.PRIVACY) }
+                if (state.has(Features.CALL_ADMISSION) || state.has(Features.MESSAGE_FILTERING) || state.has(Features.CALL_HISTORY) || state.has(Features.RECEIPTS))
+                    SettingsRow("Privacy & filtering", "Read receipts, strangers, calls and blocking", Icons.Outlined.Shield) { navigate(SettingsPage.PRIVACY) }
                 else SettingsRow("Blocked", "People and namespaces you blocked", Icons.Outlined.Block) { navigate(SettingsPage.BLOCKED) }
                 if (groups.enabled && model?.groups != null) SettingsRow("Group encryption", "This device’s keys and fingerprint", Icons.Outlined.Lock) { navigate(SettingsPage.GROUPS) }
                 SettingsRow("Help and about", "Support, privacy and app information", Icons.Outlined.HelpOutline) { navigate(SettingsPage.HELP) }

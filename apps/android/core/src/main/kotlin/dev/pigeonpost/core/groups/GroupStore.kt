@@ -1,6 +1,7 @@
 package dev.pigeonpost.core.groups
 
 import dev.pigeonpost.core.ApiException
+import dev.pigeonpost.core.Features
 import dev.pigeonpost.core.SessionExpired
 import dev.pigeonpost.core.WireJson
 import dev.pigeonpost.core.displayName
@@ -30,6 +31,7 @@ import kotlinx.serialization.json.putJsonArray
 data class JoinRequest(val groupId: String, val token: String?, val preview: GroupPreview? = null, val error: String? = null, val joining: Boolean = false)
 
 data class GroupsState(
+    val contextId: String = java.util.UUID.randomUUID().toString(),
     val enabled: Boolean = false,
     /** Groups are switched on but this device cannot load the encryption library: no groups, never a weaker fallback. */
     val unavailable: Boolean = false,
@@ -51,10 +53,16 @@ data class GroupsState(
     val notice: String? = null,
     val join: JoinRequest? = null,
     val handles: Map<String, String> = emptyMap(),
+    val features: Set<String> = emptySet(),
+    val drafts: Map<String, String> = emptyMap(),
+    val composers: Map<String, GroupComposerAction> = emptyMap(),
+    val pendingIds: Map<String, Set<String>> = emptyMap(),
+    val receipts: Map<String, GroupReceipts> = emptyMap(),
 ) {
     val invitations get() = groups.filter { it.invited }
     val joined get() = groups.filter { !it.invited && it.deletedAt == null }
     val current get() = groups.firstOrNull { it.id == open }
+    fun unconfirmed(gid: String) = history[gid].orEmpty().any { it.pending }
 }
 
 /** How a person sees an error code from the group routes (as the web inbox words them). */
@@ -75,6 +83,11 @@ fun explainGroupError(failure: Throwable): String = when ((failure as? ApiExcept
     "quota_exceeded" -> "This group is out of storage."
     "feature_disabled" -> "Groups are not enabled for this account."
     "not_found" -> "Not found."
+    "not_editable", "edit_window_closed" -> "This message can no longer be edited."
+    "unconfirmed_send" -> "Resolve the earlier send before writing another message."
+    "send_unavailable" -> "This device cannot retry that send. You can stop retrying and keep writing."
+    "send_retry_expired" -> "That send is too old to retry."
+    "outbox_full" -> "Resolve your unconfirmed messages before sending more."
     else -> (failure as? GroupCryptoError)?.let { "This device could not decrypt that (${it.code})." }
         ?: failure.message?.takeIf { failure !is ApiException } ?: "Something went wrong."
 }
@@ -107,19 +120,21 @@ class GroupStore(
 
     private fun note(text: String) = mutable.update { it.copy(notice = text) }
     fun clearNotice() = mutable.update { it.copy(notice = null) }
+    fun showNotice(text: String) = note(text)
 
     /** The mailbox or the capabilities changed. */
     fun onMailbox(mailbox: String?, handle: String?, features: Set<String>) {
         val enabled = mailbox != null && "groups" in features
         val current = state.value
         if (enabled && current.mailbox == mailbox && (current.enabled || current.unavailable)) {
-            mutable.update { it.copy(disappearing = "disappearing" in features) }
+            mutable.update { it.copy(disappearing = "disappearing" in features, features = features,
+                receipts = if (Features.RECEIPTS in features) it.receipts else emptyMap()) }
             return
         }
         teardown()
         if (!enabled) return
         val run = ++generation
-        mutable.value = GroupsState(mailbox = mailbox, disappearing = "disappearing" in features,
+        mutable.value = GroupsState(mailbox = mailbox, disappearing = "disappearing" in features, features = features,
             handles = if (handle != null) mapOf(mailbox!! to handle) else emptyMap(), join = current.join)
         scope.launch {
             val library = try { crypto() } catch (cancelled: CancellationException) { throw cancelled } catch (_: Throwable) { null }
@@ -127,7 +142,7 @@ class GroupStore(
             val c = GroupClient(library, transport, storage, mailbox!!, devicePrefix, now, onEvent = { event -> if (run == generation) onClientEvent(event) })
             try { c.init() }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (expired: SessionExpired) { onSessionExpired(); return@launch }
+            catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); return@launch }
             catch (failure: Exception) {
                 if (run == generation) mutable.update { it.copy(notice = "Groups could not start on this device: " + explainGroupError(failure)) }
                 return@launch
@@ -152,7 +167,8 @@ class GroupStore(
         generation++
         pollJob?.cancel(); openJob?.cancel()
         client = null
-        mutable.update { it.copy(enabled = false, unavailable = false, open = null, groups = emptyList(), history = emptyMap(), call = null) }
+        mutable.update { it.copy(enabled = false, unavailable = false, open = null, groups = emptyList(), history = emptyMap(),
+            call = null, sending = false, drafts = emptyMap(), composers = emptyMap(), pendingIds = emptyMap(), receipts = emptyMap()) }
     }
 
     fun setActive(value: Boolean) {
@@ -193,7 +209,20 @@ class GroupStore(
         val c = client ?: return
         val ids = state.value.groups.map { it.id }.toSet() + listOfNotNull(state.value.open)
         mutable.update { old ->
-            old.copy(history = ids.associateWith { c.history(it) }, inGroup = ids.filter(c::inGroup).toSet(),
+            val history = ids.associateWith { c.history(it) }
+            val pending = ids.associateWith { c.pendingIds(it) }
+            val drafts = old.drafts.toMutableMap()
+            val composers = old.composers.toMutableMap()
+            if (!old.sending) for (gid in ids) {
+                val resolved = old.history[gid].orEmpty().any { item -> item.pending && item.cmid != null && item.cmid !in pending[gid].orEmpty() &&
+                    history[gid].orEmpty().any { it.cmid == item.cmid && it.kind == "message" && it.seq != null && !it.pending } }
+                if (resolved) {
+                    val action = composers.remove(gid)
+                    drafts[gid] = if (action?.kind == GroupComposerKind.EDIT) action.ordinaryDraft.orEmpty() else ""
+                }
+            }
+            old.copy(history = history, inGroup = ids.filter(c::inGroup).toSet(), drafts = drafts, composers = composers,
+                pendingIds = pending,
                 safety = ids.mapNotNull { id -> c.safetyNumber(id)?.let { id to it } }.toMap(), fingerprint = c.fingerprint)
         }
     }
@@ -251,12 +280,16 @@ class GroupStore(
                 val c = client
                 if (c != null) {
                     if (c.inGroup(gid)) quietly { c.sync(gid) }
+                    if (run != generation || state.value.open != gid) return@launch
+                    quietly { c.reconcileDeletions(gid) }
                     if (tick % 5 == 0) {
                         quietly { c.processPending(gid, noJitter = tick == 0) }
                         val call = quietly { transport.groupCall(gid, c.mailbox) }
                         if (state.value.open == gid) mutable.update { it.copy(call = call) }
                     }
                     markRead(gid)
+                    if (run != generation || state.value.open != gid) return@launch
+                    loadReceipts(gid)
                     snapshot()
                 }
                 tick++
@@ -278,8 +311,10 @@ class GroupStore(
 
     suspend fun loadMembers(gid: String): List<GroupMember> {
         val c = client ?: return emptyList()
+        val run = generation
         val list = quietly { WireJson.decodeFromString<MembersResponse>(transport.groupJson(c.mailbox, "GET", gpath(gid, "/members"))).members.orEmpty() }
             ?: return state.value.members[gid].orEmpty()
+        if (run != generation) return emptyList()
         mutable.update { old -> old.copy(members = old.members + (gid to list), handles = old.handles + list.mapNotNull { m -> m.handle?.let { m.address to it } }) }
         return list
     }
@@ -302,25 +337,107 @@ class GroupStore(
 
     // ---- sending and files ---------------------------------------------------------------------
 
-    fun send(gid: String, text: String, files: List<OutgoingFile>, done: (Boolean) -> Unit = {}) {
+    fun draft(gid: String, text: String) {
+        val current = state.value
+        if (current.open != gid || current.sending || current.unconfirmed(gid)) return
+        mutable.update { it.copy(drafts = it.drafts + (gid to text.take(64000))) }
+    }
+    fun beginReply(gid: String, seq: Long) = beginAction(gid, seq, GroupComposerKind.REPLY)
+    fun beginEdit(gid: String, seq: Long) = beginAction(gid, seq, GroupComposerKind.EDIT)
+    private fun beginAction(gid: String, seq: Long, kind: GroupComposerKind) {
+        val current = state.value
+        if (current.open != gid || current.sending || current.unconfirmed(gid) || current.current?.canPost != true) return
+        if ((if (kind == GroupComposerKind.EDIT) Features.MESSAGE_EDIT else Features.MESSAGE_REPLY) !in current.features) return
+        val history = current.history[gid].orEmpty()
+        val item = history.firstOrNull { it.kind == "message" && it.seq == seq && !it.pending && !it.deleted && !it.undecryptable && it.text != null }
+            ?.takeIf { (it.expiresAt ?: Long.MAX_VALUE) > now() } ?: return
+        if (kind == GroupComposerKind.EDIT && !GroupActions.editable(item, history, current.mailbox ?: return, now())) return
+        val previous = current.composers[gid]
+        val ordinary = if (previous?.kind == GroupComposerKind.EDIT) previous.ordinaryDraft.orEmpty() else current.drafts[gid].orEmpty()
+        val action = GroupComposerAction(kind, seq, item.sender, item.text.orEmpty().lineSequence().firstOrNull().orEmpty().take(200),
+            ordinaryDraft = ordinary.takeIf { kind == GroupComposerKind.EDIT })
+        mutable.update { it.copy(composers = it.composers + (gid to action),
+            drafts = it.drafts + (gid to if (kind == GroupComposerKind.EDIT) item.text.orEmpty() else ordinary)) }
+    }
+    fun cancelAction(gid: String) {
+        val current = state.value
+        if (current.sending || current.unconfirmed(gid)) return
+        val action = current.composers[gid] ?: return
+        mutable.update { it.copy(composers = it.composers - gid,
+            drafts = if (action.kind == GroupComposerKind.EDIT) it.drafts + (gid to action.ordinaryDraft.orEmpty()) else it.drafts) }
+    }
+    private fun finishComposer(gid: String, action: GroupComposerAction?) {
+        if (state.value.composers[gid]?.id != action?.id) return
+        mutable.update { it.copy(composers = it.composers - gid,
+            drafts = it.drafts + (gid to if (action?.kind == GroupComposerKind.EDIT) action.ordinaryDraft.orEmpty() else "")) }
+    }
+    suspend fun loadReceipts(gid: String) {
         val c = client ?: return
-        if (text.isBlank() && files.isEmpty()) return
+        val run = generation
+        if (Features.RECEIPTS !in state.value.features) return
+        val receipts = quietly { c.receipts(gid) } ?: return
+        if (run == generation && Features.RECEIPTS in state.value.features) mutable.update { it.copy(receipts = it.receipts + (gid to receipts)) }
+    }
+
+    fun send(gid: String, text: String, files: List<OutgoingFile>, done: (Boolean) -> Unit = {}) {
+        sendPrepared(gid, text, { files }, done)
+    }
+    /** Capture text/action and claim single-flight before attachment IO or coroutine scheduling. */
+    fun sendPrepared(gid: String, text: String, files: suspend () -> List<OutgoingFile>, done: (Boolean) -> Unit = {}) {
+        val c = client ?: return
+        val current = state.value
+        val run = generation
+        val action = current.composers[gid]
+        if (current.sending || current.open != gid || current.current?.canPost != true || current.unconfirmed(gid)) return
+        if (action != null && (if (action.kind == GroupComposerKind.EDIT) Features.MESSAGE_EDIT else Features.MESSAGE_REPLY) !in current.features) {
+            note("That action is unavailable. Cancel it to keep writing."); return
+        }
         mutable.update { it.copy(sending = true) }
         scope.launch {
-            val ok = try { c.send(gid, OutgoingDocument(text.trim(), files)); true }
+            val ok = try {
+                val attachments = if (action?.kind == GroupComposerKind.EDIT) emptyList() else files()
+                if (run != generation) return@launch
+                if (text.isBlank() && attachments.isEmpty()) return@launch
+                c.send(gid, OutgoingDocument(text.trim(), attachments,
+                    replyTo = action?.takeIf { it.kind == GroupComposerKind.REPLY }?.seq,
+                    editOf = action?.takeIf { it.kind == GroupComposerKind.EDIT }?.seq))
+                if (run == generation) finishComposer(gid, action)
+                true
+            }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (expired: SessionExpired) { onSessionExpired(); false }
-            catch (failure: Exception) { note("Not sent: " + explainGroupError(failure)); false }
-            finally { mutable.update { it.copy(sending = false) }; snapshot() }
-            done(ok)
+            catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); false }
+            catch (failure: Exception) { if (run == generation) note("Could not confirm the send: " + explainGroupError(failure)); false }
+            finally { if (run == generation) { mutable.update { it.copy(sending = false) }; snapshot() } }
+            if (run == generation) done(ok)
         }
+    }
+
+    fun retry(gid: String, cmid: String, done: (Boolean) -> Unit = {}) {
+        val c = client ?: return
+        val run = generation
+        val current = state.value
+        if (current.sending || current.open != gid || current.current?.canPost != true || cmid !in current.pendingIds[gid].orEmpty()) return
+        val action = current.composers[gid]
+        mutable.update { it.copy(sending = true) }
+        scope.launch {
+            val ok = try { c.retry(gid, cmid); if (run == generation) finishComposer(gid, action); true }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (expired: SessionExpired) { if (run == generation) onSessionExpired(); false }
+            catch (failure: Exception) { if (run == generation) note(explainGroupError(failure)); false }
+            finally { if (run == generation) { mutable.update { it.copy(sending = false) }; snapshot() } }
+            if (run == generation) done(ok)
+        }
+    }
+    fun discard(gid: String, cmid: String) = act { c ->
+        c.discardPending(gid, cmid); snapshot(); cancelAction(gid)
     }
 
     suspend fun openFile(gid: String, file: GroupFile): ByteArray = (client ?: throw ApiException(403, "not_member")).openFile(gid, file)
 
     fun deleteMessage(gid: String, seq: Long) = act {
-        transport.groupJson(it.mailbox, "DELETE", gpath(gid, "/messages/$seq"))
-        it.sync(gid)
+        val response = WireJson.parseToJsonElement(transport.groupJson(it.mailbox, "DELETE", gpath(gid, "/messages/$seq"))) as? JsonObject
+        val seqs = (response?.get("seqs") as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.toLongOrNull() }
+        it.dropSeqs(gid, seqs.ifEmpty { listOf(seq) }, tombstones = true)
     }
 
     // ---- creating, invitations, joining --------------------------------------------------------
@@ -490,7 +607,15 @@ class GroupStore(
         val gid = (data["group_id"] as? JsonPrimitive)?.content
         scope.launch {
             when (type) {
-                "group.message", "group.handshake" -> { if (gid != null && c.inGroup(gid)) quietly { c.sync(gid) }; if (gid != null && state.value.groups.none { it.id == gid }) refresh() }
+                "group.message", "group.handshake" -> {
+                    if (gid != null && (data["deleted"] as? JsonPrimitive)?.content == "true") {
+                        val seqs = (data["seqs"] as? kotlinx.serialization.json.JsonArray).orEmpty().mapNotNull { (it as? JsonPrimitive)?.content?.toLongOrNull() }
+                        val fallback = (data["seq"] as? JsonPrimitive)?.content?.toLongOrNull()
+                        quietly { c.dropSeqs(gid, seqs.ifEmpty { listOfNotNull(fallback) }, tombstones = true) }
+                    }
+                    if (gid != null && c.inGroup(gid)) quietly { c.sync(gid) }
+                    if (gid != null && state.value.groups.none { it.id == gid }) refresh()
+                }
                 "group.crypto_pending" -> if (gid != null) quietly { c.processPending(gid) }
                 "group.member", "group.settings", "group.deleted" -> { if (gid != null) mutable.update { it.copy(members = it.members - gid) }; refresh() }
                 "group.device" -> (data["mailbox"] as? JsonPrimitive)?.content?.let { m -> mutable.update { it.copy(devices = it.devices - m) } }
@@ -515,7 +640,7 @@ class GroupStore(
         return scope.launch {
             try { work(c) }
             catch (cancelled: CancellationException) { throw cancelled }
-            catch (expired: SessionExpired) { onSessionExpired() }
+            catch (expired: SessionExpired) { if (run == generation) onSessionExpired() }
             catch (failure: Exception) { if (run == generation) note(explainGroupError(failure)) }
             finally { if (run == generation) { mutable.update { it.copy(busy = false) }; snapshot() } }
         }
@@ -585,6 +710,7 @@ fun groupWarningText(warning: String?): String = when (warning) {
     "membership_mismatch" -> "Security warning: a membership change did not match the postbox’s record. Compare safety numbers in group info."
     "commit_rejected" -> "Security warning: this device refused an invalid group change."
     "sender_mismatch" -> "Security warning: a message’s sender did not match its device."
+    "action_mismatch" -> "A message’s edit or reply reference could not be verified. Earlier messages were kept."
     "resynced" -> "This device lost the group’s keys and is being added again. Earlier messages stay unreadable here."
     else -> "Security warning."
 }

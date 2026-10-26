@@ -123,6 +123,7 @@ data class GroupItem(
     val kind: String? = null,
     val actor: String? = null,
     val metadata: JsonObject? = null,
+    @SerialName("reply_to") val replyTo: Long? = null,
     @SerialName("edit_of") val editOf: Long? = null,
     @SerialName("replaced_by") val replacedBy: Long? = null,
     @SerialName("created_at") val createdAt: Long = 0,
@@ -170,6 +171,27 @@ data class LinkResponse(@SerialName("link_token") val linkToken: String? = null,
 @Serializable
 data class GroupCallState(val active: Boolean = false, val kind: String? = null, val participants: List<String>? = null)
 
+@Serializable
+data class GroupMemberReceipt(
+    val address: String,
+    val handle: String? = null,
+    @SerialName("delivered_seq") val deliveredSeq: Long = 0,
+    @SerialName("seen_seq") val seenSeq: Long? = null,
+)
+@Serializable
+data class GroupReceipts(val members: List<GroupMemberReceipt> = emptyList(), @SerialName("read_receipts") val readReceipts: Boolean = false)
+
+data class GroupDraftKey(val mailbox: String, val groupId: String)
+enum class GroupComposerKind { REPLY, EDIT }
+data class GroupComposerAction(
+    val kind: GroupComposerKind,
+    val seq: Long,
+    val sender: String?,
+    val excerpt: String,
+    val ordinaryDraft: String? = null,
+    val id: String = java.util.UUID.randomUUID().toString(),
+)
+
 // ---- what this device keeps -------------------------------------------------------------------
 
 /** A file inside a group message: shown by name, opened with the key that travelled encrypted. */
@@ -206,6 +228,9 @@ data class HistoryItem(
     val undecryptable: Boolean = false,
     val code: String? = null,
     val pending: Boolean = false,
+    @SerialName("send_failed") val sendFailed: Boolean = false,
+    /** Set only when encrypted action fields agree with the sequenced envelope. */
+    @SerialName("actions_verified") val actionsVerified: Boolean = false,
     val local: Boolean = false,
     val warning: String? = null,
     val epoch: Long? = null,
@@ -218,6 +243,20 @@ data class HistoryItem(
 @Serializable
 data class GroupCursor(val cursor: Long = 0, @SerialName("in_group") val inGroup: Boolean = false, val acked: Long = 0)
 
+/** Stored alongside the MLS sender state in the platform's encrypted group vault. */
+@Serializable
+data class GroupPendingSend(
+    val group: String,
+    val cmid: String,
+    val fingerprint: String,
+    @SerialName("created_at") val createdAt: Long,
+    val body: String,
+    val files: List<GroupFile>,
+    val mentions: List<String> = emptyList(),
+    /** Exact prepared JSON. Null only before encryption or after an explicit conflict response. */
+    val request: String? = null,
+)
+
 /** Everything this device stores for one mailbox, sealed by the platform before it touches disk. */
 @Serializable
 data class GroupRecord(
@@ -228,6 +267,7 @@ data class GroupRecord(
     val fingerprint: String? = null,
     val groups: Map<String, GroupCursor> = emptyMap(),
     val history: Map<String, List<HistoryItem>> = emptyMap(),
+    @SerialName("pending_sends") val pendingSends: Map<String, GroupPendingSend> = emptyMap(),
 )
 
 /** Where the record lives. The Android implementation seals it with a Keystore AES-GCM key. */
