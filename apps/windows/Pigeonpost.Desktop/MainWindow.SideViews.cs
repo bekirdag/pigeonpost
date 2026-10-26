@@ -752,7 +752,7 @@ public sealed partial class MainWindow
             if (bytes is null)
             {
                 border.ClearValue(Border.BackgroundProperty);
-                if (border.Child is UIElement initials) initials.Opacity = 1;
+                if (border.Child is UIElement fallbackInitials) fallbackInitials.Opacity = 1;
                 return;
             }
             var image = new BitmapImage { DecodePixelWidth = 96 };

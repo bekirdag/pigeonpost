@@ -86,6 +86,17 @@ internal static class AvatarAuthorizationTests
             catch (AuthorizationRetiredException) { }
             Require(f.Handler.Lookups == 1 && f.Tokens.Acquisitions == 1);
         });
+        yield return ("An unchanged avatar revision cannot admit callbacks from a retired caller scope", async () =>
+        {
+            using var f = new Fixture(); await f.Directory.RefreshAsync([Alice], default);
+            var revision = f.Directory.Version; var caller = f.Tokens.AcceptedAuthorization!.Child();
+            using var operation = new AuthorizationContext(caller);
+            Require(f.Directory.IsCurrent(revision));
+            caller.Retire();
+            Require(!f.Directory.IsCurrent(revision) && f.Tokens.AcceptedAuthorization.IsActive);
+            var wrote = false;
+            Require(!f.Directory.TryWithCurrent(revision, () => wrote = true) && !wrote);
+        });
     }
 
     private static void Require(bool value) { if (!value) throw new Exception("Avatar ownership assertion failed."); }
