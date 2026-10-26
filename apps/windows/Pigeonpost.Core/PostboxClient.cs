@@ -52,6 +52,8 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     private readonly Uri endpoint = ValidateEndpoint(endpoint ?? new Uri("https://postbox.pigeonpost.dev"));
     private readonly SemaphoreSlim renewal = new(1, 1);
     public const int MaxAttachmentBytes = 25 * 1024 * 1024;
+    internal AuthorizationLease? AcceptedAuthorization => tokens.AcceptedAuthorization;
+    internal Action CaptureAuthorizationValidation() => AuthorizationContext.CaptureValidation(tokens);
 
     public async Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken)
     {
@@ -322,14 +324,11 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     private static readonly HttpRequestOptionsKey<RequestAuthorization> AuthorizationKey = new("Pigeonpost.LocalAuthorization");
     private sealed class RequestAuthorization(IAccessTokenProvider provider)
     {
-        private readonly AuthorizationLease? grant = AuthorizationContext.IsBound ? AuthorizationContext.Current : provider.AcceptedAuthorization;
+        private readonly Action validate = AuthorizationContext.CaptureValidation(provider);
         public void Check(CancellationToken cancellationToken)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            grant?.RequireActive();
-            var accepted = provider.AcceptedAuthorization;
-            if (grant is null ? accepted is not null : accepted is null || !grant.SharesAuthorization(accepted))
-                throw new AuthorizationRetiredException();
+            validate();
         }
     }
     private static void CheckResponseAuthorization(HttpResponseMessage response, CancellationToken cancellationToken)

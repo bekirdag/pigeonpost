@@ -163,9 +163,13 @@ internal static class GroupTests
                 await again.SyncAsync(gid, default);
                 Equal(Messages(again, gid).Last().Text, "After restart");
 
-                // A store another key cannot open is no state: the app enrols a new device.
+                // An unreadable store must stay available for recovery instead of being overwritten.
+                var beforeRefusal = File.ReadAllBytes(file);
                 var stranger = w.Device(alice, new FileGroupStateStore(folder, new FixedKeyProtector(new byte[32])));
-                Require(await stranger.InitAsync(default) != deviceId, "A foreign key must not open the store.");
+                try { await stranger.InitAsync(default); throw new Exception("A foreign key must not open or reset the store."); }
+                catch (GroupStateUnavailableException) { }
+                Require(File.ReadAllBytes(file).SequenceEqual(beforeRefusal),
+                    "Failed initialization must preserve the original encrypted device.");
             }
             finally { try { Directory.Delete(folder, true); } catch (IOException) { } }
         });

@@ -228,6 +228,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         var me = BoxFor(identity);
         switch (method, path)
         {
+            case ("GET", "/v1/whoami"): return new JsonObject { ["address"] = me.Address, ["handle"] = me.Handle };
             // ---- Phase 1b ----------------------------------------------------------------
             case ("GET", "/v1/policy"): return me.Policy.DeepClone();
             case ("PUT", "/v1/policy"):

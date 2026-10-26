@@ -24,18 +24,22 @@ public sealed class GroupClient : IDisposable
     public const string DevicePrefix = "win-";
 
     private readonly GroupApi api;
-    private readonly IGroupStateStore store;
+    private readonly IAuthorizedGroupStateStore store;
     private readonly Func<long> now;
     private readonly Func<int, Task> sleep;
     private readonly Func<int> jitter;
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly object lifetime = new();
+    private int users;
+    private bool disposed;
+    private bool gateDisposed;
     private GroupDevice? device;
     private GroupDeviceRecord? record;
 
     public GroupClient(GroupApi api, IGroupStateStore store, Func<long>? now = null, Func<int, Task>? sleep = null, Func<int>? jitter = null)
     {
         this.api = api;
-        this.store = store;
+        this.store = store as IAuthorizedGroupStateStore ?? throw new ArgumentException("Group storage must support authorization ownership.", nameof(store));
         this.now = now ?? (() => DateTimeOffset.UtcNow.ToUnixTimeSeconds());
         this.sleep = sleep ?? (ms => Task.Delay(ms));
         this.jitter = jitter ?? (() => Random.Shared.Next(0, 3000));
@@ -43,7 +47,7 @@ public sealed class GroupClient : IDisposable
 
     public string Mailbox => api.Mailbox;
     public GroupApi Api => api;
-    public string? DeviceId => record?.DeviceId;
+    public string? DeviceId => Local(() => record?.DeviceId);
     public bool Persistent => store.Persistent;
     public event Action<string>? HistoryChanged; // group id
     public event Action<string>? Removed;        // this device left the group's crypto
@@ -52,37 +56,55 @@ public sealed class GroupClient : IDisposable
 
     public Task<string> InitAsync(CancellationToken ct) => Serial(async () =>
     {
-        record = await store.LoadAsync(Mailbox).ConfigureAwait(false);
-        if (record is { Registered: true, StateBlob: { } blob })
+        // Authorize the exact canonical inbox before opening any cached plaintext.
+        await api.VerifyMailboxAsync(ct).ConfigureAwait(false);
+        var saved = await store.LoadAsync(Mailbox, api.Authorization).ConfigureAwait(false);
+        api.RequireActive();
+        if (saved is not null)
         {
-            try { Replace(GroupDevice.ImportState(Convert.FromBase64String(blob), Convert.FromBase64String(record.StateKey))); }
-            catch (Exception) { record = null; }
+            if (saved is not { Registered: true, StateBlob: { } blob }) throw new GroupStateUnavailableException();
+            GroupDevice? restored = null;
+            try
+            {
+                restored = Local(() => GroupDevice.ImportState(Convert.FromBase64String(blob), Convert.FromBase64String(saved.StateKey)));
+                if (!Local(() => restored.Mailbox() == Mailbox && restored.DeviceId() == saved.DeviceId && restored.IsAttested()))
+                    throw new GroupStateUnavailableException();
+                var live = await api.DevicesAsync(null, ct).ConfigureAwait(false);
+                var own = live.Devices?.SingleOrDefault(d => d.DeviceId == saved.DeviceId);
+                if (live.Mailbox != Mailbox || own is null) throw new PostboxException(403, "device_revoked");
+                if (!Local(() => own.SignatureKey == Convert.ToBase64String(restored.SignaturePublicKey())))
+                    throw new GroupStateUnavailableException();
+                Replace(restored);
+                restored = null;
+                record = saved;
+            }
+            catch (Exception ex) when (ex is not (OperationCanceledException or PostboxException)) { throw new GroupStateUnavailableException(); }
+            finally { restored?.Dispose(); }
         }
-        else record = null;
-        if (record is null || device is null) await EnrolAsync(ct).ConfigureAwait(false);
+        else await EnrolAsync(ct).ConfigureAwait(false);
         return record!.DeviceId;
     });
 
     private async Task EnrolAsync(CancellationToken ct)
     {
         var deviceId = DevicePrefix + GroupApi.RandomId(12);
-        Replace(new GroupDevice(Mailbox, deviceId));
+        Replace(Local(() => new GroupDevice(Mailbox, deviceId)));
         record = new GroupDeviceRecord
         {
             DeviceId = deviceId,
             StateKey = Convert.ToBase64String(Pigeonpost.GroupCrypto.GroupCrypto.GenerateStateKey()),
         };
-        var registered = await api.RegisterDeviceAsync(deviceId, device!.SignaturePublicKey(), ct).ConfigureAwait(false);
-        device.InstallAttestation(Convert.FromBase64String(registered.MailboxPublicKey), Convert.FromBase64String(registered.Attestation));
+        var registered = await api.RegisterDeviceAsync(deviceId, UseDevice(d => d.SignaturePublicKey()), ct).ConfigureAwait(false);
+        UseDevice(d => d.InstallAttestation(Convert.FromBase64String(registered.MailboxPublicKey), Convert.FromBase64String(registered.Attestation)));
         record.Registered = true;
-        record.Fingerprint = registered.FingerprintDigits ?? Pigeonpost.GroupCrypto.GroupCrypto.FingerprintDigits(device.Fingerprint());
+        record.Fingerprint = registered.FingerprintDigits ?? Pigeonpost.GroupCrypto.GroupCrypto.FingerprintDigits(UseDevice(d => d.Fingerprint()));
         await PersistAsync().ConfigureAwait(false);
     }
 
     // A device the server no longer knows (revoked elsewhere, or a reset) starts again as new.
     public Task ReEnrolAsync(CancellationToken ct) => Serial(async () =>
     {
-        await store.RemoveAsync(Mailbox).ConfigureAwait(false);
+        await store.RemoveAsync(Mailbox, api.Authorization).ConfigureAwait(false);
         record = null;
         Replace(null);
         await EnrolAsync(ct).ConfigureAwait(false);
@@ -94,8 +116,8 @@ public sealed class GroupClient : IDisposable
         var count = await api.KeyPackageCountAsync(record!.DeviceId, ct).ConfigureAwait(false);
         if (count.Unclaimed >= KeyPackageFloor && count.LastResort) return 0;
         var need = Math.Max(0, KeyPackageTarget - count.Unclaimed);
-        var packages = need > 0 ? device!.GenerateKeyPackages((uint)need) : [];
-        var lastResort = count.LastResort ? null : device!.GenerateLastResortKeyPackage();
+        var packages = need > 0 ? UseDevice(d => d.GenerateKeyPackages((uint)need)) : [];
+        var lastResort = count.LastResort ? null : UseDevice(d => d.GenerateLastResortKeyPackage());
         await PersistAsync().ConfigureAwait(false);
         await api.UploadKeyPackagesAsync(record.DeviceId, packages, lastResort, ct).ConfigureAwait(false);
         return packages.Length;
@@ -114,8 +136,8 @@ public sealed class GroupClient : IDisposable
                 string? code = null;
                 try
                 {
-                    if (device!.Groups().Contains(w.GroupId)) device.ForgetGroup(w.GroupId);
-                    device.JoinFromWelcome(Convert.FromBase64String(w.Welcome));
+                    UseDevice(d => { if (d.Groups().Contains(w.GroupId)) d.ForgetGroup(w.GroupId); });
+                    UseDevice(d => d.JoinFromWelcome(Convert.FromBase64String(w.Welcome)));
                     var g = Cursor(w.GroupId);
                     g.InGroup = true;
                     g.Cursor = Math.Max(w.Seq ?? 0, 0);
@@ -126,7 +148,7 @@ public sealed class GroupClient : IDisposable
                     list.Add(w.GroupId);
                 }
                 catch (GroupCryptoException.Failure e) { code = e.code; }
-                catch (Exception) { code = "join_failed"; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { code = "join_failed"; }
                 await PersistAsync().ConfigureAwait(false);
                 try { await api.AckWelcomeAsync(record.DeviceId, w.WelcomeId, ok, code, ct).ConfigureAwait(false); }
                 catch (Exception ex) when (ex is not OperationCanceledException) { }
@@ -155,7 +177,7 @@ public sealed class GroupClient : IDisposable
 
     private async Task AckEpochAsync(string gid, CancellationToken ct)
     {
-        var epoch = device!.Epoch(gid);
+        var epoch = UseDevice(d => d.Epoch(gid));
         var g = Cursor(gid);
         if (epoch <= g.Acked) return;
         try
@@ -222,11 +244,11 @@ public sealed class GroupClient : IDisposable
         }
         if (item.Type == "commit")
         {
-            if (IsOwn(item) && !device!.HasPendingCommit(gid)) return Outcome.Skipped; // merged when it was accepted
+            if (IsOwn(item) && !UseDevice(d => d.HasPendingCommit(gid))) return Outcome.Skipped; // merged when it was accepted
             Incoming result;
-            try { result = device!.ProcessIncoming(gid, Convert.FromBase64String(item.Commit ?? "")); }
+            try { result = UseDevice(d => d.ProcessIncoming(gid, Convert.FromBase64String(item.Commit ?? ""))); }
             catch (GroupCryptoException.Failure e) when (e.code == "future_epoch") { return Outcome.Gap; }
-            catch (Exception e)
+            catch (Exception e) when (e is not OperationCanceledException)
             {
                 // A commit this device cannot verify: it stops at this epoch and fails closed (P-2 §3).
                 Remember(gid, new GroupLine { Kind = "warning", Seq = item.Seq, Warning = "commit_rejected", Code = (e as GroupCryptoException.Failure)?.code ?? "mls", CreatedAt = created });
@@ -239,7 +261,7 @@ public sealed class GroupClient : IDisposable
                 Remember(gid, new GroupLine { Kind = "warning", Seq = item.Seq, Order = 1, Warning = "membership_mismatch", CreatedAt = created });
             if (o.SelfRemoved)
             {
-                try { device!.ForgetGroup(gid); } catch (Exception) { }
+                try { UseDevice(d => d.ForgetGroup(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { }
                 Cursor(gid).InGroup = false;
                 return Outcome.Removed;
             }
@@ -263,9 +285,9 @@ public sealed class GroupClient : IDisposable
                 return Outcome.Skipped;
             }
             Incoming result;
-            try { result = device!.ProcessIncoming(gid, Convert.FromBase64String(item.Ciphertext)); }
+            try { result = UseDevice(d => d.ProcessIncoming(gid, Convert.FromBase64String(item.Ciphertext))); }
             catch (GroupCryptoException.Failure e) when (e.code == "future_epoch") { return Outcome.Gap; }
-            catch (Exception e)
+            catch (Exception e) when (e is not OperationCanceledException)
             {
                 Remember(gid, new GroupLine
                 {
@@ -337,7 +359,7 @@ public sealed class GroupClient : IDisposable
 
     private async Task ResyncLockedAsync(string gid, CancellationToken ct)
     {
-        try { device!.ForgetGroup(gid); } catch (Exception) { }
+        try { UseDevice(d => d.ForgetGroup(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { }
         var g = Cursor(gid);
         g.InGroup = false;
         Remember(gid, new GroupLine { Kind = "warning", Seq = g.Cursor, Order = 1, Warning = "resynced", CreatedAt = now() });
@@ -369,7 +391,7 @@ public sealed class GroupClient : IDisposable
                     bundle.Welcome is null ? null : Convert.ToBase64String(bundle.Welcome), prepared.Adds, prepared.Removes, prepared.Revision), ct).ConfigureAwait(false);
                 // Anything sequenced before this commit is still in the old epoch: read it first.
                 if (!activation) await SyncLockedAsync(gid, res.Seq - 1, ct).ConfigureAwait(false);
-                var o = device!.ConfirmCommit(gid);
+                var o = UseDevice(d => d.ConfirmCommit(gid));
                 var g = Cursor(gid);
                 g.Cursor = Math.Max(g.Cursor, res.Seq);
                 RecordCommit(gid, res.Seq, o, now());
@@ -381,7 +403,7 @@ public sealed class GroupClient : IDisposable
             }
             catch (Exception e) when (e is not OperationCanceledException)
             {
-                try { device!.DiscardCommit(gid); } catch (Exception) { }
+                try { UseDevice(d => d.DiscardCommit(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { }
                 await PersistAsync().ConfigureAwait(false);
                 if (e is PostboxException { StatusCode: 409, Code: "revision_conflict" or "epoch_conflict" })
                 {
@@ -424,8 +446,8 @@ public sealed class GroupClient : IDisposable
                     && !(c.Mailbox == Mailbox && c.DeviceId == record.DeviceId)));
             }
             if (claims.Count == 0 && removes.Length == 0) return null;
-            var bundle = device!.Commit(gid, claims.Select(c => Convert.FromBase64String(c.KeyPackage)).ToArray(),
-                removes.Select(r => new DeviceRef(r.Mailbox, r.DeviceId)).ToArray());
+            var bundle = UseDevice(d => d.Commit(gid, claims.Select(c => Convert.FromBase64String(c.KeyPackage)).ToArray(),
+                removes.Select(r => new DeviceRef(r.Mailbox, r.DeviceId)).ToArray()));
             return new PreparedCommit(bundle, claims.Select(c => new CommitAdd(c.Mailbox, c.DeviceId, c.KeyPackageRef)).ToArray(), removes, fresh.Revision);
         }, ct)).ConfigureAwait(false);
     }
@@ -433,7 +455,7 @@ public sealed class GroupClient : IDisposable
     public Task<CommitAccepted?> SelfUpdateAsync(string gid, CancellationToken ct) => Serial(() => CommitLockedAsync(gid, async () =>
     {
         var fresh = await api.CryptoAsync(gid, record!.DeviceId, ct).ConfigureAwait(false);
-        return new PreparedCommit(device!.SelfUpdate(gid), [], [], fresh.Revision);
+        return new PreparedCommit(UseDevice(d => d.SelfUpdate(gid)), [], [], fresh.Revision);
     }, ct));
 
     // ---- creating ----------------------------------------------------------------------------
@@ -449,9 +471,9 @@ public sealed class GroupClient : IDisposable
 
     public Task<CommitAccepted?> ActivateAsync(string gid, CancellationToken ct) => Serial(async () =>
     {
-        if (!device!.Groups().Contains(gid))
+        if (!UseDevice(d => d.Groups().Contains(gid)))
         {
-            device.CreateGroup(gid);
+            UseDevice(d => d.CreateGroup(gid));
             var g = Cursor(gid);
             g.InGroup = true;
             g.Devices = DeviceMap(gid);
@@ -461,7 +483,7 @@ public sealed class GroupClient : IDisposable
         return await CommitLockedAsync(gid, async () =>
         {
             var fresh = await api.CryptoAsync(gid, record!.DeviceId, ct).ConfigureAwait(false);
-            if (fresh.ActivationState == "active" && device.Epoch(gid) > 0) return null;
+            if (fresh.ActivationState == "active" && UseDevice(d => d.Epoch(gid)) > 0) return null;
             var adds = (fresh.Pending ?? []).Where(p => p.Kind == "add" && !(p.Mailbox == Mailbox && p.DeviceId == record.DeviceId)).ToArray();
             var claims = new List<KeyPackageClaim>();
             if (adds.Length > 0)
@@ -469,7 +491,7 @@ public sealed class GroupClient : IDisposable
                 var claimed = await api.ClaimAsync(gid, record.DeviceId, adds.Select(a => a.Mailbox).Distinct(StringComparer.Ordinal).ToArray(), ct).ConfigureAwait(false);
                 claims.AddRange((claimed.Claims ?? []).Where(c => !(c.Mailbox == Mailbox && c.DeviceId == record.DeviceId)));
             }
-            var bundle = claims.Count > 0 ? device.Commit(gid, claims.Select(c => Convert.FromBase64String(c.KeyPackage)).ToArray(), []) : device.SelfUpdate(gid);
+            var bundle = claims.Count > 0 ? UseDevice(d => d.Commit(gid, claims.Select(c => Convert.FromBase64String(c.KeyPackage)).ToArray(), [])) : UseDevice(d => d.SelfUpdate(gid));
             return new PreparedCommit(bundle, claims.Select(c => new CommitAdd(c.Mailbox, c.DeviceId, c.KeyPackageRef)).ToArray(), [], fresh.Revision);
         }, ct, activation: true).ConfigureAwait(false);
     });
@@ -485,7 +507,7 @@ public sealed class GroupClient : IDisposable
         var refs = new List<AttachmentRef>();
         foreach (var f in files)
         {
-            var sealedFile = Pigeonpost.GroupCrypto.GroupCrypto.SealAttachment(f.Bytes);
+            var sealedFile = Local(() => Pigeonpost.GroupCrypto.GroupCrypto.SealAttachment(f.Bytes));
             var res = await api.UploadAttachmentAsync(gid, record!.DeviceId, sealedFile.Sealed, ct).ConfigureAwait(false);
             uploaded.Add(new GroupBody.File(res.Id, f.Name, f.Mime, f.Bytes.Length));
             refs.Add(sealedFile.Reference);
@@ -507,7 +529,7 @@ public sealed class GroupClient : IDisposable
             {
                 await SyncLockedAsync(gid, null, ct).ConfigureAwait(false);
                 if (!Cursor(gid).InGroup) throw new PostboxException(403, "not_member");
-                var outgoing = device!.EncryptMessage(gid, cmid, body, refs.ToArray());
+                var outgoing = UseDevice(d => d.EncryptMessage(gid, cmid, body, refs.ToArray()));
                 await PersistAsync().ConfigureAwait(false);
                 try
                 {
@@ -543,14 +565,14 @@ public sealed class GroupClient : IDisposable
         var fresh = await api.CryptoAsync(gid, record!.DeviceId, ct).ConfigureAwait(false);
         var removes = (fresh.Pending ?? []).Where(p => p.Kind == "remove").Select(p => new GroupDeviceRefJson(p.Mailbox, p.DeviceId)).ToArray();
         if (removes.Length == 0) return null;
-        return new PreparedCommit(device!.Commit(gid, [], removes.Select(r => new DeviceRef(r.Mailbox, r.DeviceId)).ToArray()), [], removes, fresh.Revision);
+        return new PreparedCommit(UseDevice(d => d.Commit(gid, [], removes.Select(r => new DeviceRef(r.Mailbox, r.DeviceId)).ToArray())), [], removes, fresh.Revision);
     }, ct);
 
     public async Task<byte[]> OpenFileAsync(string gid, LocalFile file, CancellationToken ct)
     {
         if (file.Key is null || file.Sha is null) throw new InvalidOperationException("This file's key is not on this device.");
         var sealedBytes = await api.DownloadAttachmentAsync(gid, record!.DeviceId, file.Id, ct).ConfigureAwait(false);
-        return Pigeonpost.GroupCrypto.GroupCrypto.OpenAttachment(sealedBytes, new AttachmentRef(Convert.FromBase64String(file.Key), Convert.FromBase64String(file.Sha), file.Len));
+        return Local(() => Pigeonpost.GroupCrypto.GroupCrypto.OpenAttachment(sealedBytes, new AttachmentRef(Convert.FromBase64String(file.Key), Convert.FromBase64String(file.Sha), file.Len)));
     }
 
     // ---- local housekeeping ------------------------------------------------------------------
@@ -579,47 +601,80 @@ public sealed class GroupClient : IDisposable
 
     public Task ForgetAsync(string gid) => Serial(async () =>
     {
-        try { device?.ForgetGroup(gid); } catch (Exception) { }
+        try { UseDevice(d => d.ForgetGroup(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { }
         record?.Groups.Remove(gid);
         record?.History.Remove(gid);
         await PersistAsync().ConfigureAwait(false);
         return 0;
     });
 
-    public bool InGroup(string gid) => record?.Groups.TryGetValue(gid, out var g) == true && g.InGroup;
-    public long CursorOf(string gid) => record?.Groups.TryGetValue(gid, out var g) == true ? g.Cursor : 0;
-    public IReadOnlyList<GroupLine> HistoryOf(string gid) => record?.History.TryGetValue(gid, out var list) == true ? list.ToArray() : [];
-    public string? Fingerprint => record?.Fingerprint;
+    public bool InGroup(string gid) => Local(() => record?.Groups.TryGetValue(gid, out var g) == true && g.InGroup);
+    public long CursorOf(string gid) => Local(() => record?.Groups.TryGetValue(gid, out var g) == true ? g.Cursor : 0);
+    public IReadOnlyList<GroupLine> HistoryOf(string gid) => Local<IReadOnlyList<GroupLine>>(() => record?.History.TryGetValue(gid, out var list) == true ? list.ToArray() : []);
+    public string? Fingerprint => Local(() => record?.Fingerprint);
 
     public IReadOnlyList<DeviceSummary> Members(string gid)
     {
-        try { return device?.Members(gid).Select(Summary).ToArray() ?? []; }
-        catch (Exception) { return []; }
+        try { return Local(() => device?.Members(gid).Select(Summary).ToArray() ?? []); }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return []; }
     }
 
     public string? SafetyNumberOf(string gid)
     {
-        try { return device?.SafetyNumber(gid); } catch (Exception) { return null; }
+        try { return Local(() => device?.SafetyNumber(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
     }
 
     public ulong? EpochOf(string gid)
     {
-        try { return device?.Epoch(gid); } catch (Exception) { return null; }
+        try { return Local(() => device?.Epoch(gid)); } catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
     }
 
     // ---- helpers -----------------------------------------------------------------------------
 
     private async Task<T> Serial<T>(Func<Task<T>> work)
     {
-        await gate.WaitAsync().ConfigureAwait(false);
-        try { return await work().ConfigureAwait(false); }
-        finally { gate.Release(); }
+        api.RequireActive();
+        lock (lifetime)
+        {
+            if (disposed) throw new AuthorizationRetiredException();
+            users++;
+        }
+        var acquired = false;
+        try
+        {
+            using var actor = api.BindActor();
+            var validate = api.CaptureValidation();
+            await gate.WaitAsync().ConfigureAwait(false);
+            acquired = true;
+            validate(); api.RequireActive();
+            var value = await work().ConfigureAwait(false);
+            validate(); api.RequireActive();
+            return value;
+        }
+        finally
+        {
+            if (acquired) gate.Release();
+            lock (lifetime)
+            {
+                users--;
+                ReleaseGateIfIdle();
+            }
+        }
     }
+
+    private T Local<T>(Func<T> work)
+    {
+        api.RequireActive();
+        return api.Authorization.WithActive(work);
+    }
+    private T UseDevice<T>(Func<GroupDevice, T> work) => Local(() => work(device ?? throw new InvalidOperationException("Group encryption is not initialized.")));
+    private void UseDevice(Action<GroupDevice> work) => UseDevice(d => { work(d); return 0; });
 
     private async Task PersistAsync()
     {
-        record!.StateBlob = Convert.ToBase64String(device!.ExportState(Convert.FromBase64String(record.StateKey)));
-        await store.SaveAsync(Mailbox, record).ConfigureAwait(false);
+        record!.StateBlob = Convert.ToBase64String(UseDevice(d => d.ExportState(Convert.FromBase64String(record.StateKey))));
+        await store.SaveAsync(Mailbox, record, api.Authorization).ConfigureAwait(false);
+        api.RequireActive();
     }
 
     private GroupCursor Cursor(string gid)
@@ -678,13 +733,35 @@ public sealed class GroupClient : IDisposable
 
     private void Replace(GroupDevice? next)
     {
-        if (!ReferenceEquals(device, next)) device?.Dispose();
-        device = next;
+        try
+        {
+            Local(() =>
+            {
+                if (!ReferenceEquals(device, next)) device?.Dispose();
+                device = next;
+                return 0;
+            });
+        }
+        catch { if (!ReferenceEquals(device, next)) next?.Dispose(); throw; }
     }
 
     public void Dispose()
     {
-        Replace(null);
+        api.Retire(); // waits for an admitted synchronous FFI operation before freeing its device
+        lock (lifetime)
+        {
+            if (disposed) return;
+            disposed = true;
+            device?.Dispose();
+            device = null;
+            ReleaseGateIfIdle();
+        }
+    }
+    private void ReleaseGateIfIdle()
+    {
+        if (!disposed || users != 0 || gateDisposed) return;
+        record = null;
+        gateDisposed = true;
         gate.Dispose();
     }
 }
