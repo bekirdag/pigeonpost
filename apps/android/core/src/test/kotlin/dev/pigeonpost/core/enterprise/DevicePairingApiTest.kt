@@ -118,4 +118,12 @@ class DevicePairingApiTest {
         assertTrue(runCatching { api.resolveDevicePairing(code) }.exceptionOrNull() is SessionExpired)
         assertEquals(2, server.requestCount); assertEquals(2, tokens.acquisitions); assertEquals(1, tokens.invalidations)
     }
+    @Test fun rateLimitsRetainBoundedRetryAfterWithoutReplayingTheRequest() = runBlocking<Unit> {
+        for ((header, expected) in listOf("45" to 45, "9999999999" to 3600, "unrecognized" to null)) {
+            server.enqueue(MockResponse().setResponseCode(429).setHeader("Retry-After", header).setBody("""{"error":"rate_limited"}"""))
+            val failure = runCatching { api.resolveDevicePairing(code) }.exceptionOrNull() as ApiException
+            assertEquals(expected, failure.retryAfter)
+        }
+        assertEquals(3, server.requestCount); assertEquals(3, tokens.acquisitions); assertEquals(0, tokens.invalidations)
+    }
 }

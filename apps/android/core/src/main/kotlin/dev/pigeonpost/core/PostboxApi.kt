@@ -61,7 +61,7 @@ interface TokenProvider {
 
 class SessionExpired : IOException("Your session expired. Sign in again.")
 class PostboxConnectionInterrupted(cause: IOException) : IOException("The connection was interrupted. Please try again.", cause)
-class ApiException(val status: Int, val code: String?, detail: String? = null, val problem: JsonObject? = null, authenticationChallenge: String? = null) : IOException(detail ?: when (code) {
+class ApiException(val status: Int, val code: String?, detail: String? = null, val problem: JsonObject? = null, authenticationChallenge: String? = null, val retryAfter: Int? = null) : IOException(detail ?: when (code) {
     "not_admitted" -> "They are not accepting messages from this inbox."
     "recipient_unresolved" -> "No inbox at that address."
     "recipient_inbox_full" -> "Their inbox is full."
@@ -541,7 +541,8 @@ class PostboxClient(
         val problem = try { WireJson.parseToJsonElement(text) as? JsonObject } catch (_: SerializationException) { null }
         ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull,
             (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500), problem,
-            it.headers.values("WWW-Authenticate").takeIf { values -> values.isNotEmpty() }?.joinToString(", "))
+            it.headers.values("WWW-Authenticate").takeIf { values -> values.isNotEmpty() }?.joinToString(", "),
+            it.header("Retry-After")?.takeIf { value -> Regex("[0-9]{1,10}").matches(value) }?.toLongOrNull()?.coerceIn(1, 3600)?.toInt())
     }
     private fun requireCurrent(response: Response) {
         try { response.request.tag(AuthorizationLease::class.java)?.requireActive() }
