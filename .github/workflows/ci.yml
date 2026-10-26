@@ -220,6 +220,9 @@ jobs:
           # transport's name in saas_be's API; the message it sends is a Pigeonpost invitation.
           # The vendored LiveKit client bundles sdp-transform, whose SDP grammar names the
           # RFC 4566 `e=` line by its spec name; the file is pinned byte for byte by its hash.
+          # Calendar screens describe actual contact-address guest delivery, distinct from
+          # Pigeonpost messages. The local protocol fixture uses fixed verified OIDC claims
+          # to exercise human-only guest invitations without sending any external delivery.
           if git grep -n -i -w "$forbidden_word" -- . \
               ':(exclude)site/account.js' \
               ':(exclude)site/account.html' \
@@ -238,6 +241,9 @@ jobs:
               ':(exclude)apps/ios/Tests/main.swift' \
               ':(exclude)apps/ios/Shared/Auth/Session.swift' \
               ':(exclude)apps/ios/Tests/groups-postbox.mjs' \
+              ':(exclude)apps/android/app/src/main/kotlin/dev/pigeonpost/inbox/ui/CalendarEditor.kt' \
+              ':(exclude)apps/android/app/src/main/kotlin/dev/pigeonpost/inbox/ui/CalendarDetails.kt' \
+              ':(exclude)tests/e2e-messages/postbox.mjs' \
               ':(exclude).github/scripts/testflight_status.py' \
               ':(exclude).github/workflows/cubemeld-testflight.yml' \
               ':(exclude)site-inbox/vendor/livekit-client/livekit-client.umd.js' \

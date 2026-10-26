@@ -29,7 +29,7 @@ state, and reconciles whole-chain deletion through metadata-only pages. Missing 
 failure for this explicit target. This does not enable group features on any production server.
 
 The optional `calendar` mode enables the calendar only in the fixture, adds synthetic verified
-sign-in claims, and runs `:core:calendarPostbox`. Contact delivery remains off; no invitation email
+sign-in claims, and runs `:core:calendarPostbox`. Contact delivery remains off; no external invitation
 is sent. It checks calendar/event/import-confirmation response loss and exact replay, mailbox
 ownership, attendee contact redaction, organizer-only guest links, independent RSVP and scheduling
 revisions, recurring occurrence identity, personal reminders, ICS privacy, settings, feed rotation
