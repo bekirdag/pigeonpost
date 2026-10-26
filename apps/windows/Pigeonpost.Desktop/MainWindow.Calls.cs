@@ -66,6 +66,9 @@ public sealed partial class MainWindow
 #if DEBUG || UI_TESTS
         if (CallsDebug("TOKEN") is { } token) return fixtureCallTokens ??= new FixtureCallTokens(token);
 #endif
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) return fixtureCallTokens ??= new FixtureCallTokens("ui-preview-only-call-token");
+#endif
         return session;
     }
     private bool CallCurrent(NativeCallSession actor) => callsSignedIn && !lifetime.IsCancellationRequested
@@ -95,9 +98,6 @@ public sealed partial class MainWindow
     // Called once the inbox is open (and again after each mailbox switch, which only reconfigures).
     private Task StartCallsAsync()
     {
-#if UI_TESTS
-        if (CallsDebug("PAGE") is null) return Task.CompletedTask;
-#endif
         if (lifetime.IsCancellationRequested || CurrentCallMailbox() is not { } mailbox) return Task.CompletedTask;
         if (callSession is { } current && CallCurrent(current))
         {
@@ -361,6 +361,9 @@ public sealed partial class MainWindow
 
     private async Task PlaceCallAsync(string peer, bool video)
     {
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) { AccountStatus.Text = "Calling is not configured in this preview."; return; }
+#endif
         if (!callsSignedIn) return;
         if (callSession is not { } actor || !CallCurrent(actor))
         {
