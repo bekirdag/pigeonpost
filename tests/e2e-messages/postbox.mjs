@@ -8,9 +8,9 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 process.umask(0o077);
-const [bin, out] = process.argv.slice(2);
-if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out)) {
-  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json");
+const [bin, out, mode] = process.argv.slice(2);
+if (!bin || !out || !path.isAbsolute(bin) || !path.isAbsolute(out) || (mode && mode !== "groups")) {
+  console.error("usage: postbox.mjs /absolute/postbox-binary /private/setup.json [groups]");
   process.exit(2);
 }
 const work = mkdtempSync(path.join(tmpdir(), "pp-message-actions-"));
@@ -71,7 +71,7 @@ for (let attempt = 0; ; attempt++) {
   if (attempt >= 120) throw new Error("Fixture postbox did not start.");
   await sleep(250);
 }
-for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "message_filtering", "account_events"]) {
+for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "message_filtering", "account_events", ...(mode === "groups" ? ["groups", "disappearing"] : [])]) {
   const response = await fetch(`${internal}/internal/v1/features/${feature}`, { method: "PUT",
     headers: { authorization: `Bearer ${ops}`, "content-type": "application/json" },
     body: JSON.stringify({ scope: "global", enabled: true }) });
@@ -106,11 +106,11 @@ const lossPort = await listen(http.createServer(async (req, res) => {
     if (req.url === "/__test/attempts" && req.method === "GET") {
       res.writeHead(200, { "content-type": "application/json" }); res.end(JSON.stringify({ attempts })); return;
     }
-    const targeted = req.method === "POST" && req.url === "/v1/send";
+    const targeted = req.method === "POST" && (req.url === "/v1/send" || /^\/v1\/groups\/[^/]+\/messages$/.test(req.url));
     let evidence;
     if (targeted) {
       evidence = { sha: crypto.createHash("sha256").update(bytes).digest("hex"),
-        msgRef: JSON.parse(bytes.toString()).msg_ref, status: null };
+        msgRef: JSON.parse(bytes.toString()).msg_ref, cmid: JSON.parse(bytes.toString()).client_message_id, status: null };
       attempts.push(evidence);
       if (loss === "before") { req.socket.destroy(); return; }
     }

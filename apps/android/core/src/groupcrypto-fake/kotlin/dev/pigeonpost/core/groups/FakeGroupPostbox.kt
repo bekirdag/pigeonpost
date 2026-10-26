@@ -442,7 +442,7 @@ class FakeGroupPostbox {
                 if (mem == null || mem.state != "active") throw ApiException(403, "not_member")
                 if (g.postPolicy == "admins" && mem.role !in setOf("owner", "admin")) throw ApiException(403, "posting_restricted")
                 g.items.firstOrNull { it.str("type") == "application" && it.str("sender") == me && it.str("client_message_id") == s("client_message_id") }?.let { dup ->
-                    return buildJsonObject { put("seq", dup.long("seq")); put("id", dup.str("id")) }
+                    return buildJsonObject { put("seq", dup.long("seq")); put("id", dup.str("id")); dup["expires_at"]?.let { put("expires_at", it) } }
                 }
                 if (body.long("epoch") != g.epoch) throw ApiException(409, "epoch_conflict", problem = buildJsonObject { put("current_epoch", g.epoch) })
                 if (pending(g).any { it.str("kind") == "remove" }) throw ApiException(409, "key_activation_pending")
@@ -455,6 +455,7 @@ class FakeGroupPostbox {
                 val item = push(g, buildJsonObject {
                     put("type", "application"); put("id", id("gm")); put("epoch", g.epoch); put("sender", me); put("sender_device", device)
                     put("client_message_id", s("client_message_id")); put("ciphertext", s("ciphertext")); put("expires_at", expires?.let { JsonPrimitive(it) } ?: JsonNull)
+                    for (field in listOf("reply_to", "edit_of")) body[field]?.let { put(field, it) }
                 })
                 return buildJsonObject { put("seq", item.long("seq")); put("id", item.str("id")); put("expires_at", expires?.let { JsonPrimitive(it) } ?: JsonNull) }
             }

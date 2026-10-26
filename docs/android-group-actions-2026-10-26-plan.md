@@ -1,0 +1,10 @@
+# Android encrypted group actions
+
+Continue the native round-two checkpoint after qualified direct-message actions. Store submissions remain batched. Preserve the MLS cryptography and existing encrypted Keystore record format; new fields use compatible defaults.
+
+1. Match encrypted edit/reply references against the sequenced envelope. Fold only verified earlier same-sender chains; ignore server-only replacement hints and retain missing-history warnings. Decode trusted sender/device identities from MLS results. Add typed group receipt cursors and local version/parent projections.
+2. Retain prepared sends in the existing encrypted group record before transport. Keep the same client message ID, ciphertext, attachment IDs and request bytes after ambiguous failures, including restart. Re-encrypt only after an explicit server epoch/key-activation conflict. Preserve attachment keys for text edits, expire/delete every known chain version and dependent pending send, and never turn a failed edit into ordinary mail.
+3. Qualify the foundation with the existing real MLS library: forged metadata/cross-sender chains, missing history, committed loss and restart, epoch recovery, receipt visibility, deletion and expiry. Add opt-in real-postbox group checks where required by the wire contract.
+4. Add capability-gated reply/edit/copy/info rows, local versions, quoted-parent navigation, composer cancel/ordinary-draft restoration, private receipt controls and member status lists. Exercise phone and tablet interactions and existing regressions before release builds.
+
+Kotlin graph/symbol extraction is incomplete, so use exact source/API inspection, AST when available, compiler checks and real MLS/runtime evidence. The existing group store has generation checks but does not yet have Apple-style authorization leases; explicit grant-scoped token/storage retirement is required before enterprise step-up screens are exposed. No production account, message, provider purchase or store submission is part of fixture validation.

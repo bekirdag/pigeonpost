@@ -6,7 +6,11 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
 import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.put
+import java.io.IOException
 import org.junit.Assert.*
 import org.junit.Assume.assumeTrue
 import org.junit.BeforeClass
@@ -49,6 +53,140 @@ class GroupClientMlsTest {
         assertEquals(listOf(gid), bob.processWelcomes())
         assertEquals(listOf(gid), carol.processWelcomes())
         return Three(w, a, b, c, alice, bob, carol, gid)
+    }
+
+    private suspend fun actionGroup(w: World, alice: GroupClient, bob: GroupClient): String {
+        val gid = alice.createGroup(buildJsonObject { put("name", "Actions") }).group.id
+        w.fake.invite(gid, bob.mailbox); w.fake.accept(gid, bob.mailbox)
+        alice.processPending(gid, noJitter = true); bob.processWelcomes()
+        return gid
+    }
+    private suspend fun expectLoss(work: suspend () -> Unit) {
+        try { work(); fail("Expected lost transport") } catch (failure: IOException) { assertFalse(failure is ApiException) }
+    }
+
+    @Test fun authenticatedEditsAndRepliesKeepTheOriginalAttachmentKeys() = runBlocking {
+        val t = three()
+        val root = t.alice.send(t.gid, OutgoingDocument("Original", listOf(OutgoingFile("plan.txt", "text/plain", "Private plan".toByteArray()))))
+        t.bob.sync(t.gid)
+        t.bob.send(t.gid, OutgoingDocument("Answer", replyTo = root.seq)); t.alice.sync(t.gid)
+        assertTrue(t.alice.history(t.gid).single { it.text == "Answer" }.actionsVerified)
+        val changed = t.alice.send(t.gid, OutgoingDocument("Updated", editOf = root.seq))
+        t.bob.sync(t.gid)
+        val edit = t.bob.history(t.gid).single { it.seq == changed.seq && it.kind == "message" }
+        assertTrue(edit.actionsVerified)
+        assertEquals(listOf("Original", "Updated"), GroupActions.versions(edit, t.bob.history(t.gid)).map { it.text })
+        assertEquals(listOf("Answer", "Updated"), GroupActions.visible(t.bob.history(t.gid), System.currentTimeMillis() / 1000).filter { it.kind == "message" }.map { it.text })
+        assertEquals("Private plan", String(t.bob.openFile(t.gid, edit.files.single())))
+    }
+
+    @Test fun forgedServerReferencesAndReplacementHintsCannotHideRealMlsPlaintext() = runBlocking {
+        val t = three()
+        val root = t.alice.send(t.gid, OutgoingDocument("Original"))
+        val second = t.alice.send(t.gid, OutgoingDocument("Another ordinary message"))
+        val items = t.w.fake.groups.getValue(t.gid).items
+        for (i in items.indices) {
+            when (items[i]["seq"]) {
+                JsonPrimitive(root.seq) -> items[i] = JsonObject(items[i] + ("replaced_by" to JsonPrimitive(second.seq)))
+                JsonPrimitive(second.seq) -> items[i] = JsonObject(items[i] + ("edit_of" to JsonPrimitive(root.seq)))
+                else -> Unit
+            }
+        }
+        t.bob.sync(t.gid)
+        assertEquals(listOf("Original", "Another ordinary message"), GroupActions.visible(t.bob.history(t.gid), System.currentTimeMillis() / 1000).filter { it.kind == "message" }.map { it.text })
+        assertTrue(t.bob.history(t.gid).any { it.warning == "action_mismatch" })
+        assertNull(t.bob.history(t.gid).single { it.text == "Another ordinary message" }.editOf)
+    }
+
+    @Test fun theVerifiedMlsDeviceMustMatchTheSequencedSenderDevice() = runBlocking {
+        val t = three()
+        val posted = t.alice.send(t.gid, OutgoingDocument("Authenticated author"))
+        val items = t.w.fake.groups.getValue(t.gid).items
+        val index = items.indexOfFirst { it["seq"] == JsonPrimitive(posted.seq) }
+        items[index] = JsonObject(items[index] + ("sender_device" to JsonPrimitive("forged-device")))
+        t.bob.sync(t.gid)
+        assertTrue(t.bob.history(t.gid).any { it.warning == "sender_mismatch" })
+        assertFalse(t.bob.history(t.gid).any { it.text == "Authenticated author" })
+    }
+
+    @Test fun aCommittedResponseLossSurvivesRestartWithTheExactEncryptedRequest() = runBlocking {
+        val w = world(); val a = w.fake.mailbox(); val b = w.fake.mailbox(); val storage = MemoryGroupStorage()
+        var lose = true
+        val attempts = mutableListOf<String>()
+        val wire = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                val response = w.fake.transport.groupJson(mailbox, method, path, body, device)
+                if (method == "POST" && path.endsWith("/messages") && mailbox == a) {
+                    attempts += body.toString()
+                    if (lose) { lose = false; throw IOException("Fixture committed response loss") }
+                }
+                return response
+            }
+        }
+        val alice = GroupClient(crypto, wire, storage, a, sleep = {}, jitter = { 0 }).also { it.init(); it.topUpKeyPackages() }
+        val bob = w.client(b); val gid = actionGroup(w, alice, bob)
+        expectLoss { alice.send(gid, OutgoingDocument("Only once")) }
+        assertEquals(1, attempts.size)
+        val pending = storage.rows.getValue(a).pendingSends.values.single()
+        assertEquals(attempts.single(), pending.request)
+        val restarted = GroupClient(crypto, wire, storage, a, sleep = {}, jitter = { 0 }).also { it.init() }
+        assertEquals("Restoring never automatically sends", 1, attempts.size)
+        assertTrue(restarted.history(gid).single { it.cmid == pending.cmid }.sendFailed)
+        restarted.retry(gid, pending.cmid)
+        assertEquals(2, attempts.size); assertEquals(attempts[0], attempts[1])
+        assertTrue(storage.rows.getValue(a).pendingSends.isEmpty())
+        bob.sync(gid); assertEquals(listOf("Only once"), texts(bob, gid))
+        assertEquals(1, w.fake.groups.getValue(gid).items.count { it["type"] == JsonPrimitive("application") })
+    }
+
+    @Test fun losingAnEditResponseDoesNotEncryptOrCreateAnotherRevisionOnRetry() = runBlocking {
+        val w = world(); val a = w.fake.mailbox(); val b = w.fake.mailbox(); val storage = MemoryGroupStorage()
+        var lose = false
+        val attempts = mutableListOf<String>()
+        val wire = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                val response = w.fake.transport.groupJson(mailbox, method, path, body, device)
+                if (method == "POST" && path.endsWith("/messages") && mailbox == a && body.toString().contains("edit_of")) {
+                    attempts += body.toString()
+                    if (lose) { lose = false; throw IOException("Fixture lost edit response") }
+                }
+                return response
+            }
+        }
+        val alice = GroupClient(crypto, wire, storage, a, sleep = {}, jitter = { 0 }).also { it.init(); it.topUpKeyPackages() }
+        val bob = w.client(b); val gid = actionGroup(w, alice, bob)
+        val root = alice.send(gid, OutgoingDocument("Before")); lose = true
+        expectLoss { alice.send(gid, OutgoingDocument("After", editOf = root.seq)) }
+        val pending = storage.rows.getValue(a).pendingSends.values.single()
+        val restarted = GroupClient(crypto, wire, storage, a, sleep = {}, jitter = { 0 }).also { it.init() }
+        restarted.retry(gid, pending.cmid)
+        assertEquals(2, attempts.size); assertEquals(attempts[0], attempts[1])
+        bob.sync(gid)
+        val edited = bob.history(gid).single { it.text == "After" }
+        assertEquals(listOf("Before", "After"), GroupActions.versions(edited, bob.history(gid)).map { it.text })
+        assertEquals(2, w.fake.groups.getValue(gid).items.count { it["type"] == JsonPrimitive("application") })
+    }
+
+    @Test fun deletingAChainAlsoErasesUnconfirmedDependentEditsAndAttachmentKeys() = runBlocking {
+        val w = world(); val a = w.fake.mailbox(); val b = w.fake.mailbox(); val storage = MemoryGroupStorage()
+        var rejectTransport = false
+        val wire = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                if (rejectTransport && method == "POST" && path.endsWith("/messages")) throw IOException("Fixture unavailable before delivery")
+                return w.fake.transport.groupJson(mailbox, method, path, body, device)
+            }
+        }
+        val alice = GroupClient(crypto, wire, storage, a, sleep = {}, jitter = { 0 }).also { it.init(); it.topUpKeyPackages() }
+        val bob = w.client(b); val gid = actionGroup(w, alice, bob)
+        val root = alice.send(gid, OutgoingDocument("Secret", listOf(OutgoingFile("secret.txt", "text/plain", "Secret file".toByteArray()))))
+        val edit = alice.send(gid, OutgoingDocument("Changed secret", editOf = root.seq))
+        rejectTransport = true
+        expectLoss { alice.send(gid, OutgoingDocument("Unconfirmed secret", editOf = edit.seq)) }
+        val cmid = storage.rows.getValue(a).pendingSends.keys.single()
+        alice.dropSeqs(gid, listOf(root.seq), tombstones = true)
+        assertTrue(storage.rows.getValue(a).pendingSends.isEmpty())
+        assertTrue(alice.history(gid).filter { it.kind == "message" }.all { it.deleted && it.text == null && it.files.isEmpty() })
+        try { alice.retry(gid, cmid); fail("Deleted edit retried") } catch (failure: ApiException) { assertEquals("send_unavailable", failure.code) }
     }
 
     @Test fun createActivatesAndAcceptedInvitationsBecomeEncryptedMembers() = runBlocking {

@@ -20,6 +20,7 @@ import kotlinx.serialization.json.longOrNull
 import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonArray
 import java.security.SecureRandom
+import java.security.MessageDigest
 import java.util.Base64
 
 const val ENC_SCHEME = "mls-rfc9420-x25519-aes128gcm-ed25519+ppgc1"
@@ -63,6 +64,7 @@ class GroupClient(
     private var device: GroupDeviceHandle? = null
     private lateinit var record: GroupRecord
     private val random = SecureRandom()
+    private val reconciliationCursors = mutableMapOf<String, Long>()
 
     val deviceId: String? get() = if (::record.isInitialized) record.deviceId else null
     val persistent get() = storage.persistent
@@ -129,6 +131,10 @@ class GroupClient(
             catch (_: Exception) { device = null }
         }
         if (device == null) enrol()
+        // Restored attempts require an explicit user retry. Never resume network work at launch.
+        record = record.copy(history = record.history.mapValues { (_, history) -> history.map { item ->
+            if (item.pending) item.copy(sendFailed = true, code = if (item.cmid in record.pendingSends) "send_unconfirmed" else "send_unavailable") else item
+        } })
         record.deviceId
     }
 
@@ -307,13 +313,26 @@ class GroupClient(
             }
             "application" -> {
                 if (item.deletedAt != null || item.ciphertext == null) {
+                    if (item.deletedAt != null) {
+                        if (isOwn(item)) updateHistory(gid) { if (it.kind == "message" && it.cmid == item.clientMessageId) it.copy(seq = item.seq) else it }
+                        eraseLocked(gid, setOf(item.seq), tombstones = true)
+                    } else if (item.replacedBy != null && historyOf(gid).any { it.kind == "message" && it.seq == item.seq && it.text != null }) {
+                        return Outcome.SKIPPED // Superseded ciphertext is different from deletion.
+                    }
                     remember(gid, HistoryItem(kind = "message", seq = item.seq, sender = item.sender, deleted = true, createdAt = item.createdAt,
-                        expiresAt = item.expiresAt, replacedBy = item.replacedBy))
+                        expiresAt = item.expiresAt))
                     return Outcome.MESSAGE
                 }
                 if (isOwn(item)) {
                     // Recorded when it was sent; the server copy only confirms its sequence number.
-                    updateHistory(gid) { if (it.kind == "message" && it.cmid == item.clientMessageId) it.copy(seq = item.seq, createdAt = item.createdAt, expiresAt = item.expiresAt, pending = false) else it }
+                    val pending = record.pendingSends[item.clientMessageId]
+                    val request = pending?.request?.let { WireJson.parseToJsonElement(it).jsonObject }
+                    if (pending != null && pending.group == gid && request?.get("ciphertext") == JsonPrimitive(item.ciphertext)) {
+                        confirmPending(pending, Posted(item.seq, item.epoch, item.expiresAt), item.createdAt)
+                    } else {
+                        updateHistory(gid) { if (it.kind == "message" && it.cmid == item.clientMessageId && it.seq == item.seq)
+                            it.copy(createdAt = item.createdAt, expiresAt = item.expiresAt) else it }
+                    }
                     return Outcome.SKIPPED
                 }
                 val r = try { d.processIncoming(gid, unb64(item.ciphertext)) }
@@ -324,19 +343,23 @@ class GroupClient(
                     return Outcome.MESSAGE
                 }
                 if (r !is Processed.Message) return Outcome.SKIPPED
-                if (r.sender.mailbox != item.sender) {
+                if (r.sender.mailbox != item.sender || r.sender.deviceId != item.senderDevice) {
                     remember(gid, HistoryItem(kind = "warning", seq = item.seq, after = 1, warning = "sender_mismatch", createdAt = item.createdAt))
                     return Outcome.SKIPPED
                 }
                 val doc = GroupBody.decode(r.body)
+                val editMatches = doc.editOf == item.editOf?.toString()
+                val replyMatches = doc.replyTo == item.replyTo?.toString()
+                if (!editMatches || !replyMatches)
+                    remember(gid, HistoryItem(kind = "warning", seq = item.seq, after = 1, warning = "action_mismatch", createdAt = item.createdAt))
                 val files = doc.files.mapIndexed { i, f ->
                     val ref = r.attachments.getOrNull(i)
                     if (ref == null) f else f.copy(key = b64(ref.key), sha = b64(ref.sealedSha256), len = ref.plaintextLen)
                 }
-                remember(gid, HistoryItem(kind = "message", seq = item.seq, sender = item.sender, senderDevice = item.senderDevice, cmid = item.clientMessageId,
-                    text = doc.text, files = files, replyTo = doc.replyTo, editOf = doc.editOf ?: item.editOf?.toString(),
+                remember(gid, HistoryItem(kind = "message", seq = item.seq, sender = r.sender.mailbox, senderDevice = r.sender.deviceId, cmid = item.clientMessageId,
+                    text = doc.text, files = files, replyTo = doc.replyTo.takeIf { replyMatches }, editOf = doc.editOf.takeIf { editMatches },
+                    actionsVerified = editMatches && replyMatches,
                     createdAt = item.createdAt, expiresAt = item.expiresAt))
-                item.editOf?.let { target -> updateHistory(gid) { if (it.kind == "message" && it.seq == target) it.copy(replacedBy = item.seq) else it } }
                 return Outcome.MESSAGE
             }
         }
@@ -484,56 +507,138 @@ class GroupClient(
 
     // ---- sending --------------------------------------------------------------------------------
 
-    /** Post one message. Files are sealed and uploaded first; their keys travel inside the encryption. */
-    suspend fun send(gid: String, doc: OutgoingDocument): Posted {
-        val cmid = "cm_" + randomId(24)
-        val files = mutableListOf<GroupFile>()
-        val refs = mutableListOf<FileKey>()
-        for (f in doc.files) {
-            require(f.bytes.size in 1..MAX_GROUP_FILE_BYTES) { "${f.name} is larger than 25 MB." }
-            val sealed = crypto.sealAttachment(f.bytes)
-            val up: Uploaded = WireJson.decodeFromString(transport.groupUpload(mailbox, gpath(gid, "/attachments"), sealed.sealed, record.deviceId))
-            files += GroupFile(up.id, f.name.take(200), f.mime.take(120), f.bytes.size.toLong(),
-                b64(sealed.reference.key), b64(sealed.reference.sealedSha256), sealed.reference.plaintextLen)
-            refs += sealed.reference
+    private fun fingerprint(gid: String, doc: OutgoingDocument): String {
+        fun digest(bytes: ByteArray) = hex(MessageDigest.getInstance("SHA-256").digest(bytes))
+        val payload = buildJsonObject {
+            put("group", gid); put("text", doc.text)
+            doc.replyTo?.let { put("reply_to", it) }; doc.editOf?.let { put("edit_of", it) }
+            putJsonArray("mentions") { doc.mentions.distinct().sorted().forEach { add(JsonPrimitive(it)) } }
+            putJsonArray("files") { doc.files.forEach { file -> add(buildJsonObject {
+                put("name", file.name); put("mime", file.mime); put("sha", digest(file.bytes))
+            }) } }
         }
-        val body = GroupBody.encode(doc.text, files, doc.replyTo?.toString(), doc.editOf?.toString())
-        return lock.withLock {
-            val d = device ?: throw ApiException(403, "not_member")
-            var local = HistoryItem(kind = "message", pending = true, sender = mailbox, senderDevice = record.deviceId, cmid = cmid, text = doc.text,
-                files = files, replyTo = doc.replyTo?.toString(), editOf = doc.editOf?.toString(), createdAt = now())
+        return digest(payload.toString().toByteArray(Charsets.UTF_8))
+    }
+    private fun setPending(pending: GroupPendingSend) {
+        record = record.copy(pendingSends = record.pendingSends + (pending.cmid to pending))
+    }
+    private fun confirmPending(pending: GroupPendingSend, posted: Posted, at: Long = pending.createdAt) {
+        val doc = GroupBody.decode(pending.body.toByteArray(Charsets.UTF_8))
+        updateHistory(pending.group) { if (it.kind == "message" && it.cmid == pending.cmid) null else it }
+        remember(pending.group, HistoryItem(kind = "message", seq = posted.seq, sender = mailbox,
+            senderDevice = record.deviceId, cmid = pending.cmid, text = doc.text, files = pending.files,
+            replyTo = doc.replyTo, editOf = doc.editOf, actionsVerified = true,
+            createdAt = at, expiresAt = posted.expiresAt))
+        record = record.copy(pendingSends = record.pendingSends - pending.cmid)
+    }
+    private suspend fun finishPending(pending: GroupPendingSend, posted: Posted): Posted {
+        confirmPending(pending, posted)
+        try { persist() } catch (failure: Exception) { setPending(pending); throw failure }
+        onEvent(GroupEvent.History(pending.group))
+        return posted
+    }
+
+    /** Prepare once, persisting the exact encrypted request before its first HTTP attempt. */
+    suspend fun send(gid: String, doc: OutgoingDocument): Posted = lock.withLock {
+        require(doc.replyTo == null || doc.editOf == null) { "Choose either reply or edit." }
+        require(listOfNotNull(doc.replyTo, doc.editOf).all { it > 0 })
+        require(doc.files.size <= 8)
+        val intent = fingerprint(gid, doc)
+        record.pendingSends.values.firstOrNull { it.group == gid && it.fingerprint == intent }?.let {
+            return@withLock deliverPendingLocked(gid, it.cmid)
+        }
+        if (record.pendingSends.values.any { it.group == gid }) throw ApiException(409, "unconfirmed_send")
+        if (record.pendingSends.size >= 64) throw ApiException(409, "outbox_full")
+        val previous = doc.editOf?.let { seq ->
+            val item = historyOf(gid).firstOrNull { it.kind == "message" && it.seq == seq }
+                ?: throw ApiException(404, "reference_not_found")
+            if (!GroupActions.editable(item, historyOf(gid), mailbox, now())) throw ApiException(403, "edit_window_closed")
+            require(doc.files.isEmpty()) { "An edit keeps its original attachments." }
+            item
+        }
+        val files = previous?.files?.toMutableList() ?: mutableListOf()
+        for (file in doc.files) {
+            require(file.bytes.size in 1..MAX_GROUP_FILE_BYTES) { "An attachment is larger than 25 MB." }
+            val sealed = crypto.sealAttachment(file.bytes)
+            val uploaded: Uploaded = WireJson.decodeFromString(transport.groupUpload(mailbox, gpath(gid, "/attachments"), sealed.sealed, record.deviceId))
+            files += GroupFile(uploaded.id, file.name.take(200), file.mime.take(120), file.bytes.size.toLong(),
+                b64(sealed.reference.key), b64(sealed.reference.sealedSha256), sealed.reference.plaintextLen)
+        }
+        val body = String(GroupBody.encode(doc.text, files, doc.replyTo?.toString(), doc.editOf?.toString()), Charsets.UTF_8)
+        val pending = GroupPendingSend(gid, "cm_" + randomId(24), intent, now(), body, files, doc.mentions.distinct().sorted())
+        setPending(pending)
+        remember(gid, HistoryItem(kind = "message", pending = true, sender = mailbox, senderDevice = record.deviceId,
+            cmid = pending.cmid, text = doc.text, files = files, replyTo = doc.replyTo?.toString(), editOf = doc.editOf?.toString(),
+            actionsVerified = true, createdAt = pending.createdAt, expiresAt = previous?.expiresAt))
+        persist()
+        onEvent(GroupEvent.History(gid))
+        deliverPendingLocked(gid, pending.cmid)
+    }
+
+    suspend fun retry(gid: String, cmid: String): Posted = lock.withLock { deliverPendingLocked(gid, cmid) }
+    suspend fun discardPending(gid: String, cmid: String) = lock.withLock {
+        if (record.pendingSends[cmid]?.group?.let { it != gid } == true) return@withLock
+        record = record.copy(pendingSends = record.pendingSends - cmid)
+        updateHistory(gid) { if (it.kind == "message" && it.cmid == cmid && it.pending) null else it }
+        persist()
+        onEvent(GroupEvent.History(gid))
+    }
+    private suspend fun deliverPendingLocked(gid: String, cmid: String): Posted {
+        try {
             for (attempt in 0 until MAX_RETRIES) {
-                syncLocked(gid, null)
-                if (!cursorOf(gid).inGroup) throw ApiException(403, "not_member")
-                val out = d.encryptMessage(gid, cmid, body, refs)
-                persist()
-                try {
-                    val res: Posted = call("POST", gpath(gid, "/messages"), buildJsonObject {
-                        put("request_key", "rk_$cmid"); put("client_message_id", cmid); put("epoch", out.epoch); put("enc_scheme", crypto.encScheme)
-                        put("ciphertext", b64(out.ciphertext)); put("envelope_signature", b64(out.envelopeSignature))
-                        putJsonArray("attachments") { files.forEach { add(JsonPrimitive(it.id)) } }
-                        doc.replyTo?.let { put("reply_to", it) }
-                        doc.editOf?.let { put("edit_of", it) }
-                        if (doc.mentions.isNotEmpty()) putJsonArray("mentions") { doc.mentions.forEach { add(JsonPrimitive(it)) } }
-                    }, device = true)
-                    local = local.copy(seq = res.seq, pending = false, expiresAt = res.expiresAt)
-                    remember(gid, local)
-                    doc.editOf?.let { target -> updateHistory(gid) { if (it.kind == "message" && it.seq == target) it.copy(replacedBy = res.seq) else it } }
+                var pending = record.pendingSends[cmid]?.takeIf { it.group == gid }
+                    ?: throw ApiException(409, "send_unavailable")
+                historyOf(gid).firstOrNull { it.kind == "message" && it.cmid == cmid && !it.pending && it.seq != null }?.let {
+                    return finishPending(pending, Posted(it.seq!!, expiresAt = it.expiresAt))
+                }
+                if (now() < pending.createdAt || now() - pending.createdAt >= 86_400) throw ApiException(409, "send_retry_expired")
+                if (pending.request == null) {
+                    syncLocked(gid, null)
+                    if (record.pendingSends[cmid] == null) throw ApiException(409, "send_unavailable")
+                    if (!cursorOf(gid).inGroup) throw ApiException(403, "not_member")
+                    val d = device ?: throw ApiException(403, "not_member")
+                    val refs = pending.files.map { file ->
+                        if (file.key == null || file.sha == null) throw GroupCryptoError("missing_key")
+                        FileKey(unb64(file.key), unb64(file.sha), file.len ?: file.size)
+                    }
+                    val encrypted = d.encryptMessage(gid, cmid, pending.body.toByteArray(Charsets.UTF_8), refs)
+                    val doc = GroupBody.decode(pending.body.toByteArray(Charsets.UTF_8))
+                    val request = buildJsonObject {
+                        put("request_key", "rk_$cmid"); put("client_message_id", cmid); put("epoch", encrypted.epoch); put("enc_scheme", crypto.encScheme)
+                        put("ciphertext", b64(encrypted.ciphertext)); put("envelope_signature", b64(encrypted.envelopeSignature))
+                        putJsonArray("attachments") { pending.files.forEach { add(JsonPrimitive(it.id)) } }
+                        GroupActions.sequence(doc.replyTo)?.let { put("reply_to", it) }
+                        GroupActions.sequence(doc.editOf)?.let { put("edit_of", it) }
+                        if (pending.mentions.isNotEmpty()) putJsonArray("mentions") { pending.mentions.forEach { add(JsonPrimitive(it)) } }
+                    }.toString()
+                    val otherBytes = record.pendingSends.values.filter { it.cmid != cmid }.sumOf { (it.request?.toByteArray()?.size ?: 0) + it.body.toByteArray().size }
+                    if (request.toByteArray().size + pending.body.toByteArray().size + otherBytes > 8 * 1024 * 1024) throw ApiException(409, "outbox_full")
+                    pending = pending.copy(request = request)
+                    setPending(pending)
+                    // Advanced sender state and the exact request are saved together before transport.
                     persist()
-                    onEvent(GroupEvent.History(gid))
-                    return@withLock res
-                } catch (e: ApiException) {
-                    // Re-encrypt under the same client message id once the epoch has moved on.
-                    if (e.status == 409 && e.code == "epoch_conflict") { sleep(50L * (attempt + 1)); continue }
-                    if (e.status == 409 && e.code == "key_activation_pending") {
-                        // A removal is waiting for a commit. Any member device may make it; this one does.
-                        commitLocked(gid) { pendingPlan(gid, adds = false) }
+                }
+                try {
+                    val result: Posted = call("POST", gpath(gid, "/messages"), WireJson.parseToJsonElement(pending.request!!), device = true)
+                    return finishPending(pending, result)
+                } catch (failure: ApiException) {
+                    if (failure.status == 409 && failure.code in setOf("epoch_conflict", "key_activation_pending")) {
+                        setPending(pending.copy(request = null))
+                        persist()
+                        if (failure.code == "key_activation_pending") commitLocked(gid) { pendingPlan(gid, adds = false) }
+                        else sleep(50L * (attempt + 1))
                         continue
                     }
-                    throw e
+                    throw failure
                 }
             }
             throw ApiException(409, "epoch_conflict")
+        } catch (failure: Exception) {
+            updateHistory(gid) { if (it.kind == "message" && it.cmid == cmid && it.pending)
+                it.copy(sendFailed = true, code = (failure as? ApiException)?.code ?: "send_unconfirmed") else it }
+            withContext(NonCancellable) { try { persist() } catch (_: Exception) { /* The already-saved request remains the recovery source. */ } }
+            onEvent(GroupEvent.History(gid))
+            throw failure
         }
     }
 
@@ -546,30 +651,67 @@ class GroupClient(
 
     // ---- housekeeping ---------------------------------------------------------------------------
 
+    private fun eraseLocked(gid: String, seqs: Set<Long>, tombstones: Boolean) {
+        val history = historyOf(gid)
+        val affected = GroupActions.linkedSequences(history, seqs)
+        val cmids = history.filter { it.seq in affected || (it.pending && GroupActions.sequence(it.editOf) in affected) }.mapNotNull { it.cmid }.toSet()
+        record = record.copy(pendingSends = record.pendingSends.filterValues { pending ->
+            pending.group != gid || (pending.cmid !in cmids && GroupActions.sequence(GroupBody.decode(pending.body.toByteArray()).editOf) !in affected)
+        })
+        setHistory(gid, GroupActions.erasing(history, affected, tombstones))
+    }
+
     /** Drop expired items by this device's own clock, whether or not the event arrived. */
     suspend fun pruneExpired(): Int = lock.withLock {
         if (!::record.isInitialized) return@withLock 0
         val t = now()
         var dropped = 0
-        val next = record.history.mapValues { (_, list) -> list.filterNot { (it.expiresAt ?: Long.MAX_VALUE) <= t }.also { dropped += list.size - it.size } }
-        if (dropped > 0) { record = record.copy(history = next); persist() }
+        for (gid in record.history.keys.toList()) {
+            val previous = historyOf(gid)
+            val expired = previous.filter { (it.expiresAt ?: Long.MAX_VALUE) <= t }.mapNotNull { it.seq }.toSet()
+            eraseLocked(gid, expired, tombstones = false)
+            val next = historyOf(gid).filter { (it.expiresAt ?: Long.MAX_VALUE) > t }
+            val expiredCmids = previous.filter { (it.expiresAt ?: Long.MAX_VALUE) <= t }.mapNotNull { it.cmid }.toSet()
+            record = record.copy(pendingSends = record.pendingSends.filterValues { it.group != gid || it.cmid !in expiredCmids })
+            setHistory(gid, next)
+            dropped += previous.size - next.size
+        }
+        if (dropped > 0) persist()
         dropped
     }
 
-    suspend fun dropSeqs(gid: String, seqs: Collection<Long>) = lock.withLock {
-        val set = seqs.toSet()
-        setHistory(gid, historyOf(gid).filterNot { it.kind == "message" && it.seq in set })
+    suspend fun dropSeqs(gid: String, seqs: Collection<Long>, tombstones: Boolean = false) = lock.withLock {
+        eraseLocked(gid, seqs.toSet(), tombstones)
         persist()
     }
 
+    /** One bounded metadata page per call; never decrypt or consume an old MLS ciphertext twice. */
+    suspend fun reconcileDeletions(gid: String) = lock.withLock {
+        val sequences = historyOf(gid).filter { it.kind == "message" }.mapNotNull { it.seq }
+        val first = sequences.minOrNull() ?: return@withLock
+        val through = sequences.maxOrNull() ?: return@withLock
+        val after = reconciliationCursors[gid]?.takeIf { it in (first - 1)..through } ?: (first - 1)
+        val page: ItemsResponse = call("GET", gpath(gid, "/messages?after_seq=$after&before_seq=${through + 1}&limit=100&metadata_only=true"), device = true)
+        val deleted = page.items.orEmpty().filter { it.type == "application" && it.deletedAt != null }
+        for (item in deleted) if (isOwn(item)) updateHistory(gid) { if (it.kind == "message" && it.cmid == item.clientMessageId) it.copy(seq = item.seq) else it }
+        if (deleted.isNotEmpty()) { eraseLocked(gid, deleted.map { it.seq }.toSet(), tombstones = true); persist(); onEvent(GroupEvent.History(gid)) }
+        val last = page.items.orEmpty().maxOfOrNull { it.seq }
+        reconciliationCursors[gid] = if (page.more && last != null && last < through) last else (first - 1)
+    }
+
+    suspend fun receipts(gid: String): GroupReceipts = call("GET", gpath(gid, "/receipts"))
+
     suspend fun forget(gid: String) = lock.withLock {
         try { device?.forgetGroup(gid) } catch (_: GroupCryptoError) {}
-        record = record.copy(groups = record.groups - gid, history = record.history - gid)
+        record = record.copy(groups = record.groups - gid, history = record.history - gid,
+            pendingSends = record.pendingSends.filterValues { it.group != gid })
+        reconciliationCursors.remove(gid)
         persist()
     }
 
     fun inGroup(gid: String) = ::record.isInitialized && record.groups[gid]?.inGroup == true
     fun history(gid: String): List<HistoryItem> = if (::record.isInitialized) record.history[gid].orEmpty() else emptyList()
+    fun pendingIds(gid: String): Set<String> = if (::record.isInitialized) record.pendingSends.values.filter { it.group == gid }.map { it.cmid }.toSet() else emptySet()
     fun members(gid: String): List<DeviceSummary> = try { device?.members(gid).orEmpty().map(::summary) } catch (_: GroupCryptoError) { emptyList() }
     fun safetyNumber(gid: String): String? = try { device?.safetyNumber(gid) } catch (_: GroupCryptoError) { null }
     fun epoch(gid: String): Long? = try { device?.epoch(gid) } catch (_: GroupCryptoError) { null }

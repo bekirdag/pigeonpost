@@ -11,11 +11,20 @@ normal Android SDK environment. Then, from the repository root:
 
 ```sh
 tests/e2e-messages/android.sh /absolute/path/to/target/debug/pigeonpost-postbox
+# Real MLS group actions, using the same protected loopback fixture:
+tests/e2e-messages/android.sh /absolute/path/to/target/debug/pigeonpost-postbox groups
 ```
 
 The runner invokes `:core:messageActionsPostbox`, a `JavaExec` task in the test runtime classpath.
 It does not add a conditional JUnit test or a new default skip. The harness rejects non-loopback
 origins. No extra dependency is required.
+
+The optional `groups` mode also enables groups/disappearing on the fixture and runs
+`:core:groupActionsPostbox` against the host MLS library. It registers real member devices, adds a
+recipient with a verified Welcome, exercises encrypted replies/edits and retained attachment keys,
+checks member receipt privacy, recovers committed send/edit loss after importing saved sender
+state, and reconciles whole-chain deletion through metadata-only pages. Missing crypto is a
+failure for this explicit target. This does not enable group features on any production server.
 
 Checks cover capability discovery; distinct sender/recipient copy IDs; delivered, seen and agent
 state; folded edits, fresh unread revisions and versions; reply context; foreign references and
