@@ -1,4 +1,5 @@
 using System.Collections.ObjectModel;
+using System.Text.Json;
 
 namespace Pigeonpost.Core;
 
@@ -27,7 +28,13 @@ public static class StableList
     }
 
     public static bool SameMessage(ThreadMessage a, ThreadMessage b) =>
-        a with { Attachments = b.Attachments } == b && (a.Attachments ?? []).SequenceEqual(b.Attachments ?? []);
+        a with { Attachments = b.Attachments, ReplyTo = b.ReplyTo } == b
+        && SameReply(a.ReplyTo, b.ReplyTo) && (a.Attachments ?? []).SequenceEqual(b.Attachments ?? []);
+    private static bool SameReply(MessageReply? a, MessageReply? b) => a is null || b is null ? a == b
+        : a with { Args = b.Args } == b && SameArgs(a.Args, b.Args);
+    private static bool SameArgs(JsonElement? a, JsonElement? b) => a is null || b is null ? a is null && b is null
+        : a.Value.ValueKind == b.Value.ValueKind && (a.Value.ValueKind == JsonValueKind.Undefined
+            || string.Equals(a.Value.GetRawText(), b.Value.GetRawText(), StringComparison.Ordinal));
     public static bool SameMessages(IReadOnlyList<ThreadMessage> a, IReadOnlyList<ThreadMessage> b) =>
         a.Count == b.Count && a.Zip(b).All(pair => SameMessage(pair.First, pair.Second));
     private static bool SameContact(Contact? a, Contact? b) => a is null || b is null ? a == b :

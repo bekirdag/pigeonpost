@@ -27,7 +27,9 @@ public static class ConversationBuilder
             if (Timers.Expired(m.ExpiresAt, clock) || m.Filtered == true) continue;
             Group(m.PeerKey).Add(new ThreadMessage(m.MessageId, m.Body, m.At, m.ThreadId, m.IsOutgoing,
                 m.IsOutgoing || m.Read == true, m.IsOutgoing ? null : m.Autonomy, m.IsOutgoing ? null : m.Verb,
-                m.IsOutgoing ? null : m.HeldBecause, Attachments: m.Attachments, ExpiresAt: m.ExpiresAt));
+                m.IsOutgoing ? null : m.HeldBecause, Attachments: m.Attachments, ExpiresAt: m.ExpiresAt, MsgRef: m.MsgRef,
+                ReplyTo: m.ReplyTo, EditedAt: m.EditedAt, EditCount: m.EditCount,
+                Receipt: m.IsOutgoing ? m.Receipt : null, AgentStatus: m.IsOutgoing ? m.AgentStatus : null));
         }
         foreach (var p in pending.Where(p => p.Mailbox == acting.Address))
         {

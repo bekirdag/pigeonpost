@@ -81,7 +81,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     public Task<InboxResponse> GetInboxAsync(string identity, int? wait = null, CancellationToken cancellationToken = default)
     {
         if (wait is < 0 or > 25) throw new ArgumentOutOfRangeException(nameof(wait));
-        var path = WithIdentity("/v1/inbox", identity) + "&include_sent=true&include_read=true";
+        var path = WithIdentity("/v1/inbox", identity) + "&include_sent=true&include_read=true&actions=1&fold=1";
         if (wait is not null) path += "&wait=" + wait.Value;
         return ReadAsync<InboxResponse>(path, cancellationToken);
     }
@@ -176,7 +176,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
         WriteWithoutResponseAsync(HttpMethod.Put, "/v1/archive", new { identity, peer, archived }, cancellationToken);
 
     public Task AcknowledgeAsync(string identity, string messageId, CancellationToken cancellationToken) =>
-        WriteWithoutResponseAsync(HttpMethod.Post, "/v1/ack", new { identity, message_id = messageId }, cancellationToken);
+        WriteWithoutResponseAsync(HttpMethod.Post, "/v1/ack", new { identity, message_id = messageId, with_edits = true }, cancellationToken);
 
     public Task SetContactAsync(string identity, Contact contact, CancellationToken cancellationToken) =>
         WriteWithoutResponseAsync(HttpMethod.Put, "/v1/contacts", new

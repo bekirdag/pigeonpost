@@ -93,6 +93,10 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     public const string Avatars = "avatars";
     public const string Groups = "groups";
     public const string Disappearing = "disappearing";
+    public const string MessageEdit = "message_edit";
+    public const string MessageReply = "message_reply";
+    public const string Receipts = "receipts";
+    public const string AgentStatus = "agent_status";
 
     public static ServerFeatures None { get; } = new(new HashSet<string>(StringComparer.Ordinal));
     public bool Has(string name) => Names.Contains(name);
