@@ -575,7 +575,12 @@ class GroupClient(
         deliverPendingLocked(gid, pending.cmid)
     }
 
-    suspend fun retry(gid: String, cmid: String): Posted = lock.withLock { deliverPendingLocked(gid, cmid) }
+    suspend fun retry(gid: String, cmid: String): Posted = lock.withLock {
+        if (record.pendingSends[cmid] == null) historyOf(gid).firstOrNull { it.kind == "message" && it.cmid == cmid && !it.pending && it.seq != null }?.let {
+            return@withLock Posted(it.seq!!, expiresAt = it.expiresAt)
+        }
+        deliverPendingLocked(gid, cmid)
+    }
     suspend fun discardPending(gid: String, cmid: String) = lock.withLock {
         if (record.pendingSends[cmid]?.group?.let { it != gid } == true) return@withLock
         record = record.copy(pendingSends = record.pendingSends - cmid)

@@ -29,6 +29,8 @@ import dev.pigeonpost.core.groups.GroupCryptoLibrary
 import dev.pigeonpost.core.groups.GroupStorage
 import dev.pigeonpost.core.groups.GroupStore
 import dev.pigeonpost.core.groups.GroupLinks
+import dev.pigeonpost.core.groups.GroupDraftKey
+import dev.pigeonpost.core.groups.GroupComposerKind
 import dev.pigeonpost.core.groups.GroupTransport
 import dev.pigeonpost.core.groups.UniffiGroupCrypto
 import dev.pigeonpost.inbox.groups.KeystoreGroupStorage
@@ -96,7 +98,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     var attachmentTarget: DraftKey? = null
     var pendingSave: File? = null
     // Declared before init: the session collector there can reset these straight away.
-    private val stagedForGroups = MutableStateFlow<Map<String, List<StagedAttachment>>>(emptyMap())
+    private val stagedForGroups = MutableStateFlow<Map<GroupDraftKey, List<StagedAttachment>>>(emptyMap())
     val groupStaged = stagedForGroups.asStateFlow()
     val profile = ProfileStore(graph.api, viewModelScope) { keys -> avatars.forget(keys + inbox.state.value.mailboxes.filter { it.address in keys }.mapNotNull { it.handle }) }
     val pictureForAll = MutableStateFlow(false)
@@ -188,33 +190,63 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey; groupAttachTarget = null }
 
     // ---- group composer files (sealed and uploaded when the message is sent) -----------------
-    var groupAttachTarget: String? = null
-    fun chooseGroupAttachments(groupId: String) { groupAttachTarget = groupId; attachmentTarget = null }
-    fun unstageGroupFile(groupId: String, id: String) {
-        stagedForGroups.value[groupId].orEmpty().firstOrNull { it.id == id }?.file?.delete()
-        stagedForGroups.value = stagedForGroups.value + (groupId to stagedForGroups.value[groupId].orEmpty().filterNot { it.id == id })
+    private data class GroupAttachmentTarget(val key: GroupDraftKey, val contextId: String)
+    private var groupAttachTarget: GroupAttachmentTarget? = null
+    fun chooseGroupAttachments(groupId: String) {
+        val state = groups?.state?.value ?: return
+        val mailbox = state.mailbox ?: return
+        if (state.sending || state.unconfirmed(groupId) || state.composers[groupId]?.kind == GroupComposerKind.EDIT) return
+        groupAttachTarget = GroupAttachmentTarget(GroupDraftKey(mailbox, groupId), state.contextId); attachmentTarget = null
     }
-    private fun stageGroup(groupId: String, uris: List<Uri>) {
+    fun unstageGroupFile(groupId: String, id: String) {
+        val state = groups?.state?.value ?: return
+        val key = GroupDraftKey(state.mailbox ?: return, groupId)
+        if (state.sending || state.unconfirmed(groupId)) return
+        stagedForGroups.value[key].orEmpty().firstOrNull { it.id == id }?.file?.delete()
+        stagedForGroups.value = stagedForGroups.value + (key to stagedForGroups.value[key].orEmpty().filterNot { it.id == id })
+    }
+    private fun stageGroup(target: GroupAttachmentTarget, uris: List<Uri>) {
         viewModelScope.launch {
             try {
                 val added = files.stage(uris)
-                val all = stagedForGroups.value[groupId].orEmpty() + added
+                val state = groups?.state?.value
+                if (state?.contextId != target.contextId || state.mailbox != target.key.mailbox || state.sending || state.unconfirmed(target.key.groupId)) {
+                    added.forEach { it.file.delete() }; return@launch
+                }
+                val all = stagedForGroups.value[target.key].orEmpty() + added
                 if (all.size > MAX_ATTACHMENTS) { added.forEach { it.file.delete() }; inbox.showError("Choose at most $MAX_ATTACHMENTS attachments."); return@launch }
-                stagedForGroups.value = stagedForGroups.value + (groupId to all)
+                stagedForGroups.value = stagedForGroups.value + (target.key to all)
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { inbox.showError(failure.message ?: "Could not read the attachment.") }
         }
     }
     fun sendGroup(groupId: String, text: String, done: (Boolean) -> Unit = {}) {
         val store = groups ?: return
-        val staged = stagedForGroups.value[groupId].orEmpty()
-        viewModelScope.launch {
-            val outgoing = try { withContext(Dispatchers.IO) { staged.map { dev.pigeonpost.core.groups.OutgoingFile(it.name, it.mediaType, it.file.readBytes()) } } }
-                catch (failure: Exception) { inbox.showError("Could not read the attachment."); done(false); return@launch }
-            stagedForGroups.value = stagedForGroups.value - groupId
-            store.send(groupId, text, outgoing) { ok ->
-                if (ok) staged.forEach { it.file.delete() } else stagedForGroups.value = stagedForGroups.value + (groupId to staged)
+        val state = store.state.value
+        val key = GroupDraftKey(state.mailbox ?: return, groupId)
+        val staged = if (state.composers[groupId]?.kind == GroupComposerKind.EDIT) emptyList() else stagedForGroups.value[key].orEmpty()
+        store.sendPrepared(groupId, text, {
+            withContext(Dispatchers.IO) { staged.map { dev.pigeonpost.core.groups.OutgoingFile(it.name, it.mediaType, it.file.readBytes()) } }
+        }) { ok ->
+            if (store.state.value.contextId == state.contextId) {
+                if (ok && staged.isNotEmpty()) {
+                    staged.forEach { it.file.delete() }
+                    stagedForGroups.value = stagedForGroups.value + (key to stagedForGroups.value[key].orEmpty().filterNot { item -> staged.any { it.id == item.id } })
+                }
                 done(ok)
+            }
+        }
+    }
+    fun retryGroup(groupId: String, cmid: String) {
+        val store = groups ?: return
+        val state = store.state.value
+        val key = GroupDraftKey(state.mailbox ?: return, groupId)
+        val edit = state.history[groupId].orEmpty().any { it.cmid == cmid && it.editOf != null }
+        val staged = if (edit) emptyList() else stagedForGroups.value[key].orEmpty()
+        store.retry(groupId, cmid) { ok ->
+            if (ok && store.state.value.contextId == state.contextId && staged.isNotEmpty()) {
+                staged.forEach { it.file.delete() }
+                stagedForGroups.value = stagedForGroups.value + (key to stagedForGroups.value[key].orEmpty().filterNot { item -> staged.any { it.id == item.id } })
             }
         }
     }

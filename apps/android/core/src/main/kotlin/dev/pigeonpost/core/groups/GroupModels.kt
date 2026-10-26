@@ -181,6 +181,17 @@ data class GroupMemberReceipt(
 @Serializable
 data class GroupReceipts(val members: List<GroupMemberReceipt> = emptyList(), @SerialName("read_receipts") val readReceipts: Boolean = false)
 
+data class GroupDraftKey(val mailbox: String, val groupId: String)
+enum class GroupComposerKind { REPLY, EDIT }
+data class GroupComposerAction(
+    val kind: GroupComposerKind,
+    val seq: Long,
+    val sender: String?,
+    val excerpt: String,
+    val ordinaryDraft: String? = null,
+    val id: String = java.util.UUID.randomUUID().toString(),
+)
+
 // ---- what this device keeps -------------------------------------------------------------------
 
 /** A file inside a group message: shown by name, opened with the key that travelled encrypted. */

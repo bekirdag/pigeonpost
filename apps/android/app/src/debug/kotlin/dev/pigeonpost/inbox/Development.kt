@@ -22,11 +22,18 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off")) return null
         val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin")
         if (mode.startsWith("actions")) {
             val base = FixturePostbox("inbox")
             return AppGraph(session, MessageActionFixture(mode, base, base), fixtures = true)
+        }
+        if (mode.startsWith("group-actions")) {
+            val world = FixtureGroups(answers = false, actionMessages = true)
+            val base = FixturePostbox("groups", world.me)
+            val actions = GroupActionFixture(mode, base, base, world)
+            return AppGraph(session, actions, fixtures = true, groupTransport = actions.transport,
+                groupCrypto = { world.crypto }, groupStorage = { dev.pigeonpost.core.groups.MemoryGroupStorage() }, start = world::run, groupPollSeconds = 1)
         }
         if (mode == "groups") {
             // Real group encryption (the AAR) against the in-memory groups postbox, with two other people.
@@ -264,7 +271,7 @@ private fun fixturePicture(color: Int): ByteArray {
  * app's mailbox is accepted, waiting to be added); Carol has invited the app's mailbox to "Book club".
  * While the app runs, Bob and Carol add pending devices, accept invitations and answer messages.
  */
-class FixtureGroups {
+class FixtureGroups(private val answers: Boolean = true, private val actionMessages: Boolean = false) {
     val fake = dev.pigeonpost.core.groups.FakeGroupPostbox().apply { serialize = true }
     val crypto = dev.pigeonpost.core.groups.UniffiGroupCrypto()
     val me = fake.mailbox()
@@ -272,6 +279,7 @@ class FixtureGroups {
     private val carol = fake.mailbox()
     private val people = mutableListOf<dev.pigeonpost.core.groups.GroupClient>()
     private val answered = mutableSetOf<Long>()
+    private var actionSeeded = false
     init { fake.handles[me] = "/demo/main"; fake.handles[bob] = "/bob/main"; fake.handles[carol] = "/carol/main" }
 
     fun run(scope: kotlinx.coroutines.CoroutineScope) {
@@ -300,7 +308,10 @@ class FixtureGroups {
                 } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (_: Exception) {}
                 // Bob answers the app's messages in the groups he is in.
                 try {
-                    for (gid in fake.groups.keys) for (item in b.history(gid)) {
+                    if (actionMessages && !actionSeeded && fake.groups[garden]?.members?.get(me)?.state == "active") {
+                        b.send(garden, dev.pigeonpost.core.groups.OutgoingDocument("The group release plan is ready.")); actionSeeded = true
+                    }
+                    if (answers) for (gid in fake.groups.keys) for (item in b.history(gid)) {
                         val seq = item.seq ?: continue
                         if (item.kind == "message" && item.sender == me && !item.deleted && seq !in answered) {
                             answered += seq

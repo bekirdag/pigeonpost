@@ -5,6 +5,8 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.test.advanceUntilIdle
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.serialization.json.buildJsonObject
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
@@ -22,6 +24,7 @@ import org.junit.Test
  * a new device without history, concurrent commits, epoch conflicts, persistence and expiry.
  * The same scenarios as the web inbox's site-inbox/test/groups-mls.test.mjs.
  */
+@OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class GroupClientMlsTest {
     companion object {
         private var library: UniffiGroupCrypto? = null
@@ -187,6 +190,111 @@ class GroupClientMlsTest {
         assertTrue(storage.rows.getValue(a).pendingSends.isEmpty())
         assertTrue(alice.history(gid).filter { it.kind == "message" }.all { it.deleted && it.text == null && it.files.isEmpty() })
         try { alice.retry(gid, cmid); fail("Deleted edit retried") } catch (failure: ApiException) { assertEquals("send_unavailable", failure.code) }
+    }
+
+    private suspend fun kotlinx.coroutines.test.TestScope.actionStore(w: World, mailbox: String, wire: GroupTransport = w.fake.transport): Pair<GroupStore, String> {
+        val store = GroupStore(wire, { crypto }, MemoryGroupStorage(), this)
+        store.onMailbox(mailbox, null, setOf("groups", "disappearing", "message_edit", "message_reply", "receipts"))
+        advanceUntilIdle()
+        assertTrue(store.state.value.enabled)
+        var gid: String? = null
+        store.create("Actions", null, emptyList(), "private", "everyone", null) { gid = it }
+        advanceUntilIdle()
+        return store to requireNotNull(gid)
+    }
+
+    @Test fun groupComposerCancelsAnEditBackToTheOrdinaryDraft() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); val (store, gid) = actionStore(w, a)
+        store.send(gid, "Original", emptyList()); advanceUntilIdle()
+        val root = store.state.value.history.getValue(gid).single { it.text == "Original" }.seq!!
+        store.draft(gid, "Ordinary draft"); store.beginEdit(gid, root)
+        assertEquals("Original", store.state.value.drafts[gid])
+        store.draft(gid, "Unsaved edit"); store.cancelAction(gid)
+        assertEquals("Ordinary draft", store.state.value.drafts[gid]); assertNull(store.state.value.composers[gid])
+        store.beginEdit(gid, root); store.draft(gid, "Updated"); store.send(gid, "Updated", emptyList())
+        advanceUntilIdle()
+        assertEquals("Ordinary draft", store.state.value.drafts[gid]); assertNull(store.state.value.composers[gid])
+        val history = store.state.value.history.getValue(gid)
+        assertEquals(listOf("Updated"), GroupActions.visible(history, System.currentTimeMillis() / 1000).filter { it.kind == "message" }.map { it.text })
+    }
+
+    @Test fun groupActionCapabilityLossNeverTurnsAnEditIntoAnOrdinarySend() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); val (store, gid) = actionStore(w, a)
+        store.send(gid, "Original", emptyList()); advanceUntilIdle()
+        val root = store.state.value.history.getValue(gid).single { it.text == "Original" }.seq!!
+        store.beginEdit(gid, root); store.draft(gid, "Changed")
+        store.onMailbox(a, null, setOf("groups")); store.send(gid, "Changed", emptyList())
+        advanceUntilIdle()
+        assertEquals(1, w.fake.groups.getValue(gid).items.count { it["type"] == JsonPrimitive("application") })
+        assertEquals(GroupComposerKind.EDIT, store.state.value.composers[gid]?.kind)
+    }
+
+    @Test fun groupSendCapturesItsActionAndSingleFlightBeforeAttachmentIo() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); val (store, gid) = actionStore(w, a)
+        store.send(gid, "Original", emptyList()); advanceUntilIdle()
+        val root = store.state.value.history.getValue(gid).single { it.text == "Original" }.seq!!
+        store.draft(gid, "Answer"); store.beginReply(gid, root)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>(); var prepares = 0
+        store.sendPrepared(gid, "Answer", { prepares++; gate.await(); emptyList() })
+        store.sendPrepared(gid, "Duplicate", { prepares++; emptyList() })
+        runCurrent()
+        assertTrue(store.state.value.sending); assertEquals(1, prepares)
+        store.cancelAction(gid); store.draft(gid, "Changed during send")
+        assertEquals("Answer", store.state.value.drafts[gid])
+        gate.complete(Unit); advanceUntilIdle()
+        val answer = store.state.value.history.getValue(gid).single { it.text == "Answer" }
+        assertEquals(root.toString(), answer.replyTo)
+        assertTrue(answer.actionsVerified); assertEquals("", store.state.value.drafts[gid])
+    }
+
+    @Test fun aRetiredGroupFilePreparationCannotSendOrRestoreAnotherMailbox() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); val other = w.fake.mailbox(); val (store, gid) = actionStore(w, a)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>(); var callback = false
+        store.draft(gid, "Old mailbox text")
+        store.sendPrepared(gid, "Old mailbox text", { gate.await(); emptyList() }) { callback = true }
+        runCurrent()
+        store.onMailbox(other, null, setOf("groups", "message_edit", "message_reply", "receipts"))
+        gate.complete(Unit); advanceUntilIdle()
+        assertEquals(other, store.state.value.mailbox); assertTrue(store.state.value.drafts.isEmpty())
+        assertFalse(callback)
+        assertTrue(w.fake.groups.getValue(gid).items.none { it["type"] == JsonPrimitive("application") })
+    }
+
+    @Test fun unconfirmedGroupSendFreezesDraftAndExplicitRetryCreatesOneMessage() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); var lose = true; var posts = 0
+        val wire = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                val response = w.fake.transport.groupJson(mailbox, method, path, body, device)
+                if (method == "POST" && path.endsWith("/messages")) { posts++; if (lose) { lose = false; throw IOException("Fixture committed response loss") } }
+                return response
+            }
+        }
+        val (store, gid) = actionStore(w, a, wire)
+        store.draft(gid, "Only once"); store.send(gid, "Only once", emptyList()); advanceUntilIdle()
+        assertTrue(store.state.value.unconfirmed(gid))
+        store.draft(gid, "Replacement"); store.send(gid, "Duplicate", emptyList())
+        assertEquals("Only once", store.state.value.drafts[gid]); assertEquals(1, posts)
+        store.retry(gid, store.state.value.pendingIds.getValue(gid).single()); advanceUntilIdle()
+        assertEquals(2, posts); assertFalse(store.state.value.unconfirmed(gid)); assertEquals("", store.state.value.drafts[gid])
+        assertEquals(1, w.fake.groups.getValue(gid).items.count { it["type"] == JsonPrimitive("application") })
+    }
+
+    @Test fun aBackgroundOwnCopyConfirmationAlsoCompletesTheGroupComposer() = kotlinx.coroutines.test.runTest {
+        val w = world(); val a = w.fake.mailbox(); var lose = true
+        val wire = object : GroupTransport by w.fake.transport {
+            override suspend fun groupJson(mailbox: String, method: String, path: String, body: JsonElement?, device: String?): String {
+                val response = w.fake.transport.groupJson(mailbox, method, path, body, device)
+                if (method == "POST" && path.endsWith("/messages") && lose) { lose = false; throw IOException("Fixture committed response loss") }
+                return response
+            }
+        }
+        val (store, gid) = actionStore(w, a, wire)
+        store.draft(gid, "Saved once"); store.send(gid, "Saved once", emptyList()); advanceUntilIdle()
+        assertTrue(store.state.value.unconfirmed(gid))
+        store.close(); store.open(gid); advanceUntilIdle()
+        assertFalse(store.state.value.unconfirmed(gid)); assertTrue(store.state.value.pendingIds[gid].orEmpty().isEmpty())
+        assertEquals("", store.state.value.drafts[gid])
+        assertEquals(1, w.fake.groups.getValue(gid).items.count { it["type"] == JsonPrimitive("application") })
     }
 
     @Test fun createActivatesAndAcceptedInvitationsBecomeEncryptedMembers() = runBlocking {
