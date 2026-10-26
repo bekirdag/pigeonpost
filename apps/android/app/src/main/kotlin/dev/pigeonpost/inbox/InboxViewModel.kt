@@ -37,8 +37,11 @@ import dev.pigeonpost.inbox.groups.KeystoreGroupStorage
 import dev.pigeonpost.core.calendar.CalendarAttemptStorage
 import dev.pigeonpost.core.calendar.CalendarStore
 import dev.pigeonpost.core.calendar.CalendarTransport
+import dev.pigeonpost.core.calendar.CalendarNotice
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.withTimeoutOrNull
 
 data class AppGraph(
     val session: UserSession,
@@ -70,6 +73,8 @@ class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(
 class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
     private val storeScope = AuthorizedStoreScope(viewModelScope)
+    private var calendarNoticeJob: Job? = null
+    private var calendarNoticeId = java.util.UUID.randomUUID()
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
@@ -115,6 +120,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     init {
         graph.start(viewModelScope)
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
+        PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
             combine(session.state, inbox.state) { session, state ->
                 if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null) Triple(state.acting!!.address, state.acting!!.handle, state.features) else null
@@ -188,6 +194,45 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         groups?.resolveJoin(link.first, link.second)
     }
 
+    /** A tap requests calendar navigation only; membership and each detail are reread as the owner. */
+    fun openCalendarNotice(payload: Map<String, String>) {
+        val notice = CalendarNotice.parse(payload) ?: return
+        val calendar = calendar ?: return
+        calendarNoticeId = java.util.UUID.randomUUID()
+        val visit = calendarNoticeId
+        calendarNoticeJob?.cancel(); calendar.noticeWaiting(false)
+        calendarNoticeJob = viewModelScope.launch {
+            val signedIn = session.state.first { !it.loading }
+            if (!signedIn.signedIn || !signedIn.termsAccepted) return@launch
+            val root = session.authorizationLease ?: return@launch
+            fun current() = visit == calendarNoticeId && root.isValid && session.authorizationLease === root && session.state.value.signedIn && session.state.value.termsAccepted
+            try {
+                val ready = withTimeoutOrNull(30_000) {
+                    combine(session.state, inbox.state) { _, inbox -> inbox }.first { !current() || it.accountLoaded && it.loaded }
+                } ?: return@launch
+                if (!current() || ready.mailboxes.none { it.address == notice.mailbox } || "calendar" !in ready.features) return@launch
+                // Even a notice for another owned mailbox waits for the current draft/detail.
+                if (calendar.state.value.editing || calendar.state.value.openEvent != null) {
+                    calendar.noticeWaiting(true)
+                    combine(session.state, calendar.state) { _, state -> state }.first { !current() || !it.editing && it.openEvent == null }
+                }
+                if (!current()) return@launch
+                val mailbox = inbox.state.value.mailboxes.firstOrNull { it.address == notice.mailbox } ?: return@launch
+                if (inbox.state.value.acting?.address != notice.mailbox) inbox.switchMailbox(mailbox)
+                val loaded = withTimeoutOrNull(30_000) {
+                    combine(session.state, inbox.state) { _, state -> state }.first { !current() || it.acting?.address != notice.mailbox || it.loaded }
+                } ?: return@launch
+                if (!current() || loaded.acting?.address != notice.mailbox || "calendar" !in loaded.features) return@launch
+                val actor = withTimeoutOrNull(30_000) {
+                    combine(session.state, calendar.state) { _, state -> state }.first { !current() || it.mailbox == notice.mailbox && it.enabled }
+                } ?: return@launch
+                if (!current() || actor.mailbox != notice.mailbox || inbox.state.value.acting?.address != notice.mailbox ||
+                    calendar.state.value.contextId != actor.contextId) return@launch
+                openCalendar(); calendar.refresh(); notice.event?.let(calendar::openEvent)
+            } finally { if (visit == calendarNoticeId) calendar.noticeWaiting(false) }
+        }
+    }
+
     fun openNotification(identity: String?, peer: String?) {
         if (identity != null && peer != null && validAddress(identity) && GroupLinks.isGroupId(peer)) {
             viewModelScope.launch {
@@ -216,7 +261,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     override fun onCleared() {
         storeScope.retire()
-        dev.pigeonpost.inbox.push.PushNotifications.groupPoke = null; billing?.close(); calls?.destroy(); super.onCleared() }
+        dev.pigeonpost.inbox.push.PushNotifications.groupPoke = null; PushNotifications.calendarPoke = null; calendarNoticeJob?.cancel(); billing?.close(); calls?.destroy(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey; groupAttachTarget = null }
 
     // ---- group composer files (sealed and uploaded when the message is sent) -----------------

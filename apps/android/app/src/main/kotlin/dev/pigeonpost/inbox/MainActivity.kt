@@ -99,7 +99,7 @@ class MainActivity : ComponentActivity() {
             fullScreenCalls = { if (model.graph.fixtures || IncomingCalls.canUseFullScreen(this)) null else ::fullScreenCallSettings },
             choosePicture = { picture.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) },
             takePicture = ::takePicture) }
-        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        if (savedInstanceState == null) openNotification(intent)
         if (savedInstanceState == null) model.openGroupLink(intent.data)
         Development.started()
         model.calls?.let { host ->
@@ -137,8 +137,19 @@ class MainActivity : ComponentActivity() {
     }
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
-        model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
+        openNotification(intent)
         answerCall(intent)
+    }
+    private fun openNotification(intent: Intent) {
+        val payload = buildMap {
+            intent.getStringExtra("push_identity")?.let { put("identity", it) }
+            intent.getStringExtra("push_type")?.let { put("type", it) }
+            for (key in listOf("calendar_event_id", "calendar_occurrence_id")) intent.getStringExtra(key)?.let { put(key, it) }
+            val legacy = intent.data?.takeIf { it.scheme == "pigeonpost-notification" }?.lastPathSegment
+            (intent.getStringExtra("push_message_id") ?: legacy)?.let { put("message_id", it) }
+        }
+        if (dev.pigeonpost.core.calendar.CalendarNotice.matches(payload)) model.openCalendarNotice(payload)
+        else model.openNotification(intent.getStringExtra("push_identity"), intent.getStringExtra("push_peer"))
     }
     override fun onStart() {
         super.onStart(); PushNotifications.foreground = true; model.setActive(true); model.billing?.attach(this)

@@ -38,13 +38,18 @@ data class CalendarState(
     val attemptsLoaded: Boolean = false,
     val attemptsUnreadable: Boolean = false,
     val durableWrites: Boolean = true,
+    val editor: CalendarEditorSession? = null,
+    val noticeWaiting: Boolean = false,
 ) {
+    val editing get() = editor != null
     val zone get() = CalendarTime.displayZone(settings.timezone)
     val weekStart get() = settings.weekStart?.takeIf { it in 0..6 } ?: 1
     val agenda get() = occurrences.filter { it.occursOn(selectedDay, zone) }.sortedWith(compareByDescending<EventOccurrence> { it.allDay == true }.thenBy { it.startsAt ?: Long.MIN_VALUE })
     val canCreate get() = enabled && attemptsLoaded && !attemptsUnreadable && durableWrites
 }
 data class CalendarCreated(val kind: CalendarAttemptKind, val eventId: String? = null, val calendarId: String? = null, val imported: Int = 0)
+/** Kept in the ViewModel-owned store through rotation, never written to an Android state bundle. */
+data class CalendarEditorSession(val initial: CalendarEventDraft, val draft: CalendarEventDraft = initial, val id: String = UUID.randomUUID().toString())
 
 /** UI-scope owner. Every task captures its canonical mailbox, child lease and request generation. */
 class CalendarStore(
@@ -114,6 +119,18 @@ class CalendarStore(
         }
     }
     fun clearError() { mutable.update { it.copy(error = null, revisionConflict = false) } }
+    fun beginEditor(draft: CalendarEventDraft) {
+        val c = client ?: return
+        if (draft.contextId != state.value.contextId) return
+        update(c) { it.copy(editor = CalendarEditorSession(draft)) }
+    }
+    fun retainEditorDraft(id: String, draft: CalendarEventDraft) {
+        val c = client ?: return
+        val editor = state.value.editor?.takeIf { it.id == id && draft.contextId == state.value.contextId } ?: return
+        update(c) { it.copy(editor = editor.copy(draft = draft)) }
+    }
+    fun closeEditor(id: String) { if (state.value.editor?.id == id) mutable.update { it.copy(editor = null) } }
+    fun noticeWaiting(value: Boolean) { mutable.update { it.copy(noticeWaiting = value) } }
     fun select(day: CalendarDay) { followingToday = false; mutable.update { it.copy(selectedDay = day) }; refresh() }
     fun today() { followingToday = true; mutable.update { it.copy(selectedDay = CalendarDay.at(now(), it.zone)) }; refresh() }
     fun selectFolders(ids: Set<String>?) { mutable.update { it.copy(selectedFolders = ids) }; refresh() }

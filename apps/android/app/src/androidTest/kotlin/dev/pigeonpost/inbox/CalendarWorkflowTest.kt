@@ -28,6 +28,10 @@ class CalendarWorkflowTest {
     }
     private fun click(text: String) = ui.onNodeWithText(text).performScrollTo().performClick()
     private fun save() = ui.onNodeWithTag("calendar:save").performScrollTo().performClick()
+    private fun notice(identity: String = "/k/demomain", event: String? = "evt_review") = Intent(context, MainActivity::class.java)
+        .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        .putExtra("pigeonpost.fixtures", "calendar").putExtra("push_type", "calendar").putExtra("push_identity", identity)
+        .putExtra("calendar_event_id", event).putExtra("calendar_occurrence_id", if (event == null) null else "occ_$event")
 
     @Test fun agendaCreateAndEditKeepTheNativeNavigationAndDetails() {
         launch().use {
@@ -116,6 +120,50 @@ class CalendarWorkflowTest {
             click("Calendars and subscriptions"); click("Show all calendars")
             ui.onNodeWithContentDescription("Close Your calendars").performClick()
             shown("Planning review")
+        }
+    }
+    @Test fun rotationPreservesAnUnsubmittedDraftWithoutSavingIt() {
+        launch().use { scenario ->
+            ui.onNodeWithTag("calendar:new").performClick()
+            ui.onNodeWithTag("calendar:title").performTextInput("A draft through rotation")
+            scenario.recreate()
+            ui.onNodeWithTag("calendar:title").assertTextContains("A draft through rotation")
+            ui.onNodeWithContentDescription("Close New event").performClick()
+            shown("Discard this draft?")
+            ui.onNodeWithText("Discard draft").performClick()
+            ui.onAllNodesWithText("A draft through rotation").assertCountEquals(0)
+        }
+    }
+    @Test fun coldStartCalendarNoticeOpensTheEventWithoutAnOrganizerConversation() {
+        context.getSharedPreferences("fixture-settings", Context.MODE_PRIVATE).edit().clear().commit()
+        ActivityScenario.launch<MainActivity>(notice()).use {
+            shown("A native calendar workflow")
+            ui.onNodeWithContentDescription("Close Event").assertExists()
+            ui.onAllNodesWithText("Message").assertCountEquals(0)
+        }
+    }
+    @Test fun aNoticeWaitsForAnOpenDraftAndDoesNotReplaceItsText() {
+        launch().use { scenario ->
+            ui.onNodeWithTag("calendar:new").performClick()
+            ui.onNodeWithTag("calendar:title").performTextInput("Keep this draft")
+            scenario.onActivity { it.startActivity(notice()) }
+            shown("A calendar notification is waiting")
+            ui.onNodeWithTag("calendar:title").assertTextContains("Keep this draft")
+            ui.onNodeWithContentDescription("Close New event").performClick()
+            shown("Discard this draft?"); ui.onNodeWithText("Discard draft").performClick()
+            shown("A native calendar workflow")
+        }
+    }
+    @Test fun aNoticeForAnotherOwnedInboxAlsoWaitsBeforeChangingMailboxes() {
+        launch().use { scenario ->
+            ui.onNodeWithTag("calendar:new").performClick()
+            ui.onNodeWithTag("calendar:title").performTextInput("Keep this mailbox draft")
+            scenario.onActivity { it.startActivity(notice("/k/demoagent", null)) }
+            shown("A calendar notification is waiting")
+            ui.onNodeWithTag("calendar:title").assertTextContains("Keep this mailbox draft")
+            ui.onNodeWithContentDescription("Close New event").performClick()
+            shown("Discard this draft?"); ui.onNodeWithText("Discard draft").performClick()
+            shown("/k/demoagent"); shown("No events on this day.")
         }
     }
 }

@@ -338,4 +338,25 @@ class CalendarStoreTest {
         catch (_: AuthorizationRetired) { }
         assertFalse(opened); assertTrue(authorization.isValid)
     } }
+    @Test fun anEditorRetainsItsInitialProofAndLatestDraftWithoutCrossingActors() = runBlocking<Unit> { world {
+        val original = CalendarEventDraft(context, "2026-10-28", tzid = "UTC", title = "Initial")
+        store.beginEditor(original)
+        val session = store.state.value.editor!!
+        store.retainEditorDraft(session.id, original.copy(title = "Unsaved rotation draft"))
+        assertEquals("Initial", store.state.value.editor!!.initial.title)
+        assertEquals("Unsaved rotation draft", store.state.value.editor!!.draft.title)
+        assertTrue(store.state.value.editing)
+        connect("/bob"); ready()
+        store.retainEditorDraft(session.id, original.copy(title = "Late old draft"))
+        store.beginEditor(original)
+        assertFalse(store.state.value.editing); assertNull(store.state.value.editor)
+    } }
+    @Test fun aLateEditorDisposalCannotReplaceOrCloseTheCurrentEditor() = runBlocking<Unit> { world {
+        val draft = CalendarEventDraft(context, "2026-10-28", tzid = "UTC", title = "Initial")
+        store.beginEditor(draft); val old = store.state.value.editor!!
+        store.closeEditor(old.id); store.beginEditor(draft.copy(title = "Replacement"))
+        val next = store.state.value.editor!!.id
+        store.retainEditorDraft(old.id, draft.copy(title = "Late")); store.closeEditor(old.id)
+        assertEquals(next, store.state.value.editor!!.id); assertEquals("Replacement", store.state.value.editor!!.draft.title)
+    } }
 }

@@ -9,6 +9,8 @@ import java.util.UUID
 
 /** Opt-in, in-memory native workflow data. It cannot make HTTP requests or send invitations. */
 internal class CalendarFixture(private val base: PostboxApi, private val mode: String) : PostboxApi by base, CalendarTransport {
+    override suspend fun identities() = listOf(IdentityRow("/k/demomain", "Main"), IdentityRow("/k/demoagent", "Build agent"))
+    override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == "/k/demomain") "/demo/main" else "/demo/agent")
     override suspend fun capabilities() = Capabilities(listOf("calendar"))
     private var settings = CalendarSettings(timezone = "Europe/Istanbul", weekStart = 1, previews = false)
     private val folders = mutableListOf(CalendarFolder("cal_main", "Personal", "blue", true, 1))
@@ -28,7 +30,7 @@ internal class CalendarFixture(private val base: PostboxApi, private val mode: S
     }
     private fun eventBytes(e: ScheduledEvent, occurrence: String? = null) = WireJson.encodeToString(CalendarEventResponse.serializer(), CalendarEventResponse(e,
         occurrence?.let { EventOccurrenceDetail(occurrenceId = it, start = e.start, end = e.end, startsAt = e.startsAt, endsAt = e.endsAt, title = e.title, myRsvp = e.my?.rsvp) })).toByteArray()
-    private fun rows(mailbox: String) = if (mailbox != "/k/demo-main") emptyList() else events.values.map { e -> EventOccurrence("occ_" + e.id, e.id,
+    private fun rows(mailbox: String) = if (mailbox != "/k/demomain") emptyList() else events.values.map { e -> EventOccurrence("occ_" + e.id, e.id,
         calendarId = e.calendarId, allDay = e.allDay, startsAt = e.startsAt, endsAt = e.endsAt, startDate = e.startDate, endDate = e.endDate, tzid = e.tzid,
         title = e.title, location = e.location, status = e.status, organizer = e.organizer, role = e.my?.role, myRsvp = e.my?.rsvp, meeting = e.meeting) }
     override suspend fun calendarRequest(mailbox: String, method: String, path: String, query: Map<String, String>, body: ByteArray?, mediaType: String): ByteArray {
@@ -48,7 +50,7 @@ internal class CalendarFixture(private val base: PostboxApi, private val mode: S
                     workingHours = fields["working_hours"]?.let { WireJson.decodeFromString<CalendarWorkingHours>(it.toString()) } ?: settings.workingHours)
                 return WireJson.encodeToString(CalendarSettings.serializer(), settings).toByteArray()
             }
-            "/v1/calendar/invitations" -> return if (query["state"] == "filtered" || mailbox != "/k/demo-main" || events["evt_invited"]?.my?.rsvp != "pending") "{\"invitations\":[]}".toByteArray()
+            "/v1/calendar/invitations" -> return if (query["state"] == "filtered" || mailbox != "/k/demomain" || events["evt_invited"]?.my?.rsvp != "pending") "{\"invitations\":[]}".toByteArray()
                 else """{"invitations":[{"event_id":"evt_invited","occurrence_id":"occ_evt_invited","title":"Shared planning","organizer":{"handle":"/demo/builder"}}]}""".toByteArray()
             "/v1/calendar/events" -> if (method == "GET") return WireJson.encodeToString(EventOccurrencesResponse.serializer(), EventOccurrencesResponse(rows(mailbox))).toByteArray() else {
                 val key = string("request_key")!!

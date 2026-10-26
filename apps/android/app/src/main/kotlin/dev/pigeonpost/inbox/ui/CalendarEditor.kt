@@ -10,8 +10,10 @@ import androidx.compose.ui.unit.dp
 import dev.pigeonpost.core.calendar.*
 
 @Composable
-internal fun CalendarEventEditor(initial: CalendarEventDraft, s: CalendarState, store: CalendarStore, dismiss: () -> Unit, saved: (CalendarEventKey) -> Unit) {
-    var draft by remember(initial) { mutableStateOf(initial) }
+internal fun CalendarEventEditor(session: CalendarEditorSession, s: CalendarState, store: CalendarStore, dismiss: () -> Unit, saved: (CalendarEventKey) -> Unit) {
+    val initial = session.initial
+    var draft by remember(session.id) { mutableStateOf(session.draft) }
+    DisposableEffect(session.id) { onDispose { store.retainEditorDraft(session.id, draft) } }
     var problem by remember { mutableStateOf<String?>(null) }
     var closeConfirm by remember { mutableStateOf(false) }
     val pending = if (initial.target == null) s.pending.firstOrNull { it.kind == CalendarAttemptKind.EVENT } else null
@@ -26,6 +28,7 @@ internal fun CalendarEventEditor(initial: CalendarEventDraft, s: CalendarState, 
         }
         problem?.let { CalendarError(it) { problem = null } }
         s.error?.let { CalendarError(it, store::clearError) }
+        if (s.noticeWaiting) Text("A calendar notification is waiting. Finish this draft and close the event to open it.", color = Pp.colors.secondary)
         CalendarField("Event title", draft.title, enabled, "calendar:title") { draft = draft.copy(title = it) }
         CalendarField("Description", draft.description, enabled, singleLine = false) { draft = draft.copy(description = it) }
         CalendarField("Location", draft.location, enabled) { draft = draft.copy(location = it) }

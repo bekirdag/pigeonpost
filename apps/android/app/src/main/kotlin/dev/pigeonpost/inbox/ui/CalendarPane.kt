@@ -29,7 +29,7 @@ fun CalendarPane(store: CalendarStore, state: CalendarState, back: () -> Unit) {
 @Composable
 private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () -> Unit) {
     val p = Pp.colors
-    var editor by remember { mutableStateOf<CalendarEventDraft?>(null) }
+    val editor = s.editor
     var tools by remember { mutableStateOf(false) }
     var discard by remember { mutableStateOf<CalendarPendingAttempt?>(null) }
     val context = s.contextId
@@ -41,7 +41,7 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
                 Text(s.mailbox.orEmpty(), style = geistMono(11.sp), color = p.muted, maxLines = 1)
             }
             ActionIcon("Calendar settings", Icons.Outlined.Tune) { tools = true }
-            IconButton({ editor = CalendarEventDraft(context, s.selectedDay.text, tzid = s.zone.id, calendarId = s.folders.firstOrNull { it.isDefault == true }?.id) }, enabled = s.canCreate && s.pending.none { it.kind == CalendarAttemptKind.EVENT }, modifier = Modifier.testTag("calendar:new")) {
+            IconButton({ store.beginEditor(CalendarEventDraft(context, s.selectedDay.text, tzid = s.zone.id, calendarId = s.folders.firstOrNull { it.isDefault == true }?.id)) }, enabled = s.canCreate && s.pending.none { it.kind == CalendarAttemptKind.EVENT }, modifier = Modifier.testTag("calendar:new")) {
                 Icon(Icons.Outlined.Add, "New event", tint = if (s.canCreate) p.accent else p.muted)
             }
         }
@@ -103,11 +103,11 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
         }
     }
     if (tools) CalendarTools(store, s) { tools = false }
-    editor?.let { draft -> CalendarEventEditor(draft, s, store, { editor = null }) { key ->
+    editor?.let { session -> CalendarEventEditor(session, s, store, { store.closeEditor(session.id) }) { key ->
         // Closing a sent form must not let its late success dismiss a replacement editor.
-        if (editor === draft) { editor = null; store.openEvent(key) }
+        if (store.state.value.editor?.id == session.id) { store.closeEditor(session.id); store.openEvent(key) }
     } }
-    if (editor == null) s.openEvent?.let { event -> key(event) { CalendarEventDetails(event, s, store, { store.closeEvent() }) { draft -> editor = draft } } }
+    if (editor == null) s.openEvent?.let { event -> key(event) { CalendarEventDetails(event, s, store, { store.closeEvent() }, store::beginEditor) } }
     discard?.let { record -> Confirm("Discard unconfirmed record?", "Discarding this record does not undo an event or import that the server already accepted. Inspect your calendar first to avoid creating a duplicate.", "Discard record",
         { store.discard(record.id, context); discard = null }, { discard = null }, enabled = s.busy.isEmpty()) }
 }
