@@ -63,6 +63,11 @@
                         Background="{ThemeResource IncomingMessageBrush}" BorderBrush="{ThemeResource IncomingBorderBrush}" BorderThickness="1">
                     <StackPanel>
                         <StackPanel Padding="16,12,16,14">
+                            <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
+                                    AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
+                                <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
+                            </Button>
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        SelectionChanged="MessageBody_SelectionChanged"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource IncomingTextBrush}" />
@@ -92,7 +97,7 @@
                         <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource IncomingFooterBorderBrush}" Padding="16,6,12,6">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="{x:Bind TimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
+                                <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
                                 <Border Grid.Column="1" Padding="8,2,8,3" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource ChipSurfaceBrush}"
                                         Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}">
                                     <TextBlock Text="{x:Bind StatusLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource ChipTextBrush}" />
@@ -114,6 +119,11 @@
                         Background="{ThemeResource OutgoingMessageBrush}" BorderBrush="{ThemeResource OutgoingBorderBrush}" BorderThickness="1">
                     <StackPanel>
                         <StackPanel Padding="16,12,16,14">
+                            <Button Tag="{x:Bind}" Visibility="{x:Bind HasReply}" Loaded="MessageAction_Loaded" Unloaded="MessageAction_Unloaded" Click="ReplyParent_Click"
+                                    AutomationProperties.Name="{x:Bind ReplyAccessibility}" ToolTipService.ToolTip="Open quoted message" Style="{StaticResource AttachmentButton}"
+                                    HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" Padding="10,8" Margin="0,0,0,10" MinWidth="0">
+                                <TextBlock Text="{x:Bind ReplyQuote}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource AccentBrush}" />
+                            </Button>
                             <TextBlock Text="{x:Bind DisplayBody}" Loaded="MessageBody_Loaded" Unloaded="MessageBody_Unloaded" TextWrapping="Wrap" IsTextSelectionEnabled="True"
                                        SelectionChanged="MessageBody_SelectionChanged"
                                        FontSize="14.5" LineHeight="21" Foreground="{ThemeResource OutgoingTextBrush}" />
@@ -143,8 +153,11 @@
                         <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource OutgoingFooterBorderBrush}" Padding="16,6,12,6">
                             <Grid ColumnSpacing="10">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                                <TextBlock Text="{x:Bind TimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
-                                <TextBlock Grid.Column="1" Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                                <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+                                    <TextBlock Text="{x:Bind ReceiptGlyph}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
+                                    <TextBlock Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
+                                </StackPanel>
                                 <Button Grid.Column="3" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
                                         AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
                                     <FontIcon Glyph="&#xE8C8;" FontSize="13" />

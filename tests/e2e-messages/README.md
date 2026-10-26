@@ -1,6 +1,18 @@
-# Android direct-message interoperability
+# Native direct-message interoperability
 
-This opt-in target uses the app's actual Kotlin `PostboxClient` against a real Rust postbox,
+The Windows Core client also has an opt-in executable against the same disposable Rust postbox:
+
+```sh
+tests/e2e-messages/windows.sh /absolute/path/to/target/debug/pigeonpost-postbox
+```
+
+It requires .NET 10 and Node. `PIGEONPOST_TEST_DOTNET` can select an already installed SDK executable.
+It qualifies folded edits, version acknowledgement/info, reply context, copy ownership, receipt
+privacy, exact explicit send/edit recovery after committed response loss, and whole-version
+deletion local to the receiving mailbox. The ordinary Core runner has no conditional skip; this
+target is explicit. Its setup file and all server state are private, synthetic and loopback-only.
+
+The Android opt-in target uses the app's actual Kotlin `PostboxClient` against a real Rust postbox,
 temporary loopback OIDC issuer and a transport fault proxy. It never uses a signed-in account or
 changes production flags. The fixture enables message actions and filtering only in its own DB.
 

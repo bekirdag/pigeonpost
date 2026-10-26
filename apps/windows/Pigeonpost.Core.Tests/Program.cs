@@ -1043,6 +1043,7 @@ tests.AddRange(CallHistoryAuthorizationTests.All());
 tests.AddRange(NativeCallSessionTests.All());
 tests.AddRange(InboxAuthorizationTests.All());
 tests.AddRange(MessageActionsTests.All());
+tests.AddRange(MessageTargetTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

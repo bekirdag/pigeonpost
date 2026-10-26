@@ -425,6 +425,26 @@ public static class NativeFileDragSource {
         if ($initialScroll.Current.VerticalScrollPercent -lt 95) { throw 'Initial conversation did not open at its newest messages.' }
         Set-Text 'Message' 'Please review the release checklist.'
         Capture 'inbox.png'
+        $null = Wait-Element 'Seen'
+        $quotedName = 'Open quoted message: I''ve organized the feedback for the next release. Can you review the desktop layout?'
+        Invoke-Control $quotedName
+        $parentSelected = $false
+        for ($n = 0; $n -lt 40; $n++) {
+            $selectedRows = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()
+            if ($selectedRows.Count -eq 1) {
+                $parentCopy = $selectedRows[0].FindFirst([System.Windows.Automation.TreeScope]::Descendants,
+                    [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'design-1'))
+                if ($parentCopy) { $parentSelected = $true; break }
+            }
+            Start-Sleep -Milliseconds 100
+        }
+        if (-not $parentSelected) { throw 'The quote did not navigate to its original message.' }
+        if ((Wait-Element 'Message').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value -ne 'Please review the release checklist.') {
+            throw 'Quoted-parent navigation changed the draft.'
+        }
+        Capture 'quoted-parent.png'
+        (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.ScrollPattern]::Pattern).SetScrollPercent(-1, 100)
+        Start-Sleep -Milliseconds 500
         $pin.Toggle()
         Start-Sleep -Milliseconds 500
         if (Element 'Subjects') { throw 'Unpinning did not hide the subjects pane.' }
