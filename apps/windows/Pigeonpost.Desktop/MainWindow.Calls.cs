@@ -329,6 +329,7 @@ public sealed partial class MainWindow
     private async Task ConfigureCallsAsync()
     {
         if (!callsSignedIn) return;
+        if (CurrentCallMailbox() is null) { RemoveCallView(); return; }
         if (callSession is not { } actor || !CallCurrent(actor)) { await StartCallsAsync(); return; }
         if (CaptureCallPage() is not { } page) return;
         var mailbox = CurrentCallMailbox()!;
@@ -432,7 +433,12 @@ public sealed partial class MainWindow
 
     private bool lastRingCard;
 
-    // Sign-out ends any call and forgets the member; the page stays loaded for the next sign-in.
+    // Sign-out retires this host; the next sign-in receives a fresh call page.
+    private static async Task ShutdownCallPageAsync(CoreWebView2 core)
+    {
+        await core.ExecuteScriptAsync(CallBridge.SignOutScript);
+    }
+
     private async Task StopCallsAsync()
     {
         var page = CaptureCallPage(requireReady: false);
@@ -442,12 +448,12 @@ public sealed partial class MainWindow
         {
             // Only this retired view receives shutdown; no token or user action is dispatched.
             if (page is not null && CallBridge.IsPage(ParseUri(page.Core.Source), callPage))
-                await page.Core.ExecuteScriptAsync(CallBridge.SignOutScript).WaitAsync(TimeSpan.FromSeconds(2));
+                await ShutdownCallPageAsync(page.Core).WaitAsync(TimeSpan.FromSeconds(2));
         }
         catch (Exception) { }
         finally { try { view?.Close(); } catch (Exception) { } }
         await alerts;
-        ApplyCallMode(CallMode.Hidden);
+        if (callSession is null) ApplyCallMode(CallMode.Hidden);
     }
 
     private void RemoveCallView()

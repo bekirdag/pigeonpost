@@ -28,7 +28,17 @@ public sealed class AvatarDirectory(PostboxClient postbox, Func<DateTimeOffset>?
         set { if (enabled == value) return; enabled = value; Clear(); }
     }
     public long Version { get { Current(); return version; } }
-    public bool IsCurrent(long revision) => Current() is { } current && revision == version && IsCurrent(current);
+    public bool IsCurrent(long revision)
+    {
+        if (Current() is not { } current || revision != version || !IsCurrent(current)) return false;
+        try
+        {
+            using var actor = AuthorizationContext.BindActor(current.Accepted, current.Authorization);
+            postbox.CaptureAuthorizationValidation()();
+            return true;
+        }
+        catch (AuthorizationRetiredException) { return false; }
+    }
     // Raised with the address whose picture changed (appeared, changed or went away).
     public event EventHandler<string>? PictureChanged;
 
