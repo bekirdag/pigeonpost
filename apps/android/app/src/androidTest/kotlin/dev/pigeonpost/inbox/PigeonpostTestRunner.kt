@@ -22,6 +22,13 @@ class PigeonpostTestRunner : AndroidJUnitRunner() {
             val power = targetContext.getSystemService(PowerManager::class.java)
             val keyguard = targetContext.getSystemService(KeyguardManager::class.java)
             startupReadiness = "beforeInteractive=${power.isInteractive},beforeKeyguard=${keyguard.isKeyguardLocked}"
+            // API 34's first-boot Pixel Launcher can leave its own ANR dialog above every
+            // test activity. Reset only that launcher on the opted-in disposable emulator,
+            // before tests start. App/unknown error dialogs and focus assertions stay intact.
+            check(shell("am force-stop com.google.android.apps.nexuslauncher").isBlank()) {
+                "Unable to reset the disposable emulator's Pixel Launcher."
+            }
+            startupReadiness += ",launcherReset=true"
             if (!power.isInteractive) shell("input keyevent KEYCODE_WAKEUP")
             if (keyguard.isKeyguardLocked) shell("wm dismiss-keyguard")
             val deadline = SystemClock.uptimeMillis() + 5000
