@@ -59,7 +59,7 @@ jobs:
           ANDROID_NDK_HOME="${ANDROID_SDK_ROOT:-$ANDROID_HOME}/ndk/27.2.12479018" scripts/build-android.sh
           cargo build --release --locked -p pigeonpost-groupcrypto-ffi
       - name: Unit tests, lint, APK and release bundle
-        run: ./gradlew :core:test :app:lintDebug :app:assembleDebug :app:assembleRelease :app:bundleRelease --no-daemon --console=plain
+        run: ./gradlew :core:test :app:lintDebug :app:assembleDebug :app:assembleDebugAndroidTest :app:assembleRelease :app:bundleRelease --no-daemon --console=plain
       - name: Enable the emulator accelerator
         run: sudo chmod 666 /dev/kvm
       - name: Native Android workflow tests
@@ -73,11 +73,15 @@ jobs:
           working-directory: apps/android
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           # Compose can render behind a sleeping/keyguard window, but clipboard/input tests
-          # correctly require focus. Keep this job's emulator awake for the entire suite.
+          # correctly require focus. The test APK is compiled above, before booting the emulator;
+          # prevent display timeout during install and verify wakefulness immediately before tests.
           script: |
+            adb shell settings put system screen_off_timeout 2147483647
             adb shell svc power stayon true
             adb shell input keyevent KEYCODE_WAKEUP
             adb shell wm dismiss-keyguard
+            adb shell dumpsys power > app/build/reports/emulator-power-before-tests.txt
+            grep -q 'mWakefulness=Awake' app/build/reports/emulator-power-before-tests.txt
             ./gradlew :app:connectedDebugAndroidTest --no-daemon --console=plain
       - name: Upload development builds and validation reports
         if: always()
