@@ -430,7 +430,7 @@ public static class NativeFileDragSource {
         Invoke-Control $quotedName
         $parentSelected = $false
         for ($n = 0; $n -lt 40; $n++) {
-            $selectedRows = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).GetCurrentSelection()
+            $selectedRows = (Wait-List 'Messages').GetCurrentPattern([System.Windows.Automation.SelectionPattern]::Pattern).Current.GetSelection()
             if ($selectedRows.Count -eq 1) {
                 $parentCopy = $selectedRows[0].FindFirst([System.Windows.Automation.TreeScope]::Descendants,
                     [System.Windows.Automation.PropertyCondition]::new([System.Windows.Automation.AutomationElement]::AutomationIdProperty, 'design-1'))
