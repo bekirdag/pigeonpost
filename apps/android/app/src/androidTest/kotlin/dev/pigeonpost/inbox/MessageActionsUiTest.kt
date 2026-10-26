@@ -56,6 +56,8 @@ class MessageActionsUiTest {
     private fun scrollMessage(id: String) {
         ui.onNodeWithTag("conversation-history").performScrollToNode(hasTestTag("message:" + id))
     }
+    // Phone chips identify the subject by ID; the existing tablet list uses its display title.
+    private fun subject(id: String, title: String) = ui.onNode(hasTestTag("subject:$id") or hasTestTag("subject:$title"))
 
     @Test fun editingCancelsBackToTheOrdinaryDraft() {
         runCase {
@@ -97,13 +99,13 @@ class MessageActionsUiTest {
     @Test fun replyingShowsTheContextAndSendsTheQuotedAnswer() {
         runCase {
             open()
-            ui.onNodeWithTag("subject:actions_earlier").performClick()
+            subject("actions_earlier", "Earlier discussion").performClick()
             tag("reply:actions_parent"); ui.onNodeWithTag("reply:actions_parent").performClick()
             tag("composerMode"); ui.onNodeWithText("Replying to Assistant").assertExists()
             ui.onNodeWithTag("messageEditor").performTextInput("Answer from the reply")
             ui.onNodeWithContentDescription("Send message").performClick()
             ui.waitUntil(20_000) { ui.onAllNodesWithTag("composerMode").fetchSemanticsNodes().isEmpty() }
-            ui.onNodeWithText("Answer from the reply").assertExists()
+            ui.onNode(hasText("Answer from the reply") and hasAnyAncestor(hasTestTag("conversation-history"))).assertExists()
             ui.onNodeWithTag("replyQuote:actions_parent").assertExists()
         }
     }
@@ -112,7 +114,7 @@ class MessageActionsUiTest {
         runCase {
             open(); scrollMessage("actions_seen")
             ui.onNode(hasTestTag("replyQuote:actions_parent") and hasAnyAncestor(hasTestTag("message:actions_seen"))).performClick()
-            ui.onNodeWithTag("subject:actions_earlier").assertIsSelected()
+            subject("actions_earlier", "Earlier discussion").assertIsSelected()
             tag("message:actions_parent")
             ui.onNodeWithText("The release plan is ready.", substring = true).assertExists()
         }
@@ -161,7 +163,7 @@ class MessageActionsUiTest {
             ui.onAllNodesWithTag("edit:actions_failed").assertCountEquals(0)
             ui.onAllNodesWithTag("receipt:agent_failed", useUnmergedTree = true).assertCountEquals(0)
             ui.onNode(hasContentDescription("Copy message") and hasAnyAncestor(hasTestTag("message:actions_failed"))).assertExists()
-            ui.onNodeWithTag("subject:actions_earlier").performClick()
+            subject("actions_earlier", "Earlier discussion").performClick()
             ui.onAllNodesWithTag("reply:actions_parent").assertCountEquals(0)
         }
     }

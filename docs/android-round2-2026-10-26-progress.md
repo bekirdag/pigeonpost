@@ -67,3 +67,13 @@
   No parent exclusion was changed. Those files receive precise source reads, compiler and runtime
   validation; Kotlin dependency graphs elsewhere are also incomplete. All debug modes require an
   explicit intent and are excluded from release. No production account or real message was used.
+
+## Full direct-message UI checkpoint (`c2752e6`)
+
+The complete Android Gradle qualification passed: 123 JVM cases including real MLS; 64 connected UI cases (61 passed, three intentional opt-in skips, no failures); debug lint; release/R8 assembly and unsigned AAB generation. The XML `tests` count includes skips. The three skipped checks require live FCM, a separately installed postbox fixture, or screenshot capture mode. These skips are not deployment/device-call proof. The AAB is unsigned (`jarsigner -verify`), SHA-256 `d6d71aaa355b232e50c35bc9c48aa074f40b591ad6d76d9049d899ec08ec957d`. Release compilation is not an R8 runtime test. Private evidence: `continuation-20261024/validation/android-message-actions-full-platform.log` and `android-message-actions-c2752e6-platform.json`. No store submission. Tablet qualification and real direct-message postbox interop follow in isolated fixtures.
+
+## Phone and wide-screen actions
+
+All eight direct-message interaction cases passed again at phone size and at a 1920×1200 / 160-dpi tablet layout on the owned API 34 emulator. Its original size/density were restored in `finally`. The first wide run found that phone chips use ID-based tags while the existing tablet list uses titles; the test selector now supports both without changing the working UI. A second failure was an assertion matching both the sidebar preview and the actual reply; the check now targets conversation history. Final evidence: `android-message-actions-{tablet,phone}-final.log`. Local Qwen provided the small valid selector helper, reviewed before use.
+
+The real Kotlin/PostboxClient integration also passed in an isolated sibling branch (`7dc6f52`): ordinary sends, folded edit/ack/version metadata, reply and account ownership, recipient/sender preferences, Filtered receipt privacy, and exact explicit send/edit retry after a real server commit and dropped response. The fixture has local-only origins, synthetic accounts and private temporary state. It creates no production accounts and sends no real messages. Cloudflare confirms TURN DNS-only A `193.164.5.36`; public DNS resolves it directly. Enterprise DNS resolves through the existing Cloudflare proxy.
