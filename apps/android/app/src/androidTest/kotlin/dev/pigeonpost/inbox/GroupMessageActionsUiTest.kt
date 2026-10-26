@@ -58,10 +58,13 @@ class GroupMessageActionsUiTest {
         ui.waitUntil(30_000) { ui.onAllNodes(message(text), useUnmergedTree = true).fetchSemanticsNodes().size == 1 }
         return ui.onNode(message(text), useUnmergedTree = true).fetchSemanticsNode().config[SemanticsProperties.TestTag].removePrefix("groupMessage:")
     }
-    private fun send(text: String): String {
-        ui.onNodeWithTag("groupComposer").performTextInput(text)
+    private fun pressSend() {
         ui.waitUntil(10_000) { SemanticsProperties.Disabled !in ui.onNodeWithContentDescription("Send to the group").fetchSemanticsNode().config }
         ui.onNodeWithContentDescription("Send to the group").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
+    }
+    private fun send(text: String): String {
+        ui.onNodeWithTag("groupComposer").performTextInput(text)
+        pressSend()
         val seq = sequence(text)
         ui.onNodeWithTag("groupComposer").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         return seq
@@ -132,7 +135,7 @@ class GroupMessageActionsUiTest {
 
     @Test fun anUnconfirmedGroupSendRetriesTheAcceptedMessageOnce() = scenario("group-actions-lost") {
         open(); ui.onNodeWithTag("groupComposer").performTextInput("One accepted group message")
-        ui.onNodeWithContentDescription("Send to the group").performClick(); tag("groupUnconfirmedSend")
+        pressSend(); tag("groupUnconfirmedSend")
         ui.onNodeWithText("Retry", useUnmergedTree = true).performClick()
         sequence("One accepted group message")
         ui.waitUntil(20_000) { ui.onAllNodesWithTag("groupUnconfirmedSend").fetchSemanticsNodes().isEmpty() }
