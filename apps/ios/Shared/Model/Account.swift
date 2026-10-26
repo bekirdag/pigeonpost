@@ -12,15 +12,43 @@ import Observation
 final class Account {
     enum Load: Equatable { case idle, loading, ready, failed(String) }
 
-    private(set) var mailboxes: [Mailbox] = []
-    private(set) var me: Mailbox?
-    private(set) var load: Load = .idle
+    private var cachedMailboxes: [Mailbox] = []
+    private var cachedMe: Mailbox?
+    private var cachedLoad: Load = .idle
+    private var cachedAuthorization: UUID?
+    private var cachedSubject: String?
+    private var loadAuthorization: UUID?
+    private var loadRequest: UUID?
+    private var creationRequest: UUID?
+    private var creatingAuthorization: UUID?
+    private var retiringAuthorization: UUID?
+    @ObservationIgnored private var actorLease: AuthorizationLease?
+    @ObservationIgnored private var actorLeaseAuthorization: UUID?
+    private(set) var actingGeneration = UUID()
+
+    var mailboxes: [Mailbox] { hasCurrentOwner ? cachedMailboxes : [] }
+    var me: Mailbox? { hasCurrentOwner ? cachedMe : nil }
+    var load: Load { hasCurrentOwner || loadAuthorization == session.authorizationId ? cachedLoad : .idle }
     /// A first mailbox is being minted. Its own flag rather than `load`, because `loadIdentities`
     /// declines to run while `load` is `.loading` and creating ends by calling it.
-    private(set) var creating = false
+    var creating: Bool { creationRequest != nil && creatingAuthorization == session.authorizationId && session.status == .signedIn }
 
     let session: Session
+    /// Long-lived services bind their own lifecycle to this provider.
     let client: PostboxClient
+    private let base: URL
+    private let defaults: UserDefaults
+    /// Snapshot a grant when an operation starts. A retained proxy never retains the session.
+    func scopedClient(acting: Bool = false) -> PostboxClient {
+        let authorization = session.authorizationId
+        let actor = acting ? actingGeneration : nil
+        let session = session
+        let tokens = ScopedTokenProvider(source: session) { [weak session, weak self] in
+            session?.status == .signedIn && session?.authorizationId == authorization
+                && (actor == nil || self?.actingGeneration == actor)
+        }
+        return PostboxClient(base: base, tokens: tokens, retainingTokens: true)
+    }
     /// What the postbox has switched on. Account-wide: capabilities are per account, not per mailbox.
     let features = Features()
     @ObservationIgnored private var purchaseStore: HandleStore?
@@ -34,16 +62,68 @@ final class Account {
 
     private let rememberedKey = "ppi_identity"
 
-    init(session: Session) {
+    init(session: Session, base: URL = Config.postbox, defaults: UserDefaults = .standard) {
         self.session = session
-        self.client = PostboxClient(tokens: session)
+        self.client = PostboxClient(base: base, tokens: session)
+        self.base = base
+        self.defaults = defaults
+        features.visible = { [weak self] in self?.hasCurrentOwner == true }
+    }
+
+    /// Same-person strong authentication keeps its screen and capabilities. Another person may
+    /// never see this person's identity cache while its new request is still pending.
+    private var hasCurrentOwner: Bool {
+        #if DEBUG
+        if Fixtures.enabled { return true }
+        #endif
+        guard session.status == .signedIn, retiringAuthorization != session.authorizationId else { return false }
+        return cachedAuthorization == session.authorizationId
+            || (cachedSubject != nil && cachedSubject == session.subject)
+    }
+
+    private func current(_ authorization: UUID) -> Bool {
+        session.status == .signedIn && session.authorizationId == authorization
+            && retiringAuthorization != authorization && !Task.isCancelled
+    }
+
+    /// The synchronous disk boundary follows both the grant and the selected inbox.
+    func accessForActingMailbox() -> AuthorizationLease? {
+        guard me != nil, current(session.authorizationId) else { return nil }
+        if actorLeaseAuthorization != session.authorizationId || actorLease?.isValid != true {
+            actorLease?.invalidate()
+            actorLease = AuthorizationLease(parent: session.accessLease)
+            actorLeaseAuthorization = session.authorizationId
+        }
+        return actorLease
+    }
+
+    private func retireActor() {
+        actorLease?.invalidate()
+        actorLease = nil
+        actorLeaseAuthorization = nil
+        actingGeneration = UUID()
     }
 
     func loadIdentities() async {
-        if case .loading = load { return }
-        load = .loading
+        let authorization = session.authorizationId
+        guard current(authorization) else { return }
+        if loadAuthorization == authorization, case .loading = cachedLoad { return }
+        let request = UUID()
+        let client = scopedClient()
+        if !hasCurrentOwner { features.reset() }
+        loadAuthorization = authorization
+        loadRequest = request
+        cachedLoad = .loading
+        defer {
+            if loadRequest == request {
+                loadRequest = nil
+                if case .loading = cachedLoad { cachedLoad = .idle }
+            }
+        }
+        func owns() -> Bool { current(authorization) && loadRequest == request }
         do {
             let rows = try await client.identities()
+            guard owns() else { return }
             let resolved = await withTaskGroup(of: (Int, Mailbox).self) { group in
                 for (index, row) in rows.enumerated() {
                     group.addTask { [client] in
@@ -57,16 +137,25 @@ final class Account {
                 for await result in group { collected.append(result) }
                 return collected.sorted { $0.0 < $1.0 }.map(\.1)
             }
-            mailboxes = resolved
-            me = preferred(among: resolved)
-            load = .ready
-            await features.load(using: client)
+            guard owns() else { return }
+            let previous = me?.address
+            let selected = previous.flatMap { address in resolved.first { $0.address == address } } ?? preferred(among: resolved)
+            if previous != selected?.address { retireActor() }
+            cachedMailboxes = resolved
+            cachedMe = selected
+            cachedAuthorization = authorization
+            cachedSubject = session.subject
+            cachedLoad = .ready
+            await features.load(using: client, ifCurrent: owns)
         } catch let error as APIError {
-            load = .failed(error.errorDescription ?? "Could not reach the postbox.")
+            guard owns() else { return }
+            cachedLoad = .failed(error.errorDescription ?? "Could not reach the postbox.")
         } catch is AuthError {
-            load = .failed("Your session expired. Sign in again.")
+            guard owns() else { return }
+            cachedLoad = .failed("Your session expired. Sign in again.")
         } catch {
-            load = .failed("Could not reach the postbox.")
+            guard owns() else { return }
+            cachedLoad = .failed("Could not reach the postbox.")
         }
     }
 
@@ -77,20 +166,31 @@ final class Account {
     /// line tool" is one call.
     func createFirstMailbox() async {
         guard !creating else { return }
-        creating = true
-        defer { creating = false }
+        let authorization = session.authorizationId
+        guard current(authorization) else { return }
+        let request = UUID()
+        creationRequest = request
+        creatingAuthorization = authorization
+        defer { if creationRequest == request { creationRequest = nil; creatingAuthorization = nil } }
         do {
-            _ = try await client.createIdentity()
+            _ = try await scopedClient().createIdentity()
         } catch let error as APIError {
-            load = .failed(error.errorDescription ?? "Could not create an inbox.")
+            guard current(authorization) else { return }
+            loadAuthorization = authorization
+            cachedLoad = .failed(error.errorDescription ?? "Could not create an inbox.")
             return
         } catch is AuthError {
-            load = .failed("Your session expired. Sign in again.")
+            guard current(authorization) else { return }
+            loadAuthorization = authorization
+            cachedLoad = .failed("Your session expired. Sign in again.")
             return
         } catch {
-            load = .failed("Could not create an inbox.")
+            guard current(authorization) else { return }
+            loadAuthorization = authorization
+            cachedLoad = .failed("Could not create an inbox.")
             return
         }
+        guard current(authorization) else { return }
         await loadIdentities()
     }
 
@@ -112,40 +212,54 @@ final class Account {
     /// the next visit to Settings tries again.
     @discardableResult
     func ensureMailbox(inNamespace namespace: String) async -> Mailbox? {
+        let authorization = session.authorizationId
+        guard current(authorization) else { return nil }
+        let client = scopedClient()
         if let existing = mailbox(inNamespace: namespace) { return existing }
         // The claim normally created /name/main already. Reload before attempting another mint.
         await loadIdentities()
+        guard current(authorization) else { return nil }
         if let existing = mailbox(inNamespace: namespace) { return existing }
         do {
             _ = try await client.createIdentity(handle: "\(namespace)/main")
         } catch {
             // Another device may have created it between the read and the mint.
+            guard current(authorization) else { return nil }
             await loadIdentities()
+            guard current(authorization) else { return nil }
             return mailbox(inNamespace: namespace)
         }
+        guard current(authorization) else { return nil }
         await loadIdentities()
+        guard current(authorization) else { return nil }
         return mailbox(inNamespace: namespace)
     }
 
     #if DEBUG
     func installFixtures(mailboxes: [Mailbox], me: Mailbox) {
-        self.mailboxes = mailboxes
-        self.me = me
-        load = .ready
+        cachedMailboxes = mailboxes
+        cachedMe = me
+        cachedAuthorization = session.authorizationId
+        cachedSubject = session.subject
+        cachedLoad = .ready
         features.installFixture()
     }
 
     /// A load that finished and found nothing — the state of every account on its first sign-in.
     func installEmptyFixture() {
-        mailboxes = []
-        me = nil
-        load = .ready
+        cachedMailboxes = []
+        cachedMe = nil
+        cachedAuthorization = session.authorizationId
+        cachedSubject = session.subject
+        cachedLoad = .ready
     }
     #endif
 
     func act(as mailbox: Mailbox) {
-        me = mailbox
-        UserDefaults.standard.set(mailbox.address, forKey: rememberedKey)
+        guard let owned = mailboxes.first(where: { $0.address == mailbox.address }) else { return }
+        if cachedMe?.address != owned.address { retireActor() }
+        cachedMe = owned
+        defaults.set(owned.address, forKey: rememberedKey)
     }
 
     /// The account's other mailboxes. On a namespace these are the sub-agents, and they are the
@@ -168,7 +282,7 @@ final class Account {
     /// lands there; opening any other mailbox by default would hide exactly the mail a person sent
     /// them directly.
     private func preferred(among all: [Mailbox]) -> Mailbox? {
-        let remembered = UserDefaults.standard.string(forKey: rememberedKey)
+        let remembered = defaults.string(forKey: rememberedKey)
         if let remembered, let match = all.first(where: { $0.address == remembered }) { return match }
 
         let named = all.filter { $0.handle != nil }
@@ -194,14 +308,20 @@ final class Account {
 
     /// Somebody chose to sign out. Ends the session at the realm too — see `Session.signOut`.
     func signOut() async {
+        let authorization = session.authorizationId
+        guard current(authorization) else { return }
         // Before the token goes: unregistering needs a live session, and a phone that keeps ringing
         // for mail it can no longer open is worse than one that goes quiet.
         if let push {
             await push.unregister()
         }
-        await groups?.signOut()
+        guard session.authorizationId == authorization else { return }
+        retiringAuthorization = authorization
+        retireActor()
+        await groups?.signOut(expectedAuthorization: authorization)
+        guard session.authorizationId == authorization else { return }
         forgetLocal()
-        await session.signOut()
+        await session.signOut(expectedAuthorization: authorization)
     }
 
     /// The realm stopped accepting this session on its own. Nothing to end and nobody to tell:
@@ -216,9 +336,17 @@ final class Account {
         purchaseStore?.reset()
         purchaseStore = nil
         features.reset()
-        mailboxes = []
-        me = nil
-        load = .idle
-        UserDefaults.standard.removeObject(forKey: rememberedKey)
+        cachedMailboxes = []
+        cachedMe = nil
+        cachedAuthorization = nil
+        cachedSubject = nil
+        cachedLoad = .idle
+        loadRequest = nil
+        loadAuthorization = nil
+        creationRequest = nil
+        creatingAuthorization = nil
+        retiringAuthorization = nil
+        retireActor()
+        defaults.removeObject(forKey: rememberedKey)
     }
 }

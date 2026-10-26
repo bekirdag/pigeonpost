@@ -7,18 +7,58 @@ import Foundation
 protocol TokenProviding: AnyObject {
     func token() async throws -> String
     @discardableResult func renew() async throws -> String
+    func checkScope() throws
+}
+
+extension TokenProviding {
+    func checkScope() throws {}
 }
 
 extension Session: TokenProviding {}
 
+/// A request retains its original authorization, even if the app signs in again while it waits.
+@MainActor
+final class ScopedTokenProvider: TokenProviding {
+    private weak var source: TokenProviding?
+    private let current: () -> Bool
+
+    init(source: TokenProviding, current: @escaping () -> Bool) {
+        self.source = source
+        self.current = current
+    }
+
+    func checkScope() throws {
+        try Task.checkCancellation()
+        guard current() else { throw CancellationError() }
+    }
+
+    func token() async throws -> String {
+        try checkScope()
+        guard let source else { throw AuthError.sessionExpired }
+        let bearer = try await source.token()
+        try checkScope()
+        return bearer
+    }
+
+    func renew() async throws -> String {
+        try checkScope()
+        guard let source else { throw AuthError.sessionExpired }
+        let bearer = try await source.renew()
+        try checkScope()
+        return bearer
+    }
+}
+
 struct PostboxClient {
     let base: URL
     private(set) weak var tokens: TokenProviding?
+    private let retainedTokens: TokenProviding?
 
     @MainActor
-    init(base: URL = Config.postbox, tokens: TokenProviding) {
+    init(base: URL = Config.postbox, tokens: TokenProviding, retainingTokens: Bool = false) {
         self.base = base
         self.tokens = tokens
+        self.retainedTokens = retainingTokens ? tokens : nil
     }
 
     private static let decoder: JSONDecoder = {
@@ -142,6 +182,7 @@ struct PostboxClient {
         let url = base.appendingPathComponent("/v1/attachments")
 
         func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            try await tokens.checkScope()
             var request = URLRequest(url: url)
             request.httpMethod = "POST"
             request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
@@ -154,6 +195,7 @@ struct PostboxClient {
             // Long enough for a large file on a phone's uplink, which is the slow case this has.
             request.timeoutInterval = 300
             let (body, response) = try await URLSession.shared.upload(for: request, from: data)
+            try await tokens.checkScope()
             return (body, response as? HTTPURLResponse ?? HTTPURLResponse())
         }
 
@@ -182,11 +224,13 @@ struct PostboxClient {
         let url = base.appendingPathComponent("/v1/attachments/\(id)")
 
         func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            try await tokens.checkScope()
             var request = URLRequest(url: url)
             request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
             request.setValue(identity, forHTTPHeaderField: "x-pigeonpost-identity")
             request.timeoutInterval = 300
             let (body, response) = try await URLSession.shared.data(for: request)
+            try await tokens.checkScope()
             return (body, response as? HTTPURLResponse ?? HTTPURLResponse())
         }
         var (body, response) = try await attempt(try await tokens.token())
@@ -381,6 +425,7 @@ struct PostboxClient {
         let url = components.url!
 
         func attempt(_ bearer: String) async throws -> (Data, HTTPURLResponse) {
+            try await tokens.checkScope()
             var request = URLRequest(url: url)
             request.httpMethod = method
             request.setValue("Bearer \(bearer)", forHTTPHeaderField: "authorization")
@@ -398,6 +443,7 @@ struct PostboxClient {
             // bug to look for.
             request.timeoutInterval = timeout ?? (path.hasPrefix("/v1/claims/") || path.hasPrefix("/v1/handles/") ? 25 : 90)
             let (data, response) = try await URLSession.shared.data(for: request)
+            try await tokens.checkScope()
             return (data, response as? HTTPURLResponse ?? HTTPURLResponse())
         }
 

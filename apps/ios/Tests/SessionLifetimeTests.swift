@@ -86,10 +86,12 @@ private final class RealmTransport: URLProtocol, @unchecked Sendable {
 
         Keychain.values = [:]
         let retired = Session(network: network, browserAuthorization: callback)
+        let retiredLease = retired.accessLease
         let login = Task { await retired.signIn() }
         let delayed = try await request()
         check(delayed.request.url?.path.hasSuffix("/token") == true, "authorization code exchange")
         retired.forget()
+        check(!retiredLease.isValid, "local retirement revokes synchronous local work")
         delayed.complete(200, try reply("retired")); await login.value
         check(retired.status == .signedOut && retired.subject == nil, "late authorization must not revive sign-out")
         check(Keychain.values.isEmpty, "retired authorization cannot write the Keychain")
@@ -97,6 +99,7 @@ private final class RealmTransport: URLProtocol, @unchecked Sendable {
         Keychain.values = ["access_token": try token("shared", expired: true), "refresh_token": "fixture-rt-shared"]
         let shared = Session(network: network, browserAuthorization: callback)
         let generation = shared.authorizationId
+        let refreshLease = shared.accessLease
         let before = RealmTransport.count
         let refreshA = Task { try await shared.renew() }
         let refreshB = Task { try await shared.renew() }
@@ -106,6 +109,7 @@ private final class RealmTransport: URLProtocol, @unchecked Sendable {
         let a = try await refreshA.value, b = try await refreshB.value
         check(a == b && Keychain.values["access_token"] == a, "all waiters receive the accepted refresh")
         check(shared.authorizationId == generation && shared.subject == "shared", "ordinary refresh preserves authorization identity")
+        check(refreshLease.isValid && refreshLease === shared.accessLease, "ordinary renewal preserves the local-work lease")
 
         Keychain.values = [:]
         let competing = Session(network: network, browserAuthorization: callback)
@@ -178,6 +182,7 @@ private final class RealmTransport: URLProtocol, @unchecked Sendable {
             Keychain.values = ["access_token": try token("strong"), "refresh_token": "fixture-rt-original"]
             let strong = Session(network: network, browserAuthorization: callback)
             let original = strong.authorizationId
+            let originalLease = strong.accessLease
             let operation = Task { () -> Bool in
                 do { _ = try await strong.verifyStrongSignIn(requirement); return true } catch { return false }
             }
@@ -201,6 +206,7 @@ private final class RealmTransport: URLProtocol, @unchecked Sendable {
             check(verified == (variant == 0), "only bound strong response is accepted")
             check(strong.subject == "strong" && strong.status == .signedIn, "verification never switches account")
             check((strong.authorizationId != original) == verified, "only verified response changes authorization identity")
+            check(originalLease.isValid != verified && strong.accessLease.isValid, "verified reauthorization retires old local work; refusal preserves it")
             check(Keychain.values["refresh_token"] == (verified ? "fixture-rt-elevated" : "fixture-rt-original"), "refused verification preserves original credential")
         }
 

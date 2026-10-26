@@ -1,8 +1,19 @@
 import Foundation
 
 @MainActor final class Session {
-    func token() async throws -> String { "calendar-store-fixture" }
-    func renew() async throws -> String { "calendar-store-fixture" }
+    var pauseToken = false, pauseRenewal = false
+    var tokenWaiter: CheckedContinuation<String, Never>?
+    var renewalWaiter: CheckedContinuation<String, Never>?
+    var renewals = 0
+    func token() async throws -> String {
+        if pauseToken { return await withCheckedContinuation { tokenWaiter = $0 } }
+        return "calendar-store-fixture"
+    }
+    func renew() async throws -> String {
+        renewals += 1
+        if pauseRenewal { return await withCheckedContinuation { renewalWaiter = $0 } }
+        return "calendar-store-fixture"
+    }
 }
 enum AuthError: Error { case sessionExpired }
 
@@ -31,6 +42,14 @@ final class CalendarGate: URLProtocol {
     static func hold(_ key: String) { lock.lock(); held.insert(key); lock.unlock() }
     static func history() -> [Entry] { lock.lock(); defer { lock.unlock() }; return entries }
     static func waitingFor(_ key: String) -> Bool { lock.lock(); defer { lock.unlock() }; return waiting.contains { $0.entry.key == key } }
+    static func waitingCount(_ key: String) -> Int { lock.lock(); defer { lock.unlock() }; return waiting.filter { $0.entry.key == key }.count }
+    static func releaseOne(_ key: String, status: Int = 200) {
+        lock.lock()
+        let index = waiting.firstIndex { $0.entry.key == key }
+        let item = index.map { waiting.remove(at: $0) }
+        lock.unlock()
+        if status == 200 { item?.respond() } else { item?.reject(status) }
+    }
     static func release(_ key: String) {
         lock.lock()
         held.remove(key)
@@ -102,6 +121,15 @@ final class CalendarGate: URLProtocol {
                                        headerFields: ["Content-Type": isICS ? "text/calendar" : "application/json"])!
         client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
         client?.urlProtocol(self, didLoad: isICS ? Data("BEGIN:VCALENDAR\r\nEND:VCALENDAR\r\n".utf8) : try! JSONSerialization.data(withJSONObject: data))
+        client?.urlProtocolDidFinishLoading(self)
+    }
+
+    private func reject(_ status: Int) {
+        let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil,
+                                       headerFields: ["Content-Type": "application/json"])!
+        let code = status == 401 ? "unauthorized" : status == 403 ? "forbidden" : "unavailable"
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: try! JSONSerialization.data(withJSONObject: ["error": code]))
         client?.urlProtocolDidFinishLoading(self)
     }
 }
@@ -297,6 +325,108 @@ struct CalendarStoreTests {
         _ = await store.createEvent(fields: fields)
         check(store.details.isEmpty && store.occurrences.isEmpty && CalendarGate.history().count == beforeDisabled,
               "feature-off erases local calendar state and performs no reads or writes")
+
+        // Live authorization proof changes before a SwiftUI lifecycle callback reconfigures.
+        let credentials = Session()
+        let scopedClient = PostboxClient(base: client.base, tokens: credentials)
+        var context: CalendarAccessScope? = .init(subject: "first", authorization: UUID(), actor: UUID(), mailbox: a)
+        let scoped = CalendarStore(client: scopedClient, now: { now }, scope: { context })
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: true)
+        await scoped.refresh(); _ = await scoped.loadEvent(key)
+        check(scoped.folders.count == 1 && scoped.details[key] != nil, "scoped calendar loads current metadata")
+        let editorScope = scoped.scopeId
+        CalendarGate.hold(delayed)
+        let oldAuthorizationRead = Task { await scoped.loadEvent(key) }
+        check(await until { CalendarGate.waitingFor(delayed) }, "old authorization detail is held")
+        context = .init(subject: "first", authorization: UUID(), actor: context!.actor, mailbox: a)
+        check(!scoped.enabled && scoped.mailbox == nil && scoped.folders.isEmpty && scoped.details.isEmpty
+              && scoped.occurrences.isEmpty && scoped.invitations.isEmpty && scoped.scopeId != editorScope,
+              "same-inbox reauthorization immediately hides data and retires the editor proof")
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: true)
+        let newAuthorizationRead = Task { await scoped.loadEvent(key) }
+        check(await until { CalendarGate.waitingCount(delayed) == 2 }, "replacement authorization has its own detail read")
+        CalendarGate.releaseOne(delayed, status: 401)
+        check(await oldAuthorizationRead.value == nil && credentials.renewals == 0, "late old 401 cannot renew the replacement grant")
+        CalendarGate.release(delayed)
+        check(await newAuthorizationRead.value?.event.title == a && scoped.details[key] != nil, "old read cannot clear the new read's result")
+
+        let beforeActorChange = scoped.scopeId
+        let authorization = context!.authorization
+        context = .init(subject: "first", authorization: authorization, actor: UUID(), mailbox: b)
+        context = .init(subject: "first", authorization: authorization, actor: UUID(), mailbox: a)
+        check(scoped.scopeId != beforeActorChange && scoped.details.isEmpty, "A-to-B-to-A cannot revive an earlier calendar activation")
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: false)
+        credentials.pauseToken = true
+        let tokenRead = Task { await scoped.loadEvent(key) }
+        check(await until { credentials.tokenWaiter != nil }, "calendar token acquisition is held")
+        let beforeTokenReply = CalendarGate.history().count
+        context = .init(subject: "replacement", authorization: UUID(), actor: UUID(), mailbox: a)
+        credentials.tokenWaiter?.resume(returning: "synthetic-replacement-token"); credentials.tokenWaiter = nil; credentials.pauseToken = false
+        check(await tokenRead.value == nil && CalendarGate.history().count == beforeTokenReply,
+              "late token cannot send an old calendar request with replacement credentials")
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: false)
+
+        credentials.pauseRenewal = true
+        CalendarGate.hold(delayed)
+        let renewingRead = Task { await scoped.loadEvent(key) }
+        check(await until { CalendarGate.waitingFor(delayed) }, "current calendar read reaches the controlled server")
+        CalendarGate.releaseOne(delayed, status: 401)
+        check(await until { credentials.renewalWaiter != nil }, "ordinary renewal is held before its result")
+        let beforeRenewalReply = CalendarGate.history().count
+        context = .init(subject: "replacement", authorization: UUID(), actor: UUID(), mailbox: a)
+        credentials.renewalWaiter?.resume(returning: "synthetic-new-grant"); credentials.renewalWaiter = nil; credentials.pauseRenewal = false
+        check(await renewingRead.value == nil && CalendarGate.history().count == beforeRenewalReply,
+              "late renewal cannot replay the earlier calendar operation")
+        CalendarGate.release(delayed)
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: false)
+
+        // Old create cleanup cannot clear a replacement mutation or its uncertain retry body.
+        CalendarGate.hold(holdA)
+        let obsoleteCreate = Task { await scoped.createEvent(fields: fields) }
+        check(await until { CalendarGate.waitingCount(holdA) == 1 }, "earlier grant's creation is held")
+        context = .init(subject: "replacement", authorization: UUID(), actor: UUID(), mailbox: a)
+        scoped.configure(mailbox: a, enabled: true, emailEnabled: false)
+        let currentCreate = Task { await scoped.createEvent(fields: fields) }
+        check(await until { CalendarGate.waitingCount(holdA) == 2 }, "replacement creation owns a separate busy operation")
+        let pendingCreates = CalendarGate.history().filter { $0.mailbox == a && $0.method == "POST" && $0.path == "/v1/calendar/events" }
+        let retryBody = pendingCreates.last!.body
+        check(pendingCreates[pendingCreates.count - 2].body != retryBody, "explicit new authorization gets a separate create intent")
+        CalendarGate.releaseOne(holdA)
+        check(await obsoleteCreate.value == nil && scoped.busy("create-event"), "old create completion cannot clear current mutation ownership")
+        CalendarGate.releaseOne(holdA, status: 503)
+        check(await currentCreate.value == nil && !scoped.busy("create-event"), "uncertain current creation remains retryable")
+        let retryCreation = Task { await scoped.createEvent(fields: fields) }
+        check(await until { CalendarGate.waitingCount(holdA) == 1 }, "explicit retry reaches the controlled server")
+        let retriedBody = CalendarGate.history().last { $0.mailbox == a && $0.method == "POST" && $0.path == "/v1/calendar/events" }!.body
+        check(retriedBody == retryBody, "late old cleanup preserves the replacement attempt's exact request and key")
+        CalendarGate.release(holdA)
+        check(await retryCreation.value != nil, "current uncertain creation can resolve normally")
+
+        // A refusal invalidates older aggregates and file exports under the same authorization.
+        await scoped.refresh(); _ = await scoped.loadEvent(key)
+        CalendarGate.hold(first)
+        let accessRead = Task { await scoped.refresh() }
+        check(await until { CalendarGate.waitingFor(first) }, "aggregate read is held before permission loss")
+        let accessExportKey = CalendarGate.key(a, "GET", "/v1/calendar/events/evt_shared.ics")
+        CalendarGate.hold(accessExportKey)
+        let accessExport = Task { await scoped.exportEvent(id: "evt_shared") }
+        check(await until { CalendarGate.waitingFor(accessExportKey) }, "export is held before permission loss")
+        CalendarGate.hold(delayed)
+        let refusedDetail = Task { await scoped.loadEvent(key) }
+        check(await until { CalendarGate.waitingFor(delayed) }, "permission refusal is independently observable")
+        CalendarGate.releaseOne(delayed, status: 403)
+        check(await refusedDetail.value == nil && scoped.details.isEmpty && scoped.folders.isEmpty && !scoped.loading,
+              "denied access clears visible reads and their loading state")
+        CalendarGate.release(first); CalendarGate.release(accessExportKey); CalendarGate.release(delayed)
+        await accessRead.value
+        check(await accessExport.value == nil && scoped.details.isEmpty && scoped.occurrences.isEmpty,
+              "older successful aggregate and export cannot resurrect data after access loss")
+        check(scoped.lastError != nil, "access loss remains visible instead of acknowledging an unrelated success")
+        context = nil
+        let beforeRetired = CalendarGate.history().count
+        await scoped.refresh(); _ = await scoped.confirmImport(draft: "draft_shared", selected: [0], calendar: "cal_a")
+        check(!scoped.enabled && scoped.settings.timezone == nil && CalendarGate.history().count == beforeRetired,
+              "retired identity cannot read or import under the next session")
         print("Calendar store: \(checks) checks, \(failures) failures")
         exit(failures == 0 ? 0 : 1)
     }

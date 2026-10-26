@@ -23,21 +23,33 @@ final class GroupStore {
         case failed(String)
     }
 
-    private(set) var status: Status = .off
-    private(set) var groups: [GroupSummary] = []
+    private var storedStatus: Status = .off
+    private(set) var status: Status { get { canRead ? storedStatus : .off } set { storedStatus = newValue } }
+    private var storedGroups: [GroupSummary] = []
+    private(set) var groups: [GroupSummary] { get { canRead ? storedGroups : [] } set { storedGroups = newValue } }
     /// What this device has decrypted of each group, newest last. Copied from the engine after every
     /// change so the screens never await anything to draw.
-    private(set) var histories: [String: [GroupItem]] = [:]
-    private(set) var members: [String: [GroupMember]] = [:]
-    private(set) var devices: [String: [MailboxDevices.Device]] = [:]
-    private(set) var memberDevices: [String: [GroupDeviceInfo]] = [:]
-    private(set) var safetyNumbers: [String: String] = [:]
-    private(set) var inGroup: Set<String> = []
-    private(set) var identity: GroupDeviceIdentity?
-    private(set) var calls: [String: GroupCallState] = [:]
-    private(set) var receipts: [String: GroupReceipts] = [:]
+    private var storedHistories: [String: [GroupItem]] = [:]
+    private(set) var histories: [String: [GroupItem]] { get { canRead ? storedHistories : [:] } set { storedHistories = newValue } }
+    private var storedMembers: [String: [GroupMember]] = [:]
+    private(set) var members: [String: [GroupMember]] { get { canRead ? storedMembers : [:] } set { storedMembers = newValue } }
+    private var storedDevices: [String: [MailboxDevices.Device]] = [:]
+    private(set) var devices: [String: [MailboxDevices.Device]] { get { canRead ? storedDevices : [:] } set { storedDevices = newValue } }
+    private var storedMemberDevices: [String: [GroupDeviceInfo]] = [:]
+    private(set) var memberDevices: [String: [GroupDeviceInfo]] { get { canRead ? storedMemberDevices : [:] } set { storedMemberDevices = newValue } }
+    private var storedSafetyNumbers: [String: String] = [:]
+    private(set) var safetyNumbers: [String: String] { get { canRead ? storedSafetyNumbers : [:] } set { storedSafetyNumbers = newValue } }
+    private var storedInGroup: Set<String> = []
+    private(set) var inGroup: Set<String> { get { canRead ? storedInGroup : [] } set { storedInGroup = newValue } }
+    private var storedIdentity: GroupDeviceIdentity?
+    private(set) var identity: GroupDeviceIdentity? { get { canRead ? storedIdentity : nil } set { storedIdentity = newValue } }
+    private var storedCalls: [String: GroupCallState] = [:]
+    private(set) var calls: [String: GroupCallState] { get { canRead ? storedCalls : [:] } set { storedCalls = newValue } }
+    private var storedReceipts: [String: GroupReceipts] = [:]
+    private(set) var receipts: [String: GroupReceipts] { get { canRead ? storedReceipts : [:] } set { storedReceipts = newValue } }
     /// Address → handle, learned from member lists, so names read as names.
-    private(set) var handles: [String: String] = [:]
+    private var storedHandles: [String: String] = [:]
+    private(set) var handles: [String: String] { get { canRead ? storedHandles : [:] } set { storedHandles = newValue } }
     /// The group on screen; its history is polled faster and its arrivals are not announced.
     var open: String?
     /// A join link waiting for the person to confirm (from a universal link or a pasted URL).
@@ -54,16 +66,53 @@ final class GroupStore {
     @ObservationIgnored private var syncing: Set<String> = []
     @ObservationIgnored private var lastTopUp: Date = .distantPast
     @ObservationIgnored let vault: GroupVault
+    typealias EngineFactory = (String, PostboxClient, GroupVault, @escaping @Sendable (GroupEngineEvent) -> Void) -> (any GroupCrypting)?
+    @ObservationIgnored private let makeEngine: EngineFactory
+    @ObservationIgnored private let cryptoAvailable: () -> Bool
+    @ObservationIgnored private let forgetKey: () -> Void
+    @ObservationIgnored private var accessLease: AuthorizationLease?
+    @ObservationIgnored private var client: PostboxClient?
+    private var boundScope: Scope?
+    @ObservationIgnored private var knownDevices: [String: GroupDeviceIdentity] = [:]
+    @ObservationIgnored private var deviceOwner: String?
 
-    init(account: Account, vault: GroupVault = .standard()) {
-        self.account = account
-        self.vault = vault
+    private struct Scope: Equatable {
+        let subject: String
+        let authorization: UUID
+        let actor: UUID
+        let mailbox: String
     }
 
-    private var client: PostboxClient { account.client }
+    private var currentScope: Scope? {
+        var subject = account.session.subject
+        #if DEBUG
+        if Fixtures.enabled { subject = subject ?? "synthetic-group-fixture" }
+        #endif
+        guard account.session.status == .signedIn, account.features.groups,
+              let subject, !subject.isEmpty, let me = account.me?.address else { return nil }
+        return Scope(subject: subject, authorization: account.session.authorizationId,
+                     actor: account.actingGeneration, mailbox: me)
+    }
+    private var canRead: Bool { boundScope != nil && boundScope == currentScope && accessLease?.isValid == true }
+    private func current(_ visit: UUID) -> Bool { visit == generation && canRead && !Task.isCancelled }
+    var scopeId: UUID? { canRead ? generation : nil }
+
+    init(account: Account, vault: GroupVault = .standard(),
+         cryptoAvailable: @escaping () -> Bool = { GroupEngines.available },
+         makeEngine: @escaping EngineFactory = { GroupEngines.make(mailbox: $0, client: $1, vault: $2, events: $3) },
+         forgetKey: @escaping () -> Void = { GroupKeychain.forget() }) {
+        self.account = account
+        self.vault = vault
+        self.cryptoAvailable = cryptoAvailable
+        self.makeEngine = makeEngine
+        self.forgetKey = forgetKey
+    }
+
+    deinit { accessLease?.invalidate() }
+
     private var me: String? { account.me?.address }
-    private var caller: GroupCaller? { me.map { GroupCaller(mailbox: $0, device: identity?.deviceId) } }
-    private var engine: (any GroupCrypting)? { mailbox.flatMap { engines[$0] } }
+    private var caller: GroupCaller? { canRead ? me.map { GroupCaller(mailbox: $0, device: identity?.deviceId) } : nil }
+    private var engine: (any GroupCrypting)? { canRead ? mailbox.flatMap { engines[$0] } : nil }
     var enabled: Bool { status == .ready }
 
     // ---- the lifecycle ------------------------------------------------------------------------------
@@ -74,34 +123,34 @@ final class GroupStore {
         if !account.features.receipts { receipts = [:] }
         #if DEBUG
         if Fixtures.enabled {
+            prepareContext()
             if account.features.groups { installFixtures() } else { status = .off }
             return
         }
         #endif
-        guard let me, account.features.groups, GroupEngines.available else {
+        guard let scope = currentScope, cryptoAvailable() else {
             teardown()
             return
         }
-        if mailbox != me {
-            teardown()
-            mailbox = me
-            generation = UUID()
-        }
+        prepareContext()
+        let me = scope.mailbox
+        guard let client, let accessLease, canRead else { return }
         let generation = self.generation
         if engines[me] == nil {
-            engines[me] = GroupEngines.make(mailbox: me, client: client, vault: vault) { [weak self] event in
-                Task { @MainActor in self?.handle(event, for: me) }
+            engines[me] = makeEngine(me, client, vault.guarded(by: accessLease)) { [weak self] event in
+                Task { @MainActor in self?.handle(event, scope: scope, visit: generation) }
             }
         }
         guard let engine = engines[me] else { return }
         if status != .ready { status = .starting }
         do {
             let identity = try await engine.start()
-            guard generation == self.generation else { return }
+            guard current(generation) else { return }
             self.identity = identity
+            knownDevices[me] = identity
             status = .ready
         } catch {
-            guard generation == self.generation else { return }
+            guard current(generation) else { return }
             status = .failed(GroupText.explain(error))
             return
         }
@@ -110,30 +159,53 @@ final class GroupStore {
             Task { _ = try? await engine.topUpKeyPackages() }
         }
         _ = try? await engine.processWelcomes()
+        guard current(generation) else { return }
         await refresh()
+    }
+
+    private func prepareContext() {
+        guard let scope = currentScope else { teardown(); return }
+        if boundScope == scope, accessLease?.isValid == true { return }
+        teardown()
+        guard let parent = account.accessForActingMailbox() else { return }
+        if deviceOwner != scope.subject { knownDevices = [:]; deviceOwner = scope.subject }
+        let lease = AuthorizationLease(parent: parent)
+        accessLease = lease
+        boundScope = scope
+        mailbox = scope.mailbox
+        let visit = generation
+        let tokens = ScopedTokenProvider(source: account.session) { [weak self] in self?.current(visit) == true }
+        client = PostboxClient(base: account.client.base, tokens: tokens, retainingTokens: true)
     }
 
     /// The cadence: run for as long as the caller's task lives (while the app is in front of somebody).
     func live() async {
+        let lifecycle = generation
         var tick = 0
         while !Task.isCancelled {
             try? await Task.sleep(nanoseconds: 3_000_000_000)
+            guard current(lifecycle) else { return }
             guard !Task.isCancelled, enabled, !Fixtures.enabled else { continue }
             tick += 1
             if let open { await syncGroup(open) }
+            guard current(lifecycle) else { return }
             if tick % 5 == 0 {
                 if let open { await pollCall(open) }
+                guard current(lifecycle) else { return }
                 _ = try? await engine?.processWelcomes()
+                guard current(lifecycle) else { return }
                 await refresh()
+                guard current(lifecycle) else { return }
                 let visit = generation
                 let currentEngine = engine
                 for group in groups where group.isActive {
-                    guard visit == generation else { break }
+                    guard current(visit) else { return }
                     try? await currentEngine?.reconcileDeletions(group.id)
-                    guard visit == generation else { break }
+                    guard current(visit) else { return }
                     await reloadHistory(group.id)
                 }
-                if (await engine?.pruneExpired() ?? 0) > 0 { await reloadHistories() }
+                guard current(lifecycle) else { return }
+                if (await engine?.pruneExpired() ?? 0) > 0, current(lifecycle) { await reloadHistories() }
             }
         }
     }
@@ -141,12 +213,23 @@ final class GroupStore {
     /// A push or a tap about a group: sync it now rather than at the next tick.
     func wake(_ group: String) {
         guard enabled else { return }
+        let visit = generation
         Task {
+            guard current(visit) else { return }
             if groups.contains(where: { $0.id == group }) { await syncGroup(group, pending: true) } else { await refresh() }
         }
     }
 
     private func teardown() {
+        accessLease?.invalidate()
+        accessLease = nil
+        refreshing?.cancel()
+        refreshing = nil
+        refreshOwner = nil
+        client = nil
+        engines = [:]
+        syncing = []
+        lastTopUp = .distantPast
         status = .off
         groups = []
         histories = [:]
@@ -158,36 +241,47 @@ final class GroupStore {
         identity = nil
         calls = [:]
         receipts = [:]
+        handles = [:]
         open = nil
+        invitationsOpen = false
         mailbox = nil
+        boundScope = nil
         generation = UUID()
     }
 
     func reset() {
         teardown()
-        engines = [:]
+        pendingJoin = nil
+        knownDevices = [:]
+        deviceOwner = nil
     }
 
-    /// Signing out: each mailbox's device revokes itself (so co-members stop counting it), then this
-    /// device's group state and its Keychain key are erased.
-    func signOut() async {
-        for (mailbox, engine) in engines {
-            guard let id = await engine.identity()?.deviceId else { continue }
-            try? await client.revokeGroupDevice(GroupCaller(mailbox: mailbox, device: id), deviceId: id)
-        }
+    /// Retire and erase local state first; revocation then uses only the captured old grant.
+    func signOut(expectedAuthorization: UUID? = nil) async {
+        let authorization = expectedAuthorization ?? account.session.authorizationId
+        guard account.session.authorizationId == authorization else { return }
+        let revocations = deviceOwner == account.session.subject ? knownDevices : [:]
+        let client = account.scopedClient()
+        // Erase before the first suspension. Every old engine's disk lease is already retired.
         reset()
         vault.removeAll()
-        GroupKeychain.forget()
+        forgetKey()
+        for (mailbox, device) in revocations {
+            guard account.session.authorizationId == authorization else { return }
+            try? await client.revokeGroupDevice(GroupCaller(mailbox: mailbox, device: device.deviceId), deviceId: device.deviceId)
+        }
     }
 
-    private func handle(_ event: GroupEngineEvent, for mailbox: String) {
-        guard mailbox == self.mailbox else { return }
+    private func handle(_ event: GroupEngineEvent, scope: Scope, visit: UUID) {
+        guard boundScope == scope, current(visit) else { return }
         switch event {
         case let .history(group):
-            Task { await reloadHistory(group) }
+            Task { guard self.current(visit) else { return }; await reloadHistory(group) }
         case let .removed(group), let .resync(group):
             Task {
+                guard self.current(visit) else { return }
                 await reloadHistory(group)
+                guard self.current(visit) else { return }
                 await refresh()
             }
         }
@@ -200,7 +294,7 @@ final class GroupStore {
         let joined = await engine.inGroup(group)
         let number = await engine.safetyNumber(group)
         let devices = await engine.members(group)
-        guard visit == generation else { return }
+        guard current(visit) else { return }
         histories[group] = history
         if joined { inGroup.insert(group) } else { inGroup.remove(group) }
         safetyNumbers[group] = number
@@ -208,42 +302,51 @@ final class GroupStore {
     }
 
     private func reloadHistories() async {
-        for group in groups { await reloadHistory(group.id) }
+        let visit = generation
+        for group in groups { guard current(visit) else { return }; await reloadHistory(group.id) }
     }
 
     // ---- the list -----------------------------------------------------------------------------------
 
     private var refreshing: Task<Void, Never>?
+    private var refreshOwner: UUID?
 
     func refresh() async {
+        let visit = generation
+        guard current(visit) else { return }
         if let refreshing { return await refreshing.value }
-        let job = Task { await refreshNow() }
+        let owner = UUID()
+        refreshOwner = owner
+        let job = Task { guard current(visit) else { return }; await refreshNow() }
         refreshing = job
         await job.value
-        refreshing = nil
+        if refreshOwner == owner { refreshing = nil; refreshOwner = nil }
     }
 
     private func refreshNow() async {
-        guard enabled, let caller, let engine else { return }
+        guard enabled, let caller, let engine, let client else { return }
         let generation = self.generation
         let listed: [GroupSummary]
         do {
             listed = try await client.groups(caller)
         } catch let error as APIError where error.status == 404 {
+            guard current(generation) else { return }
             groups = []
             return
         } catch {
             return
         }
-        guard generation == self.generation else { return }
+        guard current(generation) else { return }
         groups = listed
-        for group in listed { await reloadHistory(group.id) }
+        for group in listed { guard current(generation) else { return }; await reloadHistory(group.id) }
         for group in listed where group.deletedAt == nil {
+            guard current(generation) else { return }
             if group.isKeying, group.activationState == "provisioning", group.createdBy == caller.mailbox, group.isOwner {
                 try? await engine.activate(group.id)
+                guard current(generation) else { return }
                 await reloadHistory(group.id)
             } else if group.isActive {
-                Task { await syncGroup(group.id, pending: true) }
+                Task { guard current(generation) else { return }; await syncGroup(group.id, pending: true) }
             }
         }
     }
@@ -252,16 +355,18 @@ final class GroupStore {
         guard let engine, !syncing.contains(group) else { return }
         let visit = generation
         syncing.insert(group)
-        defer { syncing.remove(group) }
+        defer { if visit == generation { syncing.remove(group) } }
         if await engine.inGroup(group) {
             do {
                 try await engine.sync(group)
             } catch {
+                guard current(visit) else { return }
                 await recover(from: error)
             }
+            guard current(visit) else { return }
             if pending { _ = try? await engine.processPending(group, noJitter: false) }
         }
-        guard visit == generation else { return }
+        guard current(visit) else { return }
         await reloadHistory(group)
         if group == open { markRead(group) }
         if group == open { await loadReceipts(group) }
@@ -271,8 +376,10 @@ final class GroupStore {
     private func recover(from error: Error) async {
         guard let api = error as? APIError, ["unknown_device", "device_revoked"].contains(api.code ?? ""),
               let engine else { return }
-        if let identity = try? await engine.reEnrol() {
+        let visit = generation
+        if let identity = try? await engine.reEnrol(), current(visit) {
             self.identity = identity
+            if let mailbox { knownDevices[mailbox] = identity }
             _ = try? await engine.topUpKeyPackages()
         }
     }
@@ -336,17 +443,20 @@ final class GroupStore {
     // ---- opening and reading ------------------------------------------------------------------------
 
     func show(_ group: String) {
+        guard canRead else { return }
         open = group
         let visit = generation
         let currentEngine = engine
         Task {
+            guard current(visit) else { return }
             await loadMembers(group)
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             await syncGroup(group, pending: true)
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             try? await currentEngine?.reconcileDeletions(group)
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             await reloadHistory(group)
+            guard current(visit) else { return }
             await pollCall(group)
         }
     }
@@ -356,13 +466,12 @@ final class GroupStore {
     }
 
     func markRead(_ id: String) {
-        guard AppLife.isActive, let caller, let index = groups.firstIndex(where: { $0.id == id }) else { return }
+        guard AppLife.isActive, let caller, let client, let index = groups.firstIndex(where: { $0.id == id }) else { return }
         let seen = max((histories[id] ?? []).compactMap(\.seq).max() ?? 0, groups[index].lastSeq ?? 0)
         guard seen > (groups[index].my?.readCursor ?? 0) else { return }
         groups[index].my?.readCursor = seen
         groups[index].my?.unread = 0
         guard !Fixtures.enabled else { return }
-        let client = self.client
         Task { try? await client.markGroupRead(caller, id: id, seq: seen) }
     }
 
@@ -370,9 +479,9 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller else { return }
+        guard let caller, let client else { return }
         let visit = generation
-        guard let list = try? await client.groupMembers(caller, id: group), visit == generation else { return }
+        guard let list = try? await client.groupMembers(caller, id: group), current(visit) else { return }
         for member in list { if let handle = member.handle { handles[member.address] = handle } }
         members[group] = list
     }
@@ -381,20 +490,20 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let caller else { return }
+        guard let caller, let client else { return }
         let visit = generation
-        guard let list = try? await client.groupDevices(caller, of: mailbox), visit == generation else { return }
+        guard let list = try? await client.groupDevices(caller, of: mailbox), current(visit) else { return }
         devices[mailbox] = list
     }
 
     func loadReceipts(_ group: String) async {
-        guard account.features.receipts, let caller else { receipts[group] = nil; return }
+        guard account.features.receipts, let caller, let client else { receipts[group] = nil; return }
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
         let visit = generation
         let result = try? await client.groupReceipts(caller, id: group)
-        guard visit == generation, account.features.receipts else { return }
+        guard current(visit), account.features.receipts else { return }
         // Older servers and failures make no delivery/read claim.
         receipts[group] = result
     }
@@ -418,12 +527,13 @@ final class GroupStore {
         let outgoing = files.map { OutgoingGroupFile(name: $0.name, mime: $0.mediaType, data: $0.data) }
         do {
             try await engine.send(group, text: text, files: outgoing, replyTo: replyTo, editOf: editOf, mentions: [])
-            guard visit == generation else { return true }
+            guard current(visit) else { return true }
             await reloadHistory(group)
             return true
         } catch {
-            guard visit == generation else { return false }
+            guard current(visit) else { return false }
             await reloadHistory(group)
+            guard current(visit) else { return false }
             say("Not sent: " + GroupText.explain(error))
             return false
         }
@@ -436,17 +546,18 @@ final class GroupStore {
             return
         }
         #endif
-        guard let caller, let engine else { return }
+        guard let caller, let engine, let client else { return }
         let visit = generation
         do {
             let result = try await client.deleteGroupMessage(caller, id: group, seq: seq)
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             await engine.dropSeqs(group, seqs: result.seqs ?? [seq])
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             await reloadHistory(group)
+            guard current(visit) else { return }
             await syncGroup(group)
         } catch {
-            guard visit == generation else { return }
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
     }
@@ -466,12 +577,13 @@ final class GroupStore {
         guard let engine else { return false }
         do {
             _ = try await engine.retryPending(group, cmid: cmid)
-            guard visit == generation else { return true }
+            guard current(visit) else { return true }
             await reloadHistory(group)
             return true
         } catch {
-            guard visit == generation else { return false }
+            guard current(visit) else { return false }
             await reloadHistory(group)
+            guard current(visit) else { return false }
             say(GroupText.explain(error))
             return false
         }
@@ -484,8 +596,8 @@ final class GroupStore {
         #endif
         guard let engine else { return }
         do { try await engine.discardPending(group, cmid: cmid) }
-        catch { if visit == generation { say(GroupText.explain(error)) } }
-        guard visit == generation else { return }
+        catch { if current(visit) { say(GroupText.explain(error)) } }
+        guard current(visit) else { return }
         await reloadHistory(group)
     }
 
@@ -494,10 +606,10 @@ final class GroupStore {
         let visit = generation
         do {
             let data = try await engine.openFile(group, file: file)
-            guard visit == generation, hasFile(group, file: file) else { return nil }
+            guard current(visit), hasFile(group, file: file) else { return nil }
             return data
         } catch {
-            guard visit == generation else { return nil }
+            guard current(visit) else { return nil }
             say("Could not open the file: " + GroupText.explain(error))
             return nil
         }
@@ -515,6 +627,7 @@ final class GroupStore {
     func create(name: String, description: String?, invite: [String], joinPolicy: String, postPolicy: String,
                 timer: Int?) async -> Result<String, Error> {
         guard let engine else { return .failure(APIError(status: 0, code: "feature_disabled", detail: nil)) }
+        let visit = generation
         var settings: [String: Any] = [
             "name": name, "join_policy": joinPolicy, "post_policy": postPolicy, "visibility": "unlisted", "invite": invite,
         ]
@@ -522,11 +635,13 @@ final class GroupStore {
         if let timer, account.features.disappearing { settings["ephemeral_secs"] = timer }
         do {
             let created = try await engine.createGroup(settings: settings)
+            guard current(visit) else { return .failure(CancellationError()) }
             let refused = (created.invitations ?? []).filter { $0.status != "invited" }
             if !refused.isEmpty {
                 say("\(refused.count) \(refused.count == 1 ? "person" : "people") could not be invited.")
             }
             await refresh()
+            guard current(visit) else { return .failure(CancellationError()) }
             return .success(created.group.id)
         } catch {
             return .failure(error)
@@ -534,51 +649,69 @@ final class GroupStore {
     }
 
     func answer(_ group: GroupSummary, accept: Bool) async {
-        guard let caller else { return }
+        guard let caller, let client else { return }
+        let visit = generation
         do {
             try await client.answerInvitation(caller, id: group.id, accept: accept)
+            guard current(visit) else { return }
             say(accept ? "Joined \(group.name). A member's device will add you in a moment." : "Invitation declined.")
         } catch {
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
+        guard current(visit) else { return }
         await refresh()
     }
 
     func resolve(_ link: JoinLink) async throws -> GroupPreview {
-        guard let caller else { throw APIError(status: 0, code: "not_started", detail: nil) }
-        return try await client.resolveGroup(caller, id: link.groupId, linkToken: link.token)
+        guard let caller, let client else { throw APIError(status: 0, code: "not_started", detail: nil) }
+        let visit = generation
+        let result = try await client.resolveGroup(caller, id: link.groupId, linkToken: link.token)
+        guard current(visit) else { throw CancellationError() }
+        return result
     }
 
     func join(_ link: JoinLink) async throws {
-        guard let caller else { return }
+        guard let caller, let client else { throw CancellationError() }
+        let visit = generation
         try await client.joinGroup(caller, id: link.groupId, linkToken: link.token)
+        guard current(visit) else { throw CancellationError() }
         say("Joined. A member's device will add you to the encryption in a moment.")
         await refresh()
+        guard current(visit) else { throw CancellationError() }
     }
 
     func leave(_ group: GroupSummary) async -> Bool {
-        guard let caller else { return false }
+        guard let caller, let client, let engine else { return false }
+        let visit = generation
         do {
             try await client.leaveGroup(caller, id: group.id)
-            await engine?.forget(group.id)
+            guard current(visit) else { return false }
+            await engine.forget(group.id)
+            guard current(visit) else { return false }
             close(group.id)
             await refresh()
-            return true
+            return current(visit)
         } catch {
+            guard current(visit) else { return false }
             say(GroupText.explain(error))
             return false
         }
     }
 
     func delete(_ group: GroupSummary) async -> Bool {
-        guard let caller else { return false }
+        guard let caller, let client, let engine else { return false }
+        let visit = generation
         do {
             try await client.deleteGroup(caller, id: group.id)
-            await engine?.forget(group.id)
+            guard current(visit) else { return false }
+            await engine.forget(group.id)
+            guard current(visit) else { return false }
             close(group.id)
             await refresh()
-            return true
+            return current(visit)
         } catch {
+            guard current(visit) else { return false }
             say(GroupText.explain(error))
             return false
         }
@@ -589,19 +722,24 @@ final class GroupStore {
     /// Settings carry the group's revision, which also moves with every key change. Read it fresh;
     /// if somebody else's change still lands in between, reload once and reapply only these fields.
     func update(_ group: GroupSummary, _ fields: [String: Any]) async -> Bool {
-        guard let caller else { return false }
+        guard let caller, let client else { return false }
+        let visit = generation
         for attempt in 0..<2 {
             do {
                 let fresh = try? await client.group(caller, id: group.id)
+                guard current(visit) else { return false }
                 var body = fields
                 body["expected_revision"] = fresh?.revision ?? group.revision ?? 0
                 try await client.updateGroup(caller, id: group.id, fields: body)
+                guard current(visit) else { return false }
                 say("Saved.")
                 await refresh()
-                return true
+                return current(visit)
             } catch let error as APIError where error.code == "revision_conflict" && attempt == 0 {
+                guard current(visit) else { return false }
                 continue
             } catch {
+                guard current(visit) else { return false }
                 say(GroupText.explain(error))
                 break
             }
@@ -611,77 +749,99 @@ final class GroupStore {
     }
 
     func change(_ group: GroupSummary, member: GroupMember, role: String? = nil, state: String? = nil) async {
-        guard let caller else { return }
+        guard let caller, let client else { return }
+        let visit = generation
+        let engine = self.engine
         do {
             try await client.changeMember(caller, id: group.id, address: member.address, revision: member.revision,
                                           role: role, state: state)
+            guard current(visit) else { return }
             if state == "removed" || state == "banned", let engine {
                 // Commit the removal now rather than waiting for somebody else's device.
                 _ = try? await engine.processPending(group.id, noJitter: true)
             }
         } catch {
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
+        guard current(visit) else { return }
         await loadMembers(group.id)
+        guard current(visit) else { return }
         await refresh()
     }
 
     func invite(_ group: GroupSummary, raw: String) async {
-        guard let caller else { return }
+        guard let caller, let client else { return }
+        let visit = generation
         let people = raw.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map { PeerFace.conversationAddressInput(String($0)) }
         guard !people.isEmpty else { return }
         do {
             let results = try await client.invite(caller, id: group.id, people: people)
+            guard current(visit) else { return }
             let ok = results.filter { $0.status == "invited" }.count
             say(ok == people.count ? "Invited." : "\(ok) of \(people.count) invited.")
         } catch {
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
+        guard current(visit) else { return }
         await loadMembers(group.id)
     }
 
     /// The link is shown once: a new one replaces the old.
     func link(_ group: GroupSummary, enabled: Bool) async -> String? {
-        guard let caller else { return nil }
+        guard let caller, let client else { return nil }
+        let visit = generation
         do {
             let link = try await client.groupLink(caller, id: group.id, enabled: enabled)
+            guard current(visit) else { return nil }
             await refresh()
+            guard current(visit) else { return nil }
             if !enabled { say("Invite link turned off.") }
             return link.url
         } catch {
+            guard current(visit) else { return nil }
             say(GroupText.explain(error))
             return nil
         }
     }
 
     func transfer(_ group: GroupSummary, to: String) async {
-        guard let caller else { return }
+        guard let caller, let client else { return }
+        let visit = generation
         do {
             try await client.transferGroup(caller, id: group.id, to: to, revision: group.revision)
+            guard current(visit) else { return }
             say("Ownership transferred.")
         } catch {
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
         await refresh()
     }
 
     func liftBan(_ group: GroupSummary, address: String) async {
-        guard let caller else { return }
-        do { try await client.liftBan(caller, id: group.id, address: address) } catch { say(GroupText.explain(error)) }
+        guard let caller, let client else { return }
+        let visit = generation
+        do { try await client.liftBan(caller, id: group.id, address: address) } catch { if current(visit) { say(GroupText.explain(error)) } }
+        guard current(visit) else { return }
         await loadMembers(group.id)
     }
 
     func setNotifications(_ group: GroupSummary, notify: String, muted: Bool) async {
-        guard let caller else { return }
+        guard let caller, let client else { return }
+        let visit = generation
         // Muted means until further notice: the far future the web uses too.
         let until = muted ? 4_102_444_800 : nil
         do {
             try await client.setGroupNotifications(caller, id: group.id, notify: notify, mutedUntil: until)
+            guard current(visit) else { return }
             if let index = groups.firstIndex(where: { $0.id == group.id }) {
                 groups[index].my?.notify = notify
                 groups[index].my?.mutedUntil = until
             }
         } catch {
+            guard current(visit) else { return }
             say(GroupText.explain(error))
         }
     }
@@ -692,7 +852,9 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return }
         #endif
-        guard let me, let token = try? await account.session.token() else { return }
+        guard let me, let tokens = client?.tokens else { return }
+        let visit = generation
+        guard let token = try? await tokens.token(), current(visit) else { return }
         var components = URLComponents(url: CallHost.page, resolvingAgainstBaseURL: false)!
         components.path = "/calls/v1/groups/" + (group.addingPercentEncoding(withAllowedCharacters: .alphanumerics) ?? group) + "/call"
         components.query = nil
@@ -702,8 +864,9 @@ final class GroupStore {
         request.setValue("Bearer " + token, forHTTPHeaderField: "authorization")
         request.setValue("application/json", forHTTPHeaderField: "accept")
         request.timeoutInterval = 15
-        guard let (data, response) = try? await URLSession.shared.data(for: request),
-              (response as? HTTPURLResponse)?.statusCode == 200,
+        let answer = try? await URLSession.shared.data(for: request)
+        guard current(visit) else { return }
+        guard let (data, response) = answer, (response as? HTTPURLResponse)?.statusCode == 200,
               let state = try? PostboxClient.decode(GroupCallState.self, from: data) else {
             calls[group] = nil
             return
@@ -718,11 +881,17 @@ final class GroupStore {
         #if DEBUG
         if Fixtures.enabled { return true }
         #endif
+        let authorization = account.session.authorizationId
+        let actor = account.actingGeneration
+        let client = account.scopedClient(acting: true)
+        func owns() -> Bool { account.session.authorizationId == authorization && account.actingGeneration == actor && account.me?.address == me && !Task.isCancelled }
         do {
             try await client.setThreadTimer(identity: me, thread: thread, seconds: seconds)
+            guard owns() else { return false }
             say(seconds.map { "New messages disappear after \(GroupTimers.label($0))." } ?? "Disappearing messages are off.")
             return true
         } catch {
+            guard owns() else { return false }
             say("Could not change the timer: " + GroupText.explain(error))
             return false
         }
@@ -735,10 +904,20 @@ final class GroupStore {
     #if DEBUG
     // ---- fixtures ---------------------------------------------------------------------------------------
 
+    func stageOrganizationRoomFixture(_ group: GroupSummary) {
+        guard Fixtures.enabled, account.features.groups, account.features.orgs,
+              group.id.hasPrefix("grp_room_"), group.orgId == "org_room_fixture",
+              group.my?.state == "active" || group.my?.state == "keying" else { return }
+        groups.removeAll { $0.id == group.id }
+        groups.append(group)
+        histories[group.id] = []
+    }
+
     /// `-fixtures`: groups in every state the screens draw, with a history that exercises notices, a
     /// verified join, a new-device security line, a warning and a disappearing message. No library,
     /// no network.
     func installFixtures() {
+        prepareContext()
         guard groups.isEmpty, let me = account.me?.address else { return }
         let now = Int(Date().timeIntervalSince1970)
         mailbox = me

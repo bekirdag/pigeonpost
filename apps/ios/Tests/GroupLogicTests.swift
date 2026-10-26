@@ -209,7 +209,21 @@ check(vault.load(me) == record, "it opens again with the same key")
 check(GroupVault(directory: dir, key: { SymmetricKey(size: .bits256) }).load(me) == nil, "and not with another key")
 if let file = files.first { try? FileManager.default.copyItem(at: file, to: dir.appendingPathComponent("copy")) }
 check(vault.load(oz) == nil, "nor as another mailbox's record")
+let authorization = AuthorizationLease()
+let protectedVault = vault.guarded(by: authorization)
+check(protectedVault.load(me) == record, "current authorization can restore the sealed record")
+authorization.invalidate()
+check(protectedVault.load(me) == nil, "retired authorization cannot restore plaintext")
+var refusedSave = false
+do { try protectedVault.save(record, for: me) } catch is CancellationError { refusedSave = true } catch {}
+check(refusedSave && vault.load(me) == record, "retired save leaves current disk state intact")
+protectedVault.remove(me)
+check(vault.load(me) == record, "retired cleanup cannot remove another activation's record")
 vault.removeAll()
+do { try protectedVault.save(record, for: me) } catch {}
+check(!FileManager.default.fileExists(atPath: dir.path), "retired save cannot recreate erased storage")
+let missingMembership = try! JSONDecoder().decode(GroupSummary.self, from: Data(#"{"id":"grp_unknown","name":"Unknown"}"#.utf8))
+check(!missingMembership.isActive && !missingMembership.isKeying, "missing membership makes no joined claim")
 
 print("Groups logic: \(checks) checks, \(failures) failures")
 exit(failures == 0 ? 0 : 1)

@@ -24,6 +24,7 @@ struct GroupSummary: Decodable, Identifiable, Equatable, Hashable {
     var revision: Int?
     var epoch: Int?
     var activationState: String?
+    var orgId: String?
     var memberCount: Int?
     var maxMembers: Int?
     var createdBy: String?
@@ -35,7 +36,7 @@ struct GroupSummary: Decodable, Identifiable, Equatable, Hashable {
     var my: GroupMembership?
 
     var role: String { my?.role ?? "member" }
-    var state: String { my?.state ?? "active" }
+    var state: String { my?.state ?? "unknown" }
     var isAdmin: Bool { role == "owner" || role == "admin" }
     var isOwner: Bool { role == "owner" }
     var isActive: Bool { state == "active" }

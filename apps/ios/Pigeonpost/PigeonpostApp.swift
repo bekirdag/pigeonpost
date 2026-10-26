@@ -34,9 +34,9 @@ struct PigeonpostApp: App {
         _filtered = State(initialValue: filtered)
         _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
-        _calendar = State(initialValue: CalendarStore(client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
+        _calendar = State(initialValue: CalendarStore(account: account, client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
         #else
-        _calendar = State(initialValue: CalendarStore(client: account.client))
+        _calendar = State(initialValue: CalendarStore(account: account))
         #endif
         // The bars UIKit draws for SwiftUI's navigation titles, in the app's own type.
         let bar = UINavigationBar.appearance()

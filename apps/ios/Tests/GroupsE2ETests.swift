@@ -18,6 +18,24 @@ import Foundation
 }
 enum AuthError: Error { case sessionExpired }
 
+/// Holds only the leased-engine probe. Existing postbox/web interop traffic is untouched.
+private final class LeaseProbeTransport: URLProtocol, @unchecked Sendable {
+    @MainActor static var pending: LeaseProbeTransport?
+    @MainActor static var count = 0
+    override class func canInit(with request: URLRequest) -> Bool { request.url?.host == "group-lease.invalid" }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() { Task { @MainActor in Self.count += 1; Self.pending = self } }
+    override func stopLoading() {}
+    @MainActor func complete() {
+        let response = HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil,
+                                       headerFields: ["content-type": "application/json"])!
+        client?.urlProtocol(self, didReceive: response, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: Data(#"{"items":[]}"#.utf8))
+        client?.urlProtocolDidFinishLoading(self)
+        Self.pending = nil
+    }
+}
+
 struct Person: Decodable { let token: String; let address: String }
 struct Setup: Decodable { let postbox: String; let lossProxy: String?; let people: [String: Person] }
 
@@ -49,6 +67,8 @@ struct GroupsE2E {
         }
         let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("pp-groups-e2e-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: scratch) }
+        URLProtocol.registerClass(LeaseProbeTransport.self)
+        defer { URLProtocol.unregisterClass(LeaseProbeTransport.self) }
         let key = SymmetricKey(size: .bits256)
         var sessions: [Session] = []
         func client(_ who: String, baseAt: URL? = nil) -> PostboxClient {
@@ -332,6 +352,39 @@ struct GroupsE2E {
                     check(file.name == "reply.txt" && String(decoding: opened, as: UTF8.self) == "written in a browser",
                           "and opens the web client's file")
                 } else { check(false, "the web client's message carries its file") }
+            }
+
+            // A genuine restored MLS engine with a paused HTTP read and queued re-enrolment.
+            // Retiring its lease must hide keys/history and refuse queued work before any mutation.
+            let lease = AuthorizationLease()
+            let scoped = ScopedTokenProvider(source: bobClient.tokens!) { lease.isValid }
+            let probeClient = PostboxClient(base: URL(string: "https://group-lease.invalid")!, tokens: scoped, retainingTokens: true)
+            let bound = GroupEngine(mailbox: bob, client: probeClient, vault: vault("bob").guarded(by: lease), events: { _ in })
+            check(try await bound.start() == again, "leased engine restores the same attested MLS identity")
+            check(await bound.history(gid).contains { $0.text == "after the restart" }, "leased engine restores its authorized decrypted history")
+            let saved = vault("bob").load(bob)
+            let reading = Task { () -> Bool in do { _ = try await bound.sync(gid); return true } catch { return false } }
+            let reached = await until("the isolated leased read", seconds: 5) { LeaseProbeTransport.pending != nil }
+            check(reached, "actual MLS engine pauses in its scoped HTTP operation")
+            let queued = Task { () -> Bool in do { _ = try await bound.reEnrol(); return true } catch { return false } }
+            await Task.yield()
+            lease.invalidate()
+            let retiredHistory = await bound.history(gid), retiredJoined = await bound.inGroup(gid)
+            check(retiredHistory.isEmpty && !retiredJoined, "retired engine exposes no history or joined state while its request waits")
+            let retiredDevice = await bound.identity(), retiredSafety = await bound.safetyNumber(gid), retiredMembers = await bound.members(gid)
+            check(retiredDevice == nil && retiredSafety == nil && retiredMembers.isEmpty,
+                  "retired engine exposes no device or member key metadata")
+            LeaseProbeTransport.pending?.complete()
+            let readSucceeded = await reading.value, queuedSucceeded = await queued.value
+            check(!readSucceeded && !queuedSucceeded, "late read and queued re-enrolment are both refused")
+            check(LeaseProbeTransport.count == 1 && vault("bob").load(bob) == saved, "retired queue makes no further requests or persistent changes")
+            let renewedLease = AuthorizationLease()
+            let authorizedAgain = GroupEngine(mailbox: bob, client: bobClient, vault: vault("bob").guarded(by: renewedLease), events: { _ in })
+            check(try await authorizedAgain.start() == again, "a fresh authorization preserves the existing MLS identity")
+            renewedLease.invalidate()
+            vault("bob").removeAll()
+            do { _ = try await bound.start(); check(false, "retired startup was accepted") } catch is CancellationError {
+                check(!FileManager.default.fileExists(atPath: scratch.appendingPathComponent("bob").path), "retired startup cannot recreate erased vault state")
             }
         } catch {
             check(false, "unexpected error: \(error)")
