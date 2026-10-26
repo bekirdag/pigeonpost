@@ -22,8 +22,12 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off")) return null
         val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin")
+        if (mode.startsWith("actions")) {
+            val base = FixturePostbox("inbox")
+            return AppGraph(session, MessageActionFixture(mode, base, base), fixtures = true)
+        }
         if (mode == "groups") {
             // Real group encryption (the AAR) against the in-memory groups postbox, with two other people.
             val world = FixtureGroups()

@@ -48,3 +48,22 @@
   continuation validation directory. This is in-process recovery; encrypted recovery after app
   restart remains a separate hardening item. Composer controls, action rows/ticks, message-info
   presentation, emulator coverage and real postbox integration are the next implementation steps.
+- Added Compose message action rows outside the cards, reply context/navigation across subjects,
+  edit/reply composer bars with Escape/cancel and automatic editor focus, visible uncertain-send
+  retry controls, version history and accessible receipt/agent indicators. Privacy now has an
+  actual read-receipt switch and remains reachable when receipts are the only privacy feature.
+  Incoming messages and disabled features never claim sender receipts. The phone screenshot
+  review caught use of the blue action color for seen/working; these now use the existing green
+  semantic token. Display names use the theme's text font; addresses remain monospaced.
+- All eight new phone emulator workflows pass, including lost-committed-response recovery with
+  one bubble, edit versions, cross-subject quote navigation, capability-off behavior and receipt
+  preference masking. Four additional delivery/privacy projection cases bring the JVM suite to
+  123 passing tests with no skips. Debug app/test APKs compile. Retained first attempts include a
+  cross-module nullability compile fix, an unavailable test-only UiAutomator import (replaced by
+  framework instrumentation), and corrected async/merged-semantics/placeholder assertions. The
+  final eight-case run is `android-message-actions-emulator-qualified.log`; broader regression,
+  final color/text refinement, tablet, release/R8 and real-postbox checks are still pending.
+- Debug fixture source is excluded by Docdex's `debug` directory rule even on explicit ingestion.
+  No parent exclusion was changed. Those files receive precise source reads, compiler and runtime
+  validation; Kotlin dependency graphs elsewhere are also incomplete. All debug modes require an
+  explicit intent and are excluded from release. No production account or real message was used.

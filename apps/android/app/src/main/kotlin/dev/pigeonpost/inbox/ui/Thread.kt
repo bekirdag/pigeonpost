@@ -9,12 +9,14 @@ import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.CallMissed
+import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -25,6 +27,11 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -58,18 +65,35 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
     var searching by rememberSaveable(peer) { mutableStateOf(false) }
     var query by rememberSaveable(peer) { mutableStateOf("") }
     var match by rememberSaveable(peer) { mutableIntStateOf(0) }
+    var quotedMessage by remember(state.acting?.address, peer) { mutableStateOf<String?>(null) }
+    LaunchedEffect(quotedMessage) { if (quotedMessage != null) { delay(2200); quotedMessage = null } }
     var deleteSubject by remember { mutableStateOf(false) }
     var addMenu by remember { mutableStateOf(false) }
     val hits = remember(messages, query) { if (query.isBlank()) emptyList() else messages.filter { it.display.text.contains(query, true) }.map { it.id } }
     var latestRequest by remember(state.acting?.address, peer, subject?.id) { mutableIntStateOf(0) }
     val editorFocus = remember { FocusRequester() }
+    LaunchedEffect(state.composerAction?.id) { if (state.composerAction != null) runCatching { editorFocus.requestFocus() } }
     var editorFocused by remember { mutableStateOf(false) }
     val calling = callMode != CallHost.Mode.HIDDEN
     val calls = model.calls
     val askBlock = LocalAskBlock.current
     var headerMenu by remember { mutableStateOf(false) }
     val timer = subject?.ephemeralSecs
-    Column(modifier.fillMaxHeight().background(p.wash)) {
+    val showParent: (MessageReply) -> Unit = { reply ->
+        val live = store.state.value
+        if (live.acting?.address == state.acting?.address && live.selectedPeer == peer) {
+            val found = live.subjects.mapNotNull { row -> row.messages.firstOrNull {
+                it.id == reply.messageId || reply.msgRef != null && it.msgRef == reply.msgRef
+            }?.let { row to it.id } }.firstOrNull()
+            if (found == null) store.showError("The original message is no longer available in this inbox.")
+            else { store.selectSubject(found.first.id); searching = false; query = ""; quotedMessage = found.second }
+        }
+    }
+    Column(modifier.fillMaxHeight().background(p.wash).onPreviewKeyEvent {
+        if (it.key == Key.Escape && it.type == KeyEventType.KeyUp && state.composerAction != null && !state.isSending && state.unconfirmedSend == null) {
+            store.cancelMessageAction(); true
+        } else false
+    }) {
         // The bar: who this is with (the name is the button for "who is this"), then the actions.
         Row(Modifier.fillMaxWidth().heightIn(min = 60.dp).background(p.wash).padding(start = if (wide && showSidebar == null) 14.dp else 2.dp, end = 4.dp),
             verticalAlignment = Alignment.CenterVertically) {
@@ -79,7 +103,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 Avatar(peer, name, if (wide) 30.dp else 34.dp)
                 Column(Modifier.weight(1f)) {
-                    Text(name, style = geistMono(14.5.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    Text(name, style = geist(14.5.sp, FontWeight.SemiBold), color = p.ink, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(peer, style = geistMono(11.5.sp), color = p.muted, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
                 if (timer != null) Icon(Icons.Outlined.Timer, "Messages disappear after ${timerLabel(timer)}", Modifier.size(16.dp).testTag("timerBadge"), tint = p.muted)
@@ -122,9 +146,10 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
         if (messages.isEmpty()) EmptyPane("Start a conversation", timer?.let { "Messages disappear after ${timerLabel(it)}." } ?: "Send a message in ${subject?.name ?: "General"}.", Modifier.weight(1f))
         else key(state.acting?.address, peer, subject?.id) {
             ConversationHistory(messages, Modifier.weight(1f),
-                searchTarget = if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
+                searchTarget = quotedMessage ?: if (hits.isEmpty()) null else hits[match.mod(hits.size)], latestRequest = latestRequest) { message ->
                 if (message.system) CallLine(message.body) else MessageBubble(message, query.isNotBlank() && message.display.text.contains(query, true),
-                    hits.isNotEmpty() && hits[match.mod(hits.size)] == message.id, store, attachment, openLink, model, state.acting?.address.orEmpty())
+                    quotedMessage == message.id || hits.isNotEmpty() && hits[match.mod(hits.size)] == message.id,
+                    store, attachment, openLink, model, state.acting?.address.orEmpty(), state, showParent)
             }
         }
         // A blocked person: the banner and Unblock instead of the composer (SDS §15.2).
@@ -132,6 +157,7 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
         // The composer: one card holding the attach button, the field and the send button.
         else Column(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp)
             .clip(RoundedCornerShape(16.dp)).background(p.composer).border(1.dp, p.stroke, RoundedCornerShape(16.dp))) {
+            MessageComposerContext(state, store)
             if (state.attachments.isNotEmpty()) Row(Modifier.horizontalScroll(rememberScrollState()).padding(start = 10.dp, end = 10.dp, top = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 state.attachments.forEach { file -> InputChip(false, { store.removeAttachment(file.id) }, enabled = !state.isSending,
                     colors = InputChipDefaults.inputChipColors(containerColor = p.field, labelColor = p.ink), border = BorderStroke(1.dp, p.stroke),
@@ -147,17 +173,18 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
             if (state.quota?.full == true) Text("Storage is full. Delete messages or attachments to make space.", Modifier.padding(horizontal = 14.dp, vertical = 8.dp), color = p.blockedText, style = geist(13.sp))
             Row(Modifier.fillMaxWidth().padding(start = 2.dp, end = 8.dp, top = 4.dp, bottom = 4.dp), verticalAlignment = Alignment.Bottom) {
                 Box(Modifier.padding(bottom = 4.dp)) {
-                    ActionIcon("Add attachment", Icons.Outlined.AttachFile) { addMenu = true }
+                    ActionIcon("Add attachment", Icons.Outlined.AttachFile, enabled = !state.isSending && state.unconfirmedSend == null && state.composerAction?.editing != true) { addMenu = true }
                     DropdownMenu(addMenu, { addMenu = false }, containerColor = p.ground) {
                         DropdownMenuItem({ Text("Choose document") }, { addMenu = false; chooseFile() })
                         DropdownMenuItem({ Text("Choose photo") }, { addMenu = false; choosePhoto() })
                     }
                 }
                 key(state.draftKey) {
-                    MessageEditor(state.draft, store::draft, !state.isSending,
-                        Modifier.weight(1f).onFocusChanged { editorFocused = it.isFocused; if (it.isFocused) latestRequest++ }, model::pasteAttachments, editorFocus)
+                    MessageEditor(state.draft, store::draft, !state.isSending && state.unconfirmedSend == null,
+                        Modifier.weight(1f).testTag("messageEditor").onFocusChanged { editorFocused = it.isFocused; if (it.isFocused) latestRequest++ }, model::pasteAttachments, editorFocus,
+                        placeholder = if (state.composerAction?.editing == true) "Edit message" else "Message")
                 }
-                val canSend = !state.isSending && !loadingFiles && state.quota?.full != true && (state.draft.isNotBlank() || state.attachments.isNotEmpty())
+                val canSend = store.canSubmitMessage() && !loadingFiles
                 IconButton({
                     val keepFocus = editorFocused
                     latestRequest++; store.send()
@@ -166,20 +193,22 @@ fun ConversationPane(state: InboxState, store: InboxStore, model: InboxViewModel
                 }, enabled = canSend, modifier = Modifier.padding(bottom = 8.dp).size(40.dp).clip(RoundedCornerShape(11.dp))
                     .background(if (canSend) p.accent else p.chip)) {
                     if (state.isSending) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp, color = p.onAccent)
-                    else Icon(Icons.Outlined.ArrowUpward, "Send message", Modifier.size(20.dp), tint = if (canSend) p.onAccent else p.muted)
+                    else Icon(if (state.composerAction?.editing == true) Icons.Outlined.Check else Icons.Outlined.ArrowUpward,
+                        if (state.composerAction?.editing == true) "Save edit" else "Send message", Modifier.size(20.dp), tint = if (canSend) p.onAccent else p.muted)
                 }
             }
         }
     }
     if (deleteSubject) Confirm("Delete subject?", "This removes the subject and its messages from this inbox. Other inboxes keep their copies.", "Delete",
         { subject?.id?.let { store.deleteThread(it) { deleteSubject = false } } }, { deleteSubject = false }, enabled = !state.actionBusy)
+    state.messageInfo?.let { MessageInfoDialog(it, store, state) }
 }
 
 @Composable
 private fun SubjectChip(subject: Subject, selected: Boolean, select: () -> Unit) {
     val p = Pp.colors
     Row(Modifier.height(36.dp).clip(RoundedCornerShape(9.dp)).background(if (selected) p.selected else Color.Transparent)
-        .clickable(role = Role.Tab, onClick = select).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
+        .selectable(selected = selected, role = Role.Tab, onClick = select).testTag("subject:" + subject.id).padding(horizontal = 12.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         Text(subject.name + if (subject.unread > 0) " (${subject.unread})" else "", style = geist(14.sp, if (selected) FontWeight.Medium else FontWeight.Normal),
             color = if (selected) p.ink else p.secondary, maxLines = 1)
@@ -194,7 +223,7 @@ private fun SubjectChip(subject: Subject, selected: Boolean, select: () -> Unit)
 @Suppress("DEPRECATION")
 @Composable
 fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean, store: InboxStore, attachment: (Attachment, String) -> Unit,
-    openLink: (String) -> Unit, model: InboxViewModel, identity: String) {
+    openLink: (String) -> Unit, model: InboxViewModel, identity: String, state: InboxState, showParent: (MessageReply) -> Unit) {
     val p = Pp.colors
     var menu by remember { mutableStateOf(false) }
     var original by remember { mutableStateOf(false) }
@@ -204,6 +233,10 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
     LaunchedEffect(copied) { if (copied) { delay(1400); copied = false } }
     val clipboard = LocalClipboardManager.current
     val mine = message.outgoing
+    val editable = message.canEditMessage(state.features, System.currentTimeMillis() / 1000)
+    val replyable = state.has(Features.MESSAGE_REPLY) && message.status == Delivery.SENT && !state.blockedPeer
+    val pendingId = message.pendingEditId ?: message.id
+    val canChangeMode = !state.isSending && state.unconfirmedSend == null && !state.blockedPeer
     val heldRequest = !mine && message.verb != null && message.autonomy != "auto"
     val fill = if (mine) p.mineFill else if (heldRequest) p.heldCardFill else p.ground
     val stroke = if (mine) p.mineStroke else if (heldRequest) p.heldCardStroke else p.stroke
@@ -213,7 +246,8 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
     val openMenu = { menu = true }
     Row(Modifier.fillMaxWidth(), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start) {
         if (mine) Spacer(Modifier.width(36.dp))
-        Column(Modifier.weight(1f, fill = false).widthIn(max = 620.dp).clip(shape).background(fill)
+        Column(Modifier.weight(1f, fill = false).widthIn(max = 620.dp)) {
+        Column(Modifier.fillMaxWidth().clip(shape).background(fill)
             .border(if (current) 2.dp else 1.dp, if (current) p.found else if (highlighted) p.found.copy(alpha = .6f) else stroke, shape)) {
             val decision = !mine && message.verb != null
             if (decision || message.display.unattended) {
@@ -233,6 +267,7 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                 Seam(Modifier.fillMaxWidth().height(1.dp), divider)
             }
             Column(Modifier.padding(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                message.replyTo?.let { reply -> MessageReplyQuote(reply, state.conversation?.name ?: "Sender", mine) { showParent(reply) } }
                 message.heldBecause?.takeIf { message.autonomy == "review" }?.let {
                     Text(it.replace('_', ' '), style = geist(12.5.sp), color = if (heldRequest) p.heldCardText else p.muted)
                 }
@@ -242,21 +277,29 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
             Seam(Modifier.fillMaxWidth().height(1.dp), divider)
             Row(Modifier.fillMaxWidth().combinedClickable(onClick = {}, onLongClick = openMenu, onLongClickLabel = "Message actions")
                 .padding(start = 6.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-                IconButton({ clipboard.setText(AnnotatedString(message.display.text)); copied = true }, Modifier.size(36.dp)) {
-                    Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy message", Modifier.size(16.dp), tint = meta)
-                }
                 Spacer(Modifier.weight(1f))
+                if ((message.editCount ?: 0) > 0 || (message.editedAt ?: 0) > 0) Text("edited", Modifier.padding(end = 6.dp), style = geist(11.sp), color = meta)
                 message.expiresAt?.let { at -> Icon(Icons.Outlined.Timer, "Disappears " + java.text.DateFormat.getDateTimeInstance(java.text.DateFormat.SHORT, java.text.DateFormat.SHORT).format(java.util.Date(at * 1000)),
                     Modifier.padding(end = 4.dp).size(13.dp), tint = meta) }
-                Text(when (message.status) { Delivery.SENDING -> "Sending…"; Delivery.FAILED -> "Delivery unconfirmed"; Delivery.SENT -> shortTime(message.at) },
+                Text(when (message.status) {
+                    Delivery.SENDING -> if (message.pendingEditId != null) "Saving…" else "Sending…"
+                    Delivery.FAILED -> if (message.pendingEditId != null) "Edit unconfirmed" else "Delivery unconfirmed"
+                    Delivery.SENT -> shortTime(message.at)
+                },
                     style = geist(12.sp, if (message.status == Delivery.FAILED) FontWeight.SemiBold else FontWeight.Normal),
                     color = if (message.status == Delivery.FAILED) p.blockedText else meta)
+                Spacer(Modifier.width(5.dp))
+                MessageReceiptMark(message, state, meta)
                 Box {
                     IconButton(openMenu, Modifier.size(36.dp)) { Icon(Icons.Outlined.MoreHoriz, "Message actions", Modifier.size(18.dp), tint = meta) }
                     DropdownMenu(menu, { menu = false }, containerColor = p.ground) {
+                        if (replyable) DropdownMenuItem({ Text("Reply") }, { menu = false; store.beginReply(message.id) }, enabled = canChangeMode)
+                        if (editable) DropdownMenuItem({ Text("Edit") }, { menu = false; store.beginEdit(message.id) }, enabled = canChangeMode)
                         DropdownMenuItem({ Text("Copy text") }, { menu = false; clipboard.setText(AnnotatedString(message.display.text)) })
+                        if (state.features.any { it in Features.MESSAGE_ACTIONS } && state.messages.any { it.id == message.id })
+                            DropdownMenuItem({ Text("Message info") }, { menu = false; store.showMessageInfo(message.id) })
                         DropdownMenuItem({ Text("Original message") }, { menu = false; original = true })
-                        if (message.status != Delivery.SENDING) DropdownMenuItem({ Text(if (message.status == Delivery.FAILED) "Dismiss failed message" else "Delete message") }, { menu = false; confirm = "delete" })
+                        if (message.status != Delivery.SENDING) DropdownMenuItem({ Text(if (message.status == Delivery.FAILED) "Stop retrying" else "Delete message") }, { menu = false; confirm = "delete" })
                         if (!message.outgoing) DropdownMenuItem({ Text("Report message") }, { menu = false; confirm = "spam" })
                         if (!message.outgoing) DropdownMenuItem({ Text("Block sender", color = p.blockedText) }, { menu = false
                             store.state.value.selectedPeer?.let { peer -> askBlock(BlockTarget(peer, store.state.value.conversation?.name ?: displayName(peer), messageId = message.id)) } })
@@ -264,12 +307,30 @@ fun MessageBubble(message: ThreadMessage, highlighted: Boolean, current: Boolean
                 }
             }
         }
+        Row(Modifier.fillMaxWidth().testTag("messageActions:" + message.id), horizontalArrangement = if (mine) Arrangement.End else Arrangement.Start,
+            verticalAlignment = Alignment.CenterVertically) {
+            if (!mine && replyable) IconButton({ store.beginReply(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("reply:" + message.id)) {
+                Icon(Icons.AutoMirrored.Outlined.Reply, "Reply to message", Modifier.size(18.dp), tint = p.secondary)
+            }
+            if (mine && editable) IconButton({ store.beginEdit(message.id) }, enabled = canChangeMode, modifier = Modifier.size(36.dp).testTag("edit:" + message.id)) {
+                Icon(Icons.Outlined.Edit, "Edit message", Modifier.size(18.dp), tint = p.secondary)
+            }
+            IconButton({ clipboard.setText(AnnotatedString(message.display.text)); copied = true }, Modifier.size(36.dp)) {
+                Icon(if (copied) Icons.Outlined.Check else Icons.Outlined.ContentCopy, "Copy message", Modifier.size(18.dp), tint = p.secondary)
+            }
+            if (message.status == Delivery.FAILED && state.unconfirmedSend != pendingId && store.canRetrySend(pendingId))
+                TextButton({ store.retrySend(pendingId) }) { Text("Retry", style = geist(12.sp)) }
+        }
+        }
         if (!mine) Spacer(Modifier.width(36.dp))
     }
     if (original) PageDialog("Original message", { original = false }) { SelectionContainer { Text(message.body, style = geistMono(13.sp), color = p.body) } }
-    if (confirm != null) Confirm(if (confirm == "spam") "Report this message?" else "Delete message?",
-        if (confirm == "spam") "Report this message and its sender for spam, abuse, or other prohibited content. This does not delete your copy." else "This removes your copy only.",
-        if (confirm == "spam") "Report" else "Delete", { if (confirm == "spam") store.reportSpam(message.id) else store.deleteMessage(message.id); confirm = null }, { confirm = null })
+    if (confirm != null) Confirm(if (confirm == "spam") "Report this message?" else if (message.status == Delivery.FAILED) "Stop retrying?" else "Delete message?",
+        if (confirm == "spam") "Report this message and its sender for spam, abuse, or other prohibited content. This does not delete your copy."
+            else if (message.status == Delivery.FAILED) "The message may already have arrived. This stops retrying the pending message."
+            else "This removes your copy only.",
+        if (confirm == "spam") "Report" else if (message.status == Delivery.FAILED) "Stop retrying" else "Delete",
+        { if (confirm == "spam") store.reportSpam(message.id) else store.deleteMessage(if (message.status == Delivery.FAILED) pendingId else message.id); confirm = null }, { confirm = null })
 }
 
 /** A file in a message: its preview, its name and size, and a download icon. Tapping opens it in the app when it can be shown safely. */

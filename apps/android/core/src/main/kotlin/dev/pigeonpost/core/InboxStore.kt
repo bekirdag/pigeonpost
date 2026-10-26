@@ -468,7 +468,7 @@ class InboxStore(
     fun showMessageInfo(messageId: String): Job {
         val snapshot = state.value
         val identity = snapshot.acting?.address ?: return action {}
-        if (snapshot.subject?.messages.orEmpty().none { it.id == messageId && !it.system && it.status == Delivery.SENT }) return action {}
+        if (snapshot.subject?.messages.orEmpty().none { it.id == messageId && !it.system } || snapshot.messages.none { it.id == messageId }) return action {}
         if (snapshot.features.none { it in Features.MESSAGE_ACTIONS }) return action {}
         clearMessageInfo()
         val version = infoVersion
@@ -477,6 +477,7 @@ class InboxStore(
         return action {
             try {
                 val info = api.messageInfo(identity, messageId)
+                if (info.messageId != messageId) throw ApiException(200, "bad_response", "Message info did not match the requested message.")
                 if (epoch == sessionVersion && version == infoVersion && state.value.acting?.address == identity)
                     mutable.update { it.copy(messageInfo = MessageInfoState(messageId, info, loading = false)) }
             } catch (failure: Exception) {

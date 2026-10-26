@@ -53,7 +53,7 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.roundToInt
 
-/** Settings → Privacy & filtering: the six controls, each shown only when its feature is on. */
+/** Settings → Privacy & filtering: each control is shown only when its feature is on. */
 @Composable
 fun PrivacySettings(state: InboxState, store: InboxStore, blocked: () -> Unit) {
     val p = Pp.colors
@@ -64,7 +64,11 @@ fun PrivacySettings(state: InboxState, store: InboxStore, blocked: () -> Unit) {
     POLICY_ROWS.filter { state.has(it.feature) }.forEach { row ->
         Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(row.title, style = geist(14.5.sp, FontWeight.Medium), color = p.ink)
-            SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().testTag("policy:" + row.field)) {
+            if (row.field == "read_receipts") Row(Modifier.fillMaxWidth().testTag("policy:read_receipts"), verticalAlignment = Alignment.CenterVertically) {
+                Text(if (policy?.readReceipts == false) "Off" else "On", Modifier.weight(1f), style = geist(13.sp), color = p.secondary)
+                Switch(checked = policy?.readReceipts != false, onCheckedChange = { store.setPolicy("read_receipts", it.toString()) }, enabled = policy != null,
+                    modifier = Modifier.testTag("readReceiptsSwitch").semantics { contentDescription = "Send read receipts" })
+            } else SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth().testTag("policy:" + row.field)) {
                 row.options.forEachIndexed { i, (value, label) ->
                     SegmentedButton(policy?.value(row.field) == value, { if (policy != null && policy.value(row.field) != value) store.setPolicy(row.field, value) },
                         SegmentedButtonDefaults.itemShape(i, row.options.size), enabled = policy != null,
