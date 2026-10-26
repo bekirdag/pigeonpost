@@ -67,7 +67,7 @@ class MeetingLinkWorkflowTest {
                 }
                 visible && result?.length() == 1
             }
-        } catch (failure: Throwable) { throw AssertionError(lastState, failure) }
+        } catch (failure: Throwable) { throw AssertionError("$lastState; ${windowInputStatus()}", failure) }
         return result!!
     }
     @Test fun openingALinkOnlyLooksUpAndExplicitOccurrenceSelectionEnablesJoining() {
