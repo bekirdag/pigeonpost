@@ -151,6 +151,7 @@ class PostboxClient(
     // connection for that one retry; never evict connections belonging to other in-flight calls.
     private val recoveryHttp = http.newBuilder().retryOnConnectionFailure(true)
         .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
+    private val pairingHttp = http.newBuilder().callTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
 
     override suspend fun resolveDevicePairing(code: DevicePairingCode): DevicePairingPreview =
         decode<DevicePairingPreview>(pairingRequest("resolve", code)).also { if (!it.isValid) throw unverifiedPairing() }
@@ -172,7 +173,7 @@ class PostboxClient(
         val request = Request.Builder().url(url("device-pairings/$path")).post(body).build()
         // POST decisions are never retried after a network failure. Ordinary token renewal retains
         // these exact bytes; an authentication challenge instead requires a fresh human decision.
-        authenticated(request).use { AuthorizedJson(limitedBytes(it, 1024L * 1024).toString(Charsets.UTF_8), it.request.tag(AuthorizationLease::class.java)) }
+        authenticated(request, pairingHttp).use { AuthorizedJson(limitedBytes(it, 1024L * 1024).toString(Charsets.UTF_8), it.request.tag(AuthorizationLease::class.java)) }
     }
 
     override suspend fun identities() = decode<IdentitiesResponse>(request("identities")).identities.orEmpty()

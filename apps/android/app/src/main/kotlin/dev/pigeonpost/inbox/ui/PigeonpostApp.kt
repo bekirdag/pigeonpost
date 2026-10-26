@@ -68,6 +68,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val calendarStore = model.calendar
     val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
     val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
+    val deviceOpen by model.deviceApprovalOpen.collectAsStateWithLifecycle()
+    val deviceApproval by (model.deviceApproval?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.DeviceApprovalState()) }).collectAsStateWithLifecycle()
     val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
@@ -195,6 +197,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
             confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
         meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
+        if (deviceOpen && !session.loading && session.signedIn && session.termsAccepted) DeviceApprovalDialog(model, deviceApproval)
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null
