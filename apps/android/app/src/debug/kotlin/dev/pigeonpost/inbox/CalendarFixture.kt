@@ -8,10 +8,17 @@ import java.time.Instant
 import java.util.UUID
 
 /** Opt-in, in-memory native workflow data. It cannot make HTTP requests or send invitations. */
-internal class CalendarFixture(private val base: PostboxApi, private val mode: String) : PostboxApi by base, CalendarTransport {
+internal class CalendarFixture(private val base: PostboxApi, private val mode: String) : PostboxApi by base, CalendarTransport, CalendarMeetingApi {
     override suspend fun identities() = listOf(IdentityRow("/k/demomain", "Main"), IdentityRow("/k/demoagent", "Build agent"))
     override suspend fun whoami(identity: String) = WhoAmI(identity, if (identity == "/k/demomain") "/demo/main" else "/demo/agent")
     override suspend fun capabilities() = Capabilities(listOf("calendar"))
+    override suspend fun scheduledMeeting(mailbox: String, code: String): CalendarMeetingStatus {
+        if (mailbox != "/k/demomain" || code != "ABCDEFGHJK") return CalendarMeetingStatus("unavailable", emptyList())
+        val instant = Instant.now().epochSecond
+        return CalendarMeetingStatus("open", listOf(
+            CalendarMeetingOccurrence("occ_first", instant - 300, instant + 1800, instant - 900, instant + 2700),
+            CalendarMeetingOccurrence("occ_second", instant - 60, instant + 2100, instant - 600, instant + 3000)))
+    }
     private var settings = CalendarSettings(timezone = "Europe/Istanbul", weekStart = 1, previews = false)
     private val folders = mutableListOf(CalendarFolder("cal_main", "Personal", "blue", true, 1))
     private val events = linkedMapOf<String, ScheduledEvent>()
@@ -45,6 +52,7 @@ internal class CalendarFixture(private val base: PostboxApi, private val mode: S
                 }
             }
             "/v1/calendar/settings" -> {
+                if (method == "GET" && mode == "calendar-zone-delay") kotlinx.coroutines.delay(1500)
                 if (method == "PUT") settings = settings.copy(timezone = string("timezone") ?: settings.timezone, previews = fields["previews"]?.jsonPrimitive?.boolean ?: settings.previews,
                     weekStart = fields["week_start"]?.jsonPrimitive?.int ?: settings.weekStart,
                     workingHours = fields["working_hours"]?.let { WireJson.decodeFromString<CalendarWorkingHours>(it.toString()) } ?: settings.workingHours)

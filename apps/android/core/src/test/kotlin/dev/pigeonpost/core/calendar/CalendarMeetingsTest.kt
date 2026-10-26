@@ -18,6 +18,10 @@ class CalendarMeetingsTest {
         assertNull(CalendarLink.parse("https://inbox.pigeonpost.dev/m/ABCDEF"))
         assertNull(CalendarLink.parse("https://inbox.pigeonpost.dev/m/evt_" + "a".repeat(26)))
     }
+    @Test fun existingAdHocLinksUseOnlyThePinnedBrowserOriginWithoutCredentials() {
+        assertEquals("https://inbox.pigeonpost.dev/m/ABC123", CalendarLink.browserOnly("https://inbox.pigeonpost.dev/m/ABC123"))
+        for (url in listOf("http://inbox.pigeonpost.dev/m/ABC123", "https://other.invalid/m/ABC123", "https://user@inbox.pigeonpost.dev/m/ABC123", "https://inbox.pigeonpost.dev:443/m/ABC123", "https://inbox.pigeonpost.dev/m/ABC123?role=host", "https://inbox.pigeonpost.dev/m/ABC123#token", "https://inbox.pigeonpost.dev/m/ABC123/", "https://inbox.pigeonpost.dev/m/../m/ABC123")) assertNull(CalendarLink.browserOnly(url))
+    }
     @Test fun guestInvitationsRemainBrowserLinksAndNeverBecomeMemberAuthority() {
         for (url in listOf("https://inbox.pigeonpost.dev/m/ABCDEFGHJK#t=private-token", "https://inbox.pigeonpost.dev/m/evt_" + "a".repeat(26) + "#t=private-token&r=accepted", "https://inbox.pigeonpost.dev/m/u#u=private-token")) {
             val link = CalendarLink.parse(url)

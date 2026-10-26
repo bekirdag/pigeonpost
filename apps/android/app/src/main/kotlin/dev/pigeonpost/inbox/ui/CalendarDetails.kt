@@ -52,7 +52,7 @@ internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store
     PageDialog("Event", dismiss) {
         s.error?.let { CalendarError(it, store::clearError) }
         localError?.let { CalendarError(it) { localError = null } }
-        if (s.noticeWaiting) Text("A calendar notification is waiting. Close this event to open it.", color = Pp.colors.secondary)
+        if (s.noticeWaiting) Text("Another calendar item is waiting. Close this event to open it.", color = Pp.colors.secondary)
         if (response == null) {
             Text("Loading event…")
             OutlinedButton({ store.loadDetail(key) }) { Text("Reload event") }

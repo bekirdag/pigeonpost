@@ -22,7 +22,7 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "calendar", "calendar-lost", "calendar-conflict")) return null
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "calendar", "calendar-lost", "calendar-conflict", "calendar-zone-delay")) return null
         val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin", scoped = mode.startsWith("calendar"))
         if (mode.startsWith("calendar")) return AppGraph(session, CalendarFixture(FixturePostbox("inbox"), mode), fixtures = true,
             calendarStorage = { dev.pigeonpost.core.calendar.MemoryCalendarAttemptStorage() })

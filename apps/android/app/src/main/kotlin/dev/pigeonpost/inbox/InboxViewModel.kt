@@ -39,6 +39,9 @@ import dev.pigeonpost.core.calendar.CalendarStore
 import dev.pigeonpost.core.calendar.CalendarTransport
 import dev.pigeonpost.core.calendar.CalendarNotice
 import dev.pigeonpost.core.calendar.CalendarEventKey
+import dev.pigeonpost.core.calendar.CalendarMeetingApi
+import dev.pigeonpost.core.calendar.CalendarMeetingCode
+import dev.pigeonpost.core.calendar.CalendarMeetingLookup
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -59,6 +62,7 @@ data class AppGraph(
     val groupPollSeconds: Long = 15,
     val calendarTransport: CalendarTransport? = api as? CalendarTransport,
     val calendarStorage: (Application) -> CalendarAttemptStorage = { KeystoreCalendarAttempts(it) },
+    val meetingApi: CalendarMeetingApi? = api as? CalendarMeetingApi,
 ) {
     companion object {
         fun live(app: Application): AppGraph {
@@ -76,6 +80,9 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     private val storeScope = AuthorizedStoreScope(viewModelScope)
     private var calendarNoticeJob: Job? = null
     private var calendarNoticeId = java.util.UUID.randomUUID()
+    private val meetingCode = MutableStateFlow<String?>(null)
+    val memberMeetingCode = meetingCode.asStateFlow()
+    private var meetingIntentRoot: AuthorizationLease? = null
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
@@ -98,6 +105,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     /** End-to-end encrypted groups (Phase 3b), once the postbox says `groups` is on. */
     val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), storeScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
     val calendar = graph.calendarTransport?.let { CalendarStore(it, graph.calendarStorage(app), storeScope, allowVolatileStorage = graph.fixtures, onSessionExpired = { signOut() }) }
+    val meetingLookup = graph.meetingApi?.let { CalendarMeetingLookup(it, storeScope, onSessionExpired = { signOut() }) }
     val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
@@ -129,6 +137,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 avatars.enable(target != null && Features.AVATARS in target.third)
                 groups?.onMailbox(target?.first, target?.second, target?.third.orEmpty())
                 calendar?.onMailbox(target?.first, target?.third.orEmpty())
+                meetingLookup?.onMailbox(target?.first)
             }
         }
         viewModelScope.launch {
@@ -164,6 +173,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() {
+        closeMeetingLink()
         val authorization = session.authorizationLease
         val token = push?.clear()
         resetStores()
@@ -175,7 +185,8 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     private fun resetStores() {
         storeScope.retire()
-        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); profile.reset(); pictures.clear()
+        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); profile.reset(); pictures.clear()
+        if (meetingIntentRoot?.isValid == false) closeMeetingLink()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
         stagedForGroups.value = emptyMap(); attachmentTarget = null; groupAttachTarget = null; pendingSave = null
         loadingAttachments.value = emptyMap(); retainedPastes.clear(); cropping.value = null
@@ -197,6 +208,35 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             } else request.close()
         }
     }
+    fun closeMeetingLink() { meetingCode.value = null; meetingIntentRoot = null; meetingLookup?.close() }
+    fun showMeetingCode(input: String) {
+        val code = CalendarMeetingCode.parse(input) ?: return
+        val root = session.authorizationLease
+        calendarNoticeId = java.util.UUID.randomUUID(); val visit = calendarNoticeId
+        calendarNoticeJob?.cancel(); calendar?.noticeWaiting(false)
+        calendarNoticeJob = viewModelScope.launch {
+            try {
+                val calendar = calendar
+                if (calendar != null && (calendar.state.value.editing || calendar.state.value.openEvent != null)) {
+                    calendar.noticeWaiting(true)
+                    combine(session.state, calendar.state) { _, state -> state }.first {
+                        visit != calendarNoticeId || root?.let { !it.isValid || session.authorizationLease !== it } == true || !it.editing && it.openEvent == null
+                    }
+                }
+                if (visit != calendarNoticeId || root?.let { !it.isValid || session.authorizationLease !== it } == true) return@launch
+                meetingLookup?.close(); meetingIntentRoot = root; meetingCode.value = code
+                val lookup = meetingLookup
+                val snapshot = lookup?.state?.value
+                if (snapshot?.mailbox == inbox.state.value.acting?.address && snapshot != null && session.state.value.signedIn && session.state.value.termsAccepted)
+                    lookup.load(code, snapshot.contextId)
+            } finally { if (visit == calendarNoticeId) calendar?.noticeWaiting(false) }
+        }
+    }
+    fun joinMeetingLink(occurrence: String, video: Boolean, context: String, code: String) {
+        if (meetingCode.value != code) return
+        val host = calls ?: return
+        meetingLookup?.prepareJoin(occurrence, video, context, code) { request -> closeMeetingLink(); host.joinScheduled(request) }
+    }
     fun setActive(value: Boolean) { inbox.setActive(value); groups?.setActive(value); calendar?.setActive(value) }
 
     /** `https://inbox.pigeonpost.dev/g/<id>#<token>`: show the group before anything is joined. */
@@ -209,6 +249,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun openCalendarNotice(payload: Map<String, String>) {
         val notice = CalendarNotice.parse(payload) ?: return
         val calendar = calendar ?: return
+        closeMeetingLink()
         calendarNoticeId = java.util.UUID.randomUUID()
         val visit = calendarNoticeId
         calendarNoticeJob?.cancel(); calendar.noticeWaiting(false)

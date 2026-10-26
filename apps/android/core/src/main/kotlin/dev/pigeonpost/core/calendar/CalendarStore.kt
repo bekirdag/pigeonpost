@@ -138,6 +138,7 @@ class CalendarStore(
     fun openEvent(key: CalendarEventKey) { mutable.update { it.copy(openEvent = key) }; loadDetail(key) }
 
     private data class Metadata(val folders: List<CalendarFolder>, val settings: CalendarSettings, val invitations: List<CalendarInvitation>, val filtered: List<CalendarInvitation>)
+    fun refreshFor(expectedContext: String): Job? = if (state.value.contextId == expectedContext) refresh() else null
     fun refresh(): Job? {
         val c = client ?: return null
         val request = UUID.randomUUID(); refreshId = request
@@ -158,6 +159,9 @@ class CalendarStore(
                 if (!current(c) || request != refreshId) return@launch
                 update(c) { it.copy(folders = folders, settings = settings, invitations = invitations, filteredInvitations = filtered,
                     selectedFolders = selected, selectedDay = day, occurrences = rows) }
+                // An open detail can lose access independently of the agenda. Keep its editor's
+                // original revision frozen, but recheck whether this inbox may still see it.
+                state.value.openEvent?.let { loadDetail(it)?.join() }
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { if (current(c) && request == refreshId) failed(c, failure) }
             finally { if (request == refreshId) update(c) { it.copy(loading = false) } }
@@ -175,18 +179,19 @@ class CalendarStore(
             } catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: ApiException) {
                 if (current(c) && detailReads[key] == request) {
-                    if (failure.status in setOf(403, 404)) forget(c, key.eventId)
+                    if (failure.status in setOf(403, 404)) forget(c, key.eventId, permissionLoss = true)
                     failed(c, failure)
                 }
             } catch (failure: Exception) { if (current(c) && detailReads[key] == request) failed(c, failure) }
         }
     }
-    private fun forget(c: CalendarClient, id: String, close: Boolean = true) {
+    private fun forget(c: CalendarClient, id: String, close: Boolean = true, permissionLoss: Boolean = false) {
         refreshId = UUID.randomUUID()
         eventVersions[id] = UUID.randomUUID()
         detailReads.keys.filter { it.eventId == id }.toList().forEach(detailReads::remove)
         update(c) { it.copy(loading = false, details = it.details.filterKeys { key -> key.eventId != id }, occurrences = it.occurrences.filterNot { row -> row.eventId == id },
             invitations = it.invitations.filterNot { row -> row.eventId == id }, filteredInvitations = it.filteredInvitations.filterNot { row -> row.eventId == id },
+            editor = it.editor?.takeUnless { editor -> permissionLoss && editor.initial.target?.key?.eventId == id },
             openEvent = it.openEvent?.takeUnless { key -> close && key.eventId == id }) }
     }
     fun loadAttempts(): Job? {

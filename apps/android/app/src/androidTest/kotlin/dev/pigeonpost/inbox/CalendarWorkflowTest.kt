@@ -147,7 +147,7 @@ class CalendarWorkflowTest {
             ui.onNodeWithTag("calendar:new").performClick()
             ui.onNodeWithTag("calendar:title").performTextInput("Keep this draft")
             scenario.onActivity { it.startActivity(notice()) }
-            shown("A calendar notification is waiting")
+            shown("Another calendar item is waiting")
             ui.onNodeWithTag("calendar:title").assertTextContains("Keep this draft")
             ui.onNodeWithContentDescription("Close New event").performClick()
             shown("Discard this draft?"); ui.onNodeWithText("Discard draft").performClick()
@@ -159,7 +159,7 @@ class CalendarWorkflowTest {
             ui.onNodeWithTag("calendar:new").performClick()
             ui.onNodeWithTag("calendar:title").performTextInput("Keep this mailbox draft")
             scenario.onActivity { it.startActivity(notice("/k/demoagent", null)) }
-            shown("A calendar notification is waiting")
+            shown("Another calendar item is waiting")
             ui.onNodeWithTag("calendar:title").assertTextContains("Keep this mailbox draft")
             ui.onNodeWithContentDescription("Close New event").performClick()
             shown("Discard this draft?"); ui.onNodeWithText("Discard draft").performClick()

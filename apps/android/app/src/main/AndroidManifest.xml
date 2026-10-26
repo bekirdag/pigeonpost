@@ -34,6 +34,18 @@
                 <category android:name="android.intent.category.BROWSABLE" />
                 <data android:scheme="https" android:host="inbox.pigeonpost.dev" android:pathPrefix="/g/grp_" />
             </intent-filter>
+            <intent-filter android:autoVerify="true">
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="https" android:host="inbox.pigeonpost.dev" android:pathPrefix="/m/" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="dev.pigeonpost.inbox" android:host="m" />
+            </intent-filter>
         </activity>
         <activity android:name=".calls.IncomingCallActivity" android:exported="false" android:launchMode="singleTop"
             android:taskAffinity="dev.pigeonpost.inbox.incoming" android:excludeFromRecents="true" android:showWhenLocked="true"

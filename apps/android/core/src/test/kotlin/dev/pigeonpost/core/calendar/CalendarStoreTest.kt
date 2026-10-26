@@ -239,6 +239,28 @@ class CalendarStoreTest {
         val calls = transport.calls.filter { it.method == "PATCH" }
         assertEquals(1, calls.size); assertEquals(body.text, calls.single().body)
     } }
+    @Test fun refreshRechecksAnOpenEventAndForgetsItsEditorAfterAccessIsRevoked() = runBlocking<Unit> { world {
+        val key = CalendarEventKey("evt_one", "occ_original")
+        val sibling = CalendarEventKey("evt_one", "occ_sibling")
+        transport.rows["/alice"] = listOf(EventOccurrence("occ_original", "evt_one", title = "Private event"))
+        store.openEvent(key); store.loadDetail(key)!!.join(); store.loadDetail(sibling)!!.join()
+        val target = CalendarEditTarget(store.state.value.details.getValue(key), key, CalendarEventScope.ALL, context)
+        store.beginEditor(CalendarEventDraft(context, "2026-10-28", tzid = "UTC", title = "Private unsaved draft", target = target))
+        assertNotNull(store.state.value.editor)
+        val before = transport.calls.size
+        transport.hook = { call -> if (call.path == "/v1/calendar/events/evt_one") throw ApiException(403, "forbidden") else null }
+        refreshed()
+        assertTrue(transport.calls.drop(before).any { it.path == "/v1/calendar/events/evt_one" && it.query["occurrence_id"] == "occ_original" })
+        assertNull(store.state.value.openEvent); assertNull(store.state.value.editor)
+        assertTrue(store.state.value.details.isEmpty()); assertTrue(store.state.value.occurrences.isEmpty())
+        assertFalse(store.state.value.loading)
+    } }
+    @Test fun aDeniedUnrelatedEventDoesNotDiscardANewDraft() = runBlocking<Unit> { world {
+        store.beginEditor(CalendarEventDraft(context, "2026-10-28", tzid = "UTC", title = "Unrelated new draft"))
+        transport.hook = { call -> if (call.path == "/v1/calendar/events/evt_one") throw ApiException(404, "not_found") else null }
+        store.loadDetail(CalendarEventKey("evt_one"))!!.join()
+        assertEquals("Unrelated new draft", store.state.value.editor!!.draft.title)
+    } }
 
     @Test fun failedConfirmationStorageKeepsOneAcceptedIntentUntilItCanBeCleared() = runBlocking<Unit> {
         val memory = MemoryCalendarAttemptStorage(); var denyClear = true

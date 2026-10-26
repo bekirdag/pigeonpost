@@ -67,12 +67,25 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val store = model.inbox
     val calendarStore = model.calendar
     val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
+    val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
+    val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
     var viewing by remember { mutableStateOf<Attachment?>(null) }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(state.error) { state.error?.let { snackbar.showSnackbar(it); store.clearError() } }
     LaunchedEffect(groups.notice) { groups.notice?.let { snackbar.showSnackbar(it); groupStore?.clearNotice() } }
+    LaunchedEffect(meetingCode, session.signedIn, session.termsAccepted) {
+        if (meetingCode != null && !session.loading && (!session.signedIn || !session.termsAccepted)) snackbar.showSnackbar("Sign in and accept the terms to open this meeting.")
+    }
+    LaunchedEffect(meetingCode, meetingLookup.contextId, state.acting?.address, session.authorizationId) {
+        val code = meetingCode
+        if (code != null && session.signedIn && session.termsAccepted && state.accountLoaded && meetingLookup.mailbox == state.acting?.address && model.meetingLookup?.state?.value?.code != code)
+            model.meetingLookup?.load(code, meetingLookup.contextId)
+    }
+    LaunchedEffect(meetingCode, calendar.contextId, calendar.enabled) {
+        if (meetingCode != null && calendar.enabled) model.calendar?.refreshFor(calendar.contextId)
+    }
     // Preserve a Settings subpage through rotation, but never carry it to another account/inbox.
     var sheetOwner by rememberSaveable { mutableStateOf<String?>(null) }
     LaunchedEffect(session.signedIn, session.loading, session.username, state.acting?.address) {
@@ -181,6 +194,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             onDismissRequest = { model.calls?.cancelScheduledJoin() }, title = { Text("Joining meeting") },
             text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
             confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
+        meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null

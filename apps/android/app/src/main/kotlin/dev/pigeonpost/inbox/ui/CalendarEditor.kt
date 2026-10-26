@@ -28,7 +28,7 @@ internal fun CalendarEventEditor(session: CalendarEditorSession, s: CalendarStat
         }
         problem?.let { CalendarError(it) { problem = null } }
         s.error?.let { CalendarError(it, store::clearError) }
-        if (s.noticeWaiting) Text("A calendar notification is waiting. Finish this draft and close the event to open it.", color = Pp.colors.secondary)
+        if (s.noticeWaiting) Text("Another calendar item is waiting. Finish this draft and close the event to open it.", color = Pp.colors.secondary)
         CalendarField("Event title", draft.title, enabled, "calendar:title") { draft = draft.copy(title = it) }
         CalendarField("Description", draft.description, enabled, singleLine = false) { draft = draft.copy(description = it) }
         CalendarField("Location", draft.location, enabled) { draft = draft.copy(location = it) }

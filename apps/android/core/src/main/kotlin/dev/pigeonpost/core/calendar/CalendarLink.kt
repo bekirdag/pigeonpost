@@ -9,6 +9,13 @@ sealed interface CalendarLink {
     data class Member(val code: String) : CalendarLink
     class Guest(val url: String) : CalendarLink { override fun toString() = "CalendarLink.Guest()" }
     companion object {
+        /** Existing six-character ad-hoc links keep their browser flow instead of looping into this app. */
+        fun browserOnly(input: String): String? = try {
+            val uri = URI(input)
+            if (input.length <= 4096 && uri.scheme.equals("https", true) && uri.host.equals("inbox.pigeonpost.dev", true) &&
+                uri.rawUserInfo == null && uri.port == -1 && uri.rawQuery == null && uri.rawFragment == null &&
+                Regex("/m/[A-Za-z0-9]{6}").matches(uri.rawPath)) "https://inbox.pigeonpost.dev" + uri.rawPath else null
+        } catch (_: Exception) { null }
         fun parse(input: String): CalendarLink? {
             if (input.toByteArray().size > 4096) return null
             return try {

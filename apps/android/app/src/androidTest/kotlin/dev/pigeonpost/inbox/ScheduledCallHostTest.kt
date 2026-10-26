@@ -26,7 +26,7 @@ import kotlin.coroutines.resume
 /** The actual WebView/Java bridge with a loopback page; no media, public service or real calls. */
 @RunWith(AndroidJUnit4::class)
 class ScheduledCallHostTest {
-    private class Page : AutoCloseable {
+    internal class Page : AutoCloseable {
         private val socket = ServerSocket(0, 16, InetAddress.getByName("127.0.0.1"))
         private val connections = java.util.Collections.synchronizedSet(mutableSetOf<Socket>())
         val url = "http://127.0.0.1:${socket.localPort}/native-call.html"

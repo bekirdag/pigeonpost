@@ -11,7 +11,7 @@ Continue native round two from Android authorization checkpoint `093a646` while 
 
 Keep native releases batched and Apple held for the owner's Claude review; no store submission or production flag change is implied. Reuse existing FFI build caches through removable task-owned symlinks, preserve other worktrees and make no production database backups on the Mac. No new paid infrastructure or third-party application dependency.
 
-The initial calendar UI checkpoint is qualified and in draft review. Finish the remaining integration in this order: retain a bounded in-memory ICS export capsule tied to the calendar actor and write only after the system file picker returns; parse typed calendar pushes and public/personal meeting links without adopting authority; queue navigation while a person edits; then join a specifically selected occurrence through the existing native call page, with captured mailbox/login/page/permission generations and explicit lobby results. Retest each boundary before the final native batch.
+Calendar UI, protected unfinished writes, file export, typed notices and public/personal meeting routing are implemented and locally qualified. Scheduled joins require an explicitly selected occurrence and capture mailbox/login/page/permission generations. Complete the integrated PR checks, then continue Android enterprise rooms and device approval. Signed-release link handling and actual cross-device media remain part of the native batch qualification.
 
 ## Unconfirmed writes
 

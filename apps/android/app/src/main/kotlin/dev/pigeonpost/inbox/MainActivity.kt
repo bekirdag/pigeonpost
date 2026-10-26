@@ -25,6 +25,7 @@ import dev.pigeonpost.core.AttachmentKinds
 import dev.pigeonpost.inbox.calls.CallFrame
 import dev.pigeonpost.inbox.calls.CallWindow
 import dev.pigeonpost.core.verifiedSignInUrl
+import dev.pigeonpost.core.calendar.CalendarLink
 import dev.pigeonpost.inbox.ui.PigeonpostApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -101,6 +102,7 @@ class MainActivity : ComponentActivity() {
             takePicture = ::takePicture) }
         if (savedInstanceState == null) openNotification(intent)
         if (savedInstanceState == null) model.openGroupLink(intent.data)
+        if (savedInstanceState == null) openMeetingLink(intent.data)
         Development.started()
         model.calls?.let { host ->
             host.window = object : CallWindow {
@@ -138,7 +140,27 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent); setIntent(intent)
         openNotification(intent)
+        openMeetingLink(intent.data)
         answerCall(intent)
+    }
+    private fun openMeetingLink(uri: Uri?) {
+        val value = uri?.toString() ?: return
+        when (val link = CalendarLink.parse(value)) {
+            is CalendarLink.Member -> model.showMeetingCode(link.code)
+            is CalendarLink.Guest -> openMeetingBrowser(link.url)
+            null -> CalendarLink.browserOnly(value)?.let(::openMeetingBrowser)
+        }
+    }
+    /** Pin a browser package so a verified /m/ link cannot resolve straight back into this app. */
+    private fun openMeetingBrowser(url: String) {
+        val probe = Intent(Intent.ACTION_VIEW, Uri.parse("https://example.invalid/")).addCategory(Intent.CATEGORY_BROWSABLE)
+        val preferred = probe.resolveActivity(packageManager)?.packageName?.takeIf { it != packageName && it != "android" }
+        val browser = preferred ?: packageManager.queryIntentActivities(probe, 0).firstOrNull {
+            it.activityInfo.packageName != packageName && it.activityInfo.packageName != "android"
+        }?.activityInfo?.packageName
+        if (browser == null) { model.inbox.showError("Install a browser to open this invitation."); return }
+        try { CustomTabsIntent.Builder().setShowTitle(true).build().apply { intent.setPackage(browser) }.launchUrl(this, Uri.parse(url)) }
+        catch (_: ActivityNotFoundException) { model.inbox.showError("No browser is available for this invitation.") }
     }
     private fun openNotification(intent: Intent) {
         val payload = buildMap {
