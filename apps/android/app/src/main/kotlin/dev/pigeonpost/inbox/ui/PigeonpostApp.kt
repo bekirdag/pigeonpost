@@ -64,6 +64,8 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val appearance by model.appearance.collectAsStateWithLifecycle()
     val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
     val store = model.inbox
+    val calendarStore = model.calendar
+    val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
     var viewing by remember { mutableStateOf<Attachment?>(null) }
@@ -132,6 +134,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                         !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
                         state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
                         state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
+                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) })
                         wide -> TabletInbox(state, store, model, session.username, callMode,
                             newConversation = { sheet = "new" }, settings = { sheet = "settings" },
                             info = { sheet = "peer" }, newSubject = { sheet = "subject" },
@@ -271,14 +274,21 @@ private fun PhoneHome(state: InboxState, store: InboxStore, model: InboxViewMode
                     callBack = { key, video -> openPeer(key); model.calls?.call(key, video) })
                 LeftView.FILTERED -> FilteredPane(state, Modifier.fillMaxSize(), phone = true, back = { store.showView(LeftView.INBOX) }, open = openFiltered)
                 LeftView.INBOX -> InboxList(state, store, model, groups, Modifier.fillMaxSize(), mailbox, new, newGroup, settings, openPeer)
+                LeftView.CALENDAR -> model.calendar?.let { calendar ->
+                    val s by calendar.state.collectAsStateWithLifecycle()
+                    CalendarPane(calendar, s, { store.showView(LeftView.INBOX) })
+                }
             }
         }
-        if (state.has(Features.CALL_HISTORY)) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
-            NavigationBarItem(state.leftView != LeftView.CALLS, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
+        val hasCalendar = model.calendar != null && "calendar" in state.features
+        if (state.has(Features.CALL_HISTORY) || hasCalendar) NavigationBar(containerColor = p.sidebar, tonalElevation = 0.dp, modifier = Modifier.height(64.dp)) {
+            NavigationBarItem(state.leftView == LeftView.INBOX || state.leftView == LeftView.FILTERED, { store.showView(LeftView.INBOX) }, { Icon(Icons.Outlined.Forum, null) },
                 label = { Text("Conversations") }, modifier = Modifier.testTag("tab:conversations"))
-            NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
+            if (state.has(Features.CALL_HISTORY)) NavigationBarItem(state.leftView == LeftView.CALLS, { store.showView(LeftView.CALLS) }, {
                 BadgedBox(badge = { if (state.calls.unseen > 0) Badge { Text(if (state.calls.unseen > 99) "99+" else state.calls.unseen.toString()) } }) { Icon(Icons.Outlined.Call, null) }
             }, label = { Text("Calls") }, modifier = Modifier.testTag("tab:calls").semantics { contentDescription = if (state.calls.unseen > 0) "Calls, ${state.calls.unseen} missed" else "Calls" })
+            if (hasCalendar) NavigationBarItem(state.leftView == LeftView.CALENDAR, model::openCalendar, { Icon(Icons.Outlined.CalendarMonth, null) },
+                label = { Text("Calendar") }, modifier = Modifier.testTag("tab:calendar"))
         }
     }
 }

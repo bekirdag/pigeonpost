@@ -124,6 +124,12 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         MailboxSwitcher(state, username, switching, { switching = !switching }) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
+        if (model.calendar != null && "calendar" in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .clickable(onClickLabel = "Open calendar", onClick = model::openCalendar).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:calendar"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Outlined.CalendarMonth, null, Modifier.size(18.dp), tint = p.secondary)
+            Text("Calendar", style = geist(14.sp, FontWeight.Medium), color = p.ink)
+        }
         // Calls, under the mailbox switcher (SDS §12.1), with the unseen-missed badge.
         if (state.has(Features.CALL_HISTORY)) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClickLabel = "Open calls") { store.showView(LeftView.CALLS) }.padding(horizontal = 10.dp, vertical = 9.dp).testTag("sidebar:calls")

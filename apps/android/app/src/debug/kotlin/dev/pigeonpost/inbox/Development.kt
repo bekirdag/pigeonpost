@@ -22,8 +22,10 @@ object Development {
     @Suppress("UNUSED_PARAMETER")
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
-        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off")) return null
-        val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin")
+        if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "calendar", "calendar-lost", "calendar-conflict")) return null
+        val session = FixtureSession(mode != "signin", mode != "policy" && mode != "signin", scoped = mode.startsWith("calendar"))
+        if (mode.startsWith("calendar")) return AppGraph(session, CalendarFixture(FixturePostbox("inbox"), mode), fixtures = true,
+            calendarStorage = { dev.pigeonpost.core.calendar.MemoryCalendarAttemptStorage() })
         if (mode.startsWith("actions")) {
             val base = FixturePostbox("inbox")
             return AppGraph(session, MessageActionFixture(mode, base, base), fixtures = true)
@@ -90,13 +92,15 @@ object Development {
     /** Lets the call page be inspected from the computer (chrome://inspect) in debug builds. */
     fun started() { android.webkit.WebView.setWebContentsDebuggingEnabled(true) }
 }
-private class FixtureSession(signedIn: Boolean, accepted: Boolean) : UserSession {
-    override val state = MutableStateFlow(SessionState(loading = false, signedIn = signedIn, username = "demo", termsAccepted = signedIn && accepted))
+private class FixtureSession(signedIn: Boolean, accepted: Boolean, scoped: Boolean = false) : UserSession {
+    private val grant = if (scoped) AuthorizationLease() else null
+    override val authorizationLease get() = grant
+    override val state = MutableStateFlow(SessionState(loading = false, signedIn = signedIn, username = "demo", termsAccepted = signedIn && accepted, authorizationId = grant?.id))
     override suspend fun begin(provider: String?, otherAccount: Boolean): Intent? { state.value = state.value.copy(signedIn = true, termsAccepted = false); return null }
     override suspend fun complete(result: Intent?) {}
     override suspend fun cancel() {}
     override suspend fun acceptTerms() { state.value = state.value.copy(termsAccepted = state.value.signedIn) }
-    override suspend fun signOut() { state.value = state.value.copy(signedIn = false, termsAccepted = false) }
+    override suspend fun signOut() { grant?.retire(); state.value = state.value.copy(signedIn = false, termsAccepted = false, authorizationId = null) }
     override suspend fun token(rejected: String?) = "fixture-only"
 }
 

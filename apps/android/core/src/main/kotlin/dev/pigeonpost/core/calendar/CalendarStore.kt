@@ -164,13 +164,13 @@ class CalendarStore(
             } catch (failure: Exception) { if (current(c) && detailReads[key] == request) failed(c, failure) }
         }
     }
-    private fun forget(c: CalendarClient, id: String) {
+    private fun forget(c: CalendarClient, id: String, close: Boolean = true) {
         refreshId = UUID.randomUUID()
         eventVersions[id] = UUID.randomUUID()
         detailReads.keys.filter { it.eventId == id }.toList().forEach(detailReads::remove)
         update(c) { it.copy(loading = false, details = it.details.filterKeys { key -> key.eventId != id }, occurrences = it.occurrences.filterNot { row -> row.eventId == id },
             invitations = it.invitations.filterNot { row -> row.eventId == id }, filteredInvitations = it.filteredInvitations.filterNot { row -> row.eventId == id },
-            openEvent = it.openEvent?.takeUnless { key -> key.eventId == id }) }
+            openEvent = it.openEvent?.takeUnless { key -> close && key.eventId == id }) }
     }
     fun loadAttempts(): Job? {
         val c = client ?: return null
@@ -278,12 +278,45 @@ class CalendarStore(
         c.cancelEvent(key, revision, scope); forget(c, key.eventId); refresh()
     }
     fun rsvp(key: CalendarEventKey, answer: CalendarAnswer, scope: CalendarAnswerScope, expectedContext: String, note: String? = null) = mutate("rsvp", expectedContext) { c ->
-        c.rsvp(key, answer, scope, note); forget(c, key.eventId); refresh(); loadDetail(key)
+        c.rsvp(key, answer, scope, note); changed(c, key)
     }
     fun reminders(id: String, values: List<CalendarReminder>, expectedContext: String) = mutate("reminders", expectedContext) { c ->
-        c.reminders(id, values); forget(c, id); refresh(); loadDetail(CalendarEventKey(id))
+        c.reminders(id, values); changed(c, state.value.openEvent?.takeIf { it.eventId == id } ?: CalendarEventKey(id))
     }
     fun saveSettings(fields: JsonObject, expectedContext: String) = mutate("settings", expectedContext) { c ->
         val settings = c.saveSettings(fields); update(c) { it.copy(settings = settings) }; refresh()
     }
+    private fun changed(c: CalendarClient, key: CalendarEventKey) { forget(c, key.eventId, close = false); refresh(); loadDetail(key) }
+    fun updateCalendar(id: String, revision: Long, fields: JsonObject, expectedContext: String) = mutate("calendar", expectedContext) { c ->
+        c.updateCalendar(id, revision, fields); refresh()
+    }
+    fun deleteCalendar(id: String, revision: Long, expectedContext: String) = mutate("calendar", expectedContext) { c ->
+        c.deleteCalendar(id, revision)
+        val ids = state.value.occurrences.filter { it.calendarId == id }.map { it.eventId }.distinct()
+        ids.forEach { forget(c, it) }; refresh()
+    }
+    fun attendees(key: CalendarEventKey, revision: Long, answerScope: CalendarAnswerScope, adding: List<JsonObject>, removing: List<String>, expectedContext: String) = mutate("attendees", expectedContext) { c ->
+        c.attendees(key, revision, answerScope, adding, removing); changed(c, key)
+    }
+    fun linkGroup(key: CalendarEventKey, revision: Long, groupId: String?, expectedContext: String) = mutate("linked-group", expectedContext) { c ->
+        c.linkGroup(key.eventId, revision, groupId); changed(c, key)
+    }
+    fun moveInvitation(key: CalendarEventKey, calendarId: String, expectedContext: String) = mutate("placement", expectedContext) { c ->
+        c.moveInvitation(key.eventId, calendarId); changed(c, key)
+    }
+    /** Capability-bearing results live only in the current presentation, never CalendarState. */
+    private fun <T> inspect(operation: String, expectedContext: String, request: suspend (CalendarClient) -> T, done: (T) -> Unit) =
+        mutate(operation, expectedContext) { c -> val value = request(c); if (current(c)) done(value) }
+    fun guestLink(id: String, attendee: String, expectedContext: String, done: (CalendarGuestLink) -> Unit) = inspect("guest-link", expectedContext, { it.guestLink(id, attendee) }, done)
+    fun feed(id: String, expectedContext: String, done: (CalendarFeed) -> Unit) = inspect("feed", expectedContext, { it.feed(id) }, done)
+    fun setFeed(id: String, enabled: Boolean, projection: String, expectedContext: String, done: (CalendarFeed) -> Unit) = inspect("feed", expectedContext, { it.setFeed(id, enabled, projection) }, done)
+    fun ics(id: String, expectedContext: String, done: (ByteArray) -> Unit) = inspect("export", expectedContext, { it.ics(id) }, done)
+    fun previewImport(bytes: ByteArray, calendar: String?, expectedContext: String, done: (CalendarImportPreview) -> Unit): Job? {
+        val frozen = bytes.copyOf()
+        return inspect("import-preview", expectedContext, { it.previewImport(frozen, calendar) }, done)
+    }
+    fun previewLocalImport(read: suspend () -> ByteArray, calendar: String?, expectedContext: String, done: (CalendarImportPreview) -> Unit) =
+        inspect("import-preview", expectedContext, { c -> val bytes = read(); c.authorization.requireActive(); c.previewImport(bytes, calendar) }, done)
+    fun freeBusy(attendees: List<String>, from: Long, to: Long, expectedContext: String, done: (Map<String, CalendarAvailability>) -> Unit) =
+        inspect("availability", expectedContext, { it.freeBusy(attendees.toList(), from, to) }, done)
 }

@@ -285,4 +285,46 @@ class CalendarStoreTest {
             assertTrue(store.state.value.pending.isEmpty())
         }
     }
+    @Test fun answeringAndPersonalRemindersReloadWithoutClosingTheSelectedOccurrence() = runBlocking<Unit> { world {
+        val key = CalendarEventKey("evt_one", "occ_original")
+        store.openEvent(key); store.loadDetail(key)!!.join()
+        store.rsvp(key, CalendarAnswer.ACCEPTED, CalendarAnswerScope.THIS, context)!!.join()
+        store.loadDetail(key)!!.join()
+        assertEquals(key, store.state.value.openEvent)
+        store.reminders(key.eventId, listOf(CalendarReminder(15, "push")), context)!!.join()
+        store.loadDetail(key)!!.join()
+        assertEquals(key, store.state.value.openEvent)
+        assertTrue(store.state.value.details.containsKey(key))
+        val answers = transport.calls.filter { it.path.endsWith("/rsvp") }
+        assertEquals("this", answers.single().fields()["scope"]!!.jsonPrimitive.content)
+        assertEquals("occ_original", answers.single().fields()["occurrence_id"]!!.jsonPrimitive.content)
+        assertFalse("expected_revision" in answers.single().fields()) // Attendee revision is separate.
+    } }
+    @Test fun aLocalFileReadCannotSendItsBytesAsAReplacementActor() = runBlocking<Unit> { world {
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        var delivered = false
+        val original = store.previewLocalImport({ withContext(NonCancellable) { entered.complete(Unit); release.await(); "BEGIN:VCALENDAR".toByteArray() } }, null, context) { delivered = true }!!
+        entered.await(); scope.retire(); scope.activate(AuthorizationLease()); connect(); ready()
+        release.complete(Unit); original.join()
+        assertFalse(delivered)
+        assertTrue(transport.calls.none { it.path.endsWith("/import/preview") })
+        assertTrue(store.state.value.attemptsLoaded)
+    } }
+    @Test fun aLatePersonalLinkCannotReachTheReplacementPresentation() = runBlocking<Unit> { world {
+        val entered = CompletableDeferred<Unit>(); val release = CompletableDeferred<Unit>()
+        transport.hook = { call -> if (call.path.endsWith("/link")) withContext(NonCancellable) { entered.complete(Unit); release.await(); """{"url":"https://fixture.invalid/private-capability"}""".toByteArray() } else null }
+        var delivered = false
+        val original = store.guestLink("evt_one", "att_one", context) { delivered = true }!!
+        entered.await(); connect("/bob"); ready(); release.complete(Unit); original.join()
+        assertFalse(delivered); assertEquals("/bob", store.state.value.mailbox)
+    } }
+    @Test fun folderUpdatesUseReviewedRevisionAndStaleDeleteConfirmationsAreRefused() = runBlocking<Unit> { world {
+        transport.hook = { call -> if (call.method == "PATCH" && call.path.startsWith("/v1/calendars/")) """{"calendar":{"id":"cal_one","revision":8}}""".toByteArray() else null }
+        store.updateCalendar("cal_one", 7, buildJsonObject { put("name", "Renamed") }, context)!!.join()
+        val edit = transport.calls.single { it.method == "PATCH" }
+        assertEquals(7L, edit.fields()["expected_revision"]!!.jsonPrimitive.long)
+        val old = context; connect("/bob"); ready()
+        assertNull(store.deleteCalendar("cal_one", 7, old))
+        assertTrue(transport.calls.none { it.method == "DELETE" })
+    } }
 }

@@ -1,7 +1,7 @@
 package dev.pigeonpost.core.calendar
 
 import dev.pigeonpost.core.*
-import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.*
 import kotlinx.serialization.json.*
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import java.io.File
@@ -205,5 +205,38 @@ object CalendarPostbox {
         stage = "unknown availability remains distinct from free"
         val availability = alice.calendar.freeBusy(listOf(alice.address, bob.address), from, through)
         verify(availability[alice.address] is CalendarAvailability.Known && availability[bob.address] == CalendarAvailability.Unknown, "Another mailbox's unknown availability was shown as free")
+
+        stage = "native draft preserves real participant and meeting policy"
+        val reviewed = alice.calendar.detail(key)
+        val draft = CalendarEventDraft.from(CalendarEditTarget(reviewed, key, CalendarEventScope.ALL, "fixture-editor"), zone.id)
+        verify(draft.changedFields().isEmpty(), "Opening an editor changed the event")
+        val edited = alice.calendar.updateEvent(key.eventId, draft.copy(description = "Revised synthetic notes").editPayload())
+        verify(edited.event.attendees?.size == reviewed.event.attendees?.size && edited.event.meeting?.code == reviewed.event.meeting?.code && edited.event.meeting?.waiting == reviewed.event.meeting?.waiting,
+            "A draft detail edit changed participants or meeting admission")
+        rejected(setOf(409)) { alice.calendar.updateEvent(key.eventId, draft.copy(title = "Stale editor intent").editPayload()) }
+
+        stage = "calendar store restores a committed uncertain create without a replacement intent"
+        coroutineScope {
+            val actor = AuthorizedStoreScope(this).apply { activate(alice.credentials.authorizationLease) }
+            val custody = MemoryCalendarAttemptStorage()
+            val api = postbox(proxy, alice.credentials)
+            var store = CalendarStore(api, custody, actor, allowVolatileStorage = true)
+            try {
+                store.onMailbox(alice.address, setOf("calendar")); store.loadAttempts()!!.join()
+                val authored = CalendarEventDraft(store.state.value.contextId, day.text, tzid = zone.id, title = "Native durable intent", calendarId = folder.id).fields()
+                mode(proxy, "after"); store.createEvent(authored, store.state.value.contextId)!!.join()
+                verify(store.state.value.pending.size == 1, "The store lost the accepted uncertain intent")
+                val original = store.state.value.pending.single()
+                store.createEvent(JsonObject(authored + ("title" to JsonPrimitive("Changed draft"))), store.state.value.contextId)!!.join()
+                verify(attempts(proxy).size == 1, "A changed draft sent a replacement create")
+                store.reset(); store = CalendarStore(api, custody, actor, allowVolatileStorage = true)
+                store.onMailbox(alice.address, setOf("calendar")); store.loadAttempts()!!.join()
+                verify(store.state.value.pending.single().encoded == original.encoded && attempts(proxy).size == 1, "Restoration changed or automatically sent the original attempt")
+                mode(proxy, "off"); store.retry(original.id, store.state.value.contextId)!!.join()
+                sameAttempts(proxy)
+                verify(store.state.value.pending.isEmpty(), "A confirmed intent was not cleared")
+                verify(alice.calendar.occurrences(from, through).count { it.title == "Native durable intent" } == 1, "A restored store retry duplicated the event")
+            } finally { store.reset(); actor.retire() }
+        }
     }
 }

@@ -34,6 +34,10 @@ import dev.pigeonpost.core.groups.GroupComposerKind
 import dev.pigeonpost.core.groups.GroupTransport
 import dev.pigeonpost.core.groups.UniffiGroupCrypto
 import dev.pigeonpost.inbox.groups.KeystoreGroupStorage
+import dev.pigeonpost.core.calendar.CalendarAttemptStorage
+import dev.pigeonpost.core.calendar.CalendarStore
+import dev.pigeonpost.core.calendar.CalendarTransport
+import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 
 data class AppGraph(
@@ -49,6 +53,8 @@ data class AppGraph(
     val start: (CoroutineScope) -> Unit = {},
     /** How often the group list is reread while the app is in front. */
     val groupPollSeconds: Long = 15,
+    val calendarTransport: CalendarTransport? = api as? CalendarTransport,
+    val calendarStorage: (Application) -> CalendarAttemptStorage = { KeystoreCalendarAttempts(it) },
 ) {
     companion object {
         fun live(app: Application): AppGraph {
@@ -85,6 +91,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val pictures = AvatarPictures(app, avatars)
     /** End-to-end encrypted groups (Phase 3b), once the postbox says `groups` is on. */
     val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), storeScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
+    val calendar = graph.calendarTransport?.let { CalendarStore(it, graph.calendarStorage(app), storeScope, allowVolatileStorage = graph.fixtures, onSessionExpired = { signOut() }) }
     val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
@@ -114,7 +121,11 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
             }.distinctUntilChanged().collect { target ->
                 avatars.enable(target != null && Features.AVATARS in target.third)
                 groups?.onMailbox(target?.first, target?.second, target?.third.orEmpty())
+                calendar?.onMailbox(target?.first, target?.third.orEmpty())
             }
+        }
+        viewModelScope.launch {
+            inbox.state.map { it.leftView == LeftView.CALENDAR }.distinctUntilChanged().collect { calendar?.setOpen(it) }
         }
         calls?.let { host ->
             viewModelScope.launch {
@@ -157,7 +168,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     private fun resetStores() {
         storeScope.retire()
-        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); profile.reset(); pictures.clear()
+        inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); profile.reset(); pictures.clear()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
         stagedForGroups.value = emptyMap(); attachmentTarget = null; groupAttachTarget = null; pendingSave = null
         loadingAttachments.value = emptyMap(); retainedPastes.clear(); cropping.value = null
@@ -168,7 +179,8 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     /** One thing open at a time: a direct conversation or a group. */
     fun openPeer(peer: String?) { groups?.close(); inbox.selectPeer(peer) }
     fun openGroup(id: String) { inbox.selectPeer(null); inbox.showView(LeftView.INBOX); groups?.open(id) }
-    fun setActive(value: Boolean) { inbox.setActive(value); groups?.setActive(value) }
+    fun openCalendar() { groups?.close(); inbox.selectPeer(null); inbox.showView(LeftView.CALENDAR) }
+    fun setActive(value: Boolean) { inbox.setActive(value); groups?.setActive(value); calendar?.setActive(value) }
 
     /** `https://inbox.pigeonpost.dev/g/<id>#<token>`: show the group before anything is joined. */
     fun openGroupLink(uri: Uri?) {
