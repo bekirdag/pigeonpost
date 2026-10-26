@@ -2,6 +2,8 @@ namespace Pigeonpost.Core;
 
 public interface IInboxService
 {
+    // The live service exposes its accepted login; context-free stand-ins retain null.
+    AuthorizationLease? AcceptedAuthorization => null;
     Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken);
     Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken);
     Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken cancellationToken);
@@ -23,6 +25,7 @@ public interface IAccessTokenProvider
 
 public interface IAttachmentService
 {
+    AuthorizationLease? AcceptedAuthorization => null;
     Task<MessageAttachment> UploadAsync(string identity, string filename, byte[] bytes, CancellationToken cancellationToken);
     Task<SendReceipt> SendAttachmentsAsync(string identity, string peer, string body, string? threadId, IReadOnlyList<string> attachmentIds, CancellationToken cancellationToken);
 }

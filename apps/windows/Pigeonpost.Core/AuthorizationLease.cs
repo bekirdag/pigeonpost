@@ -58,13 +58,14 @@ public sealed class AuthorizationContext : IDisposable
         // it never becomes network authority or replaces a real AccountSession's grant.
         return new(accepted is null ? null : actor, actor);
     }
-    internal static Action CaptureValidation(IAccessTokenProvider provider)
+    internal static Action CaptureValidation(IAccessTokenProvider provider) => CaptureValidation(() => provider.AcceptedAuthorization);
+    internal static Action CaptureValidation(Func<AuthorizationLease?> currentAuthorization)
     {
-        var accepted = provider.AcceptedAuthorization;
+        var accepted = currentAuthorization();
         var captured = Slot.Value ?? new Frame(accepted, accepted, null);
         return () =>
         {
-            var current = provider.AcceptedAuthorization;
+            var current = currentAuthorization();
             if (!ReferenceEquals(current, accepted)) throw new AuthorizationRetiredException();
             for (var scope = captured; scope is not null; scope = scope.Parent)
             {

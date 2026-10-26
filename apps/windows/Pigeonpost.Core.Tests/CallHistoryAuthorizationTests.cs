@@ -118,7 +118,7 @@ internal static class CallHistoryAuthorizationTests
     }
     // The HTTP pipeline finishes first; only the model's UI continuation is held. Cancelling
     // HTTP after that point cannot protect a model that forgot to recheck its original actor.
-    private sealed class HeldUi : SynchronizationContext
+    internal sealed class HeldUi : SynchronizationContext
     {
         private readonly ConcurrentQueue<(SendOrPostCallback Callback, object? State)> callbacks = new();
         private readonly TaskCompletionSource queued = new(TaskCreationOptions.RunContinuationsAsynchronously);
