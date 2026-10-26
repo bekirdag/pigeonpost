@@ -68,9 +68,16 @@ struct MacInboxView: View {
             openRooms: { sheet = .organizationRooms }
         )
         // Groups keep their own cadence: the app holds no event stream (see GroupStore).
-        .task(id: "\(account.me?.address ?? "")|\(account.features.groups)") {
+        .task(id: "\(account.me?.address ?? "")|\(account.features.groups)|\(account.session.authorizationId)|\(account.actingGeneration)") {
             await groups.attach()
             await groups.live()
+        }
+        .onChange(of: account.session.authorizationId.uuidString + account.actingGeneration.uuidString) { _, _ in
+            if peer?.hasPrefix("grp_") == true { peer = nil; subthread = nil }
+            switch sheet {
+            case .newGroup, .joinLink, .join: sheet = nil
+            default: break
+            }
         }
         .onChange(of: groups.pendingJoin, initial: true) { _, link in
             guard let link else { return }

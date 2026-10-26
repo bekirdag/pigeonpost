@@ -27,9 +27,13 @@ final class Features {
     static let calendarEmail = "calendar_email"
     static let orgs = "orgs"
 
-    private(set) var enabled: Set<String> = []
+    private var values: Set<String> = []
+    var enabled: Set<String> { visible() ? values : [] }
     /// Whether an answer has arrived at all. Nothing is offered before it has.
-    private(set) var loaded = false
+    private var didLoad = false
+    var loaded: Bool { visible() && didLoad }
+    @ObservationIgnored var visible: () -> Bool = { true }
+    private var generation = UUID()
 
     func has(_ name: String) -> Bool { enabled.contains(name) }
 
@@ -54,23 +58,27 @@ final class Features {
 
     /// Ask again. A failure is an older postbox, or no network: either way nothing new is on, and
     /// what was on stays on rather than flickering off for one bad request.
-    func load(using client: PostboxClient) async {
+    func load(using client: PostboxClient, ifCurrent: () -> Bool = { true }) async {
         guard !Fixtures.enabled else { return }
+        let visit = generation
         do {
             let answer = try await client.send("/v1/capabilities", as: Answer.self)
-            enabled = Set(answer.features ?? [])
-            loaded = true
+            guard generation == visit, ifCurrent(), !Task.isCancelled else { return }
+            values = Set(answer.features ?? [])
+            didLoad = true
         } catch let error as APIError where [400, 404, 501].contains(error.status) {
-            enabled = []
-            loaded = true
+            guard generation == visit, ifCurrent(), !Task.isCancelled else { return }
+            values = []
+            didLoad = true
         } catch {
             // Keep what we had.
         }
     }
 
     func reset() {
-        enabled = []
-        loaded = false
+        generation = UUID()
+        values = []
+        didLoad = false
     }
 
     #if DEBUG
@@ -80,12 +88,12 @@ final class Features {
         let named = CommandLine.arguments.first { $0.hasPrefix("-features=") }
             .map { String($0.dropFirst("-features=".count)) }
         if let named {
-            enabled = Set(named.split(separator: ",").map(String.init))
+            values = Set(named.split(separator: ",").map(String.init))
         } else {
-            enabled = [Self.messageFiltering, Self.callAdmission, Self.callHistory, Self.avatars,
+            values = [Self.messageFiltering, Self.callAdmission, Self.callHistory, Self.avatars,
                        Self.groups, Self.disappearing, Self.messageEdit, Self.messageReply, Self.receipts, Self.agentStatus]
         }
-        loaded = true
+        didLoad = true
     }
     #endif
 }

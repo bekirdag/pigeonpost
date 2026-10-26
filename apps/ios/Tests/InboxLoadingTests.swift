@@ -6,6 +6,8 @@ import Observation
     enum Status: Equatable { case signedIn, signedOut }
     var status = Status.signedIn
     var subject: String? = "fixture-subject"
+    var authorizationId = UUID()
+    let accessLease = AuthorizationLease()
     func token() async throws -> String { "test-only" }
     func renew() async throws -> String { "test-only-renewed" }
 }
@@ -14,6 +16,7 @@ enum AuthError: Error { case sessionExpired }
     var me: Mailbox?
     var mailboxes: [Mailbox] = []
     var expired = false
+    var actingGeneration = UUID()
     #if MAC_INBOX_UI_TESTS
     var push: PushService?
     #endif
@@ -26,7 +29,9 @@ enum AuthError: Error { case sessionExpired }
     var ownAgents: [Mailbox] { mailboxes.filter { $0.address != me?.address } }
     init() { client = PostboxClient(base: URL(string: "https://pigeonpost.test")!, tokens: session) }
     func sessionExpired() { expired = true }
-    func act(as mailbox: Mailbox) { me = mailbox }
+    func act(as mailbox: Mailbox) { me = mailbox; actingGeneration = UUID() }
+    func accessForActingMailbox() -> AuthorizationLease? { AuthorizationLease(parent: session.accessLease) }
+    func scopedClient(acting: Bool = false) -> PostboxClient { client }
 }
 enum Fixtures {
     static let enabled = false

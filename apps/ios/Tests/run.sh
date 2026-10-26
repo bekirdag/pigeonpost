@@ -6,10 +6,21 @@ set -e
 cd "$(dirname "$0")/.."
 out=$(mktemp -d)
 trap 'rm -rf "$out"' EXIT
+swiftc -O -parse-as-library -o "$out/authorization-lease" Tests/AuthorizationLeaseTests.swift Shared/Auth/AuthorizationLease.swift
+"$out/authorization-lease"
+swiftc -O -parse-as-library -o "$out/account-scope" Tests/AccountScopeTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Auth/AuthorizationLease.swift Shared/Model/Account.swift Shared/Model/Features.swift
+"$out/account-scope"
+swiftc -O -parse-as-library -o "$out/group-store-scope" Tests/GroupStoreScopeTests.swift Shared/Config.swift \
+  Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift Shared/Auth/AuthorizationLease.swift \
+  Shared/Model/Account.swift Shared/Model/Features.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift \
+  Shared/Groups/GroupVault.swift Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift Shared/Groups/GroupStore.swift
+"$out/group-store-scope"
 swiftc -O -o "$out/auth" Tests/AuthTests.swift Shared/Config.swift
 "$out/auth"
 swiftc -O -DDEBUG -parse-as-library -o "$out/session-lifetime" Tests/SessionLifetimeTests.swift Shared/Config.swift \
-  Shared/API/APIError.swift Shared/Auth/StrongSignIn.swift Shared/Auth/Session.swift
+  Shared/API/APIError.swift Shared/Auth/AuthorizationLease.swift Shared/Auth/StrongSignIn.swift Shared/Auth/Session.swift
 "$out/session-lifetime"
 swiftc -O -parse-as-library -o "$out/strong-signin" Tests/StrongSignInTests.swift Shared/Config.swift Shared/API/APIError.swift Shared/Auth/StrongSignIn.swift
 "$out/strong-signin"
@@ -47,6 +58,7 @@ swiftc -O -o "$out/handles" \
 "$out/handles"
 swiftc -O -parse-as-library -o "$out/inbox-loading" \
   Tests/InboxLoadingTests.swift Shared/Config.swift \
+  Shared/Auth/AuthorizationLease.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Model/Inbox.swift Shared/Model/Conversation.swift \
   Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Views/Markdown.swift Shared/Views/SelectableText.swift
@@ -58,7 +70,7 @@ swiftc -O -parse-as-library -o "$out/call-rings" Tests/CallRingTests.swift Share
 "$out/call-rings"
 mkdir -p "$out/group-logic-src" && cp Tests/GroupLogicTests.swift "$out/group-logic-src/main.swift"
 swiftc -O -o "$out/group-logic" "$out/group-logic-src/main.swift" Shared/API/APIError.swift \
-  Shared/Groups/GroupModels.swift Shared/Groups/GroupText.swift Shared/Groups/GroupVault.swift
+  Shared/Auth/AuthorizationLease.swift Shared/Groups/GroupModels.swift Shared/Groups/GroupText.swift Shared/Groups/GroupVault.swift
 "$out/group-logic"
 swiftc -O -parse-as-library -o "$out/calendar" Tests/CalendarTests.swift \
   Shared/Calendar/CalendarModels.swift Shared/Calendar/CalendarTime.swift

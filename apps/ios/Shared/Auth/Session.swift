@@ -44,6 +44,7 @@ final class Session {
     private(set) var status: Status
     /// Changes on a new authorization or local retirement, including a return to the same person.
     private(set) var authorizationId = UUID()
+    private(set) var accessLease = AuthorizationLease()
     /// Set when a sign-in attempt failed, so the signed-out screen can say why rather than simply
     /// returning to itself — a misconfigured redirect URI is otherwise indistinguishable from a
     /// wrong password.
@@ -237,7 +238,8 @@ final class Session {
     /// Back-channel on purpose. The browser-based logout would do this too, but it opens a web sheet
     /// (and, the first time, an "…wants to sign you in" alert) in the middle of signing *out*, which
     /// reads as a bug. A POST carrying the refresh token identifies the session just as well.
-    func signOut() async {
+    func signOut(expectedAuthorization: UUID? = nil) async {
+        if let expectedAuthorization, expectedAuthorization != authorizationId { return }
         let refresh = refreshToken
         forget()
         if let refresh {
@@ -260,6 +262,8 @@ final class Session {
     /// token, the session is over and there is nothing left to end. Opening a network call — or
     /// worse, a browser — at that moment would interrupt whatever the person was doing.
     func forget() {
+        accessLease.invalidate()
+        accessLease = AuthorizationLease()
         authorizationId = UUID()
         authorizationAttempt = nil
         webSession?.cancel()
@@ -374,6 +378,8 @@ final class Session {
         refreshTask?.cancel()
         refreshTask = nil
         refreshTaskId = nil
+        accessLease.invalidate()
+        accessLease = AuthorizationLease()
         authorizationId = UUID()
         adopt(tokens)
         status = .signedIn

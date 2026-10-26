@@ -102,12 +102,19 @@ struct ConversationsView: View {
         // believe in.
         // Groups: their own cadence (no event stream here), restarted with the mailbox and paused in
         // the background like the long poll.
-        .task(id: GroupTaskKey(mailbox: account.me?.address, phase: scenePhase, on: account.features.groups)) {
+        .task(id: GroupTaskKey(mailbox: account.me?.address, phase: scenePhase, on: account.features.groups, authorization: account.session.authorizationId, actor: account.actingGeneration)) {
             guard scenePhase == .active else { return }
             await groups.attach()
             async let cadence: Void = groups.live()
             async let expiry: Void = pruneDirectMessages()
             _ = await (cadence, expiry)
+        }
+        .onChange(of: account.session.authorizationId.uuidString + account.actingGeneration.uuidString) { _, _ in
+            if selection?.hasPrefix("grp_") == true { selection = nil; subthread = nil }
+            switch sheet {
+            case .newGroup, .joinLink, .join: sheet = nil
+            default: break
+            }
         }
         .onChange(of: groups.pendingJoin, initial: true) { _, link in
             guard let link else { return }
@@ -362,6 +369,8 @@ struct ConversationsView: View {
         let mailbox: String?
         let phase: ScenePhase
         let on: Bool
+        let authorization: UUID
+        let actor: UUID
     }
 
     private func conversationRow(_ conversation: Conversation) -> some View {

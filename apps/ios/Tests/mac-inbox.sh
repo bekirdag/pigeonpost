@@ -18,7 +18,7 @@ cat > "$app/Contents/Info.plist" <<'PLIST'
 PLIST
 swiftc -O -parse-as-library -D MAC_INBOX_UI_TESTS -o "$app/Contents/MacOS/mac-inbox" \
   Tests/InboxLoadingTests.swift Tests/MacInboxLoadingTests.swift \
-  Shared/Config.swift Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
+  Shared/Config.swift Shared/Auth/AuthorizationLease.swift Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Model/Inbox.swift Shared/Model/Conversation.swift Shared/Model/StagedFile.swift \
   Shared/Design/PeerFace.swift Shared/Design/Theme.swift Shared/Design/Platform.swift Shared/Design/Time.swift \
   Shared/Views/Markdown.swift Shared/Views/SelectableText.swift Shared/Views/Components.swift Shared/Views/MessageBubble.swift Shared/Views/MessageActions.swift \

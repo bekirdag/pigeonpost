@@ -109,7 +109,8 @@ actor GroupEngine: GroupCrypting {
     private var busy = false
     private var waiting: [CheckedContinuation<Void, Never>] = []
 
-    private func serial<T>(_ body: () async throws -> T) async rethrows -> T {
+    private func serial<T>(_ body: () async throws -> T) async throws -> T {
+        try vault.lease?.check()
         if busy {
             await withCheckedContinuation { waiting.append($0) }
         } else {
@@ -118,7 +119,11 @@ actor GroupEngine: GroupCrypting {
         defer {
             if waiting.isEmpty { busy = false } else { waiting.removeFirst().resume() }
         }
-        return try await body()
+        try Task.checkCancellation()
+        try vault.lease?.check()
+        let result = try await body()
+        try vault.lease?.check()
+        return result
     }
 
     // ---- the device ---------------------------------------------------------------------------------
@@ -180,11 +185,12 @@ actor GroupEngine: GroupCrypting {
                             fingerprint: record?.fingerprint ?? device.flatMap { try? fingerprintDigits(fingerprint: $0.fingerprint()) } ?? "")
     }
 
-    func identity() -> GroupDeviceIdentity? { record == nil ? nil : identityLocked() }
+    func identity() -> GroupDeviceIdentity? { live && record != nil ? identityLocked() : nil }
 
     /// After every mutation, the whole record: the MLS blob (encrypted by the library under its
     /// state key) and the history, sealed together by the vault.
     private func persist() throws {
+        try vault.lease?.check()
         guard let device, var current = record else { return }
         current.stateBlob = try device.exportState(key: current.stateKey)
         record = current
@@ -192,6 +198,7 @@ actor GroupEngine: GroupCrypting {
     }
 
     private func ready() throws -> GroupDevice {
+        try vault.lease?.check()
         guard let device, record != nil else { throw APIError(status: 0, code: "not_started", detail: "Group encryption is not set up on this device yet.") }
         return device
     }
@@ -832,7 +839,10 @@ actor GroupEngine: GroupCrypting {
             throw APIError(status: 0, code: "no_key", detail: "This file cannot be opened on this device.")
         }
         let sealed = try await client.downloadGroupAttachment(caller, id: group, attachment: file.id)
-        return try openAttachment(sealed: sealed, reference: AttachmentRef(key: key, sealedSha256: sha, plaintextLen: ref.len))
+        try vault.lease?.check()
+        let data = try openAttachment(sealed: sealed, reference: AttachmentRef(key: key, sealedSha256: sha, plaintextLen: ref.len))
+        try vault.lease?.check()
+        return data
     }
 
     // ---- housekeeping -------------------------------------------------------------------------------
@@ -871,7 +881,7 @@ actor GroupEngine: GroupCrypting {
 
     /// Drop expired items by this device's own clock, whether or not the postbox's event arrived.
     func pruneExpired() async -> Int {
-        await serial {
+        (try? await serial {
             guard var current = record else { return 0 }
             let now = Self.now()
             var dropped = 0
@@ -890,11 +900,11 @@ actor GroupEngine: GroupCrypting {
                 try? persist()
             }
             return dropped
-        }
+        }) ?? 0
     }
 
     func dropSeqs(_ group: String, seqs: [Int]) async {
-        await serial {
+        _ = try? await serial {
             eraseLocked(group, seqs: Set(seqs))
             try? persist()
             emit(.history(group))
@@ -902,7 +912,7 @@ actor GroupEngine: GroupCrypting {
     }
 
     func forget(_ group: String) async {
-        await serial {
+        _ = try? await serial {
             try? device?.forgetGroup(groupId: group)
             record?.groups[group] = nil
             record?.history[group] = nil
@@ -913,14 +923,16 @@ actor GroupEngine: GroupCrypting {
         }
     }
 
-    func history(_ group: String) -> [GroupItem] { record?.history[group] ?? [] }
-    func inGroup(_ group: String) -> Bool { record?.groups[group]?.inGroup == true }
+    private var live: Bool { vault.lease?.isValid ?? true }
+    func history(_ group: String) -> [GroupItem] { live ? record?.history[group] ?? [] : [] }
+    func inGroup(_ group: String) -> Bool { live && record?.groups[group]?.inGroup == true }
 
     func members(_ group: String) -> [GroupDeviceInfo] {
-        ((try? device?.members(groupId: group)) ?? []).map(Self.info)
+        guard live else { return [] }
+        return ((try? device?.members(groupId: group)) ?? []).map(Self.info)
     }
 
-    func safetyNumber(_ group: String) -> String? { try? device?.safetyNumber(groupId: group) }
+    func safetyNumber(_ group: String) -> String? { live ? try? device?.safetyNumber(groupId: group) : nil }
 
     // ---- helpers ------------------------------------------------------------------------------------
 
