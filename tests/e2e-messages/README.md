@@ -13,6 +13,8 @@ normal Android SDK environment. Then, from the repository root:
 tests/e2e-messages/android.sh /absolute/path/to/target/debug/pigeonpost-postbox
 # Real MLS group actions, using the same protected loopback fixture:
 tests/e2e-messages/android.sh /absolute/path/to/target/debug/pigeonpost-postbox groups
+# Native calendar protocol, using the same disposable postbox and response-loss proxy:
+tests/e2e-messages/android.sh /absolute/path/to/target/debug/pigeonpost-postbox calendar
 ```
 
 The runner invokes `:core:messageActionsPostbox`, a `JavaExec` task in the test runtime classpath.
@@ -25,6 +27,14 @@ recipient with a verified Welcome, exercises encrypted replies/edits and retaine
 checks member receipt privacy, recovers committed send/edit loss after importing saved sender
 state, and reconciles whole-chain deletion through metadata-only pages. Missing crypto is a
 failure for this explicit target. This does not enable group features on any production server.
+
+The optional `calendar` mode enables the calendar only in the fixture, adds synthetic verified
+sign-in claims, and runs `:core:calendarPostbox`. Contact delivery remains off; no invitation email
+is sent. It checks calendar/event/import-confirmation response loss and exact replay, mailbox
+ownership, attendee contact redaction, organizer-only guest links, independent RSVP and scheduling
+revisions, recurring occurrence identity, personal reminders, ICS privacy, settings, feed rotation
+and revocation, and unknown availability. Feed probes reject every non-loopback origin. The
+calendar executable is opt-in and adds no conditional JUnit skip.
 
 Checks cover capability discovery; distinct sender/recipient copy IDs; delivered, seen and agent
 state; folded edits, fresh unread revisions and versions; reply context; foreign references and

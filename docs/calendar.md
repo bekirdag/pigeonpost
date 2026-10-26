@@ -15,7 +15,7 @@ Everything below is on the postbox (`https://postbox.pigeonpost.dev`), JSON unle
 | Acting mailbox | `x-pigeonpost-identity: /k/…` (or `?identity=`). A calendar belongs to a **mailbox**, not an account. |
 | Flags | `calendar` gates every route here (off → `404 feature_disabled`). `calendar_email` gates invitations, updates, reminders and verification codes sent to **contact addresses** (people without a Pigeonpost handle); while it is off those guests are still recorded and the organizer can copy their personal invitation link by hand (§3.7). Ask `GET /v1/capabilities` (`features[]`). |
 | Idempotency | Creating routes take `request_key` (1–64 of `[A-Za-z0-9_-]`): same key + same body → the original response; same key + other body → `409 idempotency_conflict`. Kept 7 days. |
-| Revisions | Events carry `revision` (optimistic concurrency, bumps on every change) and `sequence` (the iCalendar `SEQUENCE`, bumps only on organizer scheduling changes). Mutations take `expected_revision`; stale → `409 revision_conflict {current_revision}`. |
+| Revisions | Events carry an organizer `revision` for optimistic concurrency and `sequence` (the iCalendar `SEQUENCE`, bumps only on organizer scheduling changes). Organizer mutations take `expected_revision`; stale → `409 revision_conflict {current_revision}`. RSVP has its own attendee revision; personal reminders and placement do not invalidate the organizer's event revision. |
 | Encryption | Calendar data is **not end-to-end encrypted**. Titles, descriptions, locations and notes are sealed at rest under the postbox vault and are readable by the service, which renders them into reminders and invitations. Clients must not show a lock or "end-to-end" label on calendar data. |
 | Errors | `{error, message, …}`. Codes: `feature_disabled`, `not_found`, `forbidden`, `human_required`, `revision_conflict`, `idempotency_conflict`, `recurrence_invalid`, `time_invalid {kind: nonexistent\|ambiguous\|order}`, `zone_unknown`, `window_too_large`, `expansion_limit`, `attendee_limit`, `invite_limit`, `meeting_capacity`, `external_unavailable`, `verification_required`, `guest_token_invalid` (always generic), `window_closed`, `event_cancelled`, `calendar_unavailable`, `rate_limited` (429 + `Retry-After`). |
 
@@ -212,6 +212,10 @@ Your own answer only (≤ 300-character note). Answering a filtered invitation m
 Filtered (it does not make the organizer a contact). Declining stops reminders and removes direct
 entry to the meeting; you can change your answer later.
 
+The RSVP response's `revision` belongs to the attendee, not the event. An optional
+`expected_revision` on RSVP compares that attendee revision. Clients must not use the event's
+revision for this check or expect a reply to invalidate an unrelated organizer edit.
+
 `PUT /v1/calendar/events/{id}/reminders` `{reminders: [{minutes_before: 0–40320, channel: "push"}]}`
 — your own reminders for this event (≤ 5). `channel: "external"` is for guests only (§6).
 
@@ -261,6 +265,7 @@ Typed account events (with `account_events`, or `?typed=1`): `event.invite {even
 occurrence_id?}`, `event.rsvp {event_id, attendee_id, revision, occurrence_id?}` (organizer only),
 `event.reminder {event_id, occurrence_id, reminder_id, starts_at}`. They carry ids only; fetch the
 event to see details (a removed attendee gets `404`, and must drop what it cached).
+For `event.rsvp`, `revision` is the attendee revision; for event scheduling updates it is the event revision.
 
 Pushes: invitations push "New calendar invitation" (no details). Reminders push "Event starting in
 N minutes" (title only with `previews` on). `message_id` is `cal:<occurrence_id>:<reminder_id>`.

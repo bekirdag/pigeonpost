@@ -47,6 +47,19 @@ tasks.register<JavaExec>("groupActionsPostbox") {
     }
 }
 
+tasks.register<JavaExec>("calendarPostbox") {
+    group = "verification"
+    description = "Checks calendar APIs against a disposable loopback postbox."
+    dependsOn("testClasses")
+    classpath = sourceSets.named("test").get().runtimeClasspath
+    mainClass.set("dev.pigeonpost.core.calendar.CalendarPostbox")
+    doFirst {
+        val fixture = providers.environmentVariable("PIGEONPOST_TEST_FIXTURE").orNull
+        require(!fixture.isNullOrBlank()) { "Set PIGEONPOST_TEST_FIXTURE to the private loopback fixture JSON." }
+        setArgs(listOf(fixture))
+    }
+}
+
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
