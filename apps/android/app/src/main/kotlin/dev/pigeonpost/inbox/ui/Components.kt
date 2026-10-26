@@ -81,8 +81,9 @@ fun Avatar(peer: String?, name: String, size: Dp = 38.dp) {
     val index = PeerFace.toneIndex(peer) - 1
     val pictures = LocalAvatars.current
     val known by (pictures?.store?.pictures ?: remember { kotlinx.coroutines.flow.MutableStateFlow(emptyMap()) }).collectAsState()
+    val available by (pictures?.store?.availability ?: remember { kotlinx.coroutines.flow.MutableStateFlow(false) }).collectAsState()
     val picture = peer?.let { known[it] }
-    if (pictures != null && peer != null && peer !in known) LaunchedEffect(peer) { pictures.store.want(peer) }
+    if (pictures != null && peer != null && peer !in known) LaunchedEffect(peer, available) { if (available) pictures.store.want(peer) }
     val image by produceState(picture?.let { pictures?.cached(it) }, picture?.cacheKey) {
         if (picture != null && pictures != null && value == null) value = pictures.bitmap(peer, picture)
         else if (picture == null) value = null
