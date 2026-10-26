@@ -140,6 +140,7 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
                 SettingsRow("Account", session.username ?: "Your profile and devices", Icons.Outlined.AccountCircle) { navigate(SettingsPage.ACCOUNT) }
                 SettingsRow("Scan for login", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
                 if (state.has("orgs") && model?.deviceApproval != null) SettingsRow("Sign in a machine", "Review an agent's terminal code", Icons.Outlined.Computer) { dismiss(); model.openDeviceApproval() }
+                if (state.has("orgs") && state.has("groups") && model?.organizationRooms != null) SettingsRow("Organization rooms", "Your team's encrypted conversations", Icons.Outlined.Business) { dismiss(); model.openOrganizationRooms() }
                 SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }

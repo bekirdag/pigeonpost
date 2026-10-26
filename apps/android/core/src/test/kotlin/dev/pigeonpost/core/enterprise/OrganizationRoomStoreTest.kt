@@ -175,4 +175,27 @@ class OrganizationRoomStoreTest {
         assertNull(create()); assertFalse(store.selectOrganization("org_second", context)); assertFalse(store.close(discardUnconfirmed = true))
         release.complete(Unit); first.join(); assertEquals(1, api.payloads.size); assertTrue(store.allows(state.opening!!))
     } }
+    @Test fun anUnsentDraftSurvivesDirectoryRefreshAndRejectsOldEditorsAfterDiscard() = runBlocking<Unit> { world {
+        load(); assertTrue(store.beginCreation(context)); val draft = state.draft!!
+        store.changeDraft(draft.copy(name = "Keep this draft", description = "Private notes"), context)
+        load(); assertEquals("Keep this draft", state.draft!!.name); assertEquals(draft.id, state.draft!!.id)
+        assertTrue(store.beginCreation(context)); assertEquals(draft.id, state.draft!!.id)
+        assertTrue(store.discardCreation(context, "org_fixture")); assertTrue(store.beginCreation(context)); val replacement = state.draft!!
+        store.changeDraft(draft.copy(name = "Stale"), context); assertEquals(replacement, state.draft); assertNull(store.submitDraft(draft.id, context))
+        assertFalse("create" in api.actions)
+    } }
+    @Test fun aFrozenCreationDraftCannotBeEditedOrSubmittedUnderAnotherContext() = runBlocking<Unit> { world {
+        load(); store.beginCreation(context); val draft = state.draft!!.copy(name = "Frozen intent")
+        store.changeDraft(draft, context); api.hook = { if (it == "create") throw IOException("Fixture accepted response loss") }
+        store.submitDraft(draft.id, context)!!.join(); val pending = state.pendingCreation!!
+        store.changeDraft(draft.copy(name = "Changed"), context); assertEquals("Frozen intent", state.draft!!.name); assertSame(pending, state.pendingCreation)
+        val oldContext = context; replace(); load(); store.beginCreation(context)
+        assertNull(store.submitDraft(draft.id, oldContext)); assertEquals(1, api.payloads.size)
+    } }
+    @Test fun revocationAtTheFinalEncryptedInboxCheckForgetsPrivateRoomMetadata() = runBlocking<Unit> { world {
+        load(); inspect(); store.openReviewed(state.reviewProof, context)!!.join(); val opening = state.opening!!
+        store.openingFailed(opening, ApiException(403, "not_org_member"))
+        assertNull(state.catalog); assertNull(state.preview); assertNull(state.opening); assertTrue(state.rooms.isEmpty())
+        assertFalse(store.allows(opening)); assertNull(store.openReviewed(state.reviewProof, context))
+    } }
 }

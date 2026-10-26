@@ -16,12 +16,19 @@ class OrganizationRoomIdentity(val subject: String, val authorization: Authoriza
 class OrganizationRoomOpening internal constructor(val contextId: String, val organizationId: String, val groupId: String) {
     override fun toString() = "OrganizationRoomOpening(redacted)"
 }
+data class OrganizationRoomDraft(val organizationId: String, val id: String = UUID.randomUUID().toString(),
+    val name: String = "", val description: String = "", val join: RoomJoinPolicy = RoomJoinPolicy.MEMBERS,
+    val post: RoomPostPolicy = RoomPostPolicy.EVERYONE, val listed: Boolean = true) {
+    val dirty get() = name.isNotBlank() || description.isNotBlank()
+    override fun toString() = "OrganizationRoomDraft(redacted)"
+}
 data class OrganizationRoomsState(
     val contextId: String = UUID.randomUUID().toString(), val mailbox: String? = null,
     val catalog: RoomOrganizations? = null, val selectedOrganizationId: String? = null,
     val rooms: List<OrganizationRoom> = emptyList(), val directoryProof: String = UUID.randomUUID().toString(),
     val preview: GroupPreview? = null, val reviewProof: String = UUID.randomUUID().toString(), val mustReviewAgain: Boolean = false,
     val pendingCreation: OrganizationRoomCreate? = null, val createdCandidateId: String? = null, val completedCreation: Group? = null,
+    val draft: OrganizationRoomDraft? = null,
     val opening: OrganizationRoomOpening? = null,
     val loadingCatalog: Boolean = false, val loadingRooms: Boolean = false, val reviewing: Boolean = false, val busy: Boolean = false,
     val message: String? = null, val retryAt: Long? = null,
@@ -55,7 +62,11 @@ class OrganizationRoomStore(
         if (child != null) { actor = child; bound = next }
         mutable.value = OrganizationRoomsState(contextId = child?.id ?: UUID.randomUUID().toString(), mailbox = if (child != null) next?.mailbox else null, retryAt = deadline)
     }
-    fun synchronize() { val next = live(); if (bound?.same(next) != true || actor?.isValid != true) bind(next) }
+    fun synchronize() {
+        val next = live()
+        if (next == null && bound == null && actor == null) return
+        if (bound?.same(next) != true || actor?.isValid != true) bind(next)
+    }
     /** The UI must explicitly acknowledge abandoning an uncertain creation before closing it. */
     fun close(discardUnconfirmed: Boolean = false): Boolean {
         if (state.value.busy || state.value.pendingCreation != null && !discardUnconfirmed) return false
@@ -105,10 +116,10 @@ class OrganizationRoomStore(
         synchronize()
         if (!isCurrent(context) || state.value.busy || state.value.catalog?.forMailbox(state.value.mailbox.orEmpty())?.any { it.id == id } != true) return false
         if (state.value.selectedOrganizationId == id) return true
-        if (state.value.pendingCreation != null) { mutable.update { it.copy(message = "Check or discard the earlier creation before changing organizations.") }; return false }
+        if (state.value.pendingCreation != null || state.value.draft?.dirty == true) { mutable.update { it.copy(message = "Finish or discard the room draft before changing organizations.") }; return false }
         cancel(Lane.ROOMS); clearReview()
         mutable.update { it.copy(selectedOrganizationId = id, rooms = emptyList(), directoryProof = UUID.randomUUID().toString(), loadingRooms = false,
-            completedCreation = null, createdCandidateId = null, message = null) }
+            completedCreation = null, createdCandidateId = null, draft = null, message = null) }
         return true
     }
     fun loadOrganizations(context: String = state.value.contextId, search: String = ""): Job? = run(Lane.CATALOG, context) { work ->
@@ -121,7 +132,7 @@ class OrganizationRoomStore(
         val keep = state.value.pendingCreation != null && state.value.pendingCreation?.organizationId == selected
         mutable.update { it.copy(catalog = catalog, selectedOrganizationId = selected, rooms = emptyList(), directoryProof = UUID.randomUUID().toString(), loadingRooms = false,
             pendingCreation = it.pendingCreation.takeIf { keep }, createdCandidateId = it.createdCandidateId.takeIf { keep },
-            completedCreation = it.completedCreation?.takeIf { group -> group.orgId == selected }) }
+            completedCreation = it.completedCreation?.takeIf { group -> group.orgId == selected }, draft = it.draft?.takeIf { draft -> draft.organizationId == selected }) }
         if (selected != null) loadRooms(search, context)
     }
     fun loadRooms(search: String, context: String = state.value.contextId): Job? {
@@ -187,8 +198,19 @@ class OrganizationRoomStore(
     }
     fun beginCreation(context: String): Boolean {
         if (!canCreate(context)) return false
-        if (state.value.pendingCreation == null) mutable.update { it.copy(completedCreation = null, createdCandidateId = null, opening = null, message = null) }
+        if (state.value.pendingCreation == null) mutable.update { it.copy(completedCreation = null, createdCandidateId = null, opening = null, message = null,
+            draft = if (it.completedCreation == null) it.draft ?: OrganizationRoomDraft(it.organization!!.id) else OrganizationRoomDraft(it.organization!!.id)) }
         return true
+    }
+    fun changeDraft(draft: OrganizationRoomDraft, context: String) {
+        if (!isCurrent(context) || state.value.busy || state.value.pendingCreation != null || state.value.completedCreation != null ||
+            state.value.draft?.id != draft.id || state.value.organization?.id != draft.organizationId) return
+        mutable.update { it.copy(draft = draft.copy(name = draft.name.take(320), description = draft.description.take(2000)), message = null) }
+    }
+    fun submitDraft(id: String, context: String): Job? {
+        val draft = state.value.draft ?: return null
+        if (draft.id != id || !isCurrent(context)) return null
+        return create(context, draft.organizationId, draft.name, draft.description, draft.join, draft.post, draft.listed)
     }
     fun create(context: String, organizationId: String, name: String, description: String, join: RoomJoinPolicy, post: RoomPostPolicy, listed: Boolean): Job? {
         synchronize()
@@ -233,10 +255,12 @@ class OrganizationRoomStore(
     }
     fun discardCreation(context: String, organizationId: String): Boolean {
         if (!isCurrent(context) || state.value.busy || state.value.organization?.id != organizationId) return false
-        mutable.update { it.copy(pendingCreation = null, createdCandidateId = null, completedCreation = null, opening = null, message = null) }; return true
+        mutable.update { it.copy(pendingCreation = null, createdCandidateId = null, completedCreation = null, draft = null, opening = null, message = null) }; return true
     }
-    fun openingFailed(opening: OrganizationRoomOpening) {
-        if (allows(opening)) mutable.update { it.copy(opening = null, message = "The room is confirmed, but its encrypted inbox is not ready. Open it again to retry.") }
+    fun openingFailed(opening: OrganizationRoomOpening, failure: Exception? = null) {
+        if (!allows(opening)) return
+        if (failure is SessionExpired || (failure as? ApiException)?.status in setOf(401, 403, 404, 410)) { failed(failure!!, decision = false); return }
+        mutable.update { it.copy(opening = null, mustReviewAgain = it.preview != null, message = "The room is confirmed, but its encrypted inbox is not ready. Open it again to retry.") }
     }
     fun openingCompleted(opening: OrganizationRoomOpening) { if (allows(opening)) mutable.update { it.copy(opening = null) } }
     private fun failed(failure: Exception, decision: Boolean) {
@@ -245,7 +269,7 @@ class OrganizationRoomStore(
         if (api?.status in setOf(401, 403, 404, 410)) {
             cancel(Lane.ROOMS); clearReview()
             mutable.update { it.copy(catalog = null, selectedOrganizationId = null, rooms = emptyList(), loadingRooms = false,
-                pendingCreation = null, createdCandidateId = null, completedCreation = null, message = "Access could not be confirmed. Refresh your organizations.") }; return
+                pendingCreation = null, createdCandidateId = null, completedCreation = null, draft = null, message = "Access could not be confirmed. Refresh your organizations.") }; return
         }
         if (api?.status == 429) { rateSubject = bound?.subject; deadline = now() + (api.retryAfter ?: 30).coerceIn(1, 3600) }
         mutable.update { it.copy(mustReviewAgain = decision && it.preview != null, opening = null, retryAt = deadline, message = when {

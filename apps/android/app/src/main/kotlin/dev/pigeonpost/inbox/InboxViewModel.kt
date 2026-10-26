@@ -46,6 +46,11 @@ import dev.pigeonpost.core.enterprise.DevicePairingApi
 import dev.pigeonpost.core.enterprise.DevicePairingCode
 import dev.pigeonpost.core.enterprise.DeviceApprovalIdentity
 import dev.pigeonpost.core.enterprise.DeviceApprovalStore
+import dev.pigeonpost.core.enterprise.OrganizationRoomApi
+import dev.pigeonpost.core.enterprise.OrganizationRoomClient
+import dev.pigeonpost.core.enterprise.OrganizationRoomIdentity
+import dev.pigeonpost.core.enterprise.OrganizationRoomOpening
+import dev.pigeonpost.core.enterprise.OrganizationRoomStore
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -68,6 +73,7 @@ data class AppGraph(
     val calendarStorage: (Application) -> CalendarAttemptStorage = { KeystoreCalendarAttempts(it) },
     val meetingApi: CalendarMeetingApi? = api as? CalendarMeetingApi,
     val pairingApi: DevicePairingApi? = api as? DevicePairingApi,
+    val organizationRoomApi: OrganizationRoomApi? = groupTransport?.let(::OrganizationRoomClient),
 ) {
     companion object {
         fun live(app: Application): AppGraph {
@@ -96,6 +102,12 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val deviceApprovalOpen = machineOpen.asStateFlow()
     private var deviceNavigation: Job? = null
     var authorizationWindow: ((Intent) -> Unit)? = null
+    private val roomPage = MutableStateFlow(false)
+    val organizationRoomsOpen = roomPage.asStateFlow()
+    private val roomPreparation = MutableStateFlow(false)
+    val organizationRoomPreparing = roomPreparation.asStateFlow()
+    private var roomPreparationJob: Job? = null
+    private var roomPreparationId = java.util.UUID.randomUUID()
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
@@ -126,6 +138,14 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }, transitioning = { session.state.value.loading && session.state.value.busy }, onSessionExpired = { expected ->
         viewModelScope.launch { if (session.authorizationLease === expected) signOut() }
     }) }
+    val organizationRooms = graph.organizationRoomApi?.let { api -> OrganizationRoomStore(api, viewModelScope, identity = {
+        val state = session.state.value; val grant = session.authorizationLease; val inboxState = inbox.state.value
+        val subject = state.subject; val mailbox = inboxState.acting?.address
+        if (!state.loading && state.signedIn && state.termsAccepted && !subject.isNullOrEmpty() && mailbox != null &&
+            grant?.isValid == true && grant.id == state.authorizationId && activation.value?.authorizationId == state.authorizationId &&
+            "orgs" in inboxState.features && "groups" in inboxState.features && groups?.state?.value?.unavailable != true)
+            OrganizationRoomIdentity(subject, grant, mailbox) else null
+    }, onSessionExpired = { expected -> viewModelScope.launch { if (session.authorizationLease === expected) signOut() } }) }
     val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
@@ -148,7 +168,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val crop = cropping.asStateFlow()
     init {
         graph.start(viewModelScope)
-        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize() } }
+        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize(); organizationRooms?.synchronize() } }
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
@@ -160,6 +180,9 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 groups?.onMailbox(target?.address, target?.handle, target?.features.orEmpty())
                 calendar?.onMailbox(target?.address, target?.features.orEmpty())
                 meetingLookup?.onMailbox(target?.address)
+                organizationRooms?.synchronize()
+                if (roomPage.value && organizationRooms?.isCurrent() == true && organizationRooms.state.value.catalog == null)
+                    organizationRooms.loadOrganizations()
             }
         }
         viewModelScope.launch {
@@ -200,6 +223,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() {
+        roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         closeDeviceApproval()
         closeMeetingLink()
         val authorization = session.authorizationLease
@@ -212,6 +236,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     private fun resetStores() {
+        roomPage.value = false; cancelRoomPreparation(); organizationRooms?.reset()
         storeScope.retire()
         activation.value = null
         inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); profile.reset(); pictures.clear()
@@ -238,6 +263,53 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     fun closeMeetingLink() { meetingCode.value = null; meetingIntentRoot = null; meetingLookup?.close() }
+    fun openOrganizationRooms() {
+        val store = organizationRooms ?: return
+        store.synchronize()
+        if (!store.isCurrent()) { inbox.showError("Organization rooms are unavailable for this inbox."); return }
+        roomPage.value = true; store.loadOrganizations()
+    }
+    fun closeOrganizationRooms(context: String, discardUnconfirmed: Boolean = false): Boolean {
+        val store = organizationRooms ?: return false
+        if (context != store.state.value.contextId || roomPreparation.value || !store.close(discardUnconfirmed)) return false
+        roomPage.value = false; return true
+    }
+    fun switchOrganizationMailbox(address: String, context: String): Boolean {
+        val store = organizationRooms ?: return false
+        if (!store.isCurrent(context) || store.state.value.busy || roomPreparation.value ||
+            calls?.mode?.value?.let { it != CallHost.Mode.HIDDEN } == true || calls?.preparingScheduled?.value == true) return false
+        val target = inbox.state.value.mailboxes.firstOrNull { it.address == address } ?: return false
+        if (store.state.value.catalog?.orgs?.any { it.readable && it.mailbox?.address == address } != true) return false
+        store.reset(); inbox.switchMailbox(target); return true
+    }
+    private fun cancelRoomPreparation() {
+        roomPreparationId = java.util.UUID.randomUUID(); roomPreparationJob?.cancel(); roomPreparationJob = null; roomPreparation.value = false
+    }
+    fun prepareOrganizationRoom(opening: OrganizationRoomOpening) {
+        val store = organizationRooms ?: return; val groups = groups ?: return
+        if (!store.allows(opening) || roomPreparation.value) return
+        val root = session.authorizationLease ?: return
+        val mailbox = inbox.state.value.acting?.address ?: return
+        val child = try { root.child() } catch (_: dev.pigeonpost.core.AuthorizationRetired) { return }
+        val visit = java.util.UUID.randomUUID(); roomPreparationId = visit; roomPreparation.value = true
+        fun current() = store.allows(opening) && root.isValid && session.authorizationLease === root && inbox.state.value.acting?.address == mailbox
+        val job = viewModelScope.launch(dev.pigeonpost.core.AuthorizationContext(child), start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                val prepared = withTimeoutOrNull(15_000) {
+                    groups.state.first { !current() || it.unavailable || it.enabled && it.mailbox == mailbox }
+                    if (!current() || !groups.state.value.enabled || groups.state.value.unavailable) false
+                    else groups.prepareOrganizationRoom(opening.groupId, opening.organizationId, groups.state.value.contextId)
+                } == true
+                if (current()) {
+                    if (prepared) { inbox.selectPeer(null); inbox.showView(LeftView.INBOX); store.openingCompleted(opening); store.reset(); roomPage.value = false }
+                    else store.openingFailed(opening)
+                }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { if (current()) store.openingFailed(opening, failure) }
+            finally { child.retire(); if (roomPreparationId == visit) { roomPreparationJob = null; roomPreparation.value = false } }
+        }
+        roomPreparationJob = job; job.start()
+    }
     fun closeDeviceApproval() { deviceNavigation?.cancel(); deviceNavigation = null; machineOpen.value = false; deviceApproval?.close() }
     fun openDeviceApproval(code: DevicePairingCode? = null) {
         val store = deviceApproval ?: return
@@ -377,6 +449,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     override fun onCleared() {
+        cancelRoomPreparation(); organizationRooms?.reset()
         deviceNavigation?.cancel(); deviceApproval?.close(); authorizationWindow = null
         storeScope.retire()
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = null; PushNotifications.calendarPoke = null; calendarNoticeJob?.cancel(); billing?.close(); calls?.destroy(); super.onCleared() }

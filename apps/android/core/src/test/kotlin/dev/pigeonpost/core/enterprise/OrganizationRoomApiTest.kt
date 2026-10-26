@@ -97,6 +97,17 @@ class OrganizationRoomApiTest {
         }
         server.enqueue(response(validGroup)); assertEquals("room_fixture", accepted { api.group(mailbox, "room_fixture") }.id)
     }
+    @Test fun singleGroupReadsAcceptTheBareServerObjectWithTheSameExplicitMembershipChecks() = runBlocking<Unit> {
+        val raw = WireJson.parseToJsonElement(validGroup).jsonObject.getValue("group").jsonObject
+        server.enqueue(response(raw.toString()))
+        val group = accepted { api.group(mailbox, "room_fixture") }
+        assertEquals("room_fixture", group.id); assertEquals("org_fixture", group.orgId); assertEquals("keying", group.my!!.state)
+        assertEquals("/v1/groups/room_fixture", server.takeRequest().path)
+        server.enqueue(response(JsonObject(raw - "my").toString()))
+        assertEquals("bad_response", (runCatching { accepted { api.group(mailbox, "room_fixture") } }.exceptionOrNull() as ApiException).code)
+        server.enqueue(response(raw.toString()))
+        assertEquals("bad_response", (runCatching { accepted { api.create(mailbox, payload()) } }.exceptionOrNull() as ApiException).code)
+    }
     @Test fun joiningAndInvitationAcceptanceUseOnlyTheReviewedGroup() = runBlocking<Unit> {
         server.enqueue(response("{}")); server.enqueue(response("{}"))
         accepted { api.join(mailbox, "room_fixture"); api.acceptInvitation(mailbox, "room_fixture") }

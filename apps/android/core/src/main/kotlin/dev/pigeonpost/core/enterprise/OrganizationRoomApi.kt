@@ -58,8 +58,7 @@ class OrganizationRoomClient(private val transport: GroupTransport) : Organizati
                 it.description?.let { text -> !OrganizationRoomInput.text(text, 2000, multiline = true) } == true) bad()
         } }
     }
-    private fun confirmed(value: JsonObject, mailbox: String, id: String? = null, organization: String? = null, created: Boolean = false): Group {
-        val raw = value["group"] as? JsonObject ?: bad()
+    private fun confirmed(raw: JsonObject, mailbox: String, id: String? = null, organization: String? = null, created: Boolean = false): Group {
         val my = raw["my"] as? JsonObject ?: bad()
         fun string(objectValue: JsonObject, key: String) = (objectValue[key] as? JsonPrimitive)?.takeIf { it.isString }?.content
         val state = string(my, "state"); val role = string(my, "role")
@@ -71,9 +70,15 @@ class OrganizationRoomClient(private val transport: GroupTransport) : Organizati
             created && (result.createdBy != mailbox || role != "owner")) bad()
         return result
     }
-    override suspend fun group(mailbox: String, groupId: String): Group = accepted { confirmed(json(mailbox, "GET", path(groupId)), mailbox, id = groupId) }
+    override suspend fun group(mailbox: String, groupId: String): Group = accepted {
+        val value = json(mailbox, "GET", path(groupId))
+        // The deployed single-group route returns the object itself; older clients also accept an envelope.
+        val raw = if ("group" in value) value["group"] as? JsonObject ?: bad() else value
+        confirmed(raw, mailbox, id = groupId)
+    }
     override suspend fun create(mailbox: String, payload: OrganizationRoomCreate): Group = accepted {
-        confirmed(json(mailbox, "POST", "/v1/groups", payload.body), mailbox, organization = payload.organizationId, created = true)
+        val raw = json(mailbox, "POST", "/v1/groups", payload.body)["group"] as? JsonObject ?: bad()
+        confirmed(raw, mailbox, organization = payload.organizationId, created = true)
     }
     override suspend fun join(mailbox: String, groupId: String) { accepted { json(mailbox, "POST", path(groupId, "/join"), buildJsonObject {}) } }
     override suspend fun acceptInvitation(mailbox: String, groupId: String) { accepted { json(mailbox, "POST", path(groupId, "/invitation"), buildJsonObject { put("accept", true) }) } }

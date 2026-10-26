@@ -277,6 +277,30 @@ class GroupStore(
 
     // ---- the open group ------------------------------------------------------------------------
 
+    /** Reconfirm live room membership before exposing its encrypted conversation cache. */
+    suspend fun prepareOrganizationRoom(gid: String, organizationId: String, expectedContext: String): Boolean {
+        val c = client ?: return false
+        val operationContext = kotlinx.coroutines.currentCoroutineContext()
+        val caller = operationContext[AuthorizationContext]?.lease ?: throw AuthorizationRetired()
+        caller.requireActive()
+        if (!caller.sharesAuthorization(c.authorizationLease)) throw AuthorizationRetired()
+        fun current() = operationContext.isActive && client === c && c.authorizationLease.isValid && caller.isValid && state.value.contextId == expectedContext && state.value.mailbox == c.mailbox
+        if (!current()) return false
+        val api = dev.pigeonpost.core.enterprise.OrganizationRoomClient(c.transport)
+        var group = api.group(c.mailbox, gid)
+        if (!current() || group.orgId != organizationId) return false
+        if (group.state == "keying" && group.activationState == "provisioning" && group.createdBy == c.mailbox && group.owner) {
+            c.activate(gid)
+            if (!current()) return false
+            group = api.group(c.mailbox, gid)
+            if (!current() || group.orgId != organizationId) return false
+        }
+        mutable.update { it.copy(groups = it.groups.filterNot { old -> old.id == gid } + group) }
+        if (!current()) return false
+        open(gid)
+        return true
+    }
+
     fun open(gid: String) {
         mutable.update { it.copy(open = gid, call = null) }
         snapshot()
