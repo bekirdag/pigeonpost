@@ -4,6 +4,7 @@ public interface IInboxService
 {
     // The live service exposes its accepted login; context-free stand-ins retain null.
     AuthorizationLease? AcceptedAuthorization => null;
+    string? RecoveryOwnerKey => null;
     Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken);
     Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken);
     Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken cancellationToken);
@@ -19,6 +20,7 @@ public interface IAccessTokenProvider
 {
     // Context-free stand-ins may keep the default; the live AccountSession supplies a grant.
     AuthorizationLease? AcceptedAuthorization => null;
+    string? RecoveryOwnerKey => null;
     Task<string> GetTokenAsync(CancellationToken cancellationToken);
     Task<string> RefreshTokenAsync(CancellationToken cancellationToken);
 }
