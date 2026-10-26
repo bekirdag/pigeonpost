@@ -39,9 +39,11 @@ object Conversations {
         val aliases = aliases(messages)
         val grouped = linkedMapOf<String, MutableList<ThreadMessage>>()
         val seen = mutableSetOf<String>()
+        val seenRefs = messages.filter { it.outgoing }.mapNotNullTo(mutableSetOf()) { it.msgRef }
         messages.forEach { message ->
             if (!seen.add(message.id)) return@forEach
             val peer = aliases[message.peerKey] ?: message.peerKey
+            val editing = pending.lastOrNull { it.mailbox == acting && it.editOriginalId == message.id }
             grouped.getOrPut(peer) { mutableListOf() }.add(ThreadMessage(
                 id = message.id, body = message.body, outgoing = message.outgoing, at = message.at, threadId = message.threadId,
                 read = message.outgoing || message.read == true,
@@ -49,11 +51,15 @@ object Conversations {
                 heldBecause = message.heldBecause.takeUnless { message.outgoing }, address = message.from,
                 standing = message.standing, tier = message.tier, attachments = message.attachments.orEmpty(),
                 expiresAt = message.expiresAt,
+                msgRef = message.msgRef, replyTo = message.replyTo, editedAt = message.editedAt, editCount = message.editCount,
+                receipt = message.receipt, agentStatus = message.agentStatus,
+                status = editing?.status ?: Delivery.SENT, pendingEditId = editing?.id,
             ))
         }
-        pending.filter { it.mailbox == acting && it.id !in seen && it.sentCopyId !in seen }.forEach { row ->
+        pending.filter { it.mailbox == acting && it.editOriginalId == null && it.id !in seen && it.sentCopyId !in seen && it.action?.msgRef !in seenRefs }.forEach { row ->
             val peer = aliases[row.to] ?: row.to
-            grouped.getOrPut(peer) { mutableListOf() }.add(ThreadMessage(row.id, row.body, true, row.at, row.threadId, status = row.status, attachments = row.attachments))
+            grouped.getOrPut(peer) { mutableListOf() }.add(ThreadMessage(row.id, row.body, true, row.at, row.threadId, status = row.status, attachments = row.attachments,
+                msgRef = row.action?.msgRef, replyTo = row.replyTo, expiresAt = row.expiresAt))
         }
         contacts.filterNot { it.wildcard }.forEach { grouped.getOrPut(aliases[it.peer] ?: it.peer) { mutableListOf() } }
         return grouped.map { (peer, rows) ->

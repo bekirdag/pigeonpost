@@ -29,3 +29,22 @@
   fixture while retaining the exact two-attempt/body/reference assertions; no network retry was
   added to sends. Failed and passing logs are retained separately under the private continuation
   validation directory. Existing compiler deprecation notices remain unrelated to this change.
+- Committed/pushed wire foundation `38f256c`, then merged current main (including qualified Apple
+  PR #111 and the deployed receipt fix) locally as `9497ef9` before the next state checkpoint.
+- Added direct-message composer state and negotiated reads/acks, including the Filtered view.
+  Reply/edit modes are scoped to the draft; edits preserve request verbs/other arguments and restore
+  ordinary drafts/files. Sends capture their inputs before coroutine scheduling. Uncertain keyed
+  sends retain body/reference/upload IDs, block accidental replacement and support an explicit
+  retry. General draft keys remain stable when the server assigns a default-thread ID. Pending
+  edits project onto their root and confirmed references suppress duplicate pending bubbles.
+- Optimistic read marks now include the edited revision. Message-info results are guarded by the
+  mailbox and dialog generation and cleared on conversation/subject navigation. Two additional
+  tests reproduced a send stuck after the existing handle-registration account reload, and stale
+  info returning after navigation. Account metadata reload now has its own generation while reset
+  retires the authorization; the two reproductions fail before the fix and pass afterward.
+- State qualification passes all 119 JVM tests (including eleven new state cases and all nine real
+  MLS cases, no skips) and complete debug Kotlin compilation. The retained evidence is in
+  `android-message-actions-state-*.log` and `android-message-actions-reload-*.log` under the private
+  continuation validation directory. This is in-process recovery; encrypted recovery after app
+  restart remains a separate hardening item. Composer controls, action rows/ticks, message-info
+  presentation, emulator coverage and real postbox integration are the next implementation steps.

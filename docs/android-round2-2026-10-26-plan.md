@@ -44,3 +44,21 @@ Kotlin symbol/graph results are currently incomplete in Docdex. Use explicit cal
 the compiler and focused state/wire tests for dependency checks, and record that limitation. No
 new dependency is planned. Consult the real server and existing reference clients before filling
 in any contract detail.
+
+## Composer state and retries
+
+Use one composer mode per mailbox/peer/subject draft. Editing saves and restores the ordinary draft
+and its staged files; preserve a structured request's verb and unrelated arguments. Normalize the
+General draft's subject to null so the server assigning its default thread ID cannot hide an
+unconfirmed attempt. Capture the full send before scheduling its coroutine and retain the same
+reference/body/uploaded attachment IDs for explicit in-process retries. An uncertain attempt
+locks that draft until it is resolved or explicitly dismissed; legacy unkeyed sends keep their
+existing behavior. Account reset retires those requests; restarting the app does not yet restore
+them from encrypted storage and is a separate recovery/hardening item.
+
+Fold versions only through the negotiated API, and acknowledge them together. Optimistic read
+marks include the edited revision so a fresh edit cannot inherit the old acknowledgment. Message
+info belongs to the current mailbox/conversation/dialog generation. Metadata reload after handle
+registration gets its own generation; it must not retire the active authorization or strand an
+in-flight send. A future enterprise step-up flow must carry explicit Session authorization
+generation through the Android stores and token provider before that flow is exposed.

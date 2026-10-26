@@ -139,6 +139,10 @@ data class PendingMessage(
     val status: Delivery = Delivery.SENDING,
     val sentCopyId: String? = null,
     val attachments: List<Attachment> = emptyList(),
+    val action: MessageSendAction? = null,
+    val replyTo: MessageReply? = null,
+    val editOriginalId: String? = null,
+    val expiresAt: Long? = null,
 )
 data class ThreadMessage(
     val id: String,
@@ -158,6 +162,13 @@ data class ThreadMessage(
     val expiresAt: Long? = null,
     /** A line drawn by the app, not a message: "Missed video call · 14:32". */
     val system: Boolean = false,
+    val msgRef: String? = null,
+    val replyTo: MessageReply? = null,
+    val editedAt: Long? = null,
+    val editCount: Int? = null,
+    val receipt: MessageReceipt? = null,
+    val agentStatus: MessageAgentStatus? = null,
+    val pendingEditId: String? = null,
 ) {
     val display get() = displayBody(body, outgoing)
 }

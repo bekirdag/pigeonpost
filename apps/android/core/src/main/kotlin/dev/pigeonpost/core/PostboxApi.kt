@@ -64,6 +64,7 @@ interface PostboxApi {
     suspend fun send(identity: String, to: String, body: String, threadId: String?, attachments: List<String> = emptyList()): SendResponse
     suspend fun ack(identity: String, messageId: String)
     suspend fun inboxWithActions(identity: String, wait: Int? = null): InboxResponse = throw ApiException(404, "feature_disabled")
+    suspend fun filteredInboxWithActions(identity: String): List<Message> = throw ApiException(404, "feature_disabled")
     suspend fun sendWithActions(identity: String, to: String, body: String, threadId: String?, action: MessageSendAction, attachments: List<String> = emptyList()): SendResponse = throw ApiException(404, "feature_disabled")
     suspend fun ackWithEdits(identity: String, messageId: String) = ack(identity, messageId)
     suspend fun messageInfo(identity: String, messageId: String): MessageInfo = throw ApiException(404, "feature_disabled")
@@ -270,6 +271,8 @@ class PostboxClient(
     }
     override suspend fun filteredInbox(identity: String) = decode<InboxResponse>(request("inbox", identity = identity,
         query = mapOf("filtered" to "1", "include_read" to "true"))).messages.orEmpty().filter { !it.outgoing }
+    override suspend fun filteredInboxWithActions(identity: String) = decode<InboxResponse>(request("inbox", identity = identity,
+        query = mapOf("filtered" to "1", "include_read" to "true", "actions" to "1", "fold" to "1"))).messages.orEmpty().filter { !it.outgoing }
     override suspend fun acceptFiltered(identity: String, peer: String) {
         require(validAddress(peer))
         request("filtered/accept", "POST", json = buildJsonObject { put("identity", identity); put("peer", peer) })
