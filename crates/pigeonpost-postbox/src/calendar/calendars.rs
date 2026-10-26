@@ -109,10 +109,11 @@ pub(crate) async fn create(
         let color = color_of(&input.color)?.unwrap_or_else(|| "blue".into());
         let me = ctx.address();
         let now = now_unix();
+        let vault = state.vault.clone();
         state
             .store
             .group_tx(move |tx: &Transaction<'_>| {
-                idempotent(tx, &me, "create_calendar", &key, &hash, now, || {
+                idempotent(tx, &vault, &me, "create_calendar", &key, &hash, now, || {
                     let n: i64 = tx.query_row(
                         "SELECT COUNT(*) FROM calendars WHERE owner_identity = ?1 AND deleted_at IS NULL",
                         params![me],

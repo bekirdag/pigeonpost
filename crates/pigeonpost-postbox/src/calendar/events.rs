@@ -1497,7 +1497,7 @@ async fn create_inner(
     state
         .store
         .group_tx(move |tx: &Transaction<'_>| {
-            idempotent(tx, &me.address, "create_event", &key, &hash, now, || {
+            idempotent(tx, &vault, &me.address, "create_event", &key, &hash, now, || {
                 let organized_today: i64 = tx.query_row(
                     "SELECT COUNT(*) FROM events WHERE organizer = ?1 AND created_at > ?2",
                     params![me.address, now.saturating_sub(86_400) as i64],

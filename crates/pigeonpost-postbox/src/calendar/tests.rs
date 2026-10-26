@@ -1,5 +1,7 @@
 //! End-to-end tests for Phase 3B over real sockets (public and internal listeners).
 
+include!("receipt_tests.rs");
+
 use crate::*;
 use reqwest::{Client, Method};
 use serde_json::{json, Value};

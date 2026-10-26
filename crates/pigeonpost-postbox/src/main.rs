@@ -373,13 +373,25 @@ async fn serve(cfg: Config) {
         }
     };
 
-    let state = match build_state(&cfg) {
+    let (master_key, persistent_master_key) = load_master_key();
+    let state = match build_state(&cfg, master_key) {
         Ok(s) => s,
         Err(e) => {
             tracing::error!(error = %e, db_path = %cfg.db_path, "failed to open the identity store");
             std::process::exit(1);
         }
     };
+
+    match calendar::protect_legacy_receipts(&state, persistent_master_key).await {
+        Ok(count) if count > 0 => {
+            tracing::info!(count, "protected legacy calendar creation receipts")
+        }
+        Ok(_) => {}
+        Err(_) => {
+            tracing::error!("failed to protect saved calendar creation receipts");
+            std::process::exit(1);
+        }
+    }
 
     tracing::info!(
         bind = %cfg.bind,
@@ -451,7 +463,7 @@ async fn start_internal_listener(state: &AppState) {
 /// Assemble shared state. The PoW HMAC secret comes from `POW_HMAC_SECRET`; if it's unset (or the
 /// placeholder), we fall back to an ephemeral random secret and warn — fine for dev, but challenges
 /// won't survive a restart and won't validate across replicas.
-fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
+fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::StoreError> {
     let secret = match std::env::var("POW_HMAC_SECRET") {
         Ok(s) if !s.is_empty() && s != "CHANGEME" => s.into_bytes(),
         _ => {
@@ -463,7 +475,6 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
             b.to_vec()
         }
     };
-    let master_key = load_master_key();
     // Derived, not the master key itself: the audit log's IP hashes must be stable across restarts
     // (so one address correlates) without the log being able to say anything about the vault key.
     let audit_ip_key = {
@@ -539,13 +550,14 @@ fn build_state(cfg: &Config) -> Result<AppState, store::StoreError> {
 /// `POSTBOX_KMS=sealed-file:/path` (the file *is* the secret; disk perms protect it). Production
 /// replaces this with an age envelope or a KMS/HSM. Missing/unreadable → ephemeral key + warn: fine
 /// for dev, but managed keys won't survive a restart or validate across replicas.
-fn load_master_key() -> [u8; 32] {
+/// The boolean records whether this exact key came from persistent storage.
+fn load_master_key() -> ([u8; 32], bool) {
     if let Some(path) = std::env::var("POSTBOX_KMS")
         .ok()
         .and_then(|s| s.strip_prefix("sealed-file:").map(str::to_string))
     {
         match std::fs::read(&path) {
-            Ok(bytes) if !bytes.is_empty() => return sha256(&bytes),
+            Ok(bytes) if !bytes.is_empty() => return (sha256(&bytes), true),
             _ => tracing::warn!(
                 path,
                 "POSTBOX_KMS sealed-file unreadable/empty — using an ephemeral vault key"
@@ -555,7 +567,7 @@ fn load_master_key() -> [u8; 32] {
     let mut key = [0u8; 32];
     rand_core::RngCore::fill_bytes(&mut rand_core::OsRng, &mut key);
     tracing::warn!("no POSTBOX_KMS master key — using an ephemeral vault key (managed keys won't survive a restart)");
-    key
+    (key, false)
 }
 
 fn sha256(bytes: &[u8]) -> [u8; 32] {
