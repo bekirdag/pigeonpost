@@ -1,0 +1,11 @@
+# Windows message actions
+
+Continue the Windows native round-two plan from the account-bound inbox branch. This checkout is isolated from #120's call qualification and #121's inbox qualification. Nests/Products remain planning only; all store submissions remain held for the release batch, including the owner's Claude review before Apple App Review.
+
+1. Read `docs/message-actions.md` and the actual server/Android implementations. Inspect exact-root Docdex symbols and impact graphs for inbox models, postbox routes, conversation folding and selection ownership. Preserve the account actor and existing 179 Core/MLS cases.
+2. Add typed direct-message references, reply/receipt/status/version models and explicit immutable write requests. Generate cryptographic client references before sending and preserve the exact request across an explicit uncertain-outcome retry. Never replay a non-idempotent request automatically. Keep durable protected custody and stable authenticated-owner recovery as explicit prerequisites for releasing retry UI.
+3. Request folded message actions, acknowledge all edit versions, propagate action fields into native conversation rows and show conservative receipt/status labels. Unknown, incoming and filtered statuses must not invent seen/agent activity. Add typed own-copy info, deletion, capabilities and receipt-privacy routes through the existing frozen request authorization.
+4. Bind composer reply/edit/info/delete and parent navigation to their original account, mailbox, selection, draft revision and reviewed target. Preserve file drafts and make unavailable/expired/old-server behavior clear. Use current WinUI controls and accessible labels. Extend authenticated group envelopes/folding, version deletion and member cursors using real MLS, not plaintext reference claims.
+5. Reproduce meaningful wire/state failures; run Core tests, Release build and real disposable Rust postbox interoperability with response loss. Qualify actual Windows UI/calls/notifications in native CI before merging. Use synthetic loopback credentials only, no production operations, and preserve other checkouts.
+
+Track validation and remaining gates in [the progress ledger](windows-message-actions-2026-10-27-progress.md).

@@ -88,6 +88,14 @@ public sealed record InboxMessage
     // Phase 1b/3a: held out of the inbox by the recipient's filtering; deleted by the server at this time.
     public bool? Filtered { get; init; }
     public long? ExpiresAt { get; init; }
+    public string? MsgRef { get; init; }
+    public MessageReply? ReplyTo { get; init; }
+    public string? EditOf { get; init; }
+    public string? EditOfMessageId { get; init; }
+    public long? EditedAt { get; init; }
+    public int? EditCount { get; init; }
+    public MessageReceipt? Receipt { get; init; }
+    public MessageAgentStatus? AgentStatus { get; init; }
 
     [JsonIgnore] public bool IsOutgoing => Direction == "out";
     [JsonIgnore] public long At => IsOutgoing ? SentAt ?? ReceivedAt ?? 0 : ReceivedAt ?? SentAt ?? 0;
@@ -115,7 +123,7 @@ public sealed record Contact(string Peer, string? Alias, string Admission, strin
 }
 public sealed record ServerThread(string ThreadId, string Peer, string? Title = null, bool? IsDefault = null,
     long? CreatedAt = null, long? LastAt = null, bool? Archived = null, int? EphemeralSecs = null);
-public sealed record SendReceipt(string? MessageId, string? SentCopyId);
+public sealed record SendReceipt(string? MessageId, string? SentCopyId, string? MsgRef = null, bool? Duplicate = null);
 public sealed record Vocabulary(IReadOnlyList<string>? Grantable = null, IReadOnlyList<string>? NeverAuto = null)
 {
     public IReadOnlyList<string> SafeGrants => (Grantable ?? []).Except(NeverAuto ?? [], StringComparer.Ordinal).Distinct(StringComparer.Ordinal).ToArray();
@@ -135,7 +143,8 @@ public sealed record PendingMessage(string Id, string Mailbox, string To, string
 public sealed record ThreadMessage(string Id, string Body, long At, string? ThreadId, bool IsOutgoing,
     bool Read = true, string? Autonomy = null, string? Verb = null, string? HeldBecause = null,
     DeliveryStatus Status = DeliveryStatus.Sent, IReadOnlyList<MessageAttachment>? Attachments = null,
-    bool System = false, long? ExpiresAt = null)
+    bool System = false, long? ExpiresAt = null, string? MsgRef = null, MessageReply? ReplyTo = null,
+    long? EditedAt = null, int? EditCount = null, MessageReceipt? Receipt = null, MessageAgentStatus? AgentStatus = null)
 {
     // A small centred line in the conversation (a missed call), not a message anyone wrote.
     public bool IsSystem => System;
@@ -145,6 +154,20 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
     public string CopyText => string.IsNullOrWhiteSpace(DisplayBody) ? AttachmentSummary : DisplayBody;
     public string AttachmentSummary => string.Join(" · ", (Attachments ?? []).Select(a => a.Filename));
+    public string EditedLabel => EditCount > 0 && EditedAt is > 0 ? "Edited" : "";
+    public string ReceiptLabel => !IsOutgoing || IsSystem || Status != DeliveryStatus.Sent ? "" : Receipt?.State switch
+    {
+        "delivered" or "seen" when AgentStatus?.State == "working" => "Working",
+        "delivered" or "seen" when AgentStatus?.State == "done" => "Done",
+        "delivered" or "seen" when AgentStatus?.State == "failed" => "Failed",
+        "seen" => "Seen",
+        "delivered" => "Delivered",
+        "sent" => "Sent",
+        _ => ""
+    };
+    public bool CanEdit(ServerFeatures features, long now) => features.Has(ServerFeatures.MessageEdit) && IsOutgoing
+        && !IsSystem && Status == DeliveryStatus.Sent && At > 0 && now >= At && now - At <= 86400
+        && (ExpiresAt is null || ExpiresAt > now);
     public string StatusLabel => Status switch
     {
         DeliveryStatus.Sending => "Sending…",

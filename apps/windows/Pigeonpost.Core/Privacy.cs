@@ -16,6 +16,7 @@ public sealed record InboxPolicy
     public string? LowReputation { get; init; }
     public bool? GroupMembersKnown { get; init; }
     public int? CallHistoryDays { get; init; }
+    public bool? ReadReceipts { get; init; }
     [JsonExtensionData] public Dictionary<string, JsonElement>? Other { get; init; }
 
     public string? Value(string field) => field switch
@@ -26,6 +27,7 @@ public sealed record InboxPolicy
         "unknown_messages" => UnknownMessages,
         "low_reputation" => LowReputation,
         "call_history_days" => CallHistoryDays?.ToString(CultureInfo.InvariantCulture),
+        "read_receipts" => ReadReceipts?.ToString().ToLowerInvariant(),
         _ => null
     };
 }
@@ -234,7 +236,7 @@ public sealed partial class PostboxClient
         SendJsonAsync<InboxPolicy>(HttpMethod.Put, "/v1/policy", new Dictionary<string, object> { [field] = value, ["identity"] = identity }, identity, cancellationToken);
 
     public async Task<IReadOnlyList<InboxMessage>> GetFilteredAsync(string identity, CancellationToken cancellationToken) =>
-        (await GetJsonAsync<InboxResponse>("/v1/inbox?filtered=1&include_read=true", identity, cancellationToken).ConfigureAwait(false)).Messages?
+        (await GetJsonAsync<InboxResponse>("/v1/inbox?filtered=1&include_read=true&actions=1&fold=1", identity, cancellationToken).ConfigureAwait(false)).Messages?
             .Where(m => !m.IsOutgoing).ToArray() ?? [];
 
     public Task AcceptFilteredAsync(string identity, string peer, CancellationToken cancellationToken) =>

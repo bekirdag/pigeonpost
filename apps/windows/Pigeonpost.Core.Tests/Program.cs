@@ -2,6 +2,11 @@ using System.Net;
 using System.Text.Json;
 using Pigeonpost.Core;
 
+if (args.SequenceEqual(new[] { "--message-actions-postbox" }))
+{
+    return await MessageActionsPostbox.RunAsync();
+}
+
 // Dependency-free behavioral runner, matching the Apple client's model-test approach.
 var tests = new List<(string Name, Func<Task> Run)>();
 void Test(string name, Action test) => tests.Add((name, () => { test(); return Task.CompletedTask; }));
@@ -1037,6 +1042,7 @@ tests.AddRange(AvatarAuthorizationTests.All());
 tests.AddRange(CallHistoryAuthorizationTests.All());
 tests.AddRange(NativeCallSessionTests.All());
 tests.AddRange(InboxAuthorizationTests.All());
+tests.AddRange(MessageActionsTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
