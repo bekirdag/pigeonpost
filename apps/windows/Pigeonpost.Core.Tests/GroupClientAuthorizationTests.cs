@@ -134,6 +134,94 @@ internal static class GroupClientAuthorizationTests
             Require((missing with { My = new GroupMy { Role = "member", State = "active" } }).IsActive);
             return Task.CompletedTask;
         });
+        yield return ("Signing in again to the same mailbox rebinds the group page and clears its draft", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore();
+            await SeedGroups(f, store, "First");
+            using var model = new GroupsModel(f.Postbox, _ => store);
+            await Activate(model, f); await model.SelectAsync(model.Groups.Single());
+            model.Draft = "Old private draft";
+            model.AddFile(new GroupClient.OutgoingFile("fixture.txt", "text/plain", [1]));
+            var verified = f.Server.Requests.Count(x => x == "GET /v1/whoami");
+            f.Tokens.AcceptedAuthorization!.Retire(); f.Tokens.AcceptedAuthorization = new AuthorizationLease();
+            await Activate(model, f);
+            Require(f.Server.Requests.Count(x => x == "GET /v1/whoami") == verified + 1);
+            Require(model.Draft == "" && model.DraftFiles.Count == 0 && model.Selected is null && model.Lines.Count == 0);
+            Require(model.DeviceFingerprint is not null && model.Error is null && model.Groups.Count == 1);
+        });
+        yield return ("A group page verifies current membership before showing cached history", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore();
+            var gid = (await SeedGroups(f, store, "Private"))[0];
+            using var model = new GroupsModel(f.Postbox, _ => store); await Activate(model, f);
+            var row = model.Groups.Single();
+            Require(row.Preview.Contains("Private fixture", StringComparison.Ordinal));
+            f.Handler.RefusedGroup = gid;
+            await model.SelectAsync(row);
+            Require(model.Selected is null && model.Lines.Count == 0 && model.Groups.Count == 0 && !model.CanSend && !model.CanCall);
+        });
+        yield return ("A delayed group selection cannot replace the more recent selection", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore();
+            var ids = await SeedGroups(f, store, "First", "Second");
+            using var model = new GroupsModel(f.Postbox, _ => store); await Activate(model, f);
+            f.Handler.PausePath = "/v1/groups/" + ids[0];
+            var old = model.SelectAsync(model.Groups.Single(x => x.Id == ids[0]));
+            await f.Handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            await model.SelectAsync(model.Groups.Single(x => x.Id == ids[1]));
+            f.Handler.Release.TrySetResult(); await old;
+            Require(model.Selected?.Id == ids[1] && model.Lines.Any(x => x.Text == "Second fixture"));
+            Require(!model.Lines.Any(x => x.Text == "First fixture"));
+        });
+        yield return ("A retired group refresh cannot block or change the replacement page", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore();
+            await SeedGroups(f, store, "Current");
+            using var model = new GroupsModel(f.Postbox, _ => store); await Activate(model, f);
+            f.Handler.PausePath = "/v1/mls/key-packages/count";
+            var old = model.RefreshAsync();
+            await f.Handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            f.Tokens.AcceptedAuthorization!.Retire(); f.Tokens.AcceptedAuthorization = new AuthorizationLease();
+            await Activate(model, f);
+            model.Draft = "Replacement draft";
+            f.Handler.Release.TrySetResult(); await old;
+            var requests = f.Server.Requests.Count(x => x == "GET /v1/mls/key-packages/count");
+            await model.RefreshAsync();
+            Require(f.Server.Requests.Count(x => x == "GET /v1/mls/key-packages/count") > requests);
+            Require(model.Draft == "Replacement draft" && model.Error is null && model.Groups.Count == 1);
+        });
+        yield return ("A late group send cannot clear a replacement login's draft", async () =>
+        {
+            using var f = new Fixture(); var store = new MemoryGroupStateStore();
+            var gid = (await SeedGroups(f, store, "Current"))[0];
+            using var model = new GroupsModel(f.Postbox, _ => store); await Activate(model, f);
+            await model.SelectAsync(model.Groups.Single()); model.Draft = "Old accepted send";
+            f.Handler.PausePath = "/v1/groups/" + gid + "/messages"; f.Handler.PauseMethod = HttpMethod.Post;
+            var old = model.SendAsync();
+            await f.Handler.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            f.Tokens.AcceptedAuthorization!.Retire(); f.Tokens.AcceptedAuthorization = new AuthorizationLease();
+            await Activate(model, f); await model.SelectAsync(model.Groups.Single());
+            model.Draft = "Replacement draft";
+            f.Handler.Release.TrySetResult();
+            Require(!await old && model.Draft == "Replacement draft" && !model.IsSending && model.Error is null);
+        });
+    }
+
+    private static Task Activate(GroupsModel model, Fixture f)
+    {
+        var mailbox = new Mailbox(f.Alice, "/alice/main");
+        return model.ActivateAsync(mailbox, new ServerFeatures(new HashSet<string> { ServerFeatures.Groups }), [mailbox], []);
+    }
+    private static async Task<string[]> SeedGroups(Fixture f, MemoryGroupStateStore store, params string[] names)
+    {
+        using var seed = f.Device(f.Alice, store); await seed.InitAsync(default);
+        var ids = new List<string>();
+        foreach (var name in names)
+        {
+            var gid = (await seed.CreateGroupAsync(new GroupSettings(name), [], default)).Group.Id;
+            await seed.SendAsync(gid, name + " fixture", [], default); ids.Add(gid);
+        }
+        return ids.ToArray();
     }
 
     private static void Require(bool value) { if (!value) throw new Exception("Group ownership assertion failed."); }
@@ -185,12 +273,15 @@ internal static class GroupClientAuthorizationTests
         internal string? PausePath;
         internal HttpMethod PauseMethod = HttpMethod.Get;
         internal string? WrongWhoAmI;
+        internal string? RefusedGroup;
         internal TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal TaskCompletionSource Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
             if (request.RequestUri!.AbsolutePath == "/v1/whoami" && WrongWhoAmI is { } other)
                 return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"address\":\"" + other + "\"}", Encoding.UTF8, "application/json") };
+            if (request.Method == HttpMethod.Get && RefusedGroup is { } gid && request.RequestUri.AbsolutePath == "/v1/groups/" + gid)
+                return new HttpResponseMessage(HttpStatusCode.Forbidden) { Content = new StringContent("{\"error\":\"not_member\"}", Encoding.UTF8, "application/json") };
             var response = await inner.SendAsync(request, ct);
             if (request.RequestUri.AbsolutePath == PausePath && request.Method == PauseMethod && Interlocked.Exchange(ref held, 1) == 0)
             {
