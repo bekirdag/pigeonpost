@@ -60,6 +60,20 @@ tasks.register<JavaExec>("calendarPostbox") {
     }
 }
 
+tasks.register<JavaExec>("organizationRoomsPostbox") {
+    group = "verification"
+    description = "Checks organization rooms against a disposable loopback postbox."
+    dependsOn("testClasses")
+    classpath = sourceSets.named("test").get().runtimeClasspath
+    mainClass.set("dev.pigeonpost.core.enterprise.OrganizationRoomsPostbox")
+    systemProperty("jna.library.path", groupCrypto.resolve("target/release").absolutePath)
+    doFirst {
+        val fixture = providers.environmentVariable("PIGEONPOST_TEST_FIXTURE").orNull
+        require(!fixture.isNullOrBlank()) { "Set PIGEONPOST_TEST_FIXTURE to the private loopback fixture JSON." }
+        setArgs(listOf(fixture))
+    }
+}
+
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
