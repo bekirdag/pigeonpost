@@ -42,6 +42,7 @@ data class Group(
     @SerialName("deleted_at") val deletedAt: Long? = null,
     @SerialName("has_link") val hasLink: Boolean = false,
     val my: GroupMine? = null,
+    @SerialName("org_id") val orgId: String? = null,
 ) {
     val state get() = my?.state
     val active get() = my?.state == "active" && deletedAt == null

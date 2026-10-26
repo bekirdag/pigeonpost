@@ -23,7 +23,13 @@ object Development {
     fun graph(application: Application, intent: Intent): AppGraph? {
         val mode = intent.getStringExtra("pigeonpost.fixtures") ?: return null
         if (mode !in setOf("inbox", "empty", "offline", "signin", "long", "long-tall", "handles", "policy", "store", "safety", "groups", "actions", "actions-lost", "actions-off", "group-actions", "group-actions-lost", "group-actions-off", "calendar", "calendar-lost", "calendar-conflict", "calendar-zone-delay",
-            "enterprise", "enterprise-ready", "enterprise-deny-race", "enterprise-no-permission", "enterprise-unconfirmed", "enterprise-new-agent", "enterprise-off", "enterprise-signedout")) return null
+            "enterprise", "enterprise-ready", "enterprise-deny-race", "enterprise-no-permission", "enterprise-unconfirmed", "enterprise-new-agent", "enterprise-off", "enterprise-signedout",
+            "org-rooms", "org-rooms-lost", "org-rooms-readonly", "org-rooms-off", "org-rooms-no-membership", "org-rooms-revoked")) return null
+        if (mode.startsWith("org-rooms")) {
+            val api = OrganizationRoomsFixture.create(mode) { mailbox -> FixturePostbox("inbox", mailbox) }
+            return AppGraph(api.session, api, fixtures = true, groupTransport = api, groupCrypto = { api.crypto },
+                groupStorage = { dev.pigeonpost.core.groups.MemoryGroupStorage() }, start = api::run, groupPollSeconds = 1)
+        }
         if (mode.startsWith("enterprise")) {
             val session = EnterpriseFixtureSession(mode)
             val api = EnterpriseFixture(CalendarFixture(FixturePostbox("inbox"), "calendar"), session, mode)
