@@ -19,6 +19,20 @@ tasks.withType<Test>().configureEach {
     providers.environmentVariable("GROUPCRYPTO_REQUIRED").orNull?.let { systemProperty("groupcrypto.required", it) }
 }
 
+// Opt-in real HTTP qualification; ordinary JVM test runs need no postbox or fixture credentials.
+tasks.register<JavaExec>("messageActionsPostbox") {
+    group = "verification"
+    description = "Checks message actions against a disposable loopback postbox."
+    dependsOn("testClasses")
+    classpath = sourceSets.named("test").get().runtimeClasspath
+    mainClass.set("dev.pigeonpost.core.MessageActionsPostbox")
+    doFirst {
+        val fixture = providers.environmentVariable("PIGEONPOST_TEST_FIXTURE").orNull
+        require(!fixture.isNullOrBlank()) { "Set PIGEONPOST_TEST_FIXTURE to the private loopback fixture JSON." }
+        setArgs(listOf(fixture))
+    }
+}
+
 dependencies {
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.10.2")
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.9.0")
