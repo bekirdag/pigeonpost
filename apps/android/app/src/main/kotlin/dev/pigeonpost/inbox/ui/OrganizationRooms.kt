@@ -83,7 +83,7 @@ internal fun OrganizationRoomsDialog(model: InboxViewModel, inbox: InboxState, s
                                     enabled = !locked && !limited, modifier = Modifier.fillMaxWidth().testTag("org:room:${room.id}")) {
                                     Column(Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
                                         Text(room.name, style = MaterialTheme.typography.titleMedium)
-                                        Text("${room.memberCount} members · " + when (room.action) {
+                                        Text("${room.memberCount} ${if (room.memberCount == 1) "member" else "members"} · " + when (room.action) {
                                             RoomAction.OPEN -> if (room.membership == "keying") "Joining" else "Joined"
                                             RoomAction.ACCEPT_INVITATION -> "Invited"
                                             RoomAction.JOIN -> "Open to organization members"
@@ -118,7 +118,7 @@ internal fun OrganizationRoomsDialog(model: InboxViewModel, inbox: InboxState, s
                         if (preview != null) {
                             Text(preview.name, style = MaterialTheme.typography.headlineSmall)
                             preview.description?.let { Text(it, color = Pp.colors.secondary) }
-                            Text("${preview.memberCount} members")
+                            Text("${preview.memberCount} ${if (preview.memberCount == 1) "member" else "members"}")
                             Text("Messages are end-to-end encrypted.", color = Pp.colors.secondary)
                             if (org?.writable == false) Text("This organization is read only.", color = Pp.colors.secondary)
                             val action = store.reviewAction(s.reviewProof, s.contextId)
