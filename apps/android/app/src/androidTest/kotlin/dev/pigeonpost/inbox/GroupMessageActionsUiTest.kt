@@ -60,7 +60,8 @@ class GroupMessageActionsUiTest {
     }
     private fun send(text: String): String {
         ui.onNodeWithTag("groupComposer").performTextInput(text)
-        ui.onNodeWithContentDescription("Send to the group").performClick()
+        ui.waitUntil(10_000) { SemanticsProperties.Disabled !in ui.onNodeWithContentDescription("Send to the group").fetchSemanticsNode().config }
+        ui.onNodeWithContentDescription("Send to the group").performSemanticsAction(androidx.compose.ui.semantics.SemanticsActions.OnClick)
         val seq = sequence(text)
         ui.onNodeWithTag("groupComposer").assert(SemanticsMatcher.expectValue(SemanticsProperties.EditableText, AnnotatedString("")))
         return seq
