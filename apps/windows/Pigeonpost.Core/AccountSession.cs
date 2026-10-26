@@ -23,15 +23,26 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
     private string? refreshToken;
     private DateTimeOffset expiresAt;
     private int generation;
+    private readonly object stateLock = new();
+    private AuthorizationLease? authorization;
+    private DeviceSignIn? pendingSignIn;
+    public AuthorizationLease? AcceptedAuthorization => Volatile.Read(ref authorization);
+
+    private int Attempt() { lock (stateLock) return generation; }
+    private void RequireAttempt(int attempt)
+    {
+        if (attempt != generation) throw new AuthorizationRetiredException();
+    }
 
     public async Task<bool> RestoreAsync(CancellationToken cancellationToken)
     {
+        var attempt = Attempt();
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            refreshToken = store.Load();
+            lock (stateLock) { RequireAttempt(attempt); refreshToken = store.Load(); }
             if (string.IsNullOrEmpty(refreshToken)) return false;
-            await RenewAsync(cancellationToken).ConfigureAwait(false);
+            await RenewAsync(cancellationToken, attempt, newAuthorization: true).ConfigureAwait(false);
             return true;
         }
         finally { gate.Release(); }
@@ -39,56 +50,74 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
 
     public async Task<DeviceSignIn> BeginSignInAsync(CancellationToken cancellationToken)
     {
+        int attempt;
+        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; }
         using var result = await PostAsync("auth/device", new()
         {
             ["client_id"] = ClientId, ["scope"] = "openid profile offline_access"
         }, cancellationToken).ConfigureAwait(false);
+        lock (stateLock) RequireAttempt(attempt);
         var root = result.RootElement;
         CheckError(root);
         var uriText = Text(root, "verification_uri_complete") ?? Text(root, "verification_uri");
         if (!Uri.TryCreate(uriText, UriKind.Absolute, out var uri) || uri.Scheme != issuer.Scheme
             || uri.Authority != issuer.Authority || !uri.AbsolutePath.StartsWith(issuer.AbsolutePath, StringComparison.Ordinal))
             throw new SignInException("The sign-in service returned an invalid browser address.");
-        return new DeviceSignIn(Required(root, "device_code"), Required(root, "user_code"), uri,
+        var request = new DeviceSignIn(Required(root, "device_code"), Required(root, "user_code"), uri,
             Math.Clamp(Number(root, "expires_in", 600), 1, 1800), Math.Clamp(Number(root, "interval", 5), 1, 60));
+        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); RequireAttempt(attempt); pendingSignIn = request; }
+        return request;
     }
 
     public async Task CompleteSignInAsync(DeviceSignIn request, CancellationToken cancellationToken)
     {
-        var attempt = Volatile.Read(ref generation);
+        int attempt;
+        lock (stateLock)
+        {
+            cancellationToken.ThrowIfCancellationRequested();
+            if (!ReferenceEquals(pendingSignIn, request)) throw new SignInException("Start a new sign-in request on this device.");
+            attempt = generation;
+        }
         var deadline = DateTimeOffset.UtcNow.AddSeconds(request.ExpiresIn);
         var interval = request.Interval;
-        while (DateTimeOffset.UtcNow < deadline)
+        try
         {
-            await Task.Delay(TimeSpan.FromSeconds(interval), cancellationToken).ConfigureAwait(false);
-            if (DateTimeOffset.UtcNow >= deadline) break;
-            using var result = await PostAsync("token", new()
+            while (DateTimeOffset.UtcNow < deadline)
             {
-                ["client_id"] = ClientId, ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code", ["device_code"] = request.DeviceCode
-            }, cancellationToken).ConfigureAwait(false);
-            var error = Text(result.RootElement, "error");
-            if (error == "authorization_pending") continue;
-            if (error == "slow_down") { interval = Math.Min(interval + 5, 60); continue; }
-            CheckError(result.RootElement);
-            await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-            try
-            {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (attempt != generation) throw new OperationCanceledException(cancellationToken);
-                Accept(result.RootElement, cancellationToken, requireRefresh: true);
-                return;
+                await Task.Delay(TimeSpan.FromSeconds(interval), cancellationToken).ConfigureAwait(false);
+                if (DateTimeOffset.UtcNow >= deadline) break;
+                lock (stateLock) RequireAttempt(attempt);
+                using var result = await PostAsync("token", new()
+                {
+                    ["client_id"] = ClientId, ["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code", ["device_code"] = request.DeviceCode
+                }, cancellationToken).ConfigureAwait(false);
+                lock (stateLock) RequireAttempt(attempt);
+                var error = Text(result.RootElement, "error");
+                if (error == "authorization_pending") continue;
+                if (error == "slow_down") { interval = Math.Min(interval + 5, 60); continue; }
+                CheckError(result.RootElement);
+                await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+                try
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Accept(result.RootElement, cancellationToken, attempt, newAuthorization: true, requireRefresh: true);
+                    return;
+                }
+                finally { gate.Release(); }
             }
-            finally { gate.Release(); }
+            throw new SignInException("This sign-in code expired. Start again for a new code.");
         }
-        throw new SignInException("This sign-in code expired. Start again for a new code.");
+        finally { lock (stateLock) { if (ReferenceEquals(pendingSignIn, request)) pendingSignIn = null; } }
     }
 
     public async Task<string> GetTokenAsync(CancellationToken cancellationToken)
     {
+        var attempt = Attempt();
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
-            if (accessToken is null || DateTimeOffset.UtcNow >= expiresAt) await RenewAsync(cancellationToken).ConfigureAwait(false);
+            lock (stateLock) RequireAttempt(attempt);
+            if (accessToken is null || DateTimeOffset.UtcNow >= expiresAt) await RenewAsync(cancellationToken, attempt).ConfigureAwait(false);
             return accessToken!;
         }
         finally { gate.Release(); }
@@ -96,27 +125,34 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
 
     public async Task<string> RefreshTokenAsync(CancellationToken cancellationToken)
     {
+        var attempt = Attempt();
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
-        try { await RenewAsync(cancellationToken).ConfigureAwait(false); return accessToken!; }
+        try { await RenewAsync(cancellationToken, attempt).ConfigureAwait(false); return accessToken!; }
         finally { gate.Release(); }
     }
 
     public async Task SignOutAsync(CancellationToken cancellationToken)
     {
-        Interlocked.Increment(ref generation);
+        int attempt;
+        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; }
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
             // If vault deletion fails, keep the session visible so the user can retry sign-out.
-            store.Clear();
-            accessToken = refreshToken = null;
-            expiresAt = default;
+            lock (stateLock)
+            {
+                RequireAttempt(attempt);
+                store.Clear();
+                authorization?.Retire(); Volatile.Write(ref authorization, null);
+                accessToken = refreshToken = null; expiresAt = default;
+            }
         }
         finally { gate.Release(); }
     }
 
-    private async Task RenewAsync(CancellationToken cancellationToken)
+    private async Task RenewAsync(CancellationToken cancellationToken, int attempt, bool newAuthorization = false)
     {
+        lock (stateLock) RequireAttempt(attempt);
         if (string.IsNullOrEmpty(refreshToken)) throw new SignInException("Sign in to connect your Pigeonpost account.");
         using var result = await PostAsync("token", new()
         {
@@ -124,24 +160,33 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
         }, cancellationToken).ConfigureAwait(false);
         if (Text(result.RootElement, "error") == "invalid_grant")
         {
-            store.Clear();
-            accessToken = refreshToken = null;
-            expiresAt = default;
+            lock (stateLock)
+            {
+                RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
+                store.Clear(); authorization?.Retire(); Volatile.Write(ref authorization, null);
+                accessToken = refreshToken = null; expiresAt = default;
+            }
         }
         CheckError(result.RootElement);
-        Accept(result.RootElement, cancellationToken);
+        Accept(result.RootElement, cancellationToken, attempt, newAuthorization);
     }
 
-    private void Accept(JsonElement response, CancellationToken cancellationToken, bool requireRefresh = false)
+    private void Accept(JsonElement response, CancellationToken cancellationToken, int attempt, bool newAuthorization = false, bool requireRefresh = false)
     {
         var access = Required(response, "access_token");
         var refresh = Text(response, "refresh_token") ?? (requireRefresh ? null : refreshToken);
         if (string.IsNullOrEmpty(refresh)) throw new SignInException("Sign-in did not provide a renewable session. Please try again.");
-        cancellationToken.ThrowIfCancellationRequested();
-        store.Save(refresh);
-        refreshToken = refresh;
-        accessToken = access;
-        expiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(0, Number(response, "expires_in", 300) - 30));
+        lock (stateLock)
+        {
+            RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
+            store.Save(refresh);
+            if (newAuthorization || authorization is null)
+            {
+                authorization?.Retire(); Volatile.Write(ref authorization, new AuthorizationLease());
+            }
+            refreshToken = refresh; accessToken = access;
+            expiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(0, Number(response, "expires_in", 300) - 30));
+        }
     }
 
     private async Task<JsonDocument> PostAsync(string suffix, Dictionary<string, string> fields, CancellationToken cancellationToken)

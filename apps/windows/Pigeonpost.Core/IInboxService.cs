@@ -15,6 +15,8 @@ public interface IInboxService
 
 public interface IAccessTokenProvider
 {
+    // Context-free stand-ins may keep the default; the live AccountSession supplies a grant.
+    AuthorizationLease? AcceptedAuthorization => null;
     Task<string> GetTokenAsync(CancellationToken cancellationToken);
     Task<string> RefreshTokenAsync(CancellationToken cancellationToken);
 }
