@@ -18,13 +18,15 @@ class CalendarWorkflowTest {
     private fun shown(text: String) { ui.waitUntil(10_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
     private fun launch(mode: String = "calendar"): ActivityScenario<MainActivity> {
         context.getSharedPreferences("fixture-settings", Context.MODE_PRIVATE).edit().clear().commit()
-        return ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode)).also { scenario ->
-            ui.waitUntil(10_000) { var focused = false; scenario.onActivity { focused = it.hasWindowFocus() }; focused }
+        val scenario = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode))
+        try {
+            awaitAndroidWindowFocus(ui) { var focused = false; scenario.onActivity { focused = it.hasWindowFocus() }; focused }
             shown("Inbox")
             ui.waitUntil(10_000) { ui.onAllNodes(hasTestTag("tab:calendar") or hasTestTag("sidebar:calendar")).fetchSemanticsNodes().isNotEmpty() }
             ui.onNode(hasTestTag("tab:calendar") or hasTestTag("sidebar:calendar")).performClick()
             shown("Planning review")
-        }
+            return scenario
+        } catch (failure: Throwable) { scenario.close(); throw failure }
     }
     private fun click(text: String) = ui.onNodeWithText(text).performScrollTo().performClick()
     private fun save() = ui.onNodeWithTag("calendar:save").performScrollTo().performClick()

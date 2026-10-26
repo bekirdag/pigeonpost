@@ -68,6 +68,11 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val calendarStore = model.calendar
     val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
     val meetingCode by model.memberMeetingCode.collectAsStateWithLifecycle()
+    val deviceOpen by model.deviceApprovalOpen.collectAsStateWithLifecycle()
+    val organizationRoomsOpen by model.organizationRoomsOpen.collectAsStateWithLifecycle()
+    val organizationRoomPreparing by model.organizationRoomPreparing.collectAsStateWithLifecycle()
+    val organizationRooms by (model.organizationRooms?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.OrganizationRoomsState()) }).collectAsStateWithLifecycle()
+    val deviceApproval by (model.deviceApproval?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.enterprise.DeviceApprovalState()) }).collectAsStateWithLifecycle()
     val meetingLookup by (model.meetingLookup?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarMeetingLookupState()) }).collectAsStateWithLifecycle()
     var sheet by rememberSaveable { mutableStateOf<String?>(null) }
     var editContact by remember { mutableStateOf<Contact?>(null) }
@@ -195,6 +200,9 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
             confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
         meetingCode?.let { code -> if (session.signedIn && session.termsAccepted && state.acting != null) MeetingLinkDialog(model, state, code, meetingLookup, calendar.zone.id) }
+        if (deviceOpen && !session.loading && session.signedIn && session.termsAccepted) DeviceApprovalDialog(model, deviceApproval)
+        if (organizationRoomsOpen && !session.loading && session.signedIn && session.termsAccepted)
+            OrganizationRoomsDialog(model, state, organizationRooms, groups, organizationRoomPreparing, session.authorizationId) { openLink("https://enterprise.pigeonpost.dev/app") }
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null
@@ -338,6 +346,8 @@ private fun InboxList(state: InboxState, store: InboxStore, model: InboxViewMode
                 DropdownMenu(compose, { compose = false }, containerColor = p.ground) {
                     DropdownMenuItem({ Text("New conversation") }, { compose = false; new() }, leadingIcon = { Icon(Icons.Outlined.Edit, null) })
                     DropdownMenuItem({ Text("New group") }, { compose = false; newGroup() }, leadingIcon = { Icon(Icons.Outlined.GroupAdd, null) }, modifier = Modifier.testTag("menu:newGroup"))
+                    if (state.has("orgs") && model.organizationRooms != null) DropdownMenuItem({ Text("Organization rooms") }, { compose = false; model.openOrganizationRooms() },
+                        leadingIcon = { Icon(Icons.Outlined.Business, null) }, modifier = Modifier.testTag("menu:organizationRooms"))
                 }
             } else ActionIcon("New conversation", Icons.Outlined.Edit, action = new)
             ActionIcon("Settings", Icons.Outlined.Settings, action = settings)

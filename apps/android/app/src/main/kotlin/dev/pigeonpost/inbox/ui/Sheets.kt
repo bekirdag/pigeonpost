@@ -30,15 +30,15 @@ import dev.pigeonpost.inbox.BuildConfig
 import dev.pigeonpost.inbox.auth.SessionState
 
 @Composable
-fun PageDialog(title: String, dismiss: () -> Unit, back: (() -> Unit)? = null, content: @Composable ColumnScope.() -> Unit) {
-    Dialog({ (back ?: dismiss)() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+fun PageDialog(title: String, dismiss: () -> Unit, back: (() -> Unit)? = null, dismissEnabled: Boolean = true, content: @Composable ColumnScope.() -> Unit) {
+    Dialog({ if (dismissEnabled) (back ?: dismiss)() }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
         Surface(Modifier.padding(16.dp).widthIn(max = 600.dp).fillMaxWidth().fillMaxHeight(.92f), shape = MaterialTheme.shapes.extraLarge,
             color = Pp.colors.ground, border = androidx.compose.foundation.BorderStroke(1.dp, Pp.colors.stroke)) {
             Column {
                 Row(Modifier.fillMaxWidth().padding(start = 24.dp, end = 8.dp, top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, tint = Pp.colors.accent, action = back)
+                    if (back != null) ActionIcon("Back", Icons.AutoMirrored.Outlined.ArrowBack, enabled = dismissEnabled, tint = Pp.colors.accent, action = back)
                     Text(title, Modifier.weight(1f).padding(start = if (back != null) 4.dp else 0.dp), style = geist(19.sp, FontWeight.SemiBold), color = Pp.colors.ink)
-                    ActionIcon("Close $title", Icons.Outlined.Close, action = dismiss)
+                    ActionIcon("Close $title", Icons.Outlined.Close, enabled = dismissEnabled, action = dismiss)
                 }
                 key(title) {
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(24.dp), verticalArrangement = Arrangement.spacedBy(16.dp), content = content)
@@ -139,6 +139,8 @@ fun SettingsDialog(state: InboxState, session: SessionState, fixtures: Boolean, 
             SettingsPage.ROOT -> {
                 SettingsRow("Account", session.username ?: "Your profile and devices", Icons.Outlined.AccountCircle) { navigate(SettingsPage.ACCOUNT) }
                 SettingsRow("Scan for login", "Sign in on another device", Icons.Outlined.QrCodeScanner, scan)
+                if (state.has("orgs") && model?.deviceApproval != null) SettingsRow("Sign in a machine", "Review an agent's terminal code", Icons.Outlined.Computer) { dismiss(); model.openDeviceApproval() }
+                if (state.has("orgs") && state.has("groups") && model?.organizationRooms != null) SettingsRow("Organization rooms", "Your team's encrypted conversations", Icons.Outlined.Business) { dismiss(); model.openOrganizationRooms() }
                 SettingsRow("Handles", "Your names and subscriptions", Icons.Outlined.AlternateEmail) { navigate(SettingsPage.HANDLES) }
                 SettingsRow("Inbox and storage", "Storage and archived conversations", Icons.Outlined.Inbox) { navigate(SettingsPage.INBOX) }
                 if (state.has(Features.AVATARS) && model != null) SettingsRow("Profile picture", "Your face instead of initials", Icons.Outlined.Face) { navigate(SettingsPage.PROFILE) }

@@ -124,6 +124,12 @@ private fun Sidebar(state: InboxState, store: InboxStore, model: InboxViewModel,
         }
         Seam(Modifier.fillMaxWidth().height(1.dp))
         MailboxSwitcher(state, username, switching, { switching = !switching }) { mailbox -> switching = false; if (mailbox.address != state.acting?.address) store.switchMailbox(mailbox) }
+        if (groups.enabled && "orgs" in state.features && model.organizationRooms != null) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
+            .clickable(onClick = model::openOrganizationRooms).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:organizationRooms"),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Icon(Icons.Outlined.Business, null, Modifier.size(18.dp), tint = p.secondary)
+            Text("Organization rooms", style = geist(13.sp), color = p.secondary)
+        }
         if (model.calendar != null && "calendar" in state.features) Row(Modifier.padding(horizontal = 8.dp).fillMaxWidth().clip(RoundedCornerShape(9.dp))
             .clickable(onClickLabel = "Open calendar", onClick = model::openCalendar).padding(horizontal = 10.dp, vertical = 12.dp).testTag("sidebar:calendar"),
             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
