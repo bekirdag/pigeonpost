@@ -21,7 +21,10 @@ class DeviceApprovalWorkflowTest {
     @get:Rule val ui = createEmptyComposeRule()
     private val context get() = ApplicationProvider.getApplicationContext<Context>()
     private val fixture get() = EnterpriseFixture.current!!
-    private fun shown(text: String) { ui.waitUntil(10_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
+    private fun shown(text: String) {
+        try { ui.waitUntil(10_000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() } }
+        catch (failure: ComposeTimeoutException) { throw AssertionError("Expected native screen was unavailable. ${windowInputStatus()}", failure) }
+    }
     private fun tag(value: String) = ui.onNodeWithTag("device:$value")
     private fun intent(mode: String, link: Boolean = true) = Intent(context, MainActivity::class.java).apply {
         putExtra("pigeonpost.fixtures", mode)
