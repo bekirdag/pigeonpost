@@ -225,4 +225,15 @@ class CalendarClientTest {
         fails<AuthorizationRetired> { client.calendars() }
         assertEquals(1, server.requestCount); assertEquals(1, source.calls)
     }
+
+    @Test fun frozenFolderAndImportRetriesPreserveFieldsWithoutReencodingDefaults() = runBlocking<Unit> {
+        val folder = payload("request_key" to JsonPrimitive("stored-folder"), "name" to JsonPrimitive("Stored"), "color" to JsonPrimitive("green"), "future_policy" to JsonPrimitive("keep"))
+        server.enqueue(response("""{"calendar":{"id":"cal_one"}}"""))
+        client.createCalendar(folder)
+        assertEquals(folder.text, server.takeRequest().body.readUtf8())
+        val imported = payload("select" to JsonArray(listOf(JsonPrimitive(2), JsonPrimitive(0))), "calendar_id" to JsonPrimitive("cal_one"), "future_policy" to JsonPrimitive("keep"))
+        server.enqueue(response("""{"created":[]}"""))
+        client.confirmImport("imp_one", imported)
+        assertEquals(imported.text, server.takeRequest().body.readUtf8())
+    }
 }

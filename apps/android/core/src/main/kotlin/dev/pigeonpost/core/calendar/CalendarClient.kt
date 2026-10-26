@@ -107,6 +107,9 @@ class CalendarClient(
     suspend fun calendars(): List<CalendarFolder> = read<CalendarFoldersResponse>("/v1/calendars").calendars.orEmpty()
     suspend fun createCalendar(name: String, color: String, requestKey: String): CalendarFolder {
         val body = payload(mapOf("name" to JsonPrimitive(name), "color" to JsonPrimitive(color), "request_key" to JsonPrimitive(requestKey)))
+        return createCalendar(body)
+    }
+    suspend fun createCalendar(body: CalendarWritePayload): CalendarFolder {
         createKey(body)
         return read<CalendarFolderResponse>("/v1/calendars", "POST", payload = body).calendar
     }
@@ -206,6 +209,13 @@ class CalendarClient(
         require(selected.size <= 200 && selected.all { it >= 0 }) { "Choose at most 200 import entries." }
         val fields = mapOf("select" to JsonArray(selected.distinct().sorted().map(::JsonPrimitive))) +
             (calendar?.let { mapOf("calendar_id" to JsonPrimitive(segment(it))) } ?: emptyMap())
-        return read("/v1/calendar/import/" + segment(draft) + "/confirm", "POST", payload = payload(fields))
+        return confirmImport(draft, payload(fields))
+    }
+    suspend fun confirmImport(draft: String, body: CalendarWritePayload): CalendarImportResult {
+        val fields = body.fields()
+        val selection = fields["select"] as? JsonArray
+        require(selection != null && selection.size <= 200 && selection.all { it is JsonPrimitive && !it.isString && it.intOrNull?.let { index -> index >= 0 } == true }) { "Choose at most 200 import entries." }
+        fields["calendar_id"]?.let { require(it is JsonPrimitive && it.isString); segment(it.content) }
+        return read("/v1/calendar/import/" + segment(draft) + "/confirm", "POST", payload = body)
     }
 }
