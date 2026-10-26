@@ -2,7 +2,10 @@ package dev.pigeonpost.core
 
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.AbstractCoroutineContextElement
+import kotlin.coroutines.CoroutineContext
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -23,6 +26,8 @@ class AuthorizationLease(private val parent: AuthorizationLease? = null) {
     fun requireActive() { if (!isValid) throw AuthorizationRetired() }
     fun child(): AuthorizationLease = withActive { AuthorizationLease(this) }
     fun retire() { active.set(false) }
+    private fun root(): AuthorizationLease = if (parent == null) this else parent.root()
+    fun sharesAuthorization(other: AuthorizationLease): Boolean = root() === other.root()
     fun <T> withActive(work: () -> T): T {
         requireActive() // Retired work must not wait behind an already-admitted local writer.
         val guarded = {
@@ -48,6 +53,7 @@ class ScopedTokenProvider(
     private fun checkCurrent() {
         authorizationLease.requireActive()
         if (source.authorizationLease !== sourceGrant) throw AuthorizationRetired()
+        sourceGrant?.let { it.requireActive(); if (!authorizationLease.sharesAuthorization(it)) throw AuthorizationRetired() }
     }
     override suspend fun token(rejected: String?): String {
         checkCurrent()
@@ -60,4 +66,17 @@ class ScopedTokenProvider(
         source.invalidate(rejected, sourceGrant)
         checkCurrent()
     }
+}
+
+/** Immutable at coroutine launch: later requests in an old task keep the old authorization. */
+class AuthorizationContext(val lease: AuthorizationLease?) : AbstractCoroutineContextElement(Key) {
+    companion object Key : CoroutineContext.Key<AuthorizationContext>
+}
+
+/** Install only after retiring/resetting stores; closing the child does not revoke the login. */
+class AuthorizedStoreScope(private val base: CoroutineScope) : CoroutineScope {
+    @Volatile private var active: AuthorizationLease? = null
+    override val coroutineContext: CoroutineContext get() = base.coroutineContext + AuthorizationContext(active)
+    fun activate(parent: AuthorizationLease?) { active?.retire(); active = parent?.child() }
+    fun retire() { active?.retire(); active = null }
 }

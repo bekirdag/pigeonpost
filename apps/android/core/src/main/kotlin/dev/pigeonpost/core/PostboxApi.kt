@@ -386,11 +386,14 @@ class PostboxClient(
     }
 
     private fun limitedBytes(response: Response, max: Long): ByteArray {
+        requireCurrent(response)
         val body = response.body ?: return ByteArray(0)
         if (body.contentLength() > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
         val source = body.source()
         if (source.request(max + 1) && source.buffer.size > max) throw ApiException(response.code, "response_too_large", "The response is too large.")
-        return source.readByteArray()
+        val bytes = source.readByteArray()
+        requireCurrent(response)
+        return bytes
     }
 
     private fun messageBody(identity: String, id: String) = buildJsonObject { put("identity", identity); put("message_id", id) }
@@ -417,14 +420,23 @@ class PostboxClient(
         }
     }
     private suspend fun authenticated(request: Request, transport: OkHttpClient = http): Response {
-        val first = tokens.token()
-        var response = transport.newCall(request.newBuilder().header("Authorization", "Bearer $first").header("Accept", "application/json").build()).await()
+        val context = currentCoroutineContext()[AuthorizationContext]
+        val sourceGrant = tokens.authorizationLease
+        if (context != null && context.lease == null && sourceGrant != null) throw AuthorizationRetired()
+        val requestLease = (context?.lease ?: sourceGrant)?.child()
+        val provider = if (requestLease == null) tokens else ScopedTokenProvider(tokens, requestLease)
+        fun authorized(token: String) = request.newBuilder().tag(AuthorizationLease::class.java, requestLease)
+            .header("Authorization", "Bearer $token").header("Accept", "application/json").build()
+        val first = provider.token()
+        var response = transport.newCall(authorized(first)).await()
+        requireCurrent(response)
         if (response.code == 401) {
             response.close()
-            val renewed = tokens.token(rejected = first)
-            response = transport.newCall(request.newBuilder().header("Authorization", "Bearer $renewed").header("Accept", "application/json").build()).await()
+            val renewed = provider.token(rejected = first)
+            response = transport.newCall(authorized(renewed)).await()
+            requireCurrent(response)
             if (response.code == 401) {
-                response.close(); tokens.invalidate(renewed); throw SessionExpired()
+                response.close(); provider.invalidate(renewed); throw SessionExpired()
             }
         }
         if (!response.isSuccessful) response.use {
@@ -434,13 +446,20 @@ class PostboxClient(
         }
         return response
     }
+    private fun requireCurrent(response: Response) {
+        try { response.request.tag(AuthorizationLease::class.java)?.requireActive() }
+        catch (retired: AuthorizationRetired) { response.close(); throw retired }
+    }
     private fun readJson(response: Response): String {
+        requireCurrent(response)
         val body = response.body ?: return ""
         val max = 16L * 1024 * 1024
         if (body.contentLength() > max) throw ApiException(response.code, "response_too_large", "The postbox response is too large.")
         val source = body.source()
         if (source.request(max + 1) && source.buffer.size > max) throw ApiException(response.code, "response_too_large", "The postbox response is too large.")
-        return source.readUtf8()
+        val text = source.readUtf8()
+        requireCurrent(response)
+        return text
     }
     private suspend inline fun <reified T> decode(text: String): T = withContext(Dispatchers.Default) {
         try { WireJson.decodeFromString(text) }
