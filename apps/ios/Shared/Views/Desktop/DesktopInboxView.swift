@@ -33,6 +33,7 @@ struct DesktopInboxView: View {
     /// Open the Filtered senders. The caller owns the sheet, as it owns Settings.
     var openFiltered: () -> Void = {}
     var openCalendar: (() -> Void)? = nil
+    var openRooms: (() -> Void)? = nil
 
     @Environment(Account.self) private var account
     @Environment(Inbox.self) private var inbox
@@ -283,6 +284,10 @@ struct DesktopInboxView: View {
                         Button("New Conversation", action: newConversation)
                         Button("New Group", action: newGroup)
                         if let joinLink { Button("Join with a Link…", action: joinLink) }
+                        if account.features.orgs, let openRooms {
+                            Button("Organization rooms", action: openRooms)
+                                .accessibilityIdentifier("org-rooms-open")
+                        }
                     } label: {
                         Image(systemName: "square.and.pencil")
                             .foregroundStyle(Theme.secondary)

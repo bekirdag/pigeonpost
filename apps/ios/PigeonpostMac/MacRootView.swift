@@ -45,7 +45,7 @@ struct MacRootView: View {
                 if session.status == .signedOut { avatars?.reset() }
             }
         }
-        .task(id: session.status) {
+        .task(id: session.authorizationId) {
             guard !Fixtures.enabled, session.status == .signedIn else { return }
             await account.loadIdentities()
         }

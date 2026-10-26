@@ -24,6 +24,12 @@ The first TLS URL update encountered the existing shutdown hang: HTTP close wait
 
 Docdex mapped the calls-service imports and seven inbound test/harness callers before edits. The deployment templates and standalone certificate hook have no indexed dependency edges. The generic Docdex test runner selected Cargo and rejected the JavaScript target, so Node checks use the scoped Node runner and the package's existing test command.
 
-## Remaining
+## Signaling deployed and verified
 
-Finish signaling qualification and deploy the source correction with the verified TLS URLs, then verify the actual running environment, public browser health and preserved call-service settings. Apple and other store submissions remain held.
+- Deployed the qualified shutdown correction and both TLS URLs on Raijin. The running process contains all four UDP/TCP/TLS endpoints; all other environment bytes are preserved. Source SHA-256 is `30cb15c229ac8f515c18aa2933187ba58e715d5239d07e5eba107d64af8ebc74`.
+- Server-only rollback backup: `/var/backups/pigeonpost/calls-turn-tls-20261025T205439Z`. The initial legacy process still had the old shutdown handler and needed targeted termination after it began stopping; a pidfd prevented signaling a replacement process. No rooms or queued history events existed.
+- Public health from the persistent Chrome browser passes: postbox integration, large calls and push ringing are configured, with no failed admission or queued history events. A one-time challenge confirms the loaded signaling secret matches the relay without copying either long-lived secret.
+- PR #108 passed all 16 GitHub checks, including both Windows architectures and all platform tests, before merge. The production source was separately qualified with all 63 Node checks and exact source/environment verification.
+- Native Apple candidate #106 passed all 19 checks and merged separately. Apple and other store submissions remain held; physical-device call checks are still release gates.
+
+The DNS and relay TLS prerequisite is complete. Certbot renewal is enabled. Backups, keys and operational credential probes remain private on the servers or in the workstation's private validation directory; none are published in this repository.

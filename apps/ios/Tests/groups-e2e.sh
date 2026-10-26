@@ -24,7 +24,7 @@ binding="$root/crates/pigeonpost-groupcrypto/bindings/swift"
 swiftc -O -parse-as-library -D GROUPCRYPTO -o "$out/groups-e2e" \
   -Xcc -fmodule-map-file="$binding/PigeonpostGroupCryptoFFI.modulemap" "$binding/PigeonpostGroupCrypto.swift" \
   -L "$out/lib" -lpigeonpost_groupcrypto_ffi \
-  Tests/GroupsE2ETests.swift Shared/Config.swift \
+  Tests/GroupsE2ETests.swift Shared/Config.swift Shared/Auth/AuthorizationLease.swift \
   Shared/API/Models.swift Shared/API/APIError.swift Shared/API/PostboxClient.swift \
   Shared/Groups/GroupModels.swift Shared/Groups/GroupAPI.swift Shared/Groups/GroupVault.swift \
   Shared/Groups/GroupEngine.swift Shared/Groups/GroupText.swift 2>"$out/swiftc.log" || { grep -A3 "error:" "$out/swiftc.log" >&2; exit 1; }

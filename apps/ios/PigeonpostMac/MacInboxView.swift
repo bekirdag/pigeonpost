@@ -30,7 +30,7 @@ struct MacInboxView: View {
         case settings
         case filtered
         case peer(Conversation)
-        case newGroup, joinLink, calendar
+        case newGroup, joinLink, calendar, organizationRooms
         case join(GroupStore.JoinLink)
         case meetingLink(CalendarLinkRequest)
         case deviceApproval(DeviceApprovalRequest)
@@ -43,6 +43,7 @@ struct MacInboxView: View {
             case .join(let link): return "join:" + link.id
             case .filtered: return "filtered"
             case .calendar: return "calendar"
+            case .organizationRooms: return "org-rooms"
             case .peer(let conversation): return "peer:\(conversation.peer)"
             case .meetingLink(let request): return "meeting-link:" + request.id.uuidString
             case .deviceApproval(let request): return "device-approval:" + request.id.uuidString
@@ -63,12 +64,20 @@ struct MacInboxView: View {
             newGroup: { sheet = .newGroup },
             joinLink: { sheet = .joinLink },
             openFiltered: { sheet = .filtered },
-            openCalendar: { sheet = .calendar }
+            openCalendar: { sheet = .calendar },
+            openRooms: { sheet = .organizationRooms }
         )
         // Groups keep their own cadence: the app holds no event stream (see GroupStore).
-        .task(id: "\(account.me?.address ?? "")|\(account.features.groups)") {
+        .task(id: "\(account.me?.address ?? "")|\(account.features.groups)|\(account.session.authorizationId)|\(account.actingGeneration)") {
             await groups.attach()
             await groups.live()
+        }
+        .onChange(of: account.session.authorizationId.uuidString + account.actingGeneration.uuidString) { _, _ in
+            if peer?.hasPrefix("grp_") == true { peer = nil; subthread = nil }
+            switch sheet {
+            case .newGroup, .joinLink, .join: sheet = nil
+            default: break
+            }
         }
         .onChange(of: groups.pendingJoin, initial: true) { _, link in
             guard let link else { return }
@@ -90,6 +99,7 @@ struct MacInboxView: View {
             case "new": showingNew = true
             case "new-group": sheet = .newGroup
             case "calendar": sheet = .calendar
+            case "org-rooms" where account.features.orgs && account.features.groups: sheet = .organizationRooms
             case "device-approval" where account.features.orgs: sheet = .deviceApproval(DeviceApprovalRequest(code: nil))
             default: break
             }
@@ -211,6 +221,10 @@ struct MacInboxView: View {
             case .newGroup:
                 NewGroupSheet { id in peer = id; subthread = nil }
                     .frame(width: 480, height: 600)
+            case .organizationRooms:
+                if account.features.orgs && account.features.groups {
+                    OrganizationRoomsScreen(account: account, visit: visit) { id in peer = id; subthread = nil }
+                }
             case .joinLink:
                 JoinLinkSheet { link in sheet = .join(link) }
                     .frame(width: 460, height: 240)

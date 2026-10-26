@@ -38,6 +38,20 @@ struct GroupRecord: Codable, Equatable {
 struct GroupVault: Sendable {
     let directory: URL
     let key: @Sendable () throws -> SymmetricKey
+    let lease: AuthorizationLease?
+
+    init(directory: URL, key: @escaping @Sendable () throws -> SymmetricKey, lease: AuthorizationLease? = nil) {
+        self.directory = directory; self.key = key; self.lease = lease
+    }
+
+    func guarded(by lease: AuthorizationLease) -> GroupVault {
+        GroupVault(directory: directory, key: key, lease: lease)
+    }
+
+    private func access<T>(_ body: () throws -> T) throws -> T {
+        if let lease { return try lease.perform(body) }
+        return try body()
+    }
 
     static func standard() -> GroupVault {
         let base = (try? FileManager.default.url(for: .applicationSupportDirectory, in: .userDomainMask,
@@ -53,17 +67,20 @@ struct GroupVault: Sendable {
     }
 
     func load(_ mailbox: String) -> GroupRecord? {
+        try? access {
         guard let sealed = try? Data(contentsOf: file(for: mailbox)),
               let box = try? AES.GCM.SealedBox(combined: sealed),
               let key = try? key(),
               let plain = try? AES.GCM.open(box, using: key, authenticating: Data(mailbox.utf8))
         else { return nil }
         return try? JSONDecoder().decode(GroupRecord.self, from: plain)
+        }
     }
 
     /// Atomic: the blob, its key and the cursors land together or not at all, so a crash cannot
     /// leave an old MLS state beside newer cursors.
     func save(_ record: GroupRecord, for mailbox: String) throws {
+        try access {
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         let plain = try JSONEncoder().encode(record)
         // The mailbox is bound in as associated data: a file copied over another mailbox's does
@@ -75,15 +92,16 @@ struct GroupVault: Sendable {
         #else
         try combined.write(to: file(for: mailbox), options: [.atomic])
         #endif
+        }
     }
 
     func remove(_ mailbox: String) {
-        try? FileManager.default.removeItem(at: file(for: mailbox))
+        try? access { try FileManager.default.removeItem(at: file(for: mailbox)) }
     }
 
     /// Signing out forgets every mailbox's group state on this device.
     func removeAll() {
-        try? FileManager.default.removeItem(at: directory)
+        try? access { try FileManager.default.removeItem(at: directory) }
     }
 }
 
