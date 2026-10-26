@@ -154,6 +154,9 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
     public string DisplayBody => RequestEnvelope.DisplayText(Body);
     public string CopyText => string.IsNullOrWhiteSpace(DisplayBody) ? AttachmentSummary : DisplayBody;
     public string AttachmentSummary => string.Join(" · ", (Attachments ?? []).Select(a => a.Filename));
+    public bool HasReply => !IsSystem && ReplyTo is not null;
+    public string ReplyQuote => HasReply ? ReplyTo!.DisplayQuote : "";
+    public string ReplyAccessibility => HasReply ? "Open quoted message: " + ReplyQuote : "";
     public string EditedLabel => EditCount > 0 && EditedAt is > 0 ? "Edited" : "";
     public string ReceiptLabel => !IsOutgoing || IsSystem || Status != DeliveryStatus.Sent ? "" : Receipt?.State switch
     {
@@ -165,6 +168,8 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
         "sent" => "Sent",
         _ => ""
     };
+    public string ReceiptGlyph => !IsOutgoing || IsSystem || Status != DeliveryStatus.Sent ? "" : Receipt?.State switch
+    { "sent" => "✓", "delivered" or "seen" => "✓✓", _ => "" };
     public bool CanEdit(ServerFeatures features, long now) => features.Has(ServerFeatures.MessageEdit) && IsOutgoing
         && !IsSystem && Status == DeliveryStatus.Sent && At > 0 && now >= At && now - At <= 86400
         && (ExpiresAt is null || ExpiresAt > now);
@@ -174,8 +179,10 @@ public sealed record ThreadMessage(string Id, string Body, long At, string? Thre
         DeliveryStatus.Failed => "Delivery not confirmed",
         _ when IsHeld => "Held for review",
         _ when !IsOutgoing && Autonomy == "auto" => "Allowed by recipient",
+        _ when IsOutgoing => ReceiptLabel,
         _ => ""
     };
+    public string FooterTimeLabel => EditedLabel.Length == 0 ? TimeLabel : TimeLabel + " · " + EditedLabel;
     public string TimeLabel => At is >= -62135596800 and <= 253402300799
         ? DateTimeOffset.FromUnixTimeSeconds(At).ToLocalTime().ToString("g") : "";
 }
