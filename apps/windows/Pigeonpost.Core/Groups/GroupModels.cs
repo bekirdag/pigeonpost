@@ -45,12 +45,13 @@ public sealed record GroupInfo
     public bool? HasLink { get; init; }
     public GroupMy? My { get; init; }
 
-    [JsonIgnore] public string Role => My?.Role ?? "member";
-    [JsonIgnore] public string State => My?.State ?? "active";
+    [JsonIgnore] public string Role => My?.Role ?? "";
+    [JsonIgnore] public string State => My?.State ?? "";
     [JsonIgnore] public bool IsAdmin => Role is "owner" or "admin";
     [JsonIgnore] public bool IsOwner => Role == "owner";
     [JsonIgnore] public bool IsInvited => State == "invited";
-    [JsonIgnore] public bool IsActive => State == "active" && DeletedAt is null;
+    [JsonIgnore] public bool IsActive => State == "active" && Role is ("owner" or "admin" or "member" or "restricted")
+        && ActivationState == "active" && DeletedAt is null;
     [JsonIgnore] public bool IsKeying => State == "keying";
     [JsonIgnore] public bool IsDeleted => DeletedAt is not null;
     [JsonIgnore] public bool AnnouncementOnly => PostPolicy == "admins";

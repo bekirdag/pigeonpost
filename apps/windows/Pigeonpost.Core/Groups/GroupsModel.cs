@@ -51,23 +51,35 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     private IReadOnlyList<Contact> contacts = [];
     private IReadOnlyList<Mailbox> own = [];
     private readonly Dictionary<string, Dictionary<string, string>> handles = new(StringComparer.Ordinal); // group → address → handle
-    private bool running;
+    private GroupClient? refreshing;
+    private AuthorizationLease? authorization;
+    private bool disposed;
     private string? error;
     private string? status;
     private GroupRow? selected;
     private string draft = "";
     private bool sending;
     private int generation;
+    private int selectionGeneration;
     private CancellationTokenSource scope = new();
+    private GroupClient? ActiveClient => client is { IsActive: true } c ? c : null;
+    private bool IsCurrent(GroupClient c, int version) => !disposed && version == generation && ReferenceEquals(client, c) && c.IsActive;
+    private bool IsSelectionCurrent(GroupClient c, int version, int intent, string gid) =>
+        IsCurrent(c, version) && intent == selectionGeneration && selected?.Id == gid;
+    private T CurrentValue<T>(Func<GroupClient, T> read, T fallback)
+    {
+        if (ActiveClient is not { } c) return fallback;
+        try { return read(c); } catch (AuthorizationRetiredException) { return fallback; }
+    }
 
     public static bool LibraryAvailable { get; } = GroupClient.LibraryAvailable();
     public bool Enabled { get; private set; }
-    public bool Persistent => client?.Persistent ?? false;
+    public bool Persistent => CurrentValue(c => c.Persistent, false);
     public ObservableCollection<GroupRow> Groups { get; } = [];
     public ObservableCollection<GroupLineRow> Lines { get; } = [];
     public ObservableCollection<GroupClient.OutgoingFile> DraftFiles { get; } = [];
-    public string? DeviceFingerprint => client?.Fingerprint;
-    public string? DeviceId => client?.DeviceId;
+    public string? DeviceFingerprint => CurrentValue(c => c.Fingerprint, null);
+    public string? DeviceId => CurrentValue(c => c.DeviceId, null);
     public string Mailbox => mailbox?.Address ?? "";
     public int Invitations => Groups.Count(g => g.IsInvitation);
     public int UnreadTotal => Groups.Sum(g => g.Unread);
@@ -76,18 +88,18 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     public string? Status { get => status; set => Set(ref status, value); }
     public bool IsSending { get => sending; private set { if (Set(ref sending, value)) Changed(nameof(CanSend)); } }
     public string Draft { get => draft; set { if (Set(ref draft, value)) Changed(nameof(CanSend)); } }
-    public GroupRow? Selected => selected;
-    public GroupInfo? Info => selected?.Info;
+    public GroupRow? Selected => ActiveClient is null ? null : selected;
+    public GroupInfo? Info => Selected?.Info;
     public string Title => Info?.DisplayName ?? "Groups";
     public string Subtitle => Info is null ? "" : Info.IsInvited ? "Invitation" : $"{Info.MemberCount ?? 0} member{(Info.MemberCount == 1 ? "" : "s")}"
         + (Info.EphemeralSecs is > 0 ? " · " + Timers.Banner(Info.EphemeralSecs) : "");
-    public bool HasSelection => selected is not null;
-    public bool ShowsInvitation => selected?.IsInvitation == true;
+    public bool HasSelection => Selected is not null;
+    public bool ShowsInvitation => Selected?.IsInvitation == true;
     public bool ShowsComposer => Info?.CanPost == true;
     public bool ShowsAnnouncementBar => Info is { IsActive: true } && !Info.CanPost;
     public string AnnouncementText => Info?.Role == "restricted" ? "An admin stopped you from posting in this group." : "Only admins can send messages";
-    public bool ShowsKeying => Info is { IsKeying: true } || Info is { IsActive: true } && client?.InGroup(Info.Id) == false;
-    public bool CanSend => !IsSending && Info?.CanPost == true && client?.InGroup(Info.Id) == true && (Draft.Trim().Length > 0 || DraftFiles.Count > 0);
+    public bool ShowsKeying => Info is { IsKeying: true } || Info is { IsActive: true } info && !CurrentValue(c => c.InGroup(info.Id), false);
+    public bool CanSend => !IsSending && Info is { CanPost: true } info && CurrentValue(c => c.InGroup(info.Id), false) && (Draft.Trim().Length > 0 || DraftFiles.Count > 0);
     public bool CanCall => Info is { IsActive: true };
     public string TimerBanner => Timers.Banner(Info?.EphemeralSecs);
     public string EmptyText => Groups.Count == 0 ? "No groups yet. Use New group to start one." : "";
@@ -96,19 +108,30 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     // Called when the mailbox, the account's features or the contact list change.
     public async Task ActivateAsync(Mailbox? acting, ServerFeatures features, IReadOnlyList<Mailbox> mailboxes, IReadOnlyList<Contact> known)
     {
+        if (disposed) return;
         contacts = known;
         own = mailboxes;
         var enabled = acting is not null && features.Has(ServerFeatures.Groups) && LibraryAvailable;
-        if (enabled == Enabled && acting?.Address == mailbox?.Address) return;
+        var accepted = postbox.AcceptedAuthorization;
+        if (enabled == Enabled && acting?.Address == mailbox?.Address && ReferenceEquals(accepted, authorization)
+            && (!enabled || ActiveClient is not null)) return;
+        generation++;
+        selectionGeneration++;
+        var prior = client;
+        client = null;
+        prior?.Dispose();
         scope.Cancel();
         scope.Dispose();
         scope = new();
-        generation++;
-        client?.Dispose();
-        client = null;
+        authorization = accepted;
+        refreshing = null;
         mailbox = acting;
         Enabled = enabled;
         selected = null;
+        Draft = "";
+        DraftFiles.Clear();
+        IsSending = false;
+        Status = null;
         Groups.Clear();
         Lines.Clear();
         handles.Clear();
@@ -116,22 +139,23 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         NotifyAll();
         if (!enabled || acting is null) return;
         var next = new GroupClient(new GroupApi(postbox, acting.Address), stores(acting.Address));
+        var version = generation;
         next.HistoryChanged += gid =>
         {
-            if (ui is null || SynchronizationContext.Current == ui) { if (gid == selected?.Id) RebuildLines(); }
-            else ui.Post(_ => { if (ReferenceEquals(client, next) && gid == selected?.Id) RebuildLines(); }, null);
+            void Apply() { if (IsCurrent(next, version) && gid == selected?.Id) RebuildLines(); }
+            if (ui is null || SynchronizationContext.Current == ui) Apply();
+            else ui.Post(_ => Apply(), null);
         };
         client = next;
-        var version = generation;
         try
         {
             await next.InitAsync(scope.Token);
-            if (version != generation) return;
+            if (!IsCurrent(next, version)) return;
             await RefreshAsync();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { if (version == generation) Error = "Groups aren't available on this device right now. " + Describe(ex); }
-        NotifyAll();
+        catch (Exception ex) { if (IsCurrent(next, version)) Error = "Groups aren't available on this device right now. " + Describe(ex); }
+        if (IsCurrent(next, version)) NotifyAll();
     }
 
     public void SetContacts(IReadOnlyList<Contact> known) => contacts = known;
@@ -140,8 +164,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     // order, and pending adds and removals. Runs on a timer and after every action.
     public async Task RefreshAsync()
     {
-        if (client is not { } c || running) return;
-        running = true;
+        if (ActiveClient is not { } c || ReferenceEquals(refreshing, c)) return;
+        refreshing = c;
         var version = generation;
         var token = scope.Token;
         try
@@ -149,7 +173,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             await c.TopUpKeyPackagesAsync(token);
             await c.ProcessWelcomesAsync(token);
             var list = await c.Api.ListAsync(token);
-            if (version != generation) return;
+            if (!IsCurrent(c, version)) return;
+            var refused = new HashSet<string>(StringComparer.Ordinal);
             foreach (var g in list.Where(g => g.IsActive || g.ActivationState == "provisioning" && g.IsOwner))
             {
                 try
@@ -159,29 +184,29 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
                     await c.SyncAsync(g.Id, token);
                     await c.ProcessPendingAsync(g.Id, token);
                 }
-                catch (PostboxException ex) when (ex.Code is "not_member" or "group_deleted" or "not_found") { }
+                catch (PostboxException ex) when (ex.StatusCode is 403 or 404 || ex.Code is "not_member" or "group_deleted" or "not_found") { refused.Add(g.Id); }
             }
             await c.PruneExpiredAsync();
-            if (version != generation) return;
-            RebuildRows(list);
+            if (!IsCurrent(c, version)) return;
+            RebuildRows(list.Where(g => !refused.Contains(g.Id)).ToArray());
             Error = null;
         }
         catch (OperationCanceledException) { }
         catch (PostboxException ex) when (ex.Code is "unknown_device" or "device_revoked")
         {
             // This device was revoked elsewhere: start again as a new device; members are shown the change.
-            try { await c.ReEnrolAsync(token); Status = "This device was registered again for groups. Earlier group messages stay on the old device."; }
-            catch (Exception inner) when (inner is not OperationCanceledException) { Error = Describe(inner); }
+            try { await c.ReEnrolAsync(token); if (IsCurrent(c, version)) Status = "This device was registered again for groups. Earlier group messages stay on the old device."; }
+            catch (Exception inner) when (inner is not OperationCanceledException) { if (IsCurrent(c, version)) Error = Describe(inner); }
         }
-        catch (Exception ex) { if (version == generation) Error = Describe(ex); }
-        finally { running = false; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); }
+        finally { if (ReferenceEquals(refreshing, c)) refreshing = null; }
     }
 
     private void RebuildRows(IReadOnlyList<GroupInfo> list)
     {
         var rows = list.Where(g => !g.IsDeleted).Select(g =>
         {
-            var lines = client?.HistoryOf(g.Id) ?? [];
+            var lines = g.IsActive ? ActiveClient?.HistoryOf(g.Id) ?? [] : [];
             var last = lines.LastOrDefault(l => l.Kind == "message" && !l.Deleted && l.ReplacedBy is null);
             var preview = last is null ? g.IsActive ? "No messages yet" : "" : (last.Mine ? "You: " : ShortName(last.Sender) + ": ")
                 + (string.IsNullOrWhiteSpace(last.Text) && last.Files is { Count: > 0 } f ? f[0].Name : (last.Text ?? "").ReplaceLineEndings(" "));
@@ -199,32 +224,70 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     public async Task SelectAsync(GroupRow? row)
     {
-        selected = row;
+        if (disposed) return;
+        var intent = ++selectionGeneration;
+        var version = generation;
+        var c = ActiveClient;
+        var token = scope.Token;
+        selected = null;
         Draft = "";
         DraftFiles.Clear();
+        Error = null;
         RebuildLines();
         NotifyAll();
-        if (row is null || client is not { } c || !row.Info.IsActive) return;
-        await LoadHandlesAsync(row.Id);
-        RebuildLines();
-        await MarkReadAsync();
+        if (row is null || c is null) return;
+        if (!row.Info.IsActive)
+        {
+            selected = row;
+            NotifyAll();
+            return;
+        }
+        try
+        {
+            var fresh = await c.Api.GetAsync(row.Id, token);
+            if (!IsCurrent(c, version) || intent != selectionGeneration) return;
+            if (fresh.Id != row.Id || !fresh.IsActive) { RefuseSelection(row.Id); return; }
+            selected = row with { Info = fresh };
+            await LoadHandlesAsync(c, row.Id, version, intent, token);
+            if (!IsSelectionCurrent(c, version, intent, row.Id)) return;
+            RebuildLines();
+            NotifyAll();
+            await MarkReadAsync();
+        }
+        catch (OperationCanceledException) { }
+        catch (PostboxException ex) when (ex.StatusCode is 401 or 403 or 404 or 410)
+        {
+            if (IsCurrent(c, version) && intent == selectionGeneration) RefuseSelection(row.Id);
+        }
+        catch (Exception ex) { if (IsCurrent(c, version) && intent == selectionGeneration) Error = Describe(ex); }
+    }
+
+    private void RefuseSelection(string gid)
+    {
+        selected = null;
+        var old = Groups.FirstOrDefault(g => g.Id == gid);
+        if (old is not null) Groups.Remove(old);
+        Lines.Clear();
+        Error = "You no longer have access to this group. Refresh the list to try again.";
+        NotifyAll();
+        LinesChanged?.Invoke(this, EventArgs.Empty);
     }
 
     public async Task MarkReadAsync()
     {
-        if (client is not { } c || selected is not { Info.IsActive: true } row) return;
+        if (ActiveClient is not { } c || selected is not { Info.IsActive: true } row) return;
         var seq = c.HistoryOf(row.Id).Where(l => l.Kind == "message").Select(l => l.Seq).DefaultIfEmpty(0).Max();
         if (seq <= (row.Info.My?.ReadCursor ?? 0) && row.Unread == 0) return;
         try { await c.Api.MarkReadAsync(row.Id, Math.Max(seq, row.Info.LastSeq ?? seq), scope.Token); }
         catch (Exception ex) when (ex is not OperationCanceledException) { }
     }
 
-    private async Task LoadHandlesAsync(string gid)
+    private async Task LoadHandlesAsync(GroupClient c, string gid, int version, int intent, CancellationToken token)
     {
-        if (client is not { } c) return;
         try
         {
-            var members = await c.Api.MembersAsync(gid, scope.Token);
+            var members = await c.Api.MembersAsync(gid, token);
+            if (!IsSelectionCurrent(c, version, intent, gid)) return;
             handles[gid] = members.Where(m => m.Handle is not null).ToDictionary(m => m.Address, m => m.Handle!, StringComparer.Ordinal);
         }
         catch (Exception ex) when (ex is not OperationCanceledException) { }
@@ -232,7 +295,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     private void RebuildLines()
     {
-        if (client is not { } c || selected is not { } row)
+        if (ActiveClient is not { } c || selected is not { Info.IsActive: true } row)
         {
             Lines.Clear();
             LinesChanged?.Invoke(this, EventArgs.Empty);
@@ -348,21 +411,24 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     public async Task<bool> SendAsync()
     {
-        if (!CanSend || client is not { } c || selected is not { } row) return false;
+        if (!CanSend || ActiveClient is not { } c || selected is not { } row) return false;
+        var version = generation;
+        var intent = selectionGeneration;
+        var token = scope.Token;
         var text = Draft.Trim();
         var files = DraftFiles.ToArray();
         IsSending = true;
         Error = null;
         try
         {
-            await c.SendAsync(row.Id, text, files, scope.Token);
-            if (selected?.Id == row.Id) { Draft = ""; DraftFiles.Clear(); }
-            RebuildLines();
+            await c.SendAsync(row.Id, text, files, token);
+            if (!IsCurrent(c, version)) return false;
+            if (IsSelectionCurrent(c, version, intent, row.Id)) { Draft = ""; DraftFiles.Clear(); RebuildLines(); }
             return true;
         }
         catch (OperationCanceledException) { return false; }
-        catch (Exception ex) { Error = Describe(ex); return false; }
-        finally { IsSending = false; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); return false; }
+        finally { if (IsCurrent(c, version)) IsSending = false; }
     }
 
     public void AddFile(GroupClient.OutgoingFile file)
@@ -376,39 +442,51 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     public async Task<byte[]?> OpenFileAsync(LocalFile file)
     {
-        if (client is not { } c || selected is not { } row) return null;
-        try { return await c.OpenFileAsync(row.Id, file, scope.Token); }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Error = "Could not open this file. " + Describe(ex); return null; }
+        if (ActiveClient is not { } c || selected is not { Info.IsActive: true } row) return null;
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
+        try
+        {
+            var bytes = await c.OpenFileAsync(row.Id, file, token);
+            return IsSelectionCurrent(c, version, intent, row.Id) ? bytes : null;
+        }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex) { if (IsSelectionCurrent(c, version, intent, row.Id)) Error = "Could not open this file. " + Describe(ex); return null; }
     }
 
     public async Task<GroupInfo?> CreateAsync(GroupSettings settings, IReadOnlyList<string> invite)
     {
-        if (client is not { } c) return null;
+        if (ActiveClient is not { } c) return null;
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
         Error = null;
         try
         {
-            var created = await c.CreateGroupAsync(settings, invite.Select(PostAddress.Canonical).ToArray(), scope.Token);
+            var created = await c.CreateGroupAsync(settings, invite.Select(PostAddress.Canonical).ToArray(), token);
+            if (!IsCurrent(c, version)) return null;
             var unresolved = created.Invitations?.Where(i => i.Status is not ("invited" or "already_member")).Select(i => i.Address).ToArray() ?? [];
             if (unresolved.Length > 0) Status = "Not invited: " + string.Join(", ", unresolved);
             await RefreshAsync();
-            await SelectAsync(Groups.FirstOrDefault(g => g.Id == created.Group.Id));
-            return created.Group;
+            if (!IsCurrent(c, version)) return null;
+            if (intent == selectionGeneration) await SelectAsync(Groups.FirstOrDefault(g => g.Id == created.Group.Id));
+            return IsCurrent(c, version) ? created.Group : null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Error = Describe(ex); return null; }
+        catch (OperationCanceledException) { return null; }
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); return null; }
     }
 
     public Task AnswerInvitationAsync(bool accept) => Act(async (c, row) =>
     {
         await c.Api.AnswerInvitationAsync(row.Id, accept, scope.Token);
+        c.Api.RequireActive();
         Status = accept ? "Joined. A member's device adds you in a moment." : "Invitation declined.";
-        if (!accept) selected = null;
+        if (!accept && selected?.Id == row.Id) selected = null;
     });
 
     public Task LeaveAsync() => Act(async (c, row) =>
     {
         await c.Api.LeaveAsync(row.Id, scope.Token);
         await c.ForgetAsync(row.Id);
-        selected = null;
+        c.Api.RequireActive();
+        if (selected?.Id == row.Id) selected = null;
         Status = "You left the group.";
     });
 
@@ -416,7 +494,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     {
         await c.Api.DeleteAsync(row.Id, scope.Token);
         await c.ForgetAsync(row.Id);
-        selected = null;
+        c.Api.RequireActive();
+        if (selected?.Id == row.Id) selected = null;
         Status = "Group deleted.";
     });
 
@@ -451,45 +530,54 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     private async Task Act(Func<GroupClient, GroupRow, Task> work)
     {
-        if (client is not { } c || selected is not { } row) return;
+        if (ActiveClient is not { } c || selected is not { } row) return;
+        var version = generation;
         Error = null;
         try
         {
             await work(c, row);
-            await RefreshAsync();
+            if (IsCurrent(c, version)) await RefreshAsync();
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Error = Describe(ex); }
-        NotifyAll();
+        catch (Exception ex) { if (IsCurrent(c, version)) Error = Describe(ex); }
+        if (IsCurrent(c, version)) NotifyAll();
     }
 
     // Group info: members with roles and their devices' fingerprints, and the group safety number.
     public async Task<(IReadOnlyList<GroupMemberRow> Members, string? SafetyNumber)> LoadInfoAsync()
     {
-        if (client is not { } c || selected is not { } row) return ([], null);
+        if (ActiveClient is not { } c || selected is not { Info.IsActive: true } row) return ([], null);
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
         try
         {
-            var members = await c.Api.MembersAsync(row.Id, scope.Token);
+            var members = await c.Api.MembersAsync(row.Id, token);
+            if (!IsSelectionCurrent(c, version, intent, row.Id)) return ([], null);
             handles[row.Id] = members.Where(m => m.Handle is not null).ToDictionary(m => m.Address, m => m.Handle!, StringComparer.Ordinal);
             var leaves = c.Members(row.Id);
-            var rows = members.Select(m => new GroupMemberRow(m.Address, NameOf(m.Address), m.Role ?? "member", m.State ?? "active",
+            var rows = members.Select(m => new GroupMemberRow(m.Address, NameOf(m.Address), m.Role ?? "", m.State ?? "",
                     leaves.Where(l => l.Mailbox == m.Address).ToArray(), m.Address == mailbox?.Address, m.Revision ?? 0))
                 .OrderBy(m => m.Role switch { "owner" => 0, "admin" => 1, _ => 2 }).ThenBy(m => m.Name, StringComparer.OrdinalIgnoreCase).ToArray();
             return (rows, c.SafetyNumberOf(row.Id));
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { Error = Describe(ex); return ([], null); }
+        catch (OperationCanceledException) { return ([], null); }
+        catch (Exception ex) { if (IsSelectionCurrent(c, version, intent, row.Id)) Error = Describe(ex); return ([], null); }
     }
 
     // "Call in progress — Join" in the group header (calls service, same origin as the inbox).
     public async Task<GroupCallStatus?> CallStatusAsync(Uri callsOrigin)
     {
-        if (selected is not { Info.IsActive: true } row || mailbox is null) return null;
+        if (ActiveClient is not { } c || selected is not { Info.IsActive: true } row || mailbox is null) return null;
+        var version = generation; var intent = selectionGeneration; var token = scope.Token;
         try
         {
-            return await postbox.GetCallsJsonAsync<GroupCallStatus>(new Uri(callsOrigin,
-                "/calls/v1/groups/" + Uri.EscapeDataString(row.Id) + "/call?from=" + Uri.EscapeDataString(mailbox.Address)), scope.Token);
+            using var actor = c.Api.BindActor();
+            var validate = c.Api.CaptureValidation();
+            var status = await postbox.GetCallsJsonAsync<GroupCallStatus>(new Uri(callsOrigin,
+                "/calls/v1/groups/" + Uri.EscapeDataString(row.Id) + "/call?from=" + Uri.EscapeDataString(c.Mailbox)), token);
+            validate();
+            return IsSelectionCurrent(c, version, intent, row.Id) ? status : null;
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+        catch (Exception) { return null; }
     }
 
     private void NotifyAll()
@@ -503,6 +591,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
     private static string Describe(Exception ex) => ex switch
     {
         PostboxException p => p.Message,
+        GroupStateUnavailableException => "Saved group keys could not be opened. Try again before resetting this device.",
         Pigeonpost.GroupCrypto.GroupCryptoException.Failure f => "The group keys could not be updated (" + f.code + ").",
         HttpRequestException or TaskCanceledException => "Could not connect. Check your internet connection and try again.",
         _ => "Could not complete that action. Please try again.",
@@ -510,8 +599,19 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     public void Dispose()
     {
+        if (disposed) return;
+        disposed = true;
+        generation++; selectionGeneration++;
+        var prior = client;
+        client = null;
+        prior?.Dispose();
         scope.Cancel();
         scope.Dispose();
-        client?.Dispose();
+        selected = null;
+        DraftFiles.Clear();
+        Draft = "";
+        handles.Clear();
+        Lines.Clear();
+        Groups.Clear();
     }
 }

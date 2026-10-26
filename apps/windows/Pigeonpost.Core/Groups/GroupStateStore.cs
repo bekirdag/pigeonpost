@@ -20,14 +20,42 @@ public interface IGroupStateStore
     Task RemoveAsync(string mailbox);
 }
 
-public sealed class MemoryGroupStateStore : IGroupStateStore
+// The live group actor must use these overloads; a local lease grants no server membership.
+public interface IAuthorizedGroupStateStore : IGroupStateStore
+{
+    Task<GroupDeviceRecord?> LoadAsync(string mailbox, AuthorizationLease authorization);
+    Task SaveAsync(string mailbox, GroupDeviceRecord record, AuthorizationLease authorization);
+    Task RemoveAsync(string mailbox, AuthorizationLease authorization);
+}
+
+public sealed class GroupStateUnavailableException() : IOException("Saved encrypted group state could not be opened. Try again before resetting this device.");
+
+public sealed class MemoryGroupStateStore : IAuthorizedGroupStateStore
 {
     private readonly Dictionary<string, string> rows = new(StringComparer.Ordinal);
+    private readonly object monitor = new();
     public bool Persistent => false;
-    public Task<GroupDeviceRecord?> LoadAsync(string mailbox) =>
-        Task.FromResult(rows.TryGetValue(mailbox, out var json) ? JsonSerializer.Deserialize<GroupDeviceRecord>(json) : null);
-    public Task SaveAsync(string mailbox, GroupDeviceRecord record) { rows[mailbox] = JsonSerializer.Serialize(record); return Task.CompletedTask; }
-    public Task RemoveAsync(string mailbox) { rows.Remove(mailbox); return Task.CompletedTask; }
+    private T Local<T>(AuthorizationLease? authorization, Func<T> work)
+    {
+        T Locked() { lock (monitor) return work(); }
+        return authorization is null ? Locked() : authorization.WithActive(Locked);
+    }
+    public Task<GroupDeviceRecord?> LoadAsync(string mailbox) => Load(mailbox, null);
+    public Task<GroupDeviceRecord?> LoadAsync(string mailbox, AuthorizationLease authorization) => Load(mailbox, authorization);
+    private Task<GroupDeviceRecord?> Load(string mailbox, AuthorizationLease? authorization) => Task.FromResult(Local(authorization,
+        () => rows.TryGetValue(mailbox, out var json) ? JsonSerializer.Deserialize<GroupDeviceRecord>(json) : null));
+    public Task SaveAsync(string mailbox, GroupDeviceRecord record) => Save(mailbox, record, null);
+    public Task SaveAsync(string mailbox, GroupDeviceRecord record, AuthorizationLease authorization) => Save(mailbox, record, authorization);
+    private Task Save(string mailbox, GroupDeviceRecord record, AuthorizationLease? authorization)
+    {
+        Local(authorization, () => { rows[mailbox] = JsonSerializer.Serialize(record); return true; }); return Task.CompletedTask;
+    }
+    public Task RemoveAsync(string mailbox) => Remove(mailbox, null);
+    public Task RemoveAsync(string mailbox, AuthorizationLease authorization) => Remove(mailbox, authorization);
+    private Task Remove(string mailbox, AuthorizationLease? authorization)
+    {
+        Local(authorization, () => rows.Remove(mailbox)); return Task.CompletedTask;
+    }
 }
 
 // One file per mailbox under the app's local data folder. The record (MLS state blob, its state
@@ -35,7 +63,7 @@ public sealed class MemoryGroupStateStore : IGroupStateStore
 // a crash leaves either the previous file or the new one, never a mix of an old blob and newer
 // cursors. A file the protector cannot open (another Windows user, a reset profile) is treated as
 // no state: this device then enrols again as a new device.
-public sealed class FileGroupStateStore(string folder, IStateProtector protector) : IGroupStateStore
+public sealed class FileGroupStateStore(string folder, IStateProtector protector) : IAuthorizedGroupStateStore
 {
     private static readonly byte[] Magic = "PPGS1"u8.ToArray();
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -47,51 +75,88 @@ public sealed class FileGroupStateStore(string folder, IStateProtector protector
     private string PathFor(string mailbox) => Path.Combine(folder,
         Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(mailbox)))[..32].ToLowerInvariant() + ".state");
 
-    public async Task<GroupDeviceRecord?> LoadAsync(string mailbox)
+    private static T Local<T>(AuthorizationLease? authorization, Func<T> work) => authorization is null ? work() : authorization.WithActive(work);
+    public Task<GroupDeviceRecord?> LoadAsync(string mailbox) => Load(mailbox, null);
+    public Task<GroupDeviceRecord?> LoadAsync(string mailbox, AuthorizationLease authorization) => Load(mailbox, authorization);
+    private async Task<GroupDeviceRecord?> Load(string mailbox, AuthorizationLease? authorization)
     {
+        authorization?.RequireActive();
         await gate.WaitAsync().ConfigureAwait(false);
         try
         {
+            authorization?.RequireActive();
             var path = PathFor(mailbox);
             if (!File.Exists(path)) return null;
             var bytes = await File.ReadAllBytesAsync(path).ConfigureAwait(false);
-            if (bytes.Length < Magic.Length || !bytes.AsSpan(0, Magic.Length).SequenceEqual(Magic)) return null;
+            authorization?.RequireActive();
+            if (bytes.Length < Magic.Length || !bytes.AsSpan(0, Magic.Length).SequenceEqual(Magic))
+            {
+                if (authorization is not null) throw new GroupStateUnavailableException();
+                return null;
+            }
             byte[] plain;
             try { plain = await protector.UnprotectAsync(bytes[Magic.Length..]).ConfigureAwait(false); }
-            catch (Exception) { return null; }
-            try { return JsonSerializer.Deserialize<GroupDeviceRecord>(plain); }
-            catch (JsonException) { return null; }
+            catch (OperationCanceledException) { throw; }
+            catch (Exception)
+            {
+                authorization?.RequireActive();
+                if (authorization is not null) throw new GroupStateUnavailableException();
+                return null;
+            }
+            try
+            {
+                return Local(authorization, () => JsonSerializer.Deserialize<GroupDeviceRecord>(plain)
+                    ?? (authorization is not null ? throw new GroupStateUnavailableException() : null));
+            }
+            catch (JsonException)
+            {
+                authorization?.RequireActive();
+                if (authorization is not null) throw new GroupStateUnavailableException();
+                return null;
+            }
             finally { CryptographicOperations.ZeroMemory(plain); }
         }
         finally { gate.Release(); }
     }
 
-    public async Task SaveAsync(string mailbox, GroupDeviceRecord record)
+    public Task SaveAsync(string mailbox, GroupDeviceRecord record) => Save(mailbox, record, null);
+    public Task SaveAsync(string mailbox, GroupDeviceRecord record, AuthorizationLease authorization) => Save(mailbox, record, authorization);
+    private async Task Save(string mailbox, GroupDeviceRecord record, AuthorizationLease? authorization)
     {
-        var plain = JsonSerializer.SerializeToUtf8Bytes(record);
+        var plain = Local(authorization, () => JsonSerializer.SerializeToUtf8Bytes(record));
         byte[] sealedBytes;
         try { sealedBytes = await protector.ProtectAsync(plain).ConfigureAwait(false); }
         finally { CryptographicOperations.ZeroMemory(plain); }
+        authorization?.RequireActive();
         await gate.WaitAsync().ConfigureAwait(false);
+        string? temporary = null;
         try
         {
-            Directory.CreateDirectory(folder);
+            Local(authorization, () => Directory.CreateDirectory(folder));
             var path = PathFor(mailbox);
-            var temporary = path + ".tmp";
-            await using (var file = new FileStream(temporary, FileMode.Create, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
+            temporary = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
+            await using (var file = new FileStream(temporary, FileMode.CreateNew, FileAccess.Write, FileShare.None, 4096, FileOptions.WriteThrough))
             {
                 await file.WriteAsync(Magic).ConfigureAwait(false);
+                authorization?.RequireActive();
                 await file.WriteAsync(sealedBytes).ConfigureAwait(false);
             }
-            File.Move(temporary, path, overwrite: true);
+            Local(authorization, () => { File.Move(temporary, path, overwrite: true); return true; });
         }
-        finally { gate.Release(); }
+        finally
+        {
+            if (temporary is not null) try { File.Delete(temporary); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+            gate.Release();
+        }
     }
 
-    public async Task RemoveAsync(string mailbox)
+    public Task RemoveAsync(string mailbox) => Remove(mailbox, null);
+    public Task RemoveAsync(string mailbox, AuthorizationLease authorization) => Remove(mailbox, authorization);
+    private async Task Remove(string mailbox, AuthorizationLease? authorization)
     {
+        authorization?.RequireActive();
         await gate.WaitAsync().ConfigureAwait(false);
-        try { File.Delete(PathFor(mailbox)); }
+        try { Local(authorization, () => { File.Delete(PathFor(mailbox)); return true; }); }
         finally { gate.Release(); }
     }
 }

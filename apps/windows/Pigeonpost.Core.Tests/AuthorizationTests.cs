@@ -120,6 +120,32 @@ internal static class AuthorizationTests
             tokens.Replace(); content.Release.SetResult();
             await Fails<AuthorizationRetiredException>(() => pending); Require(callbacks == 0 && requests == 1);
         });
+        yield return ("An inner actor cannot ignore retirement of its caller's independent scope", async () =>
+        {
+            var tokens = new Tokens { Acquiring = Signal(), ReleaseAcquire = Signal() }; var requests = 0;
+            var caller = tokens.AcceptedAuthorization!.Child(); var actor = tokens.AcceptedAuthorization.Child();
+            using var http = new HttpClient(new Handler((_, _) => { requests++; return Task.FromResult(Json("{\"messages\":[]}")); }));
+            using var api = Client(http, tokens);
+            using (new AuthorizationContext(caller))
+            using (new AuthorizationContext(actor))
+            {
+                var pending = api.GetInboxAsync("/k/fixture"); await tokens.Acquiring.Task.WaitAsync(TimeSpan.FromSeconds(5));
+                caller.Retire(); tokens.ReleaseAcquire.SetResult();
+                await Fails<AuthorizationRetiredException>(() => pending);
+            }
+            Require(actor.IsActive && tokens.AcceptedAuthorization.IsActive && requests == 0);
+        });
+        yield return ("A provider cannot silently substitute another grant under the same root", async () =>
+        {
+            var tokens = new Tokens { Acquiring = Signal(), ReleaseAcquire = Signal() }; var requests = 0;
+            var original = tokens.AcceptedAuthorization!;
+            using var http = new HttpClient(new Handler((_, _) => { requests++; return Task.FromResult(Json("{\"messages\":[]}")); }));
+            using var api = Client(http, tokens);
+            var pending = api.GetInboxAsync("/k/fixture"); await tokens.Acquiring.Task.WaitAsync(TimeSpan.FromSeconds(5));
+            tokens.NarrowWithoutRetiring(); tokens.ReleaseAcquire.SetResult();
+            await Fails<AuthorizationRetiredException>(() => pending);
+            Require(original.IsActive && tokens.AcceptedAuthorization!.SharesAuthorization(original) && requests == 0);
+        });
     }
     private static PostboxClient Client(HttpClient http, Tokens tokens) => new(http, tokens, new Uri("http://127.0.0.1:1/"));
     private static TaskCompletionSource Signal() => new(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -150,6 +176,7 @@ internal static class AuthorizationTests
             if (retire) AcceptedAuthorization?.Retire();
             AcceptedAuthorization = new AuthorizationLease();
         }
+        public void NarrowWithoutRetiring() => AcceptedAuthorization = AcceptedAuthorization!.Child();
     }
     private sealed class DeferredContent(byte[] bytes) : HttpContent
     {

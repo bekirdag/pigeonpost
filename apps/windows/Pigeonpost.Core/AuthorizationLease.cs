@@ -36,17 +36,43 @@ public sealed class AuthorizationLease(AuthorizationLease? parent = null)
 /// <summary>Carry the immutable actor across all awaits of a multi-request operation.</summary>
 public sealed class AuthorizationContext : IDisposable
 {
-    private sealed record Frame(AuthorizationLease? Lease);
+    private sealed record Frame(AuthorizationLease? Lease, AuthorizationLease? LocalConstraint, Frame? Parent);
     private static readonly AsyncLocal<Frame?> Slot = new();
     private readonly Frame? previous;
     private readonly Frame frame;
     public static AuthorizationLease? Current => Slot.Value?.Lease;
     internal static bool IsBound => Slot.Value is not null;
     public AuthorizationContext(AuthorizationLease lease) : this(lease ?? throw new ArgumentNullException(nameof(lease)), true) { }
-    private AuthorizationContext(AuthorizationLease? lease, bool _)
+    private AuthorizationContext(AuthorizationLease? lease, bool _) : this(lease, lease) { }
+    private AuthorizationContext(AuthorizationLease? lease, AuthorizationLease? localConstraint)
     {
-        lease?.RequireActive(); previous = Slot.Value; frame = new(lease); Slot.Value = frame;
+        lease?.RequireActive(); localConstraint?.RequireActive();
+        previous = Slot.Value; frame = new(lease, localConstraint, previous); Slot.Value = frame;
     }
     internal static AuthorizationContext Capture(AuthorizationLease? fallback) => new(IsBound ? Current : fallback, true);
+    internal static AuthorizationContext BindActor(AuthorizationLease? accepted, AuthorizationLease actor)
+    {
+        actor.RequireActive();
+        if (accepted is not null && !actor.SharesAuthorization(accepted)) throw new AuthorizationRetiredException();
+        // A fixed-credential stand-in may lack a login grant. Its local actor still cancels work;
+        // it never becomes network authority or replaces a real AccountSession's grant.
+        return new(accepted is null ? null : actor, actor);
+    }
+    internal static Action CaptureValidation(IAccessTokenProvider provider)
+    {
+        var accepted = provider.AcceptedAuthorization;
+        var captured = Slot.Value ?? new Frame(accepted, accepted, null);
+        return () =>
+        {
+            var current = provider.AcceptedAuthorization;
+            if (!ReferenceEquals(current, accepted)) throw new AuthorizationRetiredException();
+            for (var scope = captured; scope is not null; scope = scope.Parent)
+            {
+                scope.LocalConstraint?.RequireActive();
+                if (scope.Lease is null ? current is not null : current is null || !scope.Lease.SharesAuthorization(current))
+                    throw new AuthorizationRetiredException();
+            }
+        };
+    }
     public void Dispose() { if (ReferenceEquals(Slot.Value, frame)) Slot.Value = previous; }
 }

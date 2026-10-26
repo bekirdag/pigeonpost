@@ -4,9 +4,22 @@ namespace Pigeonpost.Core.Groups;
 
 // The postbox's group and MLS routes (docs/groups.md §1–§3, §5) for one acting mailbox. Bytes
 // travel as standard base64; the device header marks the device-scoped routes.
-public sealed class GroupApi(PostboxClient postbox, string mailbox)
+public sealed class GroupApi(PostboxClient transport, string mailbox)
 {
+    private readonly BoundGroupTransport postbox = new(transport);
     public string Mailbox => mailbox;
+    internal AuthorizationLease Authorization => postbox.Authorization;
+    internal void RequireActive() => postbox.RequireActive();
+    internal IDisposable BindActor() => postbox.BindActor();
+    internal Action CaptureValidation() => postbox.CaptureValidation();
+    internal void Retire() => postbox.Authorization.Retire();
+
+    internal async Task VerifyMailboxAsync(CancellationToken ct)
+    {
+        var me = await postbox.GetJsonAsync<WhoAmI>("/v1/whoami", mailbox, ct).ConfigureAwait(false);
+        if (me.Address != mailbox) throw new PostboxException(403, "wrong_identity");
+    }
+    private sealed record WhoAmI(string? Address);
     private static string G(string id) => "/v1/groups/" + Uri.EscapeDataString(id);
 
     // ---- devices and key packages ------------------------------------------------------------
@@ -127,6 +140,59 @@ public sealed class GroupApi(PostboxClient postbox, string mailbox)
     private sealed record GroupBody(GroupInfo Group);
     private sealed record MembersBody(IReadOnlyList<GroupMember>? Members);
     private sealed record InviteBody(IReadOnlyList<InviteResult>? Results);
+
+    // Reuse the shared HTTP/renewal machinery while retaining this mailbox's accepted login.
+    private sealed class BoundGroupTransport
+    {
+        private readonly PostboxClient transport;
+        private readonly AuthorizationLease? accepted;
+        internal AuthorizationLease Authorization { get; }
+        internal BoundGroupTransport(PostboxClient transport)
+        {
+            this.transport = transport;
+            accepted = transport.AcceptedAuthorization;
+            Authorization = accepted?.Child() ?? new AuthorizationLease();
+        }
+        internal void RequireActive()
+        {
+            Authorization.RequireActive();
+            if (!ReferenceEquals(accepted, transport.AcceptedAuthorization)) throw new AuthorizationRetiredException();
+            transport.CaptureAuthorizationValidation()();
+        }
+        internal IDisposable BindActor()
+        {
+            RequireActive();
+            return AuthorizationContext.BindActor(accepted, Authorization);
+        }
+        internal Action CaptureValidation() => transport.CaptureAuthorizationValidation();
+        private async Task<T> Run<T>(Func<Task<T>> work)
+        {
+            using var actor = BindActor();
+            var validate = transport.CaptureAuthorizationValidation();
+            var value = await work().ConfigureAwait(false);
+            validate();
+            RequireActive();
+            return value;
+        }
+        private async Task Run(Func<Task> work)
+        {
+            using var actor = BindActor();
+            var validate = transport.CaptureAuthorizationValidation();
+            await work().ConfigureAwait(false);
+            validate();
+            RequireActive();
+        }
+        public Task<T> GetJsonAsync<T>(string path, string? identity, CancellationToken ct, string? device = null) =>
+            Run(() => transport.GetJsonAsync<T>(path, identity, ct, device));
+        public Task<T> SendJsonAsync<T>(HttpMethod method, string path, object? body, string? identity, CancellationToken ct, string? device = null) =>
+            Run(() => transport.SendJsonAsync<T>(method, path, body, identity, ct, device));
+        public Task SendAsync(HttpMethod method, string path, object? body, string? identity, CancellationToken ct, string? device = null) =>
+            Run(() => transport.SendAsync(method, path, body, identity, ct, device));
+        public Task<T> SendBytesAsync<T>(HttpMethod method, string path, byte[] bytes, string mediaType, string? identity, CancellationToken ct, string? device = null) =>
+            Run(() => transport.SendBytesAsync<T>(method, path, bytes, mediaType, identity, ct, device));
+        public Task<byte[]> GetBytesAsync(string path, string? identity, CancellationToken ct, string? device = null) =>
+            Run(() => transport.GetBytesAsync(path, identity, ct, device));
+    }
 }
 
 public sealed record GroupSettings(string Name, string? Description = null, string? JoinPolicy = null, string? PostPolicy = null,
