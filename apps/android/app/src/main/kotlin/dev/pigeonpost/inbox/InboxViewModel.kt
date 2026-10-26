@@ -38,6 +38,7 @@ import dev.pigeonpost.core.calendar.CalendarAttemptStorage
 import dev.pigeonpost.core.calendar.CalendarStore
 import dev.pigeonpost.core.calendar.CalendarTransport
 import dev.pigeonpost.core.calendar.CalendarNotice
+import dev.pigeonpost.core.calendar.CalendarEventKey
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -186,6 +187,16 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun openPeer(peer: String?) { groups?.close(); inbox.selectPeer(peer) }
     fun openGroup(id: String) { inbox.selectPeer(null); inbox.showView(LeftView.INBOX); groups?.open(id) }
     fun openCalendar() { groups?.close(); inbox.selectPeer(null); inbox.showView(LeftView.CALENDAR) }
+    fun joinCalendar(key: CalendarEventKey, video: Boolean, expectedContext: String) {
+        val calendar = calendar ?: return
+        val host = calls ?: return
+        calendar.prepareScheduledJoin(key, video, expectedContext) { request ->
+            val state = calendar.state.value
+            if (state.contextId == expectedContext && state.openEvent == key) {
+                calendar.closeEvent(); host.joinScheduled(request)
+            } else request.close()
+        }
+    }
     fun setActive(value: Boolean) { inbox.setActive(value); groups?.setActive(value); calendar?.setActive(value) }
 
     /** `https://inbox.pigeonpost.dev/g/<id>#<token>`: show the group before anything is joined. */

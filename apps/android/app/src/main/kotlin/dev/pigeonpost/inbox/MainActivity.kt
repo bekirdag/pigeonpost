@@ -168,7 +168,7 @@ class MainActivity : ComponentActivity() {
         setIntent(Intent(intent).setAction(null))
         if (ring == null || ring.expiresAt * 1000 < System.currentTimeMillis() - 5000 || ring.identity != IncomingCalls.identity(this)) return
         IncomingCalls.answered(this, ring)
-        model.calls?.answer(ring.room, ring.ringToken, ring.kind)
+        model.calls?.answer(ring.room, ring.ringToken, ring.kind, ring.identity)
     }
     /** Android 14+: full-screen call screens can be switched off; ask once, then Settings keeps the way back. */
     private fun offerFullScreenCalls() {

@@ -63,6 +63,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
     val handleState by model.handles.state.collectAsStateWithLifecycle()
     val appearance by model.appearance.collectAsStateWithLifecycle()
     val callMode = model.calls?.mode?.collectAsStateWithLifecycle()?.value ?: CallHost.Mode.HIDDEN
+    val joiningMeeting = model.calls?.preparingScheduled?.collectAsStateWithLifecycle()?.value ?: false
     val store = model.inbox
     val calendarStore = model.calendar
     val calendar by (calendarStore?.state ?: remember { kotlinx.coroutines.flow.MutableStateFlow(dev.pigeonpost.core.calendar.CalendarState()) }).collectAsStateWithLifecycle()
@@ -134,7 +135,7 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
                         !session.termsAccepted -> TermsConsentScreen(session, model::acceptTerms, model::signOut, openLink)
                         state.accountLoading && !state.accountLoaded -> Loading("Opening your inboxes…")
                         state.acting == null -> FirstInbox(state, store, model::signOut, openLink)
-                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) })
+                        wide && state.leftView == LeftView.CALENDAR && calendarStore != null -> CalendarPane(calendarStore, calendar, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar)
                         wide -> TabletInbox(state, store, model, session.username, callMode,
                             newConversation = { sheet = "new" }, settings = { sheet = "settings" },
                             info = { sheet = "peer" }, newSubject = { sheet = "subject" },
@@ -176,6 +177,10 @@ fun PigeonpostApp(model: InboxViewModel, signIn: (String?, Boolean) -> Unit, cho
             "signout" -> Confirm("Sign out?", "Your session and local drafts will be removed from this device.", "Sign out",
                 { sheet = null; model.signOut() }, { sheet = "settings" })
         }
+        if (joiningMeeting && callMode == CallHost.Mode.HIDDEN && session.signedIn && session.termsAccepted) AlertDialog(
+            onDismissRequest = { model.calls?.cancelScheduledJoin() }, title = { Text("Joining meeting") },
+            text = { Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) { CircularProgressIndicator(Modifier.size(24.dp)); Text("Preparing your call…") } },
+            confirmButton = {}, dismissButton = { TextButton({ model.calls?.cancelScheduledJoin() }) { Text("Cancel") } })
         viewing?.let { file ->
             val identity = state.acting?.address
             if (identity == null) viewing = null
@@ -276,7 +281,7 @@ private fun PhoneHome(state: InboxState, store: InboxStore, model: InboxViewMode
                 LeftView.INBOX -> InboxList(state, store, model, groups, Modifier.fillMaxSize(), mailbox, new, newGroup, settings, openPeer)
                 LeftView.CALENDAR -> model.calendar?.let { calendar ->
                     val s by calendar.state.collectAsStateWithLifecycle()
-                    CalendarPane(calendar, s, { store.showView(LeftView.INBOX) })
+                    CalendarPane(calendar, s, { store.showView(LeftView.INBOX) }, if (model.calls == null) null else model::joinCalendar)
                 }
             }
         }

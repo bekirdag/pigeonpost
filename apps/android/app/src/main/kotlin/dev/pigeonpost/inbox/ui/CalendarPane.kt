@@ -22,12 +22,12 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 @Composable
-fun CalendarPane(store: CalendarStore, state: CalendarState, back: () -> Unit) {
-    key(state.contextId) { CalendarContents(store, state, back) }
+fun CalendarPane(store: CalendarStore, state: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)? = null) {
+    key(state.contextId) { CalendarContents(store, state, back, joinMeeting) }
 }
 
 @Composable
-private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () -> Unit) {
+private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () -> Unit, joinMeeting: ((CalendarEventKey, Boolean, String) -> Unit)?) {
     val p = Pp.colors
     val editor = s.editor
     var tools by remember { mutableStateOf(false) }
@@ -107,7 +107,8 @@ private fun CalendarContents(store: CalendarStore, s: CalendarState, back: () ->
         // Closing a sent form must not let its late success dismiss a replacement editor.
         if (store.state.value.editor?.id == session.id) { store.closeEditor(session.id); store.openEvent(key) }
     } }
-    if (editor == null) s.openEvent?.let { event -> key(event) { CalendarEventDetails(event, s, store, { store.closeEvent() }, store::beginEditor) } }
+    if (editor == null) s.openEvent?.let { event -> key(event) { CalendarEventDetails(event, s, store, { store.closeEvent() }, store::beginEditor,
+        join = joinMeeting?.let { action -> { video -> action(event, video, s.contextId) } }) } }
     discard?.let { record -> Confirm("Discard unconfirmed record?", "Discarding this record does not undo an event or import that the server already accepted. Inspect your calendar first to avoid creating a duplicate.", "Discard record",
         { store.discard(record.id, context); discard = null }, { discard = null }, enabled = s.busy.isEmpty()) }
 }

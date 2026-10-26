@@ -18,7 +18,7 @@ import kotlinx.coroutines.withContext
 import java.io.IOException
 
 @Composable
-internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store: CalendarStore, dismiss: () -> Unit, edit: (CalendarEventDraft) -> Unit) {
+internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store: CalendarStore, dismiss: () -> Unit, edit: (CalendarEventDraft) -> Unit, join: ((Boolean) -> Unit)? = null) {
     val response = s.details[key]
     val context = s.contextId
     val live = remember { AtomicBoolean(true) }
@@ -87,6 +87,11 @@ internal fun CalendarEventDetails(key: CalendarEventKey, s: CalendarState, store
                 Text("Scheduled meeting", style = MaterialTheme.typography.titleMedium)
                 SelectionContainer { Text(code.chunked(5).joinToString("-")) }
                 Text("Joining follows this event's time window, lobby and admission settings.", color = Pp.colors.secondary)
+                if (key.occurrenceId == null) Text("Open this meeting from a day’s agenda to choose its occurrence.", color = Pp.colors.secondary)
+                if (join != null && e.status != "cancelled" && o?.status != "cancelled") {
+                    Button({ join(false) }, enabled = !busy && key.occurrenceId != null, modifier = Modifier.fillMaxWidth()) { Text("Join by voice") }
+                    OutlinedButton({ join(true) }, enabled = !busy && key.occurrenceId != null, modifier = Modifier.fillMaxWidth()) { Text("Join with video") }
+                }
             }
             Text("Participants", style = MaterialTheme.typography.titleMedium)
             e.attendees.orEmpty().forEach { person ->
