@@ -37,9 +37,19 @@ import javax.net.ssl.SSLException
 import kotlin.coroutines.resumeWithException
 
 interface TokenProvider {
+    val authorizationLease: AuthorizationLease? get() = null
     /** A rejected token is renewed only if it is still the current token. */
     suspend fun token(rejected: String? = null): String
     suspend fun invalidate(rejected: String) {}
+    /** Session implementations recheck the expected grant under their own state mutex. */
+    suspend fun token(rejected: String?, expectedAuthorization: AuthorizationLease?): String {
+        if (authorizationLease !== expectedAuthorization) throw AuthorizationRetired()
+        return token(rejected)
+    }
+    suspend fun invalidate(rejected: String, expectedAuthorization: AuthorizationLease?) {
+        if (authorizationLease !== expectedAuthorization) throw AuthorizationRetired()
+        invalidate(rejected)
+    }
 }
 
 class SessionExpired : IOException("Your session expired. Sign in again.")
