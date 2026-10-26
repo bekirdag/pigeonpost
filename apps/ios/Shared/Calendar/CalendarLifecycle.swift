@@ -10,17 +10,20 @@ private struct CalendarLifecycle: ViewModifier {
         let mailbox: String?
         let enabled: Bool
         let delivery: Bool
+        let authorization: UUID
+        let actor: UUID
     }
     private var identity: Identity {
         .init(mailbox: session.status == .signedIn ? account.me?.address : nil,
-              enabled: account.features.calendar, delivery: account.features.calendarEmail)
+              enabled: account.features.calendar, delivery: account.features.calendarEmail,
+              authorization: session.authorizationId, actor: account.actingGeneration)
     }
     func body(content: Content) -> some View {
         content
             .onChange(of: identity, initial: true) { _, identity in
                 calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.delivery)
             }
-            .task(id: "\(identity.mailbox ?? "")|\(identity.enabled)|\(identity.delivery)|\(phase)") {
+            .task(id: "\(identity.mailbox ?? "")|\(identity.enabled)|\(identity.delivery)|\(identity.authorization)|\(identity.actor)|\(phase)") {
                 calendar.configure(mailbox: identity.mailbox, enabled: identity.enabled, emailEnabled: identity.delivery)
                 guard phase == .active, calendar.enabled else { return }
                 #if DEBUG

@@ -39,9 +39,9 @@ struct PigeonpostMacApp: App {
         _filtered = State(initialValue: filtered)
         _avatars = State(initialValue: AvatarStore(account: account))
         #if DEBUG
-        _calendar = State(initialValue: CalendarStore(client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
+        _calendar = State(initialValue: CalendarStore(account: account, client: CalendarFixtures.client(account: account), now: CalendarFixtures.now))
         #else
-        _calendar = State(initialValue: CalendarStore(client: account.client))
+        _calendar = State(initialValue: CalendarStore(account: account))
         #endif
         #if DEBUG
         // The phone's demo mailbox, for looking at the window without an account. Never touches the
