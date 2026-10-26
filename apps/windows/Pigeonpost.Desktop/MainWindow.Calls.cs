@@ -26,6 +26,7 @@ namespace Pigeonpost.Desktop;
 public sealed partial class MainWindow
 {
     private WebView2? callView;
+    private CoreWebView2? callCore;
     private Task? callsStarting;
     private bool callReady;
     private bool callsSignedIn;
@@ -66,6 +67,9 @@ public sealed partial class MainWindow
 #if DEBUG || UI_TESTS
         if (CallsDebug("TOKEN") is { } token) return fixtureCallTokens ??= new FixtureCallTokens(token);
 #endif
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) return fixtureCallTokens ??= new FixtureCallTokens("ui-preview-only-call-token");
+#endif
         return session;
     }
     private bool CallCurrent(NativeCallSession actor) => callsSignedIn && !lifetime.IsCancellationRequested
@@ -74,7 +78,7 @@ public sealed partial class MainWindow
     private CallPageTicket? CaptureCallPage(bool requireReady = true)
     {
         if (requireReady && !callReady || callSession is not { } actor || !CallCurrent(actor)
-            || callView is not { CoreWebView2: { } core } view) return null;
+            || callView is not { } view || callCore is not { } core) return null;
         var ticket = new CallPageTicket(view, core, actor, callDocument);
         return CallPageCurrent(ticket) ? ticket : null;
     }
@@ -83,7 +87,7 @@ public sealed partial class MainWindow
         try
         {
             return CallCurrent(ticket.Actor) && ReferenceEquals(callView, ticket.View)
-                && ReferenceEquals(callView?.CoreWebView2, ticket.Core) && callDocument == ticket.Document
+                && ReferenceEquals(callCore, ticket.Core) && callDocument == ticket.Document
                 && CallBridge.IsPage(ParseUri(ticket.Core.Source), callPage);
         }
         catch (Exception ex) when (ex is COMException or InvalidOperationException) { return false; }
@@ -95,9 +99,6 @@ public sealed partial class MainWindow
     // Called once the inbox is open (and again after each mailbox switch, which only reconfigures).
     private Task StartCallsAsync()
     {
-#if UI_TESTS
-        if (CallsDebug("PAGE") is null) return Task.CompletedTask;
-#endif
         if (lifetime.IsCancellationRequested || CurrentCallMailbox() is not { } mailbox) return Task.CompletedTask;
         if (callSession is { } current && CallCurrent(current))
         {
@@ -167,6 +168,7 @@ public sealed partial class MainWindow
             await view.EnsureCoreWebView2Async(environment);
             if (!CallCurrent(actor) || !ReferenceEquals(callView, view)) { CloseCreatedCallView(view, actor); return; }
             var core = view.CoreWebView2;
+            callCore = core;
             var settings = core.Settings;
             settings.AreDefaultContextMenusEnabled = false;
             settings.AreBrowserAcceleratorKeysEnabled = false;
@@ -181,7 +183,9 @@ public sealed partial class MainWindow
 #endif
             await core.AddScriptToExecuteOnDocumentCreatedAsync(CallBridge.RingObserverScript);
             if (!CallCurrent(actor) || !ReferenceEquals(callView, view)) { CloseCreatedCallView(view, actor); return; }
-            core.NavigationStarting += CallView_NavigationStarting;
+            // Retain the owned projection and bind callbacks to it, rather than comparing
+            // repeatedly projected property/event-sender objects by managed identity.
+            core.NavigationStarting += (_, e) => CallView_NavigationStarting(core, e);
             core.FrameNavigationStarting += (_, e) =>
             {
                 if (!CallCurrent(actor) || !ReferenceEquals(callView, view) || !CallBridge.IsPage(ParseUri(e.Uri), callPage)) e.Cancel = true;
@@ -191,18 +195,18 @@ public sealed partial class MainWindow
                 e.Handled = true;
                 if (CallCurrent(actor) && ReferenceEquals(callView, view) && CallBridge.IsExternalLink(ParseUri(e.Uri))) _ = Launcher.LaunchUriAsync(new Uri(e.Uri));
             };
-            core.PermissionRequested += CallView_PermissionRequested;
+            core.PermissionRequested += (_, e) => CallView_PermissionRequested(core, e);
             core.ScreenCaptureStarting += (sender, e) =>
             {
                 // Screen sharing is offered by the page itself; Windows' own picker chooses what is shared.
-                var allowed = CallCurrent(actor) && ReferenceEquals(callView, view) && ReferenceEquals(view.CoreWebView2, sender)
-                    && CallBridge.IsPage(ParseUri(sender.Source), callPage);
+                var allowed = CallCurrent(actor) && ReferenceEquals(callView, view) && ReferenceEquals(callCore, core)
+                    && CallBridge.IsPage(ParseUri(core.Source), callPage);
                 e.Cancel = !allowed;
                 DesktopLog.Write($"Call screen sharing {(allowed ? "started" : "refused")}");
             };
             core.DownloadStarting += (_, e) => { e.Cancel = true; e.Handled = true; };
-            core.WebMessageReceived += CallView_WebMessageReceived;
-            core.ProcessFailed += CallView_ProcessFailed;
+            core.WebMessageReceived += (_, e) => CallView_WebMessageReceived(core, e);
+            core.ProcessFailed += (_, e) => CallView_ProcessFailed(core, e);
             DesktopLog.Write("Call view created");
             core.Navigate(callPage.AbsoluteUri);
         }
@@ -230,13 +234,19 @@ public sealed partial class MainWindow
     // browser rather than replacing the call client.
     private void CallView_NavigationStarting(CoreWebView2 sender, CoreWebView2NavigationStartingEventArgs e)
     {
-        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callView?.CoreWebView2, sender)) { e.Cancel = true; return; }
+        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callCore, sender))
+        {
+            e.Cancel = true;
+            DesktopLog.Write("Call navigation refused: retired host");
+            return;
+        }
         var target = ParseUri(e.Uri);
         if (CallBridge.IsPage(target, callPage))
         {
             if (callDocument > 0) pendingCall = null;
             callDocument++;
             callReady = false; // A reload starts again from a page that knows nothing.
+            DesktopLog.Write("Call page navigating");
             return;
         }
         e.Cancel = true;
@@ -258,7 +268,11 @@ public sealed partial class MainWindow
     private async void CallView_WebMessageReceived(CoreWebView2 sender, CoreWebView2WebMessageReceivedEventArgs e)
     {
         if (CaptureCallPage(requireReady: false) is not { } page || !ReferenceEquals(page.Core, sender)
-            || !CallBridge.IsPage(ParseUri(e.Source), callPage)) return;
+            || !CallBridge.IsPage(ParseUri(e.Source), callPage))
+        {
+            DesktopLog.Write("Call bridge ignored: host or document changed");
+            return;
+        }
         string? json;
         try { json = e.WebMessageAsJson; } catch (Exception) { return; }
         switch (CallBridge.Parse(json))
@@ -308,7 +322,7 @@ public sealed partial class MainWindow
 
     private void CallView_ProcessFailed(CoreWebView2 sender, CoreWebView2ProcessFailedEventArgs e)
     {
-        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callView?.CoreWebView2, sender)) return;
+        if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callCore, sender)) return;
         DesktopLog.Write($"Call view process failed: {e.ProcessFailedKind}");
         callReady = false;
         callRinging = false;
@@ -361,6 +375,9 @@ public sealed partial class MainWindow
 
     private async Task PlaceCallAsync(string peer, bool video)
     {
+#if UI_TESTS
+        if (CallsDebug("PAGE") is null) { AccountStatus.Text = "Calling is not configured in this preview."; return; }
+#endif
         if (!callsSignedIn) return;
         if (callSession is not { } actor || !CallCurrent(actor))
         {
@@ -472,6 +489,7 @@ public sealed partial class MainWindow
         callDocument = 0;
         var view = callView;
         callView = null;
+        callCore = null;
         callReady = false;
         callRinging = false;
         callMode = CallMode.Hidden;
