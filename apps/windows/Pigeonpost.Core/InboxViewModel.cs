@@ -52,14 +52,16 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     {
         if (!CanCompose || DraftKey() is not { } key) return;
         if (!attachmentDrafts.TryGetValue(key, out var list)) attachmentDrafts[key] = list = [];
+        var changed = false;
         foreach (var file in files)
-            if (list.All(existing => existing.Id != file.Id)) list.Add(file);
+            if (list.All(existing => existing.Id != file.Id)) { list.Add(file); changed = true; }
+        if (changed) TouchDraft(key);
         UpdateDraftAttachments();
     }
     public void RemoveAttachment(DraftAttachment file)
     {
         if (!CanCompose || DraftKey() is not { } key) return;
-        if (attachmentDrafts.TryGetValue(key, out var list)) list.RemoveAll(f => f.Id == file.Id);
+        if (attachmentDrafts.TryGetValue(key, out var list) && list.RemoveAll(f => f.Id == file.Id) > 0) TouchDraft(key);
         UpdateDraftAttachments();
     }
     private void UpdateDraftAttachments()
@@ -73,7 +75,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public event EventHandler? MessagesUpdated;
     public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
     public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); } } }
-    public bool CanCompose => SelectedConversation is not null && !IsBusy && !IsSending && !IsSelectedBlocked;
+    public bool CanCompose => ActiveAccount is not null && SelectedConversation is not null && !IsBusy && !IsSending && !IsSelectedBlocked;
     public bool HasConversation => SelectedConversation is not null;
     public bool HasError => !string.IsNullOrEmpty(Error);
     public string? Error { get => error; private set { if (Set(ref error, value)) Changed(nameof(HasError)); } }
@@ -101,8 +103,9 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         get => draft;
         set
         {
+            if (disposed || ActiveAccount is null) return;
             if (!Set(ref draft, value)) return;
-            if (DraftKey() is { } key) drafts[key] = value;
+            if (DraftKey() is { } key) { drafts[key] = value; TouchDraft(key); }
         }
     }
     public string Find
@@ -115,22 +118,34 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
 
     public async Task InitializeAsync()
     {
-        IsBusy = true;
+        if (!PrepareAccount(allowReplacement: true)) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
+        var intent = ++initializeVersion;
         try
         {
-            Mailboxes = await service.GetMailboxesAsync(mailboxScope.Token);
-            if (disposed) return;
+            IsBusy = true;
+            var mailboxes = await service.GetMailboxesAsync(mailboxScope.Token);
+            operation.Check();
+            if (intent != initializeVersion) return;
+            Mailboxes = mailboxes;
             Changed(nameof(Mailboxes));
-            if (Mailboxes.FirstOrDefault() is { } first) await SwitchMailboxAsync(first);
+            var target = Mailboxes.FirstOrDefault(m => m.Address == SelectedMailbox?.Address) ?? Mailboxes.FirstOrDefault();
+            if (target is null) { var empty = new InboxActor(operation.Accepted); operation.Check(); ResetAccount(empty); return; }
+            if (SelectedMailbox?.Address == target.Address) await RefreshAsync();
+            else await SwitchMailboxAsync(target);
         }
         catch (OperationCanceledException) { }
-        catch (Exception ex) { Error = Describe(ex); }
-        finally { if (!disposed && loading is null) IsBusy = false; }
+        catch (Exception ex) { if (operation.IsCurrent && intent == initializeVersion) Error = Describe(ex); }
+        finally { if (operation.IsCurrent && intent == initializeVersion && loading is null) IsBusy = false; }
     }
 
     public async Task SwitchMailboxAsync(Mailbox mailbox)
     {
         ObjectDisposedException.ThrowIf(disposed, this);
+        if (!PrepareAccount(allowReplacement: false)) return;
+        using var operation = BeginOperation();
+        if (operation is null || Mailboxes.Count > 0 && Mailboxes.All(m => m.Address != mailbox.Address)) return;
         if (SelectedMailbox?.Address == mailbox.Address) return;
         RememberSelection();
         mailboxScope.Cancel();
@@ -140,6 +155,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         SelectedMailbox = mailbox;
         snapshot = InboxSnapshot.Empty;
         allConversations = [];
+        callEntries = [];
         StableList.Reconcile(Conversations, [], c => c.Peer, StableList.SameConversation);
         IsSending = false;
         Error = null;
@@ -154,6 +170,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public async Task RefreshAsync(bool background = false)
     {
         if (SelectedMailbox is not { } mailbox || disposed) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
         if (background && (IsBusy || IsSending || loading is not null)) return;
         var generation = mailboxVersion;
         var requestVersion = ++loadVersion;
@@ -166,7 +184,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         try
         {
             var loaded = await service.LoadAsync(mailbox.Address, token);
-            if (disposed || generation != mailboxVersion || requestVersion != loadVersion) return;
+            operation.Check();
+            if (!operation.IsMailbox(generation) || requestVersion != loadVersion) return;
             snapshot = loaded;
             var serverIds = loaded.Messages.Select(m => m.MessageId).ToHashSet(StringComparer.Ordinal);
             pending.RemoveAll(p => p.Mailbox == mailbox.Address && p.SentCopyId is { } id && serverIds.Contains(id));
@@ -176,11 +195,11 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         catch (OperationCanceledException) { }
         catch (Exception ex)
         {
-            if (!disposed && generation == mailboxVersion && requestVersion == loadVersion) Error = Describe(ex);
+            if (operation.IsMailbox(generation) && requestVersion == loadVersion) Error = Describe(ex);
         }
         finally
         {
-            if (!disposed && generation == mailboxVersion && requestVersion == loadVersion)
+            if (operation.IsMailbox(generation) && requestVersion == loadVersion)
             {
                 IsBusy = false;
                 loading?.Dispose();
@@ -215,11 +234,15 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public async Task SendDraftAsync()
     {
         if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(Draft) && !HasDraftAttachments) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
         var text = Draft;
         var files = DraftAttachments.ToArray();
         var fileService = attachmentService ?? service as IAttachmentService;
         if (files.Length > 0 && fileService is null) { Error = "File sending is unavailable. Please try again."; return; }
         var subject = SelectedSubject?.Id;
+        var sentDraftKey = (mailbox.Address, conversation.Peer, subject ?? "");
+        var revision = draftRevisions.GetValueOrDefault(sentDraftKey);
         var generation = mailboxVersion;
         var token = mailboxScope.Token;
         var row = new PendingMessage(Guid.NewGuid().ToString("N"), mailbox.Address, conversation.Peer,
@@ -235,35 +258,48 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         {
             var uploaded = new List<MessageAttachment>();
             foreach (var file in files)
-                uploaded.Add(await fileService!.UploadAsync(mailbox.Address, file.Filename, await file.ReadAsync(token), token));
-            token.ThrowIfCancellationRequested();
+            {
+                operation.Check(token);
+                operation.RequireService(fileService!.AcceptedAuthorization);
+                var bytes = await file.ReadAsync(token);
+                operation.Check(token);
+                var attachment = await fileService.UploadAsync(mailbox.Address, file.Filename, bytes, token);
+                operation.Check(token);
+                uploaded.Add(attachment);
+            }
+            operation.Check(token);
             sendingMessage = true;
             var sent = files.Length == 0
                 ? await service.SendAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, token)
                 : await fileService!.SendAttachmentsAsync(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id).ToArray(), token);
-            ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId, Attachments = uploaded });
-            var sentDraftKey = (mailbox.Address, conversation.Peer, subject ?? "");
-            if (drafts.GetValueOrDefault(sentDraftKey) == text) drafts[sentDraftKey] = "";
-            if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
-            if (generation != mailboxVersion || disposed) return;
-            if (DraftKey() == (mailbox.Address, conversation.Peer, subject ?? "") && Draft == text) Draft = "";
+            operation.Check(); // a completed receipt may update its original inbox after a mailbox switch
+            operation.Local(() =>
+            {
+                ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId, Attachments = uploaded });
+                if (!OwnsDraft(sentDraftKey, revision)) return;
+                drafts[sentDraftKey] = "";
+                if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
+            });
+            if (!operation.IsMailbox(generation)) return;
+            if (DraftKey() == sentDraftKey && OwnsDraft(sentDraftKey, revision)) Draft = "";
             await RefreshAsync();
         }
         catch (Exception ex)
         {
-            ReplacePending(row with { Status = DeliveryStatus.Failed });
-            if (generation != mailboxVersion || disposed) return;
+            if (!operation.IsCurrent) return;
+            if (!operation.TryLocal(() => ReplacePending(row with { Status = DeliveryStatus.Failed }))) return;
+            if (!operation.IsMailbox(generation)) return;
             if (ex is not OperationCanceledException) Error = ex is PostboxException ? Describe(ex)
                 : sendingMessage ? "Delivery could not be confirmed. Check this conversation before trying again."
                 : "Could not upload the files. Your message and attachments are still in the draft.";
             Rebuild();
         }
-        finally { if (!disposed && generation == mailboxVersion) IsSending = false; }
+        finally { if (operation.IsMailbox(generation)) IsSending = false; }
     }
 
     public async Task StartConversationAsync(string peer, string firstMessage)
     {
-        if (SelectedMailbox is not { } mailbox || IsBusy || IsSending) return;
+        if (SelectedMailbox is not { } mailbox || ActiveAccount is null || IsBusy || IsSending) return;
         peer = PostAddress.Canonical(PostAddress.Input(peer));
         if (!PostAddress.IsValid(peer))
         {
@@ -294,23 +330,29 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public async Task<bool> CreateSubjectAsync(string title)
     {
         if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(title)) return false;
+        using var operation = BeginOperation();
+        if (operation is null) return false;
         var generation = mailboxVersion;
+        var context = ContextVersion;
         try
         {
             var id = await service.CreateThreadAsync(mailbox.Address, conversation.Peer, title.Trim(), mailboxScope.Token);
-            if (disposed || generation != mailboxVersion) return false;
+            operation.Check();
+            if (!operation.IsMailbox(generation)) return false;
             await RefreshAsync();
-            if (disposed || generation != mailboxVersion) return false;
-            if (SelectedConversation?.Peer == conversation.Peer) SelectSubject(Subjects.FirstOrDefault(s => s.Id == id));
+            if (!operation.IsMailbox(generation)) return false;
+            if (context == ContextVersion && SelectedConversation?.Peer == conversation.Peer) SelectSubject(Subjects.FirstOrDefault(s => s.Id == id));
             return true;
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        catch (Exception ex) { if (operation.IsMailbox(generation) && ex is not OperationCanceledException) Error = Describe(ex); }
         return false;
     }
 
     public async Task<bool> SaveContactAsync(string peer, bool known, string? alias, bool blocked, IEnumerable<string> verbs)
     {
         if (SelectedMailbox is not { } mailbox) return false;
+        using var operation = BeginOperation();
+        if (operation is null) return false;
         var generation = mailboxVersion;
         peer = ExactContact(peer)?.Peer ?? peer;
         try
@@ -322,70 +364,101 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
                 await service.SetContactAsync(mailbox.Address, new(peer, alias?.Trim(), blocked ? "block" : "allow",
                     grants.Length > 0 ? "auto" : "review", grants), mailboxScope.Token);
             }
-            if (!disposed && generation == mailboxVersion) await RefreshAsync();
-            return true;
+            operation.Check();
+            if (operation.IsMailbox(generation)) await RefreshAsync();
+            return operation.IsCurrent;
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        catch (Exception ex) { if (operation.IsMailbox(generation) && ex is not OperationCanceledException) Error = Describe(ex); }
         return false;
     }
 
     public async Task DeleteSubjectAsync()
     {
         if (!CanDeleteSubject || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || SelectedSubject is not { } subject) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
         var generation = mailboxVersion;
         var messageIds = subject.Messages.Select(m => m.Id).ToHashSet(StringComparer.Ordinal);
         IsBusy = true;
         try
         {
             await service.DeleteThreadAsync(mailbox.Address, subject.Id, mailboxScope.Token);
-            drafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
-            attachmentDrafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
-            pending.RemoveAll(p => p.Mailbox == mailbox.Address && (p.ThreadId == subject.Id || messageIds.Contains(p.Id)));
-            if (!disposed && generation == mailboxVersion) await RefreshAsync();
+            operation.Check();
+            operation.Local(() =>
+            {
+                drafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
+                attachmentDrafts.Remove((mailbox.Address, conversation.Peer, subject.Id));
+                draftRevisions.Remove((mailbox.Address, conversation.Peer, subject.Id));
+                pending.RemoveAll(p => p.Mailbox == mailbox.Address && (p.ThreadId == subject.Id || messageIds.Contains(p.Id)));
+            });
+            if (operation.IsMailbox(generation)) await RefreshAsync();
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
-        finally { if (!disposed && generation == mailboxVersion && loading is null) IsBusy = false; }
+        catch (Exception ex) { if (operation.IsMailbox(generation) && ex is not OperationCanceledException) Error = Describe(ex); }
+        finally { if (operation.IsMailbox(generation) && loading is null) IsBusy = false; }
     }
 
     public async Task ArchiveSelectedAsync()
     {
         if (SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
         var generation = mailboxVersion;
         try
         {
             await service.SetArchivedAsync(mailbox.Address, conversation.Peer, !ShowArchived, mailboxScope.Token);
-            if (!disposed && generation == mailboxVersion) await RefreshAsync();
+            operation.Check();
+            if (operation.IsMailbox(generation)) await RefreshAsync();
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        catch (Exception ex) { if (operation.IsMailbox(generation) && ex is not OperationCanceledException) Error = Describe(ex); }
     }
 
     // A toast's "Mark as read": every unread message from that peer in that mailbox, without
     // opening the window or changing the selection. Only the account's own mailboxes are accepted.
     public async Task<int> MarkConversationReadAsync(string mailboxAddress, string peer, CancellationToken cancellationToken = default)
     {
-        if (Mailboxes.All(m => m.Address != mailboxAddress)) return 0;
-        var loaded = await service.LoadAsync(mailboxAddress, cancellationToken);
-        var target = ConversationBuilder.ResolvePeer(peer, loaded, Mailboxes);
-        var unread = loaded.Messages.Where(m => !m.IsOutgoing && m.Read != true
-            && ConversationBuilder.ResolvePeer(m.PeerKey, loaded, Mailboxes) == target).ToArray();
-        foreach (var message in unread) await service.AcknowledgeAsync(mailboxAddress, message.MessageId, cancellationToken);
-        if (!disposed && SelectedMailbox?.Address == mailboxAddress) await RefreshAsync(background: true);
-        return unread.Length;
+        using var operation = BeginOperation();
+        if (operation is null || Mailboxes.All(m => m.Address != mailboxAddress)) return 0;
+        var own = Mailboxes;
+        try
+        {
+            var loaded = await service.LoadAsync(mailboxAddress, cancellationToken);
+            operation.Check(cancellationToken);
+            var target = ConversationBuilder.ResolvePeer(peer, loaded, own);
+            var unread = loaded.Messages.Where(m => !m.IsOutgoing && m.Read != true
+                && ConversationBuilder.ResolvePeer(m.PeerKey, loaded, own) == target).ToArray();
+            foreach (var message in unread)
+            {
+                operation.Check(cancellationToken);
+                await service.AcknowledgeAsync(mailboxAddress, message.MessageId, cancellationToken);
+                operation.Check(cancellationToken);
+            }
+            if (operation.IsCurrent && SelectedMailbox?.Address == mailboxAddress) await RefreshAsync(background: true);
+            return operation.IsCurrent ? unread.Length : 0;
+        }
+        catch (OperationCanceledException) { return 0; }
     }
 
     // A toast's inline reply: sent as the composer would send it, into the same subject, and the
     // conversation counts as read once answered.
     public async Task<bool> ReplyFromAlertAsync(string mailboxAddress, string peer, string? threadId, string text, CancellationToken cancellationToken = default)
     {
-        if (string.IsNullOrWhiteSpace(text) || Mailboxes.All(m => m.Address != mailboxAddress)) return false;
-        await service.SendAsync(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId, cancellationToken);
-        await MarkConversationReadAsync(mailboxAddress, peer, cancellationToken);
-        return true;
+        using var operation = BeginOperation();
+        if (operation is null || string.IsNullOrWhiteSpace(text) || Mailboxes.All(m => m.Address != mailboxAddress)) return false;
+        try
+        {
+            await service.SendAsync(mailboxAddress, peer, RequestEnvelope.Work(text.Trim()), string.IsNullOrEmpty(threadId) ? null : threadId, cancellationToken);
+            operation.Check(cancellationToken);
+            await MarkConversationReadAsync(mailboxAddress, peer, cancellationToken);
+            return operation.IsCurrent;
+        }
+        catch (OperationCanceledException) { return false; }
     }
 
     public async Task AcknowledgeSelectedAsync(Func<bool>? isVisible = null)
     {
         if (SelectedMailbox is not { } mailbox || SelectedSubject is not { } subject || isVisible?.Invoke() == false) return;
+        using var operation = BeginOperation();
+        if (operation is null) return;
         var context = ContextVersion;
         var unread = subject.Messages.Where(m => !m.IsOutgoing && !m.Read).ToArray();
         if (unread.Length == 0) return;
@@ -395,12 +468,13 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         {
             foreach (var message in unread)
             {
-                if (disposed || generation != mailboxVersion || context != ContextVersion || isVisible?.Invoke() == false) break;
+                if (!operation.IsMailbox(generation) || context != ContextVersion || isVisible?.Invoke() == false) break;
                 await service.AcknowledgeAsync(mailbox.Address, message.Id, token);
+                operation.Check(token);
             }
-            if (!disposed && generation == mailboxVersion) await RefreshAsync();
+            if (operation.IsMailbox(generation)) await RefreshAsync();
         }
-        catch (Exception ex) { if (!disposed && generation == mailboxVersion && ex is not OperationCanceledException) Error = Describe(ex); }
+        catch (Exception ex) { if (operation.IsMailbox(generation) && ex is not OperationCanceledException) Error = Describe(ex); }
     }
 
     private void Rebuild()
@@ -522,6 +596,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     {
         if (disposed) return;
         disposed = true;
+        account?.Authorization.Retire();
+        account = null;
         mailboxScope.Cancel();
         loading?.Cancel();
         loading?.Dispose();
