@@ -1033,6 +1033,7 @@ tests.AddRange(AccountTests.All());
 tests.AddRange(AuthorizationTests.All());
 tests.AddRange(GroupStateAuthorizationTests.All());
 tests.AddRange(GroupClientAuthorizationTests.All());
+tests.AddRange(AvatarAuthorizationTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

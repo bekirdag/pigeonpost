@@ -690,26 +690,29 @@ public sealed partial class MainWindow
 
     private async Task PaintAvatarAsync(Border border, string key)
     {
-        var bytes = await avatars.ImageAsync(key, lifetime.Token);
-        if (border.Tag is not string tag || AvatarDirectory.Key(tag) != key) return; // recycled for another row
-        if (bytes is null)
-        {
-            border.ClearValue(Border.BackgroundProperty);
-            if (border.Child is UIElement initials) initials.Opacity = 1;
-            return;
-        }
+        var version = avatars.Version;
+        bool Current() => !lifetime.IsCancellationRequested && avatars.IsCurrent(version)
+            && border.Tag is string tag && AvatarDirectory.Key(tag) == key;
         try
         {
+            var bytes = await avatars.ImageAsync(key, lifetime.Token);
+            if (!Current()) return;
+            if (bytes is null)
+            {
+                border.ClearValue(Border.BackgroundProperty);
+                if (border.Child is UIElement initials) initials.Opacity = 1;
+                return;
+            }
             var image = new BitmapImage { DecodePixelWidth = 96 };
             using var stream = new Windows.Storage.Streams.InMemoryRandomAccessStream();
             await stream.WriteAsync(bytes.AsBuffer());
             stream.Seek(0);
             await image.SetSourceAsync(stream);
-            if (border.Tag is not string again || AvatarDirectory.Key(again) != key) return;
+            if (!Current() || !avatars.TryWithCurrent(version, () => AvatarFiles.Remember(key, bytes))) return;
             border.Background = new ImageBrush { ImageSource = image, Stretch = Stretch.UniformToFill };
             if (border.Child is UIElement initials) initials.Opacity = 0;
-            AvatarFiles.Remember(key, bytes);
         }
+        catch (OperationCanceledException) { }
         catch (Exception ex) { DesktopLog.Error("Showing a picture failed", ex); }
     }
 

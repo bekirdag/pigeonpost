@@ -294,12 +294,16 @@ public sealed partial class PostboxClient
     // Up to 100 addresses per request; the map is keyed by the string sent, null = no picture.
     public async Task<IReadOnlyDictionary<string, AvatarInfo?>> LookupAvatarsAsync(IReadOnlyCollection<string> addresses, CancellationToken cancellationToken)
     {
+        using var operation = AuthorizationContext.Capture(tokens.AcceptedAuthorization);
+        var owner = new RequestAuthorization(tokens);
         var result = new Dictionary<string, AvatarInfo?>(StringComparer.Ordinal);
         foreach (var batch in addresses.Distinct(StringComparer.Ordinal).Chunk(100))
         {
+            owner.Check(cancellationToken);
             var body = await ReadAsync<AvatarsResponse>("/v1/avatars?addresses=" + string.Join(',', batch.Select(Uri.EscapeDataString)), cancellationToken).ConfigureAwait(false);
             foreach (var address in batch) result[address] = body.Avatars?.GetValueOrDefault(address);
         }
+        owner.Check(cancellationToken);
         return result;
     }
 
