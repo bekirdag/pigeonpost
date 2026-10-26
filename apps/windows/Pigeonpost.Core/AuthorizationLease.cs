@@ -49,6 +49,20 @@ public sealed class AuthorizationContext : IDisposable
         lease?.RequireActive(); localConstraint?.RequireActive();
         previous = Slot.Value; frame = new(lease, localConstraint, previous); Slot.Value = frame;
     }
+    private AuthorizationContext(Frame captured)
+    {
+        previous = Slot.Value;
+        var frames = new List<Frame>();
+        for (var scope = captured; scope is not null; scope = scope.Parent) frames.Add(scope);
+        Frame? merged = previous;
+        for (var index = frames.Count - 1; index >= 0; index--)
+        {
+            var scope = frames[index];
+            scope.Lease?.RequireActive(); scope.LocalConstraint?.RequireActive();
+            merged = new(scope.Lease, scope.LocalConstraint, merged);
+        }
+        frame = merged!; Slot.Value = frame;
+    }
     internal static AuthorizationContext Capture(AuthorizationLease? fallback) => new(IsBound ? Current : fallback, true);
     internal static AuthorizationContext BindActor(AuthorizationLease? accepted, AuthorizationLease actor)
     {
@@ -57,6 +71,11 @@ public sealed class AuthorizationContext : IDisposable
         // A fixed-credential stand-in may lack a login grant. Its local actor still cancels work;
         // it never becomes network authority or replaces a real AccountSession's grant.
         return new(accepted is null ? null : actor, actor);
+    }
+    internal static Func<AuthorizationContext> CaptureBinding()
+    {
+        var captured = Slot.Value ?? throw new AuthorizationRetiredException();
+        return () => new AuthorizationContext(captured);
     }
     internal static Action CaptureValidation(IAccessTokenProvider provider) => CaptureValidation(() => provider.AcceptedAuthorization);
     internal static Action CaptureValidation(Func<AuthorizationLease?> currentAuthorization)

@@ -5,6 +5,7 @@ public interface IInboxService
     // The live service exposes its accepted login; context-free stand-ins retain null.
     AuthorizationLease? AcceptedAuthorization => null;
     string? RecoveryOwnerKey => null;
+    string? RecoveryOrigin => null;
     Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken cancellationToken);
     Task<InboxSnapshot> LoadAsync(string identity, CancellationToken cancellationToken);
     Task<SendReceipt> SendAsync(string identity, string peer, string body, string? threadId, CancellationToken cancellationToken);

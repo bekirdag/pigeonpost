@@ -21,10 +21,10 @@ internal static class MessageActionsPostbox
             var from = alice.GetProperty("address").GetString()!; var to = bob.GetProperty("address").GetString()!;
             using var handler = new HttpClientHandler { AllowAutoRedirect = false };
             using var http = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) };
-            using var a = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!), endpoint);
-            using var b = new PostboxClient(http, new Tokens(bob.GetProperty("token").GetString()!), endpoint);
-            using var c = new PostboxClient(http, new Tokens(carol.GetProperty("token").GetString()!), endpoint);
-            using var loss = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!), proxy);
+            using var a = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!, 'a'), endpoint);
+            using var b = new PostboxClient(http, new Tokens(bob.GetProperty("token").GetString()!, 'b'), endpoint);
+            using var c = new PostboxClient(http, new Tokens(carol.GetProperty("token").GetString()!, 'c'), endpoint);
+            using var loss = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!, 'a'), proxy);
 
             stage = "capabilities";
             var features = await a.GetCapabilitiesAsync(default);
@@ -86,7 +86,35 @@ internal static class MessageActionsPostbox
             await b.DeleteMessageAsync(to, recovered.MessageId!, default);
             Check((await b.GetInboxAsync(to)).Messages!.All(m => m.MsgRef != request.MsgRef));
             Check((await a.GetMessageInfoAsync(from, recovered.SentCopyId!, default)).Versions?.Count == 2);
-            Console.WriteLine("PASS Windows postbox interoperability: folded edits, replies, receipt privacy, owned copies, exact committed-loss recovery and version deletion.");
+
+            stage = "protected restart recovery";
+            var custodyFolder = Path.Combine(Path.GetTempPath(), "pp-windows-custody-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(custodyFolder);
+            try
+            {
+                using var protector = new MessageAttemptStoreTests.Protector();
+                using var originalScope = await MessageRecoveryScope.AuthorizeAsync(loss, from) ?? throw new InvalidOperationException();
+                var prepared = PreparedMessageAttempt.Create(originalScope, new(from, to, "Protected restart fixture ğ 😀"));
+                var store = new FileMessageAttemptStore(custodyFolder, protector);
+                await store.SaveAsync(originalScope, prepared);
+                await Control(http, proxy, "after");
+                await ExpectLoss(() => loss.SendPreparedMessageAsync(originalScope, prepared, default));
+                await CheckAttempts(http, proxy, 1, prepared.Request.MsgRef);
+                originalScope.Dispose(); Check(!originalScope.IsCurrent);
+                await Control(http, proxy, "off");
+                var restartTokens = new Tokens(alice.GetProperty("token").GetString()!, 'a');
+                using var restarted = new PostboxClient(http, restartTokens, proxy);
+                using var currentScope = await MessageRecoveryScope.AuthorizeAsync(restarted, from) ?? throw new InvalidOperationException();
+                var restored = await new FileMessageAttemptStore(custodyFolder, protector).LoadAsync(currentScope, to, null) ?? throw new InvalidOperationException();
+                var result = await restarted.SendPreparedMessageAsync(currentScope, restored, default);
+                Check(result.Duplicate == true && result.MsgRef == prepared.Request.MsgRef);
+                await CheckAttempts(http, proxy, 2, prepared.Request.MsgRef);
+                Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == prepared.Request.MsgRef) == 1);
+                Check(await store.RemoveAsync(currentScope, to, null, result.MsgRef!));
+                restartTokens.AcceptedAuthorization?.Retire();
+            }
+            finally { Directory.Delete(custodyFolder, recursive: true); }
+            Console.WriteLine("PASS Windows postbox interoperability: folded edits, replies, receipt privacy, owned copies, exact committed-loss and protected restart recovery, version deletion.");
             return 0;
         }
         catch (Exception ex)
@@ -123,9 +151,11 @@ internal static class MessageActionsPostbox
         Check(attempts.All(a => a.GetProperty("sha").GetString() == attempts[0].GetProperty("sha").GetString()));
         Check(attempts.All(a => a.GetProperty("status").GetInt32() is 200 or 201));
     }
-    private sealed class Tokens(string value) : IAccessTokenProvider
+    private sealed class Tokens(string value, char owner) : IAccessTokenProvider
     {
         public AuthorizationLease? AcceptedAuthorization { get; } = new();
+        // Fixture-only stable subjects. Production derives this partition at the trusted exchange.
+        public string? RecoveryOwnerKey => new string(owner, 64);
         public Task<string> GetTokenAsync(CancellationToken ct) => Task.FromResult(value);
         public Task<string> RefreshTokenAsync(CancellationToken ct) => Task.FromResult(value);
         public override string ToString() => "FixtureTokens(redacted)";

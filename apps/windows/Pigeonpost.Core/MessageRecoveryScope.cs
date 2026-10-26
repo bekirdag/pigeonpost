@@ -11,15 +11,17 @@ public sealed class MessageRecoveryScope : IDisposable
     private readonly AuthorizationLease actor;
     private readonly Action validate;
     private readonly Action<Action> write;
+    private readonly Func<AuthorizationContext> bind;
     private bool authorized;
     public string OwnerKey { get; }
     public string Mailbox { get; }
+    public string Origin { get; }
 
     private MessageRecoveryScope(IInboxService service, AuthorizationLease accepted, AuthorizationLease actor,
-        string ownerKey, string mailbox, Action validate, Action<Action> write)
+        string ownerKey, string mailbox, string origin, Action validate, Action<Action> write, Func<AuthorizationContext> bind)
     {
         this.service = service; this.accepted = accepted; this.actor = actor;
-        OwnerKey = ownerKey; Mailbox = mailbox; this.validate = validate; this.write = write;
+        OwnerKey = ownerKey; Mailbox = mailbox; Origin = origin; this.validate = validate; this.write = write; this.bind = bind;
     }
 
     public static async Task<MessageRecoveryScope?> AuthorizeAsync(IInboxService service, string canonicalMailbox, CancellationToken cancellationToken = default)
@@ -29,14 +31,15 @@ public sealed class MessageRecoveryScope : IDisposable
         var initial = AuthorizationContext.CaptureValidation(() => service.AcceptedAuthorization);
         initial(); cancellationToken.ThrowIfCancellationRequested();
         var ownerKey = service.RecoveryOwnerKey;
-        if (accepted is null || !OwnerKeyShape(ownerKey)) return null;
+        var origin = NormalizeOrigin(service.RecoveryOrigin);
+        if (accepted is null || !OwnerKeyShape(ownerKey) || origin is null) return null;
         var actor = accepted.Child();
         try
         {
             using var context = AuthorizationContext.BindActor(accepted, actor);
-            var scope = new MessageRecoveryScope(service, accepted, actor, ownerKey!, canonicalMailbox,
+            var scope = new MessageRecoveryScope(service, accepted, actor, ownerKey!, canonicalMailbox, origin,
                 AuthorizationContext.CaptureValidation(() => service.AcceptedAuthorization),
-                AuthorizationContext.CaptureWriteBarrier(() => service.AcceptedAuthorization));
+                AuthorizationContext.CaptureWriteBarrier(() => service.AcceptedAuthorization), AuthorizationContext.CaptureBinding());
             scope.CheckBinding(cancellationToken);
             var mailboxes = await service.GetMailboxesAsync(cancellationToken);
             scope.CheckBinding(cancellationToken);
@@ -59,7 +62,8 @@ public sealed class MessageRecoveryScope : IDisposable
     private void CheckBinding(CancellationToken cancellationToken)
     {
         cancellationToken.ThrowIfCancellationRequested(); validate(); actor.RequireActive();
-        if (!ReferenceEquals(accepted, service.AcceptedAuthorization) || service.RecoveryOwnerKey != OwnerKey)
+        if (!ReferenceEquals(accepted, service.AcceptedAuthorization) || service.RecoveryOwnerKey != OwnerKey
+            || NormalizeOrigin(service.RecoveryOrigin) != Origin)
             throw new AuthorizationRetiredException();
         AuthorizationContext.CaptureValidation(() => service.AcceptedAuthorization)();
     }
@@ -71,10 +75,21 @@ public sealed class MessageRecoveryScope : IDisposable
         RequireCurrent();
         return result;
     }
-    private static bool CanonicalMailbox(string address) => address.Length == 29 && address.StartsWith("/k/", StringComparison.Ordinal)
+    internal AuthorizationContext BindForService(IInboxService expectedService)
+    {
+        RequireCurrent();
+        if (!ReferenceEquals(service, expectedService)) throw new AuthorizationRetiredException();
+        var context = bind();
+        try { RequireCurrent(); return context; } catch { context.Dispose(); throw; }
+    }
+    internal static bool CanonicalMailbox(string address) => address.Length == 29 && address.StartsWith("/k/", StringComparison.Ordinal)
         && address.AsSpan(3).IndexOfAnyExcept("abcdefghijklmnopqrstuvwxyz0123456789") < 0;
     private static bool OwnerKeyShape(string? key) => key is { Length: 64 }
         && key.AsSpan().IndexOfAnyExcept("0123456789abcdef") < 0;
+    private static string? NormalizeOrigin(string? value) => Uri.TryCreate(value, UriKind.Absolute, out var uri)
+        && (uri.Scheme == "https" || uri.Scheme == "http" && uri.IsLoopback) && uri.UserInfo.Length == 0
+        && uri.AbsolutePath == "/" && uri.Query.Length == 0 && uri.Fragment.Length == 0
+            ? uri.GetLeftPart(UriPartial.Authority) : null;
     public void Dispose() => actor.Retire();
     public override string ToString() => "MessageRecoveryScope(redacted)";
 }

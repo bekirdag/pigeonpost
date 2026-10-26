@@ -75,6 +75,27 @@ internal static class MessageRecoveryScopeTests
                 await Fails<ArgumentException>(() => MessageRecoveryScope.AuthorizeAsync(f, identity));
             Require(f.Lists == 0 && f.KeyReads == 0);
         });
+        yield return ("Recovery access is partitioned by the original postbox origin", async () =>
+        {
+            using var f = new Service(); using var scope = await MessageRecoveryScope.AuthorizeAsync(f, Own);
+            Require(scope!.Origin == "http://127.0.0.1:9185");
+            f.Origin = "https://other-postbox.invalid";
+            Require(!scope.IsCurrent);
+        });
+        yield return ("A postbox-origin change during authorization cannot return a usable scope", async () =>
+        {
+            using var f = new Service(); f.OnList = () => f.Origin = "https://other-postbox.invalid";
+            await Fails<AuthorizationRetiredException>(() => MessageRecoveryScope.AuthorizeAsync(f, Own));
+            Require(f.ObservedActor?.IsActive == false);
+        });
+        yield return ("Untrusted recovery origins never trigger mailbox authorization", async () =>
+        {
+            foreach (var origin in new[] { null, "http://outside.invalid", "https://user:password@postbox.invalid", "https://postbox.invalid/private", "https://postbox.invalid?route=other", "https://postbox.invalid#other" })
+            {
+                using var f = new Service(); f.Origin = origin;
+                Require(await MessageRecoveryScope.AuthorizeAsync(f, Own) is null && f.Lists == 0);
+            }
+        });
     }
     private const string Own = "/k/aaaaaaaaaaaaaaaaaaaaaaaaaa", Other = "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static void Require(bool value) { if (!value) throw new Exception("Recovery authorization assertion failed."); }
@@ -84,12 +105,14 @@ internal static class MessageRecoveryScopeTests
     {
         internal AuthorizationLease? Root = new();
         internal string? Key = new string('a', 64);
+        internal string? Origin = "http://127.0.0.1:9185";
         internal int Lists, KeyReads;
         internal Action? OnList;
         internal AuthorizationLease? ObservedActor;
         internal IReadOnlyList<Mailbox> Boxes = [new(Own)];
         public AuthorizationLease? AcceptedAuthorization => Root;
         public string? RecoveryOwnerKey { get { KeyReads++; return Key; } }
+        public string? RecoveryOrigin => Origin;
         public Task<IReadOnlyList<Mailbox>> GetMailboxesAsync(CancellationToken ct)
         { Lists++; ObservedActor = AuthorizationContext.Current; OnList?.Invoke(); return Task.FromResult(Boxes); }
         public Task<InboxSnapshot> LoadAsync(string identity, CancellationToken ct) => throw new NotSupportedException();
