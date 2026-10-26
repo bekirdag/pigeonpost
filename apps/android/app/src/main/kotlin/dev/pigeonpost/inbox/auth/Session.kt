@@ -9,9 +9,13 @@ import dev.pigeonpost.core.AuthorizationLease
 import dev.pigeonpost.core.AuthorizationRetired
 import dev.pigeonpost.core.AuthorizationContext
 import dev.pigeonpost.core.TokenProvider
+import dev.pigeonpost.core.StrongSignInRequirement
+import dev.pigeonpost.core.StrongSignInProof
+import dev.pigeonpost.core.StrongSignInException
 import dev.pigeonpost.core.await
 import dev.pigeonpost.inbox.AppPolicy
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -25,6 +29,7 @@ import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import net.openid.appauth.AuthState
 import net.openid.appauth.AuthorizationException
 import net.openid.appauth.AuthorizationRequest
@@ -42,6 +47,7 @@ import org.json.JSONObject
 import java.io.IOException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -53,7 +59,7 @@ object AuthConfig {
     const val TOKEN = "$ISSUER/protocol/openid-connect/token"
     const val LOGOUT = "$ISSUER/protocol/openid-connect/logout"
 }
-data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null, val termsAccepted: Boolean = false, val authorizationId: String? = null)
+data class SessionState(val loading: Boolean = true, val signedIn: Boolean = false, val busy: Boolean = false, val username: String? = null, val error: String? = null, val termsAccepted: Boolean = false, val authorizationId: String? = null, val subject: String? = null)
 interface UserSession : TokenProvider {
     val state: StateFlow<SessionState>
     suspend fun begin(provider: String? = null, otherAccount: Boolean = false): Intent?
@@ -61,6 +67,8 @@ interface UserSession : TokenProvider {
     suspend fun cancel()
     suspend fun acceptTerms()
     suspend fun signOut()
+    /** Returns only the exact new grant from a verified same-person interaction. */
+    suspend fun verifyStrongSignIn(requirement: StrongSignInRequirement, expectedAuthorization: AuthorizationLease, open: (Intent) -> Unit): AuthorizationLease = throw StrongSignInException()
     /** A delayed cleanup may only sign out the grant that initiated it. */
     suspend fun signOut(expectedAuthorization: AuthorizationLease?) {
         if (authorizationLease !== expectedAuthorization) throw AuthorizationRetired()
@@ -68,9 +76,9 @@ interface UserSession : TokenProvider {
     }
 }
 
-class Session(context: Context) : UserSession {
+class Session internal constructor(context: Context, private val service: AuthorizationService) : UserSession {
+    constructor(context: Context) : this(context, AuthorizationService(context))
     private val store = SecureStore(context)
-    private val service = AuthorizationService(context)
     private val mutex = Mutex()
     private val generation = AtomicLong(0)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -80,6 +88,12 @@ class Session(context: Context) : UserSession {
     private var acceptedTerms: String? = null
     private var pending: AuthorizationRequest? = null
     private var pendingAt = 0L
+    private class StrongAttempt(val authorization: AuthorizationLease, val subject: String, val requirement: StrongSignInRequirement, val began: Long, val epoch: Long) {
+        val result = CompletableDeferred<AuthorizationLease>()
+        // Cancellation and adoption compete at one explicit commit point.
+        val stage = AtomicInteger(0) // pending, committing, cancelled, finished
+    }
+    private var strong: StrongAttempt? = null
     private val mutable = MutableStateFlow(SessionState())
     override val state = mutable.asStateFlow()
     private val initialized = scope.launch {
@@ -89,8 +103,12 @@ class Session(context: Context) : UserSession {
                     val saved = JSONObject(text)
                     saved.optString("auth").takeIf { it.isNotEmpty() }?.let { auth = AuthState.jsonDeserialize(it) }
                     acceptedTerms = saved.optString("accepted_terms").takeIf { it == AppPolicy.TERMS_VERSION }
-                    saved.optString("pending").takeIf { it.isNotEmpty() }?.let { pending = AuthorizationRequest.jsonDeserialize(it) }
-                    pendingAt = saved.optLong("pending_at")
+                    // A process restore has no live approval waiter. Never reinterpret a strong
+                    // callback as ordinary sign-in or revive a previously reviewed request.
+                    if (!saved.optBoolean("pending_strong", false)) {
+                        saved.optString("pending").takeIf { it.isNotEmpty() }?.let { pending = AuthorizationRequest.jsonDeserialize(it) }
+                        pendingAt = saved.optLong("pending_at")
+                    }
                     auth?.authorizationServiceConfiguration?.let { require(trusted(it)) }
                 }
                 if (auth?.isAuthorized == true) acceptedAuthorization = AuthorizationLease()
@@ -108,6 +126,10 @@ class Session(context: Context) : UserSession {
         val epoch = generation.incrementAndGet()
         mutable.value = mutable.value.copy(busy = true, error = null)
         return try {
+            mutex.withLock {
+                abortStrong(); pending = null; pendingAt = 0; persist()
+                if (epoch != generation.get()) throw CancellationException()
+            }
             val config = discover()
             require(trusted(config)) { "The sign-in service returned unexpected endpoints." }
             val request = AuthorizationRequest.Builder(config, AuthConfig.CLIENT, ResponseTypeValues.CODE, Uri.parse(AuthConfig.REDIRECT))
@@ -123,10 +145,59 @@ class Session(context: Context) : UserSession {
             }
             service.getAuthorizationRequestIntent(request)
         } catch (failure: Exception) {
-            if (epoch == generation.get()) mutable.value = mutable.value.copy(busy = false, error = "Could not open sign-in. Check your connection and try again.")
+            withContext(NonCancellable) { mutex.withLock {
+                if (epoch == generation.get()) mutable.value = mutable.value.copy(busy = false, error = "Could not open sign-in. Check your connection and try again.")
+            } }
             if (failure is CancellationException) throw failure
             null
         }
+    }
+
+    override suspend fun verifyStrongSignIn(requirement: StrongSignInRequirement, expectedAuthorization: AuthorizationLease, open: (Intent) -> Unit): AuthorizationLease {
+        initialized.join()
+        token(null, expectedAuthorization)
+        var own: StrongAttempt? = null
+        try {
+            val (attempt, config) = mutex.withLock {
+                requireAuthorization(expectedAuthorization)
+                if (!mutable.value.signedIn || !mutable.value.termsAccepted) throw StrongSignInException()
+                val subject = StrongSignInProof.subject(auth?.accessToken, AuthConfig.ISSUER) ?: throw StrongSignInException()
+                val config = auth?.authorizationServiceConfiguration?.takeIf(::trusted) ?: throw StrongSignInException()
+                val epoch = generation.incrementAndGet()
+                abortStrong(); pending = null; pendingAt = 0
+                val attempt = StrongAttempt(expectedAuthorization, subject, requirement, System.currentTimeMillis() / 1000, epoch)
+                own = attempt; strong = attempt; persist(); publish()
+                attempt to config
+            }
+            val request = AuthorizationRequest.Builder(config, AuthConfig.CLIENT, ResponseTypeValues.CODE, Uri.parse(AuthConfig.REDIRECT))
+                .setScope("openid profile offline_access").setCodeVerifier(CodeVerifierUtil.generateRandomCodeVerifier())
+                .setPrompt("login").setAdditionalParameters(mapOf("acr_values" to requirement.requestedACR, "max_age" to requirement.maxAge.toString())).build()
+            mutex.withLock {
+                requireAuthorization(expectedAuthorization)
+                if (strong !== attempt || generation.get() != attempt.epoch || attempt.stage.get() != 0) throw AuthorizationRetired()
+                pending = request; pendingAt = System.currentTimeMillis(); persist()
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (strong !== attempt || generation.get() != attempt.epoch || !expectedAuthorization.isValid || attempt.stage.get() != 0) throw AuthorizationRetired()
+                open(service.getAuthorizationRequestIntent(request))
+            }
+            return withTimeout(600_000) { attempt.result.await() }
+        } finally {
+            own?.let { attempt ->
+                attempt.stage.compareAndSet(0, 2)
+                withContext(NonCancellable) { mutex.withLock {
+                    if (strong === attempt) {
+                        generation.incrementAndGet(); strong = null; pending = null; pendingAt = 0
+                        attempt.result.cancel(); persist(); publish()
+                    }
+                } }
+            }
+        }
+    }
+
+    private fun abortStrong() {
+        strong?.let { it.stage.compareAndSet(0, 2); it.result.cancel() }
+        strong = null
     }
 
     override suspend fun complete(result: Intent?) {
@@ -140,32 +211,51 @@ class Session(context: Context) : UserSession {
             return
         }
         val epoch = generation.get()
+        var proof: StrongAttempt? = null
+        var nonce: String? = null
         try {
             val candidate = mutex.withLock {
-                val expected = pending ?: throw IOException("No sign-in is waiting.")
-                require(System.currentTimeMillis() - pendingAt in 0..600000) { "Sign-in expired. Please try again." }
-                require(response.state == expected.state && response.request.state == expected.state
+                val expected = pending ?: return
+                // A delayed callback is not allowed to cancel the request that replaced it.
+                if (!(response.state == expected.state && response.request.state == expected.state
                     && response.request.clientId == AuthConfig.CLIENT && response.request.redirectUri.toString() == AuthConfig.REDIRECT
                     && response.request.codeVerifier == expected.codeVerifier && response.request.nonce == expected.nonce
-                    && trusted(response.request.configuration)) { "Sign-in could not be verified." }
+                    && trusted(response.request.configuration))) return
+                require(System.currentTimeMillis() - pendingAt in 0..600000) { "Sign-in expired. Please try again." }
+                proof = strong; nonce = expected.nonce
+                proof?.let { requireAuthorization(it.authorization); if (it.epoch != epoch || it.stage.get() != 0) throw AuthorizationRetired() }
                 pending = null; pendingAt = 0; persist()
                 AuthState(response, failure)
             }
             val tokens = exchange(response.createTokenExchangeRequest())
             candidate.update(tokens, null)
+            val verified = proof
+            if (verified != null) {
+                if (strong !== verified || generation.get() != epoch || !verified.authorization.isValid || verified.stage.get() != 0) throw AuthorizationRetired()
+                StrongSignInProof.validate(tokens.idToken, tokens.accessToken ?: throw StrongSignInException(), verified.subject, nonce ?: throw StrongSignInException(),
+                    verified.requirement, AuthConfig.ISSUER, AuthConfig.CLIENT, verified.began)
+            }
             mutex.withLock {
                 if (generation.get() != epoch) throw CancellationException()
                 require(candidate.isAuthorized && candidate.accessToken != null) { "Sign-in returned no session." }
+                if (verified != null) {
+                    requireAuthorization(verified.authorization)
+                    if (strong !== verified || !verified.stage.compareAndSet(0, 1)) throw AuthorizationRetired()
+                }
                 withContext(NonCancellable) {
+                    val retainedTerms = if (verified != null) acceptedTerms else null
                     val previous = acceptedAuthorization
                     previous?.retire()
-                    acceptedAuthorization = null; auth = null; acceptedTerms = null; publish()
+                    acceptedAuthorization = null; auth = null; acceptedTerms = null; publish(loading = verified != null)
                     previous?.awaitQuiescence()
                     try {
                         if (generation.get() != epoch) throw CancellationException()
-                        auth = candidate; persist()
+                        auth = candidate; acceptedTerms = retainedTerms; persist()
                         if (generation.get() != epoch) throw CancellationException()
-                        acceptedAuthorization = AuthorizationLease(); publish()
+                        acceptedAuthorization = AuthorizationLease()
+                        if (strong === verified) strong = null
+                        publish()
+                        verified?.let { it.stage.set(3); it.result.complete(acceptedAuthorization!!) }
                     } catch (failure: Exception) {
                         auth = null; acceptedTerms = null; publish()
                         runCatching { persist() }
@@ -174,10 +264,14 @@ class Session(context: Context) : UserSession {
                 }
             }
         } catch (failure: Exception) {
+            proof?.result?.completeExceptionally(if (failure is CancellationException || failure is StrongSignInException) failure else StrongSignInException())
             if (failure is CancellationException) throw failure
-            if (generation.get() == epoch) {
-                mutex.withLock { pending = null; persist() }
-                mutable.value = mutable.value.copy(busy = false, error = "Sign-in could not be completed. Please try again.")
+            mutex.withLock {
+                if (generation.get() == epoch) {
+                    if (strong === proof) strong = null
+                    pending = null; pendingAt = 0; persist(); publish()
+                    mutable.value = mutable.value.copy(busy = false, error = if (failure is StrongSignInException) failure.message else "Sign-in could not be completed. Please try again.")
+                }
             }
         }
     }
@@ -221,7 +315,7 @@ class Session(context: Context) : UserSession {
     }
     override suspend fun cancel() {
         generation.incrementAndGet()
-        mutex.withLock { pending = null; pendingAt = 0; persist(); publish() }
+        mutex.withLock { abortStrong(); pending = null; pendingAt = 0; persist(); publish() }
     }
     override suspend fun acceptTerms() {
         initialized.join()
@@ -269,7 +363,7 @@ class Session(context: Context) : UserSession {
                 put("auth", it.jsonSerializeString())
                 acceptedTerms?.let { version -> put("accepted_terms", version) }
             }
-            pending?.let { put("pending", it.jsonSerializeString()); put("pending_at", pendingAt) }
+            pending?.let { put("pending", it.jsonSerializeString()); put("pending_at", pendingAt); if (strong != null) put("pending_strong", true) }
         }
         store.write(if (auth == null && pending == null) null else json.toString())
     }
@@ -277,7 +371,7 @@ class Session(context: Context) : UserSession {
         withContext(NonCancellable) {
             val previous = acceptedAuthorization
             previous?.retire()
-            acceptedAuthorization = null; auth = null; acceptedTerms = null; pending = null; pendingAt = 0
+            abortStrong(); acceptedAuthorization = null; auth = null; acceptedTerms = null; pending = null; pendingAt = 0
             publish()
             previous?.awaitQuiescence()
             persist()
@@ -296,9 +390,10 @@ class Session(context: Context) : UserSession {
         }
         return accepted
     }
-    private fun publish() {
-        mutable.value = SessionState(loading = false, signedIn = auth?.isAuthorized == true, username = username(auth?.accessToken),
-            termsAccepted = auth?.isAuthorized == true && acceptedTerms == AppPolicy.TERMS_VERSION, authorizationId = acceptedAuthorization?.id)
+    private fun publish(loading: Boolean = false) {
+        mutable.value = SessionState(loading = loading, signedIn = auth?.isAuthorized == true, busy = strong != null, username = username(auth?.accessToken),
+            termsAccepted = auth?.isAuthorized == true && acceptedTerms == AppPolicy.TERMS_VERSION, authorizationId = acceptedAuthorization?.id,
+            subject = StrongSignInProof.subject(auth?.accessToken, AuthConfig.ISSUER))
     }
     private fun trusted(config: AuthorizationServiceConfiguration) =
         config.authorizationEndpoint.toString() == AuthConfig.AUTH && config.tokenEndpoint.toString() == AuthConfig.TOKEN

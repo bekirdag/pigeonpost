@@ -5,6 +5,7 @@ import dev.pigeonpost.core.calendar.CalendarTransport
 import dev.pigeonpost.core.calendar.CalendarMeetingApi
 import dev.pigeonpost.core.calendar.CalendarMeetingCode
 import dev.pigeonpost.core.calendar.CalendarMeetingStatus
+import dev.pigeonpost.core.enterprise.*
 
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
@@ -60,13 +61,16 @@ interface TokenProvider {
 
 class SessionExpired : IOException("Your session expired. Sign in again.")
 class PostboxConnectionInterrupted(cause: IOException) : IOException("The connection was interrupted. Please try again.", cause)
-class ApiException(val status: Int, val code: String?, detail: String? = null, val problem: JsonObject? = null) : IOException(detail ?: when (code) {
+class ApiException(val status: Int, val code: String?, detail: String? = null, val problem: JsonObject? = null, authenticationChallenge: String? = null, val retryAfter: Int? = null) : IOException(detail ?: when (code) {
     "not_admitted" -> "They are not accepting messages from this inbox."
     "recipient_unresolved" -> "No inbox at that address."
     "recipient_inbox_full" -> "Their inbox is full."
     "unauthorized" -> "Your session expired. Sign in again."
     else -> code ?: "The postbox answered $status."
-})
+}) {
+    val needsStrongSignIn = status == 401 && (code == "step_up_required" || StrongSignInRequirement.signalsChallenge(authenticationChallenge))
+    val signInRequirement = if (needsStrongSignIn) StrongSignInRequirement.from(problem, authenticationChallenge) else null
+}
 
 interface PostboxApi {
     suspend fun identities(): List<IdentityRow>
@@ -134,7 +138,7 @@ class PostboxClient(
     private val allowLoopbackForTests: Boolean = false,
     /** The inbox origin, where the calls service lives (`/calls/v1`). */
     private val inbox: HttpUrl = "https://inbox.pigeonpost.dev/".toHttpUrl(),
-) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi {
+) : PostboxApi, PaidHandleApi, AccountHandleApi, DevicePushApi, GroupTransport, CalendarTransport, CalendarMeetingApi, DevicePairingApi {
     init {
         require(base.isHttps || allowLoopbackForTests && base.host in setOf("127.0.0.1", "localhost", "::1", "10.0.2.2")) { "The postbox must use HTTPS." }
         require(base.username.isEmpty() && base.password.isEmpty() && base.query == null && base.fragment == null && base.encodedPath == "/") { "Expected a postbox origin." }
@@ -147,6 +151,30 @@ class PostboxClient(
     // connection for that one retry; never evict connections belonging to other in-flight calls.
     private val recoveryHttp = http.newBuilder().retryOnConnectionFailure(true)
         .connectionPool(ConnectionPool(0, 1, TimeUnit.SECONDS)).build()
+    private val pairingHttp = http.newBuilder().callTimeout(20, TimeUnit.SECONDS).readTimeout(20, TimeUnit.SECONDS).build()
+
+    override suspend fun resolveDevicePairing(code: DevicePairingCode): DevicePairingPreview =
+        decode<DevicePairingPreview>(pairingRequest("resolve", code)).also { if (!it.isValid) throw unverifiedPairing() }
+    override suspend fun approveDevicePairing(preview: DevicePairingPreview, code: DevicePairingCode) {
+        if (!preview.allowsApproval()) throw ApiException(409, "pairing_not_actionable", "Resolve this device request again before approving it.")
+        val result = decode<PairingApproval>(pairingRequest(preview.pairingId + "/approve", code))
+        if (!result.approved || result.handle != preview.handle || result.address?.let(::canonicalPairingAddress) != true ||
+            preview.address?.let { it != result.address } == true) throw unverifiedPairing()
+    }
+    override suspend fun denyDevicePairing(preview: DevicePairingPreview, code: DevicePairingCode) {
+        if (!preview.allowsDecision()) throw ApiException(409, "pairing_not_actionable", "Resolve this device request again before denying it.")
+        if (!decode<PairingDenial>(pairingRequest(preview.pairingId + "/deny", code)).denied) throw unverifiedPairing()
+    }
+    private fun unverifiedPairing() = ApiException(200, "bad_response", "The device request could not be verified. Resolve it again to check its status.")
+    private suspend fun pairingRequest(path: String, code: DevicePairingCode): AuthorizedJson = withContext(
+        Dispatchers.IO + (currentCoroutineContext()[AuthorizationContext] ?: AuthorizationContext(tokens.authorizationLease?.child()))
+    ) {
+        val body = buildJsonObject { put("user_code", code.displayValue) }.toString().toRequestBody("application/json".toMediaType())
+        val request = Request.Builder().url(url("device-pairings/$path")).post(body).build()
+        // POST decisions are never retried after a network failure. Ordinary token renewal retains
+        // these exact bytes; an authentication challenge instead requires a fresh human decision.
+        authenticated(request, pairingHttp).use { AuthorizedJson(limitedBytes(it, 1024L * 1024).toString(Charsets.UTF_8), it.request.tag(AuthorizationLease::class.java)) }
+    }
 
     override suspend fun identities() = decode<IdentitiesResponse>(request("identities")).identities.orEmpty()
     override suspend fun registerPushDevice(identity: String, token: String) {
@@ -495,22 +523,27 @@ class PostboxClient(
         var response = transport.newCall(authorized(first)).await()
         requireCurrent(response)
         if (response.code == 401) {
-            response.close()
+            val refusal = failure(response)
+            if (refusal.needsStrongSignIn) throw refusal
             val renewed = provider.token(rejected = first)
             response = transport.newCall(authorized(renewed)).await()
             requireCurrent(response)
             if (response.code == 401) {
-                response.close(); provider.invalidate(renewed); throw SessionExpired()
+                val repeated = failure(response)
+                if (repeated.needsStrongSignIn) throw repeated
+                provider.invalidate(renewed); throw SessionExpired()
             }
         }
-        if (!response.isSuccessful) response.use {
-            val problem = try { WireJson.parseToJsonElement(readJson(it)) as? JsonObject }
-                catch (cancelled: CancellationException) { throw cancelled }
-                catch (_: Exception) { null }
-            throw ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull,
-                (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500), problem)
-        }
+        if (!response.isSuccessful) throw failure(response)
         return response
+    }
+    private fun failure(response: Response): ApiException = response.use {
+        val text = limitedBytes(it, 64L * 1024).toString(Charsets.UTF_8)
+        val problem = try { WireJson.parseToJsonElement(text) as? JsonObject } catch (_: SerializationException) { null }
+        ApiException(it.code, (problem?.get("error") as? JsonPrimitive)?.contentOrNull,
+            (problem?.get("detail") as? JsonPrimitive)?.contentOrNull?.take(500), problem,
+            it.headers.values("WWW-Authenticate").takeIf { values -> values.isNotEmpty() }?.joinToString(", "),
+            it.header("Retry-After")?.takeIf { value -> Regex("[0-9]{1,10}").matches(value) }?.toLongOrNull()?.coerceIn(1, 3600)?.toInt())
     }
     private fun requireCurrent(response: Response) {
         try { response.request.tag(AuthorizationLease::class.java)?.requireActive() }

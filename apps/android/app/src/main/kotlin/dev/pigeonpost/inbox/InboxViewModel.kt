@@ -42,6 +42,10 @@ import dev.pigeonpost.core.calendar.CalendarEventKey
 import dev.pigeonpost.core.calendar.CalendarMeetingApi
 import dev.pigeonpost.core.calendar.CalendarMeetingCode
 import dev.pigeonpost.core.calendar.CalendarMeetingLookup
+import dev.pigeonpost.core.enterprise.DevicePairingApi
+import dev.pigeonpost.core.enterprise.DevicePairingCode
+import dev.pigeonpost.core.enterprise.DeviceApprovalIdentity
+import dev.pigeonpost.core.enterprise.DeviceApprovalStore
 import dev.pigeonpost.inbox.calendar.KeystoreCalendarAttempts
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -63,6 +67,7 @@ data class AppGraph(
     val calendarTransport: CalendarTransport? = api as? CalendarTransport,
     val calendarStorage: (Application) -> CalendarAttemptStorage = { KeystoreCalendarAttempts(it) },
     val meetingApi: CalendarMeetingApi? = api as? CalendarMeetingApi,
+    val pairingApi: DevicePairingApi? = api as? DevicePairingApi,
 ) {
     companion object {
         fun live(app: Application): AppGraph {
@@ -78,11 +83,19 @@ class PigeonpostApplication : Application() { val graph by lazy { AppGraph.live(
 class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: CallsOverride? = null, pinnedAppearance: String? = null) : AndroidViewModel(app) {
     val session = graph.session
     private val storeScope = AuthorizedStoreScope(viewModelScope)
+    private data class StoreActivation(val authorizationId: String?, val id: String = java.util.UUID.randomUUID().toString())
+    private data class InboxBinding(val scopeId: String, val address: String, val handle: String?, val features: Set<String>)
+    private data class CallBinding(val scopeId: String, val mailbox: Mailbox, val names: Map<String, String>)
+    private val activation = MutableStateFlow<StoreActivation?>(null)
     private var calendarNoticeJob: Job? = null
     private var calendarNoticeId = java.util.UUID.randomUUID()
     private val meetingCode = MutableStateFlow<String?>(null)
     val memberMeetingCode = meetingCode.asStateFlow()
     private var meetingIntentRoot: AuthorizationLease? = null
+    private val machineOpen = MutableStateFlow(false)
+    val deviceApprovalOpen = machineOpen.asStateFlow()
+    private var deviceNavigation: Job? = null
+    var authorizationWindow: ((Intent) -> Unit)? = null
     val push = if (graph.fixtures) null else PushNotifications(app)
     private val preferences = app.getSharedPreferences(if (graph.fixtures) "fixture-settings" else "settings", 0)
     val files = PlatformFiles(app, graph.api)
@@ -106,6 +119,13 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val groups = graph.groupTransport?.let { GroupStore(it, graph.groupCrypto, graph.groupStorage(app), storeScope, pollSeconds = graph.groupPollSeconds, openPollSeconds = minOf(3, graph.groupPollSeconds), onSessionExpired = { signOut() }) }
     val calendar = graph.calendarTransport?.let { CalendarStore(it, graph.calendarStorage(app), storeScope, allowVolatileStorage = graph.fixtures, onSessionExpired = { signOut() }) }
     val meetingLookup = graph.meetingApi?.let { CalendarMeetingLookup(it, storeScope, onSessionExpired = { signOut() }) }
+    val deviceApproval = graph.pairingApi?.let { api -> DeviceApprovalStore(api, viewModelScope, identity = {
+        val state = session.state.value; val grant = session.authorizationLease; val subject = state.subject
+        if (!state.loading && state.signedIn && state.termsAccepted && !subject.isNullOrEmpty() && grant != null && grant.isValid && grant.id == state.authorizationId)
+            DeviceApprovalIdentity(subject, grant) else null
+    }, transitioning = { session.state.value.loading && session.state.value.busy }, onSessionExpired = { expected ->
+        viewModelScope.launch { if (session.authorizationLease === expected) signOut() }
+    }) }
     val handles = HandleStore(graph.api, storeScope,
         onRegistered = { inbox.loadAccount(); accountHandles?.refresh() }, onSessionExpired = { signOut() })
     val accountHandles = (graph.api as? AccountHandleApi)?.let { AccountHandleStore(it, storeScope, onSessionExpired = { signOut() }) }
@@ -128,16 +148,18 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     val crop = cropping.asStateFlow()
     init {
         graph.start(viewModelScope)
+        viewModelScope.launch { session.state.collect { deviceApproval?.synchronize() } }
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = { groups?.poke() }
         PushNotifications.calendarPoke = { viewModelScope.launch { calendar?.refresh() } }
         viewModelScope.launch {
-            combine(session.state, inbox.state) { session, state ->
-                if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null) Triple(state.acting!!.address, state.acting!!.handle, state.features) else null
+            combine(session.state, inbox.state, activation) { session, state, active ->
+                if (active != null && active.authorizationId == session.authorizationId && !session.loading && session.signedIn && session.termsAccepted && state.acting != null)
+                    InboxBinding(active.id, state.acting!!.address, state.acting!!.handle, state.features) else null
             }.distinctUntilChanged().collect { target ->
-                avatars.enable(target != null && Features.AVATARS in target.third)
-                groups?.onMailbox(target?.first, target?.second, target?.third.orEmpty())
-                calendar?.onMailbox(target?.first, target?.third.orEmpty())
-                meetingLookup?.onMailbox(target?.first)
+                avatars.enable(target != null && Features.AVATARS in target.features)
+                groups?.onMailbox(target?.address, target?.handle, target?.features.orEmpty())
+                calendar?.onMailbox(target?.address, target?.features.orEmpty())
+                meetingLookup?.onMailbox(target?.address)
             }
         }
         viewModelScope.launch {
@@ -145,11 +167,11 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
         calls?.let { host ->
             viewModelScope.launch {
-                combine(session.state, inbox.state) { session, state ->
-                    if (!session.loading && session.signedIn && session.termsAccepted && state.acting != null)
-                        state.acting to state.conversations.associate { it.peer to it.name } else null
+                combine(session.state, inbox.state, activation) { session, state, active ->
+                    if (active != null && active.authorizationId == session.authorizationId && !session.loading && session.signedIn && session.termsAccepted && state.acting != null)
+                        CallBinding(active.id, state.acting!!, state.conversations.associate { it.peer to it.name }) else null
                 }.distinctUntilChanged().collect { target ->
-                    if (target != null) host.attach(target.first!!, target.second) else host.signOut()
+                    if (target != null) host.attach(target.mailbox, target.names) else host.signOut()
                 }
             }
         }
@@ -163,8 +185,13 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
                 resetStores()
                 withContext(Dispatchers.IO) { files.clear() }
                 val current = session.state.value
-                if (ready && current.signedIn && current.termsAccepted && current.authorizationId == authorizationId) {
-                    storeScope.activate(session.authorizationLease)
+                val grant = session.authorizationLease
+                if (ready && current.signedIn && current.termsAccepted && current.authorizationId == authorizationId && grant?.id == authorizationId && grant?.isValid != false) {
+                    try { storeScope.activate(grant) } catch (_: AuthorizationRetired) { return@collect }
+                    if (session.authorizationLease !== grant || grant?.isValid == false || session.state.value.authorizationId != authorizationId) {
+                        storeScope.retire(); return@collect
+                    }
+                    activation.value = StoreActivation(authorizationId)
                     inbox.loadAccount(preferences.getString("mailbox", null)); accountHandles?.refresh(); paidHandles?.restore()
                 }
             }
@@ -173,6 +200,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     fun completeSignIn(intent: Intent?) { viewModelScope.launch { session.complete(intent) } }
     fun acceptTerms() { viewModelScope.launch { session.acceptTerms() } }
     fun signOut() {
+        closeDeviceApproval()
         closeMeetingLink()
         val authorization = session.authorizationLease
         val token = push?.clear()
@@ -185,6 +213,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
     }
     private fun resetStores() {
         storeScope.retire()
+        activation.value = null
         inbox.reset(); handles.reset(); paidHandles?.reset(); accountHandles?.reset(); avatars.reset(); groups?.reset(); calendar?.reset(); meetingLookup?.reset(); profile.reset(); pictures.clear()
         if (meetingIntentRoot?.isValid == false) closeMeetingLink()
         stagedForGroups.value.values.flatten().forEach { it.file.delete() }
@@ -209,6 +238,42 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     fun closeMeetingLink() { meetingCode.value = null; meetingIntentRoot = null; meetingLookup?.close() }
+    fun closeDeviceApproval() { deviceNavigation?.cancel(); deviceNavigation = null; machineOpen.value = false; deviceApproval?.close() }
+    fun openDeviceApproval(code: DevicePairingCode? = null) {
+        val store = deviceApproval ?: return
+        closeDeviceApproval()
+        val root = session.authorizationLease
+        calendarNoticeId = java.util.UUID.randomUUID(); val visit = calendarNoticeId
+        calendarNoticeJob?.cancel(); calendar?.noticeWaiting(false)
+        val job = viewModelScope.launch(start = kotlinx.coroutines.CoroutineStart.LAZY) {
+            try {
+                val calendar = calendar
+                if (calendar != null && (calendar.state.value.editing || calendar.state.value.openEvent != null)) {
+                    calendar.noticeWaiting(true)
+                    calendar.state.first { visit != calendarNoticeId || root?.isValid == false || !it.editing && it.openEvent == null }
+                }
+                combine(session.state, inbox.state) { s, i -> s to i }.first { (s, i) ->
+                    visit != calendarNoticeId || root?.let { !it.isValid || session.authorizationLease !== it } == true ||
+                        !s.loading && s.signedIn && s.termsAccepted && i.accountLoaded
+                }
+                if (visit != calendarNoticeId || root?.let { !it.isValid || session.authorizationLease !== it } == true) return@launch
+                if ("orgs" !in inbox.state.value.features) { inbox.showError("Machine sign-in is unavailable on this server."); return@launch }
+                store.synchronize()
+                if (!store.isCurrent()) { inbox.showError("Sign in again to verify your account before reviewing a machine."); return@launch }
+                machineOpen.value = true
+                code?.let { store.resolve(it.displayValue, store.state.value.contextId) }
+            } finally { if (visit == calendarNoticeId) calendar?.noticeWaiting(false) }
+        }
+        deviceNavigation = job; calendarNoticeJob = job; job.start()
+    }
+    fun verifyDeviceSignIn(proof: String, context: String) {
+        if (calls?.mode?.value?.let { it != CallHost.Mode.HIDDEN } == true || calls?.preparingScheduled?.value == true) {
+            inbox.showError("Finish your call before verifying sign-in."); return
+        }
+        deviceApproval?.verifySignIn(proof, context) { requirement, expected ->
+            session.verifyStrongSignIn(requirement, expected) { intent -> authorizationWindow?.invoke(intent) ?: throw dev.pigeonpost.core.StrongSignInException() }
+        }
+    }
     fun showMeetingCode(input: String) {
         val code = CalendarMeetingCode.parse(input) ?: return
         val root = session.authorizationLease
@@ -312,6 +377,7 @@ class InboxViewModel(app: Application, val graph: AppGraph, callsOverride: Calls
         }
     }
     override fun onCleared() {
+        deviceNavigation?.cancel(); deviceApproval?.close(); authorizationWindow = null
         storeScope.retire()
         dev.pigeonpost.inbox.push.PushNotifications.groupPoke = null; PushNotifications.calendarPoke = null; calendarNoticeJob?.cancel(); billing?.close(); calls?.destroy(); super.onCleared() }
     fun chooseAttachments() { attachmentTarget = inbox.state.value.draftKey; groupAttachTarget = null }

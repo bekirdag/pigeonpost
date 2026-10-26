@@ -26,6 +26,7 @@ import dev.pigeonpost.inbox.calls.CallFrame
 import dev.pigeonpost.inbox.calls.CallWindow
 import dev.pigeonpost.core.verifiedSignInUrl
 import dev.pigeonpost.core.calendar.CalendarLink
+import dev.pigeonpost.core.enterprise.DevicePairingLink
 import dev.pigeonpost.inbox.ui.PigeonpostApp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
@@ -44,6 +45,7 @@ class MainActivity : ComponentActivity() {
         })[InboxViewModel::class.java]
     }
     private val authorization = registerForActivityResult(ActivityResultContracts.StartActivityForResult()) { model.completeSignIn(it.data) }
+    private val openAuthorization: (Intent) -> Unit = { authorization.launch(it) }
     private val notifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { model.refreshPushRegistration(); offerFullScreenCalls() }
     private val documents = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { model.attach(it) }
     private val photos = registerForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(8)) { model.attach(it) }
@@ -79,14 +81,19 @@ class MainActivity : ComponentActivity() {
     private var callFrame: CallFrame? = null
     private val scanner = registerForActivityResult(ScanContract()) { result ->
         result.contents?.let { text ->
-            val safe = verifiedSignInUrl(text)
-            if (safe == null) model.inbox.showError("This is not a Pigeonpost sign-in code.")
-            else openLink(safe)
+            val machine = DevicePairingLink.parse(text)
+            if (machine != null) model.openDeviceApproval(machine)
+            else {
+                val safe = verifiedSignInUrl(text)
+                if (safe == null) model.inbox.showError("This is not a Pigeonpost sign-in code.")
+                else openLink(safe)
+            }
         }
     }
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState); enableEdgeToEdge()
         Development.rememberHarness(this, intent)
+        model.authorizationWindow = openAuthorization
         setContent { PigeonpostApp(model,
             signIn = { provider, other -> lifecycleScope.launch { model.session.begin(provider, other)?.let { intent ->
                 try { authorization.launch(intent) }
@@ -103,6 +110,7 @@ class MainActivity : ComponentActivity() {
         if (savedInstanceState == null) openNotification(intent)
         if (savedInstanceState == null) model.openGroupLink(intent.data)
         if (savedInstanceState == null) openMeetingLink(intent.data)
+        if (savedInstanceState == null) intent.data?.toString()?.let(DevicePairingLink::parse)?.let(model::openDeviceApproval)
         Development.started()
         model.calls?.let { host ->
             host.window = object : CallWindow {
@@ -133,6 +141,7 @@ class MainActivity : ComponentActivity() {
         }
     }
     override fun onDestroy() {
+        if (model.authorizationWindow === openAuthorization) model.authorizationWindow = null
         callFrame?.detach(); callFrame = null
         model.calls?.window = null
         super.onDestroy()
@@ -141,6 +150,7 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent); setIntent(intent)
         openNotification(intent)
         openMeetingLink(intent.data)
+        intent.data?.toString()?.let(DevicePairingLink::parse)?.let(model::openDeviceApproval)
         answerCall(intent)
     }
     private fun openMeetingLink(uri: Uri?) {

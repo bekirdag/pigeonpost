@@ -39,14 +39,16 @@ class AppFlowTest {
     private fun launch(mode: String = "inbox"): ActivityScenario<MainActivity> {
         // Tests may switch mailboxes; each new fixture session starts independently.
         context.getSharedPreferences("fixture-settings", Context.MODE_PRIVATE).edit().clear().commit()
-        return ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode)).also { scenario ->
+        val scenario = ActivityScenario.launch<MainActivity>(Intent(context, MainActivity::class.java).putExtra("pigeonpost.fixtures", mode))
+        try {
             // A rendered Compose tree can precede Android granting this window input/clipboard access.
-            ui.waitUntil(10_000) {
+            awaitAndroidWindowFocus(ui) {
                 var focused = false
                 scenario.onActivity { focused = it.hasWindowFocus() }
                 focused
             }
-        }
+            return scenario
+        } catch (failure: Throwable) { scenario.close(); throw failure }
     }
     private fun shown(text: String) {
         ui.waitUntil(10000) { ui.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
@@ -317,7 +319,7 @@ class AddressCopyTest {
     @Test fun unnamedInboxCopiesItsFullKeyAndResetsAfterAddressChange() {
         val address = androidx.compose.runtime.mutableStateOf("/k/" + "a".repeat(128))
         ui.setContent { androidx.compose.material3.MaterialTheme { dev.pigeonpost.inbox.ui.PostAddressRow(address.value) } }
-        ui.waitUntil(10_000) { ui.runOnIdle { ui.activity.hasWindowFocus() } }
+        awaitAndroidWindowFocus(ui) { ui.runOnIdle { ui.activity.hasWindowFocus() } }
         ui.onNodeWithContentDescription("Copy address ${address.value}").performClick()
         assertClipboard(ui, ui.activity, address.value)
         ui.runOnIdle {
