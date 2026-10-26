@@ -474,9 +474,12 @@ class CallHost(private val app: Application, private val session: UserSession, p
             val binding = bindingId; val page = pageId
             main.post {
                 // Only the call page may speak for the app; navigation is pinned to it, and this checks again.
-                if (source === view && binding == bindingId && page == pageId && samePage(source.url?.let(Uri::parse))) {
+                if (source === view && page == pageId && samePage(source.url?.let(Uri::parse))) {
                     val type = runCatching { JSONObject(json).optString("type") }.getOrNull()
-                    if (type == "ready" || capture(pageBound = true) != null) received(json)
+                    // Readiness belongs to this document, independently of the current login.
+                    // It grants no action: configure() captures and checks the live actor itself.
+                    // Other messages still belong to their original account/inbox binding.
+                    if (type == "ready" || binding == bindingId && capture(pageBound = true) != null) received(json)
                 }
             }
         }
