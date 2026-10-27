@@ -4,9 +4,9 @@ on:
   push:
     branches: [main, 'codex/linux-desktop-*']
     tags: ['linux-desktop-*']
-    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/linux-desktop.yml']
+    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', 'tests/e2e-messages/**', '.github/workflows/linux-desktop.yml']
   pull_request:
-    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', '.github/workflows/linux-desktop.yml']
+    paths: ['apps/linux/**', 'crates/pigeonpost-groupcrypto/**', 'tests/e2e-messages/**', '.github/workflows/linux-desktop.yml']
   workflow_dispatch:
 
 permissions:
@@ -80,6 +80,19 @@ jobs:
         run: cargo build --locked -q -p pigeonpost-postbox
       - name: Linux ↔ web groups and Phase 1b routes against the real postbox
         run: POSTBOX_BIN="$PWD/target/debug/pigeonpost-postbox" PYTHON=/usr/bin/python3 node apps/linux/tests/live_interop.mjs
+      - name: Linux message actions, calendar, organizations and group actions against the real postbox
+        # tests/e2e-messages/linux.sh: a disposable loopback postbox and response-loss proxy per mode,
+        # driven by the app's own Python code. Synthetic accounts only; MLS is required for groups.
+        env:
+          PYTHON: /usr/bin/python3
+          PIGEONPOST_REQUIRE_GROUPCRYPTO: "1"
+        run: |
+          for mode in messages calendar orgs groups; do
+            echo "::group::$mode"
+            if [ "$mode" = messages ]; then tests/e2e-messages/linux.sh "$PWD/target/debug/pigeonpost-postbox"
+            else tests/e2e-messages/linux.sh "$PWD/target/debug/pigeonpost-postbox" "$mode"; fi
+            echo "::endgroup::"
+          done
 
   build:
     needs: native
@@ -112,8 +125,10 @@ jobs:
         run: |
           sudo apt-get update -qq
           sudo apt-get install -y python3-gi python3-gi-cairo gir1.2-gtk-4.0 gir1.2-adw-1 gir1.2-secret-1 gir1.2-poppler-0.18 gir1.2-gstreamer-1.0 gir1.2-gst-plugins-base-1.0 libgtk-4-media-gstreamer gstreamer1.0-plugins-good gstreamer1.0-libav gnome-keyring dbus-x11 xvfb xdotool imagemagick desktop-file-utils appstream flatpak flatpak-builder xdg-desktop-portal-gtk
-      - name: Domain and authentication regressions
-        run: python3 -m unittest discover -s tests -p test_core.py -v
+      - name: Domain, authentication, message-action, calendar and organization regressions
+        env:
+          PIGEONPOST_REQUIRE_GROUPCRYPTO: "1"
+        run: python3 -m unittest discover -s tests -p "test_[!ug]*.py" -v
       - name: Group encryption (MLS round trips with the Python binding)
         env:
           PIGEONPOST_REQUIRE_GROUPCRYPTO: "1"
@@ -123,14 +138,14 @@ jobs:
           desktop-file-validate data/dev.pigeonpost.Desktop.desktop
           appstreamcli validate --no-net data/dev.pigeonpost.Desktop.metainfo.xml
           python3 package-deb.py
-          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.9_all.deb
+          sudo apt-get install -y ./dist/pigeonpost-desktop_1.0.10_all.deb
           pigeonpost-desktop --version
           python3 -I -c "import sys; sys.path.insert(0, '/usr/share/pigeonpost-desktop'); from pigeonpost import groupcrypto; gc = groupcrypto.load(); assert gc, groupcrypto.reason(); print('Installed package loads group encryption:', gc.enc_scheme())"
       - name: Build Flatpak
         run: |
           flatpak remote-add --if-not-exists --user flathub https://dl.flathub.org/repo/flathub.flatpakrepo
           flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo --install build-dir dev.pigeonpost.Desktop.json
-          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.9-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak build-bundle repo dist/Pigeonpost-Desktop-1.0.10-${{ matrix.arch }}.flatpak dev.pigeonpost.Desktop --runtime-repo=https://dl.flathub.org/repo/flathub.flatpakrepo
       - name: Native GTK and installed Flatpak desktop integration
         env:
           GSK_RENDERER: cairo
@@ -181,10 +196,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<'EOF'
-          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management. 1.0.9 adds end-to-end encrypted groups (with device fingerprints, safety numbers and device-change notices), call history, the Filtered list, privacy filters, blocking, profile pictures and disappearing messages.
+          Native GTK 4/libadwaita desktop for Linux, with browser sign-in, conversations and subjects, attachments, contact permissions, handles and account management. It includes end-to-end encrypted groups, call history, the Filtered list, privacy filters, blocking, profile pictures and disappearing messages. 1.0.10 adds message edits, replies and receipts with explicit recovery of unconfirmed sends, a calendar with invitations, reminders and scheduled meetings, organization rooms, and machine sign-in approval (approval itself opens the browser until the Linux sign-in client supports strong sign-in).
 
-          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.9_all.deb` on Debian 12+ or Ubuntu 24.04+ (x86_64 and ARM64). For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.9-x86_64.flatpak` (use the aarch64 bundle on ARM64). The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
+          Install the Debian package with `sudo apt install ./pigeonpost-desktop_1.0.10_all.deb` on Debian 12+ or Ubuntu 24.04+ (x86_64 and ARM64). For other distributions, install the x86_64 Flatpak using `flatpak install --user ./Pigeonpost-Desktop-1.0.10-x86_64.flatpak` (use the aarch64 bundle on ARM64). The first Flatpak install downloads the GNOME runtime. A desktop Secret Service keyring is required. Direct bundles are updated by installing a newer release; this app is not yet listed on Flathub.
 
-          Handle purchases open the Pigeonpost website. Messages and drafts remain in memory; closing the app stops notifications. See the build plan and validation ledger in apps/linux.
+          Handle purchases open the Pigeonpost website. Messages remain in memory; drafts and unconfirmed sends are sealed on this computer with a key in the desktop keyring and are removed at sign-out. Closing the app stops notifications and reminders. See the build plan and validation ledger in apps/linux.
           EOF
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.9' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --title 'Pigeonpost Desktop for Linux 1.0.10' --notes-file notes.md --latest=false dist/*.deb dist/*.flatpak dist/SHA256SUMS
