@@ -148,9 +148,41 @@ internal static class MessageActionsPostbox
                 Check(model.Draft == "" && !model.HasPendingDeliveries && !model.IsSending);
                 await CheckAttempts(http, proxy, 2, saved.Request.MsgRef);
                 Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == saved.Request.MsgRef) == 1);
+                stage = "protected edit mode with committed response loss";
+                model.SetMessageFeatures(features);
+                model.Draft = "Restored ordinary interop draft";
+                model.AddAttachments([new("mode_backup", "fixture.txt", 3, _ => Task.FromResult(new byte[] { 1, 2, 3 }))]);
+                var original = model.Messages.Single(m => m.MsgRef == saved.Request.MsgRef);
+                Check(model.BeginEdit(model.CaptureMessageTarget(original) ?? throw new InvalidOperationException()));
+                model.Draft = "Edited via real postbox mode ğ 😀";
+                await Control(http, proxy, "after"); await model.SendDraftAsync();
+                Check(model.IsEditingMessage && model.Draft == "Edited via real postbox mode ğ 😀" && model.HasPendingDeliveries && !model.IsSending);
+                var protectedEdit = (await coordinator.GetPendingAsync(scope)).Single();
+                Check(protectedEdit.Request.EditOf == original.Id && protectedEdit.Request.ReplyTo is null && protectedEdit.Request.Attachments is null
+                    && protectedEdit.Request.Body == RequestEnvelope.EditText(original.Body, "Edited via real postbox mode ğ 😀"));
+                await CheckAttempts(http, proxy, 1, protectedEdit.Request.MsgRef);
+                await model.RefreshAsync();
+                Check(model.Messages.Count(m => m.MsgRef == original.MsgRef) == 1 && model.Messages.Single(m => m.MsgRef == original.MsgRef).EditCount == 1);
+                await Control(http, proxy, "off");
+                Check(await model.RetryPendingDeliveryAsync(model.PendingDeliveries.Single().BeginAction() ?? throw new InvalidOperationException()));
+                Check(model.Draft == "Restored ordinary interop draft" && model.DraftAttachments.Count == 1 && !model.HasComposerAction && !model.HasPendingDeliveries);
+                await CheckAttempts(http, proxy, 2, protectedEdit.Request.MsgRef);
+                var edited = (await b.GetInboxAsync(to)).Messages!.Where(m => m.MsgRef == original.MsgRef).ToArray();
+                Check(edited.Length == 1 && edited[0].EditCount == 1 && RequestEnvelope.DisplayText(edited[0].Body) == "Edited via real postbox mode ğ 😀");
+                var ownTarget = model.CaptureMessageTarget(model.Messages.Single(m => m.MsgRef == original.MsgRef)) ?? throw new InvalidOperationException();
+                var versions = await model.ReadMessageInfoAsync(ownTarget);
+                Check(versions?.Versions?.Count == 2 && versions.Versions[0].Body == original.Body && versions.Versions[1].Body == protectedEdit.Request.Body);
+                stage = "protected reply mode";
+                model.RemoveAttachment(model.DraftAttachments.Single());
+                var parent = model.Messages.First(m => !m.IsOutgoing && !m.IsSystem);
+                Check(model.BeginReply(model.CaptureMessageTarget(parent) ?? throw new InvalidOperationException()));
+                model.Draft = "Reply via real postbox mode"; await model.SendDraftAsync();
+                var replyMode = (await b.GetInboxAsync(to)).Messages!.Single(m => RequestEnvelope.DisplayText(m.Body) == "Reply via real postbox mode");
+                Check(replyMode.ReplyTo?.MsgRef == parent.MsgRef && replyMode.ReplyTo?.Quote == RequestEnvelope.ReplyQuote(parent.CopyText)
+                    && model.Draft == "" && !model.HasComposerAction && !model.HasPendingDeliveries && !model.IsSending);
             }
             finally { Directory.Delete(composerFolder, recursive: true); }
-            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss, protected restart and normal composer recovery, version deletion.");
+            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss, protected restart, normal/reply/edit composer recovery, owned version info and version deletion.");
             return 0;
         }
         catch (Exception ex)

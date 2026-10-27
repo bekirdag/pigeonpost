@@ -12,7 +12,8 @@ public sealed partial class InboxViewModel
         if (operation is null) return;
         var copy = new ServerFeatures(new HashSet<string>(features.Names, StringComparer.Ordinal));
         operation.Local(() => messageFeatures = copy);
-        if (operation.IsCurrent) Changed(nameof(CanInspectMessages));
+        if (composerMode is { } mode && !(mode.Kind == MessageComposerKind.Edit ? copy.Has(ServerFeatures.MessageEdit) : copy.Has(ServerFeatures.MessageReply))) mode.Authority.Retire();
+        if (operation.IsCurrent) { Changed(nameof(CanInspectMessages)); NotifyComposerAction(); }
     }
 
     public async Task<MessageInfo?> ReadMessageInfoAsync(MessageTarget target, CancellationToken cancellationToken = default)

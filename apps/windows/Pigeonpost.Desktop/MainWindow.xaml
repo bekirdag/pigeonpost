@@ -96,13 +96,18 @@
                         </StackPanel>
                         <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource IncomingFooterBorderBrush}" Padding="16,6,12,6">
                             <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource IncomingFooterTextBrush}" />
                                 <Border Grid.Column="1" Padding="8,2,8,3" CornerRadius="6" VerticalAlignment="Center" Background="{ThemeResource ChipSurfaceBrush}"
                                         Visibility="{Binding StatusLabel, Converter={StaticResource TextVisibility}}">
                                     <TextBlock Text="{x:Bind StatusLabel}" FontSize="11.5" FontWeight="SemiBold" Foreground="{ThemeResource ChipTextBrush}" />
                                 </Border>
-                                <Button Grid.Column="3" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource IncomingFooterTextBrush}"
+                                <Button Grid.Column="3" Tag="{x:Bind}" Loaded="MessageOptions_Loaded" Unloaded="MessageOptions_Unloaded" Click="MessageOptions_Click"
+                                        Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource IncomingFooterTextBrush}"
+                                        AutomationProperties.Name="Message actions" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Message actions">
+                                    <FontIcon Glyph="&#xE712;" FontSize="13" />
+                                </Button>
+                                <Button Grid.Column="4" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource IncomingFooterTextBrush}"
                                         AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
                                     <FontIcon Glyph="&#xE8C8;" FontSize="13" />
                                 </Button>
@@ -152,13 +157,18 @@
                         </StackPanel>
                         <Border BorderThickness="0,1,0,0" BorderBrush="{ThemeResource OutgoingFooterBorderBrush}" Padding="16,6,12,6">
                             <Grid ColumnSpacing="10">
-                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
                                 <TextBlock Text="{x:Bind FooterTimeLabel}" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
                                     <TextBlock Text="{x:Bind ReceiptGlyph}" FontFamily="Segoe UI Symbol" FontSize="12" Foreground="{ThemeResource OutgoingFooterTextBrush}" AutomationProperties.AccessibilityView="Raw" />
                                     <TextBlock Text="{x:Bind StatusLabel}" FontSize="12" FontWeight="SemiBold" Foreground="{ThemeResource OutgoingFooterTextBrush}" />
                                 </StackPanel>
-                                <Button Grid.Column="3" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
+                                <Button Grid.Column="3" Tag="{x:Bind}" Loaded="MessageOptions_Loaded" Unloaded="MessageOptions_Unloaded" Click="MessageOptions_Click"
+                                        Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
+                                        AutomationProperties.Name="Message actions" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Message actions">
+                                    <FontIcon Glyph="&#xE712;" FontSize="13" />
+                                </Button>
+                                <Button Grid.Column="4" Tag="{x:Bind CopyText}" Click="CopyMessage_Click" Style="{StaticResource FooterIconButton}" Foreground="{ThemeResource OutgoingFooterTextBrush}"
                                         AutomationProperties.Name="Copy message" AutomationProperties.AutomationId="{x:Bind Id}" ToolTipService.ToolTip="Copy message">
                                     <FontIcon Glyph="&#xE8C8;" FontSize="13" />
                                 </Button>
@@ -544,12 +554,26 @@
                          Message="{x:Bind ViewModel.BlockedBanner, Mode=OneWay}" AutomationProperties.Name="Blocked">
                     <InfoBar.ActionButton><Button Content="Unblock" Click="Unblock_Click" AutomationProperties.Name="Unblock" /></InfoBar.ActionButton>
                 </InfoBar>
+                <Border Visibility="{x:Bind ToVisibility(ViewModel.HasComposerAction), Mode=OneWay}" Margin="24,0,24,6" Padding="12,10" CornerRadius="10"
+                        Background="{ThemeResource ChipSurfaceBrush}" BorderBrush="{ThemeResource ComposerBorderBrush}" BorderThickness="1" AutomationProperties.Name="Composer action">
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+                        <StackPanel Spacing="4">
+                            <TextBlock Text="{x:Bind ViewModel.ComposerActionTitle, Mode=OneWay}" FontWeight="SemiBold" FontSize="13" Foreground="{ThemeResource AccentBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.ComposerActionQuote, Mode=OneWay}" TextWrapping="Wrap" MaxLines="2" TextTrimming="CharacterEllipsis" FontSize="12.5" Foreground="{ThemeResource TextSecondaryBrush}" />
+                            <TextBlock Text="{x:Bind ViewModel.ComposerActionProblem, Mode=OneWay}" TextWrapping="Wrap" FontSize="12" Foreground="{ThemeResource TextSecondaryBrush}"
+                                       Visibility="{x:Bind ViewModel.ComposerActionProblem, Mode=OneWay, Converter={StaticResource TextVisibility}}" />
+                        </StackPanel>
+                        <Button Grid.Column="1" Content="Cancel" Click="CancelComposerAction_Click" Style="{StaticResource SecondaryActionButton}" VerticalAlignment="Top"
+                                IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Cancel message action" />
+                    </Grid>
+                </Border>
                 <Border Padding="24,12,24,18" BorderThickness="0,1,0,0" BorderBrush="{ThemeResource DividerBrush}" Background="{ThemeResource ComposerAreaBrush}">
                 <Border Padding="10,8,12,12" CornerRadius="14" BorderThickness="1" BorderBrush="{ThemeResource ComposerBorderBrush}" Background="{ThemeResource ComposerSurfaceBrush}">
                     <Grid RowSpacing="6">
                         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
                         <ScrollViewer MaxHeight="120" Visibility="{x:Bind ToVisibility(ViewModel.HasDraftAttachments), Mode=OneWay}" HorizontalScrollBarVisibility="Disabled">
-                            <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attached files">
+                            <ItemsControl ItemsSource="{x:Bind ViewModel.DraftAttachments, Mode=OneWay}" IsEnabled="{x:Bind ViewModel.CanAttachFiles, Mode=OneWay}" AutomationProperties.Name="Attached files">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate x:DataType="core:DraftAttachment">
                                         <Border CornerRadius="10" Background="{ThemeResource AttachmentSurfaceBrush}" BorderBrush="{ThemeResource AttachmentBorderBrush}" BorderThickness="1" Padding="8" Margin="2,2,2,4">
@@ -564,7 +588,7 @@
                                 </ItemsControl.ItemTemplate>
                             </ItemsControl>
                         </ScrollViewer>
-                        <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="Write a message…"
+                        <TextBox x:Name="Composer" Grid.Row="1" Text="{x:Bind ViewModel.Draft, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}" PlaceholderText="{x:Bind ViewModel.ComposerPlaceholder, Mode=OneWay}"
                                  AcceptsReturn="True" TextWrapping="Wrap" MinHeight="56" MaxHeight="144" MaxLength="20000" BorderThickness="0" Background="Transparent" FontSize="14.5" Padding="6,6,6,4"
                                  IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Message" Paste="Composer_Paste" PreviewKeyDown="Composer_PreviewKeyDown">
                             <TextBox.Resources>
@@ -583,9 +607,9 @@
                         </TextBox>
                         <Grid Grid.Row="2" ColumnSpacing="8">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
-                            <Button Click="Attach_Click" Style="{StaticResource QuietIconButton}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" AutomationProperties.Name="Attach files…" ToolTipService.ToolTip="Attach files or paste from clipboard"><SymbolIcon Symbol="Attach" /></Button>
-                            <TextBlock Grid.Column="1" Text="Ctrl+Enter to send" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
-                            <Button Grid.Column="2" Content="Send" Click="Send_Click" Style="{StaticResource PrimaryActionButton}" IsEnabled="{x:Bind ViewModel.CanCompose, Mode=OneWay}" />
+                            <Button Click="Attach_Click" Style="{StaticResource QuietIconButton}" IsEnabled="{x:Bind ViewModel.CanAttachFiles, Mode=OneWay}" AutomationProperties.Name="Attach files…" ToolTipService.ToolTip="Attach files or paste from clipboard"><SymbolIcon Symbol="Attach" /></Button>
+                            <TextBlock Grid.Column="1" Text="Ctrl+Enter" FontSize="12" VerticalAlignment="Center" Foreground="{ThemeResource TextTertiaryBrush}" />
+                            <Button Grid.Column="2" Content="{x:Bind ViewModel.SendActionLabel, Mode=OneWay}" Click="Send_Click" Style="{StaticResource PrimaryActionButton}" IsEnabled="{x:Bind ViewModel.CanSendDraft, Mode=OneWay}" />
                         </Grid>
                     </Grid>
                 </Border>

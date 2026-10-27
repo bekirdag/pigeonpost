@@ -1,6 +1,6 @@
 # Windows reply, edit and message information
 
-Continue the protected composer from `a022089` in this separate checkout. Its parent #128 is still qualifying the actual recovery UI; do not alter that checkout during its local builds or treat this child as an independently releasable app. Native stores remain held, Apple submission requires the owner's Claude review, and Nests/Products remain planning only.
+Continue the protected composer from `a022089` in this separate checkout. Its parent #128 is merged after all 16 checks and the actual recovery UI passed; do not alter that checkout during its local builds or treat this child as an independently releasable app. Native stores remain held, Apple submission requires the owner's Claude review, and Nests/Products remain planning only.
 
 1. Inspect the Windows targets, draft/revision maps, protected delivery flow and message-action contract, plus Android's established text-envelope editing. Keep message bodies as data. Preserve the original request verb and unrelated arguments while changing only its displayed text slot; never replace a structured edit with a new privileged work envelope. Bound quotes by Unicode code points.
 2. Add account/inbox/conversation/subject-bound reply/edit sessions retaining all original action callers. Revalidate the original message, sender, 24-hour window, expiry, current capabilities and edit version. Keep a display binding distinct from the action's authority. A late token or protection result cannot adopt another account or revive a retired action.

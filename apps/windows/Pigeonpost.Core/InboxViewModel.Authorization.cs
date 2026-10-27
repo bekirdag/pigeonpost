@@ -98,6 +98,7 @@ public sealed partial class InboxViewModel
         var prior = account;
         account = next;
         prior?.Authorization.Retire();
+        ClearComposerAction(restore: false);
         mailboxVersion++; loadVersion++;
         mailboxScope.Cancel(); mailboxScope.Dispose(); mailboxScope = new();
         var previousLoad = loading; loading = null;

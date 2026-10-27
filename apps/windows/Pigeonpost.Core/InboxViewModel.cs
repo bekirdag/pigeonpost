@@ -4,7 +4,7 @@ namespace Pigeonpost.Core;
 
 // Construct on the UI context. Awaited service calls return to it; stale mailbox loads are discarded.
 public sealed partial class InboxViewModel(IInboxService service, IAttachmentService? attachmentService = null,
-    MessageDeliveryCoordinator? deliveryCoordinator = null) : ObservableObject, IDisposable
+    MessageDeliveryCoordinator? deliveryCoordinator = null, TimeProvider? timeProvider = null) : ObservableObject, IDisposable
 {
     private InboxSnapshot snapshot = InboxSnapshot.Empty;
     private readonly List<PendingMessage> pending = [];
@@ -51,7 +51,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public bool HasDraftAttachments => DraftAttachments.Count > 0;
     public void AddAttachments(IEnumerable<DraftAttachment> files)
     {
-        if (!CanCompose || DraftKey() is not { } key) return;
+        if (!CanAttachFiles || DraftKey() is not { } key) return;
         if (!attachmentDrafts.TryGetValue(key, out var list)) attachmentDrafts[key] = list = [];
         var changed = false;
         foreach (var file in files)
@@ -61,7 +61,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     }
     public void RemoveAttachment(DraftAttachment file)
     {
-        if (!CanCompose || DraftKey() is not { } key) return;
+        if (!CanAttachFiles || DraftKey() is not { } key) return;
         if (attachmentDrafts.TryGetValue(key, out var list) && list.RemoveAll(f => f.Id == file.Id) > 0) TouchDraft(key);
         UpdateDraftAttachments();
     }
@@ -70,12 +70,13 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         StableList.Reconcile(DraftAttachments, DraftKey() is { } key ? attachmentDrafts.GetValueOrDefault(key) ?? [] : [],
             f => f.Id, (a, b) => ReferenceEquals(a, b));
         Changed(nameof(HasDraftAttachments));
+        NotifyComposerAction();
     }
     public bool IsUpdatingLists { get; private set; }
     public event EventHandler? MessagesUpdating;
     public event EventHandler? MessagesUpdated;
-    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); } } }
-    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); } } }
+    public bool IsBusy { get => busy; private set { if (Set(ref busy, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); NotifyComposerAction(); } } }
+    public bool IsSending { get => sending; private set { if (Set(ref sending, value)) { Changed(nameof(CanCompose)); Changed(nameof(CanDeleteSubject)); Changed(nameof(CanReviewPendingDeliveries)); NotifyComposerAction(); } } }
     public bool CanCompose => ActiveAccount is not null && SelectedConversation is not null && !IsBusy && !IsSending && !IsSelectedBlocked;
     public bool HasConversation => SelectedConversation is not null;
     public bool HasError => !string.IsNullOrEmpty(Error);
@@ -107,6 +108,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             if (disposed || ActiveAccount is null) return;
             if (!Set(ref draft, value)) return;
             if (DraftKey() is { } key) { drafts[key] = value; TouchDraft(key); }
+            NotifyComposerAction();
         }
     }
     public string Find
@@ -242,10 +244,17 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     public async Task SendDraftAsync()
     {
         if (!CanCompose || SelectedMailbox is not { } mailbox || SelectedConversation is not { } conversation || string.IsNullOrWhiteSpace(Draft) && !HasDraftAttachments) return;
+        var submittedMode = composerMode;
+        if (submittedMode is not null && ComposerProblem(submittedMode) is { } problem) { Error = problem; return; }
+        IDisposable? actionBinding;
+        try { actionBinding = submittedMode?.Bind(); }
+        catch (OperationCanceledException) { Error = "Select the original message again before sending this action."; return; }
+        using var action = actionBinding;
         using var operation = BeginOperation();
         if (operation is null) return;
         var text = Draft;
         var files = DraftAttachments.ToArray();
+        if (submittedMode?.Kind == MessageComposerKind.Edit && files.Length > 0) { Error = "An edit can change only the message text."; return; }
         var fileService = attachmentService ?? service as IAttachmentService;
         if (files.Length > 0 && fileService is null) { Error = "File sending is unavailable. Please try again."; return; }
         var subject = SelectedSubject?.Id;
@@ -254,11 +263,14 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         var revision = draftRevisions.GetValueOrDefault(sentDraftKey);
         var generation = mailboxVersion;
         var token = mailboxScope.Token;
-        var row = new PendingMessage(Guid.NewGuid().ToString("N"), mailbox.Address, conversation.Peer,
-            files.Length > 0 ? RequestEnvelope.Attachment(text) : RequestEnvelope.Work(text.Trim()),
-            DateTimeOffset.UtcNow.ToUnixTimeSeconds(), string.IsNullOrEmpty(subject) ? null : subject,
+        string body;
+        try { body = submittedMode?.Kind == MessageComposerKind.Edit ? RequestEnvelope.EditText(submittedMode.Target.Message.Body, text.Trim())
+            : files.Length > 0 ? RequestEnvelope.Attachment(text) : RequestEnvelope.Work(text.Trim()); }
+        catch (ArgumentException) { Error = "This structured message cannot be edited safely. Its text is still in the draft."; return; }
+        var row = new PendingMessage(Guid.NewGuid().ToString("N"), mailbox.Address, conversation.Peer, body,
+            MessageNow, string.IsNullOrEmpty(subject) ? null : subject,
             Attachments: files.Select(f => new MessageAttachment(f.Id, f.Filename, "application/octet-stream", f.Bytes)).ToArray());
-        pending.Add(row);
+        if (submittedMode?.Kind != MessageComposerKind.Edit) pending.Add(row);
         var activity = StartSendingActivity();
         Error = null;
         Rebuild();
@@ -288,15 +300,20 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
                 uploaded.Add(attachment);
             }
             operation.Check(token);
+            if (submittedMode is not null && ComposerProblem(submittedMode) is not null) throw new AuthorizationRetiredException();
             SendReceipt sent;
             if (recovery is not null)
             {
                 var draftId = Guid.NewGuid().ToString("N");
                 prepared = await deliveryCoordinator!.PrepareAsync(recovery,
-                    new(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id)),
+                    new(mailbox.Address, conversation.Peer, row.Body, row.ThreadId, uploaded.Select(f => f.Id),
+                        replyTo: submittedMode?.Kind == MessageComposerKind.Reply ? submittedMode.Target.Message.Id : null,
+                        quote: submittedMode?.Kind == MessageComposerKind.Reply ? submittedMode.Quote : null,
+                        editOf: submittedMode?.Kind == MessageComposerKind.Edit ? submittedMode.Target.Message.Id : null),
                     new(conversation.Peer, subjectLabel, draftId), token);
                 operation.Check(token);
-                operation.Local(() => deliveryDraftOwners[prepared.Request.MsgRef] = new(draftId, sentDraftKey, revision, row, files, uploaded));
+                if (submittedMode is not null && ComposerProblem(submittedMode) is not null) throw new AuthorizationRetiredException();
+                operation.Local(() => deliveryDraftOwners[prepared.Request.MsgRef] = new(draftId, sentDraftKey, revision, row, files, uploaded, submittedMode));
                 sendingMessage = true;
                 var result = await deliveryCoordinator.SendAsync(recovery, prepared, token);
                 sent = result.Receipt; cleanupPending = result.PendingCleanup;
@@ -314,11 +331,19 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
                 ReplacePending(row with { Status = DeliveryStatus.Sent, SentCopyId = sent.SentCopyId, Attachments = uploaded });
                 if (prepared is not null) deliveryDraftOwners.Remove(prepared.Request.MsgRef);
                 if (!OwnsDraft(sentDraftKey, revision)) return;
-                drafts[sentDraftKey] = "";
-                if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
+                if (submittedMode?.Kind == MessageComposerKind.Edit)
+                { drafts[sentDraftKey] = submittedMode.PreviousDraft; attachmentDrafts[sentDraftKey] = submittedMode.PreviousFiles.ToList(); }
+                else
+                {
+                    drafts[sentDraftKey] = "";
+                    if (attachmentDrafts.TryGetValue(sentDraftKey, out var sentFiles)) sentFiles.RemoveAll(f => files.Any(sentFile => sentFile.Id == f.Id));
+                }
+                if (submittedMode is not null && ReferenceEquals(composerMode, submittedMode)) composerMode = null;
             });
+            if (submittedMode is not null && !ReferenceEquals(composerMode, submittedMode)) submittedMode.Dispose();
             if (!operation.IsMailbox(generation)) return;
-            if (DraftKey() == sentDraftKey && OwnsDraft(sentDraftKey, revision)) Draft = "";
+            if (DraftKey() == sentDraftKey && OwnsDraft(sentDraftKey, revision)) Draft = drafts.GetValueOrDefault(sentDraftKey, "");
+            NotifyComposerAction();
             await RefreshAsync();
             if (cleanupPending && operation.IsMailbox(generation)) Error = "Delivered. The local pending entry could not be cleared; review pending deliveries.";
         }
@@ -336,7 +361,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         finally
         {
             try { if (operation.IsMailbox(generation) && deliveryCoordinator is not null) await RefreshPendingDeliveriesAsync(silent: true); }
-            finally { operation.Dispose(); FinishSendingActivity(activity); }
+            finally { operation.Dispose(); action?.Dispose(); FinishSendingActivity(activity); }
         }
     }
 
@@ -541,7 +566,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     private void Rebuild()
     {
         if (SelectedMailbox is null) return;
-        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address), callEntries);
+        allConversations = ConversationBuilder.Build(snapshot, pending, Mailboxes, SelectedMailbox, opened.GetValueOrDefault(SelectedMailbox.Address), callEntries, now: MessageNow);
         FilterConversations();
         Changed(nameof(InboxSummary));
         // A block or a timer can change without the selected row changing.
@@ -609,6 +634,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         var contextChanged = historyContext != context;
         if (contextChanged)
         {
+            ClearComposerAction(restore: true);
             historyContext = context;
             ContextVersion++;
             matches = [];
@@ -627,6 +653,8 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
         history = Messages;
         Set(ref draft, DraftKey() is { } key ? drafts.GetValueOrDefault(key, "") : "", nameof(Draft));
         UpdateDraftAttachments();
+        if (composerMode is { } mode && ComposerProblem(mode) is not null) mode.Authority.Retire();
+        NotifyComposerAction();
         UpdateMatches();
     }
 
@@ -657,6 +685,7 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
     {
         if (disposed) return;
         disposed = true;
+        ClearComposerAction(restore: false);
         account?.Authorization.Retire();
         account = null;
         mailboxScope.Cancel();

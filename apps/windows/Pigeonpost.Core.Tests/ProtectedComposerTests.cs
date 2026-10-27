@@ -99,30 +99,30 @@ internal static class ProtectedComposerTests
         });
     }
     private static void Require(bool value) { if (!value) throw new Exception("Protected composer assertion failed."); }
-    private sealed class Fixture : IDisposable
+    internal sealed class Fixture : IDisposable
     {
         internal readonly string Folder = Path.Combine(Path.GetTempPath(), "pp-composer-fixture-" + Guid.NewGuid().ToString("N"));
         internal readonly MessageAttemptStoreTests.Protector Cipher = new();
         internal readonly Protection Protection; internal readonly Service Service = new(); internal readonly InboxViewModel Model;
-        private Fixture()
+        private Fixture(TimeProvider? clock)
         {
             Directory.CreateDirectory(Folder); Protection = new(Cipher);
-            Model = new(Service, deliveryCoordinator: new(Service, new FileMessageAttemptStore(Folder, Protection)));
+            Model = new(Service, deliveryCoordinator: new(Service, new FileMessageAttemptStore(Folder, Protection)), timeProvider: clock);
         }
-        internal static async Task<Fixture> Create()
+        internal static async Task<Fixture> Create(TimeProvider? clock = null)
         {
-            var f = new Fixture(); await f.Model.InitializeAsync();
+            var f = new Fixture(clock); await f.Model.InitializeAsync();
             f.Model.SelectConversation(f.Model.Conversations.Single(c => c.Peer == "/preview/design")); return f;
         }
         public void Dispose() { Service.Release.TrySetResult(); Model.Dispose(); Service.Root.Retire(); Cipher.Dispose(); Directory.Delete(Folder, recursive: true); }
     }
-    private sealed class Protection(IStateProtector inner) : IStateProtector
+    internal sealed class Protection(IStateProtector inner) : IStateProtector
     {
         internal bool Fail;
         public Task<byte[]> ProtectAsync(byte[] plain) => Fail ? throw new IOException("Synthetic protection failure.") : inner.ProtectAsync(plain);
         public Task<byte[]> UnprotectAsync(byte[] bytes) => inner.UnprotectAsync(bytes);
     }
-    private sealed class Service : IProtectedMessageService, IAttachmentService
+    internal sealed class Service : IProtectedMessageService, IAttachmentService
     {
         private PreviewInboxService preview = new();
         internal AuthorizationLease Root = new(); private char owner = 'a';
@@ -132,6 +132,8 @@ internal static class ProtectedComposerTests
         internal int Posts, LegacyPosts, Uploads;
         internal bool LoseNext, BlockMailboxes;
         internal Action? BeforePost;
+        internal readonly List<MessageSendRequest> Requests = [];
+        internal Func<InboxSnapshot, InboxSnapshot>? TransformLoad;
         internal readonly Dictionary<string, SendReceipt> Committed = [];
         internal readonly TaskCompletionSource Waiting = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
         internal void Rotate(bool retire = true) { if (retire) Root.Retire(); Root = new(); owner = 'b'; preview = new(); }
@@ -144,7 +146,7 @@ internal static class ProtectedComposerTests
         { scope.RequireCurrent(ct); return Task.FromResult(new RecipientRoute(scope.Mailbox, "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb", peer)); }
         public async Task<SendReceipt> SendPreparedMessageAsync(MessageRecoveryScope scope, PreparedMessageAttempt attempt, CancellationToken ct)
         {
-            scope.RequireCurrent(ct); BeforePost?.Invoke(); Posts++;
+            scope.RequireCurrent(ct); BeforePost?.Invoke(); Posts++; Requests.Add(attempt.Request);
             if (Committed.TryGetValue(attempt.Request.MsgRef, out var receipt)) return receipt with { Duplicate = true };
             var sent = await preview.SendAsync(scope.Mailbox, attempt.Review.Recipient, attempt.Request.Body, attempt.Request.ThreadId, ct);
             receipt = sent with { MsgRef = attempt.Request.MsgRef, Duplicate = false }; Committed[attempt.Request.MsgRef] = receipt;
@@ -161,7 +163,8 @@ internal static class ProtectedComposerTests
         {
             var snapshot = await preview.LoadAsync(identity, ct);
             var references = Committed.Values.Where(r => r.SentCopyId is not null).ToDictionary(r => r.SentCopyId!, r => r.MsgRef);
-            return snapshot with { Messages = snapshot.Messages.Select(m => m.IsOutgoing && references.TryGetValue(m.MessageId, out var reference) ? m with { MsgRef = reference } : m).ToArray() };
+            snapshot = snapshot with { Messages = snapshot.Messages.Select(m => m.IsOutgoing && references.TryGetValue(m.MessageId, out var reference) ? m with { MsgRef = reference } : m).ToArray() };
+            return TransformLoad?.Invoke(snapshot) ?? snapshot;
         }
         public Task<string> CreateThreadAsync(string identity, string peer, string title, CancellationToken ct) => preview.CreateThreadAsync(identity, peer, title, ct);
         public Task SetArchivedAsync(string identity, string peer, bool archived, CancellationToken ct) => preview.SetArchivedAsync(identity, peer, archived, ct);

@@ -105,7 +105,7 @@ public sealed partial class InboxViewModel
     public void PruneExpired()
     {
         if (SelectedMailbox is null || ActiveAccount is null) return;
-        var now = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+        var now = MessageNow;
         if (snapshot.Messages.Any(m => Timers.Expired(m.ExpiresAt, now)))
         {
             snapshot = snapshot with { Messages = snapshot.Messages.Where(m => !Timers.Expired(m.ExpiresAt, now)).ToArray() };

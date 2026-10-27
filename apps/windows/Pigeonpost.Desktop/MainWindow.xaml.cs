@@ -46,9 +46,18 @@ public sealed partial class MainWindow : Window
         postbox = new PostboxClient(new HttpClient(new AttachmentFixtureHandler(preview)), new AttachmentFixtureTokens());
         var stand_in = new Pigeonpost.Core.Preview.PreviewPostbox();
         PreviewSideData.Seed(stand_in);
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is not null)
+            stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
         postbox.Dispose();
         postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens());
-        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_DELIVERY_STATE") is { } deliveryState)
+        if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is { } modesState)
+        {
+            var folder = Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_FOLDER") ?? throw new InvalidOperationException("Message modes fixture folder missing.");
+            deliveryUiFixture = new NativeDeliveryFixture(preview, modesState, messageModes: true);
+            ViewModel = new InboxViewModel(deliveryUiFixture,
+                deliveryCoordinator: new MessageDeliveryCoordinator(deliveryUiFixture, new FileMessageAttemptStore(folder, new DpapiProtector())));
+        }
+        else if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_DELIVERY_STATE") is { } deliveryState)
         {
             var folder = Environment.GetEnvironmentVariable("PIGEONPOST_UI_DELIVERY_FOLDER") ?? throw new InvalidOperationException("Delivery UI fixture folder missing.");
             deliveryUiFixture = new NativeDeliveryFixture(preview, deliveryState);
@@ -100,7 +109,7 @@ public sealed partial class MainWindow : Window
         var window = WinRT.Interop.WindowNative.GetWindowHandle(this);
         fileDrop = new NativeFileDrop(window, (x, y) =>
         {
-            if (dialogOpen || !ViewModel.CanCompose || MessagingArea.Visibility != Visibility.Visible) return false;
+            if (dialogOpen || !ViewModel.CanAttachFiles || MessagingArea.Visibility != Visibility.Visible) return false;
             var origin = new DropPoint();
             if (!NativeFileDrop.ClientToScreen(window, ref origin)) return false;
             var point = MessagingArea.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point());
@@ -414,6 +423,7 @@ public sealed partial class MainWindow : Window
 
     private void ViewModel_PropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
+        if (e.PropertyName is nameof(InboxViewModel.CanCompose) or nameof(InboxViewModel.CanReplyToMessage) or nameof(InboxViewModel.CanInspectMessages)) RefreshMessageOptions();
         if (e.PropertyName == nameof(InboxViewModel.HasConversation)) UpdateLayoutMode();
         if (e.PropertyName == nameof(InboxViewModel.IsSelectedBlocked)) BlockMenuItem.Text = ViewModel.IsSelectedBlocked ? "Unblock" : "Block…";
         if (e.PropertyName is nameof(InboxViewModel.SelectedConversation) or nameof(InboxViewModel.HasConversation)) UpdateCallButtons();

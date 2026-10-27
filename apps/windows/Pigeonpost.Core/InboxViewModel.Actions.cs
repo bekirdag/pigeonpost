@@ -52,7 +52,7 @@ public sealed partial class InboxViewModel
         var generation = mailboxVersion;
         var context = ContextVersion;
         bool Current() => AccountCurrent(owner) && generation == mailboxVersion && context == ContextVersion
-            && !Timers.Expired(message.ExpiresAt, DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            && !Timers.Expired(message.ExpiresAt, MessageNow)
             && Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message));
         return new(message, Current, () => AccountCurrent(owner), () => Current() ? CaptureMessageTarget(message) : null);
     }
@@ -65,7 +65,7 @@ public sealed partial class InboxViewModel
         var generation = mailboxVersion;
         var context = ContextVersion;
         return new MessageTarget(this, message, () => operation.IsMailbox(generation) && context == ContextVersion
-            && !Timers.Expired(message.ExpiresAt, DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            && !Timers.Expired(message.ExpiresAt, MessageNow)
             && Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message)), () => operation.IsCurrent, AuthorizationContext.CaptureBinding());
     }
 
@@ -74,7 +74,7 @@ public sealed partial class InboxViewModel
         if (!ReferenceEquals(target.Owner, this) || !target.IsCurrent || target.Message.ReplyTo is not { } reply
             || SelectedConversation is not { } conversation) return null;
         var parent = conversation.Messages.FirstOrDefault(m => !m.IsSystem && m.Status == DeliveryStatus.Sent
-            && !Timers.Expired(m.ExpiresAt, DateTimeOffset.UtcNow.ToUnixTimeSeconds())
+            && !Timers.Expired(m.ExpiresAt, MessageNow)
             && (reply.MessageId is { Length: > 0 } id ? m.Id == id
                 && (reply.MsgRef is not { Length: > 0 } reference || m.MsgRef == reference)
                 : reply.MsgRef is { Length: > 0 } referenceOnly && m.MsgRef == referenceOnly));
