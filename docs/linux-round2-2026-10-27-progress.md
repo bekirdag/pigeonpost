@@ -76,8 +76,11 @@ re-run the Linux workflow.
 - Live loopback postbox (`tests/e2e-messages/linux.sh`, postbox built from this worktree): messages
   32/32 (response loss before/after commit with exact explicit retry, single delivery, conflicts,
   replies, folded edits and versions, ack with edits, seen/delivered and the read-receipts mask,
-  retired-login refusal and same-account recovery), calendar 32/32, organizations 26/26. The groups
-  suite needs the MLS library and runs in CI.
+  retired-login refusal and same-account recovery), calendar 32/32, organizations 26/26, groups 30/30
+  (with the MLS library built for macOS from this worktree and loaded through
+  `PIGEONPOST_GROUPCRYPTO_DIR`). The first CI run found the groups suite's ordering expectation wrong
+  (the folded edit keeps its own later sequence position after the reply); the folding itself was
+  correct, and the assertion now states sequence order.
 - Scratch containers on raijin were throwaway (`--rm`, own `/tmp/pp-r2-*` folders removed); no
   services or `/var/www` touched.
 

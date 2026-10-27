@@ -74,7 +74,8 @@ def main():
     alice.edit(gid, seq_of(alice, "Agenda (v2)"), "Agenda (v3)")
     bob.sync(gid)
     carol.sync(gid)
-    check.ok(visible(bob) == ["Agenda (v3)", "Looks good"], "the edit chain folds into its latest version")
+    # Sequence order: the reply (an earlier seq) precedes the latest version of the edited message.
+    check.ok(visible(bob) == ["Looks good", "Agenda (v3)"], "the edit chain folds into its latest version")
     latest = bob.current(gid, parent)
     check.ok(bob.open_file(gid, latest["files"][0]) == b"1. ship", "a text edit keeps the original file's key")
     info = bob.versions(gid, parent)
