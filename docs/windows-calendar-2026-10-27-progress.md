@@ -1,0 +1,9 @@
+# Windows calendar progress
+
+Plan: [Windows calendar](windows-calendar-2026-10-27-plan.md).
+
+- Created isolated `codex/windows-calendar-20261027` from Windows message-mode checkpoint `28803b3` / PR129 while its immutable remote CI runs. No source changes in the qualifying parent. Original shared checkout remains untouched; the existing native MLS fixture cache is linked, without production data.
+- Initialized Docdex for this exact checkout, consulted global profile, scoped memory and wake-up state, and checked index health. The first C# symbol read backed off during initial indexing; later index stats show coverage. C# graphs lack dependency edges, so direct callers and meaningful behavior/native tests supplement them.
+- Read the native round-two/calendar plans, client contract and Android models/client/time implementation. Windows currently has no calendar implementation. Server defaults are created only by writes, calendar content is service-readable, fold/gap authoring must be explicit, and contact email remains feature-gated. Implementation has not started.
+- Added tolerant typed calendar projections and literal IANA wall-time/date/month models. Ten new cases cover gaps/folds, 23/25-hour days, exclusive all-day dates, midnight overlap, moved occurrence identity, optional fields and invalid input. A whole skipped date exposed `TimeZoneInfo.IsInvalidTime` missing Apia 2011-12-30; cached distinct rule offsets plus exact UTC-to-zone round trips now refuse it. **312/312 combined Core/MLS cases pass**, Release **0 warnings/errors** (`windows-calendar-time-roundtrip-core.log`, `windows-calendar-time-release.log`). No new dependency.
+- Local DTO drafts used incorrect wrapper names and then mutable classes instead of records; neither was applied directly. Primary corrected/reviewed projections against the actual Android/server contract. Calendar API, mutation custody and UI have not started.
