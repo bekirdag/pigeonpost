@@ -93,7 +93,10 @@ Binary values are standard base64; P-256 public keys are 65-byte uncompressed po
 - **Notes keys.** Each browser or native call host keeps one non-extractable P-256 private key in
   IndexedDB. Its public half goes with a member's Agree (registered for the account through the calls
   service) and is registered by the inbox while the feature is on. At most 10 per account; the oldest is
-  dropped. A key id is never rebound to a different key.
+  dropped. A key id is never rebound to a different key. WebKit in app web views (WKWebView) cannot
+  store a `CryptoKey` in IndexedDB (`DataCloneError`); there the private key is kept as PKCS#8 bytes in
+  that origin's storage on the device and re-imported as non-extractable when used. That is weaker at
+  rest than a non-extractable key (anyone who can read the app's web storage on the device can read it).
 
 ## 4. Threat model
 
@@ -131,5 +134,9 @@ existing SSH tunnel).
 ## 6. Clients
 
 Web, and the native apps through their web call hosts (`native-call.html` loads `calls-summary.js`).
+Verified with synthetic media only: headless Chrome (inbox, native-call and join pages, production CSP;
+`tests/e2e-meeting-summaries/run.mjs`), the iOS app's WKWebView on the iOS 18.3 simulator (AAC/MP4
+chunks) and the Android app's WebView on an Android 14 emulator (WebView 113, Opus/WebM chunks)
+(`tests/e2e-meeting-summaries/native.mjs`).
 Native apps read notes in the inbox web app for now; a native reader is a follow-up. Guests on the join
 page see the disclosure and can agree or decline. Linux opens calls in the browser.
