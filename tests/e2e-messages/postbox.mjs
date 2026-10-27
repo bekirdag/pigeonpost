@@ -77,7 +77,7 @@ for (let attempt = 0; ; attempt++) {
   if (attempt >= 120) throw new Error("Fixture postbox did not start.");
   await sleep(250);
 }
-for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "message_filtering", "account_events", ...(["groups", "orgs"].includes(mode) ? ["groups", "disappearing"] : []), ...(mode === "calendar" ? ["calendar"] : []), ...(mode === "orgs" ? ["orgs"] : [])]) {
+for (const feature of ["message_edit", "message_reply", "receipts", "agent_status", "recipient_lookup", "message_filtering", "account_events", ...(["groups", "orgs"].includes(mode) ? ["groups", "disappearing"] : []), ...(mode === "calendar" ? ["calendar"] : []), ...(mode === "orgs" ? ["orgs"] : [])]) {
   const response = await fetch(`${internal}/internal/v1/features/${feature}`, { method: "PUT",
     headers: { authorization: `Bearer ${ops}`, "content-type": "application/json" },
     body: JSON.stringify({ scope: "global", enabled: true }) });

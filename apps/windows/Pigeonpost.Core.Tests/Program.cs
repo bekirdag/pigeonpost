@@ -1048,6 +1048,8 @@ tests.AddRange(SessionOwnerTests.All());
 tests.AddRange(MessageRecoveryScopeTests.All());
 tests.AddRange(MessageAttemptStoreTests.All());
 tests.AddRange(PreparedDeliveryTests.All());
+tests.AddRange(RecipientLookupTests.All());
+tests.AddRange(MessageDeliveryCoordinatorTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

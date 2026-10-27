@@ -7,27 +7,41 @@ namespace Pigeonpost.Core;
 
 public sealed class MessageAttemptUnavailableException() : IOException("Pending delivery could not be read or saved. Try again before sending another message.");
 public sealed class MessageAttemptConflictException() : IOException("Resolve the previous pending delivery before sending another message in this subject.");
+public sealed class MessageAttemptLimitException() : IOException("Review pending deliveries in this inbox before preparing more messages.");
+
+// Display context is protected alongside the wire request; it never authorizes a new recipient.
+public sealed record MessageDeliveryReview(string Recipient, string? SubjectLabel = null, string? DraftId = null)
+{
+    internal bool MatchesRecipient(string recipient) => PostAddress.Canonical(Recipient) == PostAddress.Canonical(recipient);
+    public override string ToString() => "MessageDeliveryReview(redacted)";
+}
 
 public sealed class PreparedMessageAttempt
 {
     private const int MaxWireBytes = 2 * 1024 * 1024;
     public MessageSendRequest Request { get; }
+    public MessageDeliveryReview Review { get; }
     public long CreatedAt { get; }
     internal string OwnerKey { get; }
     internal string Origin { get; }
     internal string Mailbox { get; }
     internal string Slot { get; }
     internal string WireJson { get; }
-    private PreparedMessageAttempt(MessageRecoveryScope scope, MessageSendRequest request, string wireJson, long createdAt)
+    private PreparedMessageAttempt(MessageRecoveryScope scope, MessageSendRequest request, string wireJson, long createdAt, MessageDeliveryReview review)
     {
         scope.RequireCurrent();
         if (request.From != scope.Mailbox || !MessageRecoveryScope.CanonicalMailbox(request.To) || request.Body is null
             || Encoding.UTF8.GetByteCount(wireJson) > MaxWireBytes) throw new ArgumentException("Verify the exact sender and recipient before preparing delivery.");
-        OwnerKey = scope.OwnerKey; Origin = scope.Origin; Mailbox = scope.Mailbox;
+        if (review.Recipient is null || !PostAddress.IsValid(review.Recipient) || review.Recipient.Any(char.IsControl)
+            || Encoding.UTF8.GetByteCount(review.Recipient) > 512
+            || review.SubjectLabel is not null && Encoding.UTF8.GetByteCount(review.SubjectLabel) > 1024
+            || review.DraftId is not null && (review.DraftId.Length != 32 || review.DraftId.AsSpan().IndexOfAnyExcept("0123456789abcdef") >= 0))
+            throw new ArgumentException("Verify the reviewed delivery context before preparing delivery.");
+        OwnerKey = scope.OwnerKey; Origin = scope.Origin; Mailbox = scope.Mailbox; Review = review;
         Request = request; Slot = SlotFor(request.To, request.ThreadId); WireJson = wireJson; CreatedAt = createdAt;
     }
-    public static PreparedMessageAttempt Create(MessageRecoveryScope scope, MessageSendRequest request) =>
-        new(scope, request, JsonSerializer.Serialize(request, PostboxJson.Options), DateTimeOffset.UtcNow.ToUnixTimeSeconds());
+    public static PreparedMessageAttempt Create(MessageRecoveryScope scope, MessageSendRequest request, MessageDeliveryReview? review = null) =>
+        new(scope, request, JsonSerializer.Serialize(request, PostboxJson.Options), DateTimeOffset.UtcNow.ToUnixTimeSeconds(), review ?? new(request.To));
     internal static string SlotFor(string recipient, string? thread) => Hash(recipient + "\0" + (thread ?? ""));
     internal static string Hash(string value) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(value))).ToLowerInvariant();
     internal void RequireScope(MessageRecoveryScope scope)
@@ -38,19 +52,21 @@ public sealed class PreparedMessageAttempt
     internal byte[] Encode(MessageRecoveryScope scope)
     {
         RequireScope(scope);
-        return JsonSerializer.SerializeToUtf8Bytes(new Envelope(1, OwnerKey, Origin, Mailbox, Slot, CreatedAt, WireJson, Hash(WireJson)), PostboxJson.Options);
+        return JsonSerializer.SerializeToUtf8Bytes(new Envelope(2, OwnerKey, Origin, Mailbox, Slot, CreatedAt, WireJson, Hash(WireJson), Review), PostboxJson.Options);
     }
     internal static PreparedMessageAttempt Decode(MessageRecoveryScope scope, byte[] bytes, string expectedSlot)
     {
         scope.RequireCurrent();
         var envelope = JsonSerializer.Deserialize<Envelope>(bytes, PostboxJson.Options) ?? throw new MessageAttemptUnavailableException();
-        if (envelope.Version != 1 || envelope.OwnerKey != scope.OwnerKey || envelope.Origin != scope.Origin
-            || envelope.Mailbox != scope.Mailbox || envelope.Slot != expectedSlot || envelope.WireJson is null
+        if (envelope.Version is not (1 or 2) || envelope.OwnerKey != scope.OwnerKey || envelope.Origin != scope.Origin
+            || envelope.Mailbox != scope.Mailbox || envelope.Slot is not { Length: 64 }
+            || envelope.Slot.AsSpan().IndexOfAnyExcept("0123456789abcdef") >= 0 || !envelope.Slot.StartsWith(expectedSlot, StringComparison.Ordinal) || envelope.WireJson is null
+            || envelope.Version == 2 && envelope.Review is null || envelope.Version == 1 && envelope.Review is not null
             || envelope.WireSha256 != Hash(envelope.WireJson) || envelope.CreatedAt is < 0 or > 253402300799)
             throw new MessageAttemptUnavailableException();
         var request = ParseRequest(envelope.WireJson);
-        var result = new PreparedMessageAttempt(scope, request, envelope.WireJson, envelope.CreatedAt);
-        if (result.Slot != expectedSlot) throw new MessageAttemptUnavailableException();
+        var result = new PreparedMessageAttempt(scope, request, envelope.WireJson, envelope.CreatedAt, envelope.Review ?? new(request.To));
+        if (result.Slot != envelope.Slot) throw new MessageAttemptUnavailableException();
         return result;
     }
     private static MessageSendRequest ParseRequest(string json)
@@ -70,7 +86,7 @@ public sealed class PreparedMessageAttempt
             Text("msg_ref") ?? throw new MessageAttemptUnavailableException(), Text("reply_to"), Text("quote"), Text("edit_of"));
     }
     // Validated again after decrypt; a file's path never authorizes its contents.
-    private sealed record Envelope(int Version, string OwnerKey, string Origin, string Mailbox, string Slot, long CreatedAt, string WireJson, string WireSha256)
+    private sealed record Envelope(int Version, string OwnerKey, string Origin, string Mailbox, string Slot, long CreatedAt, string WireJson, string WireSha256, MessageDeliveryReview? Review = null)
     { public override string ToString() => "MessageAttemptEnvelope(redacted)"; }
     public override string ToString() => "PreparedMessageAttempt(redacted)";
 }
@@ -78,6 +94,7 @@ public sealed class PreparedMessageAttempt
 public interface IMessageAttemptStore
 {
     bool Persistent { get; }
+    Task<IReadOnlyList<PreparedMessageAttempt>> ListAsync(MessageRecoveryScope scope, CancellationToken cancellationToken = default);
     Task<PreparedMessageAttempt?> LoadAsync(MessageRecoveryScope scope, string canonicalRecipient, string? threadId, CancellationToken cancellationToken = default);
     Task SaveAsync(MessageRecoveryScope scope, PreparedMessageAttempt attempt, CancellationToken cancellationToken = default);
     Task<bool> RemoveAsync(MessageRecoveryScope scope, string canonicalRecipient, string? threadId, string expectedReference, CancellationToken cancellationToken = default);
@@ -85,6 +102,7 @@ public interface IMessageAttemptStore
 
 public sealed class FileMessageAttemptStore(string folder, IStateProtector protector) : IMessageAttemptStore
 {
+    public const int MaxPendingPerInbox = 64;
     private static readonly byte[] Magic = "PPMA1"u8.ToArray();
     private const int MaxPlainBytes = 4 * 1024 * 1024, MaxSealedBytes = 8 * 1024 * 1024;
     private readonly SemaphoreSlim gate = new(1, 1);
@@ -98,11 +116,39 @@ public sealed class FileMessageAttemptStore(string folder, IStateProtector prote
     private string FolderFor(MessageRecoveryScope scope) => Path.Combine(folder,
         PreparedMessageAttempt.Hash(scope.OwnerKey + "\0" + scope.Origin)[..32], PreparedMessageAttempt.Hash(scope.Mailbox)[..32]);
     private string PathFor(MessageRecoveryScope scope, string slot) => Path.Combine(FolderFor(scope), slot[..32] + ".pending");
-    private FileStream Lock(MessageRecoveryScope scope, string slot) => scope.Local(() =>
+    private FileStream Lock(MessageRecoveryScope scope) => scope.Local(() =>
     {
         Directory.CreateDirectory(FolderFor(scope));
-        return new FileStream(PathFor(scope, slot) + ".lock", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
+        return new FileStream(Path.Combine(FolderFor(scope), "mailbox.lock"), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     });
+
+    private string[] PendingSlots(MessageRecoveryScope scope) => scope.Local(() =>
+    {
+        var names = Directory.EnumerateFiles(FolderFor(scope), "*.pending", SearchOption.TopDirectoryOnly)
+            .Take(MaxPendingPerInbox + 1).Select(Path.GetFileName).ToArray();
+        if (names.Length > MaxPendingPerInbox) throw new MessageAttemptLimitException();
+        if (names.Any(n => n is not { Length: 40 } || !n.EndsWith(".pending", StringComparison.Ordinal)
+            || n.AsSpan(0, 32).IndexOfAnyExcept("0123456789abcdef") >= 0)) throw new MessageAttemptUnavailableException();
+        return names.Select(n => n![..32]).ToArray();
+    });
+
+    public async Task<IReadOnlyList<PreparedMessageAttempt>> ListAsync(MessageRecoveryScope scope, CancellationToken cancellationToken = default)
+    {
+        await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
+        try
+        {
+            scope.RequireCurrent(cancellationToken);
+            if (!scope.Local(() => Directory.Exists(FolderFor(scope)))) return [];
+            using var localLock = Lock(scope);
+            var result = new List<PreparedMessageAttempt>();
+            foreach (var slot in PendingSlots(scope))
+                result.Add(await Read(scope, slot, cancellationToken).ConfigureAwait(false) ?? throw new MessageAttemptUnavailableException());
+            scope.RequireCurrent(cancellationToken);
+            return result.OrderBy(a => a.CreatedAt).ThenBy(a => a.Request.MsgRef, StringComparer.Ordinal).ToArray();
+        }
+        catch (Exception ex) when (Wrap(ex)) { throw new MessageAttemptUnavailableException(); }
+        finally { gate.Release(); }
+    }
 
     public async Task<PreparedMessageAttempt?> LoadAsync(MessageRecoveryScope scope, string canonicalRecipient, string? threadId, CancellationToken cancellationToken = default)
     {
@@ -112,7 +158,7 @@ public sealed class FileMessageAttemptStore(string folder, IStateProtector prote
         {
             scope.RequireCurrent(cancellationToken);
             if (!scope.Local(() => File.Exists(PathFor(scope, slot)))) return null;
-            using var localLock = Lock(scope, slot);
+            using var localLock = Lock(scope);
             return await Read(scope, slot, cancellationToken).ConfigureAwait(false);
         }
         catch (Exception ex) when (Wrap(ex)) { throw new MessageAttemptUnavailableException(); }
@@ -128,12 +174,20 @@ public sealed class FileMessageAttemptStore(string folder, IStateProtector prote
         try
         {
             scope.RequireCurrent(cancellationToken);
-            using var localLock = Lock(scope, attempt.Slot);
+            using var localLock = Lock(scope);
             var existing = await Read(scope, attempt.Slot, cancellationToken).ConfigureAwait(false);
             if (existing is not null)
             {
-                if (existing.WireJson == attempt.WireJson) return;
+                if (existing.WireJson == attempt.WireJson && existing.Review == attempt.Review) return;
                 throw new MessageAttemptConflictException();
+            }
+            var slots = PendingSlots(scope);
+            if (slots.Length >= MaxPendingPerInbox) throw new MessageAttemptLimitException();
+            foreach (var slot in slots)
+            {
+                var pending = await Read(scope, slot, cancellationToken).ConfigureAwait(false) ?? throw new MessageAttemptUnavailableException();
+                if (pending.Review.MatchesRecipient(attempt.Review.Recipient) && (pending.Request.ThreadId ?? "") == (attempt.Request.ThreadId ?? ""))
+                    throw new MessageAttemptConflictException();
             }
             plain = attempt.Encode(scope);
             if (plain.Length > MaxPlainBytes) throw new MessageAttemptUnavailableException();
@@ -170,7 +224,7 @@ public sealed class FileMessageAttemptStore(string folder, IStateProtector prote
         {
             scope.RequireCurrent(cancellationToken);
             if (!scope.Local(() => File.Exists(PathFor(scope, slot)))) return false;
-            using var localLock = Lock(scope, slot);
+            using var localLock = Lock(scope);
             var existing = await Read(scope, slot, cancellationToken).ConfigureAwait(false);
             if (existing is null) return false;
             if (existing.Request.MsgRef != expectedReference) throw new MessageAttemptConflictException();
@@ -205,5 +259,5 @@ public sealed class FileMessageAttemptStore(string folder, IStateProtector prote
         }
         finally { if (plain is not null) CryptographicOperations.ZeroMemory(plain); }
     }
-    private static bool Wrap(Exception ex) => ex is not OperationCanceledException and not MessageAttemptConflictException and not MessageAttemptUnavailableException;
+    private static bool Wrap(Exception ex) => ex is not OperationCanceledException and not MessageAttemptConflictException and not MessageAttemptUnavailableException and not MessageAttemptLimitException;
 }

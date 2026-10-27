@@ -99,6 +99,90 @@ internal static class MessageAttemptStoreTests
             await Fails<ArgumentException>(() => { PreparedMessageAttempt.Create(scope, new(Peer, Peer, "Wrong sender fixture")); return Task.CompletedTask; });
             Require(f.Files().Length == 0);
         });
+        yield return ("An authorized restarted inbox discovers the original reviewed handle without resolving it again", async () =>
+        {
+            using var f = new Fixture(); using var original = await f.Scope();
+            var context = new MessageDeliveryReview("/original-handle/main", "Interview plans", new string('c', 32));
+            var attempt = PreparedMessageAttempt.Create(original, new(Own, Peer, "Restarted review fixture", threadId: "original_subject"), context);
+            await f.Store.SaveAsync(original, attempt); f.Service.Rotate(); using var current = await f.Scope();
+            var restarted = new FileMessageAttemptStore(f.Folder, f.Protector);
+            var restored = (await restarted.ListAsync(current)).Single();
+            Require(restored.Request.To == Peer && restored.Request.MsgRef == attempt.Request.MsgRef && restored.Review == context);
+            await Fails<AuthorizationRetiredException>(() => restarted.ListAsync(original));
+            f.Service.Rotate(); f.Service.Key = new string('b', 64); using var other = await f.Scope();
+            Require((await restarted.ListAsync(other)).Count == 0 && f.Files().Length == 1);
+        });
+        yield return ("A pending request cannot silently replace its reviewed delivery context", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope();
+            var request = new MessageSendRequest(Own, Peer, "Unchanged wire fixture");
+            await f.Store.SaveAsync(scope, PreparedMessageAttempt.Create(scope, request, new("/original/main", "Original subject")));
+            await Fails<MessageAttemptConflictException>(() => f.Store.SaveAsync(scope, PreparedMessageAttempt.Create(scope, request, new("/different/main", "Other subject"))));
+            Require((await f.Store.ListAsync(scope)).Single().Review.Recipient == "/original/main");
+        });
+        yield return ("A renamed protected request cannot become another mailbox slot", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope();
+            await f.Store.SaveAsync(scope, PreparedMessageAttempt.Create(scope, new(Own, Peer, "Renamed fixture")));
+            var original = f.Files().Single(); var copied = Path.Combine(Path.GetDirectoryName(original)!, new string('0', 32) + ".pending");
+            File.Copy(original, copied);
+            await Fails<MessageAttemptUnavailableException>(() => f.Store.ListAsync(scope));
+            Require(f.Files().Length == 2);
+        });
+        yield return ("Pending discovery refuses a corrupted entry without erasing it or publishing a partial list", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope();
+            await f.Store.SaveAsync(scope, PreparedMessageAttempt.Create(scope, new(Own, Peer, "Valid fixture")));
+            var invalid = Path.Combine(Path.GetDirectoryName(f.Files().Single())!, "invalid.pending"); File.WriteAllBytes(invalid, [1, 2, 3]);
+            await Fails<MessageAttemptUnavailableException>(() => f.Store.ListAsync(scope));
+            Require(f.Files().Length == 2 && File.ReadAllBytes(invalid).SequenceEqual(new byte[] { 1, 2, 3 }));
+        });
+        yield return ("Retiring a caller during pending discovery prevents publication and clears decrypted bytes", async () =>
+        {
+            using var f = new Fixture(); var caller = f.Service.Root.Child();
+            using var context = new AuthorizationContext(caller); using var scope = await f.Scope();
+            await f.Store.SaveAsync(scope, PreparedMessageAttempt.Create(scope, new(Own, Peer, "Interrupted read fixture")));
+            var blocker = new BlockingReader(f.Protector); var restarted = new FileMessageAttemptStore(f.Folder, blocker);
+            var list = restarted.ListAsync(scope); await blocker.Started.Task.WaitAsync(TimeSpan.FromSeconds(3));
+            caller.Retire(); blocker.Release.TrySetResult(); await Fails<AuthorizationRetiredException>(() => list);
+            Require(blocker.Plain is not null && blocker.Plain.All(b => b == 0) && f.Files().Length == 1 && f.Service.Root.IsActive);
+        });
+        yield return ("Pending delivery capacity is bounded per inbox and an explicitly removed slot can be reused", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope(); var references = new List<string>();
+            for (var i = 0; i < 64; i++)
+            {
+                var attempt = PreparedMessageAttempt.Create(scope, new(Own, Peer, "Bounded fixture", threadId: "subject_" + i));
+                await f.Store.SaveAsync(scope, attempt); references.Add(attempt.Request.MsgRef);
+            }
+            var extra = PreparedMessageAttempt.Create(scope, new(Own, Peer, "Extra fixture", threadId: "extra_subject"));
+            await Fails<MessageAttemptLimitException>(() => f.Store.SaveAsync(scope, extra));
+            Require((await f.Store.ListAsync(scope)).Count == 64);
+            Require(await f.Store.RemoveAsync(scope, Peer, "subject_0", references[0])); await f.Store.SaveAsync(scope, extra);
+            Require((await f.Store.ListAsync(scope)).Count == 64 && (await f.Store.ListAsync(scope)).All(a => a.Request.MsgRef != references[0]));
+        });
+        yield return ("A transferred handle cannot create a second pending intent in a different canonical slot", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope(); var review = new MessageDeliveryReview("/transferred/main");
+            var original = PreparedMessageAttempt.Create(scope, new(Own, Peer, "Original recipient fixture"), review);
+            await f.Store.SaveAsync(scope, original);
+            var replacement = PreparedMessageAttempt.Create(scope, new(Own, "/k/cccccccccccccccccccccccccc", "Different recipient fixture"), new("/transferred"));
+            await Fails<MessageAttemptConflictException>(() => new FileMessageAttemptStore(f.Folder, f.Protector).SaveAsync(scope, replacement));
+            Require((await f.Store.ListAsync(scope)).Single().Request.MsgRef == original.Request.MsgRef);
+        });
+        yield return ("Original v1 encrypted requests remain discoverable with canonical display context", async () =>
+        {
+            using var f = new Fixture(); using var scope = await f.Scope();
+            var original = PreparedMessageAttempt.Create(scope, new(Own, Peer, "Legacy envelope fixture")); await f.Store.SaveAsync(scope, original);
+            var path = f.Files().Single(); var sealedBytes = File.ReadAllBytes(path); var plain = await f.Protector.UnprotectAsync(sealedBytes[5..]);
+            var envelope = System.Text.Json.Nodes.JsonNode.Parse(plain)!;
+            envelope["version"] = 1; envelope.AsObject().Remove("review"); CryptographicOperations.ZeroMemory(plain);
+            var legacy = Encoding.UTF8.GetBytes(envelope.ToJsonString());
+            try { File.WriteAllBytes(path, "PPMA1"u8.ToArray().Concat(await f.Protector.ProtectAsync(legacy)).ToArray()); }
+            finally { CryptographicOperations.ZeroMemory(legacy); }
+            var restored = (await f.Store.ListAsync(scope)).Single();
+            Require(restored.Request.MsgRef == original.Request.MsgRef && restored.Review == new MessageDeliveryReview(Peer));
+        });
     }
     private const string Own = "/k/aaaaaaaaaaaaaaaaaaaaaaaaaa", Peer = "/k/bbbbbbbbbbbbbbbbbbbbbbbbbb";
     private static void Require(bool value) { if (!value) throw new Exception("Pending delivery store assertion failed."); }
@@ -140,6 +224,14 @@ internal static class MessageAttemptStoreTests
             Plain = plain; var encrypted = await inner.ProtectAsync(plain); Started.TrySetResult(); await Release.Task.ConfigureAwait(false); return encrypted;
         }
         public Task<byte[]> UnprotectAsync(byte[] data) => inner.UnprotectAsync(data);
+    }
+    private sealed class BlockingReader(IStateProtector inner) : IStateProtector
+    {
+        internal readonly TaskCompletionSource Started = new(TaskCreationOptions.RunContinuationsAsynchronously), Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        internal byte[]? Plain;
+        public Task<byte[]> ProtectAsync(byte[] plain) => inner.ProtectAsync(plain);
+        public async Task<byte[]> UnprotectAsync(byte[] data)
+        { Plain = await inner.UnprotectAsync(data); Started.TrySetResult(); await Release.Task.ConfigureAwait(false); return Plain; }
     }
     private sealed class Service : IInboxService
     {
