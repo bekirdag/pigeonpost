@@ -133,8 +133,10 @@ public sealed partial class InboxViewModel(IInboxService service, IAttachmentSer
             if (intent != initializeVersion) return;
             Mailboxes = mailboxes;
             Changed(nameof(Mailboxes));
-            var target = Mailboxes.FirstOrDefault(m => m.Address == SelectedMailbox?.Address) ?? Mailboxes.FirstOrDefault();
-            if (target is null) { var empty = new InboxActor(operation.Accepted); operation.Check(); ResetAccount(empty); return; }
+            if (restoring) { restoring = false; PruneRestored(mailboxes); }
+            var preferred = SelectedMailbox?.Address ?? restoredMailbox; restoredMailbox = null;
+            var target = Mailboxes.FirstOrDefault(m => m.Address == preferred) ?? Mailboxes.FirstOrDefault();
+            if (target is null) { var empty = new InboxActor(operation.Accepted, service.RecoveryOwnerKey); operation.Check(); ResetAccount(empty); return; }
             if (SelectedMailbox?.Address == target.Address) await RefreshAsync();
             else await SwitchMailboxAsync(target);
         }

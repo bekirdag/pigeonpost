@@ -4,7 +4,12 @@ namespace Pigeonpost.Core;
 public sealed class PreviewInboxService : IInboxService, IConversationSettings
 {
     private readonly Dictionary<string, InboxSnapshot> snapshots;
-    public AuthorizationLease? AcceptedAuthorization { get; }
+    private readonly AuthorizationLease? fixedAuthorization;
+    private readonly Func<AuthorizationLease?>? authorizationSource;
+    private readonly Func<string?>? ownerSource;
+    // A fixture may model a deliberate grant replacement; it is still local sample data only.
+    public AuthorizationLease? AcceptedAuthorization => authorizationSource is { } source ? source() : fixedAuthorization;
+    public string? RecoveryOwnerKey => ownerSource?.Invoke();
     private int sequence;
     private const long Epoch = 1789113600;
     // Real /k/ addresses (of fixed demonstration seeds 0xA1… and 0xA2…), so the preview's stand-in
@@ -17,9 +22,10 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
         new("/k/rywv63mb6h0hhrpfjewrrttspw", "/preview/team", "Team inbox")
     ];
 
-    public PreviewInboxService(bool longHistory = false, AuthorizationLease? authorization = null)
+    public PreviewInboxService(bool longHistory = false, AuthorizationLease? authorization = null,
+        Func<AuthorizationLease?>? authorizationSource = null, Func<string?>? ownerSource = null)
     {
-        AcceptedAuthorization = authorization;
+        fixedAuthorization = authorization; this.authorizationSource = authorizationSource; this.ownerSource = ownerSource;
         var messages = new List<InboxMessage>
         {
             Received("design-1", "/preview/design", "I've organized the feedback for the next release. Can you review the desktop layout?", "design-general", Epoch - 7200, true),

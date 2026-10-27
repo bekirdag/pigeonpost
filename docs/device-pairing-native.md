@@ -1,4 +1,4 @@
-# Approving a machine from the native apps (iOS/iPadOS, macOS, Android)
+# Approving a machine from the native apps (iOS/iPadOS, macOS, Android, Windows)
 
 Server contract: `docs/orgs.md` §8. The web reference is `site-inbox/pair.html` + `pair.js`; the
 native flow must behave the same way. Native screens are optional for the Phase 4 beta: until they
@@ -46,8 +46,9 @@ failures do not consume an enrollment code or start a pairing.
 
 Approving needs a recent strong sign-in. On `401 step_up_required`, read `acr_values` and `max_age`
 from the JSON body or the `WWW-Authenticate` challenge, run a fresh Authorization Code + PKCE request
-with `acr_values`, `max_age=600`, `state` and `nonce` in `ASWebAuthenticationSession` (Apple) or
-Custom Tabs (Android) against the `pigeonpost-prod` realm, store the new tokens, return to the
+with `acr_values`, `max_age=600`, `state` and `nonce` in `ASWebAuthenticationSession` (Apple),
+Custom Tabs (Android) or the system browser with a request-owned `http://127.0.0.1:<random port>/`
+return (Windows) against the `pigeonpost-prod` realm, store the new tokens, return to the
 confirmation screen and require one more hold. Never approve automatically after the sign-in.
 `403 step_up_unavailable` means the server has no strong method configured: say so and stop.
 

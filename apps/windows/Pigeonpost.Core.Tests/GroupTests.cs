@@ -295,9 +295,40 @@ internal static class GroupsModelTests
         public Task<string> RefreshTokenAsync(CancellationToken token) => Task.FromResult("test");
     }
     private static void Require(bool condition, string reason) { if (!condition) throw new Exception(reason); }
+    private sealed class RotatingTokens : IAccessTokenProvider
+    {
+        public AuthorizationLease? AcceptedAuthorization { get; private set; } = new();
+        public Task<string> GetTokenAsync(CancellationToken token) => Task.FromResult("test");
+        public Task<string> RefreshTokenAsync(CancellationToken token) => Task.FromResult("test");
+        public AuthorizationLease Rotate() { var old = AcceptedAuthorization!; AcceptedAuthorization = new(); old.Retire(); return old; }
+    }
 
     public static IEnumerable<(string Name, Func<Task> Run)> All()
     {
+        yield return ("A group draft returns only to the same group after a verified grant replacement", async () =>
+        {
+            var server = new PreviewPostbox();
+            var alice = server.AddMailbox(PreviewPostbox.Seed(81), "/alice/main");
+            var tokens = new RotatingTokens();
+            using var client = new PostboxClient(new HttpClient(server), tokens, new Uri("http://127.0.0.1:9"));
+            var features = await client.GetCapabilitiesAsync(default);
+            var store = new MemoryGroupStateStore(); var box = new Mailbox(alice, "/alice/main");
+            using var a = new GroupsModel(client, _ => store);
+            await a.ActivateAsync(box, features, [box], []);
+            var first = await a.CreateAsync(new GroupSettings("Kept draft"), []); var second = await a.CreateAsync(new GroupSettings("Other room"), []);
+            Require(first is not null && second is not null, "Two synthetic groups exist.");
+            await a.SelectAsync(a.Groups.Single(g => g.Id == first!.Id)); a.Draft = "Unsent group words";
+            a.AddFile(new GroupClient.OutgoingFile("note.txt", "text/plain", [1, 2]));
+            Require(a.ReadyForGrantReplacement, "No group send is in flight.");
+            var prior = tokens.Rotate();
+            Require(a.CarryUnsentWork(prior) && a.HasCarriedDraft, "The draft is carried from the retired grant.");
+            await a.ActivateAsync(null, ServerFeatures.None, [], []); await a.ActivateAsync(box, features, [box], []);
+            Require(a.Draft == "" && a.DraftFiles.Count == 0, "Reactivation alone does not show the draft.");
+            await a.SelectAsync(a.Groups.Single(g => g.Id == second!.Id));
+            Require(a.Draft == "" && a.HasCarriedDraft, "Another group never receives the draft.");
+            await a.SelectAsync(a.Groups.Single(g => g.Id == first!.Id));
+            Require(a.Draft == "Unsent group words" && a.DraftFiles.Count == 1 && !a.HasCarriedDraft, "Reopening the same group restores the draft without sending it.");
+        });
         yield return ("Groups page: invitation row, accept, keying, chat lines with names, announcement bar and info", async () =>
         {
             var server = new PreviewPostbox();

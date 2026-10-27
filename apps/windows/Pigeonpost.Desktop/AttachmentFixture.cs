@@ -7,9 +7,9 @@ using Pigeonpost.Core;
 namespace Pigeonpost.Desktop;
 
 // Compiled only into the disposable UI-test build, never Store packages.
-internal sealed class AttachmentFixtureTokens(AuthorizationLease? authorization = null) : IAccessTokenProvider
+internal sealed class AttachmentFixtureTokens(AuthorizationLease? authorization = null, Func<AuthorizationLease?>? source = null) : IAccessTokenProvider
 {
-    public AuthorizationLease? AcceptedAuthorization => authorization;
+    public AuthorizationLease? AcceptedAuthorization => source is { } current ? current() : authorization;
     public Task<string> GetTokenAsync(CancellationToken token) => Task.FromResult("fixture-only");
     public Task<string> RefreshTokenAsync(CancellationToken token) => Task.FromResult("fixture-only");
 }

@@ -125,6 +125,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         scope = new();
         authorization = accepted;
         refreshing = null;
+        if (carriedDraft is { } carry && acting is not null && acting.Address != carry.Mailbox) carriedDraft = null;
         mailbox = acting;
         Enabled = enabled;
         selected = null;
@@ -156,6 +157,32 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         catch (OperationCanceledException) { }
         catch (Exception ex) { if (IsCurrent(next, version)) Error = "Groups aren't available on this device right now. " + Describe(ex); }
         if (IsCurrent(next, version)) NotifyAll();
+    }
+
+    // An unsent group draft survives one deliberate same-person grant replacement. It returns only
+    // when that same group is opened again under a different live grant for the same inbox, after
+    // the fresh membership read above; sending stays a separate explicit action.
+    private sealed record CarriedDraft(string Mailbox, string Group, string Text, GroupClient.OutgoingFile[] Files, AuthorizationLease Prior);
+    private CarriedDraft? carriedDraft;
+    public bool ReadyForGrantReplacement => !IsSending;
+    public bool HasCarriedDraft => carriedDraft is not null;
+    public bool CarryUnsentWork(AuthorizationLease prior)
+    {
+        if (disposed || !ReferenceEquals(authorization, prior)) return false;
+        carriedDraft = mailbox is { } box && selected is { } row && (Draft.Length > 0 || DraftFiles.Count > 0)
+            ? new(box.Address, row.Id, Draft, DraftFiles.ToArray(), prior) : null;
+        return true;
+    }
+    public void DropCarriedWork() => carriedDraft = null;
+    private void RestoreCarried(string gid)
+    {
+        if (carriedDraft is not { } carry || mailbox?.Address != carry.Mailbox || authorization is not { IsActive: true } current
+            || ReferenceEquals(current, carry.Prior) || current.SharesAuthorization(carry.Prior)) return;
+        if (carry.Group != gid) return;
+        carriedDraft = null;
+        Draft = carry.Text;
+        foreach (var file in carry.Files) DraftFiles.Add(file);
+        Changed(nameof(CanSend));
     }
 
     public void SetContacts(IReadOnlyList<Contact> known) => contacts = known;
@@ -250,6 +277,7 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
             selected = row with { Info = fresh };
             await LoadHandlesAsync(c, row.Id, version, intent, token);
             if (!IsSelectionCurrent(c, version, intent, row.Id)) return;
+            RestoreCarried(row.Id);
             RebuildLines();
             NotifyAll();
             await MarkReadAsync();

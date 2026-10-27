@@ -179,8 +179,9 @@ internal static partial class StrongSignInSessionTests
             f.Session=new(f.http,f.Store,new Uri(Issuer+"/"),f.Clock);Require(await f.Session.RestoreAsync(default));return f;
         }
         public StrongSignInRequest Begin(int age=600)=>Session.BeginStrongSignIn(Needs(age),Session.AcceptedAuthorization!,Redirect);
-        public Uri Callback(StrongSignInRequest request,string code="synthetic-code")
-        {var fields=Query(request.AuthorizationUri);nonces[code]=fields["nonce"];return new(fields["redirect_uri"]+"?code="+code+"&state="+fields["state"]+"&iss="+Uri.EscapeDataString(Issuer));}
+        public Uri Callback(StrongSignInRequest request,string code="synthetic-code")=>CallbackFor(request.AuthorizationUri,code);
+        public Uri CallbackFor(Uri authorization,string code="synthetic-code")
+        {var fields=Query(authorization);nonces[code]=fields["nonce"];return new(fields["redirect_uri"]+"?code="+code+"&state="+fields["state"]+"&iss="+Uri.EscapeDataString(Issuer));}
         private Dictionary<string,object> Claims()=>new(){{"iss",Issuer},{"sub",Subject},{"azp",AccountSession.ClientId},
             {"exp",Clock.GetUtcNow().ToUnixTimeSeconds()+3600},{"iat",Clock.GetUtcNow().ToUnixTimeSeconds()},{"auth_time",Clock.GetUtcNow().ToUnixTimeSeconds()},{"acr","mfa"}};
         public HttpResponseMessage OrdinaryReply()=>Reply(new{access_token=Jwt(Claims()),refresh_token="refresh-restored",expires_in=3600});

@@ -2,9 +2,10 @@ namespace Pigeonpost.Core;
 
 public sealed partial class InboxViewModel
 {
-    private sealed class InboxActor(AuthorizationLease? accepted)
+    private sealed class InboxActor(AuthorizationLease? accepted, string? owner)
     {
         internal readonly AuthorizationLease? Accepted = accepted;
+        internal readonly string? Owner = owner; // The hashed person hint when this grant was adopted.
         internal readonly AuthorizationLease Authorization = accepted?.Child() ?? new AuthorizationLease();
     }
     private InboxActor? account;
@@ -85,9 +86,11 @@ public sealed partial class InboxViewModel
             AuthorizationContext.CaptureValidation(() => service.AcceptedAuthorization)();
             if (account is { } current && ReferenceEquals(current.Accepted, accepted) && current.Authorization.IsActive) return true;
             if (account is not null && !allowReplacement) return false;
-            var next = new InboxActor(accepted);
+            var next = new InboxActor(accepted, service.RecoveryOwnerKey);
             if (!ReferenceEquals(accepted, service.AcceptedAuthorization)) { next.Authorization.Retire(); return false; }
+            var carry = carried; carried = null; restoring = false; restoredMailbox = null;
             ResetAccount(next);
+            if (carry is not null && carry.MayFollow(accepted, service.RecoveryOwnerKey)) RestoreUnsentWork(carry);
             return true;
         }
         catch (AuthorizationRetiredException) { return false; }
@@ -133,6 +136,64 @@ public sealed partial class InboxViewModel
             nameof(CanDeleteSubject), nameof(IsSelectedBlocked), nameof(BlockedBanner), nameof(CanSetTimer), nameof(TimerBanner), nameof(HasTimer),
             nameof(FindSummary), nameof(CurrentMatch), nameof(CanInspectMessages) }) Changed(name);
         MessagesUpdated?.Invoke(this, EventArgs.Empty);
+    }
+
+    // Unsent text and file drafts survive one deliberate same-person grant replacement (a fresh
+    // verification). Nothing else is carried: server data, pending views and composer actions reload
+    // under the new grant, and drafts for an inbox the new grant no longer lists are dropped.
+    public sealed class UnsentWork
+    {
+        internal readonly string OwnerKey;
+        internal readonly AuthorizationLease Prior;
+        internal readonly string? Mailbox;
+        internal readonly Dictionary<(string Mailbox, string Peer, string Subject), string> Drafts;
+        internal readonly Dictionary<(string Mailbox, string Peer, string Subject), List<DraftAttachment>> Files;
+        internal readonly Dictionary<string, (string? Peer, string? Subject)> Selections;
+        internal UnsentWork(string owner, AuthorizationLease prior, string? mailbox,
+            Dictionary<(string, string, string), string> drafts, Dictionary<(string, string, string), List<DraftAttachment>> files,
+            Dictionary<string, (string?, string?)> selections)
+        { OwnerKey = owner; Prior = prior; Mailbox = mailbox; Drafts = drafts; Files = files; Selections = selections; }
+        public bool IsEmpty => Drafts.Values.All(d => d.Length == 0) && Files.Values.All(f => f.Count == 0);
+        // Only a different, live grant of the same person may receive these drafts.
+        internal bool MayFollow(AuthorizationLease? accepted, string? owner) => accepted is { IsActive: true }
+            && !ReferenceEquals(accepted, Prior) && !accepted.SharesAuthorization(Prior) && owner is not null && owner == OwnerKey;
+        public override string ToString() => "UnsentWork(redacted)";
+    }
+    private UnsentWork? carried;
+    private string? restoredMailbox;
+    private bool restoring;
+
+    // A send, an edit or a reply is bound to the current grant: finish or cancel it before a
+    // deliberate grant replacement starts.
+    public bool ReadyForGrantReplacement => ActiveAccount is not null && !IsSending && composerMode is null && !(IsBusy && loading is null);
+
+    // After a verified same-person adoption retired `prior`, carry this model's unsent drafts (as
+    // they are now, including typing during verification) into the next InitializeAsync.
+    public void DropCarriedWork() { carried = null; restoring = false; restoredMailbox = null; }
+    public bool CarryUnsentWork(AuthorizationLease prior)
+    {
+        if (disposed || account is not { Owner: { } person } owner || !ReferenceEquals(owner.Accepted, prior)) return false;
+        RememberSelection();
+        carried = new(person, prior, SelectedMailbox?.Address,
+            drafts.Where(p => p.Value.Length > 0).ToDictionary(p => p.Key, p => p.Value),
+            attachmentDrafts.Where(p => p.Value.Count > 0).ToDictionary(p => p.Key, p => p.Value.ToList()),
+            new(selections));
+        return true;
+    }
+    private void RestoreUnsentWork(UnsentWork work)
+    {
+        foreach (var (key, text) in work.Drafts) { drafts[key] = text; TouchDraft(key); }
+        foreach (var (key, files) in work.Files) { attachmentDrafts[key] = files.ToList(); TouchDraft(key); }
+        foreach (var (key, value) in work.Selections) selections[key] = value;
+        restoredMailbox = work.Mailbox; restoring = true;
+    }
+    // Drafts never follow an inbox that the new grant does not list.
+    private void PruneRestored(IReadOnlyList<Mailbox> listed)
+    {
+        var allowed = listed.Select(m => m.Address).ToHashSet(StringComparer.Ordinal);
+        foreach (var key in drafts.Keys.Where(k => !allowed.Contains(k.Mailbox)).ToArray()) { drafts.Remove(key); draftRevisions.Remove(key); }
+        foreach (var key in attachmentDrafts.Keys.Where(k => !allowed.Contains(k.Mailbox)).ToArray()) { attachmentDrafts.Remove(key); draftRevisions.Remove(key); }
+        foreach (var key in selections.Keys.Where(k => !allowed.Contains(k)).ToArray()) selections.Remove(key);
     }
 
     private void TouchDraft((string Mailbox, string Peer, string Subject) key) => draftRevisions[key] = ++nextDraftRevision;
