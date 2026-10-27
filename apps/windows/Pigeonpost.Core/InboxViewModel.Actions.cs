@@ -7,13 +7,21 @@ public sealed class MessageTarget
     private int active = 1;
     private readonly Func<bool> current;
     private readonly Func<bool> accountCurrent;
+    private readonly Func<AuthorizationContext> bind;
     internal readonly InboxViewModel Owner;
     public ThreadMessage Message { get; }
-    internal MessageTarget(InboxViewModel owner, ThreadMessage message, Func<bool> current, Func<bool> accountCurrent)
-    { Owner = owner; Message = message; this.current = current; this.accountCurrent = accountCurrent; }
+    internal MessageTarget(InboxViewModel owner, ThreadMessage message, Func<bool> current, Func<bool> accountCurrent, Func<AuthorizationContext> bind)
+    { Owner = owner; Message = message; this.current = current; this.accountCurrent = accountCurrent; this.bind = bind; }
     public bool IsCurrent => Volatile.Read(ref active) != 0 && current();
     public bool IsAccountCurrent => accountCurrent();
     public void Retire() => Interlocked.Exchange(ref active, 0);
+    internal AuthorizationContext BindForAccount()
+    {
+        if (Volatile.Read(ref active) == 0 || !IsAccountCurrent) throw new AuthorizationRetiredException();
+        var context = bind();
+        try { if (Volatile.Read(ref active) == 0 || !IsAccountCurrent) throw new AuthorizationRetiredException(); return context; }
+        catch { context.Dispose(); throw; }
+    }
     public override string ToString() => "MessageTarget(redacted)";
 }
 
@@ -58,7 +66,7 @@ public sealed partial class InboxViewModel
         var context = ContextVersion;
         return new MessageTarget(this, message, () => operation.IsMailbox(generation) && context == ContextVersion
             && !Timers.Expired(message.ExpiresAt, DateTimeOffset.UtcNow.ToUnixTimeSeconds())
-            && Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message)), () => operation.IsCurrent);
+            && Messages.Any(m => m.Id == message.Id && StableList.SameMessage(m, message)), () => operation.IsCurrent, AuthorizationContext.CaptureBinding());
     }
 
     public ThreadMessage? OpenReplyParent(MessageTarget target)
