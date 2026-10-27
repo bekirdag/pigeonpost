@@ -280,10 +280,14 @@
   };
 
   /// One sheet at a time, sliding in from the right. Returns the body element to fill.
+  /// `onClose` runs once when this sheet goes away (close button, Escape, scrim, or another sheet),
+  /// so a sheet holding a one-time secret can drop it.
   let lastFocus = null;
-  PPE.openSheet = function (title, build) {
+  let onSheetClose = null;
+  PPE.openSheet = function (title, build, { onClose } = {}) {
     PPE.closeSheet();
     lastFocus = document.activeElement;
+    onSheetClose = typeof onClose === "function" ? onClose : null;
     const close = PPE.el("button", { class: "icon-btn", type: "button", "aria-label": "Close", onclick: () => PPE.closeSheet() }, "×");
     const heading = PPE.el("h2", { id: "ppe-sheet-title" }, title);
     const body = PPE.el("div", { class: "sheet-body" });
@@ -298,7 +302,10 @@
     return body;
   };
   PPE.closeSheet = function () {
+    const done = onSheetClose;
+    onSheetClose = null;
     PPE.$$(".sheet, #ppe-scrim").forEach((n) => n.remove());
+    if (done) { try { done(); } catch { /* never block closing */ } }
     if (lastFocus && document.contains(lastFocus)) lastFocus.focus();
     lastFocus = null;
   };
@@ -348,6 +355,8 @@
       not_org_member: "You are not a member of this organization.",
       rate_limited: "Too many attempts. Wait a little and try again.",
       feature_disabled: "This is not enabled for your account yet.",
+      webhook_limit: "An organization can have at most 10 webhooks. Delete one first.",
+      invalid_webhook_url: "Use a public https:// address on port 443 or 8443.",
     };
     return (e && e.code && known[e.code]) || (e && e.message) || "Something went wrong.";
   };

@@ -1,5 +1,5 @@
 // Pigeonpost for teams — the admin app (/app, SDS §5.2–5.3): People, Agents, Rooms, Rules, Billing,
-// Security, Organization. One primary action per page (top right), at most one table per page, one
+// Security, API keys and Webhooks (Phase 5, behind `org_api`), Organization. One primary action per page (top right), at most one table per page, one
 // sheet at a time. Every decision is the postbox's; this page only shows what it may do.
 (function () {
   "use strict";
@@ -17,6 +17,8 @@
     { key: "rules", title: "Rules", roles: ["owner", "admin", "people_admin", "agent_admin"] },
     { key: "billing", title: "Billing", roles: ["owner", "admin", "billing_admin"] },
     { key: "security", title: "Security", roles: ["owner", "admin"] },
+    { key: "api-keys", title: "API keys", roles: ["owner", "admin"], feature: "org_api" },
+    { key: "webhooks", title: "Webhooks", roles: ["owner", "admin"], feature: "org_api" },
     { key: "organization", title: "Organization", roles: ["owner", "admin"] },
   ];
   const CAPABILITIES = [
@@ -32,7 +34,7 @@
   // ---- helpers ---------------------------------------------------------------------------------
 
   const has = (...roles) => (app.me && Array.isArray(app.me.roles) ? app.me.roles.some((r) => roles.includes(r)) : false);
-  app.can = (page) => { const p = PAGES.find((x) => x.key === page); return Boolean(p && has(...p.roles)); };
+  app.can = (page) => { const p = PAGES.find((x) => x.key === page); return Boolean(p && has(...p.roles) && (!p.feature || app.features.includes(p.feature))); };
   /// Roles this admin may hand out (SDS §6.4, D-13): only the owner appoints full admins.
   app.grantable = () => (has("owner") ? ["admin", "people_admin", "agent_admin", "billing_admin"]
     : has("admin") ? ["people_admin", "agent_admin", "billing_admin"] : []);
@@ -138,6 +140,12 @@
       content(...[banner(), firstRun(), node].filter(Boolean));
     } catch (e) {
       if (e instanceof PPE.Redirecting) return;
+      // The server switched the feature off since capabilities were read: hide its pages.
+      const p = PAGES.find((x) => x.key === page);
+      if (e && e.code === "feature_disabled" && p && p.feature) {
+        app.features = app.features.filter((f) => f !== p.feature);
+        return go(page, true);
+      }
       content(el("div", { class: "card" }, el("h1", {}, "Couldn't load this page"), el("p", { class: "muted" }, PPE.explain(e))));
     }
   }
@@ -701,7 +709,9 @@
         toggle("Require two-step sign-in for everyone in the organization", Boolean(s.require_mfa), (v) => patchSettings({ require_mfa: v })),
         toggle("Only invite addresses at verified domains", Boolean(s.invite_domains_only), (v) => patchSettings({ invite_domains_only: v }))),
       el("h2", {}, "Domains"), domains.length ? domainCards : el("p", { class: "muted" }, "No domains yet. Verify your company's domain to restrict invitations to it."),
-      el("div", { class: "card" }, el("h2", {}, "API keys"), el("p", { class: "muted" }, "Coming in Phase 5: scoped keys for provisioning people and agents from your own systems.")),
+      app.can("api-keys") ? el("div", { class: "card" }, el("h2", {}, "API keys and webhooks"),
+        el("p", { class: "muted" }, "Scoped keys let your own systems manage people, agents, rules and rooms. Webhooks tell them when something changes. Neither can read messages."),
+        el("div", { class: "actions" }, pageLink("api-keys", "Manage API keys"), pageLink("webhooks", "Manage webhooks"))) : null,
       el("h2", {}, "Audit log"),
       el("div", { class: "row" }, filter, el("div", { class: "actions", style: null }, exportBtn("csv"), exportBtn("json"))),
       el("div", { class: "table-wrap" }, el("table", {}, el("thead", {}, el("tr", {}, ["When", "Who", "Action", "Target"].map((h) => el("th", { scope: "col" }, h)))), tbody)),
@@ -729,6 +739,252 @@
     const a = el("a", { href: URL.createObjectURL(blob), download: `audit-${app.org.namespace}-${new Date().toISOString().slice(0, 10)}.${format}` });
     document.body.append(a); a.click(); a.remove();
     window.setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // ---- API keys (Phase 5, docs/org-api.md §1) --------------------------------------------------
+
+  const SCOPES = [
+    ["org:read", "Read the organization, people, agents, rules, rooms, usage and billing status."],
+    ["members:write", "Invite, rename, suspend and remove ordinary members (never owners or admins)."],
+    ["agents:write", "Create, delete and disconnect agents."],
+    ["rules:write", "Add restrictive rules (block or review) and change the ones keys created."],
+    ["rooms:write", "Create, update and delete rooms, and invite company mailboxes to them."],
+    ["messages:send", "Send direct messages to people and agents here, as one agent you choose."],
+    ["audit:read", "Read the audit log."],
+    ["webhooks:write", "Create, rotate and delete webhooks."],
+  ];
+  const EVENTS = [
+    ["member.invited", "Someone was invited"], ["member.joined", "Someone joined"], ["member.suspended", "Someone was suspended"],
+    ["member.removed", "Someone was removed"], ["agent.created", "An agent was added"], ["agent.connected", "An agent logged in on a machine"],
+    ["agent.disconnected", "An agent was disconnected"], ["room.created", "A room was created"], ["room.deleted", "A room was deleted"],
+    ["billing.status_changed", "The billing status changed"],
+  ];
+  const WEBHOOK_DOCS = "https://developers.pigeonpost.dev/org-api-webhooks";
+
+  function pageLink(page, text) {
+    const a = el("a", { class: "btn btn-small", href: `/app/${page}` }, text);
+    a.addEventListener("click", (e) => { e.preventDefault(); go(page); });
+    return a;
+  }
+
+  /// Loose client-side check of one allowlist entry; the postbox decides.
+  app.looksLikeCidr = (v) => /^(\d{1,3}\.){3}\d{1,3}(\/\d{1,2})?$/.test(v) || (/^[0-9a-f:.]+(\/\d{1,3})?$/i.test(v) && v.includes(":"));
+
+  /// The status a key is in, at `now` (Unix seconds).
+  app.keyState = (k, now = Date.now() / 1000) => (k.revoked_at ? "revoked" : k.expires_at && k.expires_at <= now ? "expired" : "active");
+
+  /// Show a secret exactly once. When the sheet closes, the text leaves the page and the only
+  /// reference to it is dropped; `after` then runs (usually a list refresh).
+  function secretSheet(title, secret, notes, after) {
+    const held = { value: secret };
+    const code = el("code", { "aria-label": "Secret" }, held.value);
+    PPE.openSheet(title, (body) => body.append(
+      el("p", {}, el("strong", {}, "Copy it now. You won't see it again."), " Pigeonpost keeps only a fingerprint of it."),
+      el("div", { class: "secret" }, code, el("button", { class: "btn btn-small", type: "button", onclick: () => { if (held.value) PPE.copy(held.value); } }, "Copy")),
+      ...(notes || []).filter(Boolean).map((n) => el("p", { class: "hint" }, n)),
+      el("div", { class: "actions" }, el("button", { class: "btn btn-primary", type: "button", onclick: () => PPE.closeSheet() }, "I've stored it"))),
+    { onClose: () => { held.value = null; code.textContent = ""; if (after) after(); } });
+  }
+  app.secretSheet = secretSheet;
+
+  async function apiKeys() {
+    const { keys = [] } = await PPE.postbox(orgPath("/api-keys"));
+    const create = el("button", { class: "btn btn-primary", type: "button", onclick: () => keySheet() }, "Create key");
+    const now = Date.now() / 1000;
+    const rows = keys.map((k) => {
+      const state = app.keyState(k, now);
+      const chip = el("span", { class: `chip ${{ active: "chip-ok", expired: "chip-warn", revoked: "chip-bad" }[state]}` }, { active: "Active", expired: "Expired", revoked: "Revoked" }[state]);
+      let actions = null;
+      if (state !== "revoked") {
+        actions = el("button", { class: "btn btn-small btn-danger", type: "button", "aria-label": `Revoke ${k.name}` }, "Revoke");
+        actions.addEventListener("click", busy(actions, async () => {
+          if (!window.confirm(`Revoke ${k.name}? Anything using it stops working at once. This can't be undone.`)) return;
+          await PPE.postbox(orgPath(`/api-keys/${encodeURIComponent(k.id)}`), { method: "DELETE" });
+          PPE.toast("Key revoked"); go("api-keys", true);
+        }));
+      }
+      return el("tr", {},
+        el("td", {}, k.name, el("span", { class: "sub" }, k.created_by ? `by ${k.created_by}` : "")),
+        el("td", {}, (k.scopes || []).map((s) => el("span", { class: "chip mono" }, s)), k.send_as ? el("span", { class: "sub mono" }, `sends as ${k.send_as}`) : null,
+          (k.ip_allowlist || []).length ? el("span", { class: "sub" }, `${k.ip_allowlist.length} allowed network${k.ip_allowlist.length === 1 ? "" : "s"}`) : null),
+        el("td", { class: "mono" }, `pk_org_…${k.last4 || ""}`),
+        el("td", {}, PPE.date(k.created_at)),
+        el("td", {}, k.expires_at ? PPE.date(k.expires_at) : "Never"),
+        el("td", {}, k.last_used_at ? PPE.ago(k.last_used_at) : "Never"),
+        el("td", {}, chip),
+        el("td", { class: "row-actions" }, actions));
+    });
+    return el("div", {},
+      head("API keys", "Keys let your own systems manage this organization. A key never reads messages, and it stops working if the person who made it loses their admin role.", create),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Name", "Scopes", "Key", "Created", "Expires", "Last used", "Status", ""].map((h) => el("th", { scope: "col" }, h)))),
+        el("tbody", {}, rows))) : el("div", { class: "empty card" }, "No keys yet. Create one for each system that needs access."),
+      el("p", { class: "note" }, "Creating a key needs a fresh, strong sign-in. Each key is shown once; if it's lost, revoke it and create another."));
+  }
+
+  async function keySheet() {
+    let agentList = [];
+    try { agentList = ((await PPE.postbox(orgPath("/agents"))).agents || []).filter((a) => a.status === "active"); } catch (e) { if (e instanceof PPE.Redirecting) throw e; }
+    PPE.openSheet("Create key", (body) => {
+      const name = el("input", { type: "text", maxlength: 80, placeholder: "HR sync", autocomplete: "off" });
+      const scopes = SCOPES.map(([s, text]) => el("label", { class: "check" }, el("input", { type: "checkbox", value: s }), el("span", {}, el("strong", { class: "mono" }, s), el("span", { class: "sub muted" }, text))));
+      const sendAs = el("select", {}, el("option", { value: "" }, agentList.length ? "Choose an agent…" : "No active agents"),
+        agentList.map((a) => el("option", { value: a.handle }, a.label ? `${a.handle} (${a.label})` : a.handle)));
+      const sendAsField = PPE.field("Send messages as", sendAs, "Messages this key sends come from this agent's address. Only direct messages to people and agents here.");
+      const sendBox = scopes[SCOPES.findIndex(([s]) => s === "messages:send")].querySelector("input");
+      sendAsField.hidden = true;
+      sendBox.addEventListener("change", () => { sendAsField.hidden = !sendBox.checked; });
+      const days = el("input", { type: "number", min: 1, max: 730, step: 1, inputmode: "numeric", placeholder: "Never" });
+      const allow = el("textarea", { spellcheck: "false", autocapitalize: "none", placeholder: "203.0.113.0/24\n2001:db8::/32" });
+      const status = el("p", { class: "status-line", role: "status" });
+      const bad = (text) => { status.className = "status-line status-bad"; status.textContent = text; };
+      const make = el("button", { class: "btn btn-primary", type: "button" }, "Create key");
+      make.addEventListener("click", busy(make, async () => {
+        const chosen = scopes.map((l) => l.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+        const ips = allow.value.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+        if (!name.value.trim()) return bad("Give the key a name, so people know what uses it.");
+        if (!chosen.length) return bad("Choose at least one scope.");
+        if (chosen.includes("messages:send") && !sendAs.value) return bad("Choose the agent this key sends messages as.");
+        if (days.value.trim() && !(/^\d+$/.test(days.value.trim()) && Number(days.value) >= 1 && Number(days.value) <= 730)) return bad("Expiry is a whole number of days, from 1 to 730.");
+        if (ips.length > 20) return bad("At most 20 allowed networks.");
+        const wrong = ips.find((v) => !app.looksLikeCidr(v));
+        if (wrong) return bad(`${wrong} doesn't look like an address or network (for example 203.0.113.0/24).`);
+        const req = { name: name.value.trim(), scopes: chosen,
+          ...(days.value.trim() ? { expires_in_days: Number(days.value) } : {}),
+          ...(ips.length ? { ip_allowlist: ips } : {}),
+          ...(chosen.includes("messages:send") ? { send_as: sendAs.value } : {}) };
+        status.className = "status-line"; status.textContent = "";
+        try {
+          await createKey(req);
+        } catch (e) {
+          if (e && e.code === "step_up_unavailable") return bad("Strong sign-in isn't configured on this server, so keys can't be created.");
+          throw e;
+        }
+      }));
+      body.append(PPE.field("Name", name),
+        el("fieldset", { class: "card" }, el("legend", {}, "Scopes: what the key may do"), ...scopes),
+        sendAsField,
+        PPE.field("Expires after (days, optional)", days, "From 1 to 730. Leave empty for a key that doesn't expire."),
+        PPE.field("Allowed networks (optional)", allow, "One address or CIDR range per line, at most 20. Requests from anywhere else are refused."),
+        el("p", { class: "hint" }, "You'll be asked to sign in again with a strong method before the key is made."),
+        status, el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => PPE.closeSheet() }, "Cancel"), make));
+    });
+  }
+
+  /// After a step-up round trip, the same request is sent again (nothing secret is kept across it).
+  PPE.onResume("app.apikey", async (req) => {
+    try { await createKey(req); } catch (e) {
+      if (e && e.code === "step_up_unavailable") return PPE.toast("Strong sign-in isn't configured on this server, so keys can't be created.", "error");
+      throw e;
+    }
+  });
+  async function createKey(req) {
+    const r = await PPE.postbox(orgPath("/api-keys"), { method: "POST", body: req, resume: { name: "app.apikey", payload: req } });
+    const k = r.key || {};
+    secretSheet(`Key "${k.name || req.name}" created`, r.secret,
+      ["Use it as: Authorization: Bearer <key>, against https://postbox.pigeonpost.dev/org/v1.",
+        k.expires_at ? `It expires on ${PPE.date(k.expires_at)}.` : null],
+      () => go("api-keys", true));
+  }
+
+  // ---- Webhooks (Phase 5, docs/org-api.md §6) --------------------------------------------------
+
+  function deliveryChip(status) {
+    const kind = { delivered: "chip-ok", retrying: "chip-warn", failed: "chip-bad", blocked: "chip-bad" }[status] || "";
+    const text = { delivered: "Delivered", retrying: "Retrying", failed: "Failed", blocked: "Blocked" }[status] || status;
+    return el("span", { class: `chip ${kind}` }, text);
+  }
+  const eventsText = (events) => ((events || []).includes("*") ? "All events" : (events || []).join(", "));
+
+  async function webhooks() {
+    const { webhooks: list = [] } = await PPE.postbox(orgPath("/webhooks"));
+    const add = el("button", { class: "btn btn-primary", type: "button", onclick: () => webhookSheet() }, "Add webhook");
+    if (list.length >= 10) add.disabled = true;
+    const rows = list.map((w) => {
+      const d = w.last_delivery;
+      return el("tr", {},
+        el("td", { class: "mono" }, w.url, w.description ? el("span", { class: "sub" }, w.description) : null),
+        el("td", {}, eventsText(w.events)),
+        el("td", {}, d ? [deliveryChip(d.status), el("span", { class: "sub" }, `${d.response_status ? `HTTP ${d.response_status} · ` : ""}${PPE.ago(d.at)}`)] : el("span", { class: "muted" }, "Nothing sent yet")),
+        el("td", { class: "row-actions" }, el("button", { class: "btn btn-small", type: "button", "aria-label": `Manage ${w.url}`, onclick: () => manageWebhook(w) }, "Manage")));
+    });
+    return el("div", {},
+      head("Webhooks", "Pigeonpost calls these addresses when people, agents, rooms or billing change. Deliveries carry ids and addresses, never message content.", add),
+      rows.length ? el("div", { class: "table-wrap" }, el("table", {},
+        el("thead", {}, el("tr", {}, ["Endpoint", "Events", "Last delivery", ""].map((h) => el("th", { scope: "col" }, h)))),
+        el("tbody", {}, rows))) : el("div", { class: "empty card" }, "No webhooks yet."),
+      el("p", { class: "note" }, "Every delivery is signed with HMAC-SHA256 in the Pigeonpost-Signature header. Check it with your signing secret, reject old timestamps and ignore repeated event ids. ",
+        el("a", { href: WEBHOOK_DOCS, rel: "noopener" }, "How to verify signatures")));
+  }
+
+  function webhookSheet() {
+    PPE.openSheet("Add webhook", (body) => {
+      const url = el("input", { type: "url", maxlength: 2048, spellcheck: "false", autocapitalize: "none", placeholder: "https://hooks.example.com/pigeonpost" });
+      const all = el("input", { type: "checkbox", value: "*" });
+      const boxes = EVENTS.map(([ev, text]) => el("label", { class: "check" }, el("input", { type: "checkbox", value: ev }), el("span", {}, el("span", { class: "mono" }, ev), el("span", { class: "sub muted" }, text))));
+      all.addEventListener("change", () => { for (const b of boxes) { const c = b.querySelector("input"); c.disabled = all.checked; } });
+      const desc = el("input", { type: "text", maxlength: 200, placeholder: "HR system" });
+      const status = el("p", { class: "status-line", role: "status" });
+      const bad = (text) => { status.className = "status-line status-bad"; status.textContent = text; };
+      const save = el("button", { class: "btn btn-primary", type: "button" }, "Add webhook");
+      save.addEventListener("click", busy(save, async () => {
+        const v = url.value.trim();
+        let ok = false;
+        try { const u = new URL(v); ok = u.protocol === "https:" && !u.username && !u.password && !u.hash; } catch { ok = false; }
+        if (!ok) return bad("Use an https:// address without a user name or #fragment.");
+        const events = all.checked ? ["*"] : boxes.map((b) => b.querySelector("input")).filter((c) => c.checked).map((c) => c.value);
+        if (!events.length) return bad("Choose at least one event, or All events.");
+        const r = await PPE.postbox(orgPath("/webhooks"), { method: "POST", body: { url: v, events, ...(desc.value.trim() ? { description: desc.value.trim() } : {}) } });
+        secretSheet("Webhook signing secret", r.secret, [`Deliveries to ${(r.webhook && r.webhook.url) || v} are signed with it.`], () => go("webhooks", true));
+      }));
+      body.append(PPE.field("Endpoint address", url, "Must be https:// on port 443 or 8443, and reachable on the public internet."),
+        el("fieldset", { class: "card" }, el("legend", {}, "Events"),
+          el("label", { class: "check" }, all, el("span", {}, el("strong", {}, "All events"), el("span", { class: "sub muted" }, "Including ones added later."))), ...boxes),
+        PPE.field("Description (optional)", desc),
+        status, el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => PPE.closeSheet() }, "Cancel"), save));
+    });
+  }
+
+  function manageWebhook(w) {
+    PPE.openSheet(w.description || "Webhook", (body) => {
+      body.append(el("dl", { class: "kv" },
+        el("dt", {}, "Endpoint"), el("dd", { class: "mono" }, w.url),
+        el("dt", {}, "Events"), el("dd", {}, eventsText(w.events)),
+        el("dt", {}, "Created"), el("dd", {}, `${PPE.date(w.created_at)}${w.created_by ? ` by ${w.created_by}` : ""}`),
+        el("dt", {}, "Secret rotated"), el("dd", {}, w.rotated_at ? PPE.date(w.rotated_at) : "Never")),
+      w.previous_secret_expires_at && w.previous_secret_expires_at > Date.now() / 1000
+        ? el("p", { class: "note" }, `The previous secret also signs deliveries until ${new Date(w.previous_secret_expires_at * 1000).toLocaleString()}.`) : null);
+      const deliveries = el("button", { class: "btn", type: "button" }, "Recent deliveries");
+      deliveries.addEventListener("click", busy(deliveries, () => deliveriesSheet(w)));
+      const rotate = el("button", { class: "btn", type: "button" }, "Rotate secret");
+      rotate.addEventListener("click", busy(rotate, async () => {
+        if (!window.confirm("Make a new signing secret? The current one keeps signing deliveries for 24 hours, so you can switch over.")) return;
+        const r = await PPE.postbox(orgPath(`/webhooks/${encodeURIComponent(w.id)}/rotate`), { method: "POST", body: {} });
+        const until = r.previous_secret_expires_at ? new Date(r.previous_secret_expires_at * 1000).toLocaleString() : "24 hours from now";
+        secretSheet("New signing secret", r.secret, [`The old secret keeps working for 24 hours, until ${until}. Deliveries carry both signatures until then.`], () => go("webhooks", true));
+      }));
+      const del = el("button", { class: "btn btn-danger", type: "button" }, "Delete webhook");
+      del.addEventListener("click", busy(del, async () => {
+        if (!window.confirm(`Delete the webhook for ${w.url}? Pending deliveries are cancelled.`)) return;
+        await PPE.postbox(orgPath(`/webhooks/${encodeURIComponent(w.id)}`), { method: "DELETE" });
+        PPE.closeSheet(); PPE.toast("Webhook deleted"); go("webhooks", true);
+      }));
+      body.append(el("div", { class: "actions" }, deliveries, rotate, del));
+    });
+  }
+
+  async function deliveriesSheet(w) {
+    const { deliveries = [] } = await PPE.postbox(orgPath(`/webhooks/${encodeURIComponent(w.id)}/deliveries?limit=50`));
+    PPE.openSheet("Recent deliveries", (body) => {
+      body.append(el("p", { class: "muted mono" }, w.url));
+      if (!deliveries.length) body.append(el("p", { class: "muted" }, "Nothing has been sent yet."));
+      const list = el("ul", { class: "deliveries" }, deliveries.map((d) => el("li", { class: "setting" },
+        el("p", {}, el("span", { class: "mono" }, d.event_type), " ", deliveryChip(d.status),
+          el("span", { class: "sub muted" }, [new Date(d.at * 1000).toLocaleString(), `attempt ${d.attempt}`, d.response_status ? `HTTP ${d.response_status}` : "no answer",
+            d.duration_ms != null ? `${d.duration_ms} ms` : null].filter(Boolean).join(" · ")),
+          d.error ? el("span", { class: "sub" }, d.error) : null))));
+      body.append(list, el("div", { class: "actions" }, el("button", { class: "btn", type: "button", onclick: () => manageWebhook(w) }, "Back")));
+    });
   }
 
   // ---- Organization ----------------------------------------------------------------------------
@@ -768,7 +1024,7 @@
     gate(el("h1", {}, "Organization deleted"), el("p", { class: "muted" }, "Company mail has stopped. The address can be recovered for 30 days."), el("a", { class: "btn", href: "/" }, "Done"));
   }
 
-  const PAGE = { people, agents, rooms, rules, billing, security, organization };
+  const PAGE = { people, agents, rooms, rules, billing, security, "api-keys": apiKeys, webhooks, organization };
 
   // ---- load ------------------------------------------------------------------------------------
 
@@ -818,7 +1074,7 @@
       await load(pick.id);
       document.getElementById("gate").hidden = true;
       document.getElementById("shell").hidden = false;
-      const page = (window.location.pathname.split("/")[2] || "").replace(/[^a-z]/g, "");
+      const page = (window.location.pathname.split("/")[2] || "").replace(/[^a-z-]/g, "");
       await go(PAGE[page] ? page : "people", true);
       await PPE.runResume().catch(PPE.fail);
     } catch (e) {
