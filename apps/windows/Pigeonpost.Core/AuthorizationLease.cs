@@ -49,6 +49,20 @@ public sealed class AuthorizationContext : IDisposable
         lease?.RequireActive(); localConstraint?.RequireActive();
         previous = Slot.Value; frame = new(lease, localConstraint, previous); Slot.Value = frame;
     }
+    private AuthorizationContext(Frame captured)
+    {
+        previous = Slot.Value;
+        var frames = new List<Frame>();
+        for (var scope = captured; scope is not null; scope = scope.Parent) frames.Add(scope);
+        Frame? merged = previous;
+        for (var index = frames.Count - 1; index >= 0; index--)
+        {
+            var scope = frames[index];
+            scope.Lease?.RequireActive(); scope.LocalConstraint?.RequireActive();
+            merged = new(scope.Lease, scope.LocalConstraint, merged);
+        }
+        frame = merged!; Slot.Value = frame;
+    }
     internal static AuthorizationContext Capture(AuthorizationLease? fallback) => new(IsBound ? Current : fallback, true);
     internal static AuthorizationContext BindActor(AuthorizationLease? accepted, AuthorizationLease actor)
     {
@@ -57,6 +71,11 @@ public sealed class AuthorizationContext : IDisposable
         // A fixed-credential stand-in may lack a login grant. Its local actor still cancels work;
         // it never becomes network authority or replaces a real AccountSession's grant.
         return new(accepted is null ? null : actor, actor);
+    }
+    internal static Func<AuthorizationContext> CaptureBinding()
+    {
+        var captured = Slot.Value ?? throw new AuthorizationRetiredException();
+        return () => new AuthorizationContext(captured);
     }
     internal static Action CaptureValidation(IAccessTokenProvider provider) => CaptureValidation(() => provider.AcceptedAuthorization);
     internal static Action CaptureValidation(Func<AuthorizationLease?> currentAuthorization)
@@ -73,6 +92,35 @@ public sealed class AuthorizationContext : IDisposable
                 if (scope.Lease is null ? current is not null : current is null || !scope.Lease.SharesAuthorization(current))
                     throw new AuthorizationRetiredException();
             }
+        };
+    }
+    // Admit only short synchronous private writes; never run UI callbacks, awaits or session
+    // getters inside this barrier. All captured grants share one root, which orders the locks.
+    internal static Action<Action> CaptureWriteBarrier(Func<AuthorizationLease?> currentAuthorization)
+    {
+        var accepted = currentAuthorization() ?? throw new AuthorizationRetiredException();
+        var validate = CaptureValidation(currentAuthorization);
+        validate();
+        var grants = new List<AuthorizationLease>();
+        for (var scope = Slot.Value; scope is not null; scope = scope.Parent)
+        {
+            foreach (var grant in new[] { scope.Lease, scope.LocalConstraint })
+                if (grant is not null && !grants.Contains(grant))
+                {
+                    if (!grant.SharesAuthorization(accepted)) throw new AuthorizationRetiredException();
+                    grants.Add(grant);
+                }
+        }
+        if (!grants.Contains(accepted)) grants.Add(accepted);
+        return work =>
+        {
+            validate(); // The provider may acquire a session lock; keep this outside every grant.
+            void Admit(int index)
+            {
+                if (index == grants.Count) { work(); return; }
+                grants[index].WithActive(() => { Admit(index + 1); return 0; });
+            }
+            Admit(0);
         };
     }
     public void Dispose() { if (ReferenceEquals(Slot.Value, frame)) Slot.Value = previous; }

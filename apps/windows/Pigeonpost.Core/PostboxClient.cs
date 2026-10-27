@@ -55,6 +55,7 @@ public sealed partial class PostboxClient(HttpClient http, IAccessTokenProvider 
     internal AuthorizationLease? AcceptedAuthorization => tokens.AcceptedAuthorization;
     AuthorizationLease? IInboxService.AcceptedAuthorization => AcceptedAuthorization;
     string? IInboxService.RecoveryOwnerKey => tokens.RecoveryOwnerKey;
+    string? IInboxService.RecoveryOrigin => endpoint.GetLeftPart(UriPartial.Authority);
     AuthorizationLease? IAttachmentService.AcceptedAuthorization => AcceptedAuthorization;
     AuthorizationLease? IConversationSettings.AcceptedAuthorization => AcceptedAuthorization;
     internal Action CaptureAuthorizationValidation() => AuthorizationContext.CaptureValidation(tokens);
