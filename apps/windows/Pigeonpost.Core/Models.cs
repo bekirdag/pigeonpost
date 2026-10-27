@@ -1,4 +1,6 @@
+using System.Text;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 using System.Text.Json.Serialization;
 
 namespace Pigeonpost.Core;
@@ -218,6 +220,39 @@ public sealed record Subject(string Id, string? Title, bool IsDefault, IReadOnly
 
 public static class RequestEnvelope
 {
+    public static string ReplyQuote(string text)
+    {
+        var line = text.Trim().ReplaceLineEndings("\n").Split('\n', 2)[0];
+        return string.Concat(line.EnumerateRunes().Take(200).Select(r => r.ToString()));
+    }
+
+    // Edit the displayed slot, retaining the original verb and unrelated structured arguments.
+    public static string EditText(string original, string text)
+    {
+        JsonDocument doc;
+        try { doc = JsonDocument.Parse(original); }
+        catch (JsonException) { return text; }
+        using (doc)
+        {
+            var root = doc.RootElement;
+            if (root.ValueKind != JsonValueKind.Object || !root.TryGetProperty("v", out var version) || version.ValueKind != JsonValueKind.Number
+                || !version.TryGetInt32(out var value) || value != 1 || !root.TryGetProperty("verb", out var verb) || verb.ValueKind != JsonValueKind.String) return text;
+            static bool DuplicateFields(JsonElement element) => element.EnumerateObject().Select(p => p.Name).Distinct(StringComparer.Ordinal).Count() != element.EnumerateObject().Count();
+            if (DuplicateFields(root) || root.TryGetProperty("args", out var rawArgs) && rawArgs.ValueKind == JsonValueKind.Object && DuplicateFields(rawArgs))
+                throw new ArgumentException("This structured message has ambiguous fields and cannot be edited.");
+            var changed = JsonNode.Parse(original)!.AsObject();
+            var args = changed["args"] as JsonObject;
+            string? field = null;
+            if (args is not null)
+                field = new[] { "task", "question" }.FirstOrDefault(name => args[name] is JsonValue node && node.TryGetValue<string>(out _));
+            var displayed = DisplayText(original);
+            if (field is not null) args![field] = text;
+            if (field is null || changed["note"] is JsonValue note && note.TryGetValue<string>(out var priorNote) && priorNote == displayed)
+                changed["note"] = text;
+            return changed.ToJsonString();
+        }
+    }
+
     // A file is already message content. Do not invent a caption or an empty work request.
     public static string Attachment(string? caption) => string.IsNullOrWhiteSpace(caption) ? "" : Work(caption.Trim());
 
