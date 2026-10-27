@@ -219,4 +219,6 @@
   }
 
   window.PigeonpostNotes = { onMailbox, onEvent, open, close, _renderBrief: renderBrief, _asText: asText };
+  // The inbox may have loaded its capabilities before this file was parsed: catch up once.
+  if (host()) setTimeout(onMailbox, 0);
 })();

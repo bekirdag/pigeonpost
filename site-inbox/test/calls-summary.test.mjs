@@ -16,7 +16,7 @@ async function until(predicate, what = "condition") {
 const signing = loadSigningKey(generateSigningKeyPem());
 const MEETING = "mtg_" + "q".repeat(26);
 
-function fakeIndexedDB() {
+function fakeIndexedDB({ refuseKeys = false } = {}) {
   const stores = new Map();
   return {
     open() {
@@ -30,7 +30,10 @@ function fakeIndexedDB() {
                 const m = stores.get(n);
                 return {
                   get(k) { const r = {}; setTimeout(() => { r.result = m.get(k); r.onsuccess && r.onsuccess(); }); return r; },
-                  put(v, k) { m.set(k, v); setTimeout(() => tx.oncomplete && tx.oncomplete()); },
+                  put(v, k) {
+                    if (refuseKeys && Object.values(v).some((x) => x && x.constructor && x.constructor.name === "CryptoKey")) throw Object.assign(new Error("The object can not be cloned."), { name: "DataCloneError" });
+                    m.set(k, v); setTimeout(() => tx.oncomplete && tx.oncomplete());
+                  },
                 };
               },
             };
@@ -46,7 +49,7 @@ function fakeIndexedDB() {
   };
 }
 
-function page(t, { pinned = signing, guest = false } = {}) {
+function page(t, { pinned = signing, guest = false, refuseKeys = false } = {}) {
   const errors = [], vc = new VirtualConsole();
   vc.on("jsdomError", (e) => errors.push(e.message));
   const dom = new JSDOM(`<!doctype html><body data-page="inbox"><nav id="side-nav"></nav>
@@ -57,7 +60,7 @@ function page(t, { pinned = signing, guest = false } = {}) {
   Object.defineProperty(w, "crypto", { value: globalThis.crypto, configurable: true });
   w.TextEncoder = TextEncoder;
   w.TextDecoder = TextDecoder;
-  w.indexedDB = fakeIndexedDB();
+  w.indexedDB = fakeIndexedDB({ refuseKeys });
   const recorders = [];
   w.MediaStream = class { constructor(tracks) { this.tracks = tracks; } getTracks() { return this.tracks; } };
   w.MediaRecorder = class {
@@ -278,4 +281,14 @@ test("calls.js hands summary events to the notes module and stops it when the ca
   }
   // Every page script stays same-origin under the inbox CSP (no inline handlers or blobs).
   assert.doesNotMatch(read("calls-summary.js"), /new Worker|blob:|eval\(/);
+});
+
+test("where the engine cannot store a CryptoKey (WebKit app views), the notes key still works", async (t) => {
+  const p = page(t, { refuseKeys: true });
+  const k = await p.w.PigeonpostNotesKeys.get();
+  assert.match(k.key_id, /^nk/);
+  const brief = { v: 1, summary: "Fallback works.", transcript: [] };
+  const sealed = sealBrief(MEETING, Buffer.from(JSON.stringify(brief)), [{ account_id: "acct_me", keys: [{ key_id: k.key_id, public_key: k.public_key }] }]);
+  const opened = await p.w.PigeonpostNotesKeys.open({ id: MEETING, state: "ready", iv: sealed.iv, ciphertext: sealed.ciphertext, keys: sealed.wraps });
+  assert.equal(opened.summary, "Fallback works.");
 });

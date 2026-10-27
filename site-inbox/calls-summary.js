@@ -62,7 +62,7 @@
     async function write(d, value) {
       return new Promise((resolve, reject) => {
         const tx = d.transaction("keys", "readwrite");
-        tx.objectStore("keys").put(value, "device");
+        try { tx.objectStore("keys").put(value, "device"); } catch (e) { reject(e); return; }
         tx.oncomplete = () => resolve();
         tx.onerror = () => reject(tx.error || new Error("indexeddb"));
       });
@@ -73,12 +73,29 @@
       if (!subtle) throw new Error("no_webcrypto");
       const d = await db();
       let rec = await read(d);
+      if (rec && rec.key_id && !rec.privateKey && rec.privatePkcs8) {
+        // Stored as bytes (below): back to a non-extractable key for this page's lifetime.
+        rec = { ...rec, privateKey: await subtle.importKey("pkcs8", unb64(rec.privatePkcs8), { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]) };
+      }
       if (!rec || !rec.privateKey || !rec.key_id) {
+        const id = "nk" + b64(window.crypto.getRandomValues(new Uint8Array(12))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
         const pair = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]);
         const raw = await subtle.exportKey("raw", pair.publicKey);
-        const id = b64(window.crypto.getRandomValues(new Uint8Array(12))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-        rec = { key_id: "nk" + id, privateKey: pair.privateKey, public_key: b64(raw), created_at: Date.now() };
-        await write(d, rec);
+        rec = { key_id: id, privateKey: pair.privateKey, public_key: b64(raw), created_at: Date.now() };
+        try {
+          await write(d, rec);
+        } catch (e) {
+          if (!e || e.name !== "DataCloneError") throw e;
+          // WebKit in app web views cannot store a CryptoKey in IndexedDB. There the private key is
+          // kept as PKCS#8 bytes in this origin's storage on this device (it never leaves it) and
+          // re-imported as non-extractable when needed.
+          const pair2 = await subtle.generateKey({ name: "ECDH", namedCurve: "P-256" }, true, ["deriveBits"]);
+          const pkcs8 = await subtle.exportKey("pkcs8", pair2.privateKey);
+          const raw2 = await subtle.exportKey("raw", pair2.publicKey);
+          await write(d, { key_id: id, privatePkcs8: b64(pkcs8), public_key: b64(raw2), created_at: Date.now() });
+          new Uint8Array(pkcs8).fill(0);
+          rec = { key_id: id, privateKey: await subtle.importKey("pkcs8", unb64((await read(d)).privatePkcs8), { name: "ECDH", namedCurve: "P-256" }, false, ["deriveBits"]), public_key: b64(raw2), created_at: Date.now() };
+        }
       }
       cached = rec;
       return rec;
