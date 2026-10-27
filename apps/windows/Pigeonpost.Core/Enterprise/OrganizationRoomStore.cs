@@ -55,6 +55,13 @@ public sealed record OrganizationRoomsState
         ? catalog.Orgs.Where(o => o.Readable && o.Mailbox is not null && o.Mailbox.Address != Mailbox).ToArray() : [];
     public IReadOnlyList<RoomOperatedMailbox> Delegated => Catalog?.Delegated ?? [];
     public bool Loading => LoadingCatalog || LoadingRooms || Reviewing;
+    // The latest message, or the standing explanation of an unresolved creation in custody.
+    public string? Notice => Message ?? PendingCreation switch
+    {
+        { CandidateId: null } => "A room creation from earlier is not confirmed. Retry the same details, or discard it after checking your rooms.",
+        { } => "This room was created, but opening it is not confirmed. Check the created room.",
+        _ => null
+    };
     public override string ToString() => "OrganizationRoomsState(redacted)";
 }
 
@@ -295,6 +302,7 @@ public sealed class OrganizationRoomStore(IOrganizationRoomApi api, IInboxServic
     public bool BeginCreation(string context)
     {
         if (!CanCreate(context)) return false;
+        ClearReview(); // A room under review is a separate decision.
         if (state.PendingCreation is null)
             Update(s => s with { CompletedCreation = null, Opening = null, Message = null,
                 Draft = s.CompletedCreation is null ? s.Draft ?? new(s.Organization!.Id) : new(s.Organization!.Id) });
@@ -329,6 +337,7 @@ public sealed class OrganizationRoomStore(IOrganizationRoomApi api, IInboxServic
         if (previous is not null && !previous.CanRetry(Now))
         { Update(s => s with { Message = "This earlier creation is too old to repeat safely. Check your rooms, then discard it." }); return null; }
         var mailbox = bound!.Mailbox; var org = draft.OrganizationId;
+        ClearReview();
         return Run(Lane.Mutation, context, org, async work =>
         {
             var ct = work.Cancellation.Token;

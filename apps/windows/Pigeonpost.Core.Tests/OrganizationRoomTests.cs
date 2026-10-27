@@ -195,6 +195,7 @@ internal static class OrganizationRoomTests
                 store.Dispose();
                 var restarted = w.Store(); await Done(restarted.LoadOrganizations());
                 Require(restarted.State.PendingCreation is { } restored && restored.Payload.Encoded == w.Api.Bodies[0] && w.Api.Creates == 1);
+                Require(restarted.State.Rooms.Count == 2 && restarted.State.Notice!.StartsWith("A room creation from earlier", StringComparison.Ordinal));
                 Require(restarted.BeginCreation(restarted.State.ContextId) && restarted.State.Draft!.Name == "Private plans ğ");
                 w.Api.OnCreate = null;
                 await Done(restarted.SubmitDraft(restarted.State.Draft!.Id, restarted.State.ContextId));

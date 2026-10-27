@@ -159,7 +159,8 @@ public sealed partial class MainWindow
         closeReview.Click += (_, _) => roomStore.CloseReview(Context());
         reviewAction.Click += (_, _) => roomStore.OpenReviewed(roomStore.State.ReviewProof, Context());
         roomStore.Synchronize();
-        if (roomStore.State.Catalog is null && !roomStore.State.Loading) roomStore.LoadOrganizations(Context());
+        // Every visit rereads membership and the directory; nothing cached grants access.
+        if (!roomStore.State.Busy) roomStore.LoadOrganizations(Context());
         RenderRooms();
         return frame;
     }
@@ -172,7 +173,7 @@ public sealed partial class MainWindow
         try
         {
             view.Busy.IsActive = state.Busy || state.Loading; view.Busy.Visibility = ToVisibility(state.Busy || state.Loading);
-            view.Status.Text = state.Message ?? (!current ? "Select an inbox to see its organization rooms."
+            view.Status.Text = state.Notice ?? (!current ? "Select an inbox to see its organization rooms."
                 : state.Catalog is null ? (state.LoadingCatalog ? "Loading your organizations…" : "")
                 : state.Organizations.Count == 0 ? "This inbox is not an organization member inbox." : "");
             AutomationProperties.SetName(view.Status, view.Status.Text);
