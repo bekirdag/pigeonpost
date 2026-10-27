@@ -72,6 +72,16 @@ jobs:
       - name: Compile native app and validate unsigned MSIX
         shell: pwsh
         run: ./apps/windows/build.ps1 -Architecture '${{ matrix.architecture }}' -Package
+      - name: Exercise fresh verification and loopback browser return on Windows
+        if: matrix.architecture == 'x64'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path apps/windows/artifacts/screenshots -Force | Out-Null
+          $signInEvidence = 'apps/windows/artifacts/screenshots/strong-signin.log'
+          dotnet run --project apps/windows/Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -c Release -- --strong-signin *> $signInEvidence
+          $signInResult = $LASTEXITCODE
+          Get-Content $signInEvidence
+          if ($signInResult -ne 0) { throw 'Windows verification/session/socket tests failed.' }
       - name: Upload Store packages and test artifacts
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

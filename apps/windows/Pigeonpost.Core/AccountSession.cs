@@ -14,10 +14,12 @@ public sealed class SignInException(string message) : Exception(message);
 public sealed record DeviceSignIn(string DeviceCode, string UserCode, Uri VerificationUri, int ExpiresIn, int Interval);
 
 // Callers must disable automatic HTTP redirects. Only refresh tokens enter the operating-system vault.
-public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Uri? issuer = null) : IAccessTokenProvider
+public sealed partial class AccountSession(HttpClient http, IRefreshTokenStore store, Uri? issuer = null,
+    TimeProvider? timeProvider = null) : IAccessTokenProvider
 {
     public const string ClientId = "pigeonpost-windows";
     private readonly Uri issuer = ValidateIssuer(issuer ?? new Uri("https://auth.pigeonpost.dev/realms/pigeonpost-prod/"));
+    private readonly TimeProvider clock = timeProvider ?? TimeProvider.System;
     private readonly SemaphoreSlim gate = new(1, 1);
     private string? accessToken;
     private string? refreshToken;
@@ -54,7 +56,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
     public async Task<DeviceSignIn> BeginSignInAsync(CancellationToken cancellationToken)
     {
         int attempt;
-        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; }
+        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; RetireStrongLocked(); }
         using var result = await PostAsync("auth/device", new()
         {
             ["client_id"] = ClientId, ["scope"] = "openid profile offline_access"
@@ -81,14 +83,14 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
             if (!ReferenceEquals(pendingSignIn, request)) throw new SignInException("Start a new sign-in request on this device.");
             attempt = generation;
         }
-        var deadline = DateTimeOffset.UtcNow.AddSeconds(request.ExpiresIn);
+        var deadline = clock.GetUtcNow().AddSeconds(request.ExpiresIn);
         var interval = request.Interval;
         try
         {
-            while (DateTimeOffset.UtcNow < deadline)
+            while (clock.GetUtcNow() < deadline)
             {
                 await Task.Delay(TimeSpan.FromSeconds(interval), cancellationToken).ConfigureAwait(false);
-                if (DateTimeOffset.UtcNow >= deadline) break;
+                if (clock.GetUtcNow() >= deadline) break;
                 lock (stateLock) RequireAttempt(attempt);
                 using var result = await PostAsync("token", new()
                 {
@@ -120,7 +122,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
         try
         {
             lock (stateLock) RequireAttempt(attempt);
-            if (accessToken is null || DateTimeOffset.UtcNow >= expiresAt) await RenewAsync(cancellationToken, attempt).ConfigureAwait(false);
+            if (accessToken is null || clock.GetUtcNow() >= expiresAt) await RenewAsync(cancellationToken, attempt).ConfigureAwait(false);
             return accessToken!;
         }
         finally { gate.Release(); }
@@ -137,7 +139,7 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
     public async Task SignOutAsync(CancellationToken cancellationToken)
     {
         int attempt;
-        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; }
+        lock (stateLock) { cancellationToken.ThrowIfCancellationRequested(); attempt = ++generation; pendingSignIn = null; RetireStrongLocked(); }
         await gate.WaitAsync(cancellationToken).ConfigureAwait(false);
         try
         {
@@ -176,25 +178,28 @@ public sealed class AccountSession(HttpClient http, IRefreshTokenStore store, Ur
 
     private void Accept(JsonElement response, CancellationToken cancellationToken, int attempt, bool newAuthorization = false, bool requireRefresh = false)
     {
+        lock (stateLock) AcceptUnderLock(response, cancellationToken, attempt, newAuthorization, requireRefresh);
+    }
+
+    // Caller holds stateLock. No session lock may be acquired inside a grant write barrier.
+    private void AcceptUnderLock(JsonElement response, CancellationToken cancellationToken, int attempt, bool newAuthorization, bool requireRefresh)
+    {
         var access = Required(response, "access_token");
         var nextOwner = SessionOwnerHint.FromTrustedExchange(access, issuer, ClientId);
         var refresh = Text(response, "refresh_token") ?? (requireRefresh ? null : refreshToken);
         if (string.IsNullOrEmpty(refresh)) throw new SignInException("Sign-in did not provide a renewable session. Please try again.");
-        lock (stateLock)
+        RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
+        if (!newAuthorization && ownerHint is not null && nextOwner?.StorageKey != ownerHint.StorageKey)
+            throw new SignInException("The renewed session could not be matched to your account. Sign in again.");
+        // Learning a principal after an unknown-owner session must retire its old local work.
+        var ownerBecameKnown = authorization is not null && ownerHint is null && nextOwner is not null;
+        store.Save(refresh);
+        if (newAuthorization || authorization is null || ownerBecameKnown)
         {
-            RequireAttempt(attempt); cancellationToken.ThrowIfCancellationRequested();
-            if (!newAuthorization && ownerHint is not null && nextOwner?.StorageKey != ownerHint.StorageKey)
-                throw new SignInException("The renewed session could not be matched to your account. Sign in again.");
-            // Learning a principal after an unknown-owner session must retire its old local work.
-            var ownerBecameKnown = authorization is not null && ownerHint is null && nextOwner is not null;
-            store.Save(refresh);
-            if (newAuthorization || authorization is null || ownerBecameKnown)
-            {
-                authorization?.Retire(); Volatile.Write(ref authorization, new AuthorizationLease());
-            }
-            refreshToken = refresh; accessToken = access; ownerHint = nextOwner;
-            expiresAt = DateTimeOffset.UtcNow.AddSeconds(Math.Max(0, Number(response, "expires_in", 300) - 30));
+            authorization?.Retire(); Volatile.Write(ref authorization, new AuthorizationLease());
         }
+        refreshToken = refresh; accessToken = access; ownerHint = nextOwner;
+        expiresAt = clock.GetUtcNow().AddSeconds(Math.Max(0, Number(response, "expires_in", 300) - 30));
     }
 
     private async Task<JsonDocument> PostAsync(string suffix, Dictionary<string, string> fields, CancellationToken cancellationToken)
