@@ -1043,6 +1043,8 @@ tests.AddRange(StrongSignInProofTests.All());
 tests.AddRange(StrongSignInSessionTests.All());
 tests.AddRange(StrongSignInSessionTests.Browser());
 tests.AddRange(DevicePairingTests.All());
+tests.AddRange(DevicePairingTests.Store());
+tests.AddRange(StrongSignInSessionTests.Approval());
 tests.AddRange(GroupStateAuthorizationTests.All());
 tests.AddRange(GroupClientAuthorizationTests.All());
 tests.AddRange(AvatarAuthorizationTests.All());
@@ -1076,7 +1078,7 @@ tests.AddRange(GroupsModelTests.All());
 // The default complete suite still requires the real MLS library and runs every case.
 if (args.SequenceEqual(new[] { "--strong-signin" }))
 {
-    tests = StrongSignInSessionTests.All().Concat(StrongSignInSessionTests.Browser()).ToList();
+    tests = StrongSignInSessionTests.All().Concat(StrongSignInSessionTests.Browser()).Concat(StrongSignInSessionTests.Approval()).ToList();
 }
 var failed = 0;
 foreach (var test in tests)

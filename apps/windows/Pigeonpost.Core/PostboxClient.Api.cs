@@ -100,6 +100,8 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     public const string RecipientLookup = "recipient_lookup";
     public const string Calendar = "calendar";
     public const string CalendarEmail = "calendar_email";
+    // Organization rooms and machine approval (docs/orgs.md). Membership is still checked per request.
+    public const string Organizations = "orgs";
 
     public static ServerFeatures None { get; } = new(new HashSet<string>(StringComparer.Ordinal));
     public bool Has(string name) => Names.Contains(name);

@@ -13,6 +13,44 @@ internal static class InboxAuthorizationTests
             Require(vm.Draft == "" && vm.DraftAttachments.Count == 0 && vm.Messages.All(m => m.Body.Contains("replacement", StringComparison.Ordinal)));
             Require(f.Loads == 2 && vm.CanCompose);
         });
+        yield return ("A verified same-person grant replacement keeps unsent text and files, including typing during verification", async () =>
+        {
+            using var f = new Service { Owner = "synthetic-person" }; using var vm = new InboxViewModel(f); await vm.InitializeAsync();
+            await vm.SwitchMailboxAsync(Beta); vm.Draft = "Beta draft";
+            await vm.SwitchMailboxAsync(Alpha); vm.Draft = "Before verification"; vm.AddAttachments([File()]);
+            Require(vm.ReadyForGrantReplacement);
+            vm.Draft = "Typed while verifying"; // The browser step runs while the original grant is still accepted.
+            var prior = f.Root; f.Rotate();
+            Require(!vm.CarryUnsentWork(f.Root) && vm.CarryUnsentWork(prior));
+            f.Label = "replacement"; await vm.InitializeAsync();
+            Require(vm.SelectedMailbox?.Address == Alpha.Address && vm.Draft == "Typed while verifying" && vm.DraftAttachments.Count == 1 && vm.CanCompose);
+            Require(vm.Messages.All(m => m.Body.Contains("replacement", StringComparison.Ordinal)) && f.Sends == 0);
+            await vm.SwitchMailboxAsync(Beta); Require(vm.Draft == "Beta draft");
+        });
+        yield return ("Unsent work never follows another person, an unlisted inbox or an in-flight send", async () =>
+        {
+            using (var f = new Service { Owner = "synthetic-person" })
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync(); vm.Draft = "Private";
+                var prior = f.Root; f.Rotate(); f.Owner = "synthetic-other"; Require(vm.CarryUnsentWork(prior));
+                await vm.InitializeAsync(); Require(vm.Draft == "" && vm.DraftAttachments.Count == 0);
+            }
+            using (var f = new Service { Owner = "synthetic-person" })
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync(); await vm.SwitchMailboxAsync(Beta); vm.Draft = "Beta only";
+                var prior = f.Root; f.Rotate(); f.Boxes = [Alpha]; Require(vm.CarryUnsentWork(prior)); await vm.InitializeAsync();
+                Require(vm.SelectedMailbox?.Address == Alpha.Address && vm.Draft == "");
+                f.Boxes = [Alpha, Beta]; await vm.InitializeAsync(); await vm.SwitchMailboxAsync(Beta); Require(vm.Draft == "");
+            }
+            using (var f = new Service { Owner = "synthetic-person" })
+            {
+                using var vm = new InboxViewModel(f); await vm.InitializeAsync(); vm.Draft = "Sending";
+                var gate = f.Pause("send"); var sending = vm.SendDraftAsync(); await gate.Wait();
+                Require(!vm.ReadyForGrantReplacement); gate.Release.TrySetResult(); await sending; Require(vm.ReadyForGrantReplacement);
+                vm.Draft = "Dropped"; var prior = f.Root; f.Rotate(); Require(vm.CarryUnsentWork(prior)); vm.DropCarriedWork();
+                await vm.InitializeAsync(); Require(vm.Draft == "");
+            }
+        });
         yield return ("A queued old initialization cannot replace the new account's mailbox list", async () =>
         {
             using var f = new Service(); using var vm = new InboxViewModel(f); var gate = f.Pause("mailboxes"); var ui = new HeldUi();
@@ -146,6 +184,8 @@ internal static class InboxAuthorizationTests
     {
         internal AuthorizationLease Root = new();
         public AuthorizationLease? AcceptedAuthorization => Root;
+        internal string? Owner;
+        public string? RecoveryOwnerKey => Owner;
         internal IReadOnlyList<Mailbox> Boxes = [Alpha, Beta];
         internal string Label = "original";
         internal int Loads, Sends, Uploads, FileSends, Acknowledgements;

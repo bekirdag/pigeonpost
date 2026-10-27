@@ -4,7 +4,7 @@ using System.Text.Json;
 using Pigeonpost.Core;
 using Pigeonpost.Core.Enterprise;
 
-internal static class DevicePairingTests
+internal static partial class DevicePairingTests
 {
     private const string Alice="/k/ec55xq18rbwdnwpsvkht07az40", Bob="/k/rywv63mb6h0hhrpfjewrrttspw";
     private static readonly DevicePairingCode Code=DevicePairingCode.Parse("ABCD-EFGH")!;

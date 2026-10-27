@@ -6,7 +6,7 @@ using System.Text.Json;
 namespace Pigeonpost.Core;
 
 public sealed class PostboxException(int statusCode, string? code, JsonElement? detail = null,
-    StrongSignInRequirement? strongSignIn = null) : Exception(code switch
+    StrongSignInRequirement? strongSignIn = null, int? retryAfter = null) : Exception(code switch
 {
     "not_admitted" => "They are not accepting mail from this mailbox.",
     "recipient_unresolved" => "No mailbox at that address.",
@@ -45,6 +45,8 @@ public sealed class PostboxException(int statusCode, string? code, JsonElement? 
     public int StatusCode { get; } = statusCode;
     public string? Code { get; } = code;
     public StrongSignInRequirement? StrongSignIn { get; } = strongSignIn;
+    // A server-requested wait for 429 replies, bounded to 1–3600 seconds; absent when unusable.
+    public int? RetryAfter { get; } = retryAfter;
     // The whole error body, for codes that carry fields (current_epoch, current_revision, …).
     public JsonElement? Detail { get; } = detail;
     public long? DetailNumber(string name) => Detail is { ValueKind: JsonValueKind.Object } body

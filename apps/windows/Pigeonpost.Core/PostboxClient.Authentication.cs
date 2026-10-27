@@ -45,6 +45,14 @@ public sealed partial class PostboxClient
             code = error.GetString();
         if (signalled || response.StatusCode == HttpStatusCode.Unauthorized && code is "step_up_required" or "insufficient_user_authentication")
             return new((int)response.StatusCode, "step_up_required", detail, StrongSignInRequirement.Parse(detail, header));
-        return new((int)response.StatusCode, response.StatusCode == HttpStatusCode.Unauthorized ? "unauthorized" : code, detail);
+        return new((int)response.StatusCode, response.StatusCode == HttpStatusCode.Unauthorized ? "unauthorized" : code, detail,
+            retryAfter: response.StatusCode == HttpStatusCode.TooManyRequests ? RetryAfterSeconds(response) : null);
+    }
+
+    private static int? RetryAfterSeconds(HttpResponseMessage response)
+    {
+        if (response.Headers.RetryAfter is not { } value) return null;
+        var seconds = value.Delta?.TotalSeconds ?? (value.Date is { } date ? (date - DateTimeOffset.UtcNow).TotalSeconds : double.NaN);
+        return double.IsFinite(seconds) ? (int)Math.Clamp(Math.Ceiling(seconds), 1, 3600) : null;
     }
 }

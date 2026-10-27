@@ -160,6 +160,7 @@ public sealed partial class MainWindow
             await StopCallsAsync();
             await UnregisterCallPushAsync();
             await session.SignOutAsync(lifetime.Token);
+            ViewModel.DropCarriedWork(); groupsModel.DropCarriedWork();
             foreach (var cancellation in previewTasks.Values) { cancellation.Cancel(); cancellation.Dispose(); }
             previewTasks.Clear();
             previewCache.Clear();
