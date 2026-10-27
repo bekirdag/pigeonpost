@@ -299,7 +299,9 @@
     for (const rp of mine.lk.remoteParticipants.values()) {
       const allowed = mine.publishers.has(rp.identity) || rp.identity === mine.hostPid;
       for (const pub of rp.trackPublications.values()) {
-        const want = allowed && pub.isEncrypted;
+        // Nothing is received before this browser holds a stream key: frames it cannot open would
+        // only be dropped.
+        const want = allowed && pub.isEncrypted && mine.epoch > 0;
         if (!pub.isEncrypted && allowed && !pub.ppRefused) { pub.ppRefused = true; mine.unencrypted += 1; }
         if (pub.isDesired !== want) pub.setSubscribed(want);
       }
@@ -408,6 +410,7 @@
       const roomKey = await E().unwrapRoomKey({ privateKey: mine.identity.privateKey, roomId: mine.id, from: { id: data.from, key: mine.hostKey }, to: { id: mine.you, key: mine.identity.publicKey }, wrapped: data });
       if (L !== mine || data.epoch <= mine.epoch) return;
       await install(mine, data.epoch, roomKey, !mine.sendEpoch);
+      syncSubscriptions(mine);
       render();
     } catch (_) { mine.keyErrors += 1; }
   }
@@ -851,6 +854,8 @@
     current: () => (L ? { id: L.id, groupId: L.groupId, role: L.role } : null),
     show: () => { if (L) showUI(); },
     supported: () => Boolean(C() && C().canEncryptFrames),
+    // For automated checks (the media-server room, to prove what a viewer's ticket allows).
+    _room: () => (L && L.lk) || null,
     // For automated checks: state without media or keys.
     inspect: () => L && {
       id: L.id, role: L.role, you: L.you, hostPid: L.hostPid, epoch: L.epoch, sendEpoch: L.sendEpoch, viewers: L.viewers,
