@@ -1,9 +1,10 @@
 """Approving a machine (docs/device-pairing-native.md): the confirmation dialog.
 
 The store (pairing.ApprovalStore) belongs to the accepted login; the dialog only shows its state and
-passes the person's explicit decisions to it. Approval needs a strong sign-in, which the Linux
-OAuth client cannot do (strong_signin.supported() is False): an approvable request is approved in
-the browser (pair.html with the code in the fragment), never automatically. Deny stays native.
+passes the person's explicit decisions to it. Approval needs a strong sign-in: the system browser
+verifies it (strong_signin), then the same code is read again and another explicit approval is
+required. If the client cannot do it (strong_signin.supported() is False), an approvable request is
+approved in the browser (pair.html with the code in the fragment), never automatically.
 """
 
 import time

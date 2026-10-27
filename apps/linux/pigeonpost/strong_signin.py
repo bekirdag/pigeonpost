@@ -17,9 +17,10 @@ browser with an exact loopback redirect (RFC 8252), bound to the login that aske
   (binding.owner_key). Only then are they handed to the session, under its lock, while the lease is
   still current. It never approves anything by itself.
 
-Availability is a capability of the OAuth client, not of this code: the dedicated Linux client
-`pigeonpost-linux` is configured for device authorization only (no standard flow, no redirect
-URIs), so `supported(CLIENT_ID)` is False and the app asks the person to approve in the browser.
+Availability is a capability of the OAuth client, not of this code: since 27 October 2026 the dedicated
+Linux client `pigeonpost-linux` also allows Authorization Code with PKCE S256 and the native loopback
+redirect (device flow, consent and scopes unchanged), so `supported(CLIENT_ID)` is True. A client that
+is not listed below keeps the browser approval path.
 """
 
 import base64
@@ -35,8 +36,8 @@ from .api import APIError, CLIENT_ID, ISSUER
 from .binding import Retired, owner_key
 
 # OAuth clients configured for Authorization Code + PKCE S256 with the native loopback redirect
-# http://127.0.0.1/* (any port). `pigeonpost-linux` is not: it has device flow only.
-STRONG_SIGNIN_CLIENTS = frozenset()
+# http://127.0.0.1 (any port) and the `mfa` ACR level, in addition to device authorization.
+STRONG_SIGNIN_CLIENTS = frozenset({"pigeonpost-linux"})
 
 MAX_HEADER = 16 * 1024
 MAX_TARGET = 8 * 1024

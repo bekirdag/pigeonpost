@@ -202,8 +202,15 @@ class OrgWindowTests(unittest.TestCase):
         pump(timeout=0.3)
         self.assertEqual(self.protected.read(w.mailbox_lease, ORG_MB)["orgs"]["pending_rooms"], [])
 
+    def test_default_client_offers_native_verification(self):
+        self.assertTrue(self.window.strong_signin().available)
+
     def test_machine_approval_goes_to_browser_and_denies_natively(self):
         w = self.window
+
+        class Unavailable:  # an OAuth client without the loopback flow keeps the browser path
+            available = False
+        w.pairing_strong = Unavailable()
         dialog = w.approve_device()
         entry = dialog.pairing["entry"]
         entry.set_text("https://inbox.pigeonpost.dev/pair.html#abcd-efgh")

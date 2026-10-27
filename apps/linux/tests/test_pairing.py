@@ -300,9 +300,10 @@ class RequirementTests(unittest.TestCase):
                      {"acr_values": "a<b", "max_age": 1}, {"acr_values": "a", "max_age": True}):
             self.assertIsNone(StrongSignInRequirement.parse(body, None), body)
 
-    def test_linux_client_is_not_enabled(self):
-        self.assertFalse(supported("pigeonpost-linux"))
-        self.assertFalse(StrongSignIn(FakeSession()).available)
+    def test_only_the_configured_linux_client_is_enabled(self):
+        self.assertTrue(supported("pigeonpost-linux"))
+        self.assertFalse(supported("pigeonpost-cli"))
+        self.assertFalse(supported("pigeonpost-windows"))
 
 
 class FakeIssuer:
@@ -425,7 +426,9 @@ class LoopbackTests(unittest.TestCase):
 
     def test_unavailable_client_never_opens_browser(self):
         opened = []
-        flow = StrongSignIn(self.session, Transport(allow_loopback_http=True), issuer=self.issuer.url, open_url=opened.append)
+        # A client that is not configured for the loopback flow (an empty allow-list here).
+        flow = StrongSignIn(self.session, Transport(allow_loopback_http=True), issuer=self.issuer.url, open_url=opened.append, clients=())
+        self.assertFalse(flow.available)
         with self.assertRaises(StrongSignInError):
             flow.run(StrongSignInRequirement(["mfa"], 600), self.lease)
         self.assertEqual(opened, [])
