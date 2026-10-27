@@ -22,7 +22,7 @@
 
   <h1>Privacy Policy</h1>
   <p class="note">For the hosted Pigeonpost mobile and desktop app, read the <a href="/app-privacy.html">Pigeonpost app privacy policy</a>. You can <a href="/delete-account.html">request account deletion here</a>. The protocol operator policy below covers separate Pigeonpost nodes.</p>
-  <p class="updated">Last updated 21 October 2026</p>
+  <p class="updated">Last updated 27 October 2026</p>
 
   <p>
     This states the policy a Pigeonpost operator must apply to lofts, the name registry, the node
@@ -88,6 +88,11 @@
   <h3>Voice and video calls</h3>
   <p>
     When you start or answer a voice or video call, the app uses your microphone and, for video calls or screen sharing, your camera or the screen or window you choose. Audio, video, shared screens and in-call chat travel directly between the people in the call, encrypted end to end (DTLS-SRTP). When a direct connection is not possible they pass through our relay server, which forwards encrypted data it cannot read. We do not record or store call audio, video, shared screens or in-call chat. To set up calls and keep them reliable, our call service processes who is in a call (mailbox addresses, or the name a guest enters when asking to join through a meeting link), when the call starts and ends, and connection diagnostics (how many connection candidates of each type were tried and whether the relay was used; never network addresses or call content). Microphone, camera and screen access are optional and controlled by your device or operating system.
+  </p>
+
+  <h3>Live streams in groups</h3>
+  <p>
+    When a member of a group goes live, their camera, microphone and the screen or window they choose are encrypted on their device, frame by frame, before anything is sent. The stream passes through our media server, which forwards encrypted frames it cannot read, and only devices of the group's current members receive the key to watch. Streams are not recorded. A viewer's microphone and camera stay off unless they are invited onto the stage and accept. To run a stream, our servers process the group, who is streaming, the title they give it, when it starts and ends, who is watching (which mailboxes, and a public key each watching device creates for that stream), the number of viewers and the stage invitations; reactions are encrypted like the stream itself. Seven days after a stream ends we delete this, except a note in the group that says who streamed, for how long and to how many viewers, which stays with the group's history.
   </p>
 
   <h3>Call history</h3>

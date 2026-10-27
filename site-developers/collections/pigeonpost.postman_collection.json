@@ -3771,7 +3771,7 @@
             "description": "See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"request_key\": \"string\",\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"join_policy\": \"string\",\n  \"post_policy\": \"string\",\n  \"visibility\": \"string\",\n  \"members_can_invite\": false,\n  \"members_can_change_timer\": false,\n  \"ephemeral_secs\": 0,\n  \"invite\": []\n}",
+              "raw": "{\n  \"request_key\": \"string\",\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"join_policy\": \"string\",\n  \"post_policy\": \"string\",\n  \"stream_policy\": \"admins\",\n  \"visibility\": \"string\",\n  \"members_can_invite\": false,\n  \"members_can_change_timer\": false,\n  \"ephemeral_secs\": 0,\n  \"invite\": []\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -3894,7 +3894,7 @@
             "description": "See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`.",
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"expected_revision\": 0,\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"join_policy\": \"string\",\n  \"post_policy\": \"string\",\n  \"visibility\": \"string\",\n  \"members_can_invite\": false,\n  \"members_can_change_timer\": false,\n  \"ephemeral_secs\": 0\n}",
+              "raw": "{\n  \"expected_revision\": 0,\n  \"name\": \"string\",\n  \"description\": \"string\",\n  \"join_policy\": \"string\",\n  \"post_policy\": \"string\",\n  \"stream_policy\": \"admins\",\n  \"visibility\": \"string\",\n  \"members_can_invite\": false,\n  \"members_can_change_timer\": false,\n  \"ephemeral_secs\": 0\n}",
               "options": {
                 "raw": {
                   "language": "json"
@@ -4747,6 +4747,297 @@
               ]
             },
             "description": "See docs/groups.md. Requires the `groups` feature flag; human-only actions refuse automation with `human_required`."
+          }
+        }
+      ]
+    },
+    {
+      "name": "streams",
+      "description": "Live streams in groups (Phase 6; end-to-end encrypted media, key directory; docs/streaming.md).",
+      "item": [
+        {
+          "name": "The group's live stream, if any",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/streams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "streams"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Active members. Requires the `groups` and `streaming` feature flags (docs/streaming.md)."
+          }
+        },
+        {
+          "name": "Go live in a group",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/groups/:id/streams",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "groups",
+                ":id",
+                "streams"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "A person only; the group's `stream_policy` decides who. One live stream per group, at most 4 hours. Registers the streamer's per-stream key.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"string\",\n  \"sources\": [\n    \"camera\"\n  ],\n  \"public_key\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "One stream and the caller's role",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "streams",
+                ":id"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Members of the stream's group only."
+          }
+        },
+        {
+          "name": "Stop a stream",
+          "request": {
+            "method": "DELETE",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/:id",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "streams",
+                ":id"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The streamer or a group owner/admin, as a person. Posts the group's `stream` notice. Idempotent."
+          }
+        },
+        {
+          "name": "Register this device's receive key and learn the streamer's",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/:id/watch",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "streams",
+                ":id",
+                "watch"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "The key directory for the stream's end-to-end encryption (docs/streaming.md §4). Up to 4 keys per member.",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"public_key\": \"string\"\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
+          }
+        },
+        {
+          "name": "The stream's key directory (streamer only)",
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/:id/audience",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "streams",
+                ":id",
+                "audience"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Current active members with registered receive keys; the streamer wraps the stream key to these and no others."
+          }
+        },
+        {
+          "name": "Invite onto, accept or leave the stage",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/v1/streams/:id/stage",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "v1",
+                "streams",
+                ":id",
+                "stage"
+              ],
+              "query": [
+                {
+                  "key": "identity",
+                  "value": "",
+                  "disabled": true,
+                  "description": "Which of the account's mailboxes to act as. Needed when an account credential owns more than one; must match the mailbox when a capability token is used."
+                }
+              ],
+              "variable": [
+                {
+                  "key": "id",
+                  "value": "",
+                  "description": ""
+                }
+              ]
+            },
+            "description": "Streamer/admin about someone else (invite or remove); the invited member about themself (accept or decline, a person only).",
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"address\": \"string\",\n  \"true\": false\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            }
           }
         }
       ]

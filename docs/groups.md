@@ -49,6 +49,7 @@ the old one is revoked. The web inbox uses `web-<12 random base32>`.
   "id": "grp_…", "name": "…", "description": null, "avatar_id": null,
   "join_policy": "private|public", "post_policy": "everyone|admins", "visibility": "unlisted|listed",
   "members_can_invite": false, "members_can_change_timer": false, "ephemeral_secs": null,
+  "stream_policy": "admins|everyone",
   "revision": 3, "epoch": 2, "activation_state": "provisioning|active", "org_id": null,
   "member_count": 3, "max_members": 1000, "created_by": "/k/…", "created_at": 0, "last_at": 0,
   "last_seq": 12, "deleted_at": null, "has_link": false,
@@ -158,7 +159,9 @@ edits of the affected versions.
 
 Notice kinds: `group_created`, `member_invited`, `member_joined`, `member_left`, `member_removed`,
 `member_banned`, `role_changed`, `settings_changed`, `ownership_transferred`, `device_added`,
-`device_removed`, `timer_changed`, `call_started`, `call_ended`, `link_reset`.
+`device_removed`, `timer_changed`, `call_started`, `call_ended`, `link_reset`, `stream` (Phase 6:
+`metadata {stream_id, duration, viewers, reason}`, "Jane streamed for 34 min · 18 viewers"; see
+`docs/streaming.md`).
 
 ### Client loop (what every native client must do)
 
@@ -189,6 +192,7 @@ receiving `group.message`/`group.handshake` at once.
 | `group.member` | `{group_id, address, role, state, change}` |
 | `group.settings` | `{group_id, changed:[…], revision}` |
 | `group.deleted` | `{group_id}` |
+| `group.stream` | `{group_id, stream_id, state: live\|ended, title, by, revision}` (+ `stage`, `host_key_changed`, or `reason, duration, viewers`); flag `streaming`, `docs/streaming.md` |
 | `group.read` | `{group_id, seq}` (own account only) |
 | `group.crypto_pending` | `{group_id, kinds:[add\|remove]}` |
 | `group.device` | `{mailbox, device_id, fingerprint, change: added\|revoked}` |

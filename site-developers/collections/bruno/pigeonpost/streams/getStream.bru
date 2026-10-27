@@ -1,0 +1,23 @@
+meta {
+  name: One stream and the caller's role
+  type: http
+  seq: 3
+}
+
+get {
+  url: {{baseUrl}}/v1/streams/:id
+  body: none
+  auth: bearer
+}
+
+params:path {
+  id: 
+}
+
+auth:bearer {
+  token: {{token}}
+}
+
+docs {
+  Members of the stream's group only.
+}
