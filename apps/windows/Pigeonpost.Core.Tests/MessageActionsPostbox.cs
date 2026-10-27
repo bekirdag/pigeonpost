@@ -28,7 +28,14 @@ internal static class MessageActionsPostbox
 
             stage = "capabilities";
             var features = await a.GetCapabilitiesAsync(default);
-            Check(new[] { ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts, ServerFeatures.AgentStatus }.All(features.Has));
+            Check(new[] { ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts, ServerFeatures.AgentStatus, ServerFeatures.RecipientLookup }.All(features.Has));
+
+            stage = "canonical recipient lookup";
+            using (var lookup = await MessageRecoveryScope.AuthorizeAsync(a, from) ?? throw new InvalidOperationException())
+            {
+                var route = await a.ResolveRecipientAsync(lookup, to, default);
+                Check(route.From == from && route.Address == to && (await a.GetInboxAsync(from)).Messages!.Count == 0 && (await b.GetInboxAsync(to)).Messages!.Count == 0);
+            }
 
             stage = "send and distinct copies";
             var sent = await a.SendMessageAsync(new(from, to, "Original fixture message"), default);
@@ -94,27 +101,30 @@ internal static class MessageActionsPostbox
             {
                 using var protector = new MessageAttemptStoreTests.Protector();
                 using var originalScope = await MessageRecoveryScope.AuthorizeAsync(loss, from) ?? throw new InvalidOperationException();
-                var prepared = PreparedMessageAttempt.Create(originalScope, new(from, to, "Protected restart fixture ğ 😀"));
                 var store = new FileMessageAttemptStore(custodyFolder, protector);
-                await store.SaveAsync(originalScope, prepared);
+                var coordinator = new MessageDeliveryCoordinator(loss, store);
+                var prepared = await coordinator.PrepareAsync(originalScope, new(from, to, "Protected restart fixture ğ 😀"), new(to, "Protected restart subject"));
                 await Control(http, proxy, "after");
-                await ExpectLoss(() => loss.SendPreparedMessageAsync(originalScope, prepared, default));
+                await ExpectLoss(() => coordinator.SendAsync(originalScope, prepared, default));
                 await CheckAttempts(http, proxy, 1, prepared.Request.MsgRef);
                 originalScope.Dispose(); Check(!originalScope.IsCurrent);
                 await Control(http, proxy, "off");
                 var restartTokens = new Tokens(alice.GetProperty("token").GetString()!, 'a');
                 using var restarted = new PostboxClient(http, restartTokens, proxy);
                 using var currentScope = await MessageRecoveryScope.AuthorizeAsync(restarted, from) ?? throw new InvalidOperationException();
-                var restored = await new FileMessageAttemptStore(custodyFolder, protector).LoadAsync(currentScope, to, null) ?? throw new InvalidOperationException();
-                var result = await restarted.SendPreparedMessageAsync(currentScope, restored, default);
-                Check(result.Duplicate == true && result.MsgRef == prepared.Request.MsgRef);
+                var restartStore = new FileMessageAttemptStore(custodyFolder, protector);
+                var restartCoordinator = new MessageDeliveryCoordinator(restarted, restartStore);
+                var restored = (await restartCoordinator.GetPendingAsync(currentScope)).Single();
+                Check(restored.Review == prepared.Review && restored.Request.To == to);
+                var result = await restartCoordinator.SendAsync(currentScope, restored, default);
+                Check(result.Receipt.Duplicate == true && result.Receipt.MsgRef == prepared.Request.MsgRef && !result.PendingCleanup);
                 await CheckAttempts(http, proxy, 2, prepared.Request.MsgRef);
                 Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == prepared.Request.MsgRef) == 1);
-                Check(await store.RemoveAsync(currentScope, to, null, result.MsgRef!));
+                Check((await restartCoordinator.GetPendingAsync(currentScope)).Count == 0 && await restartStore.LoadAsync(currentScope, to, null) is null);
                 restartTokens.AcceptedAuthorization?.Retire();
             }
             finally { Directory.Delete(custodyFolder, recursive: true); }
-            Console.WriteLine("PASS Windows postbox interoperability: folded edits, replies, receipt privacy, owned copies, exact committed-loss and protected restart recovery, version deletion.");
+            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss and coordinated protected restart recovery, version deletion.");
             return 0;
         }
         catch (Exception ex)

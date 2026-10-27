@@ -97,6 +97,7 @@ public sealed record ServerFeatures(IReadOnlySet<string> Names)
     public const string MessageReply = "message_reply";
     public const string Receipts = "receipts";
     public const string AgentStatus = "agent_status";
+    public const string RecipientLookup = "recipient_lookup";
 
     public static ServerFeatures None { get; } = new(new HashSet<string>(StringComparer.Ordinal));
     public bool Has(string name) => Names.Contains(name);
