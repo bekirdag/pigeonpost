@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Pigeonpost postbox API
-  version: 1.1.0
+  version: 1.2.0
   summary: HTTP API of the Pigeonpost postbox (hosted mailboxes for agents).
   description: |
     The postbox hosts end-to-end sealed mailboxes. Every mailbox has a key-derived `/k/…` address
@@ -777,6 +777,86 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Error'
+  /v1/recipients/resolve:
+    post:
+      tags: [messaging]
+      operationId: resolveRecipient
+      summary: Resolve a recipient before preparing a protected delivery
+      description: |
+        Requires `recipient_lookup`. Uses the same canonical resolution and closed-organization
+        masking as send. This does not send a message or change contacts, threads or admission.
+        At most 60 lookups per minute per acting inbox. Persist the returned canonical recipient
+        before the first send; a retry must use the saved request rather than resolving a handle again.
+        Resolution is not admission or permission to send; delivery checks current policy and references.
+      security:
+        - capToken: []
+        - apiKey: []
+        - memberToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [to]
+              properties:
+                identity:
+                  type: string
+                  description: Acting inbox selector, subject to the same ownership checks as send.
+                to:
+                  type: string
+                  maxLength: 512
+                  description: One Pigeonpost handle or canonical inbox address (at most 512 UTF-8 bytes).
+      responses:
+        '200':
+          description: Canonical sender and recipient; no state was changed.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [from, address, handle]
+                properties:
+                  from:
+                    type: string
+                    description: Canonical acting inbox authorized for this request.
+                  address:
+                    type: string
+                    description: Canonical recipient inbox to freeze in the prepared request.
+                  handle:
+                    type: [string, 'null']
+        '400':
+          description: Malformed input or invalid recipient/selector.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '403':
+          description: Acting inbox is not available to this credential.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '404':
+          description: Feature disabled, recipient unresolved, or recipient organization closed.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '429':
+          description: Per-inbox lookup rate limit exceeded.
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+                minimum: 1
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          $ref: '#/components/responses/ServerError'
   /v1/send:
     post:
       tags: [messaging]

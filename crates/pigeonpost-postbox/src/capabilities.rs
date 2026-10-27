@@ -15,7 +15,7 @@ use serde_json::json;
 
 /// The member API version. Bumped when `/v1` gains something a client may want to detect; never
 /// for a breaking change (that would be `/v2`).
-pub(crate) const API_VERSION: &str = "1.1";
+pub(crate) const API_VERSION: &str = "1.2";
 
 /// Flags this server understands, with what each switches on. A flag not listed here cannot be
 /// set, so a typo is an error rather than a silently inert row.
@@ -85,6 +85,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Agent run status (working, done, failed) on sent messages, reported by agentd (SDS §14C)",
     ),
     (
+        RECIPIENT_LOOKUP,
+        "Canonical recipient lookup before protected native sends: /v1/recipients/resolve",
+    ),
+    (
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
@@ -127,6 +131,8 @@ pub(crate) const MESSAGE_REPLY: &str = "message_reply";
 pub(crate) const RECEIPTS: &str = "receipts";
 /// Agent run status on sent messages (SDS §14C).
 pub(crate) const AGENT_STATUS: &str = "agent_status";
+/// Canonical recipient lookup before persisting an immutable delivery intent.
+pub(crate) const RECIPIENT_LOOKUP: &str = "recipient_lookup";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[
