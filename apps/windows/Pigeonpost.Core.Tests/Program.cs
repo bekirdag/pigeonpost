@@ -1060,6 +1060,8 @@ tests.AddRange(CalendarApiTests.All());
 tests.AddRange(CalendarDeliveryTests.All());
 tests.AddRange(CalendarStoreTests.All());
 tests.AddRange(CalendarStoreTests.Actions());
+tests.AddRange(CalendarStoreTests.Meetings());
+tests.AddRange(CalendarStoreTests.MeetingBridge());
 tests.AddRange(CalendarDraftTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());

@@ -1,0 +1,10 @@
+# Windows scheduled meetings progress
+
+Plan: [Scheduled meetings](windows-scheduled-meetings-2026-10-27-plan.md).
+
+- Created an isolated child of calendar UI head `2ec7e62`; PR133 remains immutable while its remote native CI runs. No local build/test is active in this checkout. Original shared source remains untouched.
+- Consulted global profile and exact-root repo memory, initialized this worktree’s own index, and inspected calendar state, call sessions, bridge, the Android typed join and the shared native-call contract. C# graph edges are empty, so direct callers and behavioral/native tests are required. Roles, lobby and live windows remain authoritative on the calls service, including host extensions.
+- Implementation and qualification are pending. No store submission or production write.
+- Added a typed scheduled member intent and service binding, prepared only after fresh canonical ownership and exact occurrence detail. It retains every original and later invocation caller, refuses missing/changed codes, withdrawn/unknown membership, declines, cancellation and all-day calls, and retires with the calendar inbox. Live windows/extensions and lobby/roles remain decisions of the calls service.
+- Added JSON-encoded join scripts with operation IDs and bounded scheduled-result parsing. Results expose only known states and safe error codes; duplicate/malformed payloads cannot crash the bridge, and response-provided role/ticket/message data grants nothing. A retired intent cannot generate a call script.
+- **405/405 combined Core/MLS cases pass** (`windows-scheduled-admission-first-core.log`: 402; `windows-scheduled-bridge-first-core.log`: 405). Fourteen new cases cover locator parsing, fresh ownership/selected identity, status/role changes, account/inbox replacement, original and later callers, explicit retirement, Unicode/injection and malformed bridge results. A local draft supplied negative parser strings; the primary verified them and added missing digit/URL cases. Native host and visible join actions are still pending.

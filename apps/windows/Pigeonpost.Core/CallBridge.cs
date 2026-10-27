@@ -6,19 +6,19 @@ namespace Pigeonpost.Core;
 public enum CallMode { Hidden, Mini, Full }
 
 public sealed record CallPageMessage(string Type, CallMode Mode = CallMode.Hidden, string? Text = null, bool Ringing = false,
-    CallRing? Ring = null, string? Room = null, string? State = null);
+    CallRing? Ring = null, string? Room = null, string? State = null, Guid? Operation = null, string? ErrorCode = null);
 
 // The contract between the app and the web call client's native page (site-inbox/native-call.js).
 // The page posts {type: ready|mode|renew|toast|ring|ring_ended|call}; the app answers through
 // PigeonpostNative.*. (ring_card comes from the app's own observer script below.)
 // Everything the app puts into a script is JSON-encoded, never concatenated as raw text.
-public static class CallBridge
+public static partial class CallBridge
 {
     public static readonly Uri ProductionPage = new("https://inbox.pigeonpost.dev/native-call.html?v=20261025-scheduled1");
 
     public static CallPageMessage? Parse(string? json)
     {
-        if (string.IsNullOrWhiteSpace(json)) return null;
+        if (string.IsNullOrWhiteSpace(json) || json.Length > 16_384) return null;
         try
         {
             if (JsonNode.Parse(json) is not JsonObject message || message["type"] is not JsonValue typeValue
@@ -26,6 +26,7 @@ public static class CallBridge
             return type switch
             {
                 "ready" or "renew" => new CallPageMessage(type),
+                "scheduled_result" => ParseScheduled(message),
                 "ring_card" => new CallPageMessage(type, Ringing: message["ringing"] is JsonValue r && r.TryGetValue<bool>(out var ringing) && ringing),
                 // Phase 1c: a ring arrived on the event stream (docs/call-alerting.md §5).
                 "ring" => CallRing.FromPage(message) is { } ring ? new CallPageMessage(type, Ring: ring, Room: ring.Room) : null,
@@ -40,7 +41,7 @@ public static class CallBridge
                 _ => null
             };
         }
-        catch (JsonException) { return null; }
+        catch (Exception error) when (error is JsonException or ArgumentException or InvalidOperationException) { return null; }
     }
 
     // Windows only, added by the app: WebView2 in WinUI cannot show the inbox through a transparent
