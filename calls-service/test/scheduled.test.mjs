@@ -211,6 +211,30 @@ async function start(pb, overrides = {}) {
 
 const settle = (ms = 80) => new Promise((r) => setTimeout(r, ms));
 
+test("organizer-only admission denies a cohost despite its role and cached admitter address", async () => {
+  const pb = fakePostbox(); pb.m.policy.admit = "organizer"; pb.m.members["/k/bob1"].can_admit = false;
+  const t = await start(pb);
+  try {
+    const alice = await t.stream("tok-alice"), bob = await t.stream("tok-bob"), dave = await t.stream("tok-dave");
+    const host = await t.join(alice); const cohost = await t.join(bob);
+    assert.equal(cohost.body.scheduled.role, "cohost"); assert.equal(cohost.body.scheduled.can_admit, false);
+    const waiting = await t.join(dave); const knock = waiting.body.knock;
+    assert.equal((await t.req("tok-bob", "POST", `/calls/v1/rooms/${host.body.room}/knocks/${knock}`, { session: bob.id, admit: true })).status, 403);
+    assert.equal((await t.req("tok-alice", "POST", `/calls/v1/rooms/${host.body.room}/knocks/${knock}`, { session: alice.id, admit: true })).status, 200);
+  } finally { await t.stop(); }
+});
+
+test("a stale delegated address list cannot override the postbox's current admission denial", async () => {
+  const pb = fakePostbox(); pb.m.policy.admit = "delegated"; pb.m.admitters.push("/k/carol1");
+  const t = await start(pb);
+  try {
+    const alice = await t.stream("tok-alice"), carol = await t.stream("tok-carol"), dave = await t.stream("tok-dave");
+    const host = await t.join(alice); const attendee = await t.join(carol); const waiting = await t.join(dave);
+    assert.equal(attendee.body.scheduled.can_admit, false);
+    assert.equal((await t.req("tok-carol", "POST", `/calls/v1/rooms/${host.body.room}/knocks/${waiting.body.knock}`, { session: carol.id, admit: true })).status, 403);
+  } finally { await t.stop(); }
+});
+
 // ---- postbox-internal ------------------------------------------------------------------------------
 
 test("meetingAccess posts with the service token, validates strictly and fails closed", async () => {

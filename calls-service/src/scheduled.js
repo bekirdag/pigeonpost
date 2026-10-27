@@ -117,12 +117,10 @@ export function createScheduledMeetings(ctx) {
   }
 
   function mayAdmit(room, p) {
-    if (!p || !p.sched || p.sched.kind !== "member" || !p.mailbox) return false;
-    const s = room.scheduled;
-    if (p.sched.can_admit || p.sched.role === "host") return true;
-    if (p.sched.role === "cohost" && s.policy.admit !== "host") return true;
-    const a = norm(p.mailbox.address);
-    return s.admitters.some((x) => norm(x) === a);
+    // The postbox computes this permission from the current policy and selected member.
+    // A cached cohost role or address list must never override its explicit denial.
+    return Boolean(p && p.sched && p.sched.kind === "member" && p.mailbox
+      && ["host", "cohost", "attendee"].includes(p.sched.role) && p.sched.can_admit === true);
   }
 
   function updateFromVerdict(room, v) {
