@@ -251,6 +251,10 @@ struct PatchSettings {
     invite_domains_only: Option<bool>,
     #[serde(default)]
     rooms_creation: Option<String>,
+    #[serde(default)]
+    ssh_allowed: Option<bool>,
+    #[serde(default)]
+    ssh_requires_approval: Option<bool>,
 }
 
 /// `PATCH /v1/orgs/{id}`
@@ -293,6 +297,22 @@ async fn patch_org(
                 }
                 settings.rooms_creation = v.clone();
                 changed.push("rooms_creation");
+            }
+            // Allowing shells into the org's agents (SDS §11.5) is a security decision: whoever
+            // turns it on, or removes the approval requirement, signs in strongly first.
+            if let Some(v) = s.ssh_allowed {
+                if v && !settings.ssh_allowed {
+                    ctx.step_up(&state)?;
+                }
+                settings.ssh_allowed = v;
+                changed.push("ssh_allowed");
+            }
+            if let Some(v) = s.ssh_requires_approval {
+                if !v && settings.ssh_requires_approval {
+                    ctx.step_up(&state)?;
+                }
+                settings.ssh_requires_approval = v;
+                changed.push("ssh_requires_approval");
             }
         }
         if name.is_some() {
@@ -337,6 +357,8 @@ async fn patch_org(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -436,6 +458,8 @@ async fn delete_org(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -495,6 +519,8 @@ async fn transfer(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -1241,6 +1267,8 @@ async fn patch_member(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -1301,6 +1329,8 @@ async fn remove_member(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 

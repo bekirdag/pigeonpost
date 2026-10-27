@@ -111,6 +111,9 @@ mod push;
 mod recipients;
 mod reputation;
 mod review_access;
+mod shell;
+#[cfg(test)]
+mod shell_tests;
 mod store;
 mod streams;
 #[cfg(test)]
@@ -202,6 +205,8 @@ struct AppState {
     calendar: Arc<calendar::Runtime>,
     /// How webhook deliveries reach the internet: the resolver and the SSRF policy (SDS §18.5).
     webhook_egress: Arc<webhooks::Egress>,
+    /// Agent SSH: the CA, the broker URL and the agents' control streams (SDS §11).
+    shell: Arc<shell::Runtime>,
 }
 
 /// Namespaces where a name is authorised by proving control of it at an identity provider, rather
@@ -429,6 +434,8 @@ async fn serve(cfg: Config) {
     calendar::worker::start(state.clone());
     // Org webhook fan-out and delivery (SDS §18.5).
     webhooks::start_worker(state.clone());
+    // Agent SSH: re-authorize live sessions, expire pending ones (SDS §11.5).
+    shell::start_worker(state.clone());
     // `into_make_service_with_connect_info` is what puts the socket peer in request extensions;
     // without it `TRUSTED_PROXY_HOPS=0` would have no IP to rate-limit against.
     if let Err(e) = axum::serve(
@@ -562,6 +569,7 @@ fn build_state(cfg: &Config, master_key: [u8; 32]) -> Result<AppState, store::St
         call_pairs: Arc::new(filtering::PairLimiter::new()),
         calendar: Arc::new(calendar::Runtime::from_env(&cfg.public_url)),
         webhook_egress: Arc::new(webhooks::Egress::system()),
+        shell: Arc::new(shell::Runtime::from_env()),
     })
 }
 
@@ -814,6 +822,30 @@ fn build_router(state: AppState) -> Router {
         .route("/v1/streams/{id}/watch", post(streams::watch))
         .route("/v1/streams/{id}/stage", post(streams::stage))
         .route("/v1/streams/{id}/audience", get(streams::audience))
+        // Agent SSH (Phase 8, SDS §11).
+        .route("/v1/shell/ca", get(shell::get_ca))
+        .route("/v1/shell/agent", axum::routing::put(shell::put_host))
+        .route("/v1/shell/agent/events", get(shell::agent_events))
+        .route(
+            "/v1/shell/sessions",
+            get(shell::list_sessions).post(shell::open),
+        )
+        .route(
+            "/v1/shell/sessions/{id}",
+            get(shell::get_session).delete(shell::close),
+        )
+        .route("/v1/shell/sessions/{id}/approve", post(shell::approve))
+        .route("/v1/shell/sessions/{id}/deny", post(shell::deny))
+        .route("/v1/shell/sessions/{id}/connect", post(shell::connect))
+        .route("/v1/agents/{address}/shell", get(shell::agent_status))
+        .route(
+            "/v1/agents/{address}/shell/host-key",
+            post(shell::approve_host_key),
+        )
+        .route(
+            "/v1/orgs/{id}/agents/{address}/shell",
+            axum::routing::put(shell::org_agent_switch),
+        )
         .route(
             "/v1/mls/devices",
             post(mls::register_device).get(mls::list_devices),
@@ -6681,6 +6713,7 @@ mod tests {
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),
             webhook_egress: Arc::new(webhooks::Egress::system()),
+            shell: Arc::new(shell::Runtime::default()),
         }
     }
 
@@ -9390,6 +9423,7 @@ mod tests {
             call_pairs: Arc::new(filtering::PairLimiter::new()),
             calendar: Arc::new(calendar::Runtime::for_test()),
             webhook_egress: Arc::new(webhooks::Egress::system()),
+            shell: Arc::new(shell::Runtime::default()),
         };
         let _ = build_router(state);
     }

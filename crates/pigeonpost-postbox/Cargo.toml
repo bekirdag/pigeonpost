@@ -52,6 +52,8 @@ chrono = { version = "0.4", default-features = false, features = ["std", "clock"
 chrono-tz = "0.10"
 rrule = "0.14"
 p256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+# Agent SSH (SDS §11): the SSH CA signs short-lived OpenSSH user certificates. Ed25519 only.
+ssh-key = { version = "0.6", default-features = false, features = ["ed25519", "std", "alloc"] }
 
 # `statvfs`, for the free-space floor under the blob volume. Already in the tree through tokio and
 # rusqlite; this only makes the use direct.

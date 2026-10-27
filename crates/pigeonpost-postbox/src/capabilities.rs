@@ -101,6 +101,10 @@ pub(crate) const KNOWN_FEATURES: &[(&str, &str)] = &[
         "Live streams in groups: /v1/groups/{id}/streams, /v1/streams/*, group.stream events (SDS §14A)",
     ),
     (
+        AGENT_SSH,
+        "SSH to agent workspaces through the tunnel broker: /v1/shell/*, /v1/agents/{address}/shell (SDS §11)",
+    ),
+    (
         CALENDAR_EMAIL,
         "Calendar invitations, updates, reminders and codes sent to contact addresses (SDS §14B.6)",
     ),
@@ -152,6 +156,8 @@ pub(crate) const AGENT_STATUS: &str = "agent_status";
 pub(crate) const RECIPIENT_LOOKUP: &str = "recipient_lookup";
 /// Enterprise API (Phase 5): org API keys, `/org/v1`, webhooks.
 pub(crate) const ORG_API: &str = "org_api";
+/// SSH to agent workspaces (Phase 8, SDS §11, docs/agent-ssh.md).
+pub(crate) const AGENT_SSH: &str = "agent_ssh";
 
 /// Typed event names the account stream may emit when `account_events` is on.
 pub(crate) const EVENT_TYPES: &[&str] = &[

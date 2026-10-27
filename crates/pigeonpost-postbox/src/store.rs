@@ -31,6 +31,7 @@ mod msgactions;
 mod org_api;
 mod org_model;
 mod orgs;
+mod shell;
 mod streams;
 pub use audit::AuditRow;
 pub use avatars::{AvatarRow, NewAvatar, SetAvatar, Visibility};
@@ -974,6 +975,7 @@ impl Store {
         conn.execute_batch(streams::SCHEMA)?;
         // Phase 7: meeting summaries (SDS §14) — metadata, consent, public keys, ciphertext.
         conn.execute_batch(meetings::SCHEMA)?;
+        conn.execute_batch(shell::SCHEMA)?;
         for stmt in MIGRATIONS
             .iter()
             .chain(filtering::MIGRATIONS)

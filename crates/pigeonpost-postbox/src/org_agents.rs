@@ -678,6 +678,8 @@ async fn patch_agent(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -720,6 +722,8 @@ async fn delete_agent(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -847,6 +851,8 @@ async fn revoke_device(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 
@@ -994,6 +1000,8 @@ async fn revoke_delegation(
             .await
     }
     .await;
+    // Authority may have changed: re-check open SSH sessions now (SDS §11.5).
+    crate::shell::sweep_soon(&state);
     finish(&state, result)
 }
 

@@ -214,6 +214,12 @@ pub(crate) struct Settings {
     pub invite_domains_only: bool,
     #[serde(default = "everyone")]
     pub rooms_creation: String,
+    /// Whether people may open SSH sessions to this org's agents at all (SDS §11.5 item 3).
+    #[serde(default)]
+    pub ssh_allowed: bool,
+    /// Whether every SSH session also needs an owner/admin/agent admin's approval (§11.5 item 5).
+    #[serde(default)]
+    pub ssh_requires_approval: bool,
 }
 
 fn everyone() -> String {
@@ -226,6 +232,8 @@ impl Default for Settings {
             require_mfa: false,
             invite_domains_only: false,
             rooms_creation: everyone(),
+            ssh_allowed: false,
+            ssh_requires_approval: false,
         }
     }
 }

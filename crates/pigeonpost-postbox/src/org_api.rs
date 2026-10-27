@@ -1052,6 +1052,7 @@ async fn member_remove(
         .await
     }
     .await;
+    crate::shell::sweep_soon(&state);
     respond(&state, result)
 }
 
@@ -1104,6 +1105,7 @@ async fn member_status(
         .await
     }
     .await;
+    crate::shell::sweep_soon(&state);
     respond(&state, result)
 }
 
@@ -1419,6 +1421,7 @@ async fn agent_delete(
         .await
     }
     .await;
+    crate::shell::sweep_soon(&state);
     respond(&state, result)
 }
 
@@ -1450,6 +1453,7 @@ async fn agent_disconnect(
         .await
     }
     .await;
+    crate::shell::sweep_soon(&state);
     respond(&state, result)
 }
 
