@@ -43,6 +43,8 @@ public sealed record GroupInfo
     public long? LastSeq { get; init; }
     public long? DeletedAt { get; init; }
     public bool? HasLink { get; init; }
+    // Present on organization rooms; absent for personal groups. Never inferred.
+    public string? OrgId { get; init; }
     public GroupMy? My { get; init; }
 
     [JsonIgnore] public string Role => My?.Role ?? "";

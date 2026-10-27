@@ -74,6 +74,8 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
 
     public static bool LibraryAvailable { get; } = GroupClient.LibraryAvailable();
     public bool Enabled { get; private set; }
+    // True once this inbox's encrypted group client finished starting.
+    public bool IsReadyFor(string mailbox) => !disposed && Enabled && ActiveClient is not null && this.mailbox?.Address == mailbox && refreshing is null;
     public bool Persistent => CurrentValue(c => c.Persistent, false);
     public ObservableCollection<GroupRow> Groups { get; } = [];
     public ObservableCollection<GroupLineRow> Lines { get; } = [];
@@ -183,6 +185,27 @@ public sealed class GroupsModel(PostboxClient postbox, Func<string, IGroupStateS
         Draft = carry.Text;
         foreach (var file in carry.Files) DraftFiles.Add(file);
         Changed(nameof(CanSend));
+    }
+
+    // Opens an organization room only after a fresh read confirms its exact organization and live
+    // membership. An owned provisioning room is activated with real MLS first. A refusal propagates.
+    public async Task<bool> PrepareOrganizationRoomAsync(string groupId, string organizationId)
+    {
+        if (disposed || ActiveClient is not { } c) return false;
+        var version = generation; var token = scope.Token;
+        var fresh = await c.Api.GetAsync(groupId, token);
+        if (!IsCurrent(c, version)) return false;
+        if (fresh.Id != groupId || fresh.OrgId != organizationId || fresh.DeletedAt is not null || fresh.State is not ("active" or "keying")
+            || fresh.Role is not ("owner" or "admin" or "member" or "restricted")) throw new PostboxException(403, "not_member");
+        if (fresh.ActivationState == "provisioning" && fresh.IsOwner)
+        {
+            await c.ActivateAsync(groupId, token);
+            if (!IsCurrent(c, version)) return false;
+        }
+        await RefreshAsync();
+        if (!IsCurrent(c, version) || Groups.FirstOrDefault(g => g.Id == groupId) is not { } row) return false;
+        await SelectAsync(row);
+        return IsCurrent(c, version) && selected?.Id == groupId;
     }
 
     public void SetContacts(IReadOnlyList<Contact> known) => contacts = known;

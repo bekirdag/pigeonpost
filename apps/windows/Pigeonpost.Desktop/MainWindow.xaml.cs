@@ -41,11 +41,13 @@ public sealed partial class MainWindow : Window
         vaultTest.Clear();
         if (vaultTest.Load() is not null) throw new InvalidOperationException("Native vault clearing failed.");
         ViewModel.Dispose();
+        var roomsState = Environment.GetEnvironmentVariable("PIGEONPOST_UI_ROOMS_STATE");
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_APPROVAL_STATE") is { } approvalState)
         {
             approvalAccount = new NativeApprovalAccount();
             approvalFixture = new NativeApprovalFixture(approvalAccount, approvalState);
         }
+        else if (roomsState is not null) approvalAccount = new NativeApprovalAccount(); // A rotatable synthetic person for rooms.
         Func<AuthorizationLease?>? fixtureGrant = approvalAccount is { } fixtureAccount ? () => fixtureAccount.Lease : null;
         preview = new PreviewInboxService(longHistory: true, authorization: scheduledFixtureAuthorization,
             authorizationSource: fixtureGrant, ownerSource: approvalAccount is { } owner ? () => owner.Owner : null);
@@ -57,9 +59,12 @@ public sealed partial class MainWindow : Window
             stand_in.Features.UnionWith([ServerFeatures.MessageEdit, ServerFeatures.MessageReply, ServerFeatures.Receipts]);
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_CALENDAR_STATE") is not null)
             stand_in.Features.Add(ServerFeatures.Calendar);
-        if (approvalFixture is not null) stand_in.Features.Add(ServerFeatures.Organizations);
+        if (approvalFixture is not null || roomsState is not null) stand_in.Features.Add(ServerFeatures.Organizations);
+        if (roomsState is not null) PreviewSideData.SeedRooms(stand_in);
         postbox.Dispose();
-        postbox = new PostboxClient(new HttpClient(new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in)), new AttachmentFixtureTokens(scheduledFixtureAuthorization, fixtureGrant));
+        HttpMessageHandler routed = new PreviewRouter(new AttachmentFixtureHandler(preview), stand_in);
+        if (roomsState is not null) routed = roomLoss = new RoomLossHandler(routed, roomsState);
+        postbox = new PostboxClient(new HttpClient(routed), new AttachmentFixtureTokens(scheduledFixtureAuthorization, fixtureGrant));
         if (Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_STATE") is { } modesState)
         {
             var folder = Environment.GetEnvironmentVariable("PIGEONPOST_UI_MESSAGE_MODES_FOLDER") ?? throw new InvalidOperationException("Message modes fixture folder missing.");
@@ -78,6 +83,7 @@ public sealed partial class MainWindow : Window
 #endif
         CreateSideModels();
         CreateApprovalStore();
+        CreateRoomStore();
         InitializeComponent();
         MessageList.AddHandler(UIElement.PointerWheelChangedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
         MessageList.AddHandler(UIElement.PointerPressedEvent, new PointerEventHandler((_, _) => scrollVersion++), true);
@@ -112,7 +118,7 @@ public sealed partial class MainWindow : Window
 #endif
             groupsModel.Dispose();
             calendarPage?.Dispose(); calendarModel.Dispose();
-            approvalTimer?.Stop(); approvalStore.Dispose();
+            approvalTimer?.Stop(); approvalStore.Dispose(); roomStore.Dispose();
         };
     }
 

@@ -9,6 +9,7 @@ $delivery = Join-Path $PSScriptRoot 'test-delivery.ps1'
 $messageModes = Join-Path $PSScriptRoot 'test-message-modes.ps1'
 $calendar = Join-Path $PSScriptRoot 'test-calendar.ps1'
 $approval = Join-Path $PSScriptRoot 'test-approval.ps1'
+$rooms = Join-Path $PSScriptRoot 'test-rooms.ps1'
 # WinUI drag/drop requires an ordinary user. Hosted workers run elevated with UAC disabled.
 # Use a real, short-lived local account instead of modifying the worker's security token.
 Add-Type @'
@@ -83,6 +84,7 @@ try {
     & $(Literal $messageModes) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $calendar) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $approval) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
+    & $(Literal $rooms) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }
@@ -90,7 +92,7 @@ finally { Stop-Transcript | Out-Null }
 "@ | Set-Content $childScript
     $credential = [Management.Automation.PSCredential]::new("$env:COMPUTERNAME\$name", $password)
     $child = Start-Process -FilePath (Get-Command pwsh).Source -Credential $credential -LoadUserProfile -UseNewEnvironment -WindowStyle Hidden -WorkingDirectory (Get-Location).Path -ArgumentList "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File `"$childScript`"" -PassThru
-    if (-not $child.WaitForExit(540000)) { $child.Kill($true); throw 'Native UI checks timed out.' }
+    if (-not $child.WaitForExit(720000)) { $child.Kill($true); throw 'Native UI checks timed out.' }
     if ($child.ExitCode -ne 0) { throw "Native UI checks failed ($($child.ExitCode))." }
 } finally {
     if ($child -and -not $child.HasExited) { $child.Kill($true) }
