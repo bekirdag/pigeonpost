@@ -41,7 +41,12 @@ try {
             if (-not $Element.Current.IsOffscreen) { return }
         }
     }
-    function Invoke-Control([string]$Name) { $element = Wait-Control $Name; Reveal $element; $element.GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke() }
+    function Invoke-Control([string]$Name) {
+        $element = Wait-Control $Name; Reveal $element
+        # Scrolling and a background refresh can replace a visual element. Act on the current
+        # accessible control after revealing it, with the same name/enabled assertions.
+        (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern).Invoke()
+    }
     function Set-Text([string]$Name, [string]$Value) { (Wait-Control $Name).GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).SetValue($Value) }
     function State { try { if (Test-Path $stateFile) { return Get-Content $stateFile -Raw | ConvertFrom-Json } } catch { }; return $null }
     function Wait-Check([scriptblock]$Predicate, [string]$Detail) {

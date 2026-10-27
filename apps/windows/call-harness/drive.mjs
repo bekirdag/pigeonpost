@@ -11,6 +11,7 @@ import { spawn, execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { randomBytes } from "node:crypto";
 import { launch, attach, sleep, until } from "./cdp.mjs";
 
 const [repo, out, app] = process.argv.slice(2);
@@ -18,15 +19,17 @@ const simulate = app === "--simulate";
 mkdirSync(out, { recursive: true });
 const here = (name) => fileURLToPath(new URL("./" + name, import.meta.url));
 const SITE = 8460, CALLS = 8791, POSTBOX = 8792, DEVTOOLS = 9333;
-const ALICE = { token: "tok-alice", address: "/k/alice0000000000000000000a", handle: "/alice" };
+const ALICE = { token: "tok-alice", address: "/k/ec55xq18rbwdnwpsvkht07az40", handle: "/alice" };
+const BOB = { address: "/k/rywv63mb6h0hhrpfjewrrttspw", handle: "/bob" };
 const result = { checks: [], passed: false };
 const check = (name, ok, detail) => { result.checks.push({ name, ok: Boolean(ok), detail }); console.log(`${ok ? "PASS" : "FAIL"} ${name}${detail === undefined ? "" : " " + JSON.stringify(detail)}`); if (!ok) throw new Error(name); };
 const note = (name, detail) => { result.checks.push({ name, ok: null, detail }); console.log(`NOTE ${name} ${JSON.stringify(detail)}`); };
 
 const procs = [];
 const run = (args, env = {}) => { const p = spawn(process.execPath, args, { env: { ...process.env, ...env }, stdio: ["ignore", "inherit", "inherit"] }); procs.push(p); return p; };
-run([here("mockpostbox.mjs"), String(POSTBOX)]);
-run([here("calls.mjs"), path.join(repo, "calls-service/src/server.js")], { CALLS_TURN_SECRET: "", CALLS_PORT: String(CALLS), CALLS_POSTBOX_URL: `http://127.0.0.1:${POSTBOX}`, CALLS_ALLOWED_ORIGINS: `http://127.0.0.1:${SITE}`, CALLS_TRUST_PROXY: "0" });
+const serviceToken = "svc_" + randomBytes(24).toString("hex");
+run([here("mockpostbox.mjs"), String(POSTBOX)], { PIGEONPOST_TEST_INTERNAL_TOKEN: serviceToken });
+run([here("calls.mjs"), path.join(repo, "calls-service/src/server.js")], { CALLS_TURN_SECRET: "", CALLS_PORT: String(CALLS), CALLS_POSTBOX_URL: `http://127.0.0.1:${POSTBOX}`, CALLS_ALLOWED_ORIGINS: `http://127.0.0.1:${SITE}`, CALLS_TRUST_PROXY: "0", POSTBOX_INTERNAL_URL: `http://127.0.0.1:${POSTBOX}`, POSTBOX_SERVICE_TOKEN: serviceToken });
 run([here("serve.mjs"), path.join(repo, "site-inbox"), String(SITE), String(CALLS)]);
 await sleep(1500);
 
@@ -170,6 +173,57 @@ try {
   await A.evaluate("document.getElementById('call-hangup').click()");
   await until(() => mode() === "hidden", 15000, 200, "the call view to hide after the incoming call");
   check("The app hangs up and returns to the inbox", true);
+
+  // ---- 3. Scheduled meeting: exact occurrence, service window and lobby, then native media ----
+  await until(async () => !(await inspect(A)).room && !(await inspect(B)).room, 15000, 200, "both earlier calls to finish");
+  const occurrenceId = "occ_nativeCalendar_first";
+  const nativeJoin = (code, options) => A.evaluate(`PigeonpostNative.joinScheduled(${JSON.stringify(code)}, ${JSON.stringify(options)})`);
+  const wrongInbox = await nativeJoin("ABCDEFGHJK", { as: BOB.address, occurrenceId, kind: "video" });
+  check("The native scheduled bridge refuses another inbox", wrongInbox?.state === "error" && wrongInbox?.code === "identity_changed");
+  const closed = await nativeJoin("BCDEFGHJKM", { as: ALICE.address, occurrenceId, kind: "video" });
+  check("The service refuses a closed scheduled window", closed?.state === "error" && closed?.code === "window_closed");
+  const choose = await nativeJoin("ABCDEFGHJK", { as: ALICE.address, occurrenceId: "occ_notSelected", kind: "video" });
+  check("A changed occurrence requires explicit selection instead of joining the first window", choose?.state === "choose_occurrence");
+  const waiting = await B.evaluate(`PigeonpostCalls.joinScheduled("ABCDEFGHJK", ${JSON.stringify({ as: BOB.address, occurrenceId, kind: "video", title: "Synthetic calendar meeting", role: "host" })})`);
+  check("The first attendee waits in the scheduled lobby and does not become host", waiting?.state === "waiting");
+  if (simulate) {
+    const joined = await nativeJoin("ABCDEFGHJK", { as: ALICE.address, occurrenceId, kind: "video", title: "Synthetic calendar meeting" });
+    check("The native member joins the exact scheduled occurrence", joined?.state === "joined");
+  } else {
+    // A separate disposable test process supplies one shared synthetic account to the preview,
+    // HTTP client and call host. Its real CalendarStore prepares the selected occurrence and
+    // the production host dispatches/receives the operation-tagged native bridge unchanged.
+    result.adHocAppLog = appLog().map(line => line.replace(/^\S+ \[\d+\] /, ""));
+    A.close(); const earlier = appProcess; earlier.kill();
+    await until(() => earlier.exitCode !== null || earlier.signalCode !== null, 10000, 100, "the earlier app process to exit");
+    const scheduledPort = DEVTOOLS + 1;
+    appProcess = spawn(app, [], { stdio: "ignore", env: {
+      ...process.env, PIGEONPOST_CALLS_PAGE: `http://127.0.0.1:${SITE}/native-call.html`,
+      PIGEONPOST_CALLS_TOKEN: ALICE.token, PIGEONPOST_CALLS_MAILBOX: ALICE.address, PIGEONPOST_CALLS_HANDLE: ALICE.handle,
+      PIGEONPOST_CALLS_CALL: "", PIGEONPOST_CALLS_POSTBOX: `http://127.0.0.1:${POSTBOX}/`,
+      PIGEONPOST_CALLS_SCHEDULED: JSON.stringify({ code: "ABCDEFGHJK", event_id: "evt_nativeCalendar", occurrence_id: occurrenceId, video: true }),
+      PIGEONPOST_CALLS_BROWSER_ARGS: `--use-fake-device-for-media-stream --remote-debugging-port=${scheduledPort}`,
+    } });
+    A = await attach(scheduledPort, target => target.type === "page" && target.url.includes("native-call.html"), 60000);
+    await until(() => logged("Scheduled call result: joined"), 45000, 200, "the original native scheduled operation result");
+    check("The typed calendar request completes through the real native host and operation result", true);
+    const nativeRoom = (await inspect(A)).room, waitingRoom = (await inspect(B)).room;
+    check("The native member joins the exact selected occurrence's room", nativeRoom?.code === "ABCDEFGHJK" && nativeRoom?.id === waitingRoom?.id);
+  }
+  await until(() => A.evaluate("Boolean(document.querySelector('#call-knocks .call-pill-primary'))"), 15000, 200, "the host's lobby controls");
+  check("Only the scheduled host sees end/extend controls", await A.evaluate("!document.getElementById('call-host-tools').hidden") && await B.evaluate("document.getElementById('call-host-tools').hidden"));
+  capture("scheduled-call-lobby.png");
+  await A.evaluate("document.querySelector('#call-knocks .call-pill-primary').click()");
+  await until(async () => (await inspect(A)).peers[0]?.connected && (await inspect(B)).peers[0]?.connected, 40000, 250, "scheduled participants connected after admission");
+  await sleep(7000); a = await inspect(A); b = await inspect(B);
+  result.scheduled = { app: a.peers.map(p => ({ connected: p.connected, receiving: p.stats?.receiving, sas: p.security?.code })), browser: b.peers.map(p => ({ connected: p.connected, receiving: p.stats?.receiving, sas: p.security?.code })) };
+  check("Scheduled native and browser participants receive audio both ways", (audioIn(a)?.bps > 0 || audioIn(a)?.received > 0) && (audioIn(b)?.bps > 0 || audioIn(b)?.received > 0));
+  check("Scheduled native and browser participants receive video both ways", videoIn(a)?.decoded > 0 && videoIn(b)?.decoded > 0);
+  check("Scheduled participants show the same security code", a.peers[0]?.security?.code && a.peers[0].security.code === b.peers[0]?.security?.code);
+  capture("scheduled-call-connected.png");
+  await A.evaluate("document.getElementById('call-end-all').click()");
+  await until(async () => mode() === "hidden" && !(await inspect(B)).room, 15000, 200, "the host to end the scheduled meeting");
+  check("The scheduled host ends the meeting for both participants", true);
   result.passed = true;
 } catch (e) {
   result.error = String(e.stack || e);

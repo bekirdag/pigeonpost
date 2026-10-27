@@ -9,6 +9,8 @@ using Pigeonpost.Core.Calendar;
 
 namespace Pigeonpost.Desktop;
 
+internal delegate Task CalendarMeetingAction(CalendarActionTarget target, CalendarEventKey key, string code, bool video, Guid context);
+
 // Calendar content is service-readable. Every control captures a rendered inbox view; each
 // gesture then gets its own revocable target, including while a form or confirmation is open.
 internal sealed partial class CalendarPage : UserControl, IDisposable
@@ -18,6 +20,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private readonly CancellationToken lifetime;
     private readonly Func<bool> dialogBusy;
     private readonly Action<bool> setDialogBusy;
+    private readonly CalendarMeetingAction joinMeeting;
     private readonly StackPanel contents = new() { Spacing = 18, Padding = new Thickness(24, 8, 24, 24) };
     private readonly ScrollViewer scroll;
     private CalendarContextView? rendered;
@@ -26,10 +29,12 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private bool disposed;
     private bool filtersExpanded;
     private int renderQueued;
+    private int renderVersion;
 
-    internal CalendarPage(CalendarStore model, nint window, CancellationToken lifetime, Func<bool> dialogBusy, Action<bool> setDialogBusy)
+    internal CalendarPage(CalendarStore model, nint window, CancellationToken lifetime, Func<bool> dialogBusy, Action<bool> setDialogBusy, CalendarMeetingAction joinMeeting)
     {
         this.model = model; this.window = window; this.lifetime = lifetime; this.dialogBusy = dialogBusy; this.setDialogBusy = setDialogBusy;
+        this.joinMeeting = joinMeeting;
         Content = scroll = new ScrollViewer { Content = contents, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Loaded += (_, _) => Render();
         Unloaded += (_, _) => Dispose();
@@ -95,8 +100,14 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private void Render()
     {
         if (disposed) return;
-        var offset = scroll.VerticalOffset; var state = model.State; var next = model.CaptureView(); rendered?.Retire(); rendered = next;
-        if (context != state.ContextId || !state.Enabled) dialog?.Hide(); context = state.ContextId;
+        var version = ++renderVersion; var offset = scroll.VerticalOffset; var state = model.State;
+        if (context != state.ContextId || !state.Enabled)
+        {
+            rendered?.Retire(); rendered = null; dialog?.Hide(); context = state.ContextId;
+        }
+        // Background loading/rendering does not change the inbox authority. A gesture queued
+        // from the same inbox still checks fresh access; only leaving that context retires it.
+        var next = rendered ??= model.CaptureView();
         contents.Children.Clear();
         if (!state.Enabled || next is null) { contents.Children.Add(Text(state.Error ?? "The calendar is unavailable for this inbox.")); return; }
         var view = next;
@@ -173,7 +184,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
             foreach (var item in invitations) contents.Children.Add(Action(item.Title ?? "Untitled invitation", view, target => Detail(target, item.Key), accessible: "Open invitation " + item.Title));
         }
         Invitations("Invitations", state.Invitations); Invitations("Filtered invitations", state.FilteredInvitations);
-        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!disposed && ReferenceEquals(rendered, view)) scroll.ChangeView(null, offset, null, true); });
+        DispatcherQueue.TryEnqueue(Microsoft.UI.Dispatching.DispatcherQueuePriority.Low, () => { if (!disposed && version == renderVersion && ReferenceEquals(rendered, view)) scroll.ChangeView(null, offset, null, true); });
     }
     private async Task<ContentDialogResult> Show(CalendarActionTarget target, ContentDialog next)
     {

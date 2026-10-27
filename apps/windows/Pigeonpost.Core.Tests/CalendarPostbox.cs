@@ -20,7 +20,8 @@ internal static class CalendarPostbox
             using var http = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = TimeSpan.FromSeconds(15) };
             using var api = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!, 'a'), endpoint);
             using var other = new PostboxClient(http, new Tokens(bob.GetProperty("token").GetString()!, 'b'), endpoint);
-            using var loss = new PostboxClient(http, new Tokens(alice.GetProperty("token").GetString()!, 'a'), proxy);
+            var lossTokens = new Tokens(alice.GetProperty("token").GetString()!, 'a');
+            using var loss = new PostboxClient(http, lossTokens, proxy);
             using var scope = await MessageRecoveryScope.AuthorizeAsync(loss, own) ?? throw new InvalidOperationException();
             using var protector = new MessageAttemptStoreTests.Protector();
             var coordinator = new CalendarDeliveryCoordinator(loss, new FileCalendarAttemptStore(folder, protector));
@@ -113,7 +114,23 @@ internal static class CalendarPostbox
             Check(split.Event.Id != recurringId && split.SplitFrom?.EventId == recurringId && split.Event.Title == "Following occurrences fixture");
             await api.CancelCalendarEventAsync(own, new(split.Event.Id), split.Event.Revision!.Value, CalendarEventScope.All);
             Check((await api.GetCalendarEventAsync(own, new(split.Event.Id))).Event.Status == "cancelled");
-            Console.WriteLine("PASS Windows calendar postbox interoperability: protected create/controller recovery, exact committed-loss replay, revisioned edit/conflict, RSVP, reminders, settings, ICS, cancellation, occurrence override and following-series split.");
+            stage = "typed meeting authoring and member admission";
+            var meetingDraft = new CalendarEventDraft(model.State.ContextId, day, day, "Europe/Istanbul") { Title = "Windows typed scheduled fixture", CalendarId = calendars.Single().Id,
+                Meeting = new(Enabled: true), Invitees = [new(peer)] };
+            var meetingAttempt = await restarted.PrepareAsync(scope, CalendarAttemptKind.Event, meetingDraft.CreatePayload("meeting_" + Guid.NewGuid().ToString("N")));
+            var meetingReceipt = await restarted.SendAsync(scope, meetingAttempt); var meetingId = meetingReceipt.Receipt.Event!.Event.Id;
+            var meetingRow = (await api.GetCalendarOccurrencesAsync(own, range.Start, range.End)).Single(o => o.EventId == meetingId);
+            var meetingDetail = await api.GetCalendarEventAsync(own, meetingRow.Key);
+            Check(CalendarMeetingCode.Parse(meetingDetail.Event.Meeting?.Code ?? "") is not null);
+            using var preparedJoin = await model.PrepareScheduledJoinAsync(action, meetingRow.Key, meetingDetail.Event.Meeting!.Code!, true, model.State.ContextId) ?? throw new InvalidOperationException();
+            using (var memberBinding = preparedJoin.BindForService(lossTokens, own)) memberBinding.RequireCurrent();
+            Check(preparedJoin.OccurrenceId == meetingRow.OccurrenceId && preparedJoin.Mailbox == own && preparedJoin.Video);
+            stage = "declined member admission refusal";
+            await other.AnswerCalendarInvitationAsync(peer, new(meetingId), CalendarAnswer.Declined, CalendarAnswerScope.All);
+            using var invitedModel = new CalendarStore(other, other); await invitedModel.ActivateAsync(peer, await other.GetCapabilitiesAsync(default));
+            using var invitedAction = invitedModel.CaptureView()!.BeginAction()!;
+            Check(await invitedModel.PrepareScheduledJoinAsync(invitedAction, meetingRow.Key, preparedJoin.Code, false, invitedModel.State.ContextId) is null);
+            Console.WriteLine("PASS Windows calendar postbox interoperability: protected recovery, revisioned mutation/conflict, RSVP/reminders/settings/ICS, recurrence override/split, typed meeting authoring/admission and declined-member refusal.");
             return 0;
         }
         catch (Exception error)

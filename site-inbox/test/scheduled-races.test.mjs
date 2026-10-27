@@ -29,7 +29,7 @@ function page(t, { strongNoise = false } = {}) {
   const dom = new JSDOM('<!doctype html><body data-page="native"><button id="call-audio-btn"></button><button id="call-video-btn"></button></body>', {
     url: "https://inbox.pigeonpost.dev/native-call.html", runScripts: "outside-only", pretendToBeVisual: true, virtualConsole: console,
   });
-  const w = dom.window, captures = [], requests = [], responses = [], eventReaders = [];
+  const w = dom.window, captures = [], requests = [], responses = [], eventReaders = [], eventSenders = [];
   w.HTMLMediaElement.prototype.play = async () => {};
   w.HTMLMediaElement.prototype.pause = () => {};
   w.RTCPeerConnection = class {};
@@ -47,13 +47,18 @@ function page(t, { strongNoise = false } = {}) {
     const path = new URL(url, w.location.href).pathname;
     requests.push({ path, headers: options.headers, body: options.body ? JSON.parse(options.body) : null });
     if (path.endsWith("/events")) {
-      let first = true, done;
-      const stopped = new Promise((resolve) => { done = resolve; });
-      options.signal.addEventListener("abort", () => done({ done: true }));
-      eventReaders.push(done);
+      const queued = [], readers = []; let closed = false;
+      const done = () => { closed = true; for (const resolve of readers.splice(0)) resolve({ done: true }); };
+      const emit = (event, data) => {
+        if (closed) return;
+        const frame = { value: new TextEncoder().encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`), done: false };
+        if (readers.length) readers.shift()(frame); else queued.push(frame);
+      };
+      options.signal.addEventListener("abort", done); eventReaders.push(done); eventSenders.push(emit);
       const identity = options.headers.authorization.endsWith("synthetic-b") ? "b" : "a";
+      emit("ready", { session: "session-" + identity, mailboxes: [] });
       return { ok: true, status: 200, body: { getReader: () => ({
-        read: () => first ? (first = false, Promise.resolve({ value: new TextEncoder().encode(`event: ready\ndata: ${JSON.stringify({ session: "session-" + identity, mailboxes: [] })}\n\n`), done: false })) : stopped,
+        read: () => closed ? Promise.resolve({ done: true }) : queued.length ? Promise.resolve(queued.shift()) : new Promise(resolve => readers.push(resolve)),
       }) } };
     }
     if (path.includes("/meetings/scheduled/")) return new Promise((resolve) => responses.push((body, status) => resolve(json(body, status))));
@@ -73,8 +78,36 @@ function page(t, { strongNoise = false } = {}) {
   const configure = (id) => w.PigeonpostNative.configure({ token: "synthetic-" + id, mailbox: { address: "/k/" + id }, known: {} });
   configure("a");
   const join = (occurrence, id = "a") => w.PigeonpostCalls.joinScheduled("ABCDEFGHJK", { as: "/k/" + id, occurrenceId: occurrence, kind: "audio" });
-  return { w, captures, requests, responses, configure, join };
+  return { w, captures, requests, responses, configure, join, event: (name, data) => eventSenders.at(-1)(name, data) };
 }
+
+test("a late host sees earlier waiting people and duplicate joined snapshots do not revive resolved requests", { timeout: 6000 }, async (t) => {
+  const p = page(t); const joining = p.join("occ_first");
+  await until(() => p.captures.length === 1); p.captures[0].resolve(new Stream([new Track("audio")]));
+  await until(() => p.responses.length === 1);
+  const snapshot = { room: "a".repeat(32), code: "ABCDEFGHJK", you: "host", kind: "audio", participants: [],
+    scheduled: { role: "host", can_admit: true, knocks: [{ knock: "b".repeat(32), name: "Earlier guest", guest: true, verified: false }] } };
+  p.event("joined", snapshot);
+  await until(() => p.w.PigeonpostCalls.inspect().knocks.length === 1);
+  assert.match(p.w.document.getElementById("call-knocks").textContent, /Earlier guest/);
+  assert.ok(p.w.document.querySelector("#call-knocks .call-pill-primary"), "the host can admit the earlier guest");
+  p.event("knock_resolved", { room: snapshot.room, knock: "b".repeat(32) });
+  await until(() => p.w.PigeonpostCalls.inspect().knocks.length === 0);
+  p.event("knock", { room: snapshot.room, knock: "c".repeat(32), name: "Live guest", guest: true });
+  await until(() => p.w.PigeonpostCalls.inspect().knocks.length === 1);
+  p.responses[0]({ state: "joined", ...snapshot }); assert.equal((await joining).state, "joined");
+  assert.deepEqual(Array.from(p.w.PigeonpostCalls.inspect().knocks), ["c".repeat(32)], "a stale second joined snapshot preserves live requests and keeps resolved ones removed");
+});
+
+test("an attendee cannot bootstrap a private host lobby from an unsolicited snapshot", { timeout: 6000 }, async (t) => {
+  const p = page(t); const joining = p.join("occ_first");
+  await until(() => p.captures.length === 1); p.captures[0].resolve(new Stream([new Track("audio")]));
+  await until(() => p.responses.length === 1);
+  p.responses[0]({ state: "joined", room: "a".repeat(32), you: "attendee", participants: [], scheduled: { role: "attendee", can_admit: false, knocks: [{ knock: "b".repeat(32), name: "Private guest" }] } });
+  assert.equal((await joining).state, "joined");
+  assert.equal(p.w.PigeonpostCalls.inspect().knocks.length, 0);
+  assert.equal(p.w.document.getElementById("call-host-tools").hidden, true);
+});
 
 test("late media from a cancelled attempt is released and cannot replace the next call", { timeout: 6000 }, async (t) => {
   const p = page(t);

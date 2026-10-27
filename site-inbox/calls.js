@@ -599,7 +599,19 @@
       room = newRoom({ kind: data.kind, title: "Call", id: data.room });
     }
     Object.assign(room, { id: data.room, code: data.code, you: data.you, kind: data.kind || room.kind, state: "active", topology: data.topology || "mesh" });
-    if (data.scheduled) { room.scheduled = data.scheduled; $("call-lobby") && ($("call-lobby").hidden = true); renderScheduled(); } // Phase 3B
+    if (data.scheduled) {
+      room.scheduled = data.scheduled;
+      // A host may arrive after people started waiting. Bootstrap that snapshot once: the
+      // joined SSE and HTTP response can both arrive, with live knock/resolution events between.
+      if (!room.scheduledKnocksLoaded && data.scheduled.can_admit === true && Array.isArray(data.scheduled.knocks)) {
+        room.scheduledKnocksLoaded = true;
+        for (const k of data.scheduled.knocks.slice(0, 100)) {
+          if (k && typeof k.knock === "string" && /^[A-Za-z0-9_-]{1,128}$/.test(k.knock))
+            knocks.set(k.knock, { room: data.room, knock: k.knock, name: k.name, mailbox: k.mailbox, guest: k.guest, verified: k.verified === true });
+        }
+      }
+      $("call-lobby") && ($("call-lobby").hidden = true); renderScheduled();
+    }
     setMembers(data.participants);
     tellHost("callState", { state: "active", room: data.room, kind: room.kind });
     stopTone();
