@@ -209,13 +209,25 @@ pub fn routes(home: &Path) -> Vec<Route> {
 /// Start one supervisor per enabled shell. Called once by `agentd run`.
 pub fn start(home: &Path) {
     let machine = crate::agentd_cmd::machine_home(home);
-    for route in routes(home) {
-        let machine = machine.clone();
-        tokio::spawn(async move { supervise(machine, route).await });
+    let routes = routes(home);
+    if routes.is_empty() {
+        return;
+    }
+    // One host key for the machine, loaded (or made) once, before any supervisor needs it.
+    let key = match host_key(&machine) {
+        Ok(k) => k,
+        Err(e) => {
+            log_line(&machine, &format!("ssh: no host key, SSH not offered: {e}"));
+            return;
+        }
+    };
+    for route in routes {
+        let (machine, key) = (machine.clone(), key.clone());
+        tokio::spawn(async move { supervise(machine, route, key).await });
     }
 }
 
-async fn supervise(machine: PathBuf, route: Route) {
+async fn supervise(machine: PathBuf, route: Route, key: PrivateKey) {
     let mut backoff = Duration::from_secs(2);
     let blind_since: Arc<Mutex<Option<Instant>>> = Arc::new(Mutex::new(None));
     // Fail closed: without the control stream for BLIND_SECS, revocations cannot reach us.
@@ -233,7 +245,7 @@ async fn supervise(machine: PathBuf, route: Route) {
         });
     }
     loop {
-        match control_once(&machine, &route, &blind_since).await {
+        match control_once(&machine, &route, &key, &blind_since).await {
             Ok(()) => backoff = Duration::from_secs(2),
             Err(e) => {
                 log_line(&machine, &format!("ssh: {}: {e}", route.mailbox));
@@ -259,9 +271,9 @@ fn http() -> Result<reqwest::Client, Error> {
 async fn control_once(
     machine: &Path,
     route: &Route,
+    key: &PrivateKey,
     blind_since: &Arc<Mutex<Option<Instant>>>,
 ) -> Result<(), Error> {
-    let key = host_key(machine)?;
     let base = route.credential.base_url.trim_end_matches('/').to_string();
     let token = route.credential.capability_token.clone();
     let host_line = key.public_key().to_openssh()?;
@@ -1113,5 +1125,274 @@ mod tests {
         assert!(pin_ca(t.path(), &one).is_ok());
         let e = pin_ca(t.path(), &two).unwrap_err().to_string();
         assert!(e.contains("not the one this machine pinned"), "{e}");
+    }
+}
+
+/// The SSH server itself, over an in-memory stream: what a certificate must bind, and what a
+/// session may and may not do once in.
+#[cfg(test)]
+mod ssh_tests {
+    use super::*;
+    use crate::shell::config::AllowedCommand;
+    use russh::keys::ssh_key;
+
+    fn key(seed: u8) -> PrivateKey {
+        PrivateKey::from(ssh_key::private::Ed25519Keypair::from_seed(&[seed; 32]))
+    }
+
+    const SID: &str = "ssh_abcdefghijklmnopqrstuvwxyz";
+    const AGENT: &str = "/k/agent";
+
+    struct CertSpec<'a> {
+        ca: &'a PrivateKey,
+        client: &'a PrivateKey,
+        principal: String,
+        serial: u64,
+        after: u64,
+        before: u64,
+        agent: &'a str,
+        mode: &'a str,
+    }
+
+    fn good<'a>(ca: &'a PrivateKey, client: &'a PrivateKey, mode: &'a str) -> CertSpec<'a> {
+        CertSpec {
+            ca,
+            client,
+            principal: format!("pp-ssh-{SID}"),
+            serial: 0x1234,
+            after: now() - 60,
+            before: now() + 300,
+            agent: AGENT,
+            mode,
+        }
+    }
+
+    fn cert(c: CertSpec<'_>) -> Certificate {
+        let mut b = ssh_key::certificate::Builder::new(
+            vec![1u8; 32],
+            c.client.public_key().key_data().clone(),
+            c.after,
+            c.before,
+        )
+        .unwrap();
+        b.serial(c.serial).unwrap();
+        b.cert_type(ssh_key::certificate::CertType::User).unwrap();
+        b.valid_principal(c.principal).unwrap();
+        b.key_id(json!({ "sid": SID, "agent": c.agent, "mode": c.mode }).to_string())
+            .unwrap();
+        b.extension("permit-pty", "").unwrap();
+        b.sign(c.ca).unwrap()
+    }
+
+    fn shell(mode: Mode, ws: &Path) -> Shell {
+        Shell {
+            mode,
+            workspace: std::fs::canonicalize(ws).unwrap(),
+            image: "x".into(),
+            runtime: None,
+            outbound: false,
+            read_only: false,
+            max_sessions: 2,
+            idle_secs: 900,
+            commands: vec![
+                AllowedCommand { argv: vec!["/bin/echo".into(), "hello".into()], paths: 0 },
+                AllowedCommand { argv: vec!["/bin/cat".into()], paths: 1 },
+            ],
+        }
+    }
+
+    struct AnyHost;
+    impl russh::client::Handler for AnyHost {
+        type Error = russh::Error;
+        async fn check_server_key(
+            &mut self,
+            _k: &russh::keys::PublicKeyOrCertificate,
+        ) -> Result<bool, Self::Error> {
+            Ok(true)
+        }
+    }
+
+    struct Rig {
+        client: russh::client::Handle<AnyHost>,
+        proc_info: Arc<Mutex<ProcInfo>>,
+        _ws: tempfile::TempDir,
+    }
+
+    async fn rig(mode: Mode, client: &PrivateKey, c: Certificate) -> (Rig, bool) {
+        let ws = tempfile::tempdir().unwrap();
+        let ca = key(1);
+        let spec = Spec {
+            sid: SID.into(),
+            agent: AGENT.into(),
+            principal: format!("pp-ssh-{SID}"),
+            client_fp: crate::shell::fingerprint(client.public_key()),
+            serial: format!("{:016x}", 0x1234),
+            ca: ca.public_key().clone(),
+            shell: shell(mode, ws.path()),
+        };
+        let proc_info: Arc<Mutex<ProcInfo>> = Arc::default();
+        let conn = Conn {
+            spec,
+            authed: false,
+            channel: None,
+            pty: None,
+            input: None,
+            started: false,
+            activity: Arc::new(Mutex::new(Instant::now())),
+            proc_info: proc_info.clone(),
+            kill: tokio::sync::watch::channel(None).0,
+        };
+        let (a, b) = tokio::io::duplex(1 << 16);
+        let config = Arc::new(russh::server::Config {
+            methods: russh::MethodSet::from(&[russh::MethodKind::PublicKey][..]),
+            auth_rejection_time: Duration::from_millis(10),
+            auth_rejection_time_initial: Some(Duration::from_millis(0)),
+            keys: vec![key(2)],
+            ..Default::default()
+        });
+        tokio::spawn(async move {
+            if let Ok(r) = russh::server::run_stream(config, a, conn).await {
+                let _ = r.await;
+            }
+        });
+        let mut handle = russh::client::connect_stream(Arc::new(Default::default()), b, AnyHost)
+            .await
+            .unwrap();
+        let ok = handle
+            .authenticate_openssh_cert(crate::shell::SSH_USER, Arc::new(client.clone()), c)
+            .await
+            .unwrap()
+            .success();
+        (
+            Rig {
+                client: handle,
+                proc_info,
+                _ws: ws,
+            },
+            ok,
+        )
+    }
+
+    async fn collect(ch: &mut russh::Channel<russh::client::Msg>) -> (String, String, Option<u32>, bool) {
+        let (mut out, mut err, mut status, mut failed) = (Vec::new(), Vec::new(), None, false);
+        loop {
+            match tokio::time::timeout(Duration::from_secs(10), ch.wait()).await.expect("channel stalled") {
+                Some(russh::ChannelMsg::Data { data }) => out.extend_from_slice(&data),
+                Some(russh::ChannelMsg::ExtendedData { data, .. }) => err.extend_from_slice(&data),
+                Some(russh::ChannelMsg::ExitStatus { exit_status }) => status = Some(exit_status),
+                Some(russh::ChannelMsg::Failure) => failed = true,
+                Some(russh::ChannelMsg::Close) | None => break,
+                Some(_) => {}
+            }
+        }
+        (
+            String::from_utf8_lossy(&out).into_owned(),
+            String::from_utf8_lossy(&err).into_owned(),
+            status,
+            failed,
+        )
+    }
+
+    #[tokio::test]
+    async fn a_certificate_must_bind_this_session_key_serial_agent_and_ca() {
+        let (ca, client, other) = (key(1), key(3), key(4));
+        let (_, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        assert!(ok, "the session's own certificate");
+        let rogue_ca = key(9);
+        let cases: Vec<(&str, CertSpec)> = vec![
+            ("expired", CertSpec { before: now() - 5, after: now() - 400, ..good(&ca, &client, "allowlist") }),
+            ("not yet valid", CertSpec { after: now() + 600, before: now() + 900, ..good(&ca, &client, "allowlist") }),
+            ("another CA", good(&rogue_ca, &client, "allowlist")),
+            ("another session", CertSpec { principal: "pp-ssh-ssh_bbbbbbbbbbbbbbbbbbbbbbbbbb".into(), ..good(&ca, &client, "allowlist") }),
+            ("a handle as principal", CertSpec { principal: "/acme/agent1".into(), ..good(&ca, &client, "allowlist") }),
+            ("another serial", CertSpec { serial: 7, ..good(&ca, &client, "allowlist") }),
+            ("another agent", CertSpec { agent: "/k/other", ..good(&ca, &client, "allowlist") }),
+            ("another mode", good(&ca, &client, "unconfined")),
+        ];
+        for (why, spec) in cases {
+            let (_, ok) = rig(Mode::Allowlist, &client, cert(spec)).await;
+            assert!(!ok, "{why}");
+        }
+        // A valid certificate for someone else's key is no use without that key.
+        let (_, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &other, "allowlist"))).await;
+        assert!(!ok, "another key's certificate");
+    }
+
+    #[tokio::test]
+    async fn one_session_channel_and_nothing_else() {
+        let (ca, client) = (key(1), key(3));
+        std::env::set_var("PP_AGENTD_SECRET", "must-not-leak");
+        let (r, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        assert!(ok);
+        let mut ch = r.client.channel_open_session().await.unwrap();
+        // Environment injection, X11, agent forwarding, subsystems (sftp): all refused.
+        ch.set_env(true, "LD_PRELOAD", "/tmp/evil.so").await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "env");
+        ch.request_subsystem(true, "sftp").await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "sftp");
+        ch.request_x11(true, false, "MIT-MAGIC-COOKIE-1", "00", 0).await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "x11");
+        ch.agent_forward(true).await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "agent forwarding");
+        // No pty in allowlist mode.
+        ch.request_pty(true, "xterm", 80, 24, 0, 0, &[]).await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)), "pty");
+        // A second channel, port forwarding of either kind: refused.
+        assert!(r.client.channel_open_session().await.is_err());
+        assert!(r.client.channel_open_direct_tcpip("127.0.0.1", 22, "127.0.0.1", 5000).await.is_err());
+        assert!(r.client.tcpip_forward("127.0.0.1", 0).await.is_err(), "remote forwarding");
+        // The allowed command runs, without the environment of agentd or of the request.
+        ch.exec(true, "echo hello").await.unwrap();
+        let (out, _, status, _) = collect(&mut ch).await;
+        assert_eq!((out.trim(), status), ("hello", Some(0)));
+    }
+
+    #[tokio::test]
+    async fn allowlist_refusals_over_ssh() {
+        let (ca, client) = (key(1), key(3));
+        for attempt in ["cat ../../etc/passwd", "echo hi; id", "echo $(id)", "sh -c id", "cat /etc/passwd"] {
+            let (r, ok) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+            assert!(ok);
+            let mut ch = r.client.channel_open_session().await.unwrap();
+            ch.exec(true, attempt).await.unwrap();
+            let (out, err, status, _) = collect(&mut ch).await;
+            assert_eq!(status, Some(126), "{attempt}: {out} {err}");
+            assert!(err.contains("refused"), "{attempt}: {err}");
+            assert!(!out.contains("root:"), "{attempt}");
+        }
+        // A shell is refused with the list of what is allowed.
+        let (r, _) = rig(Mode::Allowlist, &client, cert(good(&ca, &client, "allowlist"))).await;
+        let mut ch = r.client.channel_open_session().await.unwrap();
+        ch.request_shell(true).await.unwrap();
+        let (_, err, status, _) = collect(&mut ch).await;
+        assert_eq!(status, Some(126));
+        assert!(err.contains("/bin/echo"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn unconfined_sessions_get_a_clean_environment_and_teardown_kills_the_group() {
+        let (ca, client) = (key(1), key(3));
+        std::env::set_var("PP_AGENTD_SECRET", "must-not-leak");
+        let (r, ok) = rig(Mode::Unconfined, &client, cert(good(&ca, &client, "unconfined"))).await;
+        assert!(ok);
+        let mut ch = r.client.channel_open_session().await.unwrap();
+        ch.set_env(true, "BASH_ENV", "/tmp/x").await.unwrap();
+        assert!(matches!(ch.wait().await, Some(russh::ChannelMsg::Failure)));
+        ch.exec(true, "env; pwd").await.unwrap();
+        let (out, _, status, _) = collect(&mut ch).await;
+        assert_eq!(status, Some(0));
+        assert!(!out.contains("must-not-leak") && !out.contains("BASH_ENV") && !out.contains("LD_PRELOAD"), "{out}");
+        assert!(out.contains("PATH="), "{out}");
+        // Teardown: a session with a child that would outlive its shell.
+        let (r, _) = rig(Mode::Unconfined, &client, cert(good(&ca, &client, "unconfined"))).await;
+        let mut ch = r.client.channel_open_session().await.unwrap();
+        ch.exec(true, "sleep 1000 & sleep 1000").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let pid = r.proc_info.lock().unwrap().pid.expect("running");
+        teardown(&r.proc_info).await;
+        let (_, _, status, _) = collect(&mut ch).await;
+        assert_ne!(status, Some(0));
+        let gone = rustix::process::test_kill_process_group(rustix::process::Pid::from_raw(pid as i32).unwrap());
+        assert!(gone.is_err(), "the whole process group is gone");
     }
 }

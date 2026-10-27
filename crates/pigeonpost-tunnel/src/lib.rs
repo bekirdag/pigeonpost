@@ -85,7 +85,7 @@ impl Config {
                 num("TUNNEL_FAIL_CLOSED_SECS", 60).clamp(5, 300),
             ),
             auth_timeout: Duration::from_secs(10),
-            per_ip_per_minute: num("TUNNEL_PER_IP_PER_MINUTE", 30) as usize,
+            per_ip_per_minute: num("TUNNEL_PER_IP_PER_MINUTE", 60) as usize,
             trust_proxy: var("TUNNEL_TRUST_PROXY").as_deref() == Some("1"),
         })
     }
