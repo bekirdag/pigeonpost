@@ -9,6 +9,8 @@ using Pigeonpost.Core.Calendar;
 
 namespace Pigeonpost.Desktop;
 
+internal delegate Task CalendarMeetingAction(CalendarActionTarget target, CalendarEventKey key, string code, bool video, Guid context);
+
 // Calendar content is service-readable. Every control captures a rendered inbox view; each
 // gesture then gets its own revocable target, including while a form or confirmation is open.
 internal sealed partial class CalendarPage : UserControl, IDisposable
@@ -18,6 +20,7 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private readonly CancellationToken lifetime;
     private readonly Func<bool> dialogBusy;
     private readonly Action<bool> setDialogBusy;
+    private readonly CalendarMeetingAction joinMeeting;
     private readonly StackPanel contents = new() { Spacing = 18, Padding = new Thickness(24, 8, 24, 24) };
     private readonly ScrollViewer scroll;
     private CalendarContextView? rendered;
@@ -27,9 +30,10 @@ internal sealed partial class CalendarPage : UserControl, IDisposable
     private bool filtersExpanded;
     private int renderQueued;
 
-    internal CalendarPage(CalendarStore model, nint window, CancellationToken lifetime, Func<bool> dialogBusy, Action<bool> setDialogBusy)
+    internal CalendarPage(CalendarStore model, nint window, CancellationToken lifetime, Func<bool> dialogBusy, Action<bool> setDialogBusy, CalendarMeetingAction joinMeeting)
     {
         this.model = model; this.window = window; this.lifetime = lifetime; this.dialogBusy = dialogBusy; this.setDialogBusy = setDialogBusy;
+        this.joinMeeting = joinMeeting;
         Content = scroll = new ScrollViewer { Content = contents, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
         Loaded += (_, _) => Render();
         Unloaded += (_, _) => Dispose();

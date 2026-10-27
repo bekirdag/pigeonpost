@@ -545,6 +545,7 @@ public sealed partial class MainWindow
 
     private async Task GroupCallAsync(bool video, bool join)
     {
+        if (scheduledCall is not null) { AccountStatus.Text = "Finish joining the meeting first."; return; }
         if (groupsModel.Info is not { IsActive: true } info) return;
         if (CaptureCallPage() is not { } page || groupsModel.Mailbox != page.Actor.Mailbox.Address) { AccountStatus.Text = "Calling isn't ready yet. Try again in a moment."; return; }
         DesktopLog.Write($"{(join ? "Joining" : "Starting")} a group {(video ? "video" : "voice")} call");

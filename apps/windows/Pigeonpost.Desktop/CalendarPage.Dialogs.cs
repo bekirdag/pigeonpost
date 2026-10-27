@@ -88,6 +88,17 @@ internal sealed partial class CalendarPage
         {
             var button = Button(label); button.Click += (_, _) => { if (needsScope && Scope() is null) { feedback.Text = "Choose which events this action applies to."; return; } after = run; next.Hide(); }; fields.Children.Add(button);
         }
+        if (e.Meeting?.Code is { } meetingCode && CalendarMeetingCode.Parse(meetingCode) is not null && e.Status == "confirmed"
+            && e.My?.Role is "organizer" or "attendee" or "cohost" && (o?.MyRsvp ?? e.My.Rsvp) != "declined")
+        {
+            if (key.OccurrenceId is null) fields.Children.Add(Text("Choose this meeting from a day's agenda to select its occurrence."));
+            else
+            {
+                var originalContext = model.State.ContextId;
+                Command("Join by voice", () => joinMeeting(target, key, meetingCode, false, originalContext));
+                Command("Join with video", () => joinMeeting(target, key, meetingCode, true, originalContext));
+            }
+        }
         if (e.Status == "confirmed" && e.My?.Role == "organizer" && e.CanEdit == true)
         {
             Command("Edit event", async () => { if (Scope() is { } selected && await model.ReviewEditAsync(target, key, selected, lifetime) is { } reviewed) await Edit(target, reviewed); }, true);

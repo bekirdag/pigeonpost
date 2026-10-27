@@ -27,7 +27,7 @@ public sealed partial class MainWindow
     private FrameworkElement BuildCalendarPage()
     {
         var frame = PageFrame("Calendar", out _, out var body);
-        calendarPage = new(calendarModel, WinRT.Interop.WindowNative.GetWindowHandle(this), lifetime.Token, () => dialogOpen, value => dialogOpen = value);
+        calendarPage = new(calendarModel, WinRT.Interop.WindowNative.GetWindowHandle(this), lifetime.Token, () => dialogOpen, value => dialogOpen = value, JoinCalendarMeetingAsync);
         body.Children.Add(calendarPage); return frame;
     }
 }

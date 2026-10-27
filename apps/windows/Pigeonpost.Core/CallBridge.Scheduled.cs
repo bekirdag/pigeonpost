@@ -30,5 +30,4 @@ public static partial class CallBridge
             })();
             """;
     }
-    public const string CancelScheduledScript = "window.PigeonpostNative && PigeonpostNative.hangUp()";
 }

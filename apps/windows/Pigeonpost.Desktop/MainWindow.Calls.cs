@@ -277,6 +277,9 @@ public sealed partial class MainWindow
         try { json = e.WebMessageAsJson; } catch (Exception) { return; }
         switch (CallBridge.Parse(json))
         {
+            case { Type: "scheduled_result" } result:
+                ScheduledCallResult(page, result);
+                break;
             case { Type: "ready" }:
                 callReady = true;
                 callRestarts = 0;
@@ -325,6 +328,7 @@ public sealed partial class MainWindow
         if (callSession is not { } actor || !CallCurrent(actor) || !ReferenceEquals(callCore, sender)) return;
         DesktopLog.Write($"Call view process failed: {e.ProcessFailedKind}");
         callReady = false;
+        callConfigured = false;
         callRinging = false;
         ApplyCallMode(CallMode.Hidden);
         if (lifetime.IsCancellationRequested || !callsSignedIn || ++callRestarts > 3) return;
@@ -342,6 +346,7 @@ public sealed partial class MainWindow
     // Tell the page who is signed in, and the names of the people in this mailbox.
     private async Task ConfigureCallsAsync()
     {
+        callConfigured = false;
         if (!callsSignedIn) return;
         if (CurrentCallMailbox() is null) { RemoveCallView(); return; }
         if (callSession is not { } actor || !CallCurrent(actor)) { await StartCallsAsync(); return; }
@@ -354,7 +359,8 @@ public sealed partial class MainWindow
         catch (OperationCanceledException) { return; }
         catch (Exception ex) { if (CallPageCurrent(page)) DesktopLog.Error("Call token unavailable", ex); }
         if (!CallPageCurrent(page)) return;
-        if (await RunCallScriptAsync(page, CallBridge.ConfigureScript(token, mailbox, conversations, nativeRing)) && CallPageCurrent(page)) configuredNativeRing = nativeRing;
+        if (await RunCallScriptAsync(page, CallBridge.ConfigureScript(token, mailbox, conversations, nativeRing)) && CallPageCurrent(page))
+        { configuredNativeRing = nativeRing; callConfigured = !string.IsNullOrEmpty(token); }
     }
 
     private async Task RenewCallTokenAsync(CallPageTicket page)
@@ -375,6 +381,7 @@ public sealed partial class MainWindow
 
     private async Task PlaceCallAsync(string peer, bool video)
     {
+        if (scheduledCall is not null) { AccountStatus.Text = "Finish joining the meeting first."; return; }
 #if UI_TESTS
         if (CallsDebug("PAGE") is null) { AccountStatus.Text = "Calling is not configured in this preview."; return; }
 #endif
@@ -409,7 +416,7 @@ public sealed partial class MainWindow
 
     private void UpdateCallButtons()
     {
-        var enabled = callSession is { } actor && CallCurrent(actor) && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
+        var enabled = scheduledCall is null && callSession is { } actor && CallCurrent(actor) && callMode == CallMode.Hidden && ViewModel.SelectedConversation is { IsMine: false };
         VoiceCallButton.IsEnabled = VideoCallButton.IsEnabled = enabled;
     }
 
@@ -481,6 +488,7 @@ public sealed partial class MainWindow
 
     private WebView2? DetachCallView()
     {
+        RetireScheduledCall();
         callSession?.Dispose();
         callSession = null;
         callInbox = null;
