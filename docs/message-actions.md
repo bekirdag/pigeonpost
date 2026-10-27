@@ -33,6 +33,15 @@ have different `message_id`s). A **`msg_ref`** names the message itself and is s
 
 ## 2. Sending
 
+Clients preparing protected restart recovery first resolve a typed handle through
+`POST /v1/recipients/resolve {identity?, to}` when `recipient_lookup` is enabled. It returns
+`{from, address, handle}` using the same sender authorization and recipient resolution as send,
+including closed-organization masking. It creates no messages, contacts or threads and is limited
+to 60 requests per minute per acting inbox. Bind the response to the original account, inbox and
+reviewed draft; verify `from` and freeze `address` and the complete request before the first POST.
+Explicit retries use those exact saved bytes/reference without resolving the handle again.
+Resolution does not grant admission, bypass current policy or guarantee future delivery.
+
 `POST /v1/send` takes, in addition to `{to, body, from?, thread_id?, thread?, attachments?}`:
 
 | Field | Meaning |
