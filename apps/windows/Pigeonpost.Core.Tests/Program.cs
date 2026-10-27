@@ -1054,6 +1054,7 @@ tests.AddRange(ProtectedComposerTests.All());
 tests.AddRange(MessageTextTests.All());
 tests.AddRange(MessageComposerTests.All());
 tests.AddRange(CalendarTimeTests.All());
+tests.AddRange(CalendarApiTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());

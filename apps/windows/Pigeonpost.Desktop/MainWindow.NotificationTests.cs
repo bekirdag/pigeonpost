@@ -21,6 +21,7 @@ public sealed partial class MainWindow
         {
             refreshTimer?.Stop();
             await RunDeliveryProtectionTestsAsync(Check);
+            RunCalendarRuntimeChecks(Check);
             await DesktopNotifications.ClearAlertsAsync();
             if (notificationInitializationError is not null) throw new InvalidOperationException("Notification initialization failed", notificationInitializationError);
             Check(notifications is not null, "Native notification services created");
