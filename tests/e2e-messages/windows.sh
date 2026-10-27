@@ -1,7 +1,7 @@
 #!/bin/sh
 # Opt-in native Windows Core protocol test against a disposable loopback Rust postbox.
 set -eu
-if [ "$#" -ne 1 ]; then printf '%s\n' 'usage: windows.sh /absolute/pigeonpost-postbox' >&2; exit 2; fi
+if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then printf '%s\n' 'usage: windows.sh /absolute/pigeonpost-postbox [calendar]' >&2; exit 2; fi
 case "$1" in /*) ;; *) printf '%s\n' 'Use an absolute binary path.' >&2; exit 2 ;; esac
 test -x "$1"
 task_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
@@ -18,7 +18,9 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
-node "$task_root/tests/e2e-messages/postbox.mjs" "$1" "$task_work/setup.json" &
+task_mode=${2:-}
+case "$task_mode" in ""|calendar) ;; *) printf '%s\n' 'Unknown fixture mode.' >&2; exit 2 ;; esac
+node "$task_root/tests/e2e-messages/postbox.mjs" "$1" "$task_work/setup.json" $task_mode &
 task_fixture_pid=$!
 task_attempt=0
 while [ ! -s "$task_work/setup.json" ]; do
@@ -29,4 +31,5 @@ while [ ! -s "$task_work/setup.json" ]; do
 done
 export PIGEONPOST_TEST_FIXTURE="$task_work/setup.json"
 cd "$task_root"
-"${PIGEONPOST_TEST_DOTNET:-dotnet}" run --project apps/windows/Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -- --message-actions-postbox
+if [ "$task_mode" = calendar ]; then task_test=--calendar-postbox; else task_test=--message-actions-postbox; fi
+"${PIGEONPOST_TEST_DOTNET:-dotnet}" run --project apps/windows/Pigeonpost.Core.Tests/Pigeonpost.Core.Tests.csproj -- "$task_test"

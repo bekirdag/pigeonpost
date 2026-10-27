@@ -7,6 +7,8 @@ if (args.SequenceEqual(new[] { "--message-actions-postbox" }))
     return await MessageActionsPostbox.RunAsync();
 }
 
+if (args.SequenceEqual(new[] { "--calendar-postbox" })) return await CalendarPostbox.RunAsync();
+
 // Dependency-free behavioral runner, matching the Apple client's model-test approach.
 var tests = new List<(string Name, Func<Task> Run)>();
 void Test(string name, Action test) => tests.Add((name, () => { test(); return Task.CompletedTask; }));
@@ -1053,6 +1055,9 @@ tests.AddRange(MessageDeliveryCoordinatorTests.All());
 tests.AddRange(ProtectedComposerTests.All());
 tests.AddRange(MessageTextTests.All());
 tests.AddRange(MessageComposerTests.All());
+tests.AddRange(CalendarTimeTests.All());
+tests.AddRange(CalendarApiTests.All());
+tests.AddRange(CalendarDeliveryTests.All());
 tests.AddRange(CallRingTests.All());
 tests.AddRange(PrivacyTests.All());
 tests.AddRange(GroupTests.All());
