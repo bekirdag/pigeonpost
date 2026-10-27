@@ -10,6 +10,7 @@ public sealed class PreviewInboxService : IInboxService, IConversationSettings
     // A fixture may model a deliberate grant replacement; it is still local sample data only.
     public AuthorizationLease? AcceptedAuthorization => authorizationSource is { } source ? source() : fixedAuthorization;
     public string? RecoveryOwnerKey => ownerSource?.Invoke();
+    public string? RecoveryOrigin => ownerSource is null ? null : "https://preview-fixture.invalid";
     private int sequence;
     private const long Epoch = 1789113600;
     // Real /k/ addresses (of fixed demonstration seeds 0xA1… and 0xA2…), so the preview's stand-in

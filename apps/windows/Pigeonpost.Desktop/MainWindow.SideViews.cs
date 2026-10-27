@@ -15,7 +15,7 @@ namespace Pigeonpost.Desktop;
 //  Every feature appears only when GET /v1/capabilities lists it for the account.
 public sealed partial class MainWindow
 {
-    private enum SideView { Chats, Calls, Filtered, Groups, Calendar, Machine }
+    private enum SideView { Chats, Calls, Filtered, Groups, Calendar, Machine, Rooms }
 
     private ServerFeatures features = ServerFeatures.None;
     private SideView sideView = SideView.Chats;
@@ -26,7 +26,7 @@ public sealed partial class MainWindow
     private readonly System.Collections.ObjectModel.ObservableCollection<CallRow> filteredCallRows = [];
     private readonly System.Collections.ObjectModel.ObservableCollection<FilteredSender> filteredSenders = [];
     private IReadOnlyList<InboxMessage> filteredMessages = [];
-    private Button? callsNav, groupsNav, chatsNav, calendarNav, machineNav;
+    private Button? callsNav, groupsNav, chatsNav, calendarNav, machineNav, roomsNav;
     private int featureVersion;
     private sealed record SideBinding(InboxViewModel Inbox, AuthorizationLease? Authorization, string Mailbox);
     private SideBinding? sideBinding;
@@ -97,7 +97,9 @@ public sealed partial class MainWindow
         filteredMessages = [];
         filteredSenders.Clear();
         // Machine approval belongs to the signed-in person, not the inbox; keep it across a rebind.
-        if (sideView is not SideView.Chats and not SideView.Machine) ShowSideView(SideView.Chats);
+        // Rooms stay open and reload for the newly selected canonical inbox.
+        if (sideView is not SideView.Chats and not SideView.Machine and not SideView.Rooms) ShowSideView(SideView.Chats);
+        if (sideView == SideView.Rooms) { roomStore.Synchronize(); roomStore.LoadOrganizations(roomStore.State.ContextId); }
         UpdateFilteredEntry();
         await RefreshSideViewsAsync();
         if (!SideCurrent(binding)) return;
@@ -146,7 +148,7 @@ public sealed partial class MainWindow
 
     private void ResetSideViews()
     {
-        approvalStore.Close();
+        approvalStore.Close(); roomStore.Close();
         featureVersion++;
         sideBinding = null;
         refreshingSide = null;
@@ -191,7 +193,8 @@ public sealed partial class MainWindow
         callsNav = features.Has(ServerFeatures.CallHistory) ? Nav("Calls", "Calls", SideView.Calls) : null;
         groupsNav = features.Has(ServerFeatures.Groups) && GroupsModel.LibraryAvailable ? Nav("Groups", "Groups", SideView.Groups) : null;
         calendarNav = features.Has(ServerFeatures.Calendar) ? Nav("Calendar", "Calendar", SideView.Calendar) : null;
-        machineNav = features.Has(ServerFeatures.Organizations) ? Nav("Approve a machine", "Approve a machine", SideView.Machine) : null;
+        roomsNav = features.Has(ServerFeatures.Organizations) && groupsNav is not null ? Nav("Rooms", "Rooms", SideView.Rooms) : null;
+        machineNav = features.Has(ServerFeatures.Organizations) ? Nav("Machines", "Machines", SideView.Machine) : null;
         SideNav.Visibility = ToVisibility(callsNav is not null || groupsNav is not null || calendarNav is not null || machineNav is not null);
         NewGroupButton.Visibility = ToVisibility(groupsNav is not null);
         UpdateSideNav();
@@ -211,14 +214,15 @@ public sealed partial class MainWindow
             AutomationProperties.SetName(groupsNav, count > 0 ? $"Groups, {count} new" : "Groups");
             NewGroupButton.Visibility = ToVisibility(groupsModel.Enabled);
         }
-        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups), (calendarNav, SideView.Calendar), (machineNav, SideView.Machine) })
+        foreach (var (button, view) in new[] { (chatsNav, SideView.Chats), (callsNav, SideView.Calls), (groupsNav, SideView.Groups), (calendarNav, SideView.Calendar), (machineNav, SideView.Machine), (roomsNav, SideView.Rooms) })
             if (button is not null) button.Style = (Style)Application.Current.Resources[sideView == view ? "AccentButtonStyle" : "DefaultButtonStyle"];
     }
 
     private void ShowSideView(SideView view)
     {
         if (sideView == SideView.Machine && view != SideView.Machine) CloseApproval();
-        approvalView = null;
+        if (sideView == SideView.Rooms && view != SideView.Rooms) CloseRooms();
+        approvalView = null; roomsView = null;
         sideView = view;
         calendarPage?.Dispose(); calendarPage = null;
         SidePage.Children.Clear();
@@ -230,6 +234,7 @@ public sealed partial class MainWindow
             case SideView.Groups: SideListHost.Children.Add(BuildGroupList()); SidePage.Children.Add(BuildGroupPage()); break;
             case SideView.Calendar: SidePage.Children.Add(BuildCalendarPage()); break;
             case SideView.Machine: SidePage.Children.Add(BuildApprovalPage()); break;
+            case SideView.Rooms: SidePage.Children.Add(BuildRoomsPage()); break;
         }
         UpdateLayoutMode();
         UpdateSideNav();

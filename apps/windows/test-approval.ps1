@@ -71,7 +71,7 @@ try {
 
     # Unsent work in the inbox must survive the verified grant replacement later in this test.
     Set-Text 'Message' 'Unsent words before verification'
-    Invoke-Control 'Approve a machine'
+    Invoke-Control 'Machines'
     $null = Wait-Control 'Machine code'
     Set-Text 'Machine code' 'not a code'; Invoke-Control 'Review request'
     Wait-Check { $null -ne (Control "Enter the eight-character code shown on the machine.") -and (State) -eq $null } 'A malformed code is refused locally without a request'

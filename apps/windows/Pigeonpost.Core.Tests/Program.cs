@@ -8,6 +8,7 @@ if (args.SequenceEqual(new[] { "--message-actions-postbox" }))
 }
 
 if (args.SequenceEqual(new[] { "--calendar-postbox" })) return await CalendarPostbox.RunAsync();
+if (args.SequenceEqual(new[] { "--organization-rooms-postbox" })) return await OrganizationRoomsPostbox.RunAsync();
 
 // Dependency-free behavioral runner, matching the Apple client's model-test approach.
 var tests = new List<(string Name, Func<Task> Run)>();
@@ -1045,6 +1046,8 @@ tests.AddRange(StrongSignInSessionTests.Browser());
 tests.AddRange(DevicePairingTests.All());
 tests.AddRange(DevicePairingTests.Store());
 tests.AddRange(StrongSignInSessionTests.Approval());
+tests.AddRange(OrganizationRoomTests.All());
+tests.AddRange(OrganizationRoomTests.StandIn());
 tests.AddRange(GroupStateAuthorizationTests.All());
 tests.AddRange(GroupClientAuthorizationTests.All());
 tests.AddRange(AvatarAuthorizationTests.All());

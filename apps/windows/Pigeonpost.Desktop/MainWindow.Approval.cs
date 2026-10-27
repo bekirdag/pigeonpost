@@ -141,7 +141,7 @@ public sealed partial class MainWindow
             Network = network, Expiry = expiry, Confirmation = confirmation, Hint = hint, Details = details, Decision = decision,
             Hold = hold, HoldProgress = holdProgress, Busy = busy
         };
-        void Submit() { view.Note.Text = ""; approvalStore.Resolve(code.Text, approvalStore.State.ContextId); }
+        void Submit() { view.Note.Text = ""; approvalStore.Resolve(code.Text, approvalStore.State.ContextId); RenderApproval(); }
         review.Click += (_, _) => Submit();
         code.KeyDown += (_, e) => { if (e.Key == VirtualKey.Enter) { e.Handled = true; Submit(); } };
         changeCode.Click += (_, _) => { approvalStore.ChangeCode(approvalStore.State.ContextId); code.Text = ""; code.Focus(FocusState.Programmatic); };
@@ -224,6 +224,8 @@ public sealed partial class MainWindow
         if (state.RetryAt is { } until && until > DateTimeOffset.UtcNow.ToUnixTimeSeconds() && state.Phase != DeviceApprovalPhase.Resolving)
             view.Status.Text = $"{state.Message ?? "Too many attempts."} Try again in {until - DateTimeOffset.UtcNow.ToUnixTimeSeconds()} s.";
         AutomationProperties.SetName(view.Status, view.Status.Text);
+        view.Status.Visibility = view.Status.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        view.Note.Visibility = view.Note.Text.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
         var reviewing = state.Preview is not null && state.Phase is DeviceApprovalPhase.Review or DeviceApprovalPhase.Approving or DeviceApprovalPhase.Denying
             or DeviceApprovalPhase.Verifying or DeviceApprovalPhase.Unconfirmed;
         view.Code.IsEnabled = view.Review.IsEnabled = current && !state.Busy && !state.HasCode;
@@ -293,7 +295,7 @@ public sealed partial class MainWindow
     {
         if (approvalView is not { } view) return;
         var state = approvalStore.State;
-        if (VerificationBlocker() is { } reason) { view.Note.Text = reason; return; }
+        if (VerificationBlocker() is { } reason) { view.Note.Text = reason; RenderApproval(); return; }
         view.Note.Text = "";
         approvalStore.VerifySignIn(state.ProofId, state.ContextId, VerifyForApprovalAsync);
     }

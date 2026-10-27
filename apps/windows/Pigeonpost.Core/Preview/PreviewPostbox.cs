@@ -140,6 +140,9 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public required string CreatedBy { get; init; }
         public long CreatedAt { get; init; }
         public long? DeletedAt { get; set; }
+        public string? OrgId { get; set; }
+        public string? RequestKey { get; set; }
+        public string? RequestHash { get; set; }
         public Dictionary<string, Member> Members { get; } = new(StringComparer.Ordinal);
         public HashSet<(string Mailbox, string Device)> Leaves { get; } = [];
         public List<JsonObject> Items { get; } = [];
@@ -148,6 +151,94 @@ public sealed class PreviewPostbox : HttpMessageHandler
         public Dictionary<string, long> Cmids { get; } = new(StringComparer.Ordinal);
         public long Seq { get; set; }
     }
+
+    // ---- organizations: canonical member inboxes and org rooms (docs/orgs.md §5) -------------
+
+    private sealed class Org(string id, string name)
+    {
+        public string Id { get; } = id;
+        public string Name { get; } = name;
+        public string Status { get; set; } = "active";
+        public Dictionary<string, string> Members { get; } = new(StringComparer.Ordinal); // canonical inbox -> member id
+        public List<(string Address, string? Handle)> Operated { get; } = [];
+    }
+    private readonly Dictionary<string, Org> orgs = new(StringComparer.Ordinal);
+    public void AddOrganization(string id, string name, IEnumerable<string> memberInboxes, IEnumerable<(string Address, string? Handle)>? operated = null)
+    {
+        lock (sync)
+        {
+            var org = new Org(id, name);
+            foreach (var inbox in memberInboxes) org.Members[inbox] = "mem_" + (++counter).ToString("d4");
+            org.Operated.AddRange(operated ?? []);
+            orgs[id] = org;
+        }
+    }
+    public void RemoveOrganizationMember(string id, string inbox) { lock (sync) orgs[id].Members.Remove(inbox); }
+    // A room owned by another member, already active (its owner device keys new joiners later).
+    public string SeedOrganizationRoom(string orgId, string ownerInbox, string name, string joinPolicy, string? description = null)
+    {
+        lock (sync)
+        {
+            var g = new Grp { Id = "grp_" + GroupApiIdSafe(), CreatedBy = ownerInbox, CreatedAt = Now, OrgId = orgId, Name = name, Description = description,
+                JoinPolicy = joinPolicy, Visibility = "listed", Activation = "active", Epoch = 1 };
+            g.Members[ownerInbox] = new Member { Address = ownerInbox, Role = "owner", State = "active" };
+            groups[g.Id] = g; return g.Id;
+        }
+    }
+    private Org MemberOrg(string? id, Box me) => id is not null && orgs.TryGetValue(id, out var org) && org.Members.ContainsKey(me.Address) && org.Status is "active" or "read_only"
+        ? org : throw new Fail(403, "forbidden");
+    private object? OrganizationRoute(string method, string path, Box me, JsonNode? body, System.Collections.Specialized.NameValueCollection query)
+    {
+        switch (method, path)
+        {
+            case ("GET", "/v1/orgs"):
+                var mine = orgs.Values.Where(o => o.Members.Keys.Any(k => boxes.ContainsKey(k) && SameAccount(k, me.Address))).ToArray();
+                return new JsonObject
+                {
+                    ["orgs"] = new JsonArray(mine.Select(o =>
+                    {
+                        var inbox = o.Members.Keys.First(k => SameAccount(k, me.Address));
+                        return (JsonNode)new JsonObject { ["id"] = o.Id, ["name"] = o.Name, ["status"] = o.Status, ["my_member_id"] = o.Members[inbox], ["namespace"] = "example",
+                            ["my_roles"] = new JsonArray(), ["settings"] = new JsonObject { ["rooms_creation"] = "everyone" },
+                            ["my_mailbox"] = new JsonObject { ["address"] = inbox, ["handle"] = boxes[inbox].Handle } };
+                    }).ToArray()),
+                    ["operated"] = new JsonArray(mine.SelectMany(o => o.Operated.Select(a => (JsonNode)new JsonObject
+                        { ["address"] = a.Address, ["org_id"] = o.Id, ["handle"] = a.Handle, ["capabilities"] = new JsonArray("read_inbox") })).ToArray()),
+                };
+            case ("GET", "/v1/rooms"):
+            {
+                var org = MemberOrg(query["org_id"], me); var search = query["q"] ?? "";
+                return new JsonObject { ["rooms"] = new JsonArray(groups.Values.Where(g => g.OrgId == org.Id && g.DeletedAt is null && g.Activation == "active"
+                        && (g.Visibility == "listed" || g.Members.ContainsKey(me.Address)) && g.Name.Contains(search, StringComparison.OrdinalIgnoreCase))
+                    .Select(g => (JsonNode)new JsonObject { ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["join_policy"] = g.JoinPolicy,
+                        ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
+                        ["my_state"] = g.Members.TryGetValue(me.Address, out var m) ? m.State : null }).ToArray()) };
+            }
+            case ("POST", "/v1/groups/resolve"):
+            {
+                if (!groups.TryGetValue((string?)body?["group_id"] ?? "", out var g) || g.DeletedAt is not null) throw new Fail(404, "not_found");
+                if (g.OrgId is { } orgId) MemberOrg(orgId, me);
+                var state = g.Members.TryGetValue(me.Address, out var m) ? m.State : null;
+                return new JsonObject { ["id"] = g.Id, ["name"] = g.Name, ["description"] = g.Description, ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"),
+                    ["join_policy"] = g.JoinPolicy, ["my_state"] = state, ["can_join"] = g.JoinPolicy == "public" && state is null or "left" };
+            }
+        }
+        if (method == "POST" && path.StartsWith("/v1/groups/", StringComparison.Ordinal) && path.EndsWith("/join", StringComparison.Ordinal))
+        {
+            var id = path["/v1/groups/".Length..^"/join".Length];
+            if (!groups.TryGetValue(id, out var g) || g.DeletedAt is not null || g.OrgId is null) return null;
+            MemberOrg(g.OrgId, me);
+            if (g.JoinPolicy != "public") throw new Fail(403, "invite_required");
+            if (g.Members.TryGetValue(me.Address, out var m) && m.State is "active" or "keying") throw new Fail(409, "already_member");
+            g.Members[me.Address] = new Member { Address = me.Address, State = "keying", JoinedAt = Now };
+            return new JsonObject { ["ok"] = true };
+        }
+        return null;
+    }
+    // Inboxes of one person (the real server groups them by account). Unlinked inboxes stand alone.
+    private readonly Dictionary<string, string> accounts = new(StringComparer.Ordinal);
+    public void LinkAccount(string account, params string[] inboxes) { lock (sync) foreach (var inbox in inboxes) accounts[inbox] = account; }
+    private bool SameAccount(string inbox, string acting) => accounts.GetValueOrDefault(inbox, inbox) == accounts.GetValueOrDefault(acting, acting);
 
     private readonly Dictionary<(string, string), Device> devices = [];
     private readonly Dictionary<string, Grp> groups = new(StringComparer.Ordinal);
@@ -318,6 +409,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
                 return new JsonObject { ["ephemeral_secs"] = secs };
             }
         }
+        if (Features.Contains(ServerFeatures.Organizations) && OrganizationRoute(method, path, me, body, query) is { } organization) return organization;
         if (path.StartsWith("/v1/mls/", StringComparison.Ordinal) || path.StartsWith("/v1/groups", StringComparison.Ordinal))
         {
             if (!Features.Contains(ServerFeatures.Groups)) throw new Fail(404, "feature_disabled");
@@ -347,6 +439,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
         if (!groups.TryGetValue(id, out var g) || !g.Members.ContainsKey(me.Address))
             throw new Fail(404, "not_found");
         if (g.DeletedAt is not null) throw new Fail(410, "group_deleted");
+        if (g.OrgId is { } org && (!orgs.TryGetValue(org, out var owner) || !owner.Members.ContainsKey(me.Address))) throw new Fail(403, "forbidden");
         return g;
     }
 
@@ -435,7 +528,18 @@ public sealed class PreviewPostbox : HttpMessageHandler
         {
             if (method == "POST")
             {
-                var g = new Grp { Id = "grp_" + GroupApiIdSafe(), CreatedBy = me.Address, CreatedAt = Now };
+                var organization = (string?)body!["org_id"];
+                if (organization is not null)
+                {
+                    MemberOrg(organization, me);
+                    var key = (string?)body["request_key"]; var hash = Hex(SHA256.HashData(raw));
+                    if (groups.Values.FirstOrDefault(x => x.RequestKey == key && key is not null && x.CreatedBy == me.Address) is { } same)
+                        return same.RequestHash == hash ? (201, new JsonObject { ["group"] = GroupJson(same, me), ["invitations"] = new JsonArray() })
+                            : throw new Fail(409, "request_key_reused");
+                }
+                var g = new Grp { Id = "grp_" + GroupApiIdSafe(), CreatedBy = me.Address, CreatedAt = Now, OrgId = organization,
+                    RequestKey = organization is null ? null : (string?)body["request_key"], RequestHash = organization is null ? null : Hex(SHA256.HashData(raw)),
+                    Visibility = (string?)body["visibility"] ?? "unlisted" };
                 g.Name = (string)body!["name"]!;
                 g.Description = (string?)body["description"];
                 g.JoinPolicy = (string?)body["join_policy"] ?? "private";
@@ -744,7 +848,7 @@ public sealed class PreviewPostbox : HttpMessageHandler
             ["ephemeral_secs"] = g.EphemeralSecs, ["revision"] = g.Revision, ["epoch"] = g.Epoch, ["activation_state"] = g.Activation,
             ["member_count"] = g.Members.Values.Count(x => x.State is "active" or "keying"), ["max_members"] = 1000, ["created_by"] = g.CreatedBy,
             ["created_at"] = g.CreatedAt, ["last_at"] = g.Items.Count == 0 ? g.CreatedAt : (long)g.Items[^1]["created_at"]!, ["last_seq"] = g.Seq,
-            ["deleted_at"] = g.DeletedAt, ["has_link"] = false, ["my"] = my,
+            ["deleted_at"] = g.DeletedAt, ["has_link"] = false, ["org_id"] = g.OrgId, ["my"] = my,
         };
     }
 
