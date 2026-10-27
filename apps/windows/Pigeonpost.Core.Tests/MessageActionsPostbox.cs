@@ -124,7 +124,33 @@ internal static class MessageActionsPostbox
                 restartTokens.AcceptedAuthorization?.Retire();
             }
             finally { Directory.Delete(custodyFolder, recursive: true); }
-            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss and coordinated protected restart recovery, version deletion.");
+            stage = "normal protected composer response loss";
+            var composerFolder = Path.Combine(Path.GetTempPath(), "pp-windows-composer-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(composerFolder);
+            try
+            {
+                using var protector = new MessageAttemptStoreTests.Protector();
+                var coordinator = new MessageDeliveryCoordinator(loss, new FileMessageAttemptStore(composerFolder, protector));
+                using var model = new InboxViewModel(loss, deliveryCoordinator: coordinator);
+                await model.InitializeAsync(); await model.StartConversationAsync(to, "");
+                model.Draft = "Real postbox composer fixture ğ 😀";
+                await Control(http, proxy, "after"); await model.SendDraftAsync();
+                Check(model.Draft == "Real postbox composer fixture ğ 😀" && model.HasPendingDeliveries && !model.IsSending);
+                using var scope = await MessageRecoveryScope.AuthorizeAsync(loss, from) ?? throw new InvalidOperationException();
+                var saved = (await coordinator.GetPendingAsync(scope)).Single();
+                await CheckAttempts(http, proxy, 1, saved.Request.MsgRef);
+                Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == saved.Request.MsgRef) == 1);
+                await model.RefreshAsync(background: true);
+                Check(model.Messages.Count(m => m.DisplayBody == "Real postbox composer fixture ğ 😀") == 1
+                    && model.Draft == "Real postbox composer fixture ğ 😀" && model.HasPendingDeliveries);
+                await Control(http, proxy, "off");
+                Check(await model.RetryPendingDeliveryAsync(model.PendingDeliveries.Single().BeginAction() ?? throw new InvalidOperationException()));
+                Check(model.Draft == "" && !model.HasPendingDeliveries && !model.IsSending);
+                await CheckAttempts(http, proxy, 2, saved.Request.MsgRef);
+                Check((await b.GetInboxAsync(to)).Messages!.Count(m => m.MsgRef == saved.Request.MsgRef) == 1);
+            }
+            finally { Directory.Delete(composerFolder, recursive: true); }
+            Console.WriteLine("PASS Windows postbox interoperability: canonical lookup, folded edits, replies, receipt privacy, owned copies, exact committed-loss, protected restart and normal composer recovery, version deletion.");
             return 0;
         }
         catch (Exception ex)

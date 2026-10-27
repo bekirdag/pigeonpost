@@ -110,6 +110,7 @@ public sealed partial class InboxViewModel
         allConversations = [];
         callEntries = [];
         pending.Clear(); drafts.Clear(); attachmentDrafts.Clear(); selections.Clear(); opened.Clear(); draftRevisions.Clear();
+        deliveryDraftOwners.Clear(); sendingActivity = null; ClearPendingDeliveryViews();
         history = []; historyContext = null; matches = []; matchIndex = 0;
         ContextVersion++;
         var wasUpdating = IsUpdatingLists;

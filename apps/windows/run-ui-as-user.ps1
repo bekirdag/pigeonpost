@@ -5,6 +5,7 @@ $ErrorActionPreference = 'Stop'
 if ($env:GITHUB_ACTIONS -ne 'true') { throw 'This helper is only for disposable GitHub Windows runners.' }
 $directory = (New-Item -ItemType Directory -Force $OutputDirectory).FullName
 $smoke = Join-Path $PSScriptRoot 'smoke-test.ps1'
+$delivery = Join-Path $PSScriptRoot 'test-delivery.ps1'
 # WinUI drag/drop requires an ordinary user. Hosted workers run elevated with UAC disabled.
 # Use a real, short-lived local account instead of modifying the worker's security token.
 Add-Type @'
@@ -66,6 +67,8 @@ try {
     `$principal = [Security.Principal.WindowsPrincipal]::new([Security.Principal.WindowsIdentity]::GetCurrent())
     if (`$principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'UI process is elevated.' }
     Write-Host 'Native UI checks are running as a standard Windows user.'
+    # The parent verified this marker; pass only it into the clean test-user environment.
+    `$env:GITHUB_ACTIONS = 'true'
     `$env:PIGEONPOST_NOTIFICATION_TEST_RESULT = $(Literal (Join-Path $directory 'notifications.json'))
     `$notificationProcess = Start-Process -FilePath $(Literal (Resolve-Path $Executable).Path) -PassThru
     if (-not `$notificationProcess.WaitForExit(60000)) { `$notificationProcess.Kill(); throw 'Notification integration timed out.' }
@@ -73,6 +76,7 @@ try {
     Write-Host (`$notificationResult | ConvertTo-Json -Depth 4)
     if (-not `$notificationResult.passed) { throw 'Native notification integration failed.' }
     Remove-Item Env:PIGEONPOST_NOTIFICATION_TEST_RESULT
+    & $(Literal $delivery) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory)
     & $(Literal $smoke) -Executable $(Literal (Resolve-Path $Executable).Path) -OutputDirectory $(Literal $directory) -Fixture
     exit 0
 } catch { Write-Host (`$_ | Out-String); exit 1 }

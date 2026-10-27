@@ -1416,18 +1416,19 @@ async fn optional_stale_attribution_cannot_pin_plain_messages_behind_it() {
         .set_sender_attribution_requirement(Some(test_requirement()))
         .unwrap();
 
-    let (projection, entries, _, refreshed_key_id, _) =
-        witnessed_registry_fixture_with_max_age(now(), MAX_WITNESS_AGE_SECS);
-    assert_eq!(refreshed_key_id, key_id);
-    registry.replace(projection, entries).await;
-    alice.refresh_compliance_keys().await.unwrap();
-
     let bob_witnessed_at = now();
     let (projection, entries, _, refreshed_key_id, _) =
         witnessed_registry_fixture_with_max_age(bob_witnessed_at, MAX_WITNESS_AGE_SECS);
     assert_eq!(refreshed_key_id, key_id);
     registry.replace(projection, entries).await;
     bob.refresh_compliance_keys().await.unwrap();
+
+    // Sender setup must not spend its two-second witness window waiting for the
+    // recipient. send() refreshes these newly signed keys before wrapping.
+    let (projection, entries, _, refreshed_key_id, _) =
+        witnessed_registry_fixture_with_max_age(now(), MAX_WITNESS_AGE_SECS);
+    assert_eq!(refreshed_key_id, key_id);
+    registry.replace(projection, entries).await;
 
     alice
         .send(&bob.address(), "optional stale attribution")
@@ -1501,18 +1502,19 @@ async fn optional_stale_attribution_still_rejects_corrupt_cached_key_rows() {
         .set_sender_attribution_requirement(Some(test_requirement()))
         .unwrap();
 
-    let (projection, entries, _, refreshed_key_id, _) =
-        witnessed_registry_fixture_with_max_age(now(), MAX_WITNESS_AGE_SECS);
-    assert_eq!(refreshed_key_id, key_id);
-    registry.replace(projection, entries).await;
-    alice.refresh_compliance_keys().await.unwrap();
-
     let bob_witnessed_at = now();
     let (projection, entries, _, refreshed_key_id, _) =
         witnessed_registry_fixture_with_max_age(bob_witnessed_at, MAX_WITNESS_AGE_SECS);
     assert_eq!(refreshed_key_id, key_id);
     registry.replace(projection, entries).await;
     bob.refresh_compliance_keys().await.unwrap();
+
+    // Sender setup must not spend its two-second witness window waiting for the
+    // recipient. send() refreshes these newly signed keys before wrapping.
+    let (projection, entries, _, refreshed_key_id, _) =
+        witnessed_registry_fixture_with_max_age(now(), MAX_WITNESS_AGE_SECS);
+    assert_eq!(refreshed_key_id, key_id);
+    registry.replace(projection, entries).await;
     alice
         .send(&bob.address(), "stale block over corrupt cache")
         .await
